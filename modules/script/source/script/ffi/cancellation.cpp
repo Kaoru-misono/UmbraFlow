@@ -4,10 +4,9 @@
 #include <format>
 #include <string>
 
-// Luau's C headers are third-party and do not build clean under the project's
-// /W4 /WX profile; a manifest-driven module has no CMakeLists to mark them
-// external, so wrap the includes exactly as the repo's other vendored FFI does
-// (image/ffi/png-decoder.cpp).
+// Luau's C headers do not build clean under the project's /W4 /WX profile, and
+// a manifest-driven module has no CMakeLists to mark them external; wrap them as
+// image/ffi/png-decoder.cpp does.
 #if defined(_MSC_VER)
 #pragma warning(push, 0)
 #elif defined(__clang__)
@@ -65,12 +64,10 @@ namespace uf::script
 
         // VM safepoint callback. Luau shares one lua_Callbacks across every
         // coroutine of the VM, so this fires on whichever task thread is running
-        // under lua_resume, and lua_callbacks(state)->userdata is the shared
-        // InterruptState installed by installInterrupt. Cancellation is
-        // yield-and-abandon: on a hit it calls lua_break (NEVER luaL_error),
-        // which sets the running thread's status to LUA_BREAK; lua_resume then
-        // returns LUA_BREAK and the host abandons the thread. A break is not a
-        // Lua error, so a pcall in the script cannot catch it.
+        // under lua_resume. Cancellation is yield-and-abandon: on a hit it calls
+        // lua_break (NEVER luaL_error), lua_resume returns LUA_BREAK and the host
+        // abandons the thread. A break is not a Lua error, so a pcall in the
+        // script cannot catch it.
         auto onInterrupt(lua_State* state, int gc) -> void
         {
             // The GC-context guard MUST be the first statement (hardening-ledger
@@ -108,14 +105,11 @@ namespace uf::script
                 return;
             }
 
-            // Stamped before the break, because the break does not return here:
-            // lua_break unwinds to lua_resume and the host reads this state to
-            // say what happened.
+            // Stamped before the break, which does not return here: lua_break
+            // unwinds to lua_resume, where the host reads this state.
             control->cause    = cause;
             control->brokenAt = now;
 
-            // Yield-and-abandon: unwinds to lua_resume with LUA_BREAK; the host
-            // drops this thread and never resumes it.
             lua_break(state);
         }
     }

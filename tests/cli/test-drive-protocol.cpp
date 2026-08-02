@@ -34,10 +34,9 @@ namespace uf::cli
             );
         }
 
-        // A temp path unique across RUNS as well as within one, which the
-        // fresh-output cases require: the guard under test refuses a results path that
-        // exists, so a leftover file from an earlier run -- including one a failing run
-        // never got to clean up -- would refuse the case's own first assertion.
+        // Unique across runs as well as within one: the guard under test refuses a
+        // results path that exists, so a leftover file from an earlier run would fail
+        // the fresh-output cases at their own first assertion.
         [[nodiscard]]
         auto uniquePath(std::string_view role) -> std::filesystem::path
         {
@@ -136,16 +135,15 @@ namespace uf::cli
         );
         CHECK(functionKey.has_value());
 
-        // The named family, admitted since 2026-07-31 and reaching this protocol
-        // through the same single definition the other two families do.
+        // The named family reaches this protocol through the same single
+        // definition the other two families do.
         auto const namedKey = parseDriveCommand(
             R"({"op":"key","cycle":4,"key":"ENTER"})"
         );
         CHECK(namedKey.has_value());
 
-        // Lower case, an unobserved key and a key with no cycle are all refused:
-        // a keystroke posts real input, so a name that is nearly right must not
-        // be guessed at.
+        // A keystroke posts real input, so a nearly-right name is refused rather
+        // than guessed at.
         for (auto const line : std::array<std::string_view, 4>{
             R"({"op":"key","cycle":4,"key":"e"})",
             R"({"op":"key","cycle":4,"key":"enter"})",
@@ -160,12 +158,10 @@ namespace uf::cli
 
     TEST_CASE("the retired model verbs are refused rather than silently accepted")
     {
-        // cycle_page, cycle_find, cycle_click and the two convenience commands
-        // built on them went with the C++ page model
-        // (docs/plans/2026-07-31-script-owned-page-model.md 9). An operator
-        // script written against the old protocol must be TOLD, not quietly
-        // dropped: every one of them now falls through to the unrecognized-op
-        // refusal, and the fields they used to carry are unrecognized too.
+        // Retired with the C++ page model (docs/plans/2026-07-31-script-owned-page-model.md
+        // 9). A script written against the old protocol must be TOLD, not quietly
+        // dropped: each verb falls through to the unrecognized-op refusal, and the
+        // fields they used to carry are unrecognized too.
         for (auto const line : std::array<std::string_view, 7>{
             R"({"op":"cycle_page","cycle":3})",
             R"({"op":"cycle_find","cycle":3,"element":"end_turn"})",
@@ -227,8 +223,8 @@ namespace uf::cli
             == R"({"op":"cycle_close","ok":true,"released":false})"
         );
 
-        // The failure kind is the domain's own wire spelling, so an operator reads the
-        // same string the trace line and a task's Tier B error carry.
+        // The failure kind is the domain's own wire spelling, so an operator reads
+        // the same string the trace line and a task's Tier B error carry.
         auto const failed = driveFailure(
             "key",
             fail(AutomationErrorKind::StaleObservation, "gone").error()
@@ -241,9 +237,8 @@ namespace uf::cli
 
     TEST_CASE("a drive session refuses a results path that already exists")
     {
-        // The fresh-output-file guarantee, carried over from the m0-demo input agent. A
-        // stale results file from an earlier session must never be mistaken for this
-        // one's, and nothing may be silently appended to or clobbered.
+        // A stale results file from an earlier session must never be mistaken for
+        // this one's, and nothing may be silently appended to or clobbered.
         auto const queue   = uniquePath("queue");
         auto const results = uniquePath("results");
         writeFile(queue, "");
@@ -260,7 +255,7 @@ namespace uf::cli
         );
         CHECK(refused.error().message().contains("must be a fresh file"));
 
-        // The refusal left the existing file untouched, which is the whole point.
+        // The refusal left the existing file untouched.
         auto stream = std::ifstream{results, std::ios::binary};
         REQUIRE(stream.is_open());
         auto contents = std::string{};
@@ -318,8 +313,8 @@ namespace uf::cli
         CHECK(parsed->maxFrameAge == k_defaultRunMaxFrameAge);
         CHECK(parsed->trace == std::filesystem::path{k_defaultTracePath});
 
-        // --task is a `run` flag and must not be spellable here: the argument shapes
-        // are the first place the two modes refuse to be one session.
+        // --task is a `run` flag and must not be spellable here: the argument
+        // shapes are the first place the two modes refuse to be one session.
         auto const withTask = std::array<std::string, 10>{
             "--project",
             "project",

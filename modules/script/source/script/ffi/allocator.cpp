@@ -3,10 +3,9 @@
 #include <cstddef>
 #include <cstdlib>
 
-// Luau's C headers are third-party and do not build clean under the project's
-// /W4 /WX profile; a manifest-driven module has no CMakeLists to mark them
-// external, so wrap the includes exactly as the repo's other vendored FFI does
-// (image/ffi/png-decoder.cpp).
+// Luau's C headers do not build clean under the project's /W4 /WX profile, and
+// a manifest-driven module has no CMakeLists to mark them external; wrap them as
+// image/ffi/png-decoder.cpp does.
 #if defined(_MSC_VER)
 #pragma warning(push, 0)
 #elif defined(__clang__)
@@ -36,11 +35,10 @@ namespace uf::script
         //   (ud, p, osize, n)    resize p from osize to n bytes
         // A resize to an equal-or-smaller size must never fail; only a fresh
         // allocation or a growth may return null. On top of that contract this
-        // charges every byte against the ledger and refuses a growth that would
-        // exceed the ceiling. Luau surfaces the refusal as a catchable
-        // LUA_ERRMEM. It runs on the VM's owning thread only, including during
-        // GC, so it is noexcept and touches nothing but the ledger and the C
-        // heap.
+        // charges every byte against the ledger and refuses a growth past the
+        // ceiling, which Luau surfaces as a catchable LUA_ERRMEM. It runs on the
+        // VM's owning thread only, GC included, so it is noexcept and touches
+        // nothing but the ledger and the C heap.
         auto accountingAlloc(
             void* ud,
             void* ptr,
@@ -90,8 +88,8 @@ namespace uf::script
             if (block == nullptr)
             {
                 // Only a growth reaches here (a shrink cannot fail): the host
-                // heap is exhausted. Leave the ledger and the still-live old
-                // block untouched; Luau raises a catchable LUA_ERRMEM.
+                // heap is exhausted. The ledger and the still-live old block are
+                // left untouched; Luau raises a catchable LUA_ERRMEM.
                 return nullptr;
             }
 

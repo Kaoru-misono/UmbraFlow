@@ -7,14 +7,8 @@
 
 #include <doctest/doctest.h>
 
-// The three domain values a test builds most often, each of which refuses to
-// construct itself from bad numbers and therefore returns a Result. Spelling
-// that check out at every call site is what these remove.
-//
-// They lived in tests/annotation/test-helpers.hpp until the annotation module
-// was retired, where they were only ever tenants: a fingerprint, a rectangle
-// and an instant are domain values, and the tests that reach for them now are
-// the CLI's and the task layer's.
+// The three domain values a test builds most often. Each refuses to construct
+// itself from bad numbers, so these remove that check from every call site.
 namespace uf::test
 {
     inline auto fingerprint(

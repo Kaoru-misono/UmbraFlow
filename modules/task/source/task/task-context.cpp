@@ -45,11 +45,10 @@ namespace uf::task
 {
     namespace
     {
-        // One crop's mask before and after it is reduced to what the caller
-        // sees: the plane that becomes the PNG's alpha channel, and the counts
-        // that go back to the agent. They travel together because they are one
-        // walk over one rectangle, and splitting them would be two walks that
-        // could report different pixels.
+        // One crop's mask before and after it is reduced to what the caller sees:
+        // the plane that becomes the PNG's alpha channel, and the counts that go
+        // back to the agent. They travel together because they are one walk over
+        // one rectangle, and splitting them would be two walks that could disagree.
         struct MeasuredCropMask final
         {
             std::vector<std::byte> weights{};
@@ -57,10 +56,8 @@ namespace uf::task
         };
 
         // Why `selected` of `total` looks like a mask that cannot measure
-        // anything, or an empty string when it does not.
-        //
-        // Both ends and the reasoning behind them are at
-        // k_minimumUsefulMaskPixels; what is here is only the wording.
+        // anything, or an empty string when it does not. Both ends and the
+        // reasoning are at k_minimumUsefulMaskPixels; only the wording is here.
         [[nodiscard]]
         auto maskWarning(uint64 selected, uint64 total) -> std::string
         {
@@ -98,11 +95,9 @@ namespace uf::task
             return {};
         }
 
-        // The weights `key` hands out over `region`, with the counts that go
-        // back to the agent.
-        //
-        // `rect` is the rectangle in FRAME coordinates, carried only so a
-        // refusal can name what the author drew rather than the crop-relative
+        // The weights `key` hands out over `region`, with the counts that go back
+        // to the agent. `rect` is the rectangle in FRAME coordinates, carried only
+        // so a refusal can name what the author drew rather than the crop-relative
         // box they never typed.
         [[nodiscard]]
         auto measureCropMask(
@@ -200,12 +195,10 @@ namespace uf::task
 
         // `rgba` with every pixel's alpha replaced by the weight `weights` gives
         // it, which is the whole of what makes a crop a masked template:
-        // decodeTemplateImage reads that channel back as the matcher's mask
-        // plane.
-        //
-        // The buffer is taken by value and handed back rather than written
-        // through a reference, so nothing here is an output parameter and the
-        // caller's move is visible at the call site.
+        // decodeTemplateImage reads that channel back as the matcher's mask plane.
+        // The buffer is taken by value and handed back rather than written through
+        // a reference, so nothing here is an output parameter and the caller's
+        // move is visible at the call site.
         [[nodiscard]]
         auto applyMaskAlpha(
             std::vector<std::byte> rgba,
@@ -246,20 +239,12 @@ namespace uf::task
     {
     }
 
-    // D6 known-popup sweep -- landing note (deliberately not a hook here).
-    //
-    // The sweep has a home now, and it is neither this file nor the engine: it
-    // is the framework's interrupt registry. A task declares the popups it knows
-    // through task.interrupt, and the Luau wait loop offers every cycle it opens
-    // to that registry before testing the target page. That is the per-cycle
-    // sweep the design asked for, and it fires on the polls that matter -- the
-    // ones in the middle of a long wait -- which is exactly what neither
-    // candidate C++ position could do. A task-side callback would have fired
-    // once at the start of a wait; the engine's own seam sat inside a poll loop
-    // the registry could not reach.
-    //
-    // What stays true: the task side owns no part of that mechanism. This note
-    // records where it went so the absence is not read as an omission.
+    // D6 known-popup sweep: it lives in the framework's interrupt registry, not
+    // here and not in the engine. A task declares the popups it knows through
+    // task.interrupt, and the Luau wait loop offers every cycle it opens to that
+    // registry before testing the target page -- so the sweep fires on the polls
+    // in the middle of a long wait, which neither candidate C++ position could do.
+    // This note records where it went so the absence is not read as an omission.
     auto TaskContext::openCycle() -> Result<CycleTicket>
     {
         // Refuse before observing. The ledger holds one cycle, and a capture
@@ -344,20 +329,13 @@ namespace uf::task
             );
         }
 
-        // ONE READ FOR THE DETECTION PASS, CHARGED BEFORE IT RUNS, AND ONE MORE
-        // FOR EVERY LINE IT LOCATED. That is the whole budget rule for this
-        // verb, and the reason is what the two halves cost. Locating is one
-        // inference over the region; recognising is one MORE inference per line,
-        // at the same 2-13 ms per line a cycle_read costs -- so a block read
-        // over a twenty-name grid is twenty-one reads however it is spelled, and
-        // charging it as one would leave the budget describing nothing for the
-        // verb that spends the most. It stays the SAME pool as cycle_read rather
-        // than a dimension of its own, which is the opposite of the choice the
-        // crop budget made and for the opposite reason: a crop is an encode and
-        // a read is an inference, so those two units do not compare, while a
-        // block read's lines are recognised by the same recogniser at the same
-        // price as a single-line read. One number covers them because it is one
-        // cost.
+        // One read for the detection pass, charged before it runs, and one more for
+        // every line it located. Locating is one inference over the region;
+        // recognising is one MORE inference per line at the same 2-13 ms a
+        // cycle_read costs, so a block read over a twenty-name grid is twenty-one
+        // reads however it is spelled. It stays the SAME pool as cycle_read because
+        // a block read's lines go through the same recogniser at the same price --
+        // unlike a crop, which is an encode and does not compare.
         //
         // The remainder is handed DOWN so the engine can refuse a region holding
         // more lines than this cycle can pay for, having spent one inference
@@ -383,9 +361,9 @@ namespace uf::task
         UF_TRY(m_cycles.requireOpen(ticket));
 
         // Charged before the engine is reached, so an exhausted budget costs no
-        // copy and no encode. Same kind and same reasoning as the read budget:
-        // the host stopped looking, and an empty answer would claim the region
-        // was inspected.
+        // copy and no encode. Same kind and reasoning as the read budget: the host
+        // stopped looking, and an empty answer would claim the region was
+        // inspected.
         if (m_cycles.cropsCharged() >= m_config.maximumCropsPerCycle)
         {
             return fail(
@@ -403,9 +381,8 @@ namespace uf::task
 
         // The mask is measured BEFORE the pixels are converted, because
         // maskColourKey reads BGRA and bgra8ToRgba8 consumes the buffer it reads
-        // from. It also has to happen before the encode for the reason the
-        // refusal exists at all: an all-transparent PNG is bytes no matcher can
-        // use, so it must never become a file an agent could save.
+        // from -- and before the encode, because an all-transparent PNG is bytes no
+        // matcher can use and must never become a file an agent could save.
         auto measured = std::optional<MeasuredCropMask>{};
         if (key.has_value())
         {
@@ -436,10 +413,9 @@ namespace uf::task
             );
         }
 
-        // The crop's whole record. It is written AFTER the encode because the
-        // hash and the byte count are what make the line worth having: a reader
-        // matching a template asset in the project directory against the frame
-        // it was cut from has nothing else to match on.
+        // The crop's whole record, written AFTER the encode because the hash and
+        // the byte count are what make the line worth having: a reader matching a
+        // template asset against the frame it was cut from has nothing else.
         auto event = trace::TraceEvent{
             .kind  = trace::TraceEventKind::AnnotationRegionSaved,
             .frame = region.frame,
@@ -554,9 +530,8 @@ namespace uf::task
     {
         // The ledger's half of the fence: the ticket is checked against the one
         // open cycle, and the frame leaves the ledger here so a stale ticket is
-        // refused before anything is delivered. There is no ordinal to check
-        // first -- see the header for why this verb has none -- so the spend is
-        // the whole of it, as it is for cycleKey and cycleScroll.
+        // refused before anything is delivered. There is no ordinal to check first
+        // -- see the header -- so the spend is the whole of it.
         UF_TRY_VALUE(observation, m_cycles.spend(ticket));
 
         // longPress consumes the frame by rvalue, so the cycle is spent whatever

@@ -45,13 +45,11 @@ namespace uf::task
     {
         // What the host knows about one run before its VM exists: which project
         // and task it addresses, the bytes the task was compiled from, and the
-        // seed its RNG will draw from.
-        //
-        // The framework version and bundle hash, and the Luau compiler version,
-        // are deliberately NOT part of it. They are properties of this binary
-        // rather than of the run, and runStartedEvent reads them itself, so no
-        // caller can ship a run.started that two different framework builds would
-        // write identically -- which is the whole point of stamping them.
+        // seed its RNG will draw from. The framework version and bundle hash, and
+        // the Luau compiler version, are deliberately NOT part of it -- they are
+        // properties of this binary rather than of the run, and runStartedEvent
+        // reads them itself, so no caller can ship a run.started that two
+        // different framework builds would write identically.
         struct RunStartSpec final
         {
             std::string projectId{};
@@ -92,10 +90,9 @@ namespace uf::task
         }
 
         // The closing line of the run bracket, written from the same report the
-        // caller receives. Both read one classification -- TaskRunReport::outcome
-        // -- so the wire outcome and the reported outcome cannot drift apart. An
-        // error carrying no automation kind is still named, as InternalInvariant,
-        // so the line always identifies a kind.
+        // caller receives. Both read TaskRunReport::outcome, so the wire outcome
+        // and the reported outcome cannot drift apart. An error carrying no
+        // automation kind is still named, as InternalInvariant.
         [[nodiscard]]
         auto runFinishedEvent(TaskRunReport const& report) -> trace::TraceEvent
         {
@@ -127,17 +124,13 @@ namespace uf::task
             };
         }
 
-        // A fresh seed for one run's deterministic RNG.
-        //
-        // It comes from std::random_device -- the host's non-deterministic
-        // entropy source -- and is drawn once per run, never from a constant and
-        // never from the clock. It is recorded in run.started because it is the
-        // only replay input the host controls: the sandbox removes math.random
-        // and the script can read no clock at all, so this seed plus the same
-        // observation sequence reproduces a run exactly. A seed that was silently
-        // the same on every run would still look correct in a trace while
-        // destroying that property, which is why the fixed placeholder default
-        // this replaced is gone.
+        // A fresh seed for one run's deterministic RNG, from std::random_device and
+        // drawn once per run -- never from a constant and never from the clock. It
+        // is recorded in run.started because it is the only replay input the host
+        // controls: the sandbox removes math.random and the script can read no
+        // clock at all, so this seed plus the same observation sequence reproduces
+        // a run exactly. A seed that was silently the same on every run would still
+        // look correct in a trace while destroying that property.
         [[nodiscard]]
         auto drawRunSeed() -> uint64
         {
@@ -274,15 +267,13 @@ namespace uf::task
             return snapshot;
         }
 
-        // Latches `frontEnd` as this generation's owner, or refuses because the other
-        // one already owns it.
-        //
-        // Idempotent under the same front-end and permanent under a different one:
-        // the ledger below this generation holds one open cycle, and two policy
-        // sources sharing it is the failure this exists to make unrepresentable. It
-        // is reported as UnsupportedCapability rather than as an invariant failure
-        // because asking is legitimate -- the caller simply cannot have it -- and
-        // because nothing in this binary is broken when it happens.
+        // Latches `frontEnd` as this generation's owner, or refuses because the
+        // other one already owns it. Idempotent under the same front-end and
+        // permanent under a different one: the ledger below this generation holds
+        // one open cycle, and two policy sources sharing it is the failure this
+        // exists to make unrepresentable. It is UnsupportedCapability rather than
+        // an invariant failure because asking is legitimate and nothing in this
+        // binary is broken when it happens.
         [[nodiscard]] auto claimFrontEnd(trace::FrontEnd frontEnd) -> Status
         {
             if (!m_frontEnd.has_value())
@@ -294,11 +285,9 @@ namespace uf::task
             {
                 return ok();
             }
-            // The holder is named through trace's own spelling rather than
-            // through a local test. A test here has to enumerate the front-ends
-            // it knows, so the first one added after it was written is reported
-            // as whichever value the test falls through to -- and a refusal that
-            // names the wrong holder sends a reader to the wrong caller.
+            // The holder is named through trace's own spelling rather than a local
+            // test, which would have to enumerate the front-ends it knows and
+            // report the first one added after it as the fall-through value.
             return fail(
                 AutomationErrorKind::UnsupportedCapability,
                 std::format(
@@ -321,16 +310,13 @@ namespace uf::task
             m_status.lastOutcome = outcome;
         }
 
-        // The whole of one run, from the opening trace line to the closing one.
-        //
-        // It takes a loaded chunk rather than a task name because its two
-        // callers differ in exactly one thing: where the bytes came from. A
-        // project task is read from <projectRoot>/tasks/<name>.luau and one of
-        // the host's own routines is a literal in this binary; everything from
+        // The whole of one run, from the opening trace line to the closing one. It
+        // takes a loaded chunk rather than a task name because its two callers
+        // differ in exactly one thing: where the bytes came from. Everything from
         // here down -- the trace bracket, the seed, the engine session, the
-        // context, the VM's two environments, the two verdicts the script's
-        // return cannot express -- is identical, and one copy of it is what
-        // keeps a routine from quietly running under different guarantees.
+        // context, the VM's two environments, the two verdicts the script's return
+        // cannot express -- is identical, and one copy of it is what keeps a
+        // routine from quietly running under different guarantees.
         [[nodiscard]]
         auto run(
             TaskRunId runId,
@@ -342,13 +328,12 @@ namespace uf::task
         {
             noteRunStarted(chunk.name);
 
-            // The recorder owns this run's single evidence stream, and every
-            // layer below borrows it (see the trace lifetime contracts on
-            // engine::EngineSession and TaskContext). It is declared before all
-            // of them and held through a unique_ptr, so its address is fixed for
-            // the whole run and every borrower -- all of them locals of this
-            // scope -- is destroyed before it, on the normal path and on every
-            // early return.
+            // The recorder owns this run's single evidence stream and every layer
+            // below borrows it (see the trace lifetime contracts on
+            // engine::EngineSession and TaskContext). Declared before all of them
+            // and held through a unique_ptr, so its address is fixed for the whole
+            // run and every borrower -- all locals of this scope -- is destroyed
+            // before it, on the normal path and on every early return.
             UF_TRY_VALUE(traceSink, trace::FileTraceSink::create(config.tracePath));
             auto recorder = std::make_unique<trace::TraceRecorder>(
                 std::move(traceSink),
@@ -399,12 +384,11 @@ namespace uf::task
                 )
             );
 
-            // The context owns the session and borrows the same recorder, and
-            // must outlive the VM that binds it, so it is declared before the
-            // Engine and destroyed after it. The generation's one stop token
-            // drives both the engine (which returns Cancelled) and the VM
-            // interrupt (which hard-breaks the task thread), so a cancellation
-            // is a single source and never two.
+            // The context owns the session and borrows the same recorder, and must
+            // outlive the VM that binds it, so it is declared before the Engine and
+            // destroyed after it. The generation's one stop token drives both the
+            // engine (which returns Cancelled) and the VM interrupt (which
+            // hard-breaks the task thread), so a cancellation is a single source.
             auto context = TaskContext{
                 std::move(session),
                 *recorder,
@@ -426,19 +410,16 @@ namespace uf::task
             };
 
             // The VM boots two environments. The trusted framework bundle loads
-            // under the framework environment and is handed the private
-            // capability surface as its chunk argument; the chunk below runs
-            // under a project environment that is an explicit whitelist and
-            // holds no route back to the framework's. So the script reaches the
-            // uf data tables and the framework's own modules, and no primitive
-            // by any route.
+            // under the framework environment and is handed the private capability
+            // surface as its chunk argument; the chunk below runs under a project
+            // environment that is an explicit whitelist and holds no route back to
+            // the framework's. So the script reaches the uf data tables and the
+            // framework's own modules, and no primitive by any route.
             //
-            // A VM that cannot be built at all -- a generation already
-            // cancelled, so the interrupt breaks the framework boot, or a
-            // framework module that will not load -- ends this RUN, not this
-            // call. run.started is already in the trace by now, so the run
-            // happened and has to be described; a bare Result failure here would
-            // leave a run bracket that never closed.
+            // A VM that cannot be built at all ends this RUN, not this call:
+            // run.started is already in the trace, so the run happened and has to
+            // be described, and a bare Result failure here would leave a run
+            // bracket that never closed.
             auto vm = script::Engine::create(
                 script::EngineConfig{
                     .cancellation      = cancellation(),
@@ -462,12 +443,10 @@ namespace uf::task
             }
             else
             {
-                // A project task's numeric return carries no success meaning of
-                // its own -- a Tier B or Tier C failure surfaces as an error
-                // here, and a clean return means the task ran to completion --
-                // so startTask discards it. A framework routine is written to
-                // answer with one, and that is the whole of why it is carried
-                // out of here rather than dropped.
+                // A project task's numeric return carries no success meaning of its
+                // own -- a failure surfaces as an error here, and a clean return
+                // means the task ran to completion -- so startTask discards it. A
+                // framework routine is written to answer with one.
                 auto runResult = vm->runNumber(chunk.source, chunk.name);
                 if (!runResult)
                 {
@@ -483,17 +462,14 @@ namespace uf::task
             // before the closing line is built so run.finished reports the run
             // that actually happened.
             //
-            // A generation the host spent terminally -- a cancellation, or a
-            // framework bug the trace state machine caught -- ended there
-            // whatever the script did afterwards. Design section 9's rule 5
-            // latches that in C++ precisely so a project pcall cannot turn it
-            // into a completed run, and this is where the latch is read back.
-            //
-            // A step or an interrupt match still open at run.finished is the
-            // framework failing to close what it opened, which section 12 makes
-            // a Failed(InternalInvariant) run. Both defer to a failure the run
-            // already has: an unclosed step under a cancelled run is the
-            // cancel's consequence, not a second cause.
+            // A generation the host spent terminally ended there whatever the
+            // script did afterwards; design section 9's rule 5 latches that in C++
+            // so a project pcall cannot turn it into a completed run, and this is
+            // where the latch is read back. A step or an interrupt match still open
+            // at run.finished is the framework failing to close what it opened,
+            // which section 12 makes a Failed(InternalInvariant) run. Both defer to
+            // a failure the run already has: an unclosed step under a cancelled run
+            // is the cancel's consequence, not a second cause.
             if (!outcome.run.failure)
             {
                 auto const terminal = context.terminalKind();
@@ -517,11 +493,10 @@ namespace uf::task
             auto finishStatus = recorder->emit(runFinishedEvent(outcome.run));
             if (!outcome.run.failure && !finishStatus)
             {
-                // The run itself succeeded but its closing evidence was lost,
-                // which leaves an incomplete trace and so cannot be reported as
-                // completed. The run's own failure always takes precedence over
-                // the sink's, so this only reaches the report when there was no
-                // other failure.
+                // The run itself succeeded but its closing evidence was lost, so it
+                // cannot be reported as completed. The run's own failure always
+                // takes precedence over the sink's, so this only reaches the report
+                // when there was no other failure.
                 outcome.run.failure = std::move(finishStatus).error();
             }
 
@@ -553,12 +528,11 @@ namespace uf::task
     {
         UF_TRY_VALUE(model, readPageModelFacts(projectRoot));
 
-        // The project's name in the trace is its directory's, because that is
-        // the whole of what identifies a project now: the v3 manifest that used
-        // to carry a project id is not read at runtime any more, and inventing a
-        // second identity in the page model would be a fact nobody maintains.
-        // An empty filename (a root path, a trailing separator) falls back to
-        // the path itself rather than to an unattributed run.
+        // The project's name in the trace is its directory's: the v3 manifest that
+        // used to carry a project id is not read at runtime any more, and inventing
+        // a second identity in the page model would be a fact nobody maintains. An
+        // empty filename (a root path, a trailing separator) falls back to the path
+        // itself rather than to an unattributed run.
         auto projectId = projectRoot.filename().string();
         if (projectId.empty())
         {
@@ -602,11 +576,10 @@ namespace uf::task
         // here rather than after reading and validating a script it will never run.
         UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Task));
 
-        // Source the task from its owning project and validate every uf
-        // reference before anything observable exists: a missing or unsafe task
-        // name, or a reference the page model does not declare, must fail before
-        // a VM is created and before a trace file is opened, so a misspelled
-        // name leaves no evidence behind.
+        // Source the task from its owning project and validate every uf reference
+        // before anything observable exists: a missing or unsafe task name, or a
+        // reference the page model does not declare, must fail before a VM is
+        // created and before a trace file is opened.
         UF_TRY_VALUE(loadedTask, loadTask(p_generation->projectRoot(), taskName));
         UF_TRY_VALUE(
             resourceReport,
@@ -691,10 +664,9 @@ namespace uf::task
         UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Task));
 
         // The chunk is assembled here rather than loaded, and that is the only
-        // difference from startTask. The hash is taken over the same bytes the
-        // VM compiles, so run.started attributes the run to the exact routine
-        // this binary shipped, exactly as a task's hash attributes it to the
-        // exact file on disk.
+        // difference from startTask. The hash is taken over the same bytes the VM
+        // compiles, so run.started attributes the run to the exact routine this
+        // binary shipped.
         auto source = std::string{routine.source};
         UF_TRY_VALUE(
             sourceHash,

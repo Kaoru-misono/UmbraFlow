@@ -9,10 +9,9 @@
 #include <string>
 #include <unordered_set>
 
-// Luau's C headers are third-party and do not build clean under the project's
-// /W4 /WX profile; a manifest-driven module has no CMakeLists to mark them
-// external, so wrap the includes exactly as the repo's other vendored FFI does
-// (image/ffi/png-decoder.cpp).
+// Luau's C headers do not build clean under the project's /W4 /WX profile, and
+// a manifest-driven module has no CMakeLists to mark them external; wrap them as
+// image/ffi/png-decoder.cpp does.
 #if defined(_MSC_VER)
 #pragma warning(push, 0)
 #elif defined(__clang__)
@@ -62,10 +61,8 @@ namespace uf::script
             lua_pop(state, 1);
         }
 
-        // Checks the metatable at `metatable` against the two rules deepFreeze
-        // enforces. Both are stated at deepFreeze's declaration; the short form
-        // is that a metatable without __metatable can be cloned away, and a
-        // function __index is a hole the yield protocol could not survive.
+        // Checks the metatable at `metatable` against the two rules stated at
+        // deepFreeze's declaration.
         [[nodiscard]]
         auto checkMetatableShape(lua_State* state, int metatable) -> Status
         {
@@ -109,10 +106,7 @@ namespace uf::script
                 return ok();
             }
 
-            // Freeze the metatable BEFORE the table itself: lua_getmetatable
-            // needs nothing writable, but leaving a metatable mutable would let
-            // a script rewrite __index/__newindex and monkey-patch around the
-            // frozen table it guards.
+            // Metatable before the table itself; see deepFreeze for why.
             if (lua_getmetatable(state, table) != 0)
             {
                 UF_TRY(checkMetatableShape(state, lua_gettop(state)));
@@ -125,8 +119,8 @@ namespace uf::script
             lua_pushnil(state);
             while (lua_next(state, table) != 0)
             {
-                // key is at -2, value at -1; recurse into nested tables, then
-                // pop the value and keep the key for the next lua_next.
+                // lua_next leaves the key at -2 and the value at -1; the pop
+                // below keeps the key for the next iteration.
                 if (lua_istable(state, -1))
                 {
                     UF_TRY(deepFreezeInto(state, -1, visited));
@@ -139,10 +133,9 @@ namespace uf::script
 
     auto deepFreeze(lua_State* state, int index) -> Status
     {
-        // A rule violation returns from the middle of a metatable check or of a
-        // lua_next walk, both of which leave values on the stack. Restoring the
-        // top here keeps the failure path as balanced as the success path, so a
-        // caller that reports the error does not also inherit stack garbage.
+        // A rule violation returns from the middle of a metatable check or a
+        // lua_next walk, both of which leave values on the stack; restoring the
+        // top keeps the failure path as balanced as the success path.
         int const stackBase = lua_gettop(state);
         auto stackGuard = scopeExit(
             [state, stackBase]() noexcept
@@ -187,34 +180,23 @@ namespace uf::script
         );
 
         // Strip the dangerous names FIRST, before any Lua code -- the framework
-        // bundle included -- has run.
+        // bundle included -- has run: the framework environment chains __index
+        // to the main globals, so a module loaded earlier could bind
+        // `local getfenv = getfenv` and hold that reference past the nilling.
+        // Nothing in the bundle wants any of them; time and randomness reach the
+        // framework through the private capability surface, and the host uses
+        // coroutines and debug only from C.
         //
-        // The design's stated boot order loaded the framework before this step.
-        // That left a capture window: the framework environment chains __index
-        // to the main globals, so a module could bind `local getfenv = getfenv`
-        // at load time and keep that reference for the whole generation, past
-        // the nilling. It was harmless only while the framework exported nothing
-        // to project code, which stopped being true the moment it started
-        // exporting ctx. Nothing in the bundle legitimately wants any of these:
-        // time and randomness reach the framework through the private capability
-        // surface, and the environment escapes are exactly what the two-
-        // environment split exists to close.
-        //
-        // Nil the globals luaL_sandbox does NOT remove (verified on 0.730). A
-        // script that spawns its own coroutine escapes the interrupt-driven
-        // cancel; debug can uninstall hooks and read outside the sandbox;
-        // getfenv/setfenv/newproxy are environment escapes. getfenv is the
-        // precise counterpart of `_G` once two environments exist: for a Lua
-        // closure luaB_getfenv returns THAT closure's env table (lbaselib.cpp),
-        // so calling it on any framework value would hand back the entire
-        // framework environment. `_G` is luaopen_base's self-reference to the
-        // global table -- a live alias door that reaches every global around the
-        // AST resource closure, e.g. `_G.uf:capture()` or
-        // `rawget(_G, 'uf')`; luaL_sandbox only freezes it, so it stays a
-        // readable handle unless removed here. Nilling the `_G` name leaves the
-        // underlying global table (LUA_GLOBALSINDEX) and every real global
-        // intact; only the reflexive handle is gone. The host uses coroutines and
-        // debug only from C, never through these globals.
+        // These are the globals luaL_sandbox does NOT remove (verified on
+        // 0.730). A script that spawns its own coroutine escapes the
+        // interrupt-driven cancel; debug can uninstall hooks and read outside
+        // the sandbox; getfenv/setfenv/newproxy are environment escapes --
+        // luaB_getfenv returns a Lua closure's OWN env table (lbaselib.cpp), so
+        // calling it on any framework value would hand back the entire framework
+        // environment. `_G` is luaopen_base's self-reference to the global
+        // table, which luaL_sandbox only freezes, so it stays a readable handle
+        // onto every global (`rawget(_G, 'uf')`) unless removed here; nilling
+        // the name leaves LUA_GLOBALSINDEX and every real global intact.
         nilGlobal(state, "getfenv");
         nilGlobal(state, "setfenv");
         nilGlobal(state, "newproxy");
@@ -237,12 +219,10 @@ namespace uf::script
         // way to be reseeded from script.
         nilLibraryField(state, "math", "randomseed");
 
-        // The framework runs under its own environment, because the whole point
-        // of the split is that trusted code never shares a global table with a
-        // project script. Its private capability surface is built first and
-        // handed to each module as a chunk argument, so the primitives are
-        // upvalues of trusted closures and are bound to no name in either
-        // environment.
+        // The framework runs under its own environment, so trusted code never
+        // shares a global table with a project script. Its private capability
+        // surface is built first and handed to each module as a chunk argument,
+        // so the primitives are bound to no name in either environment.
         installFrameworkEnvironment(state);
 
         auto privateCapabilities = std::optional<int>{};
@@ -271,8 +251,7 @@ namespace uf::script
         );
 
         // The surface has reached every module that will ever hold it, so drop
-        // the host's own reference: from here on the only way to name it is to
-        // be one of those closures.
+        // the host's own reference: naming it now requires being one of them.
         lua_settop(state, stackBase);
 
         if (config.installHostTables)

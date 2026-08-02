@@ -8,10 +8,9 @@
 #include <string>
 #include <string_view>
 
-// Luau's Ast headers are third-party and do not build clean under the project's
-// /W4 /WX profile; a manifest-driven module has no CMakeLists to mark them
-// external, so wrap the includes exactly as modules/task's other ffi sources do.
-// Only the parser and AST are needed here -- no VM, no compiler.
+// Luau's Ast headers are third-party and do not build clean under /W4 /WX; a
+// manifest-driven module has no CMakeLists to mark them external, so the
+// includes are wrapped as modules/task's other ffi sources wrap theirs.
 #if defined(_MSC_VER)
 #pragma warning(push, 0)
 #elif defined(__clang__)
@@ -58,12 +57,10 @@ namespace uf::task
 
         try
         {
-            // The Ast allocator, name table, and default parse options. parse
-            // collects recoverable syntax errors into result.errors and catches
-            // its own fatal ParseError, returning a possibly-null root. The
-            // buffer is handed over as a pointer and a length because that is
-            // the third-party entry point's fixed signature; the storage stays
-            // owned by the caller's view for the whole call.
+            // parse collects recoverable syntax errors into result.errors and
+            // catches its own fatal ParseError, returning a possibly-null root.
+            // The pointer-and-length argument is the third-party signature; the
+            // caller's view owns the storage for the whole call.
             auto allocator = Luau::Allocator{};
             auto names     = Luau::AstNameTable{allocator};
             auto options   = Luau::ParseOptions{};
@@ -98,9 +95,8 @@ namespace uf::task
         }
         catch (std::exception const& error)
         {
-            // The parser is third-party: a pathological input that escapes its
-            // own error collection still fails closed here rather than
-            // propagating an exception across this boundary.
+            // The parser is third-party: an input that escapes its own error
+            // collection fails closed rather than crossing this boundary.
             return fail(
                 AutomationErrorKind::InternalInvariant,
                 "framework module '" + chunk + "' could not be parsed: " + error.what()

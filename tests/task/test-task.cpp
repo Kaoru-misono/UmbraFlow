@@ -29,12 +29,10 @@ namespace uf::task
 {
     namespace
     {
-        // An engine whose only host capability is the frozen `uf` root.
-        //
-        // The root carries `uf.errors` and nothing else since the script-owned
-        // page model retired the element and page name tables
-        // (docs/plans/2026-07-31-script-owned-page-model.md 9), so these cases
-        // are the whole of what that surface still promises.
+        // An engine whose only host capability is the frozen `uf` root. It
+        // carries `uf.errors` and nothing else since the script-owned page model
+        // retired the element and page name tables
+        // (docs/plans/2026-07-31-script-owned-page-model.md 9).
         auto engineWithUfRoot() -> Result<script::Engine>
         {
             auto config              = script::EngineConfig{};
@@ -65,9 +63,8 @@ namespace uf::task
         }
 
         // Keeps the wire line of every event it is handed. A StampedTraceEvent
-        // cannot be minted outside modules/trace -- its constructor is private to
-        // TraceRecorder -- so recording through a real recorder is the only way to
-        // read back what a trace actually says.
+        // cannot be minted outside modules/trace, so recording through a real
+        // recorder is the only way to read back what a trace actually says.
         class LineRecordingSink final : public trace::ITraceSink
         {
             std::vector<std::string> m_lines{};
@@ -111,10 +108,9 @@ namespace uf::task
 
             for (auto const& entry : enumEntries<AutomationErrorKind>())
             {
-                // One recorder per line. A run's bracket closes at its first
+                // One recorder per line: a run's bracket closes at its first
                 // run.finished and the stream validator accepts nothing after
-                // it, so writing every kind through a single recorder would be
-                // writing a dozen runs into one bracket.
+                // it, so one recorder would be a dozen runs in one bracket.
                 auto sink          = std::make_unique<LineRecordingSink>();
                 auto* const p_sink = sink.get();
                 auto recorder      = trace::TraceRecorder{
@@ -175,8 +171,7 @@ namespace uf::task
 
             // An empty table would let `uf.elements.whatever` read as nil and a
             // script go on believing the surface exists. The tables are gone, so
-            // the ROOT itself answers nil for them -- which is what tells a script
-            // written against the old surface that the model moved.
+            // the ROOT itself answers nil for them.
             CHECK(truthy(*engine, "uf.elements == nil") == doctest::Approx(1.0));
             CHECK(truthy(*engine, "uf.pages == nil") == doctest::Approx(1.0));
         }
@@ -186,12 +181,11 @@ namespace uf::task
             auto engine = engineWithUfRoot();
             REQUIRE(engine.has_value());
 
-            // None missing, and every constant is its own key, so a script writes
-            // err.kind == uf.errors.timeout and compares the exact string the
-            // host raised. The table is built by iterating the reflected kinds at
-            // install time, which is why a kind added to the enum appears here
-            // with no edit to the surface -- and cannot compile at all until the
-            // domain has given it a wire spelling.
+            // None missing, and every constant is its own key, so a script
+            // compares the exact string the host raised. The table is built by
+            // iterating the reflected kinds at install time, so a kind added to
+            // the enum appears here with no edit to the surface -- and cannot
+            // compile at all until the domain has given it a wire spelling.
             for (auto const& wire : expectedErrorKindSpellings())
             {
                 auto const expression = "uf.errors." + wire + " == '" + wire + "'";
@@ -220,12 +214,11 @@ namespace uf::task
             auto engine = engineWithUfRoot();
             REQUIRE(engine.has_value());
 
-            // The invariant the two deleted copies of this mapping asserted in
-            // comments and nothing checked: a trace line names a failure with
-            // exactly the string the script layer sees. Both sides are read from
-            // the real artifacts -- serialized umbraflow-trace/v3 lines and the
-            // table installed on a live VM -- so a divergence shows up as wrong
-            // output rather than as two calls to the same function.
+            // A trace line names a failure with exactly the string the script
+            // layer sees. Both sides are read from the real artifacts --
+            // serialized umbraflow-trace/v3 lines and the table installed on a
+            // live VM -- so a divergence shows up as wrong output rather than as
+            // two calls to the same function.
             auto const traced = tracedErrorKindSpellings();
             CHECK(traced == expectedErrorKindSpellings());
 
@@ -238,18 +231,16 @@ namespace uf::task
         }
 
         // The distinctive value modules/task/runtime/ctx.luau assigns as a
-        // FRAMEWORK global -- deliberately not as an export, because the exports
-        // are published into the project environment and could not carry an
-        // isolation claim. It is spelled here as well as in the .luau, and the
-        // bundle-side check makes that duplication self-policing: renaming it on
-        // one side alone turns the claim vacuous, and the check reddens first.
+        // FRAMEWORK global -- not as an export, because the exports are published
+        // into the project environment and could not carry an isolation claim.
+        // Renaming it on one side alone turns the claim vacuous, and the
+        // bundle-side control below reddens first.
         constexpr auto k_frameworkSentinel =
             std::string_view{"uf-framework-sentinel-6b21f0"};
 
         // A bounded, cycle-safe reachability search for the sentinel over
-        // everything a project script can name on a real task VM -- the uf
-        // root and the published ctx included -- following table values, table
-        // keys, and metatables.
+        // everything a project script can name on a real task VM, following
+        // table values, table keys, and metatables.
         [[nodiscard]]
         auto sentinelScan() -> std::string
         {
@@ -338,10 +329,9 @@ namespace uf::task
                 REQUIRE(found.has_value());
                 CHECK(*found == doctest::Approx(0.0));
 
-                // What the project DOES see of the framework is exactly the two
-                // published exports, named rather than searched for: ctx and
-                // task are there, and the framework-only global beside them is
-                // not.
+                // What the project DOES see is exactly the two published exports,
+                // named rather than searched for, and not the framework-only
+                // global beside them.
                 CHECK(truthy(*engine, "type(ctx) == 'table'") == doctest::Approx(1.0));
                 CHECK(truthy(*engine, "type(task) == 'table'") == doctest::Approx(1.0));
                 CHECK(

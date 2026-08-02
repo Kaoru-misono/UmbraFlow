@@ -1,42 +1,33 @@
 --!strict
 -- mint: the checks and freezes every constructor in this framework repeats.
 --
--- WHY THIS IS ITS OWN MODULE. `model` owns the element and page vocabulary and
--- `navigation` owns the page graph, and both of them answer the same four
--- questions about every spec table an author hands in: is this one of ours, does
--- it carry a key we do not own, is its `extra` a plain table, and are its
--- `residual` lines strings. Answering them twice would be two copies of a rule
--- that has to stay identical -- the `extra` reservation and the residual
--- carry-through are the whole of this format's forward compatibility
--- (docs/plans/2026-07-31-script-owned-page-model.md 8), and a second copy is
--- where they would drift apart.
+-- `model` and `navigation` both ask the same four questions of every spec table
+-- an author hands in: is this one of ours, does it carry a key we do not own, is
+-- its `extra` a plain table, are its `residual` lines strings. The `extra`
+-- reservation and the residual carry-through are the whole of this format's
+-- forward compatibility (docs/plans/2026-07-31-script-owned-page-model.md 8), so
+-- a second copy of them is where they would drift apart.
 --
--- NOTHING HERE DECIDES ANYTHING ABOUT PAGES OR PIXELS. Every function is about
--- the SHAPE of a table an author wrote, so this module names no other module and
--- can be read on its own.
+-- Nothing here decides anything about pages or pixels; every function is about
+-- the SHAPE of a table an author wrote, so this module names nothing but the
+-- standard library.
 --
--- THE SENTENCES COME BACK, THEY ARE NOT RAISED. Every checker returns a sentence
--- or nil, so the constructor that called it raises once at level 2 and the
--- author reads their own call site rather than a line of a helper file.
+-- Every checker RETURNS a sentence or nil rather than raising, so the
+-- constructor raises once at level 2 and the author reads their own call site.
 --
--- LOAD ORDER. Framework modules load in the sorted order of their file names and
--- each module's frozen exports are bound in the framework environment under its
--- own name. `mint` sorts before `model` and `navigation`, which is what lets
--- both of them name it. This module names nothing but the standard library.
+-- Framework modules load in the sorted order of their file names, and each
+-- module's frozen exports are bound in the framework environment under its own
+-- name. `mint` sorts before `model` and `navigation`, which is what lets both
+-- name it.
 
 local mint = {}
 
 -- Whether `value` is one of `registry`'s tables, or inherits from one through a
--- chain of `__index` metatables.
---
--- The inheritance case is the point. Layer three extends what layer two built
--- the way Luau does it -- `setmetatable({ ... }, { __index = base })`
--- (docs/plans/2026-07-31-script-owned-page-model.md 3) -- so an extension does
--- not have to re-mint its base; what a registry check refuses is a table nobody
--- minted at all.
---
--- The walk is bounded because a cyclic chain is a table a script can build, and
--- this must answer rather than hang.
+-- chain of `__index` metatables. The inheritance case is the point: layer three
+-- extends layer two with `setmetatable({ ... }, { __index = base })`
+-- (docs/plans/2026-07-31-script-owned-page-model.md 3), so what a registry check
+-- refuses is a table nobody minted at all. The walk is bounded because a cyclic
+-- chain is a table a script can build.
 function mint.derives_from(value: any, registry: { [any]: boolean }): boolean
     local current = value
     local depth   = 0
@@ -59,12 +50,9 @@ function mint.whole_number(value: any): boolean
 end
 
 -- The sentence for the first key in `spec` that `known` does not list, or nil.
---
--- THE REFUSAL IS THE WHOLE REASON `extra` WORKS. A layer may add a key next
--- year, and a project that had quietly put its own key of that name at the top
--- level would silently lose it. So an unrecognised key is refused here, where it
--- can still be attributed to the line the author wrote, and `hasExtra` is what
--- lets the sentence point at the reserved subtable instead of just saying no.
+-- The refusal is what makes `extra` work: a layer may add a key next year, and a
+-- project that had quietly put its own key of that name at the top level would
+-- silently lose it. `hasExtra` lets the sentence point at the reserved subtable.
 function mint.unknown_key(
     what: string,
     spec: { [string]: any },
@@ -115,10 +103,9 @@ function mint.frozen_extra(value: any): { [string]: any }
 end
 
 -- The raw file lines a schema version did not understand, carried on the object
--- so a rewrite cannot drop them
--- (docs/plans/2026-07-31-script-owned-page-model.md 8: a newer file opened and
--- saved by an older build must not lose the newer build's keys, least of all
--- without saying so). A model built in code carries an empty list.
+-- so an older build cannot silently drop a newer build's keys when it rewrites
+-- the file (docs/plans/2026-07-31-script-owned-page-model.md 8). A model built in
+-- code carries an empty list.
 function mint.check_residual(what: string, value: any): string?
     if value == nil then
         return nil

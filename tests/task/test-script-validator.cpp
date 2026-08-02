@@ -14,15 +14,11 @@ namespace uf::task
     namespace
     {
         // The page model the validator resolves against: three elements and one
-        // page, written the way a project file writes them.
-        //
-        // IT IS THE PROJECT FILE AND NO LONGER A CATALOG. Which names a script may
-        // spell is a fact about that file now
+        // page, written the way a project file writes them. Which names a script
+        // may spell is a fact about that file
         // (docs/plans/2026-07-31-script-owned-page-model.md 6), so the fixture is
-        // the text rather than a compiled catalog -- and every name the file
-        // declares is resolvable, where the catalog surface exposed only elements
-        // declaring interact. `home_marker` is here to prove exactly that: an
-        // element that only identifies is a name a script may write.
+        // the text rather than a compiled catalog. `home_marker` is here because
+        // an element that only identifies is still a name a script may write.
         constexpr auto k_pageModel = std::string_view{R"toml(
 schema = "umbraflow-project/l2-v1"
 base_resolution = [4, 4]
@@ -70,9 +66,8 @@ exercised = ["interact"]
         }
 
         // Validates `source` and asserts it was rejected as InvalidResource whose
-        // message contains every `needle`. Substring assertions pin the failure to
-        // the specific offending reference, not merely "some error", so a change
-        // that rejects for the wrong reason is caught.
+        // message contains every `needle` -- pinning the failure to the offending
+        // reference, so a change that rejects for the wrong reason is caught.
         auto expectRejected(
             PageModelFacts const& model,
             std::string_view source,
@@ -96,9 +91,9 @@ exercised = ["interact"]
 
         TEST_CASE("A page model that names one thing twice is refused")
         {
-            // A duplicate would leave a literal resolving against two different
-            // rows, which is a model with no single answer about its own pixels.
-            // The refusal names the offender, because the file is hand-edited.
+            // A duplicate leaves a literal resolving against two different rows,
+            // a model with no single answer about its own pixels. The refusal
+            // names the offender, because the file is hand-edited.
             auto const duplicated = std::string{k_pageModel}
                 + "\n[[element]]\nname = \"battle\"\n"
                   "capabilities = [\"interact\"]\nrect = [0, 0, 4, 4]\n";
@@ -117,9 +112,8 @@ exercised = ["interact"]
         TEST_CASE("A page model that states no geometry is refused")
         {
             // The fingerprint is what the engine's compatibility check compares
-            // a live measurement against, so a model that states none has
-            // nothing to be compared to. Guessing one would defeat the check
-            // silently, which is why the absence is a refusal and not a default.
+            // a live measurement against, so guessing one would defeat the check
+            // silently -- hence a refusal rather than a default.
             auto       without = std::string{k_pageModel};
             auto const at      = without.find("base_resolution");
             REQUIRE(at != std::string::npos);
@@ -148,10 +142,9 @@ exercised = ["interact"]
         {
             auto const model = buildModel();
 
-            // A task the way one is written now that the framework owns policy:
-            // a step around a wait, and the uf root appearing only as the
-            // two-level resource literals -- inside a table field, inside a ctx
-            // argument, and once repeated.
+            // A task as one is written now the framework owns policy: a step
+            // around a wait, with the uf root appearing only as two-level
+            // literals -- in a table field, in a ctx argument, and once repeated.
             constexpr std::string_view source = R"lua(
                 return task.define {
                     run = function(ctx)
@@ -196,13 +189,11 @@ exercised = ["interact"]
         {
             auto const model = buildModel();
 
-            // `umbra` was this root's spelling before 2026-07-29. Nothing answers
-            // to it now: it is an ordinary unknown global, so the validator walks
-            // past it without resolving a resource -- the whole resource closure
-            // keys on `uf` alone. Reverting the validator's k_namespace flips
-            // both reports below and reddens this case. What the installer
-            // registers as the global is pinned separately, on a real task VM,
-            // by the binding suite's retired-root case.
+            // `umbra` was this root's spelling before 2026-07-29; it is an
+            // ordinary unknown global now, so the closure keys on `uf` alone.
+            // Reverting the validator's k_namespace flips both reports below and
+            // reddens this case. What the installer registers as the global is
+            // pinned separately by the binding suite's retired-root case.
             auto const retired = validateScriptResources(
                 "return uf.pages.home ~= nil and umbra.elements.battle",
                 "retired-root",
@@ -225,10 +216,9 @@ exercised = ["interact"]
         {
             auto const model = buildModel();
 
-            // The root carries data alone now, so a colon call on it names
-            // nothing that could exist. It is rejected here rather than left to
-            // fail as a runtime nil call -- the same reason a misspelled error
-            // kind is rejected.
+            // The root carries data alone, so a colon call on it names nothing
+            // that could exist, and is rejected here rather than left to fail as
+            // a runtime nil call.
             SUBCASE("a verb that used to exist")
             {
                 expectRejected(
@@ -251,11 +241,9 @@ exercised = ["interact"]
         {
             auto const model = buildModel();
 
-            // ctx is a project global the framework published; it exposes no
-            // resource name, so there is nothing here for a closure pass to
-            // resolve and it must not be mistaken for a uf reference. The
-            // resource literals inside its arguments are still enumerated, which
-            // is what the report below proves.
+            // ctx is a project global the framework published and exposes no
+            // resource name, so it must not be mistaken for a uf reference --
+            // while the literals inside its arguments are still enumerated.
             auto const report = validateScriptResources(
                 "local d = ctx:deadline(1000)\n"
                 "local r = ctx:random(1, 6)\n"
@@ -273,9 +261,9 @@ exercised = ["interact"]
         {
             auto const model = buildModel();
 
-            // uf.errors.<kind> is the third approved two-level literal. It
-            // names host vocabulary rather than a project resource, so it must
-            // pass the namespace gate without appearing in the resource closure.
+            // uf.errors.<kind> names host vocabulary rather than a project
+            // resource, so it must pass the namespace gate without appearing in
+            // the resource closure.
             auto const report = validateScriptResources(
                 "local ok, err = ctx:try(function() end)\n"
                 "if not ok and err.kind == uf.errors.stale_observation then\n"
@@ -293,9 +281,9 @@ exercised = ["interact"]
         TEST_CASE("A misspelled error kind is rejected before the VM exists")
         {
             auto const model = buildModel();
-            // Left as a runtime nil this would make every comparison against it
-            // silently false, which is exactly the failure the pre-VM pass closes
-            // for a missing element.
+            // Left as a runtime nil this makes every comparison against it
+            // silently false, the failure the pre-VM pass closes for a missing
+            // element.
             expectRejected(
                 model,
                 "return uf.errors.time_out",
@@ -327,11 +315,9 @@ exercised = ["interact"]
         {
             auto const model = buildModel();
 
-            // home_marker only identifies. The retired capability surface exposed
-            // element handles for interactive elements alone, so this name used to
-            // be REJECTED here; the project file draws no such line, and neither
-            // does this pass. The `name` under [element.extra] is not one of them:
-            // a project's own fields are its business and never a resource.
+            // home_marker only identifies, and the project file draws no line
+            // between that and an interactive element, so it is a name a script
+            // may write.
             auto const report = validateScriptResources(
                 "return uf.elements.home_marker",
                 "anchor",
@@ -341,9 +327,9 @@ exercised = ["interact"]
             CHECK(report->elements == std::vector<std::string>{"home_marker"});
 
             // A project's own field under `extra` is never a resource, however
-            // exactly it copies a key this layer owns. The fixture's element
+            // exactly it copies a key this layer owns: the fixture's element
             // carries `name = "extra_alias"` there, and the reader must not have
-            // read it as the element's own.
+            // read it as the element's own name.
             expectRejected(
                 model,
                 "return uf.elements.extra_alias",
@@ -389,13 +375,13 @@ exercised = ["interact"]
         {
             auto const model = buildModel();
 
-            // `_G` is Luau's reflexive handle to the whole global table. Every one
-            // of these chains reaches `uf` WITHOUT a literal uf root, so the
-            // rest of the validator would classify them as unrelated code; the _G
-            // rejection is what closes that alias door. This is the pre-VM twin of
-            // installSandbox niling `_G` on the task thread. Each is pinned to the
-            // '_G' offender so a chain that happened to fail for another reason
-            // would not pass this test.
+            // `_G` is Luau's reflexive handle to the whole global table. Every
+            // chain here reaches `uf` WITHOUT a literal uf root, so the rest of
+            // the validator would classify them as unrelated code and the _G
+            // rejection is what closes that door -- the pre-VM twin of
+            // installSandbox niling `_G` on the task thread. Each is pinned to
+            // the '_G' offender so a chain failing for another reason would not
+            // pass.
             SUBCASE("indexing the namespace through the _G alias")
             {
                 expectRejected(model, "return _G.uf.pages.home", {"_G"});
@@ -434,9 +420,9 @@ exercised = ["interact"]
             }
             SUBCASE("a missing resource off _G is rejected pre-VM, not left as runtime nil")
             {
-                // Without the _G rejection this would sail through validation and
-                // become a runtime nil, defeating the pre-VM missing-resource
-                // promise; the alias door is closed before the leaf is ever reached.
+                // Without the _G rejection this sails through validation and
+                // becomes a runtime nil, defeating the pre-VM missing-resource
+                // promise.
                 expectRejected(
                     model,
                     "return _G.uf.elements.does_not_exist",
@@ -459,8 +445,8 @@ exercised = ["interact"]
         {
             auto const model = buildModel();
             // uf.elements.battle is a valid handle, but the only permitted
-            // spelling is the two-level literal itself; reading a field off it is
-            // a deeper chain and rejected as the wrong shape.
+            // spelling is the two-level literal itself; a field read off it is a
+            // deeper chain and rejected as the wrong shape.
             expectRejected(
                 model,
                 "return uf.elements.battle.foo",

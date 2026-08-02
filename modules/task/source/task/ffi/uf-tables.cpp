@@ -67,70 +67,53 @@ namespace uf::task
 {
     namespace
     {
-        // Each of these strings is one host object kind's __metatable and
-        // __tostring label -- the only string a script can obtain from such an
-        // object, naming the kind and nothing else (no id, no address). Every
-        // label is rooted at `uf`, the same script-visible root the DATA table is
-        // registered under, so an object names the surface it came from.
-        //
-        // The first three are also VM registry keys: a handle kind's metatable is
-        // shared by every handle of that kind and is registered under its label.
-        // k_errorType is not, because a Tier B error carrier's metatable holds
-        // that one error's fields and so exists per instance; the label is still
-        // what a script sees, and the label is what the framework compares
-        // against, but the carrier's identity to C++ is its userdata tag.
+        // Each string is one host object kind's __metatable and __tostring
+        // label -- the only string a script can obtain from such an object,
+        // naming the kind and nothing else (no id, no address). k_cycleType,
+        // k_templateType and k_deadlineType are also the registry keys their
+        // shared metatable is stored under; k_errorType is not, because a Tier B
+        // carrier's metatable holds that one error's fields and so exists per
+        // instance.
         constexpr auto k_cycleType    = "uf.cycle";
         constexpr auto k_templateType = "uf.template";
         constexpr auto k_deadlineType = "uf.deadline";
         constexpr auto k_errorType    = "uf.error";
 
-        // The two kinds that carry READABLE fields, and so cannot share a
-        // registered metatable: the score a match reports and the text a read
-        // produces are per instance, and the design restricts __index to a table,
-        // so each instance needs its own metatable exactly as a Tier B error
-        // carrier does. Their identity to C++ is a userdata tag rather than a
-        // registry entry, for the same reason.
+        // Kinds that carry readable per-instance fields, so each instance wears
+        // a metatable of its own -- the design restricts __index to a table,
+        // leaving nowhere else for the fields -- and is recognized by userdata
+        // tag rather than by a registry entry.
         constexpr auto k_matchType   = "uf.match";
         constexpr auto k_readingType = "uf.reading";
         constexpr auto k_probeType   = "uf.probe";
         constexpr auto k_maskType    = "uf.mask";
 
-        // The single global name the DATA installer registers, and therefore the
-        // one host name the project environment whitelists. Spelled once here so
-        // the registration and the whitelist entry cannot drift apart. The
-        // private surface has no counterpart here on purpose: it is registered
-        // under no name at all.
+        // The one global the DATA installer registers and the project
+        // environment whitelists; spelled once so the two cannot drift. The
+        // private surface has none: it is registered under no name at all.
         constexpr auto k_ufRoot = "uf";
 
-        // The field of the private capability surface carrying k_errorType to
-        // the framework. It is data, not capability, and it is on the surface
-        // for one reason: it is the only table the framework is handed and no
-        // project script can name, so the label reaches ctx:try without ever
-        // being spelled in Luau. The C++ constant above is then the single
-        // source of that string -- rename it and the mint, the __metatable, and
-        // the framework's comparison all move together, because the framework
-        // compares against whatever this hands it.
+        // Carries k_errorType to the framework over the private surface -- the
+        // only table the framework is handed and no project script can name --
+        // so ctx:try never spells the label in Luau and the constant above stays
+        // its single source.
         constexpr auto k_errorTagField = "error_tag";
 
-        // The Luau userdata tag every Tier B error carrier is minted under, and
-        // the whole of how C++ recognizes one. A tag is a property of the object
-        // the VM itself stores, so it cannot be copied onto a script-built value:
-        // table.clone takes tables, setmetatable takes tables, and newproxy --
-        // the one base-library way to mint a userdata -- is removed from both
-        // environments. That is what the frozen error TABLE could not offer,
-        // where identity rested on a metatable a clone could carry along.
+        // The tag every Tier B error carrier is minted under, and the whole of
+        // how C++ recognizes one: the VM stores a tag on the object itself, and
+        // no script can put one on a value it built -- setmetatable and
+        // table.clone take tables, and newproxy is removed from both
+        // environments.
         //
-        // Any value below LUA_UTAG_LIMIT would do. Zero is what plain
-        // lua_newuserdata stamps, so the first non-default tag is used instead;
-        // the handle kinds are minted by lua_newuserdatadtor, which stamps
-        // UTAG_IDTOR (== LUA_UTAG_LIMIT) and can therefore never collide.
+        // Any value below LUA_UTAG_LIMIT would do; zero is what plain
+        // lua_newuserdata stamps, and lua_newuserdatadtor stamps UTAG_IDTOR
+        // (== LUA_UTAG_LIMIT), so the handle kinds never collide.
         constexpr auto k_errorUserdataTag = 1;
         static_assert(k_errorUserdataTag > 0 && k_errorUserdataTag < LUA_UTAG_LIMIT);
 
-        // The tags the two field-carrying handle kinds are minted under, on the
-        // same reasoning as the error carrier's: a tag is VM state that a script
-        // cannot copy onto a value it built, so it is the whole of how C++
-        // recognizes a match handed back to cycle_click.
+        // The tags the field-carrying handle kinds are minted under, on the
+        // error carrier's reasoning: a tag is the whole of how C++ recognizes a
+        // match handed back to cycle_click.
         constexpr auto k_matchUserdataTag = 2;
         static_assert(k_matchUserdataTag > 0 && k_matchUserdataTag < LUA_UTAG_LIMIT);
 
@@ -140,60 +123,44 @@ namespace uf::task
         constexpr auto k_probeUserdataTag = 4;
         static_assert(k_probeUserdataTag > 0 && k_probeUserdataTag < LUA_UTAG_LIMIT);
 
-        // A crop's mask is a kind of its own rather than a second probe, because
-        // the two answer different questions about different bytes: a probe
+        // A crop's mask is its own kind rather than a second probe: a probe
         // measures a rectangle of a blob the caller already holds, and this
-        // reports what the key a crop was CUT UNDER actually took out of the
-        // pixels that crop encoded. One label per kind is what keeps tostring on
-        // a host object an honest name.
+        // reports what the key a crop was cut under took out of that crop's own
+        // pixels.
         constexpr auto k_maskUserdataTag = 5;
         static_assert(k_maskUserdataTag > 0 && k_maskUserdataTag < LUA_UTAG_LIMIT);
 
-        // The colour tolerance a probe uses when the caller named a key but no
-        // tolerance, matching the v4 authoring line's own `--tolerance` default
-        // so a measurement taken through either route reports the same counts.
-        //
-        // It is the ONE default on this verb, and it is a default about the
-        // measurement rather than about the answer: what counts as enough
-        // selected pixels is never decided here.
+        // The tolerance a probe uses when the caller named a key but no
+        // tolerance; it matches the v4 authoring line's `--tolerance` default so
+        // either route reports the same counts. It is a default about the
+        // measurement, never about what counts as enough selected pixels.
         constexpr auto k_defaultProbeTolerance = uint32{12};
 
-        // Pushes an error kind's wire spelling as a Lua string. The domain returns
-        // a view rather than a C string, so push it with its length instead of
-        // relying on the literal's terminator.
+        // Pushes an error kind's wire spelling as a Lua string, with its length
+        // rather than as a C string: the domain returns a view.
         auto pushWireName(lua_State* state, AutomationErrorKind kind) -> void
         {
             auto const name = automationErrorWireName(kind);
             lua_pushlstring(state, name.data(), name.size());
         }
 
-        // The `retryable` field of a Tier B error table reuses the domain's own
-        // unwind axis rather than inventing a parallel table: a kind whose
-        // FailureResponse is Retry is retryable, every other response is not.
+        // `retryable` reuses the domain's own unwind axis rather than a parallel
+        // table: FailureResponse::Retry is retryable and nothing else is.
         [[nodiscard]]
         auto retryableOf(AutomationErrorKind kind) noexcept -> bool
         {
             return failureResponse(kind) == FailureResponse::Retry;
         }
 
-        // The payload an action handle carries. It is placement-constructed into
-        // a host-owned full userdata and destroyed by destroyBox at GC.
-        //
-        // What a match handle carries: the ordinal of the cycle that produced it
-        // plus the position C++ will deliver to. The score and the ceiling ALSO
-        // reach the script, through the handle's frozen fields, because judging a
-        // score is the trusted framework's job now and it cannot judge what it
-        // cannot read.
-        //
-        // The move-only Observation is never stored in a handle: it lives in the
-        // TaskContext's CycleLedger, and the only handle that names it is the
-        // ticket. A match therefore carries just the ordinal of the cycle that
-        // found it, which is the whole of its staleness check -- with at most one
-        // cycle open, an ordinal that is not the open one names a cycle that no
-        // longer exists, and there is no second cycle it could have come from.
+        // What a match handle carries into C++: the ordinal of the cycle that
+        // produced it, plus the position a click will be delivered to. No handle
+        // ever stores the move-only Observation -- it lives in the CycleLedger
+        // and only the ticket names it -- so the ordinal is the whole of the
+        // staleness check: with at most one cycle open, an ordinal that is not
+        // the open one names a cycle that no longer exists.
         //
         // Trivially destructible, which is what lets it be a tagged userdata and
-        // therefore recognizable to C++ by tag rather than by metatable.
+        // so recognizable by tag rather than by metatable.
         struct MatchBox final
         {
             uint64             cycleOrdinal{};
@@ -201,15 +168,12 @@ namespace uf::task
         };
         static_assert(std::is_trivially_destructible_v<MatchBox>);
 
-        // Runs at VM garbage collection to destroy the value placement-constructed
-        // into a handle by pushBoxed.
+        // Destroys at GC the value pushBoxed placement-constructed.
         //
-        // No handle's destructor releases a frame. Collecting a ticket or a
-        // template frees only the few bytes of the box: the frame behind them is
-        // released by cycle_close or by the click that consumes the cycle,
-        // and by the ledger's own destructor when the generation is torn down.
-        // That is the point of the cycle protocol -- host memory whose release
-        // timing was decided by the Lua collector was wrong by design.
+        // No handle's destructor releases a frame: collecting a ticket frees the
+        // box alone, and the frame goes back at cycle_close, at the click that
+        // consumes the cycle, or with the ledger. Frame release timing is the
+        // cycle protocol's, never the Lua collector's.
         template <typename T>
         auto destroyBox(void* storage) -> void
         {
@@ -220,12 +184,9 @@ namespace uf::task
             std::destroy_at(static_cast<T*>(storage));
         }
 
-        // Bound as the __newindex of every handle metatable and of every Tier B
-        // error carrier's: rejects every write with a clear error so a host
-        // object can never be mutated from a script. It is belt over braces --
-        // a userdata with no __newindex already refuses a write -- and it is
-        // here for the message, so an author sees why rather than "attempt to
-        // index".
+        // __newindex on every handle and Tier B carrier metatable. A userdata
+        // with no __newindex already refuses a write; this is here for the
+        // message, so an author sees why rather than "attempt to index".
         auto denyWrite(lua_State* state) -> int
         {
             // luaL_error is l_noret: it longjmps out of this frame and never
@@ -233,18 +194,16 @@ namespace uf::task
             luaL_error(state, "task handles are read-only");
         }
 
-        // Bound as every handle metatable's __tostring: returns the fixed kind
-        // label carried as upvalue 1, so tostring(handle) never leaks the handle
-        // address or its internal id and stays deterministic.
+        // __tostring on every handle metatable: the fixed kind label in upvalue
+        // 1, so tostring(handle) leaks no address and stays deterministic.
         auto handleToString(lua_State* state) -> int
         {
             lua_pushvalue(state, lua_upvalueindex(1));
             return 1;
         }
 
-        // Creates one opaque host-owned userdata carrying `value`, attaches the
-        // shared protected metatable registered under `metatableType`, and leaves
-        // the handle on the stack top.
+        // Creates one opaque host-owned userdata carrying `value`, wearing the
+        // shared protected metatable registered under `metatableType`.
         template <typename T>
         auto pushBoxed(
             lua_State* state,
@@ -269,10 +228,10 @@ namespace uf::task
             lua_setmetatable(state, -2);
         }
 
-        // True when the value at `index` is a full userdata whose metatable is the
-        // one registered under `metatableType`. Pointer identity against the
-        // registry entry is robust: a script cannot fabricate a userdata carrying a
-        // chosen metatable, and __metatable protection blocks setmetatable.
+        // True when the value at `index` is a full userdata wearing the metatable
+        // registered under `metatableType`. Identity against the registry entry
+        // holds because a script can neither mint a userdata carrying a chosen
+        // metatable nor, past __metatable, reset one.
         [[nodiscard]]
         auto isKind(lua_State* state, int index, char const* metatableType) -> bool
         {
@@ -290,32 +249,23 @@ namespace uf::task
             return same;
         }
 
-        // What a Tier B error carrier stores in its own userdata block. The kind
-        // is the whole payload: it is the one field the host has to be able to
-        // read back out of a value a script handed around, and reading it here
-        // -- rather than off the script-visible `kind` string -- is what keeps
-        // the decode structural. Trivially destructible, so the carrier needs no
-        // destructor and can be minted with a plain tagged userdata.
+        // What a Tier B carrier stores in its own userdata block. The kind is
+        // read back from here rather than off the script-visible `kind` string,
+        // which is what keeps the decode structural. Trivially destructible, so
+        // the carrier needs no destructor.
         struct TierBError final
         {
             AutomationErrorKind kind{};
         };
 
-        // The Tier B error carrier at `index` read back, or nullopt when that
-        // value is not one.
+        // The Tier B carrier at `index` read back, or nullopt when that value is
+        // not one. Identity is the userdata tag alone, so a script-built
+        // look-alike is not one however faithfully it copies the fields; the
+        // message is read only after the tag has answered.
         //
-        // IDENTITY IS THE USERDATA TAG AND NOTHING ELSE, so a script-built
-        // look-alike carrying `kind`, `message` and `retryable` is not a Tier B
-        // error here however faithfully it copies one. The message is read only
-        // AFTER the tag has answered, which is the ordering that keeps that
-        // property: by then the value is one raiseTierB below built, and its
-        // shape is this file's own.
-        //
-        // Every lookup is raw and reaches no metamethod, because this runs on a
-        // thread that has already been unwound by the error -- there is no
-        // protected frame left, so a raise from a metamethod would have nowhere
-        // to go. The stack is restored on every path for the same reason: the
-        // caller is entitled to find the thread exactly as it left it.
+        // Every lookup is raw and the stack is restored on every path: this runs
+        // on a thread the error already unwound, so a raise from a metamethod
+        // would have no protected frame to land in.
         [[nodiscard]]
         auto tierBError(
             lua_State* state,
@@ -346,11 +296,9 @@ namespace uf::task
                 }
             );
 
-            // The carrier's three script-visible fields live in a frozen table
-            // behind its metatable's __index, which raiseTierB puts there and
-            // deepFreezeMetatable checks is a table. Walking it by hand is what
-            // avoids tostring(), which on a userdata would have to run the
-            // __tostring metamethod.
+            // The script-visible fields live in a frozen table behind the
+            // metatable's __index. Walking it by hand avoids tostring(), which
+            // on a userdata would run the __tostring metamethod.
             if (lua_getmetatable(state, carrier) == 0)
             {
                 return raised;
@@ -375,22 +323,16 @@ namespace uf::task
 
         // Mints one Tier B error carrier and raises it. Never returns.
         //
-        // The carrier is a host-minted userdata under k_errorUserdataTag, not a
-        // table. The three fields a script reads -- kind, message, retryable --
-        // live in a frozen table behind the carrier's own protected metatable's
-        // __index, which is a TABLE and never a function (that rule is what keeps
-        // a future move to a yield protocol from acquiring an unyieldable hole,
-        // and it is checked by deepFreezeMetatable rather than trusted here).
+        // The carrier is a tagged userdata, not a table; its kind, message and
+        // retryable live in a frozen table behind a per-instance metatable's
+        // __index. That __index must stay a table and never a function -- a
+        // function there would be an unyieldable hole if this ever moved to a
+        // yield protocol -- and deepFreezeMetatable checks it rather than this
+        // trusting it. Per instance follows from the same rule: with __index a
+        // table, there is nowhere else per-error data could live.
         //
-        // The metatable is per instance because the fields are: with __index
-        // restricted to a table there is nowhere else per-error data could live.
-        // That costs two small tables per raised error, which is the right side
-        // of the trade -- errors are exceptional, and the alternative is a
-        // function __index the design rules out.
-        //
-        // Identity does not rest on that metatable. C++ reads the tag, and the
-        // framework's ctx:try asks whether the value is a userdata wearing this
-        // label; a project script can produce neither.
+        // Identity rests on the tag, not on the metatable: C++ reads the tag and
+        // ctx:try asks whether the value wears this label.
         [[noreturn]]
         auto raiseTierB(
             lua_State* state,
@@ -431,11 +373,9 @@ namespace uf::task
             lua_pushcfunction(state, &denyWrite, "uf_error_newindex");
             lua_setfield(state, metatable, "__newindex");
 
-            // tostring() names the kind and the message and nothing else, so an
-            // error that reaches the host uncaught still carries its cause into
-            // the run report. It is a fixed string built here rather than a
-            // formatter reading the carrier, so it stays deterministic and leaks
-            // no address.
+            // A fixed string rather than a formatter reading the carrier, so
+            // tostring stays deterministic, leaks no address, and still carries
+            // the cause of an uncaught error into the run report.
             auto label = std::string{k_errorType};
             label += "(";
             label += automationErrorWireName(kind);
@@ -450,11 +390,9 @@ namespace uf::task
 
             if (!script::deepFreezeMetatable(state, metatable))
             {
-                // Unreachable while the metatable is the one built directly
-                // above: it carries __metatable and a table __index by
-                // construction. Raising a plain string rather than a half-frozen
-                // carrier keeps a broken host from handing a script a mutable
-                // object that answers to the Tier B label.
+                // Unreachable for the metatable built directly above. A plain
+                // string rather than a half-frozen carrier, so no mutable object
+                // ever answers to the Tier B label.
                 lua_pushstring(
                     state,
                     "uf: a Tier B error carrier could not be frozen"
@@ -470,9 +408,8 @@ namespace uf::task
             lua_error(state);
         }
 
-        // Validates that the value at `index` is a handle of the expected kind and
-        // returns a pointer to its payload. A wrong type is a structured Tier B
-        // InvalidResource, so the whole script-facing failure model is one shape.
+        // The payload of the handle at `index`. A wrong type is a Tier B
+        // InvalidResource, keeping the script-facing failure model one shape.
         template <typename T>
         [[nodiscard]]
         auto checkBox(
@@ -497,16 +434,11 @@ namespace uf::task
             return static_cast<T*>(lua_touserdata(state, index));
         }
 
-        // Tier C: latch the terminal kind so the host discards this VM
-        // generation, then raise a plain non-table sentinel. It carries no
-        // uf.error metatable, so ctx:try refuses to swallow it and re-raises it
-        // unchanged.
-        //
-        // A project pcall CAN catch this value, and that is accepted: control is
-        // not what the sentinel protects. The latch is. Every primitive enters
-        // through guardFatal, so a script that swallowed the sentinel and kept
-        // running is refused at its next primitive call, before any capture or
-        // any click.
+        // Tier C: latch the terminal kind FIRST, then raise a plain non-table
+        // sentinel carrying no uf.error metatable, so ctx:try re-raises it
+        // unchanged. A project pcall can still catch it, and that is accepted:
+        // the latch is what the tier protects, and guardFatal refuses the next
+        // primitive before any capture or click.
         [[noreturn]]
         auto raiseCancelled(lua_State* state, TaskContext* context) -> void
         {
@@ -518,17 +450,11 @@ namespace uf::task
         // A framework bug the host caught: latch the generation terminal FIRST,
         // then raise an InternalInvariant carrier. Never returns.
         //
-        // The order is the whole point, and it is design section 9's rule 5: a
-        // project pcall or ctx:try can catch the value -- it is an ordinary Tier
-        // B carrier and there is no way to make a Lua raise uncatchable -- but
-        // the latch is already set, so the next primitive refuses at guardFatal
-        // before it reaches the engine. Control is protected even though the
-        // value is catchable, which is exactly the Tier C position.
-        //
-        // The kind is a real one rather than a private sentinel because a run
-        // that ends on it must SAY so: the host's raised-error classifier reads
-        // the carrier's tag, so an uncaught framework bug is reported and traced
-        // as internal_invariant rather than as a malformed script.
+        // The order is load-bearing (design section 9 rule 5): the carrier is an
+        // ordinary catchable Tier B value, so the latch set before it is the only
+        // thing that stops the next primitive at guardFatal. The kind is a real
+        // one rather than a private sentinel, so the raised-error classifier
+        // reports an uncaught framework bug as internal_invariant.
         [[noreturn]]
         auto raiseInvariant(
             lua_State* state,
@@ -558,14 +484,11 @@ namespace uf::task
             raiseTierB(state, kind, std::string{error.message()});
         }
 
-        // Starts one field-carrying handle: mints a tagged userdata holding
-        // `value` and pushes an empty field table above it. The caller fills the
-        // fields with scalars and then calls finishFieldHandle.
-        //
-        // It is split in two because the fields differ per kind while the
-        // freezing and the metatable shape do not, and that shape is the part
-        // that must not be reinvented: __index a table and never a function, a
-        // __metatable label, and frozen before anything wears it.
+        // Starts one field-carrying handle: a tagged userdata holding `value`
+        // with an empty field table above it. The caller fills the fields with
+        // scalars and calls finishFieldHandle, which owns the metatable shape --
+        // __index a table and never a function, a __metatable label, frozen
+        // before anything wears it.
         template <typename T>
         auto beginFieldHandle(lua_State* state, T value, int tag) -> void
         {
@@ -613,10 +536,9 @@ namespace uf::task
 
             if (!script::deepFreezeMetatable(state, metatable))
             {
-                // Unreachable while the metatable is the one built directly
-                // above: it carries __metatable and a table __index by
-                // construction. Handing a script a half-frozen object that
-                // answers to a host label would be worse than failing.
+                // Unreachable for the metatable built directly above. Failing
+                // beats handing a script a half-frozen object that answers to a
+                // host label.
                 raiseInvariant(
                     state,
                     context,
@@ -634,9 +556,8 @@ namespace uf::task
             lua_setfield(state, -2, name);
         }
 
-        // Adds one string field to the field table on the stack top. Pushed with
-        // its length rather than as a C string, so a sentence the host formatted
-        // reaches the script whole whatever it contains.
+        // Adds one string field to the field table on the stack top, with its
+        // length rather than as a C string, so any bytes reach the script whole.
         auto addTextField(
             lua_State* state,
             char const* name,
@@ -647,16 +568,11 @@ namespace uf::task
             lua_setfield(state, -2, name);
         }
 
-        // Refuses the call outright when a prior verb already latched the
-        // generation terminal, so a script that swallowed what was raised cannot
-        // drive one more engine verb before the host tears the generation down.
-        //
-        // The question itself is requireLiveGeneration's, shared with the operator
-        // front-end, so both consumers of the capability surface refuse a spent
-        // generation on the same terms; what stays here is only the raise. It is
-        // still asked BEFORE this primitive decodes its arguments, so a spent
-        // generation outranks a bad handle -- the caller is told what ended the run
-        // rather than what was wrong with the call that came after it.
+        // Refuses the call when a prior verb latched the generation terminal, so
+        // a script that swallowed what was raised drives no further engine verb.
+        // The question is requireLiveGeneration's, shared with the operator
+        // front-end; only the raise is here. It is asked before the primitive
+        // decodes its arguments, so a spent generation outranks a bad handle.
         auto guardFatal(lua_State* state, TaskContext* context) -> void
         {
             auto const live = requireLiveGeneration(*context);
@@ -682,9 +598,8 @@ namespace uf::task
             );
         }
 
-        // The automation kind of an engine failure, defaulting an unclassified
-        // error to InternalInvariant. Mirrors raiseFromError's own mapping so the
-        // HostCall trace records exactly the kind the Tier ladder will raise.
+        // Mirrors raiseFromError's mapping, so the HostCall trace records the
+        // kind the Tier ladder will raise.
         [[nodiscard]]
         auto kindOf(Error const& error) noexcept -> AutomationErrorKind
         {
@@ -692,11 +607,9 @@ namespace uf::task
                 .value_or(AutomationErrorKind::InternalInvariant);
         }
 
-        // Emits the task.native_call trace event for a verb at its exit, and turns
-        // a lost line into a Tier B IoFailure that aborts the verb. Both halves --
-        // the line's shape and what a sink failure costs -- are
-        // native-call-trace.hpp's, shared with the operator front-end; what this
-        // adds is the raise.
+        // Emits the task.native_call line at a verb's exit and turns a lost line
+        // into a Tier B IoFailure. The line's shape and the cost of a sink
+        // failure are native-call-trace.hpp's; only the raise is here.
         auto traceHostCall(
             lua_State* state,
             TaskContext* context,
@@ -715,14 +628,10 @@ namespace uf::task
             }
         }
 
-        // Records a failed verb and then raises that verb's own error, never the
-        // sink's -- see recordNativeCallFailure for why the original cause wins.
-        //
-        // For a cancellation this keeps the Tier C sentinel on the raise path,
-        // which latches fatal before anything else can run. That ordering is
-        // load-bearing rather than defensive: ctx:try is pure Luau and consults
-        // nothing, so the latch set here is the only thing standing between a
-        // swallowed sentinel and one more primitive call. Never returns.
+        // Records a failed verb and raises that verb's own error, never the
+        // sink's -- see recordNativeCallFailure. A cancellation keeps the Tier C
+        // sentinel on this path, so the latch is set before anything else runs:
+        // ctx:try is pure Luau and consults nothing. Never returns.
         auto traceHostCallFailure(
             lua_State* state,
             TaskContext* context,
@@ -734,10 +643,9 @@ namespace uf::task
             raiseFromError(state, context, error);
         }
 
-        // Reads a required string argument at `index` as a view into the VM's own
-        // storage. Tier B rather than an invariant failure: every string a
-        // primitive takes -- a project file name, a template blob -- comes from a
-        // project's own data, so a wrong type is an author error to catch.
+        // A required string argument at `index`, as a view into VM storage. Tier
+        // B rather than an invariant: every string a primitive takes comes from a
+        // project's own data, so a wrong type is an author error.
         [[nodiscard]]
         auto checkText(
             lua_State* state,
@@ -811,19 +719,15 @@ namespace uf::task
             return static_cast<uint8>(value);
         }
 
-        // Reads the optional colour key at `first` and the three positions after
-        // it: red, green, blue, tolerance.
+        // The optional colour key at `first` and the three positions after it:
+        // red, green, blue, tolerance.
         //
-        // ONE READER FOR BOTH VERBS. `probe` measures what a key takes and
-        // `cycle_crop` cuts under one, and an agent's whole loop is to do the
-        // first and then the second with the SAME key -- so a second reader
+        // One reader for both `probe` and `cycle_crop`, because an agent probes
+        // to choose a key and then crops under the same one: a second reader
         // would be a second place the default tolerance, the channel range and
-        // the "no key at all" case could come to differ, and the two verbs would
-        // stop being about one measurement.
-        //
-        // Presence is decided by the FIRST position alone. A caller that names a
-        // red channel and stops has written half a key, and being told which
-        // channel is missing beats silently keying on black.
+        // the absent-key case could come to differ. Presence is decided by the
+        // first position alone, so half a key is told which channel is missing
+        // rather than silently keying on black.
         [[nodiscard]]
         auto checkColourKey(
             lua_State* state,
@@ -845,12 +749,9 @@ namespace uf::task
             };
         }
 
-        // Reads four numbers starting at `first` as one rectangle.
-        //
-        // Four scalars rather than one table, because section 5's second
-        // invariant admits only host-minted handles and scalars as primitive
-        // arguments and a Luau table is neither. The trusted framework wraps this
-        // back into whatever shape its own callers want.
+        // Four numbers starting at `first` as one rectangle. Scalars rather than
+        // a table because section 5's second invariant admits only host-minted
+        // handles and scalars as primitive arguments.
         [[nodiscard]]
         auto checkPixelRect(
             lua_State* state,
@@ -875,10 +776,8 @@ namespace uf::task
             return *rect;
         }
 
-        // The match handle at `index`, or null when that value is not one. The
-        // test is the userdata tag and nothing else, exactly as for a Tier B
-        // error carrier: a script-built look-alike carrying the same fields is
-        // not a match here however faithfully it copies one.
+        // The match handle at `index`, or null. The test is the userdata tag
+        // alone, as for a Tier B carrier: a script-built look-alike is not one.
         [[nodiscard]]
         auto matchBoxAt(lua_State* state, int index) -> MatchBox const*
         {
@@ -897,26 +796,18 @@ namespace uf::task
         }
 
         // Every primitive below is a plain function of the private capability
-        // table, called as native.<verb>(...) from the framework, so its
-        // arguments start at stack index 1. They were method calls on the uf
-        // root before the surface went private, which is why the design writes
-        // them as bare signatures: cycle_close(ticket), not uf:cycle_close.
+        // table, called as native.<verb>(...), so its arguments start at stack
+        // index 1.
         //
-        // cycle_open() -> ticket. Observes one frame and opens the
-        // generation's single observation cycle over it. A capture failure maps
-        // through the Tier ladder (Tier B, or Tier C for a cancellation);
-        // opening while a cycle is already open is a framework bug and fails
-        // InternalInvariant rather than becoming a Tier B failure a script could
-        // catch and retry.
+        // cycle_open() -> ticket. Observes one frame and opens the generation's
+        // single observation cycle over it. A capture failure maps through the
+        // Tier ladder; opening while a cycle is already open is a framework bug
+        // and fails InternalInvariant rather than a Tier B a script could retry.
         //
-        // It takes no deadline, and never will. The capture IS bounded --
-        // EngineSession::observe mints a CaptureBudget from the session's own
-        // captureTimeout and hands IFrameSource::capture both that deadline and
-        // the run's stop token -- but the bound is the HOST's, not the script's.
-        // How long one screenshot may block is a resource boundary the host
-        // owns, so a script is given no knob it could widen. The one deadline a
-        // script can hold comes from the `deadline` primitive, and it bounds a
-        // wait loop rather than any single capture.
+        // It takes no deadline, and never will: EngineSession::observe bounds the
+        // capture from the session's own captureTimeout, and how long one
+        // screenshot may block is a host resource boundary no script may widen.
+        // The `deadline` primitive bounds a wait loop, never a capture.
         auto cycleOpenFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -968,14 +859,9 @@ namespace uf::task
         }
 
         // template_load(blob) -> template handle. Decodes one template PNG once
-        // and names the result for the rest of this generation.
-        //
-        // Handle-based rather than decode-per-match, and that is a decision
-        // rather than an optimisation: a wait loop matching one template per poll
-        // would otherwise pay a PNG decode per poll, and since decoding is
-        // deterministic, repeating it can only cost time and never change an
-        // answer. Loading the same bytes twice returns the same handle, so a
-        // script's load order cannot change what it ends up holding.
+        // and names the result for the rest of this generation, so a wait loop
+        // pays no decode per poll. Loading the same bytes twice returns the same
+        // handle, so load order cannot change what a script holds.
         auto templateLoadFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1011,14 +897,12 @@ namespace uf::task
         }
 
         // cycle_match(ticket, template, x, y, width, height) -> match handle, or
-        // nil when the region held no candidate position at all.
+        // nil when the region held no candidate position.
         //
-        // It reports the distance and the ceiling and judges NEITHER. Whether a
-        // score counts as a hit is the trusted framework's, which is the whole
-        // content of "scores stay in layer one, judging moves to layer two"; the
-        // handle carries `score` and `maximum` so the framework has something to
-        // judge with. A budget, deadline or cancel stop RAISES rather than
-        // returning nil: a search that stopped looking has established nothing.
+        // It reports `score` and `maximum` and judges neither: whether a score
+        // counts as a hit is the trusted framework's. A budget, deadline or
+        // cancel stop raises rather than returning nil, because a search that
+        // stopped looking has established nothing.
         auto cycleMatchFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1070,18 +954,18 @@ namespace uf::task
         }
 
         // cycle_read(ticket, x, y, width, height) -> reading handle, or nil when
-        // the region held no text.
+        // this frame read no text inside the region. Nil does not say the region
+        // holds nothing: a region still being drawn reads the same way, and one
+        // frame carries no evidence separating the two. Which of them the caller
+        // meant is declared a layer up (`observe.empty_is_absence` /
+        // `observe.empty_is_unknown`), and this verb takes no part in it.
         //
-        // It takes no expected text. Whether a reading matches what a page model
-        // hoped for -- full width against half width, traditional against
-        // simplified, contains against equals -- is policy, and a wrong answer
-        // there only picks a different already-authorised target. The host owns
-        // no part of that rule, so there is no parameter for it.
+        // It takes no expected text: whether a reading matches what a page model
+        // hoped for is policy, and the host owns no part of that rule.
         //
-        // The handle carries `confidence` beside `text` because reading is the
-        // one capability that fails OPEN: a rectangle pointed at the wrong place
-        // returns plausible text rather than nothing, and without a confidence a
-        // script cannot tell a real line from a guess.
+        // The handle carries `confidence` beside `text` because reading fails
+        // open -- a rectangle pointed at the wrong place returns plausible text
+        // rather than nothing.
         auto cycleReadFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1110,9 +994,8 @@ namespace uf::task
             }
             traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
 
-            // The carrier holds no payload: nothing in C++ ever reads a reading
-            // back, so the fields below are the whole of it. A single byte is the
-            // smallest block the VM will hand out.
+            // Nothing in C++ ever reads a reading back, so the fields below are
+            // the whole of it; a single byte is the smallest block the VM hands.
             beginFieldHandle<uint8>(state, uint8{0}, k_readingUserdataTag);
             lua_pushlstring(state, reading->text.data(), reading->text.size());
             lua_setfield(state, -2, "text");
@@ -1127,32 +1010,22 @@ namespace uf::task
 
         // cycle_read_lines(ticket, x, y, width, height) -> a frozen array of
         // reading handles, one per line the frame holds inside the region, in
-        // top-to-bottom then left-to-right order. The array is empty when the
-        // region held no text at all.
+        // top-to-bottom then left-to-right order. Empty when this frame read no
+        // line, which is not the claim that the region holds nothing -- see
+        // cycle_read.
         //
-        // IT IS A VERB OF ITS OWN AND NOT A FLAG ON cycle_read. What comes back
-        // is different in KIND -- a list rather than a reading -- so a mode
-        // parameter would make every caller of the older verb unwrap a value
-        // whose shape depended on an argument, and this file already refuses
-        // parameters whose only meaning is "not the other kind" (see cycle_read
-        // on why it takes no expected text). The two also differ in what they
-        // ASSERT: cycle_read's caller says the rectangle holds one line, and
-        // this caller says it has no idea what is in the region, which is the
-        // whole reason the region is worth reading.
+        // A verb of its own rather than a flag on cycle_read: what comes back
+        // differs in kind, and the two callers assert opposite things -- one
+        // says the rectangle holds a single line, this one says it does not know
+        // what the region holds.
         //
-        // WHAT IT COSTS: one read for the detection pass plus one for each line
-        // that pass located, out of the same per-cycle pool cycle_read spends.
-        // A region holding more lines than the cycle can still pay for RAISES
-        // rather than returning the first few, because a partly-read region
-        // establishes nothing about the lines nobody looked at -- the same rule
-        // a stopped template search obeys. See TaskContext::cycleReadLines.
-        //
-        // It does not consume the cycle: reading changes nothing on the target,
-        // so the same cycle goes on to click one of the lines it found.
-        //
-        // EVERY LINE COMES BACK IN TARGET PIXELS. The rectangle on a handle is
-        // where the FRAME put the text, not where the caller asked it to look,
-        // so nothing above this has an origin to add back and forget.
+        // It costs one read for the detection pass plus one per line that pass
+        // located, out of the pool cycle_read spends; a region holding more lines
+        // than the cycle can pay for raises rather than returning the first few,
+        // on the rule a stopped template search obeys (see
+        // TaskContext::cycleReadLines). It does not consume the cycle. Every
+        // rectangle comes back in target pixels -- where the frame put the text,
+        // not where the caller looked -- so nothing above adds an origin back.
         auto cycleReadLinesFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1188,10 +1061,8 @@ namespace uf::task
             {
                 auto const& line = lines[index];
 
-                // The same carrier shape a single reading gets, because a line
-                // IS a reading: one region, one string, one confidence. A second
-                // shape for the same facts would be a second thing for layer two
-                // to learn.
+                // A line is a reading, so it gets a reading's carrier shape
+                // rather than a second shape for the same facts.
                 beginFieldHandle<uint8>(state, uint8{0}, k_readingUserdataTag);
                 lua_pushlstring(state, line.text.data(), line.text.size());
                 lua_setfield(state, -2, "text");
@@ -1205,10 +1076,9 @@ namespace uf::task
                 lua_rawseti(state, array, static_cast<int>(index) + 1);
             }
 
-            // Frozen like every other host-minted value. The entries already are;
-            // the array around them is frozen so a framework bug cannot append a
-            // line the frame never located to a list the layer above treats as
-            // evidence.
+            // The entries are already frozen; the array is too, so no framework
+            // bug can append a line the frame never located to what the layer
+            // above treats as evidence.
             if (!script::deepFreeze(state, array))
             {
                 raiseInvariant(
@@ -1222,13 +1092,9 @@ namespace uf::task
         }
 
         // project_read(name) -> blob. Reads one file from the generation's own
-        // project directory.
-        //
-        // It is NOT cycle-scoped, and deliberately so: a page model is loaded
-        // before any observation exists, and requiring an open cycle would make a
-        // captured frame a precondition for reading a file. Confinement to the
-        // project directory is ProjectFileStore's, and it is the whole of what
-        // keeps `name` from reaching the rest of the disk.
+        // project directory. Deliberately not cycle-scoped: a page model is
+        // loaded before any observation exists. Confinement of `name` to that
+        // directory is ProjectFileStore's alone.
         auto projectReadFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1273,12 +1139,9 @@ namespace uf::task
         }
 
         // project_write(name, blob) -> (). Writes one file into the generation's
-        // own project directory, replacing it if it is already there.
-        //
-        // Replacing rather than refusing an existing file is the difference from
-        // the input agent's output confinement, which shares this shape: an agent
-        // capture must be a file that does not exist yet, while a page model is
-        // rewritten every time it changes.
+        // own project directory, replacing it. Replacing rather than refusing is
+        // the one difference from the input agent's output confinement: a page
+        // model is rewritten every time it changes.
         auto projectWriteFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1317,13 +1180,11 @@ namespace uf::task
         // cycle_click_point(ticket, x, y) -> (). Consumes the cycle and delivers
         // a click at a bare coordinate.
         //
-        // THIS IS THE PRIVILEGE THE FRAMEWORK HOLDS AND A PROJECT NEVER SEES. It
-        // is a separate primitive rather than an argument shape on cycle_click
-        // because the trusted framework gates it: the business environment is
-        // handed wrappers that click an annotated element, and this name is not
-        // on anything a project can reach. What C++ still enforces is the rest of
-        // the fence -- this ticket's frame, the observation's lease, the project
-        // fingerprint, and one delivery per cycle.
+        // A separate primitive rather than an argument shape on cycle_click,
+        // because the trusted framework gates it and no project environment can
+        // name it. C++ still enforces the rest of the fence: this ticket's frame,
+        // the observation's lease, the project fingerprint, and one delivery per
+        // cycle.
         auto cycleClickPointFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1351,45 +1212,31 @@ namespace uf::task
             return 0;
         }
 
-        // How much free room under the memory ceiling a crop insists on before
-        // it mints its PNG string, as a multiple of that string's own bytes.
-        // The reasoning for the number is at the check that reads it, below.
+        // Free room under the memory ceiling a crop insists on before minting
+        // its PNG string, as a multiple of that string's bytes. See its use.
         constexpr auto k_cropHeadroomFactor = uint64{4};
 
         // cycle_crop(ticket, x, y, width, height[, key_r, key_g, key_b,
         // tolerance]) -> (blob, hash[, mask]). The agent's eye: the pixels of one
-        // rectangle, encoded as a PNG, plus the lowercase hex SHA-256 of exactly
-        // those bytes.
+        // rectangle as a PNG, plus the lowercase hex SHA-256 of exactly those
+        // bytes. It does not consume the cycle (see TaskContext::cycleCrop).
         //
-        // THE KEY SITS AT THE SAME FOUR POSITIONS `probe` PUTS IT, and carries
-        // the same default tolerance, because it is meant to be the same key: an
-        // agent probes a rectangle to choose one and then cuts under the one it
-        // chose. With a key the PNG carries an alpha plane -- opaque where the
-        // key took the pixel, transparent where it did not -- which is what makes
-        // the template a MASKED template all the way down to the matcher. With no
-        // key the bytes are what they were before this argument existed.
+        // The key sits where `probe` puts it and carries the same default
+        // tolerance, because it is meant to be the same key: an agent probes a
+        // rectangle to choose one and then cuts under the one it chose. With a
+        // key the PNG carries an alpha plane -- opaque where the key took the
+        // pixel -- which is what makes the template masked down to the matcher.
+        // The mask return is then present, and absent exactly when no key was
+        // given: a zeroed handle would read as a key that selected nothing, and
+        // such a key is refused rather than reported.
         //
-        // THE THIRD RETURN IS THE MASK THE CALLER JUST DREW, and it is absent
-        // exactly when no key was given, on probe's reasoning: a zeroed handle
-        // would read as a key that took nothing, which is a different answer and
-        // one this verb never returns at all -- a key that takes nothing is
-        // refused, not reported.
+        // The hash is not a convenience. A template asset is named by the content
+        // hash of its own bytes and the sandbox leaves Luau no hash function, so
+        // a caller not told the hash could not write the file.
         //
-        // ONLY THE EXPLORATION SURFACE HAS IT. Handing raw pixels to a business
-        // script would give it a way to decide things no evidence can falsify,
-        // which is the whole content of the pixel row in the two-trust-mode table
-        // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2). A run
-        // VM's private surface does not carry this key, so a framework module
-        // that reached for it finds nil.
-        //
-        // TWO RETURNS, AND THE SECOND IS NOT A CONVENIENCE. A template asset is
-        // named by the content hash of its own bytes, and the sandbox leaves Luau
-        // no hash function at all -- so a caller that could not be told the hash
-        // could not write the file. The host already computed it for the trace
-        // line, and handing over the same value is what keeps the file name and
-        // the evidence from being two truths that could disagree.
-        //
-        // It does not consume the cycle: see TaskContext::cycleCrop.
+        // Only the exploration surface binds it: handing raw pixels to a business
+        // script would let it decide things no evidence can falsify
+        // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
         auto cycleCropFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1410,15 +1257,10 @@ namespace uf::task
                 traceHostCallFailure(state, context, call, result.error());
             }
 
-            // The trace line carries the prefixed spelling every other
-            // content-hash line uses, and the script gets the BARE hex.
-            //
-            // They are two renderings of one value rather than two values, and
-            // the difference is not cosmetic: a template asset lives at
-            // assets/templates/<64 hex>.png, and a name carrying the "sha256:"
-            // prefix would be a path no loader reads. The script layer is the
-            // one that has to spell the file name, so it gets the spelling that
-            // IS the file name.
+            // Two renderings of one value: the trace line takes the prefixed
+            // spelling every content-hash line uses and the script takes the bare
+            // hex, because a template asset lives at assets/templates/<64
+            // hex>.png and "sha256:" would be a path no loader reads.
             auto const traceHash = result->hash.toString();
             auto const scriptHash = result->hash.hex();
             auto const done       = NativeCallIdentity{
@@ -1429,29 +1271,19 @@ namespace uf::task
             };
             traceHostCall(state, context, done, trace::NativeCallOutcome::Succeeded);
 
-            // RECLAIM BEFORE MINTING, WHEN THE LEDGER IS CLOSE TO ITS CEILING.
+            // Reclaim before minting, when the ledger is near its ceiling. Luau
+            // throws LUA_ERRMEM the moment the allocator refuses and never
+            // collects and retries, so an agent loop dropping each
+            // multi-megabyte blob would die on a ceiling that is almost all
+            // garbage. Collecting here is sound where collecting inside the
+            // allocator would not be: no allocation is in flight and every value
+            // this frame holds is a stack root.
             //
-            // This is the one verb that hands a script a multi-megabyte value,
-            // and an agent's loop drops each blob as soon as it has looked at
-            // it -- so the ledger fills with garbage rather than with anything
-            // live. Luau throws LUA_ERRMEM the moment the allocator refuses and
-            // never collects and retries, so without this the loop dies with a
-            // bare "not enough memory" while almost the whole ceiling is
-            // reclaimable. A full collection HERE is sound where one inside the
-            // allocator would not be: this is an ordinary lua_CFunction, no
-            // allocation is in flight, and every value this frame holds is a
-            // stack root.
-            //
-            // FOUR TIMES THE PAYLOAD of free headroom, and each multiple is a
-            // separate claim. One is the string lua_pushlstring is about to
-            // copy, which must fit or the call raises. The second covers what
-            // the push costs BESIDES the bytes -- interning, a string-table
-            // rehash, the hash string beside it. The remaining two are
-            // hysteresis: collecting at exactly the payload would leave the
-            // next crop against the ceiling again, because the string this one
-            // just minted is live and no collection can reclaim it, so a
-            // session would pay a full sweep per crop from then on. Above the
-            // threshold nothing is paid at all.
+            // The headroom is four times the payload: one for the string
+            // lua_pushlstring must fit, one for what the push costs besides the
+            // bytes (interning, a string-table rehash, the hash string), and two
+            // of hysteresis -- the string just minted is live and unreclaimable,
+            // so collecting at exactly the payload would sweep on every crop.
             if (
                 script::heapUsage(state).headroomBytes()
                 < k_cropHeadroomFactor * static_cast<uint64>(result->png.size())
@@ -1495,24 +1327,18 @@ namespace uf::task
         // probe(blob, x, y, width, height[, key_r, key_g, key_b, tolerance])
         // -> probe handle. Colour statistics over one rectangle of one PNG.
         //
-        // PURE, AND SO IT TAKES NO TICKET. Every other verb on this surface is
-        // about the live target and is fenced by the cycle that observed it; this
-        // one is arithmetic over bytes the caller already holds, so requiring an
-        // open cycle would be ceremony that made a measurement depend on a frame
-        // it never reads. It is privileged nonetheless, for the same reason
-        // cycle_crop is: the only way to hold pixels here is to have cropped
-        // them.
+        // It takes no ticket because it is arithmetic over bytes the caller
+        // already holds, not a question about the live target. It is privileged
+        // nonetheless, for cycle_crop's reason: the only way to hold pixels here
+        // is to have cropped them.
         //
-        // THE KEY IS OPTIONAL AND ITS ABSENCE IS VISIBLE. With no key the handle
-        // carries the census fields alone and no selection fields at all, so a
-        // caller cannot read "no key was passed" as "the key selected nothing".
-        // The census is what an agent probes FIRST -- the plan's loop is crop,
-        // then probe to fix the key and the threshold -- and a verb that demanded
-        // a key would be useless for choosing one.
+        // With no key the handle carries the census fields and no selection
+        // fields at all, so "no key was passed" cannot be read as "the key
+        // selected nothing". The census is what an agent probes first, to choose
+        // a key -- a verb that demanded one would be useless for that.
         //
-        // NOTHING HERE IS A THRESHOLD. The handle reports counts; whether a count
-        // is good enough is the caller's, and the caller writes what it decided
-        // into the project file where it can be argued with.
+        // Nothing here is a threshold: the handle reports counts, and whether a
+        // count is good enough is the caller's to write into the project file.
         auto probeFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1539,9 +1365,8 @@ namespace uf::task
             }
             traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
 
-            // The carrier holds no payload: nothing in C++ ever reads a probe
-            // back, so the fields below are the whole of it -- the same shape a
-            // reading handle takes, for the same reason.
+            // No payload, for a reading handle's reason: nothing in C++ ever
+            // reads a probe back, so the fields below are the whole of it.
             beginFieldHandle<uint8>(state, uint8{0}, k_probeUserdataTag);
             addNumberField(state, "image_width", result->imageWidth);
             addNumberField(state, "image_height", result->imageHeight);
@@ -1572,17 +1397,14 @@ namespace uf::task
         // cycle_click(ticket, match) -> (). Consumes the cycle and delivers the
         // click at the position the match reports.
         //
-        // IT TAKES A MATCH AND NOTHING ELSE. There is no catalog hit any more:
-        // an element is a layer-two object built out of the project file, so the
-        // only evidence C++ can check is that this template matched on THIS
-        // frame. The other requisites are unchanged -- the same-frame ordinal, the
-        // observation's lease, the project fingerprint, one delivery per cycle --
-        // and "this page authorises this element" is enforced above, in
-        // modules/task/runtime/observe.luau, which is the only place that knows
-        // what a page is.
-        //
-        // Both ordinals reach the wire: they agree on every delivered click, and
-        // differ exactly when a match from a spent cycle was refused.
+        // It takes a match and nothing else: an element is a layer-two object
+        // built out of the project file, so the only evidence C++ can check is
+        // that this template matched on this frame, under the same-frame ordinal,
+        // the observation's lease, the project fingerprint and one delivery per
+        // cycle. "This page authorises this element" is enforced in
+        // modules/task/runtime/observe.luau, the only place that knows what a
+        // page is. Both ordinals reach the wire, and differ exactly when a match
+        // from a spent cycle was refused.
         auto cycleClickFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1621,20 +1443,16 @@ namespace uf::task
         // key(ticket, name) -> (). Consumes the cycle and delivers one
         // press-and-release of the key `name` prints.
         //
-        // Its authorization contract is deliberately NOT a click's, and the full
-        // reasoning is at TaskContext::cycleKey and EngineSession::pressKey. In one
-        // sentence: it requires an open cycle and nothing else, because a keystroke
-        // names no screen position -- so there is no detection to be same-frame with
-        // and no coordinate whose shelf life a lease could bound -- while it still
-        // consumes the cycle, because a delivered keystroke changes the screen
-        // exactly as a click does.
+        // Its authorization contract is not a click's: a keystroke names no
+        // screen position, so it requires an open cycle and nothing else -- no
+        // same-frame detection, no lease over a coordinate -- while still
+        // consuming the cycle, because it changes the screen as a click does. See
+        // TaskContext::cycleKey and EngineSession::pressKey.
         //
-        // The name is a string rather than a handle because it is a scalar the
-        // target itself publishes ("E ends the turn"), not an identity the catalog
-        // mints. domain::KeyName is the single definition of which names exist, so a
-        // name outside the set is a Tier B ActionRejected an author can catch and
-        // correct, refused BEFORE the cycle is spent -- a typo must not cost a
-        // frame.
+        // The name is a scalar the target publishes ("E ends the turn"), not an
+        // identity the catalog mints. domain::KeyName defines which names exist,
+        // so one outside the set is a Tier B ActionRejected refused before the
+        // cycle is spent: a typo must not cost a frame.
         auto keyFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1683,36 +1501,27 @@ namespace uf::task
             return 0;
         }
 
-        // cycle_scroll(ticket, notches) -> (). Consumes the cycle and delivers one
-        // wheel scroll of `notches` detents, positive away from the operator and
-        // negative toward them.
+        // cycle_scroll(ticket, notches) -> (). Consumes the cycle and delivers
+        // one wheel scroll of `notches` detents, positive away from the operator
+        // and negative toward them.
         //
-        // Its authorization contract is `key`'s rather than a click's, and the full
-        // reasoning is at TaskContext::cycleScroll and EngineSession::scroll. In one
-        // sentence: it requires an open cycle and nothing else, because the verb
-        // names no screen position -- so there is no hit to be same-frame with and
-        // no coordinate whose shelf life a lease could bound -- while it still
-        // consumes the cycle, because a delivered scroll moves the screen exactly as
-        // a keystroke does.
+        // Its authorization contract is `key`'s rather than a click's -- an open
+        // cycle and nothing else, since the verb names no screen position, while
+        // still consuming the cycle. See TaskContext::cycleScroll and
+        // EngineSession::scroll. It is on both surfaces because scrolling a list
+        // too long to fit is ordinary business work, and the two exploration
+        // privileges are pixels and bare coordinates.
         //
-        // IT IS ON BOTH SURFACES. Scrolling a list too long to fit is ordinary
-        // business work -- the fighter list of teaching step 4 is the instance the
-        // verb roster cites -- and nothing about it hands a script pixels or a bare
-        // coordinate, which is what the two exploration privileges are.
+        // Anchoring a scroll to an annotated region is open question 5 of
+        // docs/plans/2026-08-01-three-layers-and-agent-operator.md; until it is
+        // settled the raw verb ships with no anchoring rule, and the region will
+        // arrive as an argument rather than as a reinterpretation of this one.
         //
-        // ANCHORING ONE TO AN ANNOTATED REGION IS DELIBERATELY NOT HERE. That is
-        // open question 5 of docs/plans/2026-08-01-three-layers-and-agent-operator
-        // .md; the raw verb ships with no anchoring rule rather than with an
-        // invented one, and when the question is settled the region arrives as an
-        // argument rather than as a reinterpretation of this one.
-        //
-        // The count is checked here only for the shape a Luau number can be wrong
-        // in -- not a number, not whole, or beyond what the port carries. What a
-        // deliverable count IS belongs to the delivery layer: the bound comes from
-        // the word the platform's wheel message encodes it in, and zero is refused
-        // there too. Restating either here would be a second rule with nothing
-        // holding it equal to the first, and the cost of leaving it there is one
-        // spent frame on a mistyped scroll.
+        // The count is checked only for the shape a Luau number can be wrong in.
+        // What a deliverable count IS belongs to the delivery layer, which bounds
+        // it by the word the platform's wheel message encodes and refuses zero;
+        // restating that here would be a second rule with nothing holding it
+        // equal to the first.
         auto cycleScrollFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1756,19 +1565,14 @@ namespace uf::task
             return 0;
         }
 
-        // Converts a script's millisecond count into the monotonic Duration the
-        // host times with. `what` names the script-facing spelling the count
-        // came from, because that is what the author wrote to get here.
+        // A script's millisecond count as the monotonic Duration the host times
+        // with; `what` names the script-facing spelling the author wrote.
         //
-        // The Duration is steady_clock's tick -- nanoseconds on every supported
-        // standard library -- so the conversion multiplies by the ms-to-tick
-        // ratio. A raw duration_cast would overflow the signed tick rep
-        // (undefined behaviour) far below the millisecond count's own int64
-        // limit, and before any monotonic-overflow guard downstream could run.
-        // Build the Duration through the checked helpers instead: a NaN,
-        // negative, non-finite, or out-of-range count -- or one whose tick
-        // product would not fit -- is a Tier B InvalidResource here rather than
-        // silent wraparound.
+        // A raw duration_cast would overflow the signed tick rep -- undefined
+        // behaviour -- far below the millisecond count's own int64 limit and
+        // before any downstream monotonic-overflow guard could run, so the
+        // Duration is built through the checked helpers and a NaN, negative,
+        // non-finite or out-of-range count is a Tier B InvalidResource instead.
         [[nodiscard]]
         auto millisToDuration(
             lua_State* state,
@@ -1802,9 +1606,8 @@ namespace uf::task
             return Duration{*ticks};
         }
 
-        // Reads a required millisecond argument at `index`. A missing or
-        // non-numeric argument is a Tier B InvalidResource, keeping the
-        // script-facing failure model single-shaped.
+        // A required millisecond argument at `index`; a missing or non-numeric
+        // one is a Tier B InvalidResource like every other argument rejection.
         [[nodiscard]]
         auto checkMillisDuration(
             lua_State* state,
@@ -1825,40 +1628,28 @@ namespace uf::task
 
         // cycle_long_press(ticket, x, y, hold_ms) -> (). Consumes the cycle and
         // delivers one long press at the point: the button goes down, stays down
-        // for `hold_ms`, and comes back up before this returns.
+        // for `hold_ms`, and comes back up before this returns. It sits here
+        // rather than beside the other cycle verbs only because it needs
+        // checkMillisDuration above.
         //
-        // IT SITS HERE, AWAY FROM THE OTHER CYCLE VERBS, only because it needs
-        // checkMillisDuration above; this file's helpers are defined before use
-        // and nothing else about its placement means anything.
+        // Its authorization contract is cycle_click_point's, not `key`'s: it
+        // names a coordinate the caller measured off this frame, so the
+        // fingerprint check, the lease and the same-frame rule all apply, and it
+        // consumes the cycle because a delivered press changes the screen. See
+        // TaskContext::cycleLongPress and EngineSession::longPress.
         //
-        // ITS AUTHORIZATION CONTRACT IS cycle_click_point's, not `key`'s, and the
-        // full reasoning is at TaskContext::cycleLongPress and
-        // EngineSession::longPress. In one sentence: it names a coordinate the
-        // caller measured off this frame, so the fingerprint check, the lease and
-        // the same-frame rule all apply exactly as they do to a click, and it
-        // consumes the cycle because a delivered press changes the screen -- on
-        // the target this exists for it magnifies the thing that was pressed,
-        // which is the whole reason to ask for one.
+        // One verb rather than a press and a release, because a long press begins
+        // and ends inside this call and so fits the authorization model
+        // unchanged, leaving no observation that describes a target with a button
+        // stuck down. A bare press would span frames and nothing yet says who
+        // guarantees the release; see engine::IActionSink::longPress.
         //
-        // WHY THERE IS ONE VERB AND NOT A PRESS AND A RELEASE. A long press is one
-        // complete act that begins and ends inside this call, so it fits the
-        // authorization model unchanged: the hit that authorises it was located on
-        // the frame it is delivered to, and no observation is left describing a
-        // target with a button stuck down in it. A bare press would span frames
-        // and the model has no answer yet for who guarantees the release; see
-        // engine::IActionSink::longPress, where that is decided.
+        // It is privileged exactly as cycle_click_point is, and bound on both
+        // surfaces for the same reason: no business environment can name it, and
+        // only `observe.long_press` and `explore.long_press` reach it.
         //
-        // IT IS THE PRIVILEGED SPELLING, exactly as cycle_click_point is. It is
-        // installed on both surfaces for cycle_click_point's stated reason -- the
-        // trusted framework needs it in run mode for an element positioned by the
-        // page model -- and what makes it privileged is that no BUSINESS
-        // environment can name it: `ctx` publishes no forward, `observe.long_press`
-        // reaches it through this chunk's closure upvalue, and only the
-        // exploration environment publishes `explore.long_press`.
-        //
-        // The hold is checked here for the shape a Luau number can be wrong in and
-        // against the host's ceiling, and it has no default: a duration the caller
-        // cannot see is a decision the caller did not make.
+        // The hold has no default: a duration the caller cannot see is a decision
+        // the caller did not make.
         auto cycleLongPressFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1871,10 +1662,8 @@ namespace uf::task
                 checkMillisDuration(state, 4, "cycle_long_press hold_ms");
             if (hold > k_maxLongPressHold)
             {
-                // Refused before the cycle is spent, like every other argument
-                // rejection here: a hold the author mistyped must not cost a
-                // frame, and must not leave the target holding a button while
-                // they find out.
+                // Refused before the cycle is spent, so a mistyped hold costs
+                // no frame and leaves no button down.
                 raiseTierB(
                     state,
                     AutomationErrorKind::InvalidResource,
@@ -1883,9 +1672,8 @@ namespace uf::task
                 );
             }
 
-            // millisToDuration built this from a whole, non-negative millisecond
-            // count and the ceiling above caps it far below any tick limit, so
-            // the round trip back to milliseconds is exact.
+            // The count was whole and non-negative and the ceiling above caps
+            // it far below any tick limit, so the round trip is exact.
             auto const call = NativeCallIdentity{
                 .verb           = "cycle_long_press",
                 .cycleOrdinal   = ticket->ordinal,
@@ -1904,12 +1692,10 @@ namespace uf::task
             return 0;
         }
 
-        // The automation kind whose domain wire spelling is `wireName`, or
-        // nullopt when no kind carries it. The scan is over the reflected
-        // entries and compares against the same domain function that produces
-        // uf.errors, a Tier B carrier's `kind` field, and the trace, so a
-        // spelling the framework passes here is checked against the one truth
-        // rather than against a second copy of it.
+        // The automation kind whose domain wire spelling is `wireName`. It
+        // compares against the same domain function that produces uf.errors, a
+        // carrier's `kind` field and the trace, so there is no second copy of the
+        // spellings to drift from.
         [[nodiscard]]
         auto kindOfWireName(std::string_view wireName) noexcept
             -> std::optional<AutomationErrorKind>
@@ -1927,24 +1713,18 @@ namespace uf::task
         // raise(kind, message) -> never. Mints a Tier B error carrier of the
         // named kind and raises it.
         //
-        // It is admitted under the design's primitive rule -- an indivisible
-        // effect or a safety primitive -- as the second of those. A Tier B
-        // carrier is tagged userdata that only the host can produce, so a
-        // framework policy that fails on its own terms (a wait whose deadline
-        // expired) has no other way to fail as a real automation error: an
-        // error() from Luau is a plain string, which reaches the host as a
-        // malformed script and which neither ctx:try nor ctx:retry will treat
-        // as an automation failure. Nothing about page selection, looping,
-        // retry or game decision-making is here; the caller decided all of it.
+        // Admitted under the design's primitive rule as a safety primitive: a
+        // Tier B carrier is tagged userdata only the host can produce, so a
+        // framework policy that fails on its own terms has no other way to fail
+        // as a real automation error -- error() from Luau is a plain string,
+        // which reaches the host as a malformed script and which neither ctx:try
+        // nor ctx:retry treats as an automation failure.
         //
-        // Two kinds are refused. `cancelled` is the host's own terminal verdict
-        // and arrives with the fatal latch already set, so a Tier B carrying it
-        // would claim a stop nobody requested and would be catchable besides.
-        // `internal_invariant` must latch the generation terminal BEFORE it is
-        // raised, or a project pcall could swallow a framework bug; this
-        // primitive deliberately does not latch, so that kind keeps its own door
-        // -- raiseInvariant, reached only when the host itself caught the bug --
-        // rather than a catchable impostor here.
+        // `cancelled` and `internal_invariant` are refused. Both must arrive with
+        // the fatal latch already set and this primitive deliberately does not
+        // latch, so each keeps its own door -- raiseCancelled and raiseInvariant,
+        // reached only when the host itself decided -- rather than a catchable
+        // impostor here.
         auto raiseFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1987,17 +1767,12 @@ namespace uf::task
             raiseTierB(state, *kind, message);
         }
 
-        // Raises the Tier C sentinel when the run's cancel source has already
-        // requested a stop. The three time primitives below reach no engine
-        // verb, so nothing downstream would fail closed for them: this is where
-        // they do it, and it runs both before a pause and after one, so a stop
-        // that lands mid-sleep ends the primitive on the terminal path rather
-        // than as a normal return. Every later primitive is then refused by
-        // guardFatal, before any capture.
-        // The question itself is requireNotCancelled's, shared with the operator
-        // front-end so a stop refuses a pause on the same terms whichever front-end
-        // asked; what stays here is the raise, which reaches the Tier C sentinel
-        // through raiseFromError's Cancelled branch.
+        // Raises the Tier C sentinel when a stop has already been requested. The
+        // time primitives below reach no engine verb, so nothing downstream would
+        // fail closed for them; this runs before a pause and after one, so a stop
+        // landing mid-sleep ends the primitive on the terminal path. The question
+        // is requireNotCancelled's, shared with the operator front-end; only the
+        // raise is here.
         auto guardCancelled(lua_State* state, TaskContext* context) -> void
         {
             auto const live = requireNotCancelled(*context);
@@ -2008,14 +1783,10 @@ namespace uf::task
             raiseFromError(state, context, live.error());
         }
 
-        // deadline(ms) -> deadline handle. Mints the absolute instant `ms` from
-        // now as an opaque host handle.
-        //
-        // The instant is absolute and host-minted for the same reason a cycle
-        // ticket is: a script that could name the value could also renew it, and
-        // a wait budget a script can extend is not a budget. It reads no clock
-        // back to Lua -- `now()` was deleted with this primitive's arrival --
-        // so the only thing a script can do with a deadline is hand it to wait.
+        // deadline(ms) -> deadline handle. The absolute instant `ms` from now,
+        // opaque for a cycle ticket's reason: a wait budget a script could name
+        // is one it could renew. No clock reads back into Lua, so the only thing
+        // to do with a deadline is hand it to wait.
         auto deadlineFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -2043,17 +1814,15 @@ namespace uf::task
         }
 
         // wait(deadline, interval_ms) -> bool. Pauses for one poll interval and
-        // reports whether the deadline still has budget: false means it expired
-        // and the framework's wait loop is over.
+        // reports whether the deadline still has budget; false ends the
+        // framework's wait loop.
         //
-        // It polls nothing itself. What is re-observed between two calls is the
-        // framework's business, which is what keeps this an indivisible effect
-        // rather than a policy loop smuggled into C++ (design section 18's
-        // primitive admission rule). Bounded by min(interval, time to deadline),
-        // and it never sleeps at all once the deadline has passed.
-        //
-        // The interval is clamped up to k_minWaitPollInterval so a framework bug
-        // asking for zero cannot turn the observation cycle into a busy wait.
+        // It polls nothing itself -- what is re-observed between two calls is the
+        // framework's business, which keeps this an indivisible effect rather
+        // than a policy loop in C++ (design section 18). The pause is
+        // min(interval, time to deadline) and is skipped once the deadline has
+        // passed; the interval is clamped up to k_minWaitPollInterval so a
+        // framework bug asking for zero cannot busy-wait.
         auto waitFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -2073,17 +1842,13 @@ namespace uf::task
             return 1;
         }
 
-        // settle(ms) -> (). A declarative bounded pause, and the only one: it
-        // reaches no engine verb, so its whole content is the duration, which is
-        // why it is traced. Design section 10 makes that duration part of the
-        // replay input -- a run cannot be reproduced from a pause nobody wrote
-        // down.
+        // settle(ms) -> (). The one declarative bounded pause. It reaches no
+        // engine verb, so its whole content is the duration -- which design
+        // section 10 makes part of the replay input, hence the trace line.
         //
-        // A request beyond k_maxSettleDuration is Tier B rather than a framework
-        // invariant failure: a project asking to settle for ten minutes is a
-        // project error, and section 9 reserves the invariant kind for failures a
-        // project cannot cause. It is refused before the pause and untraced, like
-        // every other argument rejection.
+        // A request beyond k_maxSettleDuration is Tier B rather than an invariant
+        // failure, because section 9 reserves the invariant kind for failures a
+        // project cannot cause. Refused before the pause and untraced.
         auto settleFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -2100,9 +1865,8 @@ namespace uf::task
                 );
             }
 
-            // The duration came from a whole millisecond count and is capped far
-            // below any tick-count ceiling, so the round trip back to
-            // milliseconds is exact and non-negative.
+            // The duration came from a whole millisecond count and is capped
+            // far below any tick ceiling, so the round trip is exact.
             auto const call = NativeCallIdentity{
                 .verb           = "settle",
                 .durationMillis = static_cast<uint64>(
@@ -2115,9 +1879,8 @@ namespace uf::task
             context->settle(duration);
             if (context->cancellationRequested())
             {
-                // Record the abandoned settle before taking the terminal path,
-                // so the trace shows the pause that was cut short rather than
-                // ending on a verb that never reported anything.
+                // Record the abandoned settle first, so the trace shows the
+                // pause that was cut short rather than a verb that said nothing.
                 auto const cancelled = fail(
                     AutomationErrorKind::Cancelled,
                     "cancelled while settling"
@@ -2129,24 +1892,19 @@ namespace uf::task
             return 0;
         }
 
-        // One spelling the framework may pass to `emit`, and the stream event it
-        // names. The framework writes the bare verb ("step_started") and the wire
-        // name carries the layer ("framework.step_started"), so the layer prefix
-        // is spelled once, in the trace schema, and cannot drift from what a
-        // reader sees.
+        // One spelling the framework may pass to `emit`, and the event it names.
+        // The framework writes the bare verb ("step_started"); the layer prefix
+        // lives once, in the trace schema.
         struct SemanticEventName final
         {
             std::string_view      verb;
             trace::TraceEventKind kind;
         };
 
-        // The whole semantic vocabulary the framework may request. Anything else
-        // is a framework bug rather than a bad argument: this table and the Luau
-        // call sites are the same binary, so a name that is not here was never
-        // written by a framework this host shipped.
-        //
-        // framework.subtask_entered / subtask_exited are absent because cross-file
-        // reuse is P1: there is no ctx:call to emit them.
+        // The whole vocabulary the framework may request. Anything else is a
+        // framework bug rather than a bad argument: this table and the Luau call
+        // sites ship in the same binary. subtask_entered / subtask_exited are
+        // absent because cross-file reuse is P1 -- there is no ctx:call yet.
         constexpr auto k_semanticEventNames = std::array{
             SemanticEventName{
                 .verb = "step_started",
@@ -2182,12 +1940,9 @@ namespace uf::task
             },
         };
 
-        // Reads the scope label at `index`. A non-string is a framework bug: every
-        // call site has already checked its own argument -- ctx:step refuses a
-        // non-string name and task.interrupt refuses a non-string id -- so a
-        // non-string arriving here means the framework, not the project, is wrong.
-        // Length and character set are the stream validator's, because they are
-        // the same rules for every label whatever asked for one.
+        // The scope label at `index`. A non-string is a framework bug rather than
+        // a bad argument: every call site has already checked its own. Length and
+        // character set are the stream validator's.
         [[nodiscard]]
         auto checkScopeLabel(
             lua_State* state,
@@ -2209,12 +1964,9 @@ namespace uf::task
             return std::string{p_text, length};
         }
 
-        // Reads a whole non-negative count at `index`.
-        //
-        // Tier B rather than an invariant failure, because every count `emit`
-        // takes originates in a project's own policy table -- retry attempts and
-        // backoff milliseconds -- so a value out of range is a project error the
-        // author can catch and correct.
+        // A whole non-negative count at `index`. Tier B rather than an invariant
+        // failure, because every count `emit` takes comes from a project's own
+        // policy table.
         [[nodiscard]]
         auto checkCount(lua_State* state, int index, std::string const& what) -> uint64
         {
@@ -2269,28 +2021,20 @@ namespace uf::task
 
         // emit(name, ...) -> (). Requests one framework semantic event.
         //
-        // It is admitted under the design's primitive rule as a safety primitive,
-        // for the same shape of reason `raise` is: the framework's own structure
-        // -- which step is open, which attempt this is, which interrupt matched --
-        // is not observable from anywhere else, and a trace that records only what
-        // the host did cannot explain a run the framework shaped. Nothing about
-        // page selection, looping or game decisions crosses here; the caller
-        // decided all of it and is only saying what it decided.
+        // Admitted as a safety primitive for `raise`'s shape of reason: the
+        // framework's own structure -- which step is open, which attempt this is
+        // -- is observable nowhere else, and a trace recording only what the host
+        // did cannot explain a run the framework shaped.
         //
-        // The design writes this primitive as emit(event) taking a table. It takes
-        // a name and scalars instead, because section 5's second invariant admits
-        // only host-minted handles and scalars as arguments, and a Luau table is
-        // neither. Nothing is lost: the vocabulary is closed (see above), so the
-        // positional shape is decided by the name.
+        // The design writes it as emit(event) taking a table; it takes a name and
+        // scalars because section 5's second invariant admits only host-minted
+        // handles and scalars. Nothing is lost: the vocabulary is closed, so the
+        // name decides the positional shape.
         //
-        // It is deliberately NOT a passthrough. The host validates the request
-        // against the stream state machine and records nothing that fails, which
-        // is what keeps this from being a hole through which a buggy framework
-        // writes a plausible history of a run that did not happen that way.
-        //
-        // It writes no task.native_call of its own. The event IS the record, and a
-        // second line saying a trace call happened would double every framework
-        // event for no evidence.
+        // It is not a passthrough -- the host validates against the stream state
+        // machine and records nothing that fails, so a buggy framework cannot
+        // write a plausible history of a run that did not happen. It writes no
+        // task.native_call of its own: the event IS the record.
         auto emitFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -2332,15 +2076,11 @@ namespace uf::task
 
         // terminal() -> bool. Whether this generation is already spent.
         //
-        // It is the one primitive that does NOT enter through guardFatal, and
-        // that is its entire purpose: the framework's cleanup paths have to ask
-        // whether the generation is still live before they emit a closing event,
-        // and a question that raised when the answer is "no" could never be
-        // asked. Without it, a step whose body was cancelled would raise a second
-        // time on the way out and bury the cause under its own consequence.
-        //
-        // It confers nothing: the answer is already observable to a script as
-        // "the last primitive refused".
+        // The one primitive that does not enter through guardFatal, which is its
+        // whole purpose: a framework cleanup path must be able to ask whether the
+        // generation is live before emitting a closing event, and a question that
+        // raised when the answer is "no" could never be asked. It confers nothing
+        // -- the answer is already observable as "the last primitive refused".
         auto terminalFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -2348,17 +2088,14 @@ namespace uf::task
             return 1;
         }
 
-        // The largest magnitude a random bound may take. Beyond 2^53 a Lua
-        // number (an IEEE double) can no longer represent every integer, so the
-        // value the script passed would already be rounded and a returned integer
-        // might not round-trip. Bounding here keeps every result an exact integer.
+        // The largest magnitude a random bound may take: beyond 2^53 a Lua
+        // number cannot represent every integer, so the bound the script passed
+        // would already have been rounded.
         constexpr auto k_maxExactInteger = int64{9007199254740992};
 
-        // Reads a random bound at `index` as an integer. A non-number, a
-        // non-integral value, or one outside +/-2^53 is a Tier B InvalidResource,
-        // keeping the script-facing failure model single-shaped. The messages name
-        // the script-facing spelling ctx:random, because that is what a project
-        // author wrote to get here.
+        // A random bound at `index`. Out of range is a Tier B InvalidResource,
+        // and the messages name ctx:random because that is the spelling the
+        // author wrote.
         [[nodiscard]]
         auto checkRandomInteger(lua_State* state, int index) -> int64
         {
@@ -2383,12 +2120,10 @@ namespace uf::task
             return *value;
         }
 
-        // random([m [, n]]) -> number. Mirrors Lua's math.random over the
-        // host's deterministic seeded RNG: no argument yields a double in [0, 1);
-        // one argument m yields an integer in [1, m]; two arguments yield an integer
-        // in [m, n]. A bad shape -- a non-integer bound, m < 1, or m > n -- is a
-        // Tier B InvalidResource, matching math.random's own rejection of an empty
-        // interval.
+        // random([m [, n]]) -> number. math.random's shape over the host's
+        // deterministic seeded RNG: no argument gives a double in [0, 1), one
+        // gives an integer in [1, m], two give one in [m, n]. An empty interval is
+        // a Tier B InvalidResource, as math.random rejects one.
         auto randomFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -2436,9 +2171,9 @@ namespace uf::task
             return 1;
         }
 
-        // Starts a fresh handle metatable on the stack with an empty __index method
-        // table, __newindex deny, and the fixed __tostring/__metatable label. The
-        // caller adds any methods, then finishMetatable freezes and registers it.
+        // A fresh handle metatable on the stack: empty __index method table,
+        // __newindex deny, fixed __tostring/__metatable label. The caller adds
+        // any methods, then finishMetatable freezes and registers it.
         auto beginMetatable(lua_State* state, char const* label) -> void
         {
             lua_newtable(state);
@@ -2461,16 +2196,10 @@ namespace uf::task
         // Freezes the metatable on the stack top and stores it in the registry
         // under `registryType`, popping it.
         //
-        // The freeze is script::deepFreezeMetatable, the sandbox's own walk in
-        // its metatable-checking form, so the design's runtime rules -- a
-        // __metatable field on every metatable, an __index that is a table and
-        // never a function, frozen before anything wears it -- are enforced on
-        // these at construction rather than restated here as a convention.
-        //
-        // The metatable-checking form is the one that applies: a handle kind's
-        // metatable is registered here and attached to each handle later, so the
-        // plain deepFreeze would only ever see it as an ordinary table and would
-        // never check it as the metatable it is about to become.
+        // deepFreezeMetatable rather than deepFreeze: this metatable is
+        // registered here and worn later, so the plain walk would only ever see
+        // an ordinary table and would never check the design's metatable rules --
+        // a __metatable field, a table __index, frozen before anything wears it.
         [[nodiscard]]
         auto finishMetatable(lua_State* state, char const* registryType) -> Status
         {
@@ -2479,22 +2208,16 @@ namespace uf::task
             return ok();
         }
 
-        // Registers the metatables only a bound session can ever mint: the cycle
-        // ticket, the template and the deadline. They belong to the private
-        // capability installer because every one of them is produced by a
-        // primitive, so a VM with no session has nothing that could wear them.
+        // Registers the metatables only a bound session can mint. They belong to
+        // the private capability installer because a primitive produces each one,
+        // so a VM with no session has nothing that could wear them.
         //
-        // The Tier B error carrier is absent on purpose. Its metatable is per
-        // instance -- it holds that error's own kind, message and retryable
-        // behind a table __index -- so there is nothing shared to register here,
-        // and its identity is the userdata tag rather than a registry entry. The
-        // match and reading handles are absent for exactly that reason too: both
-        // carry per-instance fields, so both wear a metatable of their own.
-        //
-        // None of the three carries a method. They are pure names the host hands
+        // The Tier B carrier and the field-carrying handle kinds are absent on
+        // purpose: their metatables are per instance, so there is nothing shared
+        // to register and their identity is the userdata tag. None of the
+        // registered kinds carries a method -- they are pure names the host hands
         // back to itself, so every operation on a cycle is a primitive taking the
-        // ticket. The resolved page's `is` was the one method here, and it went
-        // with the page model.
+        // ticket.
         [[nodiscard]]
         auto installSessionMetatables(lua_State* state) -> Status
         {
@@ -2508,18 +2231,12 @@ namespace uf::task
             return finishMetatable(state, k_deadlineType);
         }
 
-        // Populates `uf.errors` with one constant per AutomationErrorKind. Both
-        // the key and the value are that kind's domain wire spelling, so a script
-        // writes `err.kind == uf.errors.timeout` and compares the exact string
-        // the Tier B error and the trace line both carry.
-        //
-        // The table is built here, from the same domain function, rather than
-        // generated into a .luau file by a build step. A generator would parse the
-        // enum and emit a third artifact that has to be kept in sync; reading the
-        // enum at install time leaves one source of truth by construction, with no
-        // parse, no codegen and nothing to go stale. Iteration is over the
-        // reflected entries, which is the repository's existing enumeration of the
-        // kinds, so a new kind appears here with no edit to this function.
+        // Populates `uf.errors` with one constant per AutomationErrorKind, key
+        // and value both that kind's domain wire spelling, so `err.kind ==
+        // uf.errors.timeout` compares the exact string the carrier and the trace
+        // line carry. Reading the reflected entries at install time rather than
+        // generating a .luau table leaves one source of truth and makes a new
+        // kind appear here with no edit.
         auto installErrorKindTable(lua_State* state, int root) -> void
         {
             lua_newtable(state);
@@ -2533,9 +2250,8 @@ namespace uf::task
             lua_setfield(state, root, "errors");
         }
 
-        // Binds one primitive (`fieldName`) into the private surface table at
-        // `surface`, as a C closure carrying the TaskContext as lightuserdata
-        // upvalue 1.
+        // Binds one primitive into the private surface table at `surface`, as a
+        // C closure carrying the TaskContext as lightuserdata upvalue 1.
         auto installPrimitive(
             lua_State* state,
             int surface,
@@ -2550,15 +2266,11 @@ namespace uf::task
             lua_setfield(state, surface, fieldName);
         }
 
-        // Assembles the frozen global uf table: the error kinds, and today
-        // nothing else. Every entry is data. Nothing here can observe or act,
-        // which is why it is safe as a project global.
-        //
-        // Its `elements` and `pages` name tables went with the C++ page model.
-        // The root survives them because uf.errors is what a project compares an
-        // error kind against, and because the pre-VM pass still resolves
-        // uf.elements.<name> literals -- against the project file now, see
-        // task/script-validator.hpp.
+        // Assembles the frozen global uf table: the error kinds and nothing
+        // else. Every entry is data that can neither observe nor act, which is
+        // what makes it safe as a project global. Its `elements` and `pages`
+        // tables went with the C++ page model; the pre-VM pass still resolves
+        // uf.elements.<name> against the project file (task/script-validator.hpp).
         [[nodiscard]]
         auto buildUfData(lua_State* state) -> Status
         {
@@ -2573,33 +2285,26 @@ namespace uf::task
         }
 
         // Assembles the private capability surface and LEAVES IT ON THE STACK,
-        // which is the contract script::PrivateCapabilityInstaller states: the
-        // boot hands this one table to the framework bundle as a chunk argument
-        // and then drops it, so no name in either environment ever refers to it.
+        // as script::PrivateCapabilityInstaller's contract states: the boot hands
+        // this table to the framework bundle as a chunk argument and drops it, so
+        // no name in either environment refers to it. It is frozen for the uf
+        // table's reason: rebinding a primitive would silently redefine what
+        // "click" means.
         //
-        // It is frozen for the same reason the uf table is: a framework bug
-        // that rebound a primitive would silently redefine what "click" means,
-        // and freezing turns that into an immediate error instead.
-        // WHERE THE TWO ENVIRONMENTS DIFFER, AND THE ONLY PLACE THEY DO.
+        // `mode` is the only place the two environments differ, and it is not a
+        // permission check -- a Run surface simply never binds cycle_crop or
+        // probe, so a framework module naming one reads nil. Section 2 rule 2 of
+        // docs/plans/2026-08-01-three-layers-and-agent-operator.md asks for
+        // exactly that: the privileged verbs do not exist rather than being
+        // refused one call at a time. cycle_click_point and cycle_long_press are
+        // privileged too but bound on both; their installations below say where
+        // their confinement lives.
         //
-        // `mode` decides whether two keys exist on the table this builds. It is
-        // not a permission check and there is no refusal anywhere below: a Run
-        // surface simply never binds cycle_crop or probe, so a framework module
-        // that named one of them reads nil. That is what section 2 rule 2 of
-        // docs/plans/2026-08-01-three-layers-and-agent-operator.md asks for: the
-        // privileged verbs do not exist rather than being refused one call at a
-        // time.
-        //
-        // The third privileged verb, cycle_click_point, is bound on both -- see
-        // its installation below for why, and for where its own confinement
-        // actually lives.
-        //
-        // Everything else on the surface is identical between the two, because
-        // the exploration environment is the run surface PLUS these three and
-        // never a different set (docs/plans/2026-08-01-agent-front-end-and-
-        // exploration.md 1). An agent must meet exactly the guarantees a task
-        // meets on every verb they share, or what it measures would be a
-        // statement about a system the product does not ship.
+        // Everything else is identical between the two, because the exploration
+        // environment is the run surface plus those mode-gated keys and never a
+        // different set (docs/plans/2026-08-01-agent-front-end-and-exploration.md
+        // 1). An agent must meet exactly the guarantees a task meets on every
+        // verb they share.
         [[nodiscard]]
         auto buildPrivateSurface(
             lua_State* state,
@@ -2644,13 +2349,9 @@ namespace uf::task
                 "uf_cycle_read",
                 context
             );
-            // Bound outside the Exploration block, like cycle_read and unlike
-            // cycle_crop. It hands back text and rectangles, which is an ANSWER
-            // about the frame rather than the frame's pixels or a bare
-            // coordinate -- and those two are what the privileged verbs are. A
-            // business task reading a scrolling list it cannot draw rectangles
-            // inside is doing ordinary work, and an agent authoring that list
-            // needs the same verb under the same guarantees.
+            // Unprivileged like cycle_read: it hands back text and rectangles,
+            // which is an answer about the frame rather than the frame's pixels
+            // or a bare coordinate.
             installPrimitive(
                 state,
                 surface,
@@ -2667,16 +2368,13 @@ namespace uf::task
                 "uf_cycle_click",
                 context
             );
-            // Bound on BOTH surfaces, and this is not an oversight. The trusted
-            // framework needs it in run mode: an element verified by its expected
-            // text carries no match handle, so observe.click delivers at the
-            // rectangle the page model gave it, and that is the locked decision 4
-            // of docs/plans/2026-08-01-three-layers-and-agent-operator.md 5. What
-            // makes it privileged is that no BUSINESS environment can name it --
-            // it is a closure upvalue of the framework and nothing published into
-            // a project environment forwards it, which is that document's section
-            // 2 rule stated exactly. The exploration environment publishes a
-            // forward for it; the run environment publishes none.
+            // Bound on both surfaces, not an oversight: an element verified by
+            // its expected text carries no match handle, so observe.click
+            // delivers at the rectangle the page model gave it (locked decision 4
+            // of docs/plans/2026-08-01-three-layers-and-agent-operator.md 5). Its
+            // confinement is that no business environment can name it -- it is a
+            // framework closure upvalue, and only the exploration environment
+            // publishes a forward.
             installPrimitive(
                 state,
                 surface,
@@ -2685,12 +2383,9 @@ namespace uf::task
                 "uf_cycle_click_point",
                 context
             );
-            // Bound on BOTH surfaces for the reason immediately above, because it
-            // is the same reason: a long press names a bare coordinate, so it is
-            // the same privilege under the same confinement. The framework needs
-            // it in run mode to press an element the page model placed, and the
-            // exploration environment needs it because an agent measuring a
-            // target is precisely who discovers that a long press magnifies one.
+            // Bound on both surfaces for the reason immediately above: a long
+            // press names a bare coordinate, so it is the same privilege under
+            // the same confinement.
             installPrimitive(
                 state,
                 surface,
@@ -2743,10 +2438,8 @@ namespace uf::task
                 context
             );
             installPrimitive(state, surface, "key", &keyFn, "uf_key", context);
-            // Bound outside the Exploration block, like `key` and unlike
-            // cycle_crop: a business task that scrolls a list is doing ordinary
-            // work, and the two privileges are pixels and bare coordinates rather
-            // than input in general.
+            // Unprivileged like `key`: the two privileges are pixels and bare
+            // coordinates, not input in general.
             installPrimitive(
                 state,
                 surface,
@@ -2792,8 +2485,7 @@ namespace uf::task
             );
 
             // The one non-primitive entry: the Tier B label, so ctx:try can ask
-            // whether a caught value wears it without the framework spelling the
-            // string itself. See k_errorTagField.
+            // whether a caught value wears it. See k_errorTagField.
             lua_pushstring(state, k_errorType);
             lua_setfield(state, surface, k_errorTagField);
 
@@ -2826,9 +2518,8 @@ namespace uf::task
         -> script::PrivateCapabilityInstaller
     {
         // Lifetime: the closure stores this address, which the caller guarantees
-        // outlives the VM this installer configures (see the header contract). The
-        // TaskContext is non-movable, so the pointer stays valid for the VM's life;
-        // it is a non-owning observation, never an owner.
+        // outlives the VM this installer configures (see the header contract).
+        // The TaskContext is non-movable, so it is a non-owning observation.
         TaskContext* const contextPtr = &context;
         return [contextPtr, mode](lua_State* state) -> Status
         {

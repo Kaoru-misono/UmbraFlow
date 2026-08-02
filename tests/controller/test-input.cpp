@@ -120,13 +120,11 @@ namespace uf
         {
             names.emplace_back(named);
         }
-        // A literal rather than a computed total, so growing the set is a
-        // deliberate edit here as well as in domain.
+        // A literal, not a computed total: growing the set is a deliberate edit here too.
         REQUIRE(names.size() == 52U);
 
-        // The mapping matches on the bytes value() returns, so the longest name
-        // in the set has to survive KeyName's fixed storage first. Too small a
-        // k_maxKeyNameBytes truncates it here rather than at the lookup.
+        // Too small a k_maxKeyNameBytes truncates the longest name here rather
+        // than at the lookup, which matches on the bytes value() returns.
         for (auto const named : k_namedKeys)
         {
             CAPTURE(named);
@@ -160,8 +158,8 @@ namespace uf
             std::pair{std::string_view{"F1"}, uint16{0x0070U}},
             std::pair{std::string_view{"F3"}, uint16{0x0072U}},
             std::pair{std::string_view{"F12"}, uint16{0x007BU}},
-            // The named family. Without these the target's battle loop is
-            // unreachable: a digit selects a card and only ENTER plays one.
+            // Without the named family the target's battle loop is unreachable:
+            // a digit selects a card and only ENTER plays one.
             std::pair{std::string_view{"ENTER"}, uint16{0x000DU}},
             std::pair{std::string_view{"ESC"}, uint16{0x001BU}},
             std::pair{std::string_view{"CAPS"}, uint16{0x0014U}},
@@ -188,13 +186,10 @@ namespace uf
             "AB",
             "10",
             "+",
-            // The named family is closed and case-sensitive, and both halves of
-            // that matter here. Above the divide are real keys no target has been
-            // observed printing, and admitting one on the grounds that keyboards
-            // have it is exactly the escape hatch this set refuses. Below are
-            // other spellings of names the set does hold; a keystroke that lands
-            // on a key the author did not name is indistinguishable from one they
-            // did, so a near miss must fail rather than be guessed at.
+            // The named family is closed and case-sensitive: above the divide are
+            // real keys no target was observed printing, below are other spellings
+            // of names the set does hold. A keystroke landing on a key the author
+            // never named is indistinguishable from one they did.
             "TAB",
             "CTRL",
             "ALT",
@@ -215,10 +210,9 @@ namespace uf
             );
         }
 
-        // A refusal has to name the whole vocabulary it refused against,
-        // including the case rule. "enter" is what a real operator typed, and the
-        // previous message put "uppercase" in front of "A"-"Z" alone, where it
-        // reads as a rule about letters and leaves a named key unexplained.
+        // A refusal names the whole vocabulary it refused against, case rule
+        // included: "uppercase" in front of "A"-"Z" alone reads as a rule about
+        // letters and leaves a named key unexplained.
         auto const lowercase = KeyInput::fromName("enter");
         REQUIRE_FALSE(lowercase.has_value());
         auto const message = lowercase.error().message();

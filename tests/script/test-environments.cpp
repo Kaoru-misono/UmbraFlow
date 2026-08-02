@@ -8,29 +8,22 @@
 #include <string>
 #include <string_view>
 
-// The two-environment model, tested as a mechanism: the denial list a project
-// script sees, the impossibility of reaching the framework environment from the
-// project one, and the failure a host-table installer can now report.
-//
-// Every case here is written to be falsifiable. Where a claim is an absence --
+// The two-environment model tested as a mechanism. Where a claim is an absence --
 // "the project cannot see X" -- the same expression is also run on the framework
-// side, which must see X. An absence that both sides report would mean the test
-// is asserting nothing.
+// side, which must see X; an absence both sides reported would mean the case is
+// asserting nothing.
 namespace uf::script
 {
     namespace
     {
-        // A value that exists nowhere but inside the probe's framework
-        // environment. Its only job is to be findable, so the isolation claim is
-        // about a concrete value rather than about a name nobody defined.
+        // Exists nowhere but inside the probe's framework environment, so the isolation
+        // claim is about a concrete value rather than a name nobody defined.
         constexpr auto k_sentinel = std::string_view{"uf-probe-sentinel-91c4"};
 
-        // A framework module that publishes the sentinel two different ways: as
-        // its module exports, which the loader binds in the framework
-        // environment under the module name, and as a plain global, which lands
-        // in the framework environment because that is what the module's closure
-        // writes its globals into. Both are routes the project side must fail to
-        // follow, and neither is reachable without the environment itself.
+        // Publishes the sentinel twice: as module exports, which the loader binds under
+        // the module name, and as a plain global, which lands in the framework
+        // environment because that is where the module's closure writes globals. Both
+        // are routes the project side must fail to follow.
         [[nodiscard]]
         auto frameworkSource() -> std::string
         {
@@ -39,15 +32,11 @@ namespace uf::script
                    "return { sentinel = '" + sentinel + "' }\n";
         }
 
-        // A bounded, cycle-safe reachability search for the sentinel over every
-        // name a project environment is allowed to hold, plus the two framework
-        // names, following table values, table KEYS, and metatables.
-        //
-        // It is deliberately the same source on both sides. Run under the
-        // framework environment the two framework names resolve and it returns
-        // 1; run under the project environment every route must dead-end and it
-        // returns 0. A single expression that flips answer with the environment
-        // is a discriminator; two different expressions would not be.
+        // A bounded, cycle-safe search for the sentinel over every name a project
+        // environment may hold plus the two framework names, following table values,
+        // table KEYS, and metatables. Deliberately the same source on both sides: one
+        // expression that flips answer with the environment is a discriminator, two
+        // different expressions would not be.
         [[nodiscard]]
         auto reachabilityScan() -> std::string
         {
@@ -104,12 +93,9 @@ namespace uf::script
             auto engine = Engine::create();
             REQUIRE(engine.has_value());
 
-            // The design's denial list in full, not a sample of it. The first
-            // group are globals; the second are fields of libraries the project
-            // environment does admit, which is why the library itself is
-            // asserted present first -- `os.time == nil` would also hold if `os`
-            // had silently gone missing, and that would be a different VM than
-            // the one under test.
+            // The denial list in full, not a sample. The library itself is asserted
+            // present first because `os.time == nil` would also hold if `os` had
+            // silently gone missing, which would be a different VM than the one tested.
             constexpr std::string_view deniedGlobals[] = {
                 "_G",
                 "getfenv",
@@ -158,8 +144,8 @@ namespace uf::script
 
             SUBCASE("control: the framework environment does hold the sentinel")
             {
-                // Without this the case below proves nothing: an environment
-                // where the framework never ran would pass it trivially.
+                // Without this, an environment where the framework never ran passes
+                // the case below trivially.
                 auto const found = runInEnvironment(
                     framework,
                     scan,
@@ -182,8 +168,8 @@ namespace uf::script
 
             SUBCASE("neither framework name is a project global")
             {
-                // The two direct routes, named rather than searched for, so a
-                // failure says which one opened.
+                // The two direct routes named rather than searched, so a failure says
+                // which one opened.
                 auto const named = runInEnvironment(
                     framework,
                     "return (probe == nil and frameworkSentinel == nil) and 1 or 0",
@@ -210,17 +196,12 @@ namespace uf::script
             using testing::ProbeEnvironment;
             using testing::runInEnvironment;
 
-            // The framework environment chains __index to the main globals, so a
-            // module that binds a name at LOAD time keeps that value for the
-            // whole generation regardless of what the boot removes afterwards.
-            // The boot therefore strips the denial list before any Lua runs --
-            // the framework included -- rather than after loading it, which is
-            // what the design's §7 ordering said.
-            //
-            // The module below tries every capture the denial list covers, plus
-            // one name it is meant to keep. Both halves are asserted, so this
-            // fails if the strip stopped happening AND if the strip started
-            // taking the whole standard library with it.
+            // The framework environment chains __index to the main globals, so a module
+            // that binds a name at LOAD time keeps it for the whole generation whatever
+            // the boot removes afterwards. The boot therefore strips the denial list
+            // before any Lua runs, the framework included; move the strip back after
+            // the framework load and this goes red. The admitted name is asserted too,
+            // so a strip that took the whole standard library with it also fails.
             constexpr auto framework = std::string_view{
                 "capturedGlobalEnv  = _G\n"
                 "capturedGetfenv    = getfenv\n"
@@ -274,9 +255,8 @@ namespace uf::script
         {
             using testing::probeInstallerFailure;
 
-            // Two different failures, because a create() that always reported
-            // one fixed error would pass a single-case test. The kind and the
-            // message must both be the installer's own.
+            // Two different failures, because a create() reporting one fixed error would
+            // pass a single-case test. Kind and message must both be the installer's own.
             auto const refused = probeInstallerFailure(
                 AutomationErrorKind::InvalidResource,
                 "probe installer refused to build its tables"
@@ -305,10 +285,9 @@ namespace uf::script
                 == "probe installer has no such capability"
             );
 
-            // And the VM create() had already allocated is gone. lua_close is
-            // the only thing that runs a userdata destructor, so the witness the
-            // installer registered reaching exactly one is a direct observation
-            // of the close rather than an inference from the returned error.
+            // The VM create() had already allocated is gone. lua_close is the only thing
+            // that runs a userdata destructor, so the installer's witness reaching
+            // exactly one is a direct observation of the close, not an inference.
             CHECK(refused.finalizedHostObjects == 1);
             CHECK(unsupported.finalizedHostObjects == 1);
         }

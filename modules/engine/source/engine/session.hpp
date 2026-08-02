@@ -39,61 +39,43 @@ namespace uf::engine
 
     class EngineSession;
 
-    // The largest region one cycle_read may hand the OCR engine, in pixels.
-    //
-    // It is a ceiling on cost rather than on meaning: a read is the one engine
-    // verb whose price is set by an argument a script chose, and recognising a
-    // strip runs in single-digit milliseconds only while the strip is a strip.
-    // A script asking to read the whole screen is asking for a detector pass
-    // this adapter does not run, so the refusal is what tells it so.
-    //
-    // CALIBRATION: a 1600x900 target's widest single label measured well under
-    // this; it is deliberately far above any line and far below a full frame.
+    // The largest region one cycle_read may hand the OCR engine, in pixels. A
+    // ceiling on cost, not on meaning: recognising a strip runs in single-digit
+    // milliseconds only while the strip is a strip, and a script asking to read
+    // the whole screen is asking for a detector pass this adapter does not run.
+    // A 1600x900 target's widest single label measured well under this.
     inline constexpr auto k_maximumReadPixels = uint64{1600} * 200U;
 
-    // The largest region one block read may hand the OCR engine, in pixels.
-    //
-    // It is a SEPARATE ceiling because the two verbs are bounded by different
-    // things. A single-line read is capped near a line's area because a caller
-    // asking to read a whole panel as one line is asking for nonsense; a block
-    // read is asked about a panel on purpose, and the ceiling it needs is only
-    // "not more than a frame". Detection resizes its input down to a 960-pixel
-    // longest side before the model sees it, so the cost of a block read grows
-    // with the number of LINES the region holds rather than with its area --
-    // which is what the caller's own line budget bounds.
-    //
-    // CALIBRATION: 4096x4096 is above every desktop this project binds to and
-    // below any region a capture could produce by accident. It exists to refuse
-    // an arithmetic mistake, not to tune anything.
+    // The largest region one block read may hand the OCR engine, in pixels. A
+    // separate ceiling because a block read is asked about a panel on purpose:
+    // detection resizes its input to a 960-pixel longest side before the model
+    // sees it, so a block read's cost grows with the number of LINES rather than
+    // with area, and the caller's own line budget is what bounds it. 4096x4096 is
+    // above every desktop this project binds to, and refuses an arithmetic
+    // mistake rather than tuning anything.
     inline constexpr auto k_maximumBlockReadPixels = uint64{4096} * 4096U;
 
-    // The longest one capture may block before observe() gives up on it. It is a
-    // conservative placeholder awaiting the first real daily and a real-machine
-    // soak: the WGC adapter's own stall fuse is a second, and a compositor that
-    // has produced nothing for twice that is not going to produce a frame this
-    // cycle either. Calibrate it here -- it is the only place the bound is
-    // spelled -- once measured capture latencies exist.
+    // The longest one capture may block before observe() gives up on it. A
+    // conservative placeholder awaiting a real-machine soak: the WGC adapter's
+    // own stall fuse is a second, and a compositor silent for twice that will not
+    // produce a frame this cycle either. This is the only place the bound is
+    // spelled.
     inline constexpr auto k_defaultCaptureTimeout = MonotonicInstant::Duration{
         std::chrono::seconds{2}
     };
 
-    // The read-only configuration a session captures once at construction. It is
-    // a transport aggregate: build it with designated initializers. The live
-    // fingerprint has no default state, so it must be supplied at every
-    // construction site; every other field carries a safe in-class default.
+    // The read-only configuration a session captures once at construction. A
+    // transport aggregate: build it with designated initializers. The live
+    // fingerprint has no default state and must be supplied at every site.
     struct EngineSessionConfig final
     {
         ProjectFingerprint liveFingerprint;
 
-        // The geometry the page model this session serves was authored at.
-        //
-        // It is supplied rather than read off a loaded project because the
-        // engine no longer loads one: the model is layer two's, stated at the top
-        // of its own project file, and the host reads it there
-        // (docs/plans/2026-07-31-script-owned-page-model.md 4). Every guarantee
-        // that used to consult the catalog's fingerprint -- the click edge's
-        // compatibility refusal and the raw match's -- consults this instead, so
-        // the check is unchanged and only its source moved.
+        // The geometry the page model this session serves was authored at,
+        // supplied rather than read off a loaded project because the engine loads
+        // none -- the model is layer two's, stated at the top of its own project
+        // file (docs/plans/2026-07-31-script-owned-page-model.md 4). The click
+        // edge's compatibility refusal and the raw match's consult this.
         ProjectFingerprint projectFingerprint;
 
         uint64                     maximumPixelComparisons{};
@@ -105,15 +87,10 @@ namespace uf::engine
     };
 
     // Where one raw template match landed on one frame, what it scored, and the
-    // ceiling that score is read against.
-    //
-    // It carries no element and no page, because a template loaded by the script
-    // layer belongs to neither -- and after the page model moved to Luau there is
-    // no other shape of evidence left in this module. What it carries is a
-    // rectangle this frame produced, a distance, and the maximum that distance
-    // could have been, so the click that consumes it is fenced by the same
-    // same-frame, lease and fingerprint checks. Whether the score counts as a hit
-    // is the caller's judgement and deliberately not decided here.
+    // ceiling that score is read against. It carries no element and no page: a
+    // template loaded by the script layer belongs to neither. Whether the score
+    // counts as a hit is the caller's judgement and deliberately not decided
+    // here.
     struct MatchFound final
     {
         PixelRect  matchedRect;
@@ -124,39 +101,28 @@ namespace uf::engine
     };
 
     // One line of text read off one frame, with where it was read and how sure
-    // the engine was.
-    //
-    // The confidence is not decoration. Reading is the one capability that fails
-    // open -- a rectangle pointed at the wrong place returns plausible text
-    // rather than nothing -- so a caller that cannot tell "there really is text
-    // here" from "the model guessed" has no way to refuse a bad read.
+    // the engine was. Reading is the one capability that fails open -- a
+    // rectangle pointed at the wrong place returns plausible text rather than
+    // nothing -- so the confidence is what lets a caller refuse a bad read.
     struct TextReading final
     {
         std::string text{};
 
         // The region that was read, in frame pixels, as the caller asked for it.
-        // A read has no score to locate it by, so the rectangle is the whole of
-        // "where did this come from".
+        // A read has no score to locate it by.
         PixelRect rect;
 
-        // The model's own confidence in basis points, as ocr::TextLine reports
-        // it.
+        // Basis points, as ocr::TextLine reports it.
         uint32 confidenceBp{};
     };
 
     // A single-use, move-only handle over one captured frame, vended only by
-    // EngineSession::observe. It carries the frame, its lease, its frame
-    // identity, and a shared immutable token identifying the session that
-    // produced it.
-    //
-    // The token owns no session state and is never dereferenced. It follows a
-    // moved EngineSession and lets every operation reject a handle vended by a
-    // different session without retaining a borrow into the session object.
-    // Consuming the handle by value makes it typed single-use, and the invalidated
-    // flag fences any surviving alias at runtime. The move operations copy the
-    // members into the destination and invalidate the source, so a moved-from
-    // handle is dead exactly like a consumed one and fails StaleObservation on
-    // any later use.
+    // EngineSession::observe. The session identity token owns no state and is
+    // never dereferenced; it follows a moved EngineSession and lets every
+    // operation reject a handle vended by a different session without retaining a
+    // borrow into the session object. Consuming by value makes the handle typed
+    // single-use, and the invalidated flag fences any surviving alias, including
+    // a moved-from one, with StaleObservation.
     class Observation final
     {
         friend class EngineSession;
@@ -185,26 +151,21 @@ namespace uf::engine
     };
 
     // One rectangle of one frame's pixels, copied out of the observation that
-    // held them.
+    // held them. Every other verb here hands back an answer about the frame; this
+    // one hands back the evidence, because its caller is the exploration
+    // front-end, where an agent with no model yet must be able to look at the
+    // screen (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2). The
+    // primitive above it is loaded in that environment only, never for a business
+    // script.
     //
-    // WHY THE PIXELS LEAVE THIS MODULE AT ALL. Every other verb here answers a
-    // question ABOUT the frame -- where a template matched, what text a region
-    // holds -- and hands back the answer rather than the evidence. This one
-    // hands back the evidence, because its caller is the exploration front-end,
-    // whose whole purpose is that an agent with no model yet can look at the
-    // screen (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2). It is
-    // the reason the primitive above it is loaded in one environment and not the
-    // other; nothing about it is available to a business script.
-    //
-    // The pixels are BGRA8, packed, with no row padding: stride is width * 4.
-    // A Gray8 frame is widened rather than refused, on the same reasoning the
-    // text read widens one -- a capture format the caller did not choose must
-    // not change what a verb can answer.
+    // The pixels are BGRA8, packed, no row padding: stride is width * 4. A Gray8
+    // frame is widened rather than refused -- a capture format the caller did not
+    // choose must not change what a verb can answer.
     struct CroppedRegion final
     {
-        // The frame these pixels came from. It has no default constructor, so a
-        // construction site that leaves it out does not compile, and the crop's
-        // own trace line joins to the capture through it.
+        // The frame these pixels came from; the crop's trace line joins to the
+        // capture through it. No default constructor, so a site that leaves it
+        // out does not compile.
         FrameIdentity frame;
 
         uint32 width{};
@@ -222,9 +183,8 @@ namespace uf::engine
     };
 
     // The record of one delivered keystroke: the frame whose observation it spent
-    // and the key posted to the sink. There is no point, because a keystroke has
-    // none -- which is the whole reason it is a separate receipt rather than an
-    // ActReceipt with an invented coordinate.
+    // and the key posted to the sink. A separate receipt rather than an
+    // ActReceipt with an invented coordinate, because a keystroke names none.
     struct KeyReceipt final
     {
         FrameId frameId;
@@ -232,9 +192,8 @@ namespace uf::engine
     };
 
     // The record of one delivered wheel scroll: the frame whose observation it
-    // spent and the detent count posted to the sink. It carries no point for the
-    // reason KeyReceipt carries none -- the verb named none -- and the count is
-    // signed because the direction is half of what was delivered.
+    // spent and the detent count posted to the sink. No point, for KeyReceipt's
+    // reason; signed, because direction is half of what was delivered.
     struct ScrollReceipt final
     {
         FrameId frameId;
@@ -243,9 +202,8 @@ namespace uf::engine
 
     // The record of one delivered long press: the frame it was authorized
     // against, the client-space point the button went down at, and how long it
-    // stayed down. It carries a point where ScrollReceipt carries none because
-    // this verb named one, and it carries the hold because that is the only
-    // thing separating this receipt from an ActReceipt for the same coordinate.
+    // stayed down. The hold is the only thing separating this receipt from an
+    // ActReceipt for the same coordinate.
     struct LongPressReceipt final
     {
         FrameId            frameId;
@@ -256,17 +214,12 @@ namespace uf::engine
 
     // The recognition and action pipeline over one bound capture target.
     //
-    // Trace lifetime contract: the session does NOT own its trace sink. It stores
-    // a non-owning borrow of the run's trace::TraceRecorder, which is owned by
-    // `task::TaskHost::startTask`: that function holds the recorder in a
-    // std::unique_ptr local declared before the session it builds, so the session
-    // is destroyed first on the normal path and on every early return, and the
-    // recorder is non-movable so its address cannot drift while the session
-    // borrows it. Any other owner MUST reproduce both properties -- construct the
-    // recorder before the session, destroy it after, and never relocate it. The
-    // borrow exists because the run has exactly one evidence stream and every
-    // layer stamps its events through the same sequence counter, which a
-    // per-session owned sink could not provide.
+    // Trace lifetime contract: the session stores a non-owning borrow of the
+    // run's trace::TraceRecorder, so that a run has one evidence stream and one
+    // sequence counter. `task::TaskHost::startTask` holds the recorder in a
+    // std::unique_ptr local declared before the session, and the recorder is
+    // non-movable. Any other owner MUST reproduce both -- construct the recorder
+    // before the session, destroy it after, never relocate it.
     class EngineSession final
     {
         friend class Observation;
@@ -275,11 +228,10 @@ namespace uf::engine
         std::unique_ptr<IFrameSource>                        m_frameSource;
         std::unique_ptr<IActionSink>                         m_actionSink;
 
-        // Null when the composition root bound no OCR adapter, which is the
-        // normal state for every path that does not read text: the weights are
-        // tens of megabytes and loading them for a run that never reads would be
-        // a cost nobody asked for. readText refuses on its own terms when it is
-        // absent, rather than the session refusing to exist.
+        // Null when the composition root bound no OCR adapter -- the normal state
+        // for a path that never reads text, whose weights are tens of megabytes.
+        // readText refuses on its own terms rather than the session refusing to
+        // exist.
         std::unique_ptr<ocr::IOcrEngine> m_ocrEngine;
 
         trace::TraceRecorder& m_recorder;
@@ -302,9 +254,7 @@ namespace uf::engine
 
         // The two gates every verb taking an existing observation opens with: the
         // handle came from this session, and it has not been consumed or moved
-        // from. `verb` names the caller so the refusal still reads as that verb's
-        // own, which is why these stayed spelled out per verb until there were
-        // five of them.
+        // from. `verb` names the caller so the refusal reads as that verb's own.
         [[nodiscard]]
         auto ensureUsable(
             Observation const& observation,
@@ -312,10 +262,9 @@ namespace uf::engine
         ) const -> Status;
 
         // What one OCR call produced, before readText decides whether it is a
-        // reading or only a trace line. It is nested and private because nothing
-        // names it except readText: the trace line has to carry the engine
-        // identity and the duration even when no text was found, so the two
-        // cannot be folded into the optional reading itself.
+        // reading or only a trace line. The trace line carries the engine
+        // identity and the duration even when no text was found, so neither can
+        // be folded into the optional reading.
         struct ReadAttempt final
         {
             std::optional<TextReading> line{};
@@ -324,10 +273,9 @@ namespace uf::engine
             uint64      durationMicros{};
         };
 
-        // readTextLines' equivalent, and a separate type rather than a vector
-        // bolted onto the one above: a single-line read has at most one answer
-        // by contract, and folding the two into a container would make every
-        // reader of the single-line path ask how many elements it can have.
+        // readTextLines' equivalent. Separate rather than a vector bolted onto the
+        // one above: a single-line read has at most one answer by contract, and a
+        // container would make every reader of that path ask how many.
         struct BlockReadAttempt final
         {
             std::vector<TextReading> lines{};
@@ -357,9 +305,8 @@ namespace uf::engine
 
         ~EngineSession() = default;
 
-        // `ocrEngine` is optional and defaults to none, so every composition root
-        // that never reads text is unchanged and pays nothing. A session built
-        // without one refuses readText rather than pretending to read.
+        // A session built without `ocrEngine` refuses readText rather than
+        // pretending to read.
         [[nodiscard]]
         static auto create(
             std::unique_ptr<IFrameSource> frameSource,
@@ -374,14 +321,11 @@ namespace uf::engine
 
         // Searches `searchRoi` of the frame `observation` holds for
         // `templateImage`, reporting the best position it found or nothing when
-        // the region could hold no candidate at all.
-        //
-        // It is the whole of what this module searches for: no catalog lookup,
-        // no page, no appearance, no threshold, because all four moved to layer
-        // two with the model. A control stop -- the comparison budget, the
-        // recognition deadline, a requested cancel -- is a FAILURE and never a
-        // miss, because a search that stopped looking has not established that
-        // the template is absent.
+        // the region could hold no candidate at all. No catalog lookup, page,
+        // appearance or threshold: all four are layer two's. A control stop --
+        // comparison budget, recognition deadline, requested cancel -- is a
+        // FAILURE and never a miss, because a search that stopped looking has not
+        // established that the template is absent.
         [[nodiscard]]
         auto matchTemplate(
             Observation const& observation,
@@ -389,14 +333,12 @@ namespace uf::engine
             PixelRect searchRoi
         ) -> Result<std::optional<MatchFound>>;
 
-        // Reads the text in `rect` of the frame `observation` holds.
-        //
-        // The region is asserted by the caller to hold ONE line: detection is the
-        // expensive stage and the adapter this project ships does not run it, so
-        // a caller that does not know the line count gets a refusal rather than a
-        // silent single-line read of several lines. Finding no text is an empty
-        // optional, which is an ordinary answer about the screen; a failure here
-        // means the read could not be attempted.
+        // Reads the text in `rect` of the frame `observation` holds. The caller
+        // asserts the region holds ONE line: the adapter this project ships runs
+        // no detection, so a caller that does not know the line count gets a
+        // refusal rather than a silent single-line read of several. Finding no
+        // text is an empty optional; a failure means the read could not be
+        // attempted.
         [[nodiscard]]
         auto readText(
             Observation const& observation,
@@ -406,31 +348,22 @@ namespace uf::engine
         // Finds every line of text inside `rect` on the frame `observation`
         // holds and reads each one, with its own rectangle in FRAME pixels.
         //
-        // IT IS A SECOND LAYOUT AND NOT A REPLACEMENT. readText above stays the
-        // right verb wherever the caller drew the rectangle: it skips detection
-        // entirely, which is both cheaper and immune to a detector that splits
-        // one label in two. This one exists for the region nobody can draw a
-        // rectangle inside -- a grid that scrolls continuously, where a name's
-        // position is a fact about the frame rather than about the model, and
-        // the only way to find one is to read the whole region and see where the
-        // text landed.
+        // A second layout and not a replacement: readText stays the right verb
+        // wherever the caller can draw the rectangle, being cheaper and immune to
+        // a detector that splits one label in two. This one is for the region
+        // nobody can draw inside -- a continuously scrolling grid, where a name's
+        // position is a fact about the frame rather than about the model.
         //
-        // `maximumLines` is how many lines this call may recognise. A region
-        // holding more FAILS with RecognitionIncomplete and reads none of them,
-        // because a caller handed the first n lines of a region would conclude
-        // that what it was looking for is absent from a region nobody finished
-        // looking at. The refusal costs one detection pass rather than one
-        // recognition per line; see ocr::ReadSpec::maximumLines.
+        // A region holding more than `maximumLines` FAILS with
+        // RecognitionIncomplete and reads none of them, because a caller handed
+        // the first n lines would conclude its target is absent from a region
+        // nobody finished looking at. The refusal costs one detection pass rather
+        // than one recognition per line; see ocr::ReadSpec::maximumLines.
         //
-        // Finding no lines is an empty vector, which is an ordinary answer about
-        // the screen. A failure means the read could not be attempted or could
-        // not be finished.
-        //
-        // A returned line may carry EMPTY text. That is the detector saying
-        // there is text at this rectangle and the recogniser failing to read it,
-        // which is a fact about the frame worth having rather than one to hide;
-        // it also makes the returned count equal to the recognitions the call
-        // performed, which is what a caller charging a budget needs.
+        // Finding no lines is an empty vector. A returned line may carry EMPTY
+        // text -- the detector found text and the recogniser failed to read it --
+        // which keeps the returned count equal to the recognitions performed, as
+        // a caller charging a budget needs.
         [[nodiscard]]
         auto readTextLines(
             Observation const& observation,
@@ -439,19 +372,15 @@ namespace uf::engine
         ) -> Result<std::vector<TextReading>>;
 
         // Copies `rect` of the frame `observation` holds and hands the pixels
-        // back.
+        // back. It does NOT spend the observation and does not touch the action
+        // sink -- reading pixels changes nothing on the target, so the same cycle
+        // can go on to click. It refuses only a rectangle the frame does not
+        // contain.
         //
-        // It does NOT spend the observation and it does not touch the action
-        // sink: reading pixels changes nothing on the target, so the frame is
-        // still the frame afterwards and the same cycle can go on to click. The
-        // one thing it can refuse is a rectangle the frame does not contain.
-        //
-        // It emits NOTHING. Every other verb here writes its own engine.* line,
-        // and this one does not, because the honest line for a crop belongs to
-        // the vocabulary of the front-end that has the verb:
-        // annotation.region_saved, written by the layer that also knows the
-        // encoded bytes and their hash. Writing an engine.* line here as well
-        // would put the same act in the record twice under two names.
+        // It emits NOTHING, alone among the verbs here: the honest line for a
+        // crop is annotation.region_saved, written by the front-end layer that
+        // also knows the encoded bytes and their hash. An engine.* line here
+        // would record the same act twice under two names.
         [[nodiscard]]
         auto cropRegion(
             Observation const& observation,
@@ -460,31 +389,25 @@ namespace uf::engine
 
         // Delivers one click at `point`, spending `observation`.
         //
-        // WHICH LINE THE DELIVERY IS WRITTEN UNDER depends on the front-end that
-        // owns the stream, and this is the only place it is decided. On a task
-        // or an operator stream a delivered click is engine.action_delivered; on
-        // the exploration stream it is annotation.click_delivered, because there
-        // the caller is an agent naming a coordinate with no element and no page
-        // behind it, and engine.action_delivered would claim a recognition that
-        // never happened (docs/plans/2026-08-01-agent-front-end-and-
-        // exploration.md 1). The stream validator refuses the other spelling on
-        // each stream, so the choice cannot be got wrong quietly.
+        // Which line the delivery is written under is decided here and nowhere
+        // else: engine.action_delivered on a task or operator stream,
+        // annotation.click_delivered on the exploration stream, where the caller
+        // is an agent naming a coordinate with no element and no page behind it.
+        // The stream validator refuses the other spelling on each stream
+        // (docs/plans/2026-08-01-agent-front-end-and-exploration.md 1).
         //
-        // WHAT IT ENFORCES, and what it deliberately does not. A requested stop
-        // refuses before any sink call, a foreign handle is an
-        // InternalInvariant, a consumed handle is StaleObservation, the live
-        // fingerprint must match the project's, the observation's lease must
-        // still be valid at delivery, the bound target instance is revalidated
-        // immediately before the post, and the observation is spent so one frame
-        // delivers at most one input.
+        // It enforces: a requested stop refuses before any sink call, a foreign
+        // handle is an InternalInvariant, a consumed handle is StaleObservation,
+        // the live fingerprint must match the project's, the observation's lease
+        // must still be valid at delivery, the bound target instance is
+        // revalidated immediately before the post, and the observation is spent
+        // so one frame delivers at most one input.
         //
-        // What it does NOT enforce is that a resolved page authorises the element
-        // being clicked, because there is no element here and no page: both moved
-        // to layer two with the model. The privilege of naming a bare coordinate
-        // is therefore the trusted framework's and is never handed to a business
-        // script -- modules/task/runtime/observe.luau is where "only click what
-        // this page authorises" is enforced now
-        // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
+        // It does NOT enforce that a resolved page authorises the element: there
+        // is no element and no page here. Naming a bare coordinate is therefore
+        // the trusted framework's privilege and never a business script's --
+        // modules/task/runtime/observe.luau enforces "only click what this page
+        // authorises" (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
         [[nodiscard]]
         auto clickPoint(
             Observation&& observation,
@@ -493,37 +416,23 @@ namespace uf::engine
 
         // Delivers one keystroke, spending `observation`.
         //
-        // ITS AUTHORIZATION CONTRACT, and how it differs from clickPoint()'s.
-        // Stated here because this is the only place both verbs are visible at
-        // once.
-        //
-        // Shared with clickPoint(), and for the same reasons:
-        //   - a requested stop refuses before any sink call, so a cancelled run
-        //     never posts input;
-        //   - an observation from another session is an InternalInvariant, and an
-        //     invalidated one is StaleObservation, so a handle cannot be reused or
-        //     smuggled across sessions;
-        //   - the bound target instance is revalidated immediately before the post,
-        //     which closes the HWND-reuse window;
-        //   - the observation is spent, so one observation delivers at most one
-        //     input. A keystroke changes the screen exactly as a click does, so a
-        //     frame that survived it would describe a target that no longer exists.
+        // Shared with clickPoint() and for its reasons: a requested stop refuses
+        // before any sink call; a foreign handle is an InternalInvariant and an
+        // invalidated one is StaleObservation; the bound target instance is
+        // revalidated immediately before the post, closing the HWND-reuse window;
+        // and the observation is spent, because a keystroke changes the screen
+        // exactly as a click does.
         //
         // Deliberately NOT shared, because a keystroke names no screen position:
-        //   - there is no fingerprint check. That question asks whether a
-        //     coordinate measured against this project still means what it meant;
-        //     a virtual key names no coordinate, so there is nothing for the
-        //     geometry to invalidate;
-        //   - the observation's lease is not enforced. A lease bounds a
-        //     coordinate's shelf life; a key's meaning does not decay with layout.
-        //     Enforcing it would refuse keystrokes for a reason that cannot apply
-        //     to them, and would push an operator to widen --max-frame-age for the
-        //     whole run to get keys through -- weakening every click to serve a key.
+        //   - no fingerprint check. That asks whether a coordinate measured
+        //     against this project still means what it meant, and a virtual key
+        //     names no coordinate.
+        //   - no lease-age refusal. A lease bounds a coordinate's shelf life;
+        //     enforcing it here would push an operator to widen --max-frame-age
+        //     for the whole run to get keys through, weakening every click.
         //
-        // What the caller supplies instead of a detection is the requirement that
-        // an observation exist at all: the keystroke is ordered against the
-        // observation cycle that produced it, and the trace joins it to that
-        // frame.
+        // Requiring an observation at all is what orders the keystroke against a
+        // cycle and lets the trace join it to a frame.
         [[nodiscard]]
         auto pressKey(
             Observation&& observation,
@@ -532,20 +441,13 @@ namespace uf::engine
 
         // Delivers one wheel scroll of `notches` detents, spending `observation`.
         //
-        // ITS AUTHORIZATION CONTRACT IS pressKey()'s, not clickPoint()'s, and the
-        // reason is the same one: the verb names no screen position. A requested
-        // stop refuses before any sink call, an observation from another session is
-        // an InternalInvariant and an invalidated one is StaleObservation, the bound
-        // target instance is revalidated immediately before the post, and the
-        // observation is spent -- a delivered scroll changes the screen, so the
-        // frame that survived it would describe a target that no longer exists.
-        // Equally deliberately absent: the fingerprint check and the lease-age
-        // refusal, neither of which has a coordinate here to be about.
+        // Its authorization contract is pressKey()'s, not clickPoint()'s, for
+        // pressKey()'s reason: the verb names no screen position. The fingerprint
+        // check and the lease-age refusal are absent for that reason too.
         //
-        // The observation's lease still travels to the sink, and that is a delivery
-        // requirement rather than an authorization one -- see IActionSink::scroll,
-        // which is where the difference is spelled out and where the open question
-        // about aiming a scroll is recorded.
+        // The lease still travels to the sink, which is a delivery requirement
+        // rather than an authorization one -- see IActionSink::scroll, where the
+        // open question about aiming a scroll is recorded.
         [[nodiscard]]
         auto scroll(
             Observation&& observation,
@@ -554,31 +456,21 @@ namespace uf::engine
 
         // Delivers one long press at `point` for `hold`, spending `observation`.
         //
-        // ITS AUTHORIZATION CONTRACT IS clickPoint's, CLAUSE FOR CLAUSE, and that
-        // is the whole point of the verb existing here rather than beside
-        // pressKey. A long press names a coordinate a caller measured off this
-        // frame, so every check a click gets applies unchanged and for the
-        // unchanged reason: a requested stop refuses before any sink call, a
-        // foreign handle is an InternalInvariant and a consumed one is
-        // StaleObservation, the live fingerprint must match the project's, the
-        // observation's lease must still be valid at delivery, the bound target
-        // instance is revalidated immediately before the post, and the
-        // observation is spent. Nothing here is looser than a click, because a
-        // second and laxer path to the same window is the hole this rule exists
-        // to close.
+        // Its authorization contract is clickPoint's clause for clause, because a
+        // long press names a coordinate the caller measured off this frame:
+        // requested stop, foreign handle, consumed handle, live fingerprint,
+        // lease validity at delivery, target-instance revalidation before the
+        // post, and the spent observation. Nothing here may be looser than a
+        // click -- a second and laxer path to the same window is the hole this
+        // closes.
         //
-        // IT SPENDS THE OBSERVATION, and deliberately. A delivered long press
-        // changes the screen -- on the target this was built for it magnifies the
-        // thing that was pressed, which is the entire reason to ask for one -- so
-        // a frame that survived it would describe a screen the press had already
-        // replaced. Reading the magnified result therefore costs a fresh
-        // observation, which is correct: the magnification is not on the frame
-        // that authorized the press.
+        // It spends the observation deliberately: a delivered long press changes
+        // the screen, so reading the result costs a fresh observation rather than
+        // reusing the frame that authorized the press.
         //
-        // `hold` is the caller's with no default at this layer or any layer
-        // above; see IActionSink::longPress. What this layer does NOT do is bound
-        // it -- the ceiling belongs to the host surface that a script reaches,
-        // where a refusal can name what the author wrote.
+        // `hold` is the caller's with no default at this layer or above; see
+        // IActionSink::longPress. Bounding it belongs to the host surface a
+        // script reaches, where a refusal can name what the author wrote.
         [[nodiscard]]
         auto longPress(
             Observation&& observation,

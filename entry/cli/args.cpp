@@ -39,10 +39,8 @@ namespace uf::cli
             return std::ranges::find(flags, flag) != flags.end();
         }
 
-        // `drive` shares every recognition and delivery bound with `run` on purpose:
-        // the two front-ends must not be able to run under different guarantees.
-        // --task is absent and --queue/--results are present, which is the argument
-        // shape refusing a session that is both at once.
+        // --task is absent and --queue/--results are present, which is the
+        // argument shape refusing a session that is both at once. See DriveArgs.
         [[nodiscard]]
         auto isDriveValueFlag(std::string_view flag) noexcept -> bool
         {
@@ -61,15 +59,9 @@ namespace uf::cli
             return std::ranges::find(flags, flag) != flags.end();
         }
 
-        // `check` names no target, and the absence of --selector is still the
-        // argument shape stating what the matrix is: a measurement of authored
-        // screens against authored marks, with no live frame in it.
-        //
-        // --ocr-models joined the list on 2026-08-01, and this comment used to
-        // say it never would -- the matrix measured template distances, and
-        // reading was the capability with no score to falsify against. The
-        // reading's confidence is that score, so a project can now claim what a
-        // region reads on one screen and the matrix measures it. See CheckArgs.
+        // The absence of --selector is the argument shape stating what the matrix
+        // is: authored screens against authored marks, with no live frame in it.
+        // See CheckArgs.
         [[nodiscard]]
         auto isCheckValueFlag(std::string_view flag) noexcept -> bool
         {
@@ -350,10 +342,8 @@ namespace uf::cli
     auto parseExploreArguments(std::span<std::string const> raw) -> Result<ExploreArgs>
     {
         // Parsed through the drive reader, because the flag set IS the drive flag
-        // set: same target binding, same project, same two IPC files, same
-        // recognition and delivery bounds. Only what a queue LINE means differs,
-        // and that is the protocol's business rather than the parser's. A second
-        // copy of ten flags is a second place a default could drift.
+        // set; only what a queue LINE means differs, which is the protocol's
+        // business. A second copy of ten flags is a second place a default drifts.
         UF_TRY_VALUE(shared, parseDriveArguments(raw));
 
         return ExploreArgs{

@@ -34,10 +34,9 @@ namespace uf::task
     namespace
     {
         // Requests a stop the first time a frame is captured, then still hands back
-        // a valid frame. Wiring its stop token into both the engine session and the
-        // task VM reproduces the single cancel source: once the stop is requested,
-        // the VM interrupt hard-breaks the task thread, so no script statement after
-        // the cancelled call runs.
+        // a valid frame. One token wired into both the engine session and the task
+        // VM is the single cancel source: once the stop is requested, the VM
+        // interrupt hard-breaks the thread, so no statement after the call runs.
         class StopOnCaptureFrameSource final : public engine::IFrameSource
         {
             Frame            m_frame;
@@ -63,10 +62,9 @@ namespace uf::task
             }
         };
 
-        // Fails only when recording a native call, so a test can prove a verb
-        // aborts when its task.native_call event cannot be recorded rather than
-        // dropping the evidence silently. Letting the engine's own events through
-        // keeps the failure exactly where the test aims it.
+        // Fails only when recording a native call, so a test can prove a verb aborts
+        // when its task.native_call event cannot be recorded. Letting the engine's
+        // own events through keeps the failure where the test aims it.
         class FailOnNativeCallTraceSink final : public trace::ITraceSink
         {
         public:
@@ -85,8 +83,8 @@ namespace uf::task
         };
 
         // Fails only when recording a verb's failure. A sink that failed on every
-        // event would abort the first successful verb and no test could ever reach
-        // the failure path it wants to observe.
+        // event would abort the first successful verb, so no test could reach the
+        // failure path it wants to observe.
         class FailOnFailedTraceSink final : public trace::ITraceSink
         {
         public:
@@ -122,8 +120,7 @@ namespace uf::task
         }
 
         // Builds a context seeded with `seed` and draws `count` values from its
-        // RNG, so two draws can be compared for reproducibility. The frame is never
-        // captured; only the seeded RNG is exercised.
+        // RNG. The frame is never captured; only the seeded RNG is exercised.
         [[nodiscard]]
         auto drawContextDoubles(uint64 seed, std::size_t count) -> std::vector<double>
         {
@@ -146,9 +143,7 @@ namespace uf::task
 
         TEST_CASE("Two contexts with the same seed draw the same random sequence")
         {
-            // The seed is what a trace records to replay a run: two contexts given
-            // the same seed produce an identical sequence of at least a hundred
-            // numbers, and a different seed diverges.
+            // The seed is what a trace records to replay a run.
             auto const first  = drawContextDoubles(0x00C0'FFEE, 100);
             auto const second = drawContextDoubles(0x00C0'FFEE, 100);
             CHECK(first == second);
@@ -180,11 +175,11 @@ namespace uf::task
 
         TEST_CASE("The task binding refuses to open a second cycle while one is open")
         {
-            // The one-cycle rule. It is a framework bug rather than a script
-            // error -- the framework opens and closes one cycle per poll -- so it
-            // is InternalInvariant, not a Tier B failure a retry policy would
-            // treat as recoverable. The refusal also lands BEFORE the capture, so
-            // the second open costs no frame, and the first cycle is untouched.
+            // The one-cycle rule. It is a framework bug rather than a script error
+            // -- the framework opens and closes one cycle per poll -- so it is
+            // InternalInvariant, not a Tier B failure a retry policy would treat as
+            // recoverable. The refusal lands BEFORE the capture, so it costs no
+            // frame and leaves the first cycle untouched.
             auto frameSource = std::make_unique<FakeFrameSource>(
                 resolvingFrames(FrameId{18})
             );
@@ -226,10 +221,6 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // After the click consumes the cycle, cycle_match, cycle_read and a
-            // second cycle_click all fail with a frozen, protected
-            // stale_observation error a script cannot mutate. A closed cycle's
-            // ticket is just as dead, and so is a match it produced.
             auto const source = withTemplate(R"lua(
                 local template = ctx:template_load(TEMPLATE)
                 local cycle = ctx:cycle_open()
@@ -290,7 +281,7 @@ namespace uf::task
             TaskContext context{*std::move(built.session), *built.recorder};
 
             // Every close below is unguarded: a raise anywhere would abort the
-            // script and never reach the return, which is the assertion. This is
+            // script and never reach the return, which is the assertion. That is
             // what lets a framework cleanup path close unconditionally.
             auto const source = withTemplate(R"lua(
                 local template = ctx:template_load(TEMPLATE)
@@ -316,10 +307,9 @@ namespace uf::task
 
         TEST_CASE("Closing a cycle is what releases the frame, and only closing does")
         {
-            // The whole point of the protocol: the frame's lifetime is the
-            // ledger's, not the collector's. Both halves run with the VM already
-            // destroyed, so every Lua handle has been finalised either way -- the
-            // only difference is whether the script closed the cycle.
+            // The frame's lifetime is the ledger's, not the collector's. Both
+            // halves run with the VM already destroyed, so every Lua handle is
+            // finalised either way -- the only difference is the close.
             SUBCASE("a cycle left open still holds its frame after the VM is gone")
             {
                 auto built = buildBinding(resolvingFrames(FrameId{22}));
@@ -355,8 +345,8 @@ namespace uf::task
         TEST_CASE("A ticket minted by one generation is rejected by another")
         {
             // Two contexts, so two ledgers and two generation stamps. Both open
-            // their first cycle, so both hold ordinal 1 and only the generation
-            // stamp tells the two tickets apart.
+            // their first cycle, so both hold ordinal 1 and only the stamp tells
+            // the tickets apart.
             auto firstBuilt = buildBinding(resolvingFrames(FrameId{24}));
             REQUIRE(firstBuilt.session.has_value());
             TaskContext first{*std::move(firstBuilt.session), *firstBuilt.recorder};
@@ -380,8 +370,7 @@ namespace uf::task
 
             // The rejection is the stamp and not a dead ledger: the second
             // generation's own ticket of the same ordinal reaches the engine,
-            // which refuses it for its own reason (no OCR adapter is bound) and
-            // never for the ledger's.
+            // which refuses it for its own reason (no OCR adapter is bound).
             auto const own = second.cycleRead(*secondTicket, test::pixelRect(0, 0, 1, 1));
             REQUIRE_FALSE(own.has_value());
             CHECK(
@@ -393,10 +382,9 @@ namespace uf::task
         TEST_CASE("The task binding returns nil for a match that completes without a hit")
         {
             // The template is larger than the region it is searched in, which is
-            // what a completed miss looks like: no candidate position at all, so
-            // an ordinary answer about the screen rather than a search that
-            // stopped. A template that FITS always reports its best position and
-            // the distance there, because judging a distance is layer two's.
+            // what a completed miss looks like: no candidate position at all. A
+            // template that FITS always reports its best position and the distance
+            // there, because judging a distance is layer two's.
             auto frames = std::vector<Frame>{};
             frames.emplace_back(
                 grayFrame(fixtureFingerprint(), resolvedTargetlessPixels(), FrameId{26})
@@ -420,10 +408,9 @@ namespace uf::task
 
         TEST_CASE("The task binding runs a poll loop that opens and closes one cycle a turn")
         {
-            // Twenty frames the template is not on, then one it is. The loop opens
-            // a cycle, inspects it and closes it every turn, so it runs far past
-            // anything a retention cap once allowed -- and needs no forced
-            // collection to do it, because nothing is ever pinned past the close.
+            // Twenty frames the template is not on, then one it is. The loop opens,
+            // inspects and closes a cycle every turn, and needs no forced collection
+            // to do it, because nothing is ever pinned past the close.
             auto const fingerprint = fixtureFingerprint();
             auto       frames      = std::vector<Frame>{};
             for (int index = 0; index < 20; ++index)
@@ -462,10 +449,9 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // 1e15 ms cleared the old <= 1e15 bound yet overflowed the nanosecond
-            // tick rep inside duration_cast (undefined behaviour). It is now a
-            // clean Tier B InvalidResource raised while the deadline is minted,
-            // before anything is observed, so the frame source is never touched.
+            // 1e15 ms overflows the nanosecond tick rep inside duration_cast. It is
+            // a Tier B InvalidResource raised while the deadline is minted, before
+            // anything is observed, so the frame source is never touched.
             constexpr std::string_view source = R"lua(
                 local ok, err = pcall(function()
                     return ctx:deadline(1e15)
@@ -487,9 +473,6 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // The first click consumes the cycle; a second click inside try is a
-            // Tier B stale_observation, returned as (false, carrier). A plainly
-            // successful function returns (true, nil).
             auto const source = withTemplate(R"lua(
                 local template = ctx:template_load(TEMPLATE)
                 local cycle = ctx:cycle_open()
@@ -520,17 +503,13 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // Forgery is not a check to defeat any more: the carrier is a
-            // userdata under a host tag, and a project script has no way to mint
-            // a userdata at all. Every route it does have is exercised here,
-            // each against the control that the GENUINE carrier is accepted by
-            // the same path -- so a try that classified nothing would fail the
-            // control rather than pass this vacuously.
-            //
-            // The second route is the one that matters most: it is the forgery
-            // the frozen error TABLE could not refuse. With identity resting on
-            // the __metatable label, a hand-built table wearing that label was
-            // accepted; with identity resting on being userdata, it is not.
+            // The carrier is a userdata under a host tag, and a project script has
+            // no way to mint a userdata at all. Every route it does have is
+            // exercised here, each against the control that the GENUINE carrier is
+            // accepted by the same path -- so a try that classified nothing would
+            // fail the control rather than pass vacuously. Route 2 matters most: a
+            // table wearing the __metatable label defeats identity by label, and
+            // not identity by userdata.
             auto const source = withTemplate(R"lua(
                 local template = ctx:template_load(TEMPLATE)
                 local cycle = ctx:cycle_open()
@@ -592,10 +571,9 @@ namespace uf::task
         TEST_CASE("The host names an uncaught Tier B error by its tag, never by its fields")
         {
             // The C++ half of the same guarantee. A value that escapes a run
-            // uncaught is classified by the carrier's userdata tag, so the kind
-            // in the run report -- and so in run.finished -- is the one that
-            // really failed. A forged look-alike carries no tag and therefore
-            // cannot choose the kind its run is reported under.
+            // uncaught is classified by the carrier's userdata tag, so the kind in
+            // the run report is the one that really failed. A forged look-alike
+            // carries no tag and cannot choose the kind it is reported under.
             SUBCASE("a genuine carrier names its kind")
             {
                 auto built = buildBinding(resolvingFrames(FrameId{38}));
@@ -627,8 +605,8 @@ namespace uf::task
                 TaskContext context{*std::move(built.session), *built.recorder};
 
                 // Same fields and the same label, read off a real error so the
-                // disguise cannot go stale, raised the same way -- and the host
-                // reports the script's own failure instead of the claimed kind.
+                // disguise cannot go stale -- and the host still reports the
+                // script's own failure instead of the claimed kind.
                 auto const source = withTemplate(R"lua(
                     local template = ctx:template_load(TEMPLATE)
                     local cycle = ctx:cycle_open()
@@ -662,13 +640,11 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // The carrier a script catches is the host's own object and stays
-            // the host's: its fields are readable and every write route is
-            // refused, its metatable can neither be replaced nor obtained, and
-            // its printed form names the kind rather than an address.
-            //
-            // The read controls are load-bearing. Without them an object that
-            // simply answered nothing would pass every refusal below.
+            // The carrier a script catches stays the host's: fields readable, every
+            // write route refused, metatable neither replaceable nor obtainable,
+            // printed form naming the kind rather than an address. The read
+            // controls are load-bearing -- an object that simply answered nothing
+            // would pass every refusal below.
             auto const source = withTemplate(R"lua(
                 local template = ctx:template_load(TEMPLATE)
                 local cycle = ctx:cycle_open()
@@ -716,9 +692,8 @@ namespace uf::task
             TaskContext context{*std::move(built.session), *built.recorder};
 
             // error('boom') is the script's own failure, not a Tier B automation
-            // error: try must re-raise it, so the outer pcall -- not try -- is what
-            // catches it, the statement after try never runs, and the caught value
-            // is the raw string rather than an error table.
+            // error: try re-raises it, so the outer pcall -- not try -- catches, and
+            // the statement after try never runs.
             constexpr std::string_view source = R"lua(
                 local reachedAfter = false
                 local ok, err = pcall(function()
@@ -739,10 +714,9 @@ namespace uf::task
         TEST_CASE("A cancellation is unrecoverable through pcall or try, and mark never runs")
         {
             // The shared stop source drives both the engine (returns Cancelled) and
-            // the VM interrupt (hard-breaks the thread). A capture requests the stop,
-            // so whatever the script wraps the call in, no statement after it runs:
-            // the host-visible mark() -- a non-automation witness -- stays at zero
-            // and the run ends Cancelled.
+            // the VM interrupt (hard-breaks the thread). A capture requests the
+            // stop, so whatever the script wraps the call in, no statement after it
+            // runs: mark() -- a non-automation witness -- stays at zero.
             auto const cancelledRun = [](std::string_view guarded) -> void
             {
                 auto stop  = std::stop_source{};
@@ -789,10 +763,9 @@ namespace uf::task
 
         TEST_CASE("A swallowed cancellation still leaves the next primitive refused")
         {
-            // The Tier C contract, split from the interrupt that normally hides
-            // it: a project pcall MAY observe the sentinel, and observing it buys
-            // nothing, because the terminal latch is checked at the C guard entry
-            // of every primitive rather than by ctx:try.
+            // The Tier C contract, split from the interrupt that normally hides it:
+            // a project pcall MAY observe the sentinel and it buys nothing, because
+            // the latch is checked at every primitive's C guard entry, not by try.
             SUBCASE("the latch refuses every later primitive, without capturing")
             {
                 auto frameSource = std::make_unique<CancelOnceFrameSource>(
@@ -884,10 +857,10 @@ namespace uf::task
             TaskContext context{*std::move(built.session), *built.recorder};
 
             // `umbra` was this root's global name before 2026-07-29. The project
-            // environment is a whitelist with no metatable, so a name the
-            // installer no longer registers is structurally absent: it reads nil
-            // and indexing it raises. The control is `uf` itself, which must
-            // still carry the error table.
+            // environment is a whitelist with no metatable, so a name the installer
+            // no longer registers is structurally absent: it reads nil and indexing
+            // it raises. The control is `uf` itself, which must still carry the
+            // error table.
             constexpr std::string_view source = R"lua(
                 if umbra ~= nil then return 0 end
                 if pcall(function() return umbra.errors.timeout end) then return 0 end
@@ -915,18 +888,14 @@ namespace uf::task
 
             // The primitives are upvalues of the framework's closures. A project
             // script must not reach one as a global, as a field of uf, through
-            // rawget, through a table.clone of uf, or by walking values, keys
-            // and metatables from anything it can name.
-            //
-            // ctx is excluded from the walk by identity, and only by identity:
-            // its methods are the framework's own Luau wrappers, which ARE the
-            // published surface. The claim is about the native table behind them.
-            //
-            // Three controls keep the claim from being vacuous: the scanner is
-            // shown finding a planted primitive by the same route; the two
-            // by-name routes are shown finding a key that really is on uf; and
-            // the run ends by driving a real capture through ctx, so the
-            // framework demonstrably holds what no project route can name.
+            // rawget, through a table.clone of uf, or by walking values, keys and
+            // metatables from anything it can name. ctx is excluded from the walk
+            // by identity and only by identity: its methods are the framework's own
+            // Luau wrappers, which ARE the published surface, and the claim is
+            // about the native table behind them. Three controls keep the claim
+            // from being vacuous -- the scanner finds a planted primitive by the
+            // same route, the two by-name routes find a key that really is on uf,
+            // and the run ends by driving a real capture through ctx.
             constexpr std::string_view source = R"lua(
                 local target = 'cycle_open'
 
@@ -1005,12 +974,8 @@ namespace uf::task
             // record raised the sink's own IoFailure instead, an author debugging a
             // failed click would be told the trace file was unwritable rather than
             // why the click failed. The verb's cause wins; the lost evidence is
-            // latched on the context so the host still learns the trace is
-            // incomplete.
-            //
-            // Clicking consumes the cycle, so the second click fails
-            // StaleObservation -- a Tier B failure ctx:try hands back rather than
-            // re-raising, which is what makes the substitution observable.
+            // latched on the context. ctx:try hands a Tier B failure back rather
+            // than re-raising it, which is what makes the substitution observable.
             auto built = buildBindingWith(
                 std::make_unique<FakeFrameSource>(resolvingFrames(FrameId{88})),
                 std::stop_token{},
@@ -1044,10 +1009,8 @@ namespace uf::task
             TaskContext context{*std::move(built.session), *built.recorder};
 
             // The sandbox removed the native clocks and RNG, so ctx:random is the
-            // sole source of randomness; no-argument random() is a float in [0, 1);
-            // random(1, 3) stays in the closed interval, is always integral, and
-            // over enough draws reaches both endpoints; and an empty or non-integer
-            // interval is rejected exactly as math.random would reject it.
+            // sole source of randomness, and it rejects an empty or non-integer
+            // interval exactly as math.random would.
             constexpr std::string_view source = R"lua(
                 if os.time ~= nil or os.clock ~= nil then return 0 end
                 if math.random ~= nil or math.randomseed ~= nil then return 0 end
@@ -1101,8 +1064,7 @@ namespace uf::task
             auto const& events = p_traces->events();
 
             // Every event of the run carries the same run identity and the next
-            // sequence number, whichever layer wrote it. This is what the two old
-            // schemas could not do: they had no join key at all.
+            // sequence number, whichever layer wrote it.
             REQUIRE_FALSE(events.empty());
             for (auto index = std::size_t{0}; index < events.size(); ++index)
             {
@@ -1112,12 +1074,10 @@ namespace uf::task
             }
 
             // The engine event and the task.native_call it caused sit adjacent in
-            // one stream, so a reader can correlate them: each primitive's native
-            // call immediately follows the engine work it drove, and the click's
+            // one stream, so a reader can correlate them, and the click's
             // engine.action_delivered names the frame the open observed. The
             // trailing cycle_close reached the host and found nothing to release,
-            // which is the deterministic-release path being audited rather than
-            // inferred.
+            // which audits the deterministic-release path rather than inferring it.
             auto const kinds = kindsOf(events);
             auto const expected = std::vector<trace::TraceEventKind>{
                 trace::TraceEventKind::TaskNativeCall,
@@ -1141,8 +1101,7 @@ namespace uf::task
             CHECK(delivered.frame->frameId() == FrameId{70});
 
             // Each primitive emits exactly one native call, in call order. The
-            // template load comes first and reaches no engine verb at all, which
-            // is why its line stands alone.
+            // template load reaches no engine verb at all, so its line stands alone.
             auto const verbs = nativeCallVerbs(events);
             CHECK(
                 verbs
@@ -1187,10 +1146,9 @@ namespace uf::task
             TaskContext context{*std::move(built.session), *built.recorder};
 
             // The template is larger than the region, so both searches COMPLETE
-            // with nowhere to have looked. Each records Empty (Tier A) rather
-            // than Succeeded or Failed: an absence is an ordinary answer about
-            // the screen, and the distinction is what a reader tells a miss from
-            // a stop by.
+            // with nowhere to have looked. Each records Empty (Tier A) rather than
+            // Succeeded or Failed: an absence is an ordinary answer about the
+            // screen, and that is what a reader tells a miss from a stop by.
             auto const source = "local TEMPLATE = " + oversizedTemplateLiteral()
                 + "\n" + R"lua(
                 local template = ctx:template_load(TEMPLATE)
@@ -1240,10 +1198,9 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // cycle_open succeeds in the engine, but recording its native call
-            // fails; losing the trace evidence aborts the primitive as a Tier B
-            // io_failure carrying the protected uf.error metatable, rather than
-            // dropping the record silently (the trace's throw-instant discipline).
+            // cycle_open succeeds in the engine but recording its native call
+            // fails; losing the evidence aborts the primitive as a Tier B
+            // io_failure rather than dropping the record (throw-instant discipline).
             constexpr std::string_view source = R"lua(
                 local ok, err = pcall(function() return ctx:cycle_open() end)
                 if ok then return 0 end

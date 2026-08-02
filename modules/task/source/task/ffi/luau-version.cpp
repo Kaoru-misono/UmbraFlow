@@ -3,10 +3,9 @@
 #include <format>
 #include <string>
 
-// Luau's Bytecode header is third-party and does not build clean under the
-// project's /W4 /WX profile; a manifest-driven module has no CMakeLists to mark
-// it external, so wrap the include exactly as modules/task's other ffi sources
-// do. Only the bytecode version accessor is needed here -- no VM, no parser.
+// Luau's headers are third-party and do not build clean under /W4 /WX; a
+// manifest-driven module has no CMakeLists to mark them external, so the
+// include is wrapped as modules/task's other ffi sources wrap theirs.
 #if defined(_MSC_VER)
 #pragma warning(push, 0)
 #elif defined(__clang__)
@@ -30,10 +29,8 @@ namespace uf::task
 {
     auto luauRuntimeVersion() -> std::string
     {
-        // The bytecode target version the compiler would emit for a task: the
-        // stable format number that governs whether a compiled task stays
-        // reproducible. static_cast widens the uint8 version for formatting; no
-        // pointer, aliasing, or lifetime concern arises, so no SAFETY note is due.
+        // The bytecode format number that governs whether a compiled task stays
+        // reproducible; widened from uint8 only so it formats as a number.
         auto const version = static_cast<int>(Luau::BytecodeBuilder::getVersion());
         return std::format("luau-bytecode-{}", version);
     }

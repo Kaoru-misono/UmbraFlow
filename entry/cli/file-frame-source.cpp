@@ -25,14 +25,12 @@ namespace uf::cli
 {
     namespace
     {
-        // The capture identity every replayed frame wears.
-        //
-        // A live source takes both from the bound window: the session id names
-        // the capture device and the generation names the window instance, and
-        // together they are what an observation lease is validated against.
+        // The capture identity every replayed frame wears. A live source takes both
+        // from the bound window -- session id for the capture device, generation for
+        // the window instance -- and an observation lease is validated against them.
         // There is no window here, so one fixed pair for the whole replay is the
-        // honest answer -- every frame comes from the same place, which is this
-        // directory, and nothing about it can change under the run.
+        // honest answer: every frame comes from this directory and nothing about it
+        // can change under the run.
         constexpr auto k_replaySessionId  = CaptureSessionId{1};
         constexpr auto k_replayGeneration = uint64{1};
     }
@@ -95,10 +93,9 @@ namespace uf::cli
     auto FileFrameSource::capture(CaptureBudget const& budget) -> Result<Frame>
     {
         // The budget's cancellation is honoured and its deadline is not, because
-        // nothing here can block on an external producer: a decode either
-        // finishes or fails. A cancelled generation must still stop, and a stop
-        // requested between two screens is the ordinary way a long matrix ends
-        // early.
+        // nothing here can block on an external producer: a decode either finishes
+        // or fails. A stop requested between two screens is the ordinary way a long
+        // matrix ends early.
         if (budget.cancellation.stop_requested())
         {
             return fail(
@@ -157,9 +154,8 @@ namespace uf::cli
         );
 
         // The decoder answers in RGBA and a frame carries BGRA, so the two outer
-        // channels are swapped on the way in. Doing it here rather than teaching
-        // the decoder a second output format keeps the swap beside the one
-        // consumer that needs it.
+        // channels are swapped on the way in. Doing it here rather than teaching the
+        // decoder a second output format keeps the swap beside its one consumer.
         auto pixels = std::vector<std::byte>{};
         pixels.reserve(decoded.pixels.size());
         for (auto index = std::size_t{0}; index + 3U < decoded.pixels.size(); index += 4U)
@@ -190,9 +186,9 @@ namespace uf::cli
             );
         }
 
-        // The frame ordinal counts from one and never repeats, so two screens
-        // never share a frame identity and every trace line can be read back to
-        // the screen that produced it.
+        // The frame ordinal counts from one and never repeats, so two screens never
+        // share a frame identity and every trace line reads back to the screen that
+        // produced it.
         ++m_served;
 
         return Frame::create(

@@ -23,9 +23,8 @@
 #include <utility>
 #include <vector>
 
-// The wire between an agent and an exploration session: what a queue line may
-// say, what a result line says back, and the cursor that keeps a restart from
-// running a chunk twice.
+// The wire between an agent and an exploration session, plus the cursor that
+// keeps a restart from running a chunk twice.
 namespace uf::cli
 {
     namespace
@@ -102,9 +101,8 @@ namespace uf::cli
 
         TEST_CASE("a queue line that is nearly right is refused rather than guessed at")
         {
-            // Every one of these runs code against a live target if it is
-            // interpreted generously, which is the whole reason the reader is
-            // strict.
+            // Each of these runs code against a live target if read generously,
+            // which is why the reader is strict.
             auto const bad = std::vector<std::string>{
                 R"({"id":"a"})",
                 R"({"chunk":"return 1"})",
@@ -135,14 +133,12 @@ namespace uf::cli
             REQUIRE(!parsed.has_value());
             CHECK(parsed.error().message().contains("op"));
 
-            // `op` is the OPERATOR protocol's member. An agent that pasted a
-            // drive command into an explore queue has to be told so rather than
-            // have it silently ignored.
+            // `op` is the drive protocol's member: an agent that pasted a drive
+            // command into an explore queue is told so rather than ignored.
             CHECK(parsed.error().message().contains("id"));
         }
 
-        // The ledger reading a result line is built with. Fixed rather than
-        // measured: what is under test here is the rendering, not the figures.
+        // Fixed rather than measured: the rendering is under test, not the figures.
         constexpr auto k_lineHeap = script::HeapUsage{
             .usedBytes    = 1024,
             .ceilingBytes = 67'108'864,
@@ -177,8 +173,7 @@ namespace uf::cli
                 exploreSuccess("a", script::ScriptValue{3.0}, k_lineHeap);
             CHECK(number.starts_with(R"({"id":"a","ok":true,"value":3)"));
 
-            // A chunk that returned nothing and one that returned false are
-            // different answers, and the line says which.
+            // Returning nothing and returning false are different answers.
             CHECK(
                 exploreSuccess("a", script::ScriptValue{}, k_lineHeap)
                 != exploreSuccess("a", script::ScriptValue{false}, k_lineHeap)
@@ -187,10 +182,8 @@ namespace uf::cli
 
         TEST_CASE("every answered chunk carries the heap against its ceiling")
         {
-            // AN AGENT HAS TO SEE THE WALL BEFORE IT HITS IT. The ceiling is
-            // measured against garbage as well as live data, so a figure that
-            // appeared only on the failing line would arrive one chunk late --
-            // which is precisely how a session came to be debugged by guessing.
+            // The ceiling is measured against garbage as well as live data, so a
+            // figure carried only by the failing line would arrive a chunk late.
             CHECK(
                 exploreSuccess("a", script::ScriptValue{}, k_lineHeap)
                     .contains(k_lineHeapText)
@@ -200,8 +193,7 @@ namespace uf::cli
                 fail(AutomationErrorKind::InvalidResource, "boom").error();
             CHECK(exploreFailure("a", error, k_lineHeap).contains(k_lineHeapText));
 
-            // A line that answered no chunk never reached a VM, so there is no
-            // reading to report and it carries none.
+            // A line that answered no chunk never reached a VM, so it has none.
             auto const refused =
                 fail(AutomationErrorKind::InvalidResource, "bad line").error();
             CHECK(!serializeExploreParseFailure(refused).contains("heap"));
@@ -227,9 +219,8 @@ namespace uf::cli
                 fail(AutomationErrorKind::InvalidResource, "bad line").error();
             auto const line = serializeExploreParseFailure(error);
 
-            // The id is empty rather than invented: attributing the refusal to a
-            // chunk the agent may not have sent would send it looking in the
-            // wrong place.
+            // Empty rather than invented: attributing the refusal to a chunk the
+            // agent may not have sent would send it looking in the wrong place.
             CHECK(line.contains(R"("id":"")"));
             CHECK(line.contains(R"("ok":false)"));
         }
@@ -313,8 +304,8 @@ namespace uf::cli
                 )
             );
 
-            // Its byte offset would seek into a file it never described, and
-            // whatever precedes that offset would run without ever being seen.
+            // Its offset would seek into a file it never described, skipping
+            // every chunk before that point unseen.
             CHECK(!readExploreQueueCursor(cursor, queue).has_value());
         }
 
@@ -397,8 +388,8 @@ namespace uf::cli
             auto const extent = measureExploreQueue(queue);
             REQUIRE(extent.has_value());
 
-            // The queue was truncated or replaced under the session, which makes
-            // the cursor a record of chunks that are no longer there.
+            // The queue was truncated or replaced, so the cursor records chunks
+            // that are no longer there.
             auto const start = resolveExploreQueueStart(
                 std::optional<ExploreQueuePosition>{
                     ExploreQueuePosition{.consumedBytes = 10'000}

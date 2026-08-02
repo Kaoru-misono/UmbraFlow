@@ -18,10 +18,9 @@
 #include <utility>
 #include <variant>
 
-// Luau's C headers are third-party and do not build clean under the project's
-// /W4 /WX profile; a manifest-driven module has no CMakeLists to mark them
-// external, so wrap the includes exactly as the repo's other vendored FFI does
-// (image/ffi/png-decoder.cpp).
+// Luau's C headers do not build clean under the project's /W4 /WX profile, and
+// a manifest-driven module has no CMakeLists to mark them external; wrap them as
+// image/ffi/png-decoder.cpp does.
 #if defined(_MSC_VER)
 #pragma warning(push, 0)
 #elif defined(__clang__)
@@ -47,9 +46,8 @@ namespace uf::script
     namespace
     {
         // Convert the config's 64-bit ceiling to the allocator's size_t ledger
-        // unit, clamping a value beyond the addressable range to the maximum (an
-        // effectively unlimited ceiling on this host). Zero passes through and
-        // disables the ceiling.
+        // unit, clamping past the addressable range to the maximum (effectively
+        // unlimited here). Zero passes through and disables the ceiling.
         [[nodiscard]]
         auto quotaLimit(uint64 bytes) -> std::size_t
         {
@@ -58,9 +56,8 @@ namespace uf::script
         }
 
         // The refusal every call gets once a generation has been spent, naming
-        // what spent it. Shared by runNumber and runValue, because an agent
-        // reading one of them must not learn less than an agent reading the
-        // other.
+        // what spent it. Shared by runNumber and runValue so an agent reading
+        // one never learns less than an agent reading the other.
         [[nodiscard]]
         auto terminalRefusal(InterruptState const& control) -> std::unexpected<Error>
         {
@@ -91,36 +88,33 @@ namespace uf::script
     {
         friend class Engine;
 
-        // Memory ledger backing the accounting allocator, filled from the config
-        // before the VM is created and read on every allocation. Declared first
-        // so it is destroyed last: m_state closes the VM first, while frees from
-        // Luau teardown can still reach this live ledger.
+        // Memory ledger backing the accounting allocator, read on every
+        // allocation. Declared before m_state so it is destroyed last: closing
+        // the VM runs frees that must still reach a live ledger.
         MemoryQuota m_quota;
 
-        // The owned VM handle. Left null until create() allocates it through the
+        // The owned VM handle, null until create() allocates it through the
         // accounting allocator, so a construction that fails before then closes
         // nothing.
         std::unique_ptr<lua_State, LuaStateDeleter> m_state;
 
-        // Live cancellation/budget state the interrupt callback reads. Derived
-        // from the config at construction (the deadline is anchored to now(), so
-        // the framework boot runs under it too) and address-stable because Impl
-        // is heap-pinned behind unique_ptr.
+        // Live cancellation/budget state the interrupt callback reads. The
+        // deadline is anchored at construction, so the framework boot runs under
+        // it too; address-stable because Impl is heap-pinned behind unique_ptr.
         InterruptState m_control;
 
         // The configured ceiling on ONE unit of script, kept so every run can
         // re-anchor the deadline against it.
         std::chrono::steady_clock::duration m_maxRuntime;
 
-        // The host's decoder for a raised value nobody caught. Copied from the
-        // config rather than borrowed: create() takes the config by const
-        // reference and the caller is free to destroy it, while this is read on
-        // every failing run for the Engine's whole life.
+        // The host's decoder for a raised value nobody caught. Copied rather
+        // than borrowed: create() takes the config by const reference and the
+        // caller may destroy it, while this is read for the Engine's whole life.
         RaisedErrorClassifier m_classifyRaisedError;
 
-        // Set once a task thread has been hard-cancelled (the interrupt issued
-        // lua_break): the VM generation is spent, so every later runNumber
-        // refuses with Cancelled instead of resuming an abandoned VM.
+        // Set once the interrupt has hard-cancelled a task thread: the VM
+        // generation is spent, so every later run refuses with Cancelled instead
+        // of resuming an abandoned VM.
         bool m_terminal{false};
 
     public:
@@ -143,16 +137,8 @@ namespace uf::script
 
         ~Impl() = default;
 
-        // Anchor the wall clock at the unit of script about to run.
-        //
-        // The ceiling bounds how long ONE chunk may run, not how long this VM
-        // may exist, and anchoring it once at construction was the same thing
-        // only while a generation ran exactly one script. The exploration
-        // front-end runs many chunks in one VM with an agent's own thinking time
-        // in between, so the construction anchor charged the VM for wall clock
-        // during which no Lua ran at all: a session died at thirty minutes,
-        // between two chunks, and every chunk after it was refused.
-        //
+        // Anchor the wall clock at the unit of script about to run: the ceiling
+        // bounds ONE chunk, not the VM's life (see EngineConfig::maxRuntime).
         // The framework boot keeps the construction anchor above, so nothing is
         // left unguarded between create() and the first run.
         auto beginUnitOfScript() noexcept -> void
@@ -179,9 +165,9 @@ namespace uf::script
             return HeapUsage{};
         }
 
-        // Widening from the ledger's size_t to the report's uint64 loses
-        // nothing on any host this project builds for, so it needs no checked
-        // cast; the narrowing direction is quotaLimit's, above.
+        // Widening the ledger's size_t to the report's uint64 loses nothing on
+        // any host this project builds for, so it needs no checked cast; the
+        // narrowing direction is quotaLimit's, above.
         return HeapUsage{
             .usedBytes    = static_cast<uint64>(p_quota->used),
             .ceilingBytes = static_cast<uint64>(p_quota->limitBytes),
@@ -193,10 +179,9 @@ namespace uf::script
     {
         if (state != nullptr)
         {
-            // Runs no Lua: Luau has no __gc metamethod, and the only thing a
-            // sweep can call is a C userdata destructor. So this is safe from
-            // inside a lua_CFunction, where the calling frame's own values are
-            // stack roots and cannot be collected under it.
+            // Runs no Lua: Luau has no __gc metamethod and a sweep can only call
+            // a C userdata destructor, so this is safe from inside a
+            // lua_CFunction, whose own frame values are stack roots.
             lua_gc(state, LUA_GCCOLLECT, 0);
         }
         return heapUsage(state);
@@ -255,9 +240,8 @@ namespace uf::script
         auto impl = std::make_unique<Impl>(config);
 
         // Allocate the VM through the accounting allocator, which charges every
-        // byte against impl->m_quota and refuses growth past the configured
-        // ceiling. Returns null on host allocation failure, as luaL_newstate
-        // would.
+        // byte against impl->m_quota and refuses growth past the ceiling. Null
+        // on host allocation failure, as luaL_newstate would be.
         impl->m_state.reset(createStateWithQuota(&impl->m_quota));
         auto* state = impl->m_state.get();
         if (state == nullptr)
@@ -270,20 +254,16 @@ namespace uf::script
         luaL_openlibs(state);
 
         // Arm hard cancellation before ANY Lua code runs, the framework bundle
-        // included. m_control lives in the heap-pinned Impl, so the userdata
-        // pointer stays valid. Arming it here rather than after the sandbox is
-        // what puts the framework's own boot under the same stop token,
-        // instruction budget and deadline a task run answers to; with no
-        // framework modules configured no Lua code runs during the boot at all,
-        // so nothing is charged against the budget.
+        // included: arming it here rather than after the sandbox is what puts
+        // the framework's own boot under the same stop token, instruction budget
+        // and deadline a task run answers to. m_control lives in the heap-pinned
+        // Impl, so the userdata pointer stays valid.
         installInterrupt(state, &impl->m_control);
 
         // Boot the two environments. installSandbox owns the whole ordered
-        // sequence -- framework environment and bundle, host tables, the global
-        // strippings, luaL_sandbox, project environment prototype -- because an
-        // ordering this security-relevant belongs in one place rather than
-        // spread across its callers. A failure returns the reason its own step
-        // gave, and `impl` closes the VM it had already allocated.
+        // sequence, because an ordering this security-relevant belongs in one
+        // place rather than spread across its callers. A failure returns the
+        // reason its own step gave, and `impl` closes the VM already allocated.
         UF_TRY(installSandbox(state, config, &impl->m_control));
 
         return Engine{std::move(impl)};
@@ -295,7 +275,7 @@ namespace uf::script
     ) -> Result<double>
     {
         // A hard cancel spends the whole VM generation: once a task thread has
-        // been broken, this Engine is terminal and never resumes another thread.
+        // been broken this Engine is terminal and never resumes another.
         if (m_impl->m_terminal)
         {
             return terminalRefusal(m_impl->m_control);
@@ -311,7 +291,7 @@ namespace uf::script
             &m_impl->m_classifyRaisedError
         );
 
-        // runNumberOnThread already reported the cancel; this only spends the
+        // The runner already reported the cancel; this only spends the
         // generation, so every later call refuses without touching the VM.
         if (m_impl->m_control.broken())
         {

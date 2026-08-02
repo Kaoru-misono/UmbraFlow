@@ -26,40 +26,33 @@
 
 namespace uf::task
 {
-    // The agent front-end: a live target, a project, and one Luau chunk at a
-    // time.
+    // The agent front-end: a live target, a project, and one Luau chunk at a time.
     //
-    // WHAT MAKES IT THE THIRD FRONT-END RATHER THAN A MODE OF THE OTHER TWO. A
-    // task runs one script the host loaded from the project; an operator sends
-    // commands that are not code at all; an agent sends CODE, chunk by chunk,
-    // and looks at what came back before writing the next one. That loop --
-    // capture, look, click, capture again -- is the workflow an annotation
-    // session actually has (docs/plans/2026-08-01-three-layers-and-agent-
-    // operator.md 3), and neither of the other two front-ends can express it: a
-    // task cannot be written before the model exists, and an operator protocol
-    // cannot compose two verbs without growing a second copy of the framework.
+    // A third front-end rather than a mode of the other two because an agent sends
+    // CODE, chunk by chunk, and looks at what came back before writing the next.
+    // Neither of the others can express that loop: a task cannot be written before
+    // the model exists, and an operator protocol cannot compose two verbs without
+    // growing a second copy of the framework
+    // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 3).
     //
-    // THE SECOND ENVIRONMENT LIVES HERE. The VM this owns is booted with the
-    // Exploration private surface -- the run surface plus `cycle_crop` and
-    // `probe` -- and publishes two framework modules a run VM does not, `explore`
-    // and `scribe`. That pair of differences is the whole of the trust split; see
-    // task/script-bindings.hpp and task/framework-bundle.hpp for why each half is
-    // where it is. Everything else about the VM is identical to a task's,
-    // deliberately: an agent that measured the system under weaker guarantees
-    // would be measuring a system the product does not ship.
+    // The second environment lives here. The VM this owns is booted with the
+    // Exploration private surface -- the run surface plus `cycle_crop` and `probe`
+    // -- and publishes two framework modules a run VM does not, `explore` and
+    // `scribe`. That pair of differences is the whole of the trust split (see
+    // task/script-bindings.hpp and task/framework-bundle.hpp); everything else
+    // about the VM is identical to a task's, so an agent measures the system the
+    // product actually ships.
     //
-    // ONE CHUNK IS ONE BRACKET. Each evaluate() runs its chunk under a project
+    // One chunk is one bracket. Each evaluate() runs its chunk under a project
     // environment built fresh for it, so globals one chunk writes never reach the
-    // next; and the session sweeps any observation cycle the chunk left open, so
-    // a chunk that raised mid-cycle costs its own line and not the session. What
-    // does survive between chunks is everything the HOST owns: the ledger's
-    // ordinals, the template store, the trace sequence, and the target binding.
+    // next, and the session sweeps any observation cycle the chunk left open. What
+    // survives between chunks is everything the HOST owns: the ledger's ordinals,
+    // the template store, the trace sequence, and the target binding.
     //
     // Lifetime: non-movable, because the VM borrows the context, the context
     // borrows the recorder, and both addresses must stay fixed. Created through
-    // TaskHost::startExplorationSession, which latches the generation's
-    // front-end claim, so a generation cannot end up with both this and a task
-    // run.
+    // TaskHost::startExplorationSession, which latches the generation's front-end
+    // claim.
     //
     // NOT thread-safe: every verb runs on the owning thread.
     class ExplorationSession final
@@ -93,18 +86,17 @@ namespace uf::task
 
             ProjectFingerprint projectFingerprint;
 
-            // The directory project_read and project_write are confined to,
-            // which is the generation's own project root. An exploration session
-            // needs it where an operator session did not: `scribe` writes
-            // template assets and rewrites the model file, and both are
-            // project_write calls that must not be able to name the rest of the
-            // disk.
+            // The directory project_read and project_write are confined to. An
+            // exploration session needs it where an operator session did not:
+            // `scribe` writes template assets and rewrites the model file, and
+            // both are project_write calls that must not be able to name the rest
+            // of the disk.
             std::filesystem::path projectRoot{};
 
             // This session's RNG seed, drawn by the host and recorded in
-            // run.started. The exploration surface carries `random`, so a seed
-            // is a real replay input here rather than the zero an operator
-            // session records for having no randomness at all.
+            // run.started. The exploration surface carries `random`, so a seed is
+            // a real replay input here rather than the zero an operator session
+            // records for having no randomness at all.
             uint64 seed{};
 
             std::stop_token cancellation{};
@@ -128,10 +120,8 @@ namespace uf::task
 
         // Opens the run bracket, binds the ports and boots the VM. Everything
         // fallible happens here, so a session that exists has run.started in its
-        // trace, a bound target, and an environment ready to run a chunk.
-        //
-        // `config` and `spec` are taken by value because this is a move-in
-        // ownership boundary: the ports end up inside the session.
+        // trace, a bound target, and an environment ready to run a chunk. `config`
+        // and `spec` are taken by value: the ports end up inside the session.
         [[nodiscard]]
         static auto create(
             TaskRunConfig config,
@@ -140,16 +130,13 @@ namespace uf::task
             GenerationId generationId
         ) -> Result<std::unique_ptr<ExplorationSession>>;
 
-        // Runs one agent-supplied chunk and reports what it returned.
-        //
-        // `chunkName` labels the chunk in compile diagnostics and in a raised
-        // error's traceback, so the agent's own id for the line is what it reads
-        // back. Neither view is stored.
+        // Runs one agent-supplied chunk and reports what it returned. `chunkName`
+        // labels the chunk in compile diagnostics and in a raised error's
+        // traceback; neither view is stored.
         //
         // A chunk that fails is an ORDINARY outcome: the agent reads the failure
-        // and sends another chunk. What is not ordinary is a cancellation or a
-        // spent generation, and those surface as the failure kind the caller
-        // ends the session on.
+        // and sends another chunk. A cancellation or a spent generation is not,
+        // and surfaces as the failure kind the caller ends the session on.
         [[nodiscard]]
         auto evaluate(
             std::string_view chunk,
@@ -164,10 +151,9 @@ namespace uf::task
 
         // The VM's memory ledger as it stands, which after an evaluate() is the
         // reading AFTER that chunk's reclamation -- the live figure, not the
-        // garbage the chunk happened to leave behind.
-        //
-        // The caller reports it on every result line so an agent watches itself
-        // approach the ceiling. A session with no VM reports an empty readout.
+        // garbage the chunk left behind. The caller reports it on every result
+        // line so an agent watches itself approach the ceiling; a session with no
+        // VM reports an empty readout.
         [[nodiscard]]
         auto heapUsage() const noexcept -> script::HeapUsage;
 

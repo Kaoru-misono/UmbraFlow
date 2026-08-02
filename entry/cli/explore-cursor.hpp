@@ -10,14 +10,10 @@
 
 namespace uf::cli
 {
-    // How far into its queue an exploration session has already gone.
-    //
-    // A chunk counts as consumed only once it has RUN and been answered in the
-    // results file, so this position never runs ahead of the answers. A restart
-    // that resumes from it re-runs nothing the agent has already been told about
-    // -- which is the property that matters here far more than it does for a task
-    // run: replaying an agent's queue would re-deliver every click in it against
-    // a live target.
+    // How far into its queue an exploration session has already gone. A chunk
+    // counts as consumed only once it has RUN and been answered in the results
+    // file, so a restart re-runs nothing the agent has been told about -- replaying
+    // an agent's queue would re-deliver every click in it against a live target.
     struct ExploreQueuePosition final
     {
         uintmax consumedBytes{};
@@ -26,13 +22,9 @@ namespace uf::cli
         auto operator==(ExploreQueuePosition const&) const -> bool = default;
     };
 
-    // A cursor file exactly as it reads on disk.
-    //
-    // The queue path travels with the position because a cursor sitting beside a
-    // different queue has to be refused rather than believed: its byte offset
-    // would seek into a file it never described and silently skip whatever
-    // precedes it. This is the m0-demo input agent's rule, carried over
-    // deliberately -- it is the reason that agent could be restarted at all.
+    // The queue path travels with the position so a cursor sitting beside a
+    // different queue can be refused: its byte offset would seek into a file it
+    // never described and silently skip whatever precedes it.
     struct ExploreQueueCursorRecord final
     {
         std::filesystem::path queue{};
@@ -41,9 +33,9 @@ namespace uf::cli
         auto operator==(ExploreQueueCursorRecord const&) const -> bool = default;
     };
 
-    // What a queue file already holds. `framedBytes` ends just past the last
-    // newline, so it is the only position a reader may resume from: starting
-    // mid-line would splice half a chunk onto the next append.
+    // `framedBytes` ends just past the last newline, so it is the only position a
+    // reader may resume from: starting mid-line would splice half a chunk onto the
+    // next append.
     struct ExploreQueueExtent final
     {
         uintmax framedBytes{};
@@ -65,18 +57,17 @@ namespace uf::cli
         ExploreQueueCursorRecord const& record
     ) -> std::string;
 
-    // Rejects every partial file: a cursor is rewritten whole, so a text that
-    // lacks a field or its closing newline was cut short by a dying session and
-    // says nothing trustworthy about what already ran.
+    // Rejects every partial file: a cursor is rewritten whole, so a text missing a
+    // field or its closing newline was cut short by a dying session.
     [[nodiscard]]
     auto parseExploreQueueCursor(
         std::string_view text,
         std::filesystem::path const& path
     ) -> Result<ExploreQueueCursorRecord>;
 
-    // Absent means no session has recorded a position for this queue yet, which
-    // is the only case a caller may treat as a fresh start. A cursor that names
-    // another queue, or that does not parse, is a failure rather than an absence.
+    // Absent means no session has recorded a position for this queue yet, the only
+    // case a caller may treat as a fresh start. A cursor that names another queue,
+    // or that does not parse, is a failure rather than an absence.
     [[nodiscard]]
     auto readExploreQueueCursor(
         std::filesystem::path const& path,
@@ -88,17 +79,10 @@ namespace uf::cli
         std::filesystem::path const& queue
     ) -> Result<ExploreQueueExtent>;
 
-    // The one decision that keeps a restart from replaying.
-    //
-    // A recorded position always wins. With no cursor, an EMPTY queue starts at
-    // zero -- that is the ordinary first session, where the agent creates the
-    // file and then appends to it. With no cursor and a queue that already holds
-    // chunks there is no safe reading: those lines were either written for a
-    // session that died or for this one, and guessing either way replays history
-    // against a live target or silently drops a batch. So it is refused, and the
-    // refusal says what to do about it. The input agent solved this with a
-    // three-way policy flag; refusing outright needs no flag and is the same
-    // fail-closed answer its default already gave.
+    // The one decision that keeps a restart from replaying. A recorded position
+    // always wins; with no cursor an empty queue starts at zero. With no cursor and
+    // a queue that already holds chunks, guessing would replay history against a
+    // live target or silently drop a batch, so it is refused.
     [[nodiscard]]
     auto resolveExploreQueueStart(
         std::optional<ExploreQueuePosition> const& recorded,
@@ -107,8 +91,8 @@ namespace uf::cli
     ) -> Result<ExploreQueuePosition>;
 
     // Owns the cursor file for one session. Rewriting the whole file on every
-    // advance keeps the durable state a single self-describing document and
-    // leaves it unlocked between chunks, so the directory stays inspectable.
+    // advance leaves it unlocked between chunks, so the directory stays
+    // inspectable.
     class ExploreQueueCursor final
     {
         std::filesystem::path m_path;
@@ -128,9 +112,9 @@ namespace uf::cli
         auto operator=(ExploreQueueCursor&&) noexcept -> ExploreQueueCursor& = default;
         ~ExploreQueueCursor() = default;
 
-        // Publishes the starting position before the first chunk runs, so a
-        // session that dies having done nothing still leaves an unambiguous file
-        // behind instead of the absence that forces the next start to refuse.
+        // Publishes the starting position before the first chunk runs, so a session
+        // that dies having done nothing leaves a file rather than the absence that
+        // forces the next start to refuse.
         [[nodiscard]]
         static auto open(
             std::filesystem::path path,

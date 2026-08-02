@@ -44,13 +44,11 @@
 
 namespace uf::task
 {
-    // The event stream a resident host would subscribe to. task-host.hpp declares
-    // this type and deliberately never defines it, because what a task event is
-    // remains a P2 question. This is the program's single definition, and it
-    // exists for one reason: subscribeEvents takes a reference to it, so proving
-    // the verb reports UnsupportedCapability needs something to reference. It
-    // carries no members precisely because inventing a payload here would be the
-    // speculative design the incomplete declaration exists to avoid.
+    // The event stream a resident host would subscribe to. task-host.hpp
+    // declares the type and never defines it, because what a task event is
+    // remains a P2 question; this is the program's single definition and exists
+    // only so subscribeEvents has something to reference. Members would be the
+    // speculation the incomplete declaration avoids.
     class ITaskEventSink final
     {
     };
@@ -64,15 +62,13 @@ namespace uf::task
 
         constexpr auto k_projectId = std::string_view{"personal.task_host"};
 
-        // The task every run in this file drives: load the template the project
-        // file names, observe once, match it, click it. It also NAMES a page and
-        // an element through the two-level literals, so the
-        // run.resources_validated line carries a non-empty closure of each --
-        // which is the pre-VM pass resolving them against page-model.toml.
+        // The task every run in this file drives: load a template, observe once,
+        // match it, click it. It also NAMES a page and an element, so the
+        // run.resources_validated line carries a non-empty closure of each,
+        // resolved against page-model.toml by the pre-VM pass.
         constexpr auto k_taskSource = std::string_view{
             // The two literals sit in a function the run never calls: the pre-VM
-            // pass reads them off the AST, which is where the closure is decided,
-            // while the VM never evaluates them -- the `uf` root carries no name
+            // pass reads them off the AST, and the `uf` root carries no name
             // tables to evaluate them against any more
             // (docs/plans/2026-07-31-script-owned-page-model.md 9).
             "local function names()\n"
@@ -87,8 +83,8 @@ namespace uf::task
         };
 
         // The page model the host reads, and the whole of what it reads out of
-        // it: the geometry every rectangle was measured at, and the names a
-        // script may spell. Everything else in the file is layer two's.
+        // it: the geometry rectangles were measured at, and the names a script
+        // may spell. Everything else in the file is layer two's.
         constexpr auto k_pageModel = std::string_view{R"toml(
 schema = "umbraflow-project/l2-v1"
 base_resolution = [3, 2]
@@ -192,10 +188,9 @@ exercised = ["interact"]
         }
 
         // The three-by-two authoring source every fixture project is compiled
-        // from. Each pixel carries a distinct value, so a frame painted with the
-        // same pixels reproduces every crop exactly at its own position and
-        // nowhere else: the page anchor matches at (0, 0) and the action target
-        // at (1, 0), both with a zero sum of absolute differences.
+        // from. Each pixel is distinct, so a frame painted with the same pixels
+        // reproduces every crop at its own position and nowhere else, with a
+        // zero sum of absolute differences.
         [[nodiscard]]
         auto sourcePixelsRgba() -> std::vector<std::byte>
         {
@@ -215,11 +210,10 @@ exercised = ["interact"]
             return test::fingerprint(3, 2, 96, 96);
         }
 
-        // Publishes a project at `root`: the page model the host reads, the one
-        // template the task searches for, and `tasks/<name>.luau`. This is the
-        // on-disk shape TaskHost addresses -- it never executes a loose-path
-        // script, and it reads no generated/annotations.runtime.toml any more
-        // (docs/plans/2026-07-31-script-owned-page-model.md 9).
+        // Publishes a project at `root`: the page model, the one template the
+        // task searches for, and `tasks/<name>.luau`. TaskHost never executes a
+        // loose-path script and reads no generated/annotations.runtime.toml any
+        // more (docs/plans/2026-07-31-script-owned-page-model.md 9).
         auto publishProject(
             std::filesystem::path const& root,
             std::string_view taskName,
@@ -248,8 +242,7 @@ exercised = ["interact"]
         }
 
         // A frame reproducing the authoring source pixel for pixel, in BGRA and
-        // stamped with the current monotonic instant so the action's frame-age
-        // check passes.
+        // stamped now so the action's frame-age check passes.
         [[nodiscard]]
         auto sourceFrame(FrameId frameId) -> Frame
         {
@@ -316,10 +309,9 @@ exercised = ["interact"]
             };
         }
 
-        // Every line the run wrote, with the documented non-golden `meta` member
-        // stripped. Reading the file back rather than a recording sink is
-        // deliberate: the host owns the sink, so the file is the only place the
-        // stream is observable, and it is what an operator actually reads.
+        // Every line the run wrote, with the non-golden `meta` member stripped.
+        // The host owns the sink, so the file is the only place the stream is
+        // observable -- and it is what an operator actually reads.
         [[nodiscard]]
         auto traceLines(std::filesystem::path const& path) -> std::vector<std::string>
         {
@@ -338,9 +330,9 @@ exercised = ["interact"]
             return lines;
         }
 
-        // The stamped prefix every line of a run carries: schema, kind, and the
-        // identity triple. Comparing prefixes pins the event order, the monotonic
-        // sequence, and the single run/generation identity in one assertion.
+        // The stamped prefix every line of a run carries. Comparing prefixes
+        // pins the event order, the monotonic sequence and the single
+        // run/generation identity in one assertion.
         [[nodiscard]]
         auto stampedPrefix(std::string_view kind, std::size_t sequence) -> std::string
         {
@@ -400,8 +392,7 @@ exercised = ["interact"]
     {
         // The verb set is frozen from day one so the API surface does not change
         // between P0 and P2. These three are signature commitments backed by an
-        // existing error kind rather than by unimplemented machinery, and this
-        // pins that they say so rather than doing something partial.
+        // existing error kind, and this pins that they say so rather than half-do.
         auto host = TaskHost{};
         auto sink = ITaskEventSink{};
 
@@ -453,11 +444,10 @@ exercised = ["interact"]
 
     TEST_CASE("a generation drives one front-end, whichever arrives first")
     {
-        // The mutual exclusion, made structural. A generation holds the single-open-
-        // cycle ledger, so two policy sources driving one generation would contend for
-        // it. Both orders are checked, because "the first one wins" is only a rule if
-        // it holds symmetrically -- and both are checked on the SAME host, so nothing
-        // about process-level dispatch is doing the work.
+        // A generation holds the single-open-cycle ledger, so two policy sources
+        // driving one would contend for it. Both orders are checked, because
+        // "the first one wins" is only a rule if it holds symmetrically, and
+        // both on the SAME host so no process-level dispatch is doing the work.
         SUBCASE("a task run refuses an operator session afterwards")
         {
             auto const temp = TemporaryDir{"exclusion-task-first"};
@@ -518,10 +508,9 @@ exercised = ["interact"]
 
         SUBCASE("a task run refuses an exploration session afterwards")
         {
-            // The third front-end obeys the same rule, and it has to be checked
-            // on its own rather than inferred: an agent session holds the same
-            // single-open-cycle ledger a task does, so admitting one beside a
-            // task would be two policy sources contending for one frame.
+            // The third front-end is checked on its own rather than inferred: an
+            // agent session holds the same ledger a task does, so admitting one
+            // beside a task would be two policy sources over one frame.
             auto const temp = TemporaryDir{"exclusion-task-then-agent"};
             publishProject(temp.path(), "daily", k_taskSource);
 
@@ -581,9 +570,8 @@ exercised = ["interact"]
 
         SUBCASE("the same front-end twice is allowed")
         {
-            // A generation legitimately runs several tasks in sequence. What it must
-            // never do is mix the two front-ends, so this half of the rule has to hold
-            // or the exclusion would be a ban on reuse rather than on contention.
+            // A generation legitimately runs several tasks in sequence; without
+            // this half the exclusion bans reuse rather than contention.
             auto const temp = TemporaryDir{"exclusion-same"};
             publishProject(temp.path(), "daily", k_taskSource);
 
@@ -656,8 +644,7 @@ exercised = ["interact"]
         REQUIRE(session.has_value());
 
         // Each chunk runs under a project environment built fresh for it, so a
-        // global one chunk writes never reaches the next. What DOES survive is
-        // everything the host owns, which the ledger ordinal below shows.
+        // global one chunk writes never reaches the next; what the host owns does.
         auto const first = (*session)->evaluate("carried = 7 return 1", "one");
         REQUIRE(first.has_value());
         CHECK(first->number() == 1.0);
@@ -672,7 +659,7 @@ exercised = ["interact"]
 
         // A chunk that leaves a cycle open costs its own line and nothing more:
         // the host sweeps the bracket, so the next chunk opens a cycle of its
-        // own instead of meeting a framework-bug refusal.
+        // own rather than meeting a framework-bug refusal.
         auto const leaky = (*session)->evaluate("ctx:cycle_open() return true", "three");
         REQUIRE(leaky.has_value());
         auto const after = (*session)->evaluate(
@@ -734,14 +721,11 @@ exercised = ["interact"]
         REQUIRE(idle.usedBytes > 0);
 
         // Six megabytes still REACHABLE when the chunk returns, so the
-        // incremental collector cannot have taken them mid-run. Nothing is
-        // supposed to survive a chunk except the project files on disk, and the
-        // ceiling is measured against garbage as well as live data, so the
-        // boundary is where the host has to reclaim.
-        //
-        // The index is concatenated on because Luau interns EVERY string, long
-        // ones included: ninety-six copies of one string.rep would be one
-        // object and this case would measure nothing.
+        // incremental collector cannot have taken them mid-run; the ceiling is
+        // measured against garbage as well as live data, so the chunk boundary
+        // is where the host has to reclaim. The index is concatenated on because
+        // Luau interns EVERY string, long ones included: ninety-six copies of
+        // one string.rep would be one object and measure nothing.
         auto const ran = (*session)->evaluate(
             "local t = {} for i = 1, 96 do"
             " t[i] = string.rep('x', 65536) .. tostring(i) end"
@@ -784,8 +768,8 @@ exercised = ["interact"]
 
         // Unbounded LIVE growth, so the ceiling is reached with nothing to
         // reclaim and the allocator refuses. Each string is made distinct
-        // because Luau interns every one of them, and a loop reallocating the
-        // same object would spin rather than fill.
+        // because Luau interns them and a loop reallocating one object would
+        // spin rather than fill.
         auto const failed = (*session)->evaluate(
             "local t = {} local n = 0 while true do n = n + 1"
             " t[n] = string.rep('x', 65536) .. tostring(n) end",
@@ -796,18 +780,16 @@ exercised = ["interact"]
         auto const message = std::string{failed.error().message()};
         CAPTURE(message);
 
-        // Luau's own sentence survives verbatim -- it is still what happened --
-        // and the reading that explains it is added behind it. Without the
-        // second half an agent reads "not enough memory" and has no way to tell
-        // an exhausted ceiling from a chunk that asked for something absurd,
-        // which is a difference worth several chunks of guessing.
+        // Luau's own sentence survives verbatim with the reading added behind
+        // it: without the second half an agent reads "not enough memory" and
+        // cannot tell an exhausted ceiling from a chunk that asked for
+        // something absurd.
         CHECK(message.contains("not enough memory"));
         CHECK(message.contains("memory ledger"));
         CHECK(message.contains(std::to_string(ceiling)));
 
         // A chunk that failed for its own reasons keeps its message untouched:
-        // the reading is added because the ledger was against the ceiling, not
-        // because a chunk failed.
+        // the reading is added because the ledger was against the ceiling.
         auto const ordinary = (*session)->evaluate("error('deliberate')", "plain");
         REQUIRE_FALSE(ordinary.has_value());
         CHECK(!std::string{ordinary.error().message()}.contains("memory ledger"));
@@ -907,15 +889,12 @@ exercised = ["interact"]
 
     TEST_CASE("TaskHost reports a run whose terminal verdict the script swallowed")
     {
-        // Design section 9's rule 5, read back at the host boundary. The first
-        // capture fails Cancelled, which latches the generation terminal; the
-        // task catches the raise and returns normally. Nothing else marks the
-        // run, so without the latch being folded into the report this would be
-        // indistinguishable from a task that ran to completion.
-        //
-        // No stop token is armed anywhere: the VM interrupt never fires and the
-        // engine would happily capture again, so the latch is the only thing
-        // that can decide this run's outcome.
+        // The first capture fails Cancelled, latching the generation terminal,
+        // and the task catches the raise and returns normally: without the latch
+        // folded into the report this is indistinguishable from a task that ran
+        // to completion. No stop token is armed anywhere -- the VM interrupt
+        // never fires and the engine would happily capture again -- so the latch
+        // is the only thing that can decide this run's outcome.
         auto const temp = TemporaryDir{"swallowed-terminal"};
         publishProject(
             temp.path(),
@@ -995,9 +974,9 @@ exercised = ["interact"]
         REQUIRE(second.has_value());
         REQUIRE(second->outcome() == TaskRunOutcome::Completed);
 
-        // Two runs of one task must not share a seed. A constant seed would look
-        // perfectly correct in a trace while making every run replay as the same
-        // draw sequence, which is exactly the placeholder this replaced.
+        // Two runs of one task must not share a seed: a constant seed looks
+        // perfectly correct in a trace while making every run replay the same
+        // draw sequence.
         CHECK(first->seed != second->seed);
 
         // The reported seed is the one the trace recorded, so a replay reads the
@@ -1011,11 +990,10 @@ exercised = ["interact"]
 
     TEST_CASE("a TaskHost run writes one ordered umbraflow-trace/v3 run bracket")
     {
-        // The acceptance criterion for the whole slice: one call drives the host
-        // events, the engine's recognition and delivery events, and the script
-        // layer's native calls into a single file, in order, under one sequence
-        // and one run and generation identity -- and the run bracket that only
-        // the host can write opens and closes it.
+        // One call drives the host events, the engine's recognition and delivery
+        // events and the script layer's native calls into a single file, in
+        // order, under one sequence and one run and generation identity, inside
+        // the run bracket only the host can write.
         auto const temp = TemporaryDir{"bracket"};
         publishProject(temp.path(), "daily", k_taskSource);
 
@@ -1065,10 +1043,9 @@ exercised = ["interact"]
         }
 
         // The three host-authoritative lines are pinned whole. The framework
-        // version, bundle hash and Luau compiler version are interpolated
-        // because they legitimately change when the framework or the vendored
-        // compiler is rebuilt, while their presence and position is exactly what
-        // this pins; the seed is interpolated because it is drawn per run.
+        // version, bundle hash, Luau version and per-run seed are interpolated
+        // because they change legitimately; their presence and position is what
+        // this pins.
         CHECK(
             lines.front()
             == std::format(
@@ -1077,9 +1054,8 @@ exercised = ["interact"]
                 R"(,"projectId":"{}","taskName":"daily")"
                 R"(,"sourceHash":"{}","frameworkVersion":"{}")"
                 R"(,"frameworkHash":"{}","luauVersion":"{}","seed":{}}})",
-                // The project's own directory name: the v3 manifest that used to
-                // carry a project id is no longer a runtime input, so this is the
-                // whole of what identifies a project on the wire
+                // The project's own directory name is the whole of what
+                // identifies a project on the wire; no manifest carries an id
                 // (docs/plans/2026-07-31-script-owned-page-model.md 9).
                 temp.path().filename().string(),
                 report->sourceHash,
@@ -1101,9 +1077,8 @@ exercised = ["interact"]
                R"(,"seq":13,"runId":1,"generationId":1,"frontEnd":"task","runOutcome":"Completed"})"
         );
 
-        // The engine event that opened the observation and the one that
-        // delivered the click name the same frame, which is what lets a reader
-        // attribute the click to the evidence it was authorized against.
+        // The observation and the delivery name the same frame, which lets a
+        // reader attribute the click to the evidence it was authorized against.
         CHECK(lines[4].contains(R"("frameId":91)"));
         CHECK(lines[9].contains(R"("frameId":91)"));
     }

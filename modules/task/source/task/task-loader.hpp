@@ -18,12 +18,11 @@ namespace uf::task
     // (engine::k_maximumRuntimeManifestBytes) rather than any script property.
     inline constexpr auto k_maximumTaskSourceBytes = std::size_t{4} * 1024U * 1024U;
 
-    // One task resolved from its owning project by name (task addressing: see
-    // docs/plans/2026-07-29-three-layer-task-system.md section 6): the validated
+    // One task resolved from its owning project by name
+    // (docs/plans/2026-07-29-three-layer-task-system.md section 6): the validated
     // task name, the whole script source, and the content hash the host stamps
-    // into the trace at load time. It only ever exists once loadTask has
-    // established it -- ContentHash has no default state -- so the aggregate has no
-    // meaningful default; build it through loadTask.
+    // into the trace at load time. ContentHash has no default state, so the
+    // aggregate has no meaningful default; build it through loadTask.
     struct LoadedTask final
     {
         std::string name{};
@@ -47,11 +46,10 @@ namespace uf::task
     ) -> Result<LoadedTask>;
 
     // The Luau compiler/runtime version stamp the host records in a task's trace
-    // beside the script hash. It is the Luau bytecode target version --
-    // the compiler output format that determines reproducibility of a compiled
-    // task -- which is the only stable version constant the vendored VM exposes.
-    // Process-global, not per-task; reads the constant behind the ffi boundary so
-    // no Luau header reaches this public header.
+    // beside the script hash: the bytecode target version, which is the only
+    // stable version constant the vendored VM exposes. Process-global, not
+    // per-task; the constant is read behind the ffi boundary so no Luau header
+    // reaches this public header.
     [[nodiscard]]
     auto luauRuntimeVersion() -> std::string;
 }

@@ -13,25 +13,18 @@
 
 // The adversarial suite for the script substrate: the places §11 of
 // docs/plans/2026-07-29-three-layer-task-system.md says guarantees historically
-// break, plus the ceilings a hostile script is expected to try to outlive.
-//
-// test-veto-suite.cpp already covers the two non-yieldable frames the P0 gate
-// named (table.sort and string.gsub) and the three ceilings against a naive
-// runaway. What is added here is the rest of §11's matrix -- the generic-for
-// iterator, the __index / __newindex / __tostring metamethods, and the xpcall
-// error handler, which is the one that historically failed SILENTLY -- and the
-// ceilings against a script that actively tries to survive them.
+// break. test-veto-suite.cpp covers the two non-yieldable frames the P0 gate named
+// (table.sort, string.gsub) against a naive runaway; this adds the rest of §11's
+// matrix and the ceilings against a script that actively tries to outlive them.
 namespace uf::script
 {
     namespace
     {
-        // One of §11's non-yieldable host C frames, with `body` executed inside
-        // it. A lua_break landing in one of these cannot unwind cleanly: Luau
-        // raises an ordinary CATCHABLE error instead (ldo.cpp lua_break, guarded
-        // on nCcalls > baseCcalls). The engine stays safe because the interrupt
-        // sets InterruptState::broken BEFORE calling lua_break, so the run is
-        // reported Cancelled whichever shape the break took -- which is what
-        // every case below is holding it to.
+        // One of §11's non-yieldable host C frames, with `body` executed inside it. A
+        // lua_break landing in one cannot unwind cleanly and Luau raises an ordinary
+        // CATCHABLE error instead (ldo.cpp lua_break, guarded on nCcalls > baseCcalls);
+        // the run is still Cancelled because the interrupt sets InterruptState::broken
+        // BEFORE calling lua_break.
         struct NonYieldableForm final
         {
             std::string_view name;
@@ -115,25 +108,20 @@ namespace uf::script
             return forms;
         }
 
-        // The instruction budget the runaway cases trip. Large enough that every
-        // form reaches its C frame first -- a budget that fired during the
-        // prologue would cancel the run without ever entering the context under
-        // test, and the control below is what would catch that.
+        // Large enough that every form reaches its C frame first: a budget that fired
+        // during the prologue would cancel the run without ever entering the context
+        // under test, and the control case below is what would catch that.
         constexpr auto k_runawayBudgetTicks = uint64{20'000};
 
         TEST_CASE("A cancellation landing in any non-yieldable context still stops the run")
         {
-            // The runaway sits INSIDE the C frame, so the break fires where the
-            // frame is on the stack and degrades into a catchable error. mark()
-            // sits after the whole construct: it is a host-visible witness, so
-            // "the script did not continue" is an observation rather than an
-            // inference from the reported kind.
-            //
-            // The xpcall form is the one worth reading twice. Luau turns an error
-            // inside an error handler into LUA_ERRERR and hands the CALLER a
-            // plain (false, "error in error handling") -- the silent failure §11
-            // records. The run still ends Cancelled, because the engine boundary
-            // consults InterruptState::broken and not just the resume status.
+            // The runaway sits INSIDE the C frame, so the break degrades into a
+            // catchable error; mark() after the construct makes "the script did not
+            // continue" an observation, not an inference from the reported kind. The
+            // xpcall form is the sharp one: Luau turns an error inside an error handler
+            // into LUA_ERRERR and hands the caller a plain (false, "error in error
+            // handling") -- §11's silent failure -- yet the run still ends Cancelled,
+            // because the boundary consults InterruptState::broken, not resume status.
             for (auto const& form : nonYieldableForms("        while true do end\n"))
             {
                 INFO("non-yieldable form: ", form.name);
@@ -149,11 +137,9 @@ namespace uf::script
 
         TEST_CASE("Control: every non-yieldable form runs and reaches mark when nothing breaks")
         {
-            // Without this the case above would pass on a substrate that
-            // cancelled every run, or on forms whose bodies never executed at
-            // all. A zero budget disables every break lever, and the body is
-            // bounded, so each form must run to completion and reach mark()
-            // exactly once.
+            // Without this the case above would pass on a substrate that cancelled
+            // every run, or on forms whose bodies never executed. A zero budget
+            // disables every break lever and the body is bounded.
             for (auto const& form : nonYieldableForms("        local n = 1 + 1\n"))
             {
                 INFO("non-yieldable form: ", form.name);
@@ -169,19 +155,14 @@ namespace uf::script
 
         TEST_CASE("A script that catches its own ceiling breaches in a loop is still stopped")
         {
-            // The naive runaway is already covered. This is the evasive one: it
-            // wraps the over-quota allocation in a pcall and retries forever, so
-            // the memory ceiling alone -- which raises an ORDINARY catchable
-            // error by design -- never ends it. The instruction budget and the
-            // wall clock do, and that division of labour is the thing under
-            // test: each ceiling covers a shape the others do not.
-            //
-            // The breach grows a TABLE rather than a string on purpose. Doubling
-            // a string reaches the ceiling in a couple of dozen instructions but
-            // copies the whole buffer each time, so the instruction budget that
-            // must end it would be reached only after minutes of memcpy. Table
-            // growth spends roughly one instruction per element, so the budget
-            // below is both a real bound and a fast one.
+            // The evasive runaway wraps its over-quota allocation in a pcall and
+            // retries forever, so the memory ceiling alone -- an ORDINARY catchable
+            // error by design -- never ends it. The instruction budget and the wall
+            // clock do, and that division of labour is what is under test. The breach
+            // grows a TABLE rather than a string on purpose: doubling a string reaches
+            // the ceiling in a couple of dozen instructions but copies the whole buffer
+            // each time, so the budget that must end it would arrive only after minutes
+            // of memcpy.
             constexpr std::string_view evasive =
                 "local rounds = 0\n"
                 "while true do\n"
@@ -194,9 +175,8 @@ namespace uf::script
                 "end\n"
                 "return rounds\n";
 
-            // Two rounds of a 4 MiB table cost a few hundred thousand elements,
-            // so this budget is spent well inside one ctest timeout while still
-            // being far more than a single breach needs.
+            // Two rounds of a 4 MiB table cost a few hundred thousand elements, so this
+            // budget is spent well inside one ctest timeout.
             constexpr auto k_quotaBytes  = uint64{4} * 1024 * 1024;
             constexpr auto k_evasiveTicks = uint64{1'000'000};
 
@@ -221,10 +201,8 @@ namespace uf::script
 
             SUBCASE("the wall-clock ceiling ends it with no instruction budget armed")
             {
-                // The same script with the budget disabled, so only the deadline
-                // can stop it. A ceiling that never fired would hang this test
-                // rather than fail it, which the ctest timeout turns into a
-                // failure either way.
+                // Only the deadline can stop it. A ceiling that never fired would hang
+                // rather than fail, which the ctest timeout turns into a failure anyway.
                 auto config                 = EngineConfig{};
                 config.memoryQuotaBytes     = k_quotaBytes;
                 config.interruptBudgetTicks = 0;
@@ -248,13 +226,10 @@ namespace uf::script
             SUBCASE("control: the same shape with a bounded loop completes")
             {
                 // Without this the two cases above would pass on an engine that
-                // cancelled every run under a quota, whatever the script did. It
-                // also proves the breach really is caught: three rounds finish
-                // only if pcall swallowed three out-of-memory errors.
-                //
-                // The budget is an order of magnitude above the attack's so this
-                // control cannot be decided by the budget it is meant to hold
-                // constant; it still has one, so a blanket "any budget cancels
+                // cancelled every run under a quota. It also proves the breach really
+                // is caught: three rounds finish only if pcall swallowed three
+                // out-of-memory errors. The budget is an order of magnitude above the
+                // attack's, but still present, so a blanket "any budget cancels
                 // everything" regression fails here rather than passing quietly.
                 auto config                 = EngineConfig{};
                 config.memoryQuotaBytes     = k_quotaBytes;
@@ -285,11 +260,9 @@ namespace uf::script
         TEST_CASE("A run cannot plant anything for the next run through any shared route")
         {
             // Each run gets a fresh shallow copy of the frozen project-environment
-            // prototype, so a global it writes dies with it. What the copy SHARES
-            // with the prototype -- and therefore with the framework and with
-            // every later run -- is the library tables and the string metatable,
-            // by reference. Those are the routes a script would use to leave
-            // something behind, and every one of them must refuse the write.
+            // prototype, so a global it writes dies with it. What the copy SHARES by
+            // reference -- the library tables and the string metatable -- is the only
+            // route left for planting something, so every one must refuse the write.
             auto engine = Engine::create();
             REQUIRE(engine.has_value());
 

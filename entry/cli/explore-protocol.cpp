@@ -29,18 +29,13 @@ namespace uf::cli
             return fail(AutomationErrorKind::InvalidResource, std::move(message));
         }
 
-        // A strict reader for the one JSON shape this protocol uses: a flat
-        // object of exactly two string members.
-        //
-        // IT IS A SECOND READER AND NOT A REUSE OF THE OPERATOR'S, and the
-        // reason is that they are strict about different things. The operator's
-        // reads six OPTIONAL members of mixed type and then asks a builder which
-        // combination names a command; this reads two REQUIRED members that are
-        // both strings and has no builder at all. Sharing would mean a reader
-        // parameterised by a field table, which is more machinery than either
-        // caller needs. What IS shared is the half where a difference would
-        // silently corrupt a file rather than fail: escapeJsonString, in
-        // json-text.hpp.
+        // A strict reader for the one JSON shape this protocol uses: a flat object
+        // of exactly two string members. Deliberately not a reuse of the operator's
+        // reader, which is strict about different things -- six optional members of
+        // mixed type and a builder that decides which combination names a command
+        // -- and sharing would mean a reader parameterised by a field table. What
+        // IS shared is the half where a difference would silently corrupt a file
+        // rather than fail: escapeJsonString, in json-text.hpp.
         class LineReader final
         {
             std::string_view m_source;
@@ -89,10 +84,9 @@ namespace uf::cli
                 return ok();
             }
 
-            // Reads one JSON string. Only the six named escapes and \uXXXX for
-            // the ASCII control range are accepted: a chunk arrives as text and
-            // an escape this reader guessed at would change the program that
-            // runs.
+            // Reads one JSON string. Only the six named escapes and \uXXXX for the
+            // ASCII control range are accepted: a chunk arrives as text, and an
+            // escape this reader guessed at would change the program that runs.
             [[nodiscard]] auto readString(std::string_view what) -> Result<std::string>
             {
                 UF_TRY(expect('"', what));
@@ -151,11 +145,10 @@ namespace uf::cli
                         UF_TRY_VALUE(code, readFourHexDigits(what));
                         if (code > 0x7FU)
                         {
-                            // Above ASCII a \u escape names a code point that
-                            // may be half of a surrogate pair, and decoding
-                            // those correctly is a second parser. A chunk needing
-                            // a non-ASCII character carries it as UTF-8, which
-                            // this reader passes through untouched.
+                            // Above ASCII a \u escape may name half of a surrogate
+                            // pair, and decoding those is a second parser. A chunk
+                            // needing a non-ASCII character carries it as UTF-8,
+                            // which this reader passes through untouched.
                             return invalidLine(
                                 std::format(
                                     "a \\u escape above U+007F appears in {}; "
@@ -362,9 +355,9 @@ namespace uf::cli
         }
         if (result.number.has_value())
         {
-            // Seventeen significant digits round-trips every double exactly,
-            // which matters because a chunk's answer may be a pixel count an
-            // agent then feeds back as an argument.
+            // Seventeen significant digits round-trips every double exactly, which
+            // matters because a chunk's answer may be a pixel count an agent then
+            // feeds back as an argument.
             line += std::format(",\"value\":{:.17g}", *result.number);
         }
         if (result.text.has_value())
@@ -384,10 +377,9 @@ namespace uf::cli
         }
         if (result.heap.has_value())
         {
-            // A nested object rather than two flat members, because the two
-            // figures are only meaningful against each other: an agent reads
-            // "used out of ceiling", and a line that carried `used` alone would
-            // invite it to compare against a ceiling it assumed.
+            // A nested object rather than two flat members, because the figures are
+            // only meaningful against each other: a line carrying `used` alone
+            // would invite an agent to compare it against a ceiling it assumed.
             line += std::format(
                 ",\"heap\":{{\"used\":{},\"ceiling\":{}}}",
                 result.heap->usedBytes,
@@ -411,11 +403,9 @@ namespace uf::cli
             .heap = heap,
         };
 
-        // A chunk that returned nothing sets none of the three, so its line
-        // carries no `value` member at all. That absence is the answer, and it is
-        // why the members are separate: `"value":null` would read as a chunk that
-        // returned nil, which in Luau is the same thing but in JSON is not
-        // distinguishable from a member the writer forgot.
+        // A chunk that returned nothing sets none of the three, so its line carries
+        // no `value` member at all. That absence is the answer: `"value":null` is
+        // not distinguishable in JSON from a member the writer forgot.
         if (auto const boolean = value.boolean(); boolean.has_value())
         {
             result.boolean = *boolean;

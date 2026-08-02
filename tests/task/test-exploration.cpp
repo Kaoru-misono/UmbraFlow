@@ -38,25 +38,17 @@
 #include <vector>
 
 // The agent front-end's two halves: the primitives only it carries, and the
-// environment split that decides who carries them.
-//
-// EVERY CASE HERE DRIVES REAL LUAU AGAINST A REAL SESSION. The claim under test
-// is about what a script can and cannot reach, and a C++-only harness would
-// prove things about a table nobody runs against. The absence cases in
-// particular have to be asked from INSIDE the environment they are about: "the
-// run environment cannot name a bare click" is a statement about a Luau
-// whitelist, and only Luau can ask it.
+// environment split that decides who carries them. Every case drives real Luau
+// against a real session, because "the run environment cannot name a bare
+// click" is a statement about a Luau whitelist and only Luau can ask it.
 namespace uf::task
 {
     namespace
     {
-        // A colour frame, because the two new primitives are about colour and the
-        // shared fixture frame is Gray8.
-        //
-        // Four by two, painted in two solid halves: the left column pair is one
-        // colour and the right pair another. That is the smallest frame on which
-        // a crop can differ from the whole frame, a colour key can select part of
-        // a rect and miss the rest, and a census has something to be dominant.
+        // A colour frame, because the shared fixture frame is Gray8. Four by
+        // two in two solid halves is the smallest geometry on which a crop can
+        // differ from the whole frame, a colour key can select part of a rect
+        // and miss the rest, and a census has something to be dominant.
         inline constexpr auto k_leftBlue  = uint8{200};
         inline constexpr auto k_leftGreen = uint8{40};
         inline constexpr auto k_leftRed   = uint8{10};
@@ -123,13 +115,9 @@ namespace uf::task
             return *std::move(frame);
         }
 
-        // A session over the colour frame, recording into `sink`, stamped with
-        // `frontEnd`.
-        //
-        // The front-end is a parameter because half the cases here are about it:
-        // the same click through the same code has to land under two different
-        // trace kinds depending on which stream it belongs to, and a fixture that
-        // fixed the front-end could not ask that question.
+        // A session over the colour frame. The front-end is a parameter
+        // because the same click has to land under two different trace kinds
+        // depending on which stream it belongs to.
         struct ColourHarness final
         {
             std::unique_ptr<trace::TraceRecorder> recorder;
@@ -187,15 +175,11 @@ namespace uf::task
             return engine->runNumber(source, "exploration");
         }
 
-        // A RUN VM that nonetheless publishes `explore`.
-        //
-        // This is the falsification harness for the environment split, and it is
-        // deliberately not something the product ever builds. The claim is "the
-        // run surface does not carry these keys"; asked through a verb that
-        // raises, the claim would pass just as well against a surface that
-        // carried the keys and refused the calls -- which is exactly the shape
-        // the design rejects. So the module that names the surface is published
-        // into a run VM here, and asked directly whether the keys are there.
+        // A run VM that nonetheless publishes `explore`, which the product
+        // never builds. Asked through a verb that raises, "the run surface does
+        // not carry these keys" would pass just as well against a surface that
+        // carried them and refused the calls, so the keys are asked for
+        // directly instead.
         [[nodiscard]]
         auto runWithExploreOnRunSurface(
             TaskContext& context,
@@ -228,11 +212,9 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // The whole of the rule, asked as an absence rather than as a
-            // refusal. `ctx` used to forward the primitive, which made the bare
-            // click something every business task could call directly; the
-            // project environment is a whitelist with no metatable, so a name
-            // nothing publishes is not reachable by any route at all.
+            // Asked as an absence rather than as a refusal: the project
+            // environment is a whitelist with no metatable, so a name nothing
+            // publishes is unreachable by any route.
             constexpr std::string_view source = R"lua(
                 if ctx.cycle_click_point ~= nil then return 0 end
                 if explore ~= nil then return 0 end
@@ -414,10 +396,9 @@ namespace uf::task
             REQUIRE(harness.session.has_value());
             TaskContext context{*std::move(harness.session), *harness.recorder};
 
-            // Determinism is what lets a template asset be NAMED by its hash: two
-            // crops of the same pixels have to be the same file, or an agent
-            // re-measuring an element would litter the project with duplicates
-            // that differ in nothing.
+            // Determinism is what lets a template asset be NAMED by its hash;
+            // otherwise re-measuring an element litters the project with
+            // duplicates that differ in nothing.
             constexpr std::string_view source = R"lua(
                 local ticket = ctx:cycle_open()
                 local first, firstHash   = explore.crop(ticket, 0, 0, 2, 2)
@@ -481,9 +462,9 @@ namespace uf::task
             REQUIRE(harness.session.has_value());
             TaskContext context{*std::move(harness.session), *harness.recorder};
 
-            // The frame is two solid halves, so a crop of the whole four-by-two
-            // holds exactly two colours, four pixels each. A key on the left
-            // colour must take exactly those four at full weight.
+            // Two solid halves, so a crop of the whole four-by-two holds two
+            // colours, four pixels each; a key on the left colour must take
+            // exactly those four at full weight.
             auto const source = std::string{R"lua(
                 local ticket = ctx:cycle_open()
                 local blob = explore.crop(ticket, 0, 0, 4, 2)
@@ -614,8 +595,7 @@ namespace uf::task
             );
 
             // The point the AGENT named reaches the wire, not only the client
-            // point the desktop received: on this stream the first of the two is
-            // what the agent believed it was doing.
+            // point the desktop received.
             auto const found = std::ranges::find_if(
                 p_sink->events(),
                 [](trace::StampedTraceEvent const& event)
@@ -672,19 +652,18 @@ namespace uf::task
             CHECK(event.annotation->rect->width() == 2U);
             CHECK(event.annotation->rect->height() == 2U);
             REQUIRE(event.annotation->contentHash.has_value());
-            // The trace's own spelling of a content hash, which carries the
-            // algorithm prefix every other content-hash line carries. The bare
-            // hex the script was handed is the same value; see cycle_crop.
+            // The trace spells a content hash with its algorithm prefix; the
+            // bare hex the script was handed is the same value.
             CHECK(event.annotation->contentHash->starts_with("sha256:"));
             CHECK(event.annotation->contentHash->size() == 71U);
             REQUIRE(event.annotation->byteCount.has_value());
             CHECK(*event.annotation->byteCount > 0U);
 
-            // The frame identity is on the line, which is the only thing that
-            // ties a template asset back to the capture it was cut from.
+            // The frame identity is the only thing tying a template asset back
+            // to the capture it was cut from.
             CHECK(event.frame.has_value());
 
-            // And a native call names the verb, so the crop is joinable to the
+            // A native call names the verb, so the crop is joinable to the
             // cycle it was charged against.
             auto const* p_call = findNativeCall(p_sink->events(), "cycle_crop");
             REQUIRE(p_call != nullptr);
@@ -693,9 +672,9 @@ namespace uf::task
 
         TEST_CASE("A crop measures the frame's own pixels")
         {
-            // The C++ half of the same claim, asked without a VM: an agent that
-            // cropped the right half must get the right half's colour, or every
-            // measurement above is about a rectangle nobody chose.
+            // The C++ half of the same claim: an agent that cropped the right
+            // half must get the right half's colour, or every measurement
+            // above is about a rectangle nobody chose.
             auto harness = buildColourHarness(
                 trace::FrontEnd::Annotation,
                 std::make_unique<DiscardingTraceSink>()
@@ -749,10 +728,9 @@ namespace uf::task
             );
             REQUIRE(built.session.has_value());
 
-            // The fixture recorder is a Task stream, and a crop writes an
-            // annotation.* line, which that stream refuses by protocol. So this
-            // case asks the question on an annotation-stamped recorder of its
-            // own over the same grey frame.
+            // The fixture recorder is a Task stream, which refuses by protocol
+            // the annotation.* line a crop writes, so this case builds an
+            // annotation-stamped recorder of its own over the same grey frame.
             auto recorder = trace::TraceRecorder{
                 std::make_unique<DiscardingTraceSink>(),
                 k_fixtureRunId,
@@ -791,11 +769,10 @@ namespace uf::task
             REQUIRE(harness.session.has_value());
             TaskContext context{*std::move(harness.session), *harness.recorder};
 
-            // One queue line is one bracket, and the HOST owns it. An agent that
-            // raised between cycle_open and cycle_close leaves the ledger holding
-            // a frame; without the sweep the next chunk's cycle_open is an
-            // InternalInvariant, latched terminal -- so one mistyped line would
-            // end the whole session instead of costing one result line.
+            // One queue line is one bracket and the HOST owns it: without the
+            // sweep, an agent that raised between cycle_open and cycle_close
+            // leaves the next cycle_open a latched-terminal InternalInvariant,
+            // ending the session over one mistyped line.
             auto const leaked = context.openCycle();
             REQUIRE(leaked.has_value());
             CHECK(context.hasOpenCycle());
@@ -815,27 +792,19 @@ namespace uf::task
             CHECK(!context.sweepOpenCycle());
         }
 
-        // A frame big enough that one crop of it is a real payload, painted
-        // with bytes no PNG filter can compress away.
-        //
-        // The colour frame above is four by two, which encodes to a few dozen
-        // bytes: right for asking what a crop RETURNS and useless for asking
-        // what it COSTS. A hundred and ninety-two square of pseudo-random pixels
-        // encodes to about 150 KiB, which is the order of a real crop and enough
-        // that a dozen of them fill a test-sized ceiling. It is no larger
-        // because every one of them is really PNG-encoded and this suite shares
-        // one CTest timeout.
-        //
-        // The frame is WIDER than the crop so a loop can slide the rectangle and
-        // get different bytes each time. That is not decoration: Luau interns
-        // every string, so cropping one rectangle of one frame thirty times
-        // hands back the SAME object thirty times and allocates nothing at all
-        // after the first.
+        // A frame whose crops are real payloads, painted with bytes no PNG
+        // filter can compress away: 192 square of pseudo-random pixels encodes
+        // to about 150 KiB, the order of a real crop and enough that a dozen
+        // fill a test-sized ceiling. No larger, because each is really
+        // PNG-encoded and this suite shares one CTest timeout. The frame is
+        // WIDER than the crop so a loop can slide the rectangle: Luau interns
+        // every string, so a fixed rectangle would hand back the same object
+        // every time and allocate nothing after the first.
         inline constexpr auto k_noiseExtent = uint32{256};
 
-        // How much room above the VM's boot cost the crop-pressure case leaves.
-        // Two megabytes is about fourteen crops, so a thirty-crop loop breaches
-        // it twice over.
+        // Room above the VM's boot cost for the crop-pressure case: two
+        // megabytes is about fourteen crops, so a thirty-crop loop breaches it
+        // twice over.
         inline constexpr auto k_noiseCeilingHeadroom = uint64{2} * 1024 * 1024;
 
         [[nodiscard]]
@@ -854,9 +823,9 @@ namespace uf::task
         [[nodiscard]]
         auto noisePixels() -> std::vector<std::byte>
         {
-            // A fixed xorshift rather than <random>: the case needs
-            // incompressible bytes and needs the same ones on every host, so
-            // the payload size a crop produces does not drift between machines.
+            // A fixed xorshift rather than <random>: incompressible bytes, and
+            // the same ones on every host, so the payload size a crop produces
+            // does not drift between machines.
             auto pixels = std::vector<std::byte>{};
             pixels.reserve(std::size_t{k_noiseExtent} * k_noiseExtent * 4U);
 
@@ -906,11 +875,10 @@ namespace uf::task
             return *std::move(frame);
         }
 
-        // A session over the noise frame. It is a second builder rather than a
-        // parameter on the colour one because the two differ in the thing each
-        // case is about: that fixture's geometry is the smallest on which a
-        // colour key can select part of a rect, and this one's is the smallest
-        // on which a crop costs anything.
+        // A session over the noise frame. A second builder rather than a
+        // parameter on the colour one: that geometry is the smallest on which a
+        // colour key can select part of a rect, this one the smallest on which
+        // a crop costs anything.
         [[nodiscard]]
         auto buildNoiseHarness() -> ColourHarness
         {
@@ -938,9 +906,8 @@ namespace uf::task
             };
         }
 
-        // What an exploration VM over `context` costs to boot, measured rather
-        // than assumed: the framework bundle's weight is not the next case's
-        // subject, and a hard-coded ceiling would fail there every time that
+        // What an exploration VM costs to boot, measured rather than assumed: a
+        // hard-coded ceiling would fail every time the framework bundle's
         // weight changed. The probe VM is closed before the caller builds its
         // own, so only one is ever bound to the context.
         [[nodiscard]]
@@ -972,24 +939,18 @@ namespace uf::task
             auto engine = script::Engine::create(config);
             REQUIRE(engine.has_value());
 
-            // Thirty crops of about 150 KiB each is four and a half megabytes
-            // through two megabytes of headroom, and every blob is dropped as
-            // soon as the loop has taken its length -- so all but the last is
-            // garbage. Luau raises LUA_ERRMEM the instant the allocator refuses
-            // and has no emergency collection behind it (VM/src/lmem.cpp), so
-            // the ceiling is measured against that garbage and this loop dies
-            // partway through unless the crop reclaims first.
+            // Thirty crops of about 150 KiB is four and a half megabytes
+            // through two megabytes of headroom, and every blob is dropped once
+            // the loop has taken its length. Luau raises LUA_ERRMEM the instant
+            // the allocator refuses and has no emergency collection behind it
+            // (VM/src/lmem.cpp), so the ceiling is measured against that garbage
+            // and this loop dies partway unless the crop reclaims first.
             //
-            // ONE CYCLE AND A SLIDING RECTANGLE, which is what makes this the
-            // case it claims to be. Luau's collector is stepped from the VM
-            // instruction loop and each step is worth two kilobytes of marking,
-            // so its progress is paced against INSTRUCTIONS while a crop's cost
-            // is a hundred and fifty kilobytes the collector never sees; opening
-            // a cycle per iteration would add enough interpreted work per
-            // megabyte to hide that, and it was measured doing so. The rectangle
-            // slides because a repeated crop of one rectangle is byte-identical
-            // and Luau interns it, so a fixed loop would allocate once and prove
-            // nothing -- that was measured too.
+            // One cycle and a sliding rectangle: the collector is stepped from
+            // the instruction loop at two kilobytes of marking per step, so a
+            // cycle per iteration adds enough interpreted work to hide the leak
+            // -- measured -- and a fixed rectangle is interned and allocates
+            // once.
             constexpr std::string_view source = R"lua(
                 local ticket = ctx:cycle_open()
                 local total = 0
@@ -1005,24 +966,19 @@ namespace uf::task
             REQUIRE(result.has_value());
 
             // The control, without which a loop cropping something tiny would
-            // satisfy the case without making its claim: the payloads were real
-            // and their sum is well past the ceiling they ran under.
+            // satisfy the case: the payloads were real and their sum is well
+            // past the ceiling they ran under.
             CHECK(*result > 4'000'000.0);
             CHECK(*result > static_cast<double>(config.memoryQuotaBytes));
         }
 
         TEST_CASE("An exploration VM outlives a ceiling that would have ended it")
         {
-            // The session shape the runtime ceiling was killing, on the VM the
-            // agent front-end actually boots: two chunks that each do real work,
-            // separated by an idle gap longer than the whole ceiling. The gap is
-            // the agent reading one answer and writing the next chunk, and no
-            // Luau runs during it, so nothing may be charged for it.
-            //
-            // ExplorationSession::create sets no ceiling of its own and does not
-            // need one -- explorationVmConfig is the same assembly it performs,
-            // and shortening the ceiling here is only how a case that would
-            // otherwise take thirty minutes is asked in half a second.
+            // Two chunks that each do real work, separated by an idle gap
+            // longer than the whole ceiling. The gap is the agent reading one
+            // answer and writing the next chunk; no Luau runs during it, so
+            // nothing may be charged for it. The ceiling is shortened here only
+            // to ask in half a second what would otherwise take thirty minutes.
             auto harness = buildNoiseHarness();
             REQUIRE(harness.session.has_value());
             TaskContext context{
@@ -1058,9 +1014,8 @@ namespace uf::task
 
         TEST_CASE("An annotation event is refused on a stream no agent drove")
         {
-            // The mirror of the framework.* rule, and the reason the vocabulary
-            // is worth anything: a stream's front-end does not merely label it,
-            // it decides which events the stream may hold.
+            // The mirror of the framework.* rule: a stream's front-end does not
+            // merely label it, it decides which events the stream may hold.
             auto sink          = std::make_unique<RecordingTraceSink>();
             auto* const p_sink = sink.get();
             auto recorder      = trace::TraceRecorder{

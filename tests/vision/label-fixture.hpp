@@ -600,19 +600,13 @@ namespace uf::test
         },
     };
 
-    // The same rectangle as k_sortieLabel's template -- the right-menu entry
-    // at source rect (1380, 220, 100, 40) -- in colour rather than grey, over
-    // both backgrounds. Row major, tightly packed, three bytes per pixel in
-    // red, green, blue order.
-    //
-    // These are the two crops the retired workbench colour-key fixture held,
-    // decoded once from its PNG bytes rather than captured again. They are
-    // spelled out here because test-vision links only the vision module and so
-    // cannot decode a PNG, and because the colour primitives have nothing to
-    // measure on the grey planes above. What keeps the copy honest is that
+    // The same rectangle as k_sortieLabel's template -- source rect
+    // (1380, 220, 100, 40) -- in colour, over both backgrounds. Row major,
+    // tightly packed, three bytes per pixel in red, green, blue order. Spelled
+    // out rather than decoded because test-vision links only the vision module
+    // and so cannot decode a PNG. What keeps the copy honest is that
     // bgra8ToGray8 over the first plane must reproduce k_sortieLabel's
-    // templateHex byte for byte, which a test asserts: the two fixtures cannot
-    // drift into different crops without that failing.
+    // templateHex byte for byte, which a test asserts.
     struct ColourLabelFixture final
     {
         uint32 width{};

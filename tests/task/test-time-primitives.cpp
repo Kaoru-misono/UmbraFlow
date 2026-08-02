@@ -25,14 +25,12 @@
 #include <utility>
 #include <vector>
 
-// The three time primitives -- deadline, wait and settle -- and the absence the
-// same change created: no clock reaches a script any more.
-//
-// Every timing assertion here is written so a green run finishes in
-// milliseconds and a regression is bounded well inside the suite timeout: the
-// scripts ask for pauses of seconds and the checks demand they end in a
-// fraction of one, so a primitive that stopped honouring its deadline or its
-// stop token fails on the clock rather than hanging the run.
+// The three time primitives -- deadline, wait and settle -- and the absence
+// beside them: no clock reaches a script. Every timing assertion is written so a
+// green run finishes in milliseconds and a regression stays inside the suite
+// timeout: the scripts ask for pauses of seconds and the checks demand they end
+// in a fraction of one, so a primitive that stopped honouring its deadline or
+// its stop token fails on the clock rather than hanging the run.
 namespace uf::task
 {
     namespace
@@ -46,29 +44,25 @@ namespace uf::task
         }
 
         // How long DelayedStop waits before requesting the stop. The scripts
-        // below reach their pausing primitive in microseconds -- every frame is
-        // a fake -- so the stop lands while that primitive is already sleeping,
-        // which is the case a stop checked only on entry would pass and only a
-        // sliced sleep actually covers.
+        // reach their pausing primitive in microseconds -- every frame is a fake
+        // -- so the stop lands mid-sleep, which is the case a stop checked only
+        // on entry would pass and only a sliced sleep covers.
         constexpr auto k_stopDelay = millis(200);
 
         // The floor a "it really did pause" check uses: below the 200 ms the
-        // stop takes to arrive, and far above the microseconds a run spends on
-        // fake frames, so a primitive that returned without pausing at all fails
-        // it.
+        // stop takes to arrive and far above the microseconds a run spends on
+        // fake frames, so a primitive that returned without pausing fails it.
         constexpr auto k_pausedFloor = millis(150);
 
-        // The ceiling every "returned promptly" check uses. It is well above the
-        // 100 ms slice a stop is observed within and far below the multi-second
-        // pause each script asks for, so it separates the two outcomes without
-        // depending on how loaded the machine is.
+        // The ceiling every "returned promptly" check uses: well above the 100 ms
+        // slice a stop is observed within and far below the multi-second pause
+        // each script asks for, so it separates the two outcomes on any machine.
         constexpr auto k_promptCeiling = millis(5'000);
 
         // Requests `stop` after k_stopDelay on a joined thread, so the primitive
         // under test observes the stop mid-sleep rather than on entry. The
-        // stop_source is copied into the thread, which shares its stop-state, so
-        // the worker retains no reference into the test frame; std::jthread joins
-        // in its destructor, so no thread outlives the case.
+        // stop_source is copied in and shares its stop-state, so the worker
+        // holds no reference into the test frame; std::jthread joins on destroy.
         class DelayedStop final
         {
             std::jthread m_thread;
@@ -87,9 +81,8 @@ namespace uf::task
         };
 
         // A binding built over one resolving frame, with observing pointers to
-        // the frame source and the trace sink. The frame source is what lets a
-        // case prove a refusal happened BEFORE the engine: a refusal that still
-        // spent a capture is a weaker guarantee.
+        // the frame source and the trace sink. The frame count is what lets a
+        // case prove a refusal happened BEFORE the engine.
         struct TimedBuild final
         {
             Built               built;
@@ -107,11 +100,10 @@ namespace uf::task
             auto* const p_frames = frameSource.get();
             auto* const p_traces = traceSink.get();
 
-            // No stop token on the ENGINE config, deliberately, in every case
-            // below. The cancel token is armed on the TaskContext alone, so the
-            // engine would happily capture again and the only thing that can
-            // refuse a primitive after a cancelled pause is the terminal latch
-            // the pause itself set.
+            // No stop token on the ENGINE config in any case below: the cancel is
+            // armed on the TaskContext alone, so the engine would happily capture
+            // again and the only thing that can refuse a primitive after a
+            // cancelled pause is the terminal latch the pause itself set.
             auto built = buildBindingWith(
                 std::move(frameSource),
                 std::stop_token{},
@@ -124,9 +116,9 @@ namespace uf::task
             };
         }
 
-        // Runs `source`, requiring it to report success, and returns how long the
-        // whole run took, so a case can assert a pause was taken or skipped
-        // without reaching inside the VM.
+        // Runs `source`, requiring success, and returns how long the whole run
+        // took, so a case can assert a pause was taken or skipped from outside
+        // the VM.
         [[nodiscard]]
         auto runTimed(
             TaskContext& context,
@@ -164,8 +156,7 @@ namespace uf::task
 
             // Both directions are asserted, so neither a wait that always
             // reports expiry nor one that never does can pass. The expired case
-            // asks for a minute of poll interval it must not take; the live case
-            // asks for none, so it returns as soon as the interval floor is up.
+            // asks for a minute of poll interval it must not take.
             constexpr std::string_view source = R"lua(
                 local expired = ctx:deadline(0)
                 if ctx:wait(expired, 60000) ~= false then return 0 end
@@ -186,9 +177,8 @@ namespace uf::task
             TaskContext context{*std::move(timed.built.session), *timed.built.recorder};
 
             // A settle past the host ceiling is Tier B -- a project error the
-            // author can catch and correct -- and it is refused before it
-            // sleeps, which is why this run still finishes in milliseconds
-            // despite asking for ten minutes.
+            // author can catch -- and it is refused before it sleeps, which is
+            // why this run finishes in milliseconds despite asking ten minutes.
             constexpr std::string_view source = R"lua(
                 ctx:settle(0)
                 ctx:settle(200)
@@ -210,7 +200,7 @@ namespace uf::task
 
             // Both accepted settles are on the wire with the duration they
             // declared, because a run cannot be replayed from a pause nobody
-            // wrote down. The refused one is an argument rejection and records
+            // wrote down. The refused one is an argument rejection: it records
             // nothing, exactly like a wrong handle type.
             auto const& events = timed.traces->events();
             CHECK(
@@ -240,11 +230,10 @@ namespace uf::task
                 TaskContextConfig{.cancellation = stop.get_token()},
             };
 
-            // Each of the three refuses, and the refusal is the Tier C sentinel
-            // rather than a catchable automation error: it is a plain string, so
-            // ctx:try would re-raise it and only a raw pcall can hold it at all.
-            // Swallowing it buys nothing -- the following cycle_open is refused
-            // by the latch the first refusal set.
+            // Each of the three refuses with the Tier C sentinel rather than a
+            // catchable automation error: a plain string, so ctx:try would
+            // re-raise it and only a raw pcall can hold it. Swallowing it buys
+            // nothing -- the cycle_open after it is refused by the same latch.
             constexpr std::string_view source = R"lua(
                 local d = pcall(function() return ctx:deadline(1000) end)
                 if d then return 0 end
@@ -282,9 +271,9 @@ namespace uf::task
                 TaskContextConfig{.cancellation = stop.get_token()},
             };
 
-            // One cycle runs first, so the capture count below has something to
-            // stay at: the claim is that the refusal after the cancelled settle
-            // did not advance it, which an always-zero count could not show.
+            // One cycle runs first so the capture count below has something to
+            // stay at: an always-zero count could not show that the refusal
+            // after the cancelled settle did not advance it.
             constexpr std::string_view source = R"lua(
                 local c = ctx:cycle_open()
                 ctx:cycle_close(c)
@@ -300,8 +289,7 @@ namespace uf::task
             auto const stopper = DelayedStop{stop};
             auto const elapsed = runTimed(context, timed.built, source);
 
-            // It slept until the stop arrived, and not the ten seconds it asked
-            // for.
+            // It slept until the stop arrived, not the ten seconds it asked for.
             CHECK(elapsed >= k_pausedFloor);
             CHECK(elapsed < k_promptCeiling);
             CHECK(timed.frames->captureCount() == 1U);
@@ -322,7 +310,7 @@ namespace uf::task
 
             // The deadline is minted before the stop lands, so the wait enters
             // its sleep with a full ten seconds of budget: nothing but the stop
-            // can end it this early.
+            // ends it this early.
             constexpr std::string_view source = R"lua(
                 local c = ctx:cycle_open()
                 ctx:cycle_close(c)
@@ -352,9 +340,9 @@ namespace uf::task
             TaskContext context{*std::move(timed.built.session), *timed.built.recorder};
 
             // ctx:now is gone by name, and so is every native clock the sandbox
-            // already removed. The controls are the surface that DID survive:
-            // deadline, wait and settle are still there, and random -- the other
-            // half of modules/task/deterministic -- still draws.
+            // removed. The controls are the surface that DID survive: deadline,
+            // wait, settle, and random -- the other half of
+            // modules/task/deterministic -- which still draws.
             constexpr std::string_view source = R"lua(
                 if ctx.now ~= nil then return 0 end
                 if now ~= nil then return 0 end

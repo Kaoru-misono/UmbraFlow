@@ -29,27 +29,20 @@
 
 // The framework semantic events and the two primitives behind them, driven
 // through a real task VM: what the trusted Luau framework asks the host to
-// record, what the host refuses, and what a refusal costs.
-//
-// Everything runs off fake ports and asserts on host-visible counts -- frames
-// served, clicks delivered, lines recorded -- so a green run finishes in
-// milliseconds and no case depends on machine load or on a wall clock.
+// record, what the host refuses, and what a refusal costs. Everything runs off
+// fake ports and asserts on host-visible counts -- frames served, clicks
+// delivered, lines recorded -- so no case depends on machine load or a clock.
 namespace uf::task
 {
     namespace
     {
         // A framework module that emits BADLY on purpose, loaded beside the real
-        // bundle and published to the project environment as `probe`.
-        //
-        // It exists because no project script can reach `emit`: the primitive is
-        // a closure upvalue of the trusted framework, and the real framework is
-        // well-behaved by construction. A framework bug is therefore not
-        // reachable from a task, and the only honest way to test what the host
-        // does about one is to boot a framework that has it. That is exactly the
-        // seam script::EngineConfig::frameworkModules already is.
-        //
-        // The source is a string literal, so it satisfies FrameworkModule's
-        // lifetime contract for the whole process.
+        // bundle and published to the project environment as `probe`. No project
+        // script can reach `emit` -- it is a closure upvalue of the trusted
+        // framework -- so the only honest way to test what the host does about a
+        // framework bug is to boot a framework that has one. The source is a
+        // string literal, satisfying FrameworkModule's process-long lifetime
+        // contract.
         constexpr auto k_probeSource = std::string_view{R"lua(
             local native = ...
             local probe = {}
@@ -170,8 +163,8 @@ namespace uf::task
         }
 
         // The first line the run recorded for `verb`, so a test can read the step
-        // scope stamped onto it. The pointer observes the recording sink's own
-        // storage, which the annotation on the parameter states.
+        // scope stamped onto it. The returned pointer observes the recording
+        // sink's own storage, which the annotation on the parameter states.
         [[nodiscard]]
         auto findStampedCall(
             std::vector<trace::StampedTraceEvent> const& events UF_LIFETIME_BOUND,
@@ -200,8 +193,8 @@ namespace uf::task
 
             // One nested pair of steps with a native call inside them, one
             // declared pause, and one retry that exhausts its two attempts on a
-            // retryable failure. Between them they exercise every framework event
-            // a task can produce.
+            // retryable failure -- between them, every framework event a task
+            // can produce.
             constexpr std::string_view source = R"lua(
                 ctx:step('outer', function()
                     ctx:step('inner', function()
@@ -293,8 +286,8 @@ namespace uf::task
             };
 
             // Length and character set are the host's, and a refusal is Tier B:
-            // the name came from a project string literal, and section 9 reserves
-            // the invariant kind for failures a project cannot cause. So the
+            // the name came from a project string literal, and the invariant
+            // kind is reserved for failures a project cannot cause -- so the
             // author catches it, and the generation is still theirs to use.
             constexpr std::string_view source = R"lua(
                 local tooLong = string.rep('a', 65)
@@ -347,11 +340,10 @@ namespace uf::task
                 *semantic.built.recorder,
             };
 
-            // Design section 9's rule 5. The value CAN be caught -- there is no
-            // way to make a Lua raise uncatchable -- so what is under test is
-            // that catching it buys no control: the latch is already set when the
-            // raise happens, and every later primitive stops at the guard before
-            // it reaches the engine.
+            // The value CAN be caught -- there is no way to make a Lua raise
+            // uncatchable -- so what is under test is that catching it buys no
+            // control: the latch is already set when the raise happens, and every
+            // later primitive stops at the guard before it reaches the engine.
             constexpr std::string_view source = R"lua(
                 -- Control: the primitive works, and costs a frame, before the
                 -- framework misbehaves. Without it the refusals below would pass
@@ -410,8 +402,8 @@ namespace uf::task
             CHECK(runWithProbe(context, semantic.built, leak) == doctest::Approx(1.0));
 
             // The script returned cleanly, so nothing else would have failed this
-            // run. Section 12 makes the unclosed step itself the failure, and its
-            // kind is the one reserved for a framework bug.
+            // run: the unclosed step itself is the failure, under the kind
+            // reserved for a framework bug.
             auto const scopes = semantic.built.recorder->requireScopesClosed();
             REQUIRE_FALSE(scopes.has_value());
             CHECK(
@@ -420,8 +412,7 @@ namespace uf::task
             );
 
             // The control: closing it makes the bracket closable again, so the
-            // refusal is about the step being open rather than about the check
-            // never passing.
+            // refusal is about the open step rather than the check never passing.
             constexpr std::string_view close = R"lua(
                 probe.close_leaked_step()
                 return 1

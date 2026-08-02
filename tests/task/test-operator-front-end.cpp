@@ -37,12 +37,10 @@
 
 // The operator front-end, tested against the property that gives it the right to
 // exist: it is a SIBLING consumer of the private capability surface, so every
-// guarantee a task gets, an operator gets -- identically, and for the same reason,
-// because both call the same TaskContext.
-//
-// Each case that claims "identically" proves it by driving BOTH paths over the same
-// runtime and comparing the refusal, rather than by asserting a kind on one side and
-// trusting the other.
+// guarantee a task gets, an operator gets, because both call the same
+// TaskContext. Each case that claims "identically" proves it by driving BOTH
+// paths over the same runtime and comparing the refusal, rather than asserting a
+// kind on one side and trusting the other.
 namespace uf::task
 {
     namespace
@@ -69,10 +67,9 @@ namespace uf::task
                 );
         }
 
-        // A frame stamped at the clock epoch, so a session configured with a zero
-        // maximum action frame age mints a lease that is already expired by the time
-        // the action reaches the delivery edge. It is how both paths are handed the
-        // same "expired frame" without either of them waiting.
+        // A frame stamped at the clock epoch, so a session with a zero maximum
+        // action frame age mints a lease already expired at the delivery edge --
+        // an expired frame without either path having to wait for one.
         [[nodiscard]]
         auto epochResolvingFrame() -> Frame
         {
@@ -155,9 +152,8 @@ namespace uf::task
             };
         }
 
-        // The operator side over the same runtime, the same frames and the same
-        // bounds, so a comparison between the two isolates the front-end and nothing
-        // else.
+        // The operator side over the same runtime, frames and bounds, so a
+        // comparison between the two isolates the front-end and nothing else.
         struct OperatorSide final
         {
             std::unique_ptr<OperatorSession> session;
@@ -234,17 +230,13 @@ namespace uf::task
 
     TEST_CASE("a click on an expired frame is refused on the task path")
     {
-        // A zero maximum action frame age makes the lease of an epoch-stamped frame
-        // expired at the delivery edge. The script matches the template first, so
-        // the only thing left to refuse the click is the lease itself.
-        //
-        // THE OPERATOR HALF OF THIS PARITY IS GONE, and the absence is the point:
-        // an operator can no longer produce a match at all, because searching for
-        // one means naming a template a project file holds and this front-end
-        // reaches no project file
-        // (docs/plans/2026-07-31-script-owned-page-model.md 9). What survives on
-        // both paths -- the open cycle a key demands, and the ledger's answer
-        // about a spent one -- is compared in the cases below.
+        // A zero maximum action frame age makes the lease of an epoch-stamped
+        // frame expired at the delivery edge, and the script matches the template
+        // first, so the only thing left to refuse the click is the lease itself.
+        // There is no operator half: an operator cannot produce a match at all,
+        // because searching means naming a template a project file holds and this
+        // front-end reaches no project file
+        // (docs/plans/2026-07-31-script-owned-page-model.md 9).
         auto frames = std::vector<Frame>{};
         frames.emplace_back(epochResolvingFrame());
         auto side = buildTaskSide(
@@ -271,10 +263,10 @@ namespace uf::task
 
     TEST_CASE("key requires an open cycle on both paths")
     {
-        // The contract `key` DOES impose. It names no screen position, so it demands
-        // no detection and no fresh lease -- but it must not be deliverable outside an
-        // observation cycle, because that is what orders it against the observations
-        // around it and what its trace line joins on.
+        // The contract `key` DOES impose. It names no screen position, so it
+        // demands no detection and no fresh lease -- but it must not be
+        // deliverable outside an observation cycle, which is what orders it
+        // against the observations around it and what its trace line joins on.
         auto const taskKind = [&]
         {
             auto side = buildTaskSide(resolvingFrames(FrameId{33}), lenientFrameAge());
@@ -315,9 +307,8 @@ namespace uf::task
 
     TEST_CASE("key with no cycle ever opened is refused rather than delivered")
     {
-        // The operator addresses a cycle by ordinal over a text protocol, so it can
-        // name one that never existed. The LEDGER decides, not the session: an ordinal
-        // that is not the open cycle's names a cycle that no longer exists.
+        // The operator addresses a cycle by ordinal over a text protocol, so it
+        // can name one that never existed. The LEDGER decides, not the session.
         auto side = buildOperatorSide(
             resolvingFrames(FrameId{34}),
             lenientFrameAge()
@@ -351,19 +342,17 @@ namespace uf::task
         CHECK(automationErrorKind(again.error()) == AutomationErrorKind::StaleObservation);
         CHECK(side.actions->keys().size() == 1U);
 
-        // The refusal must not name a click. It is the only account the operator
-        // gets of why the cycle is gone, and a keystroke spent this one: the
-        // message used to say "already consumed by a click" on exactly this path,
-        // which sent a reader looking for a click that never happened.
+        // The refusal must not name a click: it is the only account the operator
+        // gets of why the cycle is gone, and a keystroke spent this one, so a
+        // message naming a click sends a reader looking for one that never was.
         CHECK_FALSE(again.error().message().contains("click"));
         CHECK(again.error().message().contains("delivered input"));
     }
 
     TEST_CASE("a key needs nothing found on its frame, only an open cycle")
     {
-        // Stated as its own case because it is the design decision, not an accident:
-        // a click needs a match this frame produced, and a key on a cycle that
-        // matched nothing at all is delivered.
+        // The design decision, not an accident: a click needs a match this frame
+        // produced, and a key on a cycle that matched nothing is still delivered.
         auto side = buildOperatorSide(
             resolvingFrames(FrameId{36}),
             lenientFrameAge()
@@ -378,18 +367,14 @@ namespace uf::task
 
     TEST_CASE("a task presses a key through the cycle view its block was handed")
     {
-        // The shape a real task writes. ctx:cycle hands the block a frozen view, and
-        // view:key goes dead afterwards exactly as view:click does -- so the framework's
-        // own bookkeeping agrees with the ledger about the cycle a keystroke spent,
-        // which is what stops the block from finding or clicking on a screen the key
-        // already changed.
-        // WHICH LAYER refuses the second key is what this case pins, and it is why the
-        // script reports a code rather than a boolean. The framework's refusal is a
-        // plain string -- its own closed-cycle sentence -- while the host's is a Tier B
-        // error carrier, which is userdata a project cannot produce. Distinguishing
-        // them is the only way to tell "the framework caught it first" from "the
-        // framework let it through and the ledger caught it", and the design's layering
-        // is the former: C++ owns the guarantee, the framework owns the good message.
+        // The shape a real task writes: ctx:cycle hands the block a frozen view,
+        // and view:key goes dead afterwards exactly as view:click does, so the
+        // framework's bookkeeping agrees with the ledger about the cycle a
+        // keystroke spent. WHICH LAYER refuses the second key is what this case
+        // pins, and why the script reports a code rather than a boolean: the
+        // framework's refusal is a plain string, the host's is a Tier B userdata
+        // carrier a project cannot produce, and the design's layering is that the
+        // framework catches it first.
         auto side = buildTaskSide(resolvingFrames(FrameId{41}), lenientFrameAge());
         auto const source = std::string{
             "local delivered = 0\n"
@@ -483,9 +468,9 @@ namespace uf::task
 
     TEST_CASE("a task run's trace lines are attributed to the task front-end")
     {
-        // The other half of "the two are distinguishable": the same recorder, over the
-        // same runtime, stamps the other value, and a reader can tell the streams
-        // apart on that member alone.
+        // The other half of "the two are distinguishable": the same recorder over
+        // the same runtime stamps the other value, and a reader can tell the
+        // streams apart on that member alone.
         auto side = buildTaskSide(resolvingFrames(FrameId{40}), lenientFrameAge());
         auto const status = side.recorder->emit(
             trace::TraceEvent{.kind = trace::TraceEventKind::RunStarted}
@@ -508,10 +493,10 @@ namespace uf::task
 
     TEST_CASE("an operator stream refuses a framework event outright")
     {
-        // The validator is authoritative for the new field rather than merely carrying
-        // it: framework.* events describe the trusted Luau framework's own structure,
-        // and on an operator stream that framework does not exist, so such a line
-        // could only be a host bug attributing task structure to the operator.
+        // The validator is authoritative for the field rather than merely carrying
+        // it: framework.* events describe the trusted Luau framework's structure,
+        // which on an operator stream does not exist, so such a line could only be
+        // a host bug attributing task structure to the operator.
         auto validator = trace::TraceStreamValidator{trace::FrontEnd::Operator};
         auto const refused = validator.admit(
             trace::TraceEvent{

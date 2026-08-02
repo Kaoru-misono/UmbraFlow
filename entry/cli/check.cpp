@@ -25,60 +25,36 @@ namespace uf::cli
 {
     namespace
     {
-        // The screens directory, relative to the project root. It mirrors
-        // assets/templates, which is where the runtime loader already reads a
-        // project's content-addressed pixels from.
-        //
-        // The trusted framework spells the same path on its own side, as
-        // `oracle.screen_directory`, and one of the two has to name it first: the
-        // host lists the directory before any VM exists, and the routine derives
-        // each screen's file from its content hash. Nothing derives one from the
-        // other, and what holds them equal is that every case in
-        // tests/cli/test-check.cpp fails outright if they disagree -- the host
-        // would find no screens where the routine reads them, or the reverse.
+        // The screens directory, relative to the project root. The trusted
+        // framework spells the same path on its own side as
+        // `oracle.screen_directory`; nothing derives one from the other, and what
+        // holds them equal is that every case in tests/cli/test-check.cpp fails
+        // outright if they disagree.
         constexpr auto k_screensDirectory = "assets/screens";
 
-        // The routine `check` runs.
+        // The routine `check` runs. It is the HOST'S source and never the
+        // project's -- a project that could supply the thing judging it could
+        // pass any model -- so this text is compiled into the binary and reaches
+        // the VM through runFrameworkRoutine, which never touches <project>/tasks.
         //
-        // IT IS THE HOST'S SOURCE AND NEVER THE PROJECT'S. A project that could
-        // supply the thing judging it could pass any model; this text is
-        // compiled into the binary and reaches the VM through
-        // runFrameworkRoutine, which never touches <project>/tasks.
+        // Three host-side facts are formatted in, each because only the routine
+        // can compare it against what the project file declares:
+        //   - the screen count, which holds both sides to one set of screens. A
+        //     declared screen with no file already fails on its own project_read;
+        //     a file no screen declares would silently shift the content-hash
+        //     pairing from that file onward, and only the count catches it.
+        //   - whether an OCR engine is bound, so the routine can name the missing
+        //     flag. A project measuring what a region READS and a check started
+        //     with no engine produce no verdict about half the model, and a report
+        //     whose green cells and unmeasured cells look alike is worse than a
+        //     refusal. Two questions decide it: what the claims need, and what the
+        //     screens' own page declarations need.
+        //   - the per-cycle read budget. Checked BEFORE the engine clause, because
+        //     a binary that cannot budget the file it was handed should say so
+        //     before telling an operator to pass a flag that would not have helped.
         //
-        // THE SCREEN COUNT IS FORMATTED IN, and it is the whole of how the two
-        // sides are held to one set of screens. The host serves this run's
-        // frames from a directory it listed; the routine walks the screens the
-        // project file declares, in content-hash order, opening one observation
-        // for each -- so a declared screen with no file fails on its own
-        // project_read, and a file no screen declares would silently shift the
-        // pairing from that file onward. Stating the count the host found closes
-        // the second case where it can still be attributed.
-        //
-        // WHETHER AN OCR ENGINE IS BOUND IS FORMATTED IN FOR THE SAME REASON,
-        // and it is the only way the routine can name the flag that is missing.
-        // A cell claiming what a region READS is measured by reading it, so a
-        // project that holds one and a check started with no engine can produce
-        // no verdict about half its model. The routine refuses that outright
-        // before the first screen, because the alternative is a report whose
-        // green cells and whose unmeasured cells look alike. It asks TWO
-        // questions to decide it: what the claims need, and what the screens'
-        // own page declarations need -- a page identified by what its title box
-        // reads is read on every screen that declares it, whether or not that
-        // screen claims a text of its own.
-        //
-        // AND THE PER-CYCLE READ BUDGET IS FORMATTED IN AS THE THIRD OF THE SAME
-        // KIND. The host fixes that budget before the VM exists and the routine
-        // is what knows how many cells one screen claims, so only the routine can
-        // compare them -- and a budget that is short otherwise surfaces as a
-        // RecognitionIncomplete part-way through screen three, which says truly
-        // what stopped and nothing about why. It is checked BEFORE the engine
-        // clause, because a binary that cannot budget the file it was handed
-        // should say so before telling an operator to pass a flag that would not
-        // have helped.
-        //
-        // It reports through `print` rather than by returning the text, because
-        // a routine is run for its effect on the evidence stream and its stdout,
-        // and the one thing the host needs back is the number below.
+        // It reports through `print` rather than by returning the text; the one
+        // thing the host needs back is the number below.
         constexpr auto k_checkRoutinePrefix = R"lua(
 local screens_on_disk = )lua";
 
@@ -155,7 +131,7 @@ return #verdict.findings
         }
 
         // The action sink a check binds. A falsification run measures and never
-        // acts, so both verbs refuse rather than counting or discarding: an
+        // acts, so every verb refuses rather than counting or discarding: an
         // input this run delivered would be a defect in the routine, and the
         // only useful behaviour is to say so.
         class RefusingActionSink final : public engine::IActionSink
@@ -211,43 +187,30 @@ return #verdict.findings
             }
         };
 
-        // The per-cycle text-read budget one check runs under, taken from the
-        // file it is about.
+        // The per-cycle text-read budget one check runs under, taken from the file
+        // it is about rather than from k_defaultMaximumReadsPerCycle. That
+        // constant bounds a wait loop and a block read, neither of which the
+        // matrix does: it opens one observation per screen and spends one
+        // single-line read per claimed cell, so its need is a property of the
+        // project file and is known before the run.
         //
-        // WHY THE DEFAULT IS THE WRONG NUMBER HERE. k_defaultMaximumReadsPerCycle
-        // guards a LOOP and a BLOCK READ: a wait that reads once per poll has no
-        // bound of its own, and a block read costs one for locating plus one per
-        // line it found, so that constant is where the host stops paying for
-        // inference nobody decided to spend. The matrix does neither. It opens
-        // one observation per screen and spends at most one single-line read per
-        // element on it, so what one of its cycles needs is a property of the
-        // project file and is known before the run -- a number the constant can
-        // be above or below without either being wrong.
+        // The ceiling is that property: the declared element count TWICE, each
+        // factor one walk of the same list. Once for the cells -- regress walks
+        // each element per screen, searches every rectangle a claim places it at,
+        // and reads only the ones with no templates. Once more for the page a
+        // screen declares itself to be, whose identify rows are elements of this
+        // same file and can be no more numerous.
         //
-        // SO THE CEILING IS THAT PROPERTY AND NOT A BIGGER CONSTANT. It is the
-        // number of elements the project declares, TWICE, and each factor is one
-        // walk of that same list. Once for the cells: regress walks each element
-        // once per screen and reads only the ones with no templates, and only
-        // where a claim asked. Once more for the page a screen declares itself to
-        // be, whose identify rows are elements of this same file and can be no
-        // more numerous, and which is resolved on the screen's own observation
-        // because that is the frame the claim is about.
+        // The first factor is a heuristic and not a bound, since an element may
+        // draw no rectangle of its own and be claimed several times on one screen.
+        // The routine below asks the model for the exact count
+        // (`oracle.Claims.most_reads_on_one_screen`) and refuses in its own words
+        // when this number is short of it. Uncovered: a screen whose cell reads
+        // fit while its cells plus its declared page's reads do not, which runs
+        // out mid-walk as a loud RecognitionIncomplete rather than a quiet miss.
         //
-        // THE FIRST FACTOR IS A HEURISTIC AND NO LONGER A BOUND, since an element
-        // may draw no rectangle of its own and then be claimed several times on
-        // one screen, each claim naming its own region -- a confirm button drawn
-        // once and read on nine of them. The exact count is a fact about the file
-        // rather than about the element list, so the routine below asks the model
-        // for it (`oracle.Claims.most_reads_on_one_screen`) and refuses in its own
-        // words when this number is short of it. What is left uncovered is a
-        // screen whose cell reads FIT while its cell reads plus its declared
-        // page's reads do not; that runs out mid-walk, which is the loud
-        // RecognitionIncomplete refusal it has always been rather than a cell
-        // quietly reported as a miss.
-        //
-        // A project declaring no elements gets a budget of zero, which is the
-        // honest answer: there is no element for a claim to be about, so there is
-        // no read to spend.
+        // A project declaring no elements gets a budget of zero, which is honest:
+        // no element for a claim to be about is no read to spend.
         constexpr auto k_readsPerElementPerScreen = uint64{2};
 
         [[nodiscard]]
@@ -279,11 +242,10 @@ return #verdict.findings
         UF_TRY_VALUE(declaredElements, host.projectElementCount(generation));
         UF_TRY_VALUE(readBudget, readBudgetForCheck(declaredElements));
 
-        // The same binding `run`, `drive` and `explore` use, so a cell the
-        // matrix reads is read by the engine a run would have used. Built before
-        // the frame source for the reason a run builds it before the target: a
-        // model directory that will not produce an engine must fail before any
-        // screen is opened.
+        // The same binding `run`, `drive` and `explore` use, so a cell the matrix
+        // reads is read by the engine a run would have used. Built before the
+        // frame source so a model directory that will not produce an engine fails
+        // before any screen is opened.
         UF_TRY_VALUE(ocrEngine, platform::bindOcrEngine(args.ocrModels));
 
         UF_TRY_VALUE(
@@ -292,8 +254,7 @@ return #verdict.findings
         );
         auto const screensOnDisk = frameSource->fileCount();
         // One local feeds both the routine's clause and the run's config, so the
-        // number the routine compares against cannot drift from the number the
-        // host actually enforces.
+        // number the routine compares against cannot drift from the one enforced.
         auto const source = checkRoutineSource(
             screensOnDisk,
             args.ocrModels.has_value(),
@@ -312,15 +273,12 @@ return #verdict.findings
                     .frameSource = std::move(frameSource),
                     .actionSink  = std::make_unique<RefusingActionSink>(),
                     .ocrEngine   = std::move(ocrEngine),
-                    // The project's own geometry, because the screens being
-                    // measured are the project's own; see
-                    // TaskHost::projectFingerprint.
+                    // The project's own geometry: the screens being measured are
+                    // the project's own.
                     .liveFingerprint         = fingerprint,
                     .maximumPixelComparisons = args.budget,
                     .recognitionTimeout      = args.recognitionTimeout,
-                    // See readBudgetForCheck: the matrix's read count is a fact
-                    // about this file, so the ceiling is read off it rather than
-                    // left at the default that bounds a wait loop.
+                    // See readBudgetForCheck.
                     .maximumReadsPerCycle = readBudget,
                     .tracePath            = args.trace,
                 }
@@ -330,11 +288,9 @@ return #verdict.findings
         auto findings = uint64{0};
         if (!outcome.run.failure)
         {
-            // The routine answers with a count of findings. A negative, a
-            // fractional or an unrepresentable answer is a routine that stopped
-            // meaning what it says, and it is reported as an internal invariant
-            // rather than rounded into a verdict: a check whose own answer
-            // cannot be read has not accepted anything.
+            // A negative, fractional or unrepresentable answer is reported as an
+            // internal invariant rather than rounded into a verdict: a check whose
+            // own answer cannot be read has not accepted anything.
             auto const converted = checkedIntegralCast<uint64>(outcome.answer);
             if (!converted)
             {

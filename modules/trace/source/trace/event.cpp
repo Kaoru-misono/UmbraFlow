@@ -24,8 +24,7 @@ namespace uf::trace
     {
         // Minimal JSON string escaper: quote the value and escape the mandatory
         // control and structural bytes. trace is the only module that writes this
-        // schema, so this is now the single copy -- engine/trace.cpp and
-        // task/trace.cpp each carried one before the two streams merged.
+        // schema, so this is the single copy.
         [[nodiscard]]
         auto escapeJsonString(std::string_view value) -> std::string
         {
@@ -64,9 +63,9 @@ namespace uf::trace
             return output;
         }
 
-        // Schema-owned names, kept independent of enum reflection so the wire
-        // format cannot silently follow a rename of the underlying enumerator.
-        // The dotted spelling names the layer that authored the event.
+        // Schema-owned names, independent of enum reflection so the wire format
+        // cannot follow a rename of the enumerator. The dotted spelling names the
+        // layer that authored the event.
         [[nodiscard]]
         auto traceEventKindName(TraceEventKind kind) noexcept -> std::string_view
         {
@@ -175,8 +174,6 @@ namespace uf::trace
         }
 
         // Accumulates a JSON object, tracking whether the leading comma is due.
-        // Mutating its own buffer is the builder's whole purpose, so its methods
-        // do not use output parameters.
         class TraceLineBuilder final
         {
             std::string m_text{"{"};
@@ -212,9 +209,8 @@ namespace uf::trace
                 addLiteral(name, escapeJsonString(value));
             }
 
-            // Emits a JSON array of the already-sorted `values`. Every element is
-            // escaped, so a name that ever carries a quote or control byte stays
-            // a valid line.
+            // Emits a JSON array of the already-sorted `values`, each escaped, so a
+            // name carrying a quote or control byte still writes a valid line.
             auto addStringArray(
                 std::string_view name,
                 std::span<std::string const> values
@@ -255,9 +251,8 @@ namespace uf::trace
         }
 
         // The group writers below take the builder by mutable reference because
-        // appending to the caller's half-built object is their whole operation,
-        // exactly as for the builder's own methods; nothing is returned through
-        // the parameter.
+        // appending to the caller's half-built object is their whole operation;
+        // nothing is returned through the parameter.
         auto addFrame(
             TraceLineBuilder& builder,
             FrameIdentity const& frame
@@ -292,11 +287,9 @@ namespace uf::trace
                 return;
             }
 
-            // Built here rather than through a builder method because it is the
-            // schema's only array of objects and a general one would have to
-            // invent a nested-builder protocol for one caller. The order is the
-            // order ocr::Readout promises -- top to bottom, then left to right
-            // -- so the same pixels write the same line every time.
+            // Built inline because it is the schema's only array of objects. The
+            // order is ocr::Readout's -- top to bottom, then left to right -- so
+            // the same pixels write the same line every time.
             auto array = std::string{"["};
             auto first = true;
             for (auto const& line : reading.lines)
@@ -431,9 +424,8 @@ namespace uf::trace
         }
 
         // Locates the top-level member named `name` in the serialized object
-        // `line`, returning the half-open range covering its key, colon and
-        // value. Returns nullopt when the line is not an object or has no such
-        // member, so a caller can leave the line untouched.
+        // `line`, returning the half-open range covering its key, colon and value.
+        // Returns nullopt when the line is not an object or has no such member.
         [[nodiscard]]
         auto findTopLevelMember(
             std::string_view line,
@@ -484,9 +476,8 @@ namespace uf::trace
         }
     }
 
-    // Lower case like every other schema-owned enumerator spelling that names a
-    // layer rather than an outcome, and independent of the enumerator name for
-    // the reason above the kind table.
+    // Lower case like every other schema-owned spelling, and independent of the
+    // enumerator name for the reason above the kind table.
     auto frontEndWireName(FrontEnd frontEnd) noexcept -> std::string_view
     {
         switch (frontEnd)
@@ -559,9 +550,8 @@ namespace uf::trace
         );
         builder.addString("frontEnd", frontEndWireName(stamped.frontEnd()));
 
-        // Part of the stamp, so it sits with the identity triple rather than
-        // among the event's own fields. Omitted when no step is open, which is
-        // every line of a task that never called ctx:step.
+        // Part of the stamp, so it sits with the identity triple rather than among
+        // the event's own fields. Omitted when no step is open.
         if (!stamped.openSteps().empty())
         {
             builder.addStringArray("steps", stamped.openSteps());
@@ -714,11 +704,9 @@ namespace uf::trace
 
         if (event.errorKind.has_value())
         {
-            // The domain's single wire spelling, which is also the `kind` a
-            // script's Tier B error carries and the uf.errors constant it
-            // compares against. That shared spelling -- not engine-trace/v1's
-            // reflected PascalCase -- is why a trace line names a failure with
-            // exactly the string the script saw.
+            // The domain's single wire spelling, also the `kind` a script's Tier B
+            // error carries and the uf.errors constant it compares against, so a
+            // trace line names a failure with exactly the string the script saw.
             builder.addString("errorKind", automationErrorWireName(*event.errorKind));
         }
 
@@ -738,9 +726,8 @@ namespace uf::trace
             builder.addString("key", event.key->value());
         }
 
-        // A literal rather than a string: the count is a signed number the reader
-        // compares and sums, and quoting it would make every consumer parse it
-        // back out.
+        // A literal rather than a string: the count is a signed number a reader
+        // compares and sums, and quoting it would make every consumer parse it out.
         if (event.wheelNotches.has_value())
         {
             builder.addLiteral("wheelNotches", std::format("{}", *event.wheelNotches));

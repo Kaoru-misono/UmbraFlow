@@ -10,10 +10,9 @@
 #include <string>
 #include <utility>
 
-// Luau's C headers are third-party and do not build clean under the project's
-// /W4 /WX profile; a manifest-driven module has no CMakeLists to mark them
-// external, so wrap the includes exactly as the repo's other vendored FFI does
-// (image/ffi/png-decoder.cpp).
+// Luau's C headers do not build clean under the project's /W4 /WX profile, and
+// a manifest-driven module has no CMakeLists to mark them external; wrap them as
+// image/ffi/png-decoder.cpp does.
 #if defined(_MSC_VER)
 #pragma warning(push, 0)
 #elif defined(__clang__)
@@ -50,21 +49,16 @@ namespace uf::script
         // __index chain to the main globals -- to anything holding the table.
         constexpr auto k_frameworkEnvironmentLabel = "uf.framework_env";
 
-        // The project environment's whitelist: every deterministic base
-        // function and library a project script may see, named one by one.
+        // The project environment's whitelist: every deterministic base function
+        // and library a project script may see, named one by one. A whitelist
+        // rather than the complement of a denial list, because a denial list is
+        // only as good as its author's memory of what luaL_openlibs registered
+        // and a Luau bump adding a global would silently widen the project
+        // surface.
         //
-        // This is a whitelist rather than the complement of a denial list on
-        // purpose. A denial list is only as good as its author's memory of what
-        // luaL_openlibs registered, and a Luau bump that adds a global would
-        // silently widen the project surface. Here a new global is invisible
-        // until someone writes it down.
-        //
-        // What is deliberately absent, and matches the design's denial list
-        // exactly: _G, getfenv, setfenv, newproxy, gcinfo, coroutine and debug
-        // (installSandbox also nils each of them, so they are gone from the main
-        // globals this copies from), plus os.time / os.clock / os.date /
-        // math.random / math.randomseed, which installSandbox removes from the
-        // shared os and math tables listed here.
+        // `os` and `math` are the same tables installSandbox already stripped of
+        // their clock and RNG entry points, and every global it nilled is
+        // absent from the main globals this copies from.
         constexpr std::string_view k_projectStandardGlobals[] = {
             "_VERSION",
             "assert",
@@ -109,7 +103,7 @@ namespace uf::script
         // Copies one field by name from the table at `source` into the table at
         // `destination`. A name that resolves to nil fails: an environment
         // quietly missing a whitelisted entry would look like a script bug at
-        // the point of use rather than like the boot problem it is.
+        // the point of use rather than the boot problem it is.
         [[nodiscard]]
         auto copyFieldInto(
             lua_State* state,
@@ -136,13 +130,10 @@ namespace uf::script
 
         // Compiles `source`, loads it as a closure whose environment is the
         // table at `environmentIndex`, and resumes it on a fresh thread spun
-        // from `mainState`.
-        //
-        // The returned pointer is a non-owning observation of the VM-owned
-        // thread, which stays alive because `mainState` still holds it on its
-        // stack: the caller reads the thread's results and then restores
-        // `mainState`'s stack top, after which the pointer is dead. Every caller
-        // in this file installs that restoring guard before calling.
+        // from `mainState`. The returned pointer is a non-owning observation of
+        // the VM-owned thread, kept alive only by `mainState` still holding it
+        // on its stack; it is dead once the caller restores `mainState`'s top,
+        // and every caller in this file installs that restoring guard first.
         [[nodiscard]]
         auto resumeChunkOnThread(
             lua_State* mainState,
@@ -202,16 +193,13 @@ namespace uf::script
             lua_State* thread = lua_newthread(mainState);
 
             // Move the environment onto the thread, where luau_load can name it,
-            // and make it the thread's globals table as well.
-            //
-            // Binding the thread is the C++-side setfenv path the sandbox needs:
-            // Lua's own setfenv is removed, and without this the thread would
-            // keep the globals table lua_newthread copied from its parent (the
-            // main globals). That matters twice over. LUA_GLOBALSINDEX on this
-            // thread -- what every C function sees -- would otherwise reach the
-            // main globals; and luau_load pre-resolves import constants against
-            // L->gt when that table is marked safeenv, which the frozen main
-            // globals are, so a chunk could be handed constants it must not see.
+            // and make it the thread's globals table as well. This is the
+            // C++-side setfenv the sandbox needs, Lua's own being removed:
+            // without it the thread keeps the globals table lua_newthread copied
+            // from its parent, so LUA_GLOBALSINDEX -- what every C function sees
+            // -- would reach the main globals, and luau_load would pre-resolve
+            // import constants against them, since a frozen global table is
+            // marked safeenv.
             lua_xpush(mainState, thread, environment);
             lua_pushthread(thread);
             lua_pushvalue(thread, 1);
@@ -240,7 +228,7 @@ namespace uf::script
 
             // The chunk's one vararg, when the caller supplied one. A framework
             // module reads it as `local native = ...`, which is how the private
-            // capability surface becomes an upvalue of trusted code without ever
+            // capability surface becomes an upvalue of trusted code without
             // being bound to a name either environment could reach.
             int argumentCount = 0;
             if (argument.has_value())
@@ -252,25 +240,21 @@ namespace uf::script
             int const runStatus = lua_resume(thread, nullptr, argumentCount);
             if (runStatus == LUA_BREAK || (control != nullptr && control->broken()))
             {
-                // The interrupt hard-cancelled this thread (stop token, instruction
-                // budget, or deadline). The thread is abandoned -- the caller's
-                // guard pops it and it is never resumed. A break is not a
-                // script-level error and cannot be caught by pcall.
+                // The interrupt hard-cancelled this thread (stop token,
+                // instruction budget, or deadline). The thread is abandoned --
+                // the caller's guard pops it and it is never resumed -- and a
+                // break is not a script-level error, so pcall cannot catch it.
+                // All three triggers land here identically, so the sentence
+                // names which one fired.
                 //
                 // The broken flag is checked alongside LUA_BREAK because a break
                 // raised inside a non-yieldable C frame surfaces as an ordinary
                 // runtime error (LUA_ERRRUN, "attempt to break across C-call
-                // boundary") instead. Classifying that as a recoverable script
-                // error would misreport a host control signal as a Tier B
-                // failure, and it is this disjunct alone that prevents it:
-                // removing it turns six of the seven non-yieldable forms in
-                // tests/script/test-adversarial-substrate.cpp, plus veto #6's own
-                // two cases, from Cancelled into InvalidResource.
-                //
-                // The trigger is NAMED. All three land here identically, and a
-                // sentence that says only "hard-cancelled" leaves the reader to
-                // guess between a stop token, a spent budget and an expired
-                // clock -- which cost three wrong diagnoses of one session.
+                // boundary") instead, which would misreport a host control
+                // signal as a Tier B failure. Measured: removing this disjunct
+                // turns six of the seven non-yieldable forms in
+                // tests/script/test-adversarial-substrate.cpp, plus veto #6's
+                // own two cases, from Cancelled into InvalidResource.
                 auto reason = std::string{
                     "task hard-cancelled (lua_break); the task thread is abandoned"
                 };
@@ -296,30 +280,20 @@ namespace uf::script
                 // the script's own failure and stays InvalidResource.
                 //
                 // That ordering is the fail-closed default and NOT the mechanism
-                // that stops a cancel being downgraded, because the state it
-                // would rule on cannot arise: `broken` is set only inside the
-                // interrupt, which then calls lua_break, and every trigger it
-                // reads is monotone. Once it is set, the next interrupt breaks
-                // again -- and Luau's interrupt sites are the call, return and
-                // loop-back ops, all of which run BEFORE the op completes. So no
-                // host C function can be entered to mint a carrier afterwards,
-                // and a carrier already in hand can only be raised through
-                // error(), which is itself a call. Measured, not assumed: moving
-                // this block above the cancellation branch reddens nothing, even
-                // against the script in
-                // tests/task/test-adversarial-surface.cpp that holds a real
-                // carrier and re-raises it from inside a cancelled sort
-                // comparator. Keep the ordering anyway -- it costs one branch and
-                // it is what a future yield protocol, or a Luau that adds an
-                // interrupt site, would need.
+                // that stops a cancel being downgraded: `broken` is set inside
+                // the interrupt, which breaks at a call, return or loop-back op
+                // BEFORE that op completes, so no host C function can be entered
+                // to mint a carrier afterwards. Measured: moving this block
+                // above the cancellation branch reddens nothing, even against
+                // tests/task/test-adversarial-surface.cpp, which re-raises a
+                // real carrier from inside a cancelled sort comparator. Kept
+                // anyway for one branch, against a future yield protocol or a
+                // Luau that adds an interrupt site.
                 //
-                // The stack is grown first. A thread that has just failed is
-                // unwound to exactly the error value, with no spare slots, so a
-                // classifier that pushes even one temporary would run off the
-                // end -- measured, not assumed: a classifier calling
-                // luaL_getmetafield here crashed the process until this line
-                // existed. Growing it costs nothing on the success path, which
-                // never reaches this branch.
+                // The stack is grown first because a thread that has just failed
+                // is unwound to exactly the error value with no spare slots:
+                // measured, a classifier calling luaL_getmetafield here crashed
+                // the process until this line existed.
                 static_cast<void>(lua_checkstack(thread, LUA_MINSTACK));
                 auto raised = std::optional<RaisedError>{};
                 if (classify != nullptr && *classify)
@@ -328,11 +302,8 @@ namespace uf::script
                 }
                 if (raised.has_value() && !raised->message.empty())
                 {
-                    // The host's own sentence, which lua_tostring cannot reach:
-                    // the carrier is a userdata and that call runs no metamethod,
-                    // so without the classifier's copy every host refusal reads
-                    // "(non-string error value)" at this boundary and the reason
-                    // survives only in the trace.
+                    // The host's own sentence, which lua_tostring cannot reach;
+                    // see RaisedError.
                     return fail(raised->kind, "script error: " + raised->message);
                 }
                 auto kind = AutomationErrorKind::InvalidResource;
@@ -358,11 +329,11 @@ namespace uf::script
         lua_setfield(state, metatable, "__index");
         lua_pushstring(state, k_frameworkEnvironmentLabel);
         lua_setfield(state, metatable, "__metatable");
-        // Frozen with a shallow lua_setreadonly rather than deepFreezeMetatable,
-        // which would follow __index into the main globals and freeze them here
-        // -- before the host installer has registered its tables and before
-        // luaL_sandbox, which owns that freeze. The shape rules the walk would
-        // check are satisfied by construction two lines up.
+        // Shallow lua_setreadonly rather than deepFreezeMetatable, which would
+        // follow __index into the main globals and freeze them here -- before
+        // the host installer has registered its tables and before luaL_sandbox,
+        // which owns that freeze. The shape rules are satisfied by construction
+        // two lines up.
         lua_setreadonly(state, metatable, 1);
         lua_setmetatable(state, environment);
 
@@ -422,10 +393,10 @@ namespace uf::script
                 );
             }
 
-            // Take the module's first return value as its exports, freeze it,
-            // and bind it in the framework environment under the module name.
-            // Only a table can be frozen; a module exporting a scalar or a
-            // function exports something already immutable or already opaque.
+            // The module's first return value is its exports, frozen and bound
+            // in the framework environment under the module name. Only a table
+            // can be frozen; a scalar or function export is already immutable or
+            // already opaque.
             lua_xpush(thread, state, 1);
             if (lua_istable(state, -1))
             {
@@ -533,9 +504,8 @@ namespace uf::script
         lua_pushnil(state);
         while (lua_next(state, prototype) != 0)
         {
-            // key is at -2 and value at -1; copy both, raw-set them into the
-            // fresh environment, then drop the value and keep the key for the
-            // next lua_next.
+            // lua_next leaves the key at -2 and the value at -1; copy both into
+            // the fresh environment, then drop the value and keep the key.
             lua_pushvalue(state, -2);
             lua_pushvalue(state, -2);
             lua_rawset(state, environment);
@@ -558,10 +528,9 @@ namespace uf::script
         RaisedErrorClassifier const* classify
     ) -> Result<double>
     {
-        // The thread lua_newthread pushes onto the main state's stack, and every
-        // value the run leaves behind, are released here on EVERY exit --
-        // including a throw from the std::string allocations below -- so threads
-        // can never accumulate across repeated calls.
+        // Releases the thread lua_newthread pushed, and every value the run left
+        // behind, on EVERY exit -- a throw from the std::string allocations
+        // included -- so threads never accumulate across repeated calls.
         int const stackBase = lua_gettop(mainState);
         auto stackGuard = scopeExit(
             [mainState, stackBase]() noexcept

@@ -38,16 +38,15 @@ namespace uf::task
     {
         // The opening line of an operator session's run bracket.
         //
-        // Four of the seven Run members are deliberately empty, and the emptiness is
-        // accurate rather than missing. There is no task, so no taskName and no
+        // Four of the seven Run members are deliberately empty, and the emptiness
+        // is accurate rather than missing. There is no task, so no taskName and no
         // sourceHash; no trusted Luau framework ran, so no frameworkVersion,
-        // frameworkHash or luauVersion -- naming this binary's framework build would
-        // claim a framework that took no part in the run. The seed is zero for the
-        // same reason: the operator surface exposes no randomness (see
-        // OperatorSession's class comment), so there is no replay input to record,
-        // and a drawn-but-unused seed would be a false one. The `frontEnd` member the
-        // recorder stamps on this same line is what tells a reader which of these
-        // absences to expect.
+        // frameworkHash or luauVersion -- naming this binary's framework build
+        // would claim a framework that took no part in the run. The seed is zero
+        // for the same reason: the operator surface exposes no randomness, so a
+        // drawn-but-unused seed would be a false one. The `frontEnd` member the
+        // recorder stamps on this same line tells a reader which absences to
+        // expect.
         [[nodiscard]]
         auto operatorRunStartedEvent(std::string const& projectId) -> trace::TraceEvent
         {
@@ -143,8 +142,8 @@ namespace uf::task
 
         // No run.resources_validated line. That event records the closure of uf
         // references a task SOURCE was validated against before its VM existed;
-        // there is no source here, so the event has nothing to say and an empty
-        // one would misreport a validation that never happened.
+        // there is no source here, so an empty one would misreport a validation
+        // that never happened.
         UF_TRY_VALUE(
             session,
             engine::EngineSession::create(
@@ -227,9 +226,8 @@ namespace uf::task
         }
         // Remembered before the line is recorded, so a lost trace line still leaves
         // the operator able to close the cycle it just opened. The Luau primitive
-        // cannot do this -- its raise skips the return, so the framework never
-        // receives the ticket -- and the difference costs no refusal: the failure is
-        // the same IoFailure either way, only the recovery is better here.
+        // cannot do this -- its raise skips the return -- and the failure is the
+        // same IoFailure either way, only the recovery is better here.
         m_ticket = *result;
 
         UF_TRY(recordNativeCall(m_context, call, trace::NativeCallOutcome::Succeeded));

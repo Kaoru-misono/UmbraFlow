@@ -28,10 +28,9 @@ namespace uf::task
 
         TEST_CASE("The same seed replays an identical sequence and a different seed diverges")
         {
-            // Same seed, same draw order -> byte-for-byte identical, the property a
-            // trace-recorded seed relies on to replay a run. At least a hundred
-            // numbers, so a generator that only agreed on its first few outputs
-            // would be caught.
+            // Same seed, same draw order -> byte-for-byte identical, the property
+            // a trace-recorded seed relies on to replay a run. A hundred-odd
+            // numbers, so a generator agreeing only on its first few is caught.
             auto const first  = drawWords(0x1234'5678'9ABC'DEF0, 128);
             auto const second = drawWords(0x1234'5678'9ABC'DEF0, 128);
             CHECK(first == second);
@@ -75,10 +74,10 @@ namespace uf::task
 
         TEST_CASE("boundedUint64 is roughly uniform across its buckets")
         {
-            // A coarse but falsifiable unbiasedness check: over a large sample every
-            // bucket count should sit near N/span. The tolerance is wide (a biased
-            // modulo mapping skews far past it) yet nowhere near the noise floor --
-            // a bucket's standard deviation here is about a hundred counts, so a
+            // A coarse but falsifiable unbiasedness check: every bucket count
+            // should sit near N/span. The tolerance is wide enough that a biased
+            // modulo mapping skews past it, and far from the noise floor -- a
+            // bucket's standard deviation here is about a hundred counts, so a
             // fifteen-percent band is a dozen-plus sigma and never flakes.
             constexpr std::size_t bucketCount = 8;
             constexpr int         samples     = 100'000;

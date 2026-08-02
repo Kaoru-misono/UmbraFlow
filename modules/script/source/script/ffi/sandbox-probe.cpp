@@ -37,16 +37,12 @@ namespace uf::script::testing
     {
         // Build `host = { flat = 7, nested = { value = 1 } }` behind a metatable
         // `{ __index = { inherited = 5 }, __metatable = "probe.host" }`,
-        // deep-freeze the whole shape (recursively read-only, metatable
-        // included), then bind it as a global. Registered before luaL_sandbox, so
-        // the global binding itself is frozen with the rest.
+        // deep-freeze the whole shape, then bind it as a global. Registered
+        // before luaL_sandbox, so the binding is frozen with the rest.
         //
-        // The metatable carries every property deepFreeze now demands of a
-        // project-visible host object: a table __index (so a script inheriting
-        // through it reads a frozen table rather than running host code) and a
-        // __metatable field (so getmetatable hands back a label, and table.clone
-        // refuses the object outright). It is therefore both the fixture for the
-        // walk's metatable arm and the fixture proving the rules are enforced --
+        // The metatable carries both properties deepFreeze demands of a
+        // project-visible host object, so this is at once the fixture for the
+        // walk's metatable arm and the fixture proving the rules are enforced:
         // dropping either field makes deepFreeze reject this table.
         [[nodiscard]]
         auto installSyntheticHostTable(lua_State* state) -> Status

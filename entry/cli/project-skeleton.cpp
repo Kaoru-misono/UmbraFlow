@@ -14,27 +14,14 @@ namespace uf::cli
 {
     namespace
     {
-        // The three directories a project is authored INTO, project-relative.
-        //
-        // Each one is named by something else already, and this list is a fourth
-        // spelling of none of them -- it is the one place that says a directory
-        // has to EXIST, which is a different fact from where a file goes:
-        //
-        //   * assets/templates is where a measured crop is stored, under the hash
-        //     of its own bytes (`scribe.template_path`).
-        //   * assets/screens is where the pixels a screen is measured from live
-        //     (`oracle.screen_path`), and it is the directory `check` replays.
-        //   * frames is where a session keeps the captures it worked from. It is
-        //     the one nothing in this binary ever reads -- an agent writes into it
-        //     through project_write and a developer reads it afterwards -- and it
-        //     is laid out for exactly that reason: an agent that has to create it
-        //     cannot, because creating a directory is not a verb the script layer
-        //     has.
-        //
-        // Nothing else belongs here. page-model.toml is content and not layout:
-        // it states the geometry the project was authored at, which is a fact
-        // about the target rather than about the directory, and a file this
-        // function invented would be a model nobody wrote.
+        // The three directories a project is authored INTO, project-relative. Each is
+        // named elsewhere by the code that writes into it; this list is the one place
+        // saying a directory has to EXIST, which is a different fact from where a
+        // file goes: `scribe.template_path` writes crops into assets/templates,
+        // `oracle.screen_path` reads assets/screens (the directory `check` replays),
+        // and frames holds the captures a session worked from -- nothing here reads
+        // it, but an agent cannot create a directory itself. Nothing else belongs
+        // here: page-model.toml is content and not layout.
         constexpr auto k_skeletonDirectories = std::array<std::string_view, 3>{
             "assets/templates",
             "assets/screens",
@@ -96,8 +83,8 @@ namespace uf::cli
             error = std::error_code{};
             // create_directories rather than create_directory, because two of the
             // three are nested and their shared parent may be missing too. Its
-            // false return is not an error on its own -- it means nothing was
-            // created -- so the error code is what is asked.
+            // false return means nothing was created, not an error, so the error
+            // code is what is asked.
             static_cast<void>(std::filesystem::create_directories(directory, error));
             if (error)
             {

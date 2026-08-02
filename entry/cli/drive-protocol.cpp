@@ -74,15 +74,12 @@ namespace uf::cli
         };
 
         // A strict reader for the one JSON shape this protocol uses: a flat object of
-        // strings and non-negative whole numbers.
-        //
-        // Strict on purpose, and modelled on the m0-demo input agent's own reader: an
-        // unrecognized field, a repeated field, a fractional number, a leading zero,
-        // an unescaped control byte and trailing content are all REFUSED rather than
-        // tolerated. An operator command posts input to a live target, so a line that
-        // is nearly right must fail loudly instead of being interpreted generously.
-        // Floating point is absent because no field of this protocol is fractional --
-        // every one is a count, an id or a name.
+        // strings and non-negative whole numbers. An unrecognized field, a repeated
+        // field, a fractional number, a leading zero, an unescaped control byte and
+        // trailing content are all REFUSED, because an operator command posts input
+        // to a live target and a line that is nearly right must fail loudly. Floating
+        // point is absent because no field here is fractional -- every one is a
+        // count, an id or a name.
         class CommandReader final
         {
             std::string m_source;

@@ -32,9 +32,8 @@ namespace uf::cli
 {
     namespace
     {
-        // How often the session looks for newly appended chunks. It bounds
-        // latency and nothing else -- no guarantee depends on it -- and it is the
-        // session's own plumbing rather than agent policy.
+        // How often the session looks for newly appended chunks: it bounds latency
+        // and nothing else, and is session plumbing rather than agent policy.
         inline constexpr auto k_queuePollInterval = std::chrono::milliseconds{25};
 
         [[nodiscard]]
@@ -86,23 +85,20 @@ namespace uf::cli
             return canonical;
         }
 
-        // One chunk read out of the queue, with the byte offset just past its
-        // terminator. The offset travels with the text because that is what the
-        // cursor advances to, and deriving it a second time in the loop is where
-        // an off-by-one would replay a chunk.
+        // `endOffset` is just past the terminator. It travels with the text because
+        // that is what the cursor advances to; deriving it again in the loop is
+        // where an off-by-one would replay a chunk.
         struct FramedLine final
         {
             std::string line{};
             uintmax     endOffset{};
         };
 
-        // Reads whole lines appended to the queue since the last call, starting
-        // from the cursor's position.
-        //
-        // The offset is durable, not merely per-session: a partial trailing line
-        // is held back until its terminator arrives, and a line is handed out
-        // exactly once however many times the queue is polled and however many
-        // times the session is restarted.
+        // Reads whole lines appended since the last call, starting from the cursor's
+        // position. The offset is durable, not merely per-session: a partial
+        // trailing line is held back until its terminator arrives, and a line is
+        // handed out exactly once however often the queue is polled or the session
+        // restarted.
         class QueueReader final
         {
             std::filesystem::path m_path;
@@ -128,9 +124,8 @@ namespace uf::cli
                 if (size < m_offset)
                 {
                     // A queue that shrank was replaced or truncated under the
-                    // session, which makes the offset name a different file's
-                    // bytes -- and the cursor beside it a record of chunks that
-                    // are no longer there.
+                    // session, so the offset names a different file's bytes and the
+                    // cursor beside it records chunks that are no longer there.
                     return invalid(
                         std::format(
                             "the chunk queue {} shrank; an exploration session "
@@ -340,9 +335,8 @@ namespace uf::cli
     {
         auto value = session.evaluate(chunk.chunk, chunk.id);
 
-        // Read AFTER the chunk, which is after the session reclaimed it: the
-        // figure the agent needs is the live set it is carrying into the next
-        // chunk, not the garbage this one happened to leave behind.
+        // Read AFTER the chunk, so the figure is the live set the agent carries
+        // into the next chunk rather than the garbage this one left behind.
         auto const heap = session.heapUsage();
         if (!value)
         {
@@ -351,16 +345,12 @@ namespace uf::cli
                 .resultLine = exploreFailure(chunk.id, error, heap),
             };
 
-            // A chunk that raised is an ordinary outcome and the session goes on.
-            // A CANCELLATION is not: once the generation is spent every later
-            // primitive refuses on the terminal latch, so continuing would spin
-            // the queue until the idle timeout and fill the results file with the
-            // same refusal. The session ends on it, and run.finished reports it.
-            //
-            // The latch is asked rather than only the kind, because a chunk can
-            // catch what was raised and return normally while the generation stays
-            // spent -- and then the FIRST failing line would be a later one whose
-            // error says nothing about what actually ended the run.
+            // A chunk that raised is an ordinary outcome and the session goes on. A
+            // CANCELLATION is not: every later primitive refuses on the terminal
+            // latch, so continuing would spin the queue to the idle timeout filling
+            // the results file with the same refusal. The latch is asked rather than
+            // the kind, because a chunk can catch what was raised and return
+            // normally while the generation stays spent.
             if (session.terminalKind().has_value())
             {
                 execution.stopSession = true;
@@ -374,9 +364,8 @@ namespace uf::cli
         };
         if (auto const terminal = session.terminalKind(); terminal.has_value())
         {
-            // The chunk swallowed a terminal raise and returned a value. The
-            // value is still what it returned and the line still says so, but the
-            // session is over.
+            // The chunk swallowed a terminal raise and returned a value. The line
+            // still reports that value, but the session is over.
             execution.stopSession = true;
             execution.failure     = fail(
                 *terminal,
@@ -425,9 +414,9 @@ namespace uf::cli
             {
                 auto parsed = parseExploreChunk(framed.line);
 
-                // The result line goes out FIRST and the cursor advances after
-                // it, so a hard kill between the two costs a replay of this one
-                // chunk rather than a chunk the agent was never told about.
+                // The result line goes out FIRST and the cursor advances after it,
+                // so a hard kill between the two replays this one chunk rather than
+                // losing a chunk the agent was never told about.
                 auto const line = parsed
                     ? std::string{}
                     : serializeExploreParseFailure(parsed.error());
@@ -447,11 +436,10 @@ namespace uf::cli
                 auto written = writer.write(execution.resultLine);
                 if (!written)
                 {
-                    // A results file that cannot be written IS session-ending,
-                    // and it ends the session THROUGH `failure` rather than by
-                    // returning: a return here would leave the run bracket open,
-                    // and a trace whose run.finished is missing is worse evidence
-                    // than one that closes on the failure.
+                    // A results file that cannot be written is session-ending, but
+                    // it ends the session through `failure` rather than by
+                    // returning: a return would leave the run bracket open, and a
+                    // trace missing run.finished is worse evidence.
                     failure = std::move(written).error();
                     stopped = true;
                     break;

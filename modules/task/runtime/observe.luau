@@ -4,54 +4,30 @@
 --
 -- `model` owns the nouns and `navigation` owns the page graph and the belief
 -- rules for the page stack; this file owns everything that COSTS A CAPTURE.
--- Both halves used to be C++ verbs -- `cycle_page` and `cycle_find` -- and both
--- are gone from the host surface: they are rebuilt here on `cycle_match`,
--- `cycle_read` and `cycle_click`, which is what
--- docs/plans/2026-07-31-script-owned-page-model.md 4 replaced them with.
+-- `walk_edge` is here because it delivers a trigger and waits on frames; the
+-- stack it updates and the depth cap it honours are there, because neither looks
+-- at a pixel. Both halves used to be the C++ verbs `cycle_page` and `cycle_find`
+-- (docs/plans/2026-07-31-script-owned-page-model.md 4).
 --
--- THE SPLIT WITH `navigation` IS THAT LINE AND NOTHING ELSE. `walk_edge` is here
--- because it delivers a trigger and waits on frames; the stack it updates, the
--- depth cap it honours and the rule that a base page resets belief are there,
--- because none of them looks at a pixel.
+-- Every verb takes `ctx` first and reaches the host only through it, so a test
+-- can drive these verbs against any ctx and a signature names every host call a
+-- verb can make.
 --
--- THE PRIMITIVES ARRIVE AS A PARAMETER. Every verb below takes `ctx` first and
--- reaches the host only through it. Nothing here closes over the private
--- surface to do observation work, so a test can drive these verbs against any
--- ctx and a reader can see, from the signature alone, exactly which host calls
--- a verb can make. The one exception is at the very bottom of this comment.
+-- No policy is implied anywhere: every timeout, poll interval, streak length and
+-- text comparison is a parameter with no default.
 --
--- NO POLICY IS IMPLIED ANYWHERE. Every timeout, poll interval, streak length
--- and text comparison is a parameter with no default, in the same spirit as
--- ctx.luau: a default the caller cannot see is a decision the caller did not
--- make. `observe.exact_text` exists so that "equality" is a named thing you
--- pass, not a thing that happens when you pass nothing.
+-- A stopped search is never a miss. `cycle_match` raises when a budget, a
+-- deadline or a cancel stopped it, and no verb here wraps that in `pcall`:
+-- turning one into "the element is not on screen" would make the model's answer
+-- a function of a configuration number. A region that read nothing is the same
+-- mistake one layer up, and `observe.empty_is_absence` is where it is answered.
 --
--- A STOPPED SEARCH IS NEVER A MISS. `cycle_match` raises when a budget, a
--- deadline or a cancel stopped it, precisely because a search that stopped
--- looking has established nothing. No verb here wraps it in `pcall`, so that
--- raise travels out to the caller as the control error it is. Turning one into
--- "the element is not on screen" would make the model's answer a function of a
--- configuration number, which is the one thing the determinism rule forbids.
---
--- AN EMPTY REGION IS THE SAME MISTAKE ONE LAYER UP, and the read verbs refuse
--- to make it on the caller's behalf. A region reads nothing for two reasons --
--- it is blank, or what belongs in it has not been drawn yet -- and no frame
--- tells those apart, because the recogniser reports the same nothing for both.
--- One caller is asking "is this region clear", and for it the empty read is the
--- answer; the other is asking "what is in this region", and for it the empty
--- read is a blank that reads like a conclusion: a list nobody can pick from
--- looks exactly like a list holding nothing it wants. So `read_element` and
--- `read_lines` take `observe.empty_is_absence` or `observe.empty_is_unknown`
--- with no default, and the second raises rather than handing back a nothing the
--- caller would go on to reason from. The verb cannot choose: the two callers
--- differ in what they came for, not in what they read.
---
--- THE EXCEPTION. `wait_until` mints a Tier B timeout, and minting a host error
--- has no `ctx` forward -- ctx.luau's own wait loop reaches for `native.raise`
--- for exactly this. So this module takes the private surface as its chunk
--- argument and uses ONE thing from it. `native` is nil on a VM with no bound
--- session, as it is in ctx.luau, and a method then fails at the call rather
--- than at load.
+-- Three things come from `native` rather than from `ctx`: `wait_until`'s Tier B
+-- timeout, the read verbs' `recognition_incomplete`, and the bare-coordinate
+-- delivery `observe.click` and `observe.long_press` need. Minting a host error
+-- has no `ctx` forward, and a `ctx` forward for bare-coordinate input would put
+-- it within reach of every business task. `native` is nil on a VM with no bound
+-- session, and a method then fails at the call rather than at load.
 local native = ...
 
 local observe = {}
@@ -59,18 +35,12 @@ local observe = {}
 -- One thing this module located on one frame, and what a click on it would be
 -- authorised by. `evidence` owns which frame it is about and who may mint one.
 --
--- `positioned_by` says where the position came from, and it has three values.
--- "pixels" is a template match, whose rectangle C++ can still re-check at the
--- click edge. "page" is an element with no template, whose rectangle is the
--- model's own and whose whole claim to a position is that the page resolved.
--- "text" is a line `read_lines` found INSIDE an annotated region: the region is
--- authored and the line's place in it is not, so the frame is the only thing
--- that ever said where it is.
---
--- `text` and `confidence` are present exactly on a "text" hit, because that is
--- the only kind whose identity is what it SAYS. A caller that ignores the
--- confidence on one has thrown away the only evidence that would let it notice
--- a region the recogniser guessed at.
+-- `positioned_by`: "pixels" is a template match, whose rectangle C++ can still
+-- re-check at the click edge; "page" is an element with no template, whose whole
+-- claim to a position is that the page resolved; "text" is a line `read_lines`
+-- found inside an annotated region, where only the frame ever said where it is.
+-- `text` and `confidence` are present exactly on a "text" hit, the only kind
+-- whose identity is what it says.
 export type Hit = {
     element: any,
     page: string,
@@ -91,8 +61,7 @@ export type Hit = {
 }
 
 -- What `observe.resolve_page` hands back when the frame behind a ticket IS the
--- page it was asked about. `evidence.mint_receipt` is where it comes from and
--- why it is an object rather than a boolean.
+-- page it was asked about; `evidence.mint_receipt` is where it comes from.
 export type Receipt = {
     page: any,
     ticket: any,
@@ -110,92 +79,69 @@ export type Reading = {
     matches: boolean?,
 }
 
--- What `observe.walk_edge` returns.
---
--- "arrived" carries WHICH page resolved, because an edge's `to` is a set: an
--- edge that can land on the result page or on an error page has told the caller
--- something real only when it says which one happened.
---
--- "interrupted" carries the interrupt page that resolved instead. Dismissing it
--- is the caller's policy and never this layer's -- some popups are closed, some
--- are waited out, some end the run -- so the framework's whole job is to name it
--- rather than to time out with nothing to say.
+-- What `observe.walk_edge` returns. "arrived" carries WHICH page resolved,
+-- because an edge's `to` is a set. "interrupted" carries the interrupt page that
+-- resolved instead; dismissing it is the caller's policy and never this layer's,
+-- so the framework's job is to name it rather than to time out with nothing to
+-- say.
 export type WalkOutcome = {
     outcome: string,
     page: any,
 }
 
--- Whether a match clears an appearance's threshold.
---
--- The score is a sum of absolute differences and the maximum is the ceiling for
--- that template, both handed over by C++ without judgement -- scores stay in
--- layer one, judging moves to layer two
+-- Whether a match clears an appearance's threshold. The score is a sum of
+-- absolute differences and the maximum is that template's ceiling, both handed
+-- over by C++ without judgement
 -- (docs/plans/2026-07-31-script-owned-page-model.md 7). The threshold is in
--- basis points of similarity, so the test is
--- `score <= maximum * (1 - threshold/10000)`, written multiplied out so no
--- division rounds it.
+-- basis points of similarity, written multiplied out so no division rounds it.
 function observe.matched(match: any, threshold: number): boolean
     return match.score * 10000 <= match.maximum * (10000 - threshold)
 end
 
 -- Whether `candidate` beat `incumbent`, comparing two appearances of one
--- element.
+-- element. Raw scores are not comparable across appearances -- each template has
+-- its own ceiling -- so the test is the cross product, exact because both
+-- operands are whole numbers well inside what a double represents exactly.
 --
--- Raw scores between two appearances are NOT comparable: each has its own
--- template size and therefore its own ceiling. The exact comparison is the
--- cross product -- `score_a / max_a < score_b / max_b` without the division --
--- and it is exact rather than approximate because both operands are whole
--- numbers well inside what a double represents exactly.
---
--- A TIE LOSES. That is the whole of what declaration order decides: it breaks
--- ties and nothing else. "First appearance past its threshold wins" is
--- deterministic too, so determinism is not the argument against it -- the
--- argument is that an over-wide early appearance would answer first and return
--- ITS rectangle, and the click would land on pixels that belong to another
--- appearance with nothing downstream noticing
+-- A tie loses: declaration order breaks ties and decides nothing else, so an
+-- over-wide early appearance cannot answer first and return ITS rectangle while
+-- the click lands on another appearance's pixels
 -- (docs/plans/2026-07-31-annotation-model-capabilities.md 2.3, correction 1).
 function observe.better(candidate: any, incumbent: any): boolean
     return candidate.score * incumbent.maximum
         < incumbent.score * candidate.maximum
 end
 
--- Leading and trailing whitespace, removed. It belongs to the ENGINE rather than
--- to the screen: a single-line read of a padded rectangle comes back with the
--- padding, and a project file that had to spell " 出擊 " to match would be
--- recording an artefact of where the rectangle was drawn instead of a fact about
--- the UI. `%s` is the ASCII class, which is what the engine emits around a line;
--- a full-width space INSIDE the text is content and is left alone.
+-- Leading and trailing whitespace, removed. It belongs to the ENGINE and not to
+-- the screen: a project file that had to spell " 出擊 " to match would record
+-- where the rectangle was drawn instead of a fact about the UI. `%s` is the
+-- ASCII class the engine emits around a line; a full-width space inside the text
+-- is content and is left alone.
 local function trimmed(text: string): string
     return (string.gsub(text, "^%s*(.-)%s*$", "%1"))
 end
 
 -- Whether a reading counts as the text the model expects.
 --
--- IT IS EQUALITY AND NOT CONTAINMENT, and on this target the difference decides
--- which page a run thinks it is on. Every screen prints its own name in the same
--- top-left box, and "出擊" is a prefix of "出擊紀錄": a contains rule would
--- resolve the second screen as the first and then click the first one's buttons
--- on it. What it does forgive is whitespace at the ends, on both sides, for the
--- reason above.
+-- It is equality and not containment: every screen on this target prints its own
+-- name in the same top-left box and "出擊" is a prefix of "出擊紀錄", so a
+-- contains rule resolves the second screen as the first and clicks the first
+-- one's buttons on it. Whitespace at the ends is forgiven, for the reason above.
 --
--- It remains the comparison a caller PASSES rather than one this module applies
--- behind them -- `read_element` still takes it as an argument with no default --
--- because whether full width equals half width and whether traditional equals
--- simplified are rules this layer owns and a project may replace. What changed
--- on 2026-08-01 is only that identify-by-text calls this one itself, since a
--- page signature is not a place a project gets to relax the rule per call site.
+-- Callers still PASS it -- `read_element` takes it with no default -- because
+-- whether full width equals half width and traditional equals simplified are
+-- rules a project may replace. Identify-by-text calls this one itself: a page
+-- signature is not a place to relax the rule per call site.
 function observe.exact_text(actual: string, expected: string): boolean
     return trimmed(actual) == trimmed(expected)
 end
 
 -- Whether a reading is sure enough to be evidence, judged against the floor its
--- element declared (`model.Element.read_floor`).
---
--- The split is `observe.matched`'s exactly: the number is DATA and lives in the
--- model where it can be argued with, the comparison is a judgement and lives
+-- element declared (`model.Element.read_floor`). The number is DATA and lives in
+-- the model where it can be argued with; the comparison is a judgement and lives
 -- here. Reading is the one capability that fails open -- a rectangle aimed at
--- the wrong place returns plausible text rather than nothing -- so this is the
--- only thing standing between a guess and a page identity.
+-- the wrong place returns plausible text -- so this is the only thing standing
+-- between a guess and a page identity.
 function observe.confident(reading: any, floor: number): boolean
     return reading.confidence >= floor
 end
@@ -203,37 +149,31 @@ end
 -- What a region that read NOTHING means to the caller who asked. Both read verbs
 -- take one of these two and neither has a default.
 --
--- WHY IT CANNOT BE ANSWERED HERE. The engine reports the same nothing whether
--- the region is blank or whether what belongs in it has not been drawn yet, and
--- one frame holds no evidence separating them. What separates them is the
--- QUESTION: `empty_is_absence` is asked by a caller who wants to know whether
--- the region is clear -- the shape a `forbidden` clause has, and the shape "is
--- the popup gone" has -- and for it a region reading nothing is the answer.
--- `empty_is_unknown` is asked by a caller who wants what is in the region, and
--- for it a region reading nothing has said nothing at all: the read verb raises
--- `uf.errors.recognition_incomplete`, which classifies as Retry, so the caller
+-- The engine reports the same nothing whether the region is blank or whether
+-- what belongs in it has not been drawn yet, so one frame cannot separate them
+-- and the QUESTION has to. `empty_is_absence` is asked by a caller who wants to
+-- know whether the region is clear -- the shape a `forbidden` clause has -- and
+-- for it a region reading nothing is the answer. `empty_is_unknown` is asked by
+-- a caller who wants what is IN the region, and for it the read verb raises
+-- `uf.errors.recognition_incomplete`, which classifies as Retry so the caller
 -- observes again instead of branching on a blank.
 --
--- WHY IT IS A RAISE AND NOT A THIRD RETURN VALUE. Because the cost of this
--- mistake is that it does not look like one. A caller holding an empty list runs
--- its whole choosing loop, matches nothing, and prints a sentence that reads
--- like a decision -- this framework watched one skip a card reward whose cards
--- had not finished drawing. A second return value is dropped by writing one
--- `local`, and a nil is a value a caller still has to remember to test. A raise
--- is the only answer here that a caller cannot go on to reason from, and it is
--- the same answer `cycle_match` gives a search that stopped looking.
+-- It raises rather than returning a second value, because a caller holding an
+-- empty list walks its whole choosing loop and prints a sentence shaped like a
+-- decision: this framework watched one skip a card reward whose cards had not
+-- finished drawing.
 observe.empty_is_absence = "absence"
 observe.empty_is_unknown = "unknown"
 
--- The closed set, so a misspelling picks no policy at all rather than the wrong
--- one.
+-- The closed set, so a misspelling picks no policy rather than the wrong one.
 local k_emptyMeaningKnown: { [string]: boolean } = table.freeze({
     [observe.empty_is_absence] = true,
     [observe.empty_is_unknown] = true,
 })
 
--- The refusal blames level 3: level 1 is this function, level 2 is the read verb
--- that called it, and the caller that left the policy out is one further again.
+-- The refusal blames level 3, as `searchRect` and `readTarget` below do: level 1
+-- is this function, level 2 is the read verb that called it, and the caller that
+-- left the policy out is one further again.
 local function emptyMeaning(verb: string, value: any): string
     if type(value) ~= "string" or not k_emptyMeaningKnown[value] then
         error(
@@ -253,14 +193,9 @@ local function emptyMeaning(verb: string, value: any): string
 end
 
 -- What a read verb raises when it found nothing and the caller said nothing is
--- not an answer.
---
--- It is a HOST-MINTED Tier B error rather than a Luau string, for `wait_until`'s
--- reason: a project can catch it, a retry policy can name it, and the host
--- classifies it with every other automation failure. The kind is
--- `recognition_incomplete`, whose whole definition is "the caller learned
--- nothing about the screen, so it must observe again instead of branching as
--- though something had been ruled out" -- which is this case exactly.
+-- not an answer. It is a host-minted Tier B error rather than a Luau string, so
+-- a project can catch it and a retry policy can name it; `recognition_incomplete`
+-- means the caller learned nothing about the screen and must observe again.
 local function raiseUnread(verb: string, element: any, rect: any)
     native.raise(
         "recognition_incomplete",
@@ -291,15 +226,11 @@ end
 -- Where a verb looks: the row's rectangle when the page refined one, and the
 -- element's own otherwise.
 --
--- THE LAST BRANCH IS UNREACHABLE THROUGH A PAGE AND REACHABLE WITHOUT ONE, which
--- is why it is a sentence rather than a nil. An element may draw no rectangle at
--- all -- one confirm button reused on nine screens sits somewhere different on
--- each -- and `Page.new` refuses a row that neither inherits one nor states one,
--- so every path through `find` arrives with a rectangle by construction. The
--- read verbs are the ones that also take a BARE element, where there is no row to
--- have been checked; a caller reaching this with one has asked to read a region
--- nothing has placed yet, and the alternative to saying so is an index of a nil
--- field inside `cycle_read`.
+-- The last branch is unreachable through a page and reachable without one, which
+-- is why it is a sentence rather than a nil. `Page.new` refuses a row that
+-- neither inherits a rectangle nor states one, so every path through `find`
+-- arrives with one; the read verbs also take a BARE element, and a caller
+-- reaching this with one has asked to read a region nothing has placed yet.
 local function searchRect(reference: any, element: any): any
     if reference ~= nil and reference.rect_override ~= nil then
         return reference.rect_override
@@ -318,15 +249,9 @@ local function searchRect(reference: any, element: any): any
 end
 
 -- What a read verb was pointed at: the page row when the caller passed one, and
--- the element either way.
---
--- Extracted because both read verbs take the same either-shape and refuse on the
--- same two grounds, and two copies of "which of these did I get, and may it be
--- read" is exactly where the two would come to disagree about what `read` means.
---
--- The refusals blame level 3 rather than 2: level 1 is this function, level 2 is
--- the verb that called it, and the caller a wrong argument belongs to is one
--- further out again.
+-- the element either way. Both read verbs take the same either-shape and refuse
+-- on the same two grounds, and two copies of "which of these did I get, and may
+-- it be read" is where the two would come to disagree about what `read` means.
 local function readTarget(verb: string, value: any): (any, any)
     local reference: any = nil
     local element: any   = value
@@ -354,20 +279,17 @@ local function readTarget(verb: string, value: any): (any, any)
 end
 
 -- The pixel a rectangle is clicked at when nothing matched inside it: the
--- middle, rounded down. It is deterministic and it is the only sensible answer
--- for an element with no template, whose whole claim to a position is "the page
--- was recognised, so the rectangle is where it was drawn"
+-- middle, rounded down. It is the only deterministic answer for an element with
+-- no template, whose whole claim to a position is that the page was recognised
 -- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.3).
 local function centrePixel(rect: any): (number, number)
     return rect.x + (rect.width - 1) // 2, rect.y + (rect.height - 1) // 2
 end
 
 -- Searches one element's appearances inside `rect` and returns the best one, or
--- nil twice.
---
--- `only` restricts the search to a single appearance name, which is what a page
--- reference's pin does for a click. With `only` nil every appearance is
--- searched and the best normalised margin wins.
+-- nil twice. `only` restricts the search to a single appearance name, which is
+-- what a page reference's pin does for a click; with `only` nil every appearance
+-- is searched and the best normalised margin wins.
 local function foldAppearances(
     ctx: any,
     ticket: any,
@@ -381,8 +303,7 @@ local function foldAppearances(
     for index = 1, #element.appearances do
         local appearance = element.appearances[index]
         if only == nil or appearance.name == only then
-            -- Not wrapped: a raise here is a stopped search, and a stopped
-            -- search is a control error rather than an absence.
+            -- Not wrapped: a stopped search is a control error, not an absence.
             local found = ctx:cycle_match(
                 ticket,
                 appearance.template,
@@ -406,24 +327,17 @@ end
 -- Reads one rectangle and says whether it read the text the model expects, plus
 -- the phrase a refusal sentence uses to report what it read instead.
 --
--- IT COSTS A READ OUT OF THE CYCLE'S BUDGET, which is why it is only ever
--- reached for an element with no appearances: an element with a template
--- identifies by its pixels and never pays for this.
+-- It costs a read out of the cycle's budget, which is why it is only ever
+-- reached for an element with no appearances.
 --
--- A READING BELOW THE FLOOR IS NOT A MATCH, AND IT IS NOT AN ERROR EITHER. The
--- engine returns plausible text for any rectangle it is given, so a low
--- confidence means "this is a guess" and a guess is not evidence -- but neither
--- is it a failure of the run: the commonest reason a title reads badly is that
--- the screen in front of the run is not the screen being asked about, which is
--- the answer "no, this is not that page" and not a fault. So it comes back as
--- "did not match", and a `forbidden` clause is satisfied by it, because that
--- clause asks for the absence of this evidence rather than for evidence of an
--- absence.
+-- A reading below the floor is not a match and not an error either: the
+-- commonest reason a title reads badly is that the screen in front of the run is
+-- not the screen being asked about, which is an answer and not a fault. So it
+-- comes back as "did not match", and a `forbidden` clause is satisfied by it,
+-- because that clause asks for the absence of this evidence rather than for
+-- evidence of an absence.
 --
--- The read is NOT wrapped: `cycle_read` raises when the cycle's read budget is
--- spent, and a read that never happened has established nothing, exactly as a
--- stopped search has not. Turning it into "the page is not this page" would make
--- an identity a function of a configuration number.
+-- The read is not wrapped, for the reason no read here is.
 local function readsExpected(
     ctx: any,
     ticket: any,
@@ -453,52 +367,37 @@ local function readsExpected(
 end
 
 -- Whether `value` is a receipt this framework minted for `ticket`. Published
--- here rather than reimplemented, because `evidence` is not a name any script
--- can reach and this is the question a layer-three caller legitimately asks
--- before it commits to a branch that ends in a click.
+-- here because `evidence` is not a name any script can reach, and this is the
+-- question a layer-three caller asks before committing to a branch that clicks.
 observe.is_receipt_for = evidence.is_receipt_for
 
 -- observe.resolve_page(ctx, ticket, page) -> (Receipt?, string?)
 --
 -- Whether the frame behind `ticket` is this page, and when it is not, the one
 -- sentence saying why. Only references exercising identify are consulted; the
--- rest of the page describes what a script may DO once it is here.
+-- rest of the page describes what a script may DO once it is here. Success is a
+-- receipt rather than a boolean because `observe.click` demands evidence that
+-- this page resolved on THIS ticket.
 --
--- SUCCESS IS A RECEIPT AND NOT A BOOLEAN. See the Receipt type above: the
--- receipt is the evidence `observe.click` demands that this page resolved on
--- THIS ticket, and it is the whole of how the same-frame authorisation rule
--- survived the model's move out of C++.
+-- The signature is strictly conjunctive -- every required reference must match
+-- and every forbidden one must not -- and evaluation stops at the first clause
+-- that fails, so rejecting a page costs one search rather than all of them.
 --
--- The signature is strictly conjunctive: every required reference must match
--- and every forbidden one must not. Evaluation stops at the first clause that
--- fails, so the cost of rejecting a page is one search rather than all of them.
+-- The element decides which evidence is read. One with appearances identifies by
+-- its pixels; one with none identifies by the TEXT its rectangle reads, checked
+-- against what this page said it should read there
+-- (docs/plans/2026-08-01-three-layers-and-agent-operator.md, open question 8),
+-- which is what the target printing its own name in one box on every screen
+-- costs one element instead of a template per page. Both polarities work on both
+-- kinds, and a reading the engine was not sure enough about is an absence rather
+-- than a match (see `readsExpected`).
 --
--- THERE ARE TWO KINDS OF EVIDENCE, AND THE ELEMENT DECIDES WHICH. An element
--- with appearances identifies by its pixels, which is every page signature this
--- model has ever had and is unchanged in every byte. An element with none
--- identifies by the TEXT its rectangle reads, checked against what this page
--- said it should read there (2026-08-01, closing open question 8 of
--- docs/plans/2026-08-01-three-layers-and-agent-operator.md). The second exists
--- because the target prints its own name in one box on every screen: one drawn
--- rectangle, one `read` capability, and a row per page saying which name belongs
--- to it -- against a template per page, each of which would have to be cut,
--- thresholded and falsified separately for a fact the screen states in words.
+-- Identify folds across every appearance, INCLUDING a pinned one: the sweep runs
+-- before the page is known, so it cannot ask a page which appearance to expect
+-- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.4 correction).
 --
--- BOTH POLARITIES WORK ON BOTH KINDS. `required` demands the match, `forbidden`
--- demands its absence, and a reading the engine was not sure enough about is an
--- absence rather than a match (see `readsExpected`).
---
--- IDENTIFY FOLDS ACROSS EVERY APPEARANCE, INCLUDING A PINNED ONE. The pin on a
--- reference is honoured by `find` and ignored here, because an identify sweep
--- happens before the page is known and therefore cannot ask a page which
--- appearance to expect (docs/plans/2026-07-31-annotation-model-capabilities.md
--- 4-2.4 correction). Ignoring it silently would be a trap, so it is stated on
--- the field in `model` and again here.
---
--- This resolves ONE page. Walking a catalogue to ask "which page am I on" is a
--- layer-three loop over pages it cares about, and that is the intended shape:
--- automation knows where it just went and needs to confirm it, and searching
--- every marker of every page is the recovery path, not the entrance.
+-- It resolves ONE page. Asking "which page am I on" is a layer-three loop over
+-- the pages it cares about, and that is the intended shape.
 function observe.resolve_page(ctx: any, ticket: any, page: any): (Receipt?, string?)
     requireCtx(ctx, "observe.resolve_page")
     if not model.is_page(page) then
@@ -510,17 +409,13 @@ function observe.resolve_page(ctx: any, ticket: any, page: any): (Receipt?, stri
         if reference.exercised.identify then
             local element = reference.element
             if #element.appearances == 0 then
-                -- The text clause. `Page.new` has already refused an identify
-                -- row that would arrive here with nothing to check, so the
-                -- expected text is present by construction and the cast says so.
-                --
-                -- It reads the ELEMENT's rectangle, like the fold below and for
-                -- the same reason: an identify sweep runs before the page is
-                -- known, so a page's refinement is not available to it -- which
-                -- is why `Page.new` refuses a rect_override on an identify row
-                -- rather than leaving one here to be quietly ignored, and refuses
-                -- an identify row on an element that draws no rectangle at all.
-                -- Both halves are what make `element.rect` present here.
+                -- The text clause. It reads the ELEMENT's rectangle, like the
+                -- fold below: the sweep runs before the page is known, so a
+                -- page's refinement is not available to it. `Page.new` refuses
+                -- an identify row with nothing to check, one that refines the
+                -- search rectangle, and one on an element that draws none, which
+                -- is what makes the expected text and `element.rect` present
+                -- here by construction.
                 local expected =
                     model.Reference.expected_text(reference) :: string
                 local matched, actual = readsExpected(
@@ -589,30 +484,23 @@ end
 -- Locates one element the page references. `page_or_reference` may be the page
 -- (with `element` naming which one) or the page's reference row directly.
 --
--- FIND IS READ-ONLY AND DOES NOT REQUIRE INTERACT. A state element that only
--- ever identifies still has to be queryable -- reading `hit.appearance` to see
--- which speed the game is at is a find, not a click
+-- Find is read-only and does not require interact: a state element that only
+-- ever identifies still has to be queryable
 -- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-3). The interact
 -- check happens in `observe.click`, and the authorisation travels on the hit so
 -- the two cannot disagree.
 --
 -- An element with no appearances is positioned by the page: the hit is its
--- rectangle, `positioned_by` says "page", and `match` is nil. Such a hit has
--- had NO pixel-level re-verification -- there was no template to verify against
--- -- and clicking one is the one place this model delivers an action on the
--- strength of "the page resolved" alone. Reading the rectangle first and
--- checking the text is the recommended default there
+-- rectangle, `positioned_by` says "page", and `match` is nil. Such a hit has had
+-- NO pixel-level re-verification, so reading the rectangle and checking its text
+-- first is the recommended default
 -- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.6).
 --
--- FIND DOES NOT CHECK THAT THE PAGE ACTUALLY RESOLVED ON THIS TICKET, and that
--- is a deliberate difference from the C++ verb it replaces. `cycle_find` had to
--- resolve first because it had no other way to learn which row to read; here the
--- caller names the page, so a find is a question about pixels and answers it
--- without a resolution. Looking is free; ACTING is not, and `observe.click`
--- demands the receipt `resolve_page` mints on the same ticket. The distinction
--- matters most for a page-positioned element, whose whole claim to a position is
--- that the page was recognised -- so a hit on one is worth exactly the receipt
--- that will be produced beside it, and worth nothing without one.
+-- It does not check that the page resolved on this ticket. The caller names the
+-- page, so a find is a question about pixels and answers it without a
+-- resolution; looking is free and ACTING is not, and `observe.click` demands the
+-- receipt `resolve_page` mints on the same ticket. A hit on a page-positioned
+-- element is worth exactly that receipt and nothing without one.
 function observe.find(
     ctx: any,
     ticket: any,
@@ -722,45 +610,27 @@ end
 -- Reads the element's rectangle and, when there is expected text, says whether
 -- the reading counts as that text.
 --
--- IT TAKES EITHER AN ELEMENT OR A PAGE'S ROW, AND THE ANSWER CAN DIFFER. Handed
+-- It takes either an element or a page's row, and the answer can differ. Handed
 -- an element it reads that element's own rectangle against that element's own
--- expected text -- the reading of the model on its own, which is what a caller
--- holding no page has. Handed a reference it reads what THIS page says about the
--- same element: the row's expected text if it carries one
--- (`model.Reference.expected_text`), and the row's `rect_override` if it carries
--- one, because a page that refined where this element sits refined it for every
--- use of the row and the row is what the caller passed in.
+-- expected text; handed a reference it reads what THIS page says about the same
+-- element -- the row's expected text (`model.Reference.expected_text`) and the
+-- row's `rect_override` when it carries them. There is no page-plus-element
+-- form: a caller holding a page reaches the row through
+-- `model.Page.reference_for`.
 --
--- It takes no page-plus-element form, unlike `observe.find`. A caller holding a
--- page reaches the row through `model.Page.reference_for`, and one explicit line
--- there is better than a sixth argument on a verb whose fourth and fifth are
--- already policies.
+-- `on_empty` comes before `compare` because it is required on every call and the
+-- comparison is required only when there is expected text to judge. What each
+-- value means is on `observe.empty_is_absence`: a nil reading under
+-- `empty_is_absence`, a raise under `empty_is_unknown`.
 --
--- `on_empty` COMES BEFORE `compare`, AND THAT ORDER IS THE POINT. It is required
--- on every call; the comparison is required only when there is expected text to
--- judge. Required before optional means the common call needs no `nil` place
--- holder, and a caller who swaps the two is refused by name rather than having a
--- function silently read as a policy. What each value means is on
--- `observe.empty_is_absence` above; the short of it is that a nil reading is
--- what a caller gets under `empty_is_absence`, and a raise is what it gets under
--- `empty_is_unknown`, because a rectangle that read nothing has not said that
--- the text it was pointed at is absent.
---
--- THE EXPECTED TEXT IS DATA AND THE COMPARISON IS POLICY. "This cell says 出击"
--- is a fact about the UI, so it is written in the project file where it can be
--- falsified and replayed. Whether full width equals half width, whether
--- traditional equals simplified, whether contains counts as equals -- that is a
--- rule this layer owns, which is why `cycle_read` takes no expected text at all
--- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-2).
---
--- `compare` is therefore required whenever there is expected text, and there is
--- no default: pass `observe.exact_text` to get equality. Reading an element
--- with no expected text needs no comparison and `matches` comes back nil.
---
--- Reading is the one capability that fails OPEN -- a rectangle pointed at the
--- wrong place returns plausible text rather than nothing -- so `confidence`
--- travels on every reading and a caller that ignores it has kept none of the
--- evidence that would let it notice.
+-- The expected text is DATA and the comparison is POLICY. "This cell says 出击"
+-- is a fact about the UI and lives in the project file; whether full width
+-- equals half width is a rule this layer owns, which is why `cycle_read` takes
+-- no expected text at all
+-- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-2). So `compare`
+-- is required whenever there is expected text and has no default -- pass
+-- `observe.exact_text` for equality -- and `matches` comes back nil when there
+-- is none. `confidence` travels on every reading, because reading fails open.
 function observe.read_element(
     ctx: any,
     ticket: any,
@@ -769,9 +639,8 @@ function observe.read_element(
     compare: any
 ): Reading?
     requireCtx(ctx, "observe.read_element")
-    -- Named before the generic refusal, because the two policies are adjacent
-    -- and a comparison landing in the empty-region slot is the one mistake this
-    -- signature makes easy.
+    -- Named before the generic refusal, because a comparison landing in the
+    -- empty-region slot is the one mistake this signature makes easy.
     if type(onEmpty) == "function" then
         error(
             "observe.read_element takes the empty-region policy before the "
@@ -809,10 +678,9 @@ function observe.read_element(
         return nil
     end
 
-    -- The element's name travels with the reading because reading is the one
-    -- capability with no score to argue from: which region was read, what came
-    -- back, and how sure the engine was are the whole of the evidence a wrong
-    -- read can be found in afterwards
+    -- The element's name travels with the reading: which region was read, what
+    -- came back, and how sure the engine was are the whole of the evidence a
+    -- wrong read can be found in afterwards
     -- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.7).
     return table.freeze({
         element    = element.name,
@@ -833,71 +701,32 @@ end
 --
 -- Reads the element's whole region and returns one hit per line of text the
 -- FRAME found inside it, top to bottom then left to right, each carrying its own
--- rectangle in target pixels.
+-- rectangle in target pixels. What an empty list means is `on_empty`'s: under
+-- `empty_is_unknown` there is no list to walk because the verb raises, and under
+-- `empty_is_absence` the empty list comes back and means what the caller said.
 --
--- WHAT AN EMPTY LIST MEANS IS `on_empty`'S, AND THIS VERB IS WHERE THAT RULE WAS
--- BOUGHT. An empty list read like a fact about the region and was not one: a
--- caller that reads three reward cards' name bands before the cards have
--- finished drawing gets nothing from all three, walks its choosing loop over
--- nothing, and reports "none of these is what the policy wants" -- a sentence
--- shaped like a decision and made of a blank. Under `observe.empty_is_unknown`
--- there is no list to walk, because the verb raises; under
--- `observe.empty_is_absence` the empty list comes back and means what the caller
--- said it means. See `observe.empty_is_absence` for why the verb cannot decide
--- this itself.
+-- It exists because a rectangle per line models one frame and not a region that
+-- SCROLLS: this target's character grid has columns at fixed x and moves
+-- continuously in y, so dragging it once moved every name by two hundred pixels.
 --
--- WHY THIS EXISTS AT ALL, WHICH IS THE ONLY INTERESTING QUESTION ABOUT IT. Every
--- other verb here starts from a rectangle the model drew: `find` searches one,
--- `read_element` reads one. That works while a thing stays where it was
--- annotated. It stops working the moment a region SCROLLS -- the target's
--- character grid has columns at fixed x and moves continuously in y, so dragging
--- it once moved every name by two hundred pixels and no row ever snapped back.
--- A rectangle per name is not a model of that; it is a model of one frame. So
--- the region is annotated, and what is in it is read.
+-- What comes back is the `Hit` `find` mints, with `positioned_by` "text" and the
+-- decoded string beside it, so a line reaches `observe.click` through the same
+-- door a template match does and every check there applies to it unchanged. It
+-- is authorised on the same terms too: its position is evidence read off the
+-- very frame the click will be authorised against, and that evidence does not
+-- travel -- `observe.click` refuses a line located on any other frame.
 --
--- A HIT AND NOT A READING, AND THIS IS THE DECISION THIS VERB IS ABOUT. What
--- comes back is the same `Hit` `find` mints, with `positioned_by` "text" and the
--- decoded string beside it -- so a line goes to `observe.click` through the same
--- door a template match does, and every check there applies to it unchanged:
--- minted here, the receipt is for THIS ticket, the receipt's page is the hit's
--- page, and the page exercises interact on the element. A separate "line" type
--- with its own click verb would have been a second door into the same delivery,
--- and the second door is always the one that is missing a lock.
+-- `read` is what lets the region be read; `interact` on the page's own row is
+-- what lets a line in it be clicked. Reading is allowed from a bare element too,
+-- and such a hit carries no page and no interact. An empty-text line is kept: a
+-- region the detector found and the recogniser could not read is a frame saying
+-- "there is something here I cannot spell".
 --
--- WHY A LINE MAY BE CLICKED AT ALL. The rule this layer keeps is that an action
--- is authorised by the frame it is delivered against. A line satisfies it as
--- squarely as a template match does: the region it was found in is annotated,
--- and its position inside that region is evidence read off the very frame the
--- click will be authorised against -- the same frame, the same cycle, the same
--- lease. Nothing is being relaxed. What is new is only that the frame, rather
--- than the project file, is what says where the target is; and for a list whose
--- contents the author has never seen, the frame is the only thing that COULD
--- say. The one thing that has to be added is the rule that this evidence does
--- not travel: a line located on one frame is a claim about that frame, so
--- `observe.click` refuses it on any other (see `evidence`).
---
--- THE ELEMENT STILL DECIDES WHETHER A CLICK IS ALLOWED. `read` is what lets the
--- region be read; `interact` on the page's own row is what lets a line in it be
--- clicked, exactly as for every other hit. A region annotated as readable and
--- not as interactive is a list to look at, and the refusal for one comes from
--- `observe.click` unchanged. Reading is allowed from a bare element too, and
--- such a hit carries no page and no interact -- looking is free, acting needs
--- the row.
---
--- AN EMPTY-TEXT LINE IS KEPT. The host reports a region the detector found and
--- the recogniser could not read, and it is dropped nowhere on the way up:
--- that is a frame saying "there is something here I cannot spell", which is
--- worth seeing, and a text comparison simply never accepts it.
---
--- IT COSTS the cycle's read budget -- one for locating plus one per line found
--- -- and does NOT consume the cycle, so the same frame goes on to click. A
--- region holding more lines than the cycle can pay for RAISES rather than
--- returning the first few; the read is not wrapped, for the reason no read here
--- is: a region nobody finished looking at has established nothing about the
--- lines nobody looked at.
---
--- PICKING one of the lines out and AIMING beside it are `hits.matching` and
--- `hits.offset`. Neither costs a capture, which is why neither is here.
+-- It costs one read to locate plus one per line found and does NOT consume the
+-- cycle, so the same frame goes on to click; a region holding more lines than
+-- the cycle can pay for raises rather than returning the first few. Picking one
+-- line out and aiming beside it are `hits.matching` and `hits.offset`, which
+-- cost no capture and are therefore not here.
 function observe.read_lines(
     ctx: any,
     ticket: any,
@@ -916,9 +745,8 @@ function observe.read_lines(
         raiseUnread("observe.read_lines", element, rect)
     end
 
-    -- `located` rather than `hits`, which is the name of a published framework
-    -- module: shadowing it inside the one verb whose results that module
-    -- operates on is exactly the confusion nobody would enjoy discovering.
+    -- `located` rather than `hits`, which is the name of the published module
+    -- whose verbs operate on these results.
     local located: { Hit } = {}
     for index = 1, #found do
         local line = found[index]
@@ -954,26 +782,23 @@ function observe.read_lines(
     return table.freeze(located)
 end
 
--- observe.click(ctx, ticket, receipt, hit) -> ()
+-- requireAuthorisedHit(verb, ticket, receipt, hit) -> ()
 --
--- Delivers the click the hit describes and spends the observation cycle.
+-- The check every verb that delivers pointer input at a hit passes through
+-- first. It reaches no host and delivers nothing; the verbs below it do that.
 --
--- THIS IS WHERE AUTHORISATION IS ENFORCED. The four guarantees C++ still keeps
--- are that the match came from THIS ticket's own match on THIS frame, that the
--- observation lease is fresh, that the fingerprint is compatible, and that a
--- ticket delivers at most one input. "Only click an annotated element" is no
--- longer among them, because the annotation now lives in Luau -- so the trusted
--- framework enforces it, here, and the bare-point primitive it needs for a
--- page-positioned element is reachable only from this layer
--- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
+-- This is where authorisation is enforced. C++ still keeps four guarantees: the
+-- match came from THIS ticket's own match on THIS frame, the observation lease
+-- is fresh, the fingerprint is compatible, and a ticket delivers at most one
+-- input. "Only click an annotated element" is no longer among them, because the
+-- annotation lives in Luau -- so the trusted framework enforces it here, and the
+-- bare-point primitive a page-positioned element needs is reachable only from
+-- this layer (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
 --
--- THE RECEIPT IS THE FIFTH REQUISITE, AND IT IS THE ONE THAT WENT MISSING. The
--- other half of the old C++ rule was that the page authorising the element had
--- resolved on the SAME observation. `cycle_click` could enforce it because the
--- ledger held the resolution; once the page moved to Luau the ledger stopped
--- knowing what a page is, and `resolve_page` returning a boolean left nothing
--- tying an answer to the frame it was answered about. So a caller now hands
--- over the receipt, and three things are checked against it:
+-- The receipt is the fifth requisite: the page authorising the element must have
+-- resolved on the SAME observation, which `cycle_click` could enforce while the
+-- ledger held the resolution and cannot now that a page is a Luau object. Three
+-- things are checked against it:
 --
 --   * it is a receipt this module minted, so a table shaped like one is not
 --     evidence;
@@ -985,16 +810,11 @@ end
 -- A failed resolution mints nothing at all, which is what makes "resolve_page
 -- said no" and "resolve_page was never called" the same refusal here.
 --
--- IT IS ONE FUNCTION SERVING TWO VERBS, and that is deliberate rather than
--- tidy. `observe.long_press` delivers pointer input at a hit exactly as this
--- does, and the read_lines comment above says why a second door into the same
--- delivery is the wrong shape: the second door is always the one that is missing
--- a lock. So the six requisites are written once, and a verb that delivers at a
--- hit without passing through here would be visible as such.
+-- One function serves both delivering verbs, so a verb that delivered at a hit
+-- without passing through here would be visible as such.
 --
 -- `verb` names the caller because that is the only part of each sentence that
--- differs; the refusals blame level 3, which is the caller of the verb that
--- called this.
+-- differs; the refusals blame level 3, the caller of the verb that called this.
 local function requireAuthorisedHit(
     verb: string,
     ticket: any,
@@ -1030,14 +850,11 @@ local function requireAuthorisedHit(
             3
         )
     end
-    -- THE SIXTH REQUISITE, and the one a located line made necessary. A hit is
-    -- evidence about the frame it was minted on: a template match is a rectangle
-    -- that frame produced, and a line is a position that frame read. Neither is
-    -- a claim about the next frame. C++ enforces this for a template hit through
-    -- the match handle's cycle ordinal and cannot enforce it for a line, which
-    -- reaches the host as a bare coordinate with no handle to check -- so it is
-    -- enforced here, for every kind of hit alike rather than for the one kind
-    -- that would otherwise escape.
+    -- The sixth requisite, and the one a located line made necessary. A hit is
+    -- evidence about the frame it was minted on and not a claim about the next.
+    -- C++ enforces this for a template hit through the match handle's cycle
+    -- ordinal and cannot enforce it for a line, which reaches the host as a bare
+    -- coordinate -- so it is enforced here, for every kind of hit alike.
     if not rawequal(evidence.hit_ticket(hit), ticket) then
         error(
             verb
@@ -1070,6 +887,10 @@ local function requireAuthorisedHit(
     end
 end
 
+-- observe.click(ctx, ticket, receipt, hit) -> ()
+--
+-- Delivers the click the hit describes and spends the observation cycle.
+-- Authorisation is `requireAuthorisedHit`'s, above.
 function observe.click(ctx: any, ticket: any, receipt: any, hit: any)
     requireCtx(ctx, "observe.click")
     requireAuthorisedHit("observe.click", ticket, receipt, hit)
@@ -1079,18 +900,14 @@ function observe.click(ctx: any, ticket: any, receipt: any, hit: any)
         return
     end
 
-    -- The bare-point delivery for an element with no template: one verified by
-    -- its expected text has a rectangle and no match handle, so the click lands
-    -- where the page model says the element is
+    -- The bare-point delivery for an element with no template: it has a
+    -- rectangle and no match handle, so the click lands where the page model
+    -- says the element is
     -- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5, decision 4).
-    --
-    -- IT GOES THROUGH `native` AND NOT THROUGH `ctx`, and that is the whole
-    -- confinement. `ctx` is published into every project environment, so a
+    -- It goes through `native` and not through `ctx`, which is the whole
+    -- confinement: `ctx` is published into every project environment, so a
     -- forward there would be a bare click a business task could call directly,
-    -- skipping every check above. The private surface is a closure upvalue of
-    -- this chunk and a key of no table either environment can name, so this is
-    -- the one route to the primitive in run mode -- and it runs only after the
-    -- receipt, the hit and the interact edge have all been checked.
+    -- skipping every check above.
     if native == nil then
         error(
             "observe.click needs the host's private surface to deliver a click "
@@ -1106,46 +923,26 @@ end
 -- Presses where the hit is, holds the button down for `hold_ms`, releases it,
 -- and spends the observation cycle.
 --
--- WHAT IT IS FOR. Some targets say more when they are pressed than when they are
--- looked at. The one this framework was built for fans its battle cards so each
--- name is clipped by the card in front of it, and it prints, on that very screen,
--- "long-press a card to see its details" -- a press magnifies the card and the
--- whole name becomes legible. The alternative is matching a fragment against a
--- list of full names and guessing which card it belongs to, which on this target
--- read as `萬人的英雄`, then `人的`, then `人的英` across three turns and once
--- nearly matched the wrong card. This verb is how a script takes a good reading
--- instead of tolerating a bad one.
+-- Some targets say more when pressed than when looked at. The one this framework
+-- was built for fans its battle cards so each name is clipped by the card in
+-- front of it, and a press magnifies the card; matching the fragment instead
+-- read `萬人的英雄`, then `人的`, then `人的英` across three turns and once
+-- nearly matched the wrong card.
 --
--- IT IS AUTHORISED EXACTLY AS observe.click IS, through the same function, and
--- that is the whole of why it is safe: the same receipt for this ticket, the same
--- page, the same hit minted on this frame, the same interact edge. Delivering
--- pointer input at a hit is what both verbs do, and neither gets its own weaker
--- door into it.
+-- It is authorised exactly as `observe.click` is, through the same function, and
+-- goes through `native` rather than `ctx` for the reason stated there.
 --
--- EVERY HIT IS DELIVERED AT ITS POINT, including one that carries a match.
--- `observe.click` hands a match back to C++ so the host can re-check that the
--- handle came from this frame; there is no match-handle spelling of a long press
--- and inventing one would be a second delivery path to maintain in step with the
--- first. Nothing is relaxed by that: the same-frame rule is enforced above, in
--- `requireAuthorisedHit`, for every kind of hit alike -- which is exactly the
--- arrangement a located line already required, since a line reaches the host as
--- a bare coordinate with no handle for C++ to check either.
+-- Every hit is delivered at its POINT, including one that carries a match: there
+-- is no match-handle spelling of a long press. Nothing is relaxed by that,
+-- because the same-frame rule is enforced in `requireAuthorisedHit` for every
+-- kind of hit alike.
 --
--- IT SPENDS THE CYCLE, like every delivered input. That is not incidental here:
--- the magnified card is on the NEXT frame by definition, so reading it means
--- opening another observation, which is what the caller would have to do anyway
--- and now cannot forget to.
+-- It spends the cycle, like every delivered input. The magnified card is on the
+-- NEXT frame by definition, so reading it means opening another observation.
 --
--- `hold_ms` HAS NO DEFAULT. How long this target wants a press held before it
--- treats it as a long one is a fact the author measured; a number this file
--- supplied would be a decision the caller did not make and could not see. The
--- host caps it, because a ceiling stops a script leaving the target mid-press
--- while a default would merely choose for them.
---
--- IT GOES THROUGH `native` AND NOT THROUGH `ctx`, for observe.click's reason
--- stated once there: `ctx` is published into every project environment, and a
--- forward there would be a bare-coordinate press a business task could call
--- directly, skipping every check above.
+-- `hold_ms` has no default: how long this target wants a press held is a fact
+-- the author measured. The host caps it, because a ceiling stops a script
+-- leaving the target mid-press while a default would merely choose for them.
 function observe.long_press(
     ctx: any,
     ticket: any,
@@ -1210,12 +1007,10 @@ local function holdsNow(ctx: any, ticket: any, page: any, element: any): boolean
     return observe.find(ctx, ticket, page, element) ~= nil
 end
 
--- One observation, opened and closed whatever `probe` did.
---
--- The observation's own failure outranks a failure from the close, so the caller
--- is told why the work failed rather than being handed the second-order
--- consequence of it. Both waits below go through here, so neither can leave a
--- cycle open on a raise.
+-- One observation, opened and closed whatever `probe` did. The observation's own
+-- failure outranks a failure from the close, so the caller is told why the work
+-- failed rather than the second-order consequence of it. Both waits below go
+-- through here, so neither can leave a cycle open on a raise.
 local function observeOnce(ctx: any, probe: any): any
     local ticket             = ctx:cycle_open()
     local ok, found          = pcall(probe, ctx, ticket)
@@ -1233,24 +1028,20 @@ end
 -- Observes until `probe` returns the SAME page `consecutive` times in a row, and
 -- returns it; returns nil when the budget ran out first.
 --
--- CONSECUTIVE IS THE WHOLE POINT, AND IT REPLACES WAITING FOR A STILL FRAME.
--- The obvious primitive -- wait until the screen stops changing -- cannot work
--- on this target: a resting-point border animates forever, so a whole-frame
--- difference never reaches zero and the verb either deadlocks or lies. Asking
--- instead for K consecutive agreeing observations of a SEMANTIC fact says the
--- same thing about the part of the screen that matters, and says it about
--- something a trace can show
+-- Waiting for a still frame cannot work on this target: a resting-point border
+-- animates forever, so a whole-frame difference never reaches zero and the verb
+-- either deadlocks or lies. K consecutive agreeing observations of a SEMANTIC
+-- fact say the same thing about the part of the screen that matters, and say it
+-- about something a trace can show
 -- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 7).
 --
--- A streak is broken by one disagreeing observation, not decremented: two
--- agreements separated by a disagreement are not evidence of a settled screen.
--- Two agreements about DIFFERENT pages are not either, which is why the streak
--- is per-page rather than per-hit -- an edge whose `to` names three pages must
+-- A streak is broken by one disagreeing observation rather than decremented, and
+-- it is per-page rather than per-hit: an edge whose `to` names three pages must
 -- not settle by seeing each of them once.
 --
--- Returning nil rather than raising is deliberate: `wait_until` turns an
--- exhausted budget into a Tier B timeout and `walk_edge` looks for an interrupt
--- page first, and neither policy belongs in the loop that counts the frames.
+-- Returning nil rather than raising leaves the policy to the callers:
+-- `wait_until` turns an exhausted budget into a Tier B timeout and `walk_edge`
+-- looks for an interrupt page first.
 local function waitForStreak(
     ctx: any,
     probe: any,
@@ -1288,13 +1079,10 @@ end
 -- observe.wait_until(ctx, options) -> true
 --
 -- Observes until the target holds on `consecutive` observations in a row, or
--- raises `uf.errors.timeout` when the budget runs out.
---
--- The timeout is a HOST-MINTED Tier B error rather than a Luau string, so a
--- project can catch it, a retry policy can name it, and the host classifies it
--- the same way it classifies every other automation failure. It is a control
--- error and never a "no": nothing that ran out of time learned anything about
--- the screen.
+-- raises `uf.errors.timeout` when the budget runs out. The timeout is a
+-- host-minted Tier B error rather than a Luau string, so a project can catch it
+-- and a retry policy can name it. It is a control error and never a "no":
+-- nothing that ran out of time learned anything about the screen.
 --
 -- options.page       the page that must resolve (required)
 -- options.element    an element on that page that must also be found (optional)
@@ -1378,42 +1166,27 @@ end
 -- observe.walk_edge(ctx, stack, edge, options) -> WalkOutcome
 --
 -- Performs the edge's trigger, waits for somewhere it can land, and updates what
--- the run believes about the pages underneath.
+-- the run believes about the pages underneath. It does not pathfind and it does
+-- not choose: which edge to walk is strategy and lives in layer three.
 --
--- IT DOES NOT PATHFIND AND IT DOES NOT CHOOSE. One edge is handed in and one
--- edge is walked. Which edge to walk is strategy and lives in layer three; where
--- an edge leads is fact and lives in the project file.
+-- A click edge resolves the page it LEAVES, on the frame that delivers the
+-- trigger, because `observe.click` is authorised by a receipt from this ticket.
+-- It does not consult the page stack for that receipt -- the stack is belief and
+-- this is evidence -- and walks nothing if the resolution fails. The cost is the
+-- intended one: with a card-detail overlay open, an edge leaving the battle page
+-- can no longer be walked, because that page's forbidden clause fires and
+-- nothing on the frame proves the page authorising the click is the page in
+-- front of the run. Reaching it means popping the overlay, or modelling the
+-- overlaid screen as its own page
+-- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.6).
 --
--- A CLICK EDGE RESOLVES THE PAGE IT LEAVES, ON THE FRAME THAT DELIVERS THE
--- TRIGGER. It has to: `observe.click` is authorised by a receipt from THIS
--- ticket, and this verb is the caller. It does not consult the page stack to
--- get that receipt -- the stack is belief and this is evidence -- it resolves
--- `edge.from` on the frame it just captured and walks nothing if that fails.
+-- The click goes through `observe.click`, so interact and the receipt are
+-- enforced in the one place that enforces them. A key goes through the ctx
+-- forward and needs no receipt, because a keystroke names no position and no
+-- page declares anything about keys. A spontaneous edge does nothing at all.
 --
--- The cost of the rule is real and is the intended one: standing on a battle
--- screen with a card-detail overlay open, an edge leaving the battle page can
--- no longer be walked, because the battle page does not resolve while its
--- overlay is up (its forbidden clause fires). The end-turn button underneath is
--- still there and a click would still land, but nothing on that frame proves
--- the page authorising it is the page in front of the run. Reaching it means
--- popping the overlay first, or modelling the overlaid screen as its own page
--- with its own authorisations, which is what
--- docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.6 already says to
--- do when a form changes what may be clicked.
---
--- THE CLICK GOES THROUGH `observe.click`, so the interact authorisation and the
--- receipt are enforced by the one place that enforces them. The key goes
--- through the ctx forward, which spends the cycle the same way a click does; it
--- needs no receipt because a keystroke names no position and no page declares
--- anything about keys. A spontaneous edge does nothing at all and the wait
--- below is the whole of the walk.
---
--- A TIMEOUT LOOKS FOR AN INTERRUPT PAGE BEFORE IT GIVES UP. Popups are declared
--- once, as a flag on the page, rather than as an inbound edge from everywhere
--- they can appear; when the destination never came and one of them is on screen
--- instead, the walk says so and hands the page over. What to do about it --
--- close it, wait it out, end the run -- is the caller's policy, and a framework
--- that dismissed it would be deciding that for every project at once.
+-- A timeout looks for an interrupt page before it gives up and hands it over
+-- rather than dismissing it: what to do about a popup is the caller's policy.
 --
 -- options.consecutive  how many agreeing observations in a row (required, >= 1)
 -- options.timeout_ms   the whole budget for the destination (required, >= 0)
@@ -1473,11 +1246,10 @@ function observe.walk_edge(
         "a whole number of milliseconds"
     )
 
-    -- Both of these read the stack and neither costs a capture, so both live in
-    -- `navigation` with the rest of the belief rules. The ORDER is what matters
-    -- here: a push whose belief has nowhere to go is refused before its trigger
-    -- is delivered, because a click that landed on a screen this run then
-    -- refuses to reason about is worse than no click at all.
+    -- Both read the stack and neither costs a capture, so both live in
+    -- `navigation`. The ORDER matters: a push whose belief has nowhere to go is
+    -- refused before its trigger is delivered, because a click that landed on a
+    -- screen this run then refuses to reason about is worse than no click.
     local destinations: { any } = if edge.kind == "pop"
         then { navigation.pop_destination(stack, edge) }
         else edge.to
@@ -1551,8 +1323,7 @@ function observe.walk_edge(
             .. ", and no interrupt page was on screen either"
     )
     -- Unreachable: native.raise never returns. The return keeps the strict-mode
-    -- reading of this function honest rather than leaving a path that falls off
-    -- the end with no value.
+    -- reading of this function honest.
     return table.freeze({ outcome = "interrupted", page = nil })
 end
 

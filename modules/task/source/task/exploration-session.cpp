@@ -35,20 +35,17 @@ namespace uf::task
     {
         // The opening line of an exploration session's run bracket.
         //
-        // WHICH MEMBERS IT FILLS, AND WHY THEY DIFFER FROM AN OPERATOR'S. A
-        // trusted Luau framework DOES run here, so the framework version, the
-        // bundle hash and the Luau compiler version are named: an agent's chunk
-        // calls into `explore`, `observe` and `model`, and a session that did not
-        // say which build of those it ran against would not be attributable. The
-        // seed is real for the same reason -- the exploration surface carries
-        // `random`.
+        // The framework version, the bundle hash and the Luau compiler version are
+        // named where an operator's line leaves them empty: a trusted Luau
+        // framework DOES run here, and an agent's chunk calls into `explore`,
+        // `observe` and `model`. The seed is real for the same reason -- the
+        // exploration surface carries `random`.
         //
-        // The two that stay empty are the task name and the source hash, and both
-        // absences are accurate. There is no ONE source: a session is a sequence
-        // of chunks the agent wrote as it went, each hashed nowhere and none of
-        // them addressable as (project, task). What names a chunk is the id its
-        // queue line carried, which reaches the trace through the chunk name in a
-        // raised error rather than through this line.
+        // The task name and the source hash stay empty, and both absences are
+        // accurate: a session is a sequence of chunks the agent wrote as it went,
+        // none of them addressable as (project, task). What names a chunk is the
+        // id its queue line carried, which reaches the trace through the chunk
+        // name in a raised error rather than through this line.
         [[nodiscard]]
         auto explorationRunStartedEvent(
             std::string const& projectId,
@@ -70,15 +67,13 @@ namespace uf::task
         // Whether the ledger stood close enough to its ceiling that a failure
         // recorded at that moment is worth reporting as a memory failure.
         //
-        // AN EIGHTH OF THE CEILING, and the fraction is chosen to be generous
-        // rather than precise. At the default 64 MiB that leaves 8 MiB of
-        // headroom, which is more than four full-frame crops -- so a chunk that
-        // failed with less than that left is one the ceiling was plausibly
-        // involved in, and the sentence costs nothing when it was not: the
-        // figures are true either way and the original message is kept verbatim
-        // in front of them. Being wrong in the other direction is what this
-        // exists to prevent, and it cost three chunks of an agent's session to
-        // find out once.
+        // An eighth of the ceiling, chosen to be generous rather than precise: at
+        // the default 64 MiB that leaves 8 MiB of headroom, more than four
+        // full-frame crops, so a chunk that failed with less than that left is one
+        // the ceiling was plausibly involved in. The sentence costs nothing when
+        // it was not -- the figures are true either way and the original message
+        // is kept verbatim in front of them -- while being wrong in the other
+        // direction cost three chunks of an agent's session once.
         //
         // A VM with no ceiling never qualifies: headroomBytes reports the widest
         // value, so the comparison is false whatever `used` says.
@@ -159,9 +154,8 @@ namespace uf::task
 
         // No run.resources_validated line. That event records the closure of uf
         // references a task SOURCE was validated against before its VM existed;
-        // an agent's chunks arrive one at a time after the VM is up, so there is
-        // no closure to have validated and an empty line would report a pass that
-        // never ran.
+        // an agent's chunks arrive one at a time after the VM is up, so an empty
+        // line would report a pass that never ran.
         UF_TRY_VALUE(
             session,
             engine::EngineSession::create(
@@ -202,18 +196,16 @@ namespace uf::task
         // each caller has to remember.
         //
         // This is the only place ScriptTrustMode::Exploration and
-        // explorationProjectGlobals() are named in the product. Every other VM in
-        // this binary is a Run VM, so the wider surface exists exactly where the
-        // agent front-end is and nowhere else.
+        // explorationProjectGlobals() are named in the product: every other VM in
+        // this binary is a Run VM.
         //
-        // NO RUNTIME CEILING OF ITS OWN, on purpose. script::EngineConfig's
-        // maxRuntime bounds one chunk rather than the VM's age, so an agent
-        // session lives as long as the agent keeps working and a chunk that will
-        // not finish is still stopped -- under exactly the ceiling a task run
-        // answers to. A session-shaped number here would be the thing that once
-        // killed a live annotation session mid-flow; what ends an ABANDONED one
-        // is `explore --idle-timeout`, which measures the gap between chunks and
-        // is the only clock that can tell an idle session from a busy one.
+        // The VM gets no runtime ceiling of its own, on purpose.
+        // script::EngineConfig's maxRuntime bounds one chunk rather than the VM's
+        // age, so an agent session lives as long as the agent keeps working and a
+        // chunk that will not finish is still stopped, under exactly the ceiling a
+        // task run answers to. What ends an ABANDONED session is `explore
+        // --idle-timeout`, which measures the gap between chunks and is the only
+        // clock that can tell an idle session from a busy one.
         auto vm = script::Engine::create(
             script::EngineConfig{
                 .cancellation      = spec.cancellation,
@@ -259,41 +251,35 @@ namespace uf::task
         // evidence that the ceiling was involved would be gone.
         auto const atOutcome = m_vm->heapUsage();
 
-        // Sweep whatever cycle the chunk left open, WHETHER OR NOT it failed.
-        //
-        // A chunk is one agent-written line, and an agent that raised between
-        // cycle_open and cycle_close has left the ledger holding a frame. Without
-        // this, the next chunk's cycle_open is an InternalInvariant -- a
-        // framework bug, latched terminal -- so one mistyped line would end the
-        // session instead of costing one result line. The host owns the bracket
-        // around a chunk, so the host closes it; nothing script-facing can reach
-        // this, and the ordinal a swept cycle spent is never reissued, so a
-        // ticket the chunk kept somehow stays dead.
+        // Sweep whatever cycle the chunk left open, WHETHER OR NOT it failed. A
+        // chunk is one agent-written line, and an agent that raised between
+        // cycle_open and cycle_close has left the ledger holding a frame; without
+        // this the next chunk's cycle_open is an InternalInvariant, latched
+        // terminal, so one mistyped line would end the session instead of costing
+        // one result line. Nothing script-facing can reach this, and the ordinal a
+        // swept cycle spent is never reissued, so a ticket the chunk kept stays
+        // dead.
         static_cast<void>(m_context.sweepOpenCycle());
 
-        // Reclaim the chunk, on the same reasoning that sweeps its cycle.
-        //
-        // A chunk is the natural reclamation point because NOTHING is supposed
-        // to survive one except the project files on disk: the environment is
-        // rebuilt per chunk, the thread is discarded, and every host object the
-        // chunk held is either swept above or dead with it. So a full collection
-        // here reclaims garbage and cannot reclaim anything the next chunk
-        // needs.
+        // Reclaim the chunk, on the same reasoning that sweeps its cycle. Nothing
+        // is supposed to survive one except the project files on disk -- the
+        // environment is rebuilt per chunk, the thread is discarded, and every
+        // host object the chunk held is either swept above or dead with it -- so a
+        // full collection here cannot reclaim anything the next chunk needs.
         //
         // It has to be here rather than in the allocator because there is no
         // emergency-GC seam to put it in: Luau throws LUA_ERRMEM the instant
-        // frealloc returns null and never retries, and adding a retry would mean
-        // re-entering the collector from inside the allocator callback -- which
-        // that callback also runs UNDER, so it is not sound. The ceiling is
-        // therefore measured against live bytes plus whatever the incremental
-        // collector has not reached, and this is where the host fixes that.
+        // frealloc returns null and never retries, and a retry would re-enter the
+        // collector from inside the allocator callback, which that callback also
+        // runs UNDER. The ceiling is therefore measured against live bytes plus
+        // whatever the incremental collector has not reached, and this is where
+        // the host fixes that.
         m_vm->collectGarbage();
 
-        // A failure with the ledger against the ceiling has to SAY so. Luau's
-        // own sentence is "not enough memory" and nothing else -- no figure, no
-        // hint that the ceiling rather than the chunk is the subject -- and an
-        // agent reading that has no way to tell an out-of-memory session from a
-        // chunk that is simply wrong.
+        // A failure with the ledger against the ceiling has to SAY so. Luau's own
+        // sentence is "not enough memory" and nothing else -- no figure, no hint
+        // that the ceiling rather than the chunk is the subject -- and an agent
+        // reading that cannot tell an out-of-memory session from a wrong chunk.
         if (!result && nearTheCeiling(atOutcome))
         {
             auto const kind = automationErrorKind(result.error())

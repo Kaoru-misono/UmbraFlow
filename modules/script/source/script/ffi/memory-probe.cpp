@@ -61,9 +61,9 @@ namespace uf::script::testing
 
             // Neither the boot nor the run is under test here: a failure (an
             // over-quota breach, say) still leaves the ledger to be checked once
-            // the VM is closed, so both results are consumed and discarded
-            // deliberately. No interrupt is armed on this quota-only probe,
-            // hence the null control block.
+            // the VM is closed, so both results are discarded deliberately. No
+            // interrupt is armed on this quota-only probe, hence the null
+            // control block.
             if (installSandbox(state, EngineConfig{}, nullptr))
             {
                 auto const ran = runNumberInProjectEnvironment(
@@ -76,9 +76,8 @@ namespace uf::script::testing
                 (void)ran;
             }
         }
-        // The close guard has run: every byte the VM held was returned through
-        // the allocator, so `used` is the post-close residual and `peak` is the
-        // high-water mark observed over the VM's life.
+        // The close guard has run, so every byte the VM held was returned
+        // through the allocator and `used` is the post-close residual.
 
         return MemoryUsage{.peak = quota.peak, .residual = quota.used};
     }

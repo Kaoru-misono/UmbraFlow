@@ -16,11 +16,10 @@
 
 namespace uf::cli::platform
 {
-    // Adapts controller background input to the engine IActionSink port. It owns
-    // the delivery target and the per-target input bookkeeping (held inputs and
-    // the audit log) that controller::click threads through. The observation
-    // lease is forwarded into controller::click so the injection-layer fence
-    // (frameId, targetGeneration, age) re-runs at delivery time as layer 2.
+    // Adapts controller background input to the engine IActionSink port, owning the
+    // per-target input bookkeeping controller::click threads through. The
+    // observation lease is forwarded so the injection-layer fence (frameId,
+    // targetGeneration, age) re-runs at delivery time as layer 2.
     class ControllerActionSink final : public engine::IActionSink
     {
         DeliveryTarget m_target;
@@ -28,13 +27,9 @@ namespace uf::cli::platform
         AuditLog       m_audit{};
 
         // Drains whatever the failed verb left held and returns the verb's own
-        // error, with a note appended when the drain itself failed.
-        //
-        // Every verb here that can leave a button or a key down owes this, and
-        // the reason it is one function is that the three of them owe exactly the
-        // same thing: a target stranded mid-press is the same defect whichever
-        // verb stranded it. `what` names the verb, because that is the only part
-        // of the sentence that differs.
+        // error, with a note appended when the drain itself failed. One function for
+        // all three verbs that can leave a button or key down: `what` names the
+        // verb, and nothing else differs.
         [[nodiscard]]
         auto drainAfterFailure(Error error, std::string_view what) -> Status;
 
@@ -50,30 +45,24 @@ namespace uf::cli::platform
             ObservationLease const& lease
         ) -> Status override;
 
-        // Resolves the key's printed name to a virtual key and delivers one
-        // press-and-release through controller::keyPress, which is the same
-        // deliver -> postInputMessage -> PostMessageW route click() takes.
-        //
-        // It forwards the observation's target generation where click() forwards a
-        // lease, because that is what the delivery layer fences a keystroke on: there
-        // is no coordinate here whose frame identity or age could matter, and the
-        // controller's keyPress accordingly takes the generation alone. Resolving
-        // cannot fail -- domain::KeyName admits only names controller::KeyInput maps.
+        // Delivers one press-and-release through controller::keyPress, the same
+        // deliver -> postInputMessage -> PostMessageW route click() takes. It
+        // forwards the observation's target generation where click() forwards a
+        // lease, because a keystroke has no coordinate whose frame identity or age
+        // could matter. Resolving the name cannot fail -- domain::KeyName admits only
+        // names controller::KeyInput maps.
         [[nodiscard]]
         auto pressKey(
             KeyName key,
             TargetGeneration actionGeneration
         ) -> Status override;
 
-        // Turns the port's detent count into the controller's WheelDelta -- which
-        // is where "not zero" and "small enough for the word the wheel message
-        // encodes it in" are decided -- and posts it through controller::scroll,
-        // forwarding the lease so the same injection-layer fence a click gets runs
-        // at delivery time.
-        //
-        // It supplies the position controller::scroll needs, because the port's
-        // verb names none: see the definition for which position and why that
-        // choice leaves the anchoring question open rather than answering it.
+        // Turns the port's detent count into the controller's WheelDelta -- where
+        // "not zero" and "small enough for the word the wheel message encodes it in"
+        // are decided -- and posts it through controller::scroll, forwarding the
+        // lease so a click's injection-layer fence runs here too. It supplies the
+        // position controller::scroll needs, since the port's verb names none; see
+        // the definition for which position and why.
         [[nodiscard]]
         auto scroll(
             int32 notches,
@@ -81,14 +70,10 @@ namespace uf::cli::platform
         ) -> Status override;
 
         // Posts the press, holds it, re-reads the bound window, and posts the
-        // release, through controller::longPress -- the same
-        // deliver -> postInputMessage -> PostMessageW route click() takes, with
-        // the same lease forwarded so the injection-layer fence runs at delivery
-        // time.
-        //
-        // It supplies the refresh-target callback controller::longPress requires;
-        // see the definition for what this composition can honestly re-read and
-        // what the callback is there to catch.
+        // release through controller::longPress -- the same route click() takes,
+        // with the same lease forwarded. It supplies the refresh-target callback
+        // controller::longPress requires; see the definition for what that callback
+        // can honestly re-read here.
         [[nodiscard]]
         auto longPress(
             Point<ClientSpace> point,

@@ -55,9 +55,8 @@ namespace uf::cli
     ) noexcept -> ExitCode
     {
         // A Ctrl-C during a blocked step surfaces as that step's failure (a stalled
-        // capture reports CaptureStalled, for example), not as Cancelled. The
-        // operator's intent to stop takes precedence in reporting, so a requested
-        // cancellation always maps to the documented cancellation code.
+        // capture reports CaptureStalled), not as Cancelled. The operator's intent
+        // to stop takes precedence in reporting.
         if (stopRequested)
         {
             return ExitCode::Cancelled;
@@ -99,11 +98,10 @@ namespace uf::cli
         bool stopRequested
     ) noexcept -> ExitCode
     {
-        // A run that ended cleanly reports success even if a stop arrived while
-        // it was finishing: the task did what it was asked to do. Every other
-        // ending is described by the error that caused it, so the mapping is the
-        // same one a run that never started goes through -- a cancelled run
-        // reports Cancelled because its failure kind is Cancelled, not because
+        // A run that ended cleanly reports success even if a stop arrived while it
+        // was finishing: the task did what it was asked to do. Every other ending
+        // goes through the same mapping a run that never started does -- a cancelled
+        // run reports Cancelled because its failure kind is Cancelled, not because
         // this function knows about cancellation separately.
         if (!report.failure)
         {

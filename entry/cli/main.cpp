@@ -43,9 +43,8 @@ namespace uf::cli
             }
 
             // A started run always names what ran and where its evidence went,
-            // whether it completed, was cancelled, or failed; a failure adds the
-            // one rendered line explaining it. This is the CLI's whole remaining
-            // job after argument parsing and target binding.
+            // whether it completed, was cancelled, or failed; a failure adds the one
+            // rendered line explaining it.
             if (report->failure)
             {
                 std::cerr << formatRunError(*report->failure) << '\n';
@@ -141,11 +140,10 @@ namespace uf::cli
                 return exitCodeForError(report.error(), false);
             }
 
-            // EVERY LINE THIS SUBCOMMAND WRITES TO STANDARD OUTPUT IS JSON. The
-            // verdict is already there, written by the routine itself, so the
-            // human summary goes to standard error instead of after it -- a
-            // check is the one product verb whose output is meant to be piped
-            // into something that parses it.
+            // Every line this subcommand writes to standard output is JSON. The
+            // verdict is already there, written by the routine itself, so the human
+            // summary goes to standard error -- a check is the one product verb
+            // whose output is meant to be piped into something that parses it.
             if (report->run.failure)
             {
                 std::cerr << formatRunError(*report->run.failure) << '\n';
@@ -159,11 +157,11 @@ namespace uf::cli
             return exitCodeForCheck(*report);
         }
 
-        // The mode is chosen HERE and nowhere else, and there is exactly one choice
-        // per process: one subcommand token selects one handler, and no handler
-        // can reach another. That is the argument-level half of the exclusion; the
-        // half that actually holds it is TaskHost's per-generation front-end claim,
-        // which refuses the second front-end however it was reached.
+        // The mode is chosen HERE and nowhere else: one subcommand token selects one
+        // handler, and no handler can reach another. That is the argument-level half
+        // of the exclusion; the half that actually holds it is TaskHost's
+        // per-generation front-end claim, which refuses the second front-end however
+        // it was reached.
         [[nodiscard]]
         auto dispatch(std::span<std::string const> raw) -> ExitCode
         {

@@ -134,19 +134,16 @@ namespace uf
         CHECK(automationKind(result.error()) == AutomationErrorKind::CaptureStalled);
     }
 
-    // The incident this pins: a minimized target stalled every capture and the
-    // message named only the symptom, so the operator hunted the capture backend
-    // instead of restoring a window. Naming the state is not enough on its own —
-    // the message has to carry the action too.
+    // Naming the state is not enough: the message has to carry the action, or an
+    // operator hunts the capture backend instead of restoring a window.
     TEST_CASE("a stall behind a minimized window names the state and the fix")
     {
         auto const message = stallMessage(
             controller_detail::TargetWindowState::Minimized
         );
 
-        // "window is minimized" rather than "minimized", because the message for
-        // a window that is fine says "is not minimized" and would satisfy the
-        // looser check while explaining nothing.
+        // "window is minimized" rather than "minimized": the message for a healthy
+        // window says "is not minimized" and would satisfy the looser check.
         CHECK(message.contains("window is minimized"));
         CHECK(message.contains("Restore the window"));
         CHECK(message.contains("1000 monotonic clock ticks"));
@@ -162,9 +159,8 @@ namespace uf
         CHECK(message.contains("Resolve the target again"));
     }
 
-    // The inverse matters as much: a stall with nothing observably wrong must not
-    // borrow the minimized explanation, or the next operator restores a window
-    // that was never minimized and learns to distrust the message.
+    // A stall with nothing observably wrong must not borrow the minimized
+    // explanation, or the next operator restores a window that never was.
     TEST_CASE("a stall with no observable cause says so instead of guessing")
     {
         auto const message = stallMessage(

@@ -21,9 +21,8 @@ namespace uf::cli::platform
         std::string_view what
     ) -> Status
     {
-        // HeldInputs and AuditLog are cheap owned members, so this compensation
-        // is always affordable here. The original failure remains the reported
-        // error; a compensation release that itself fails only adds context.
+        // The original failure remains the reported error; a compensation release
+        // that itself fails only adds context.
         auto releases = releaseHeld(m_target, m_held, m_audit);
         for (auto const& release : releases)
         {
@@ -52,8 +51,8 @@ namespace uf::cli::platform
             return ok();
         }
 
-        // The click failed after possibly leaving a pointer button held. Drain any
-        // residual held input so the target is not stranded mid-press.
+        // The click may have left a pointer button held; drain it so the target is
+        // not stranded mid-press.
         return drainAfterFailure(std::move(delivered).error(), "click");
     }
 
@@ -74,10 +73,8 @@ namespace uf::cli::platform
             return ok();
         }
 
-        // The press may have landed while the release did not, leaving the key held
-        // down in the target. Drain any residual held input so the target is not
-        // stranded mid-press -- the same compensation click() performs, and for the
-        // same reason.
+        // The press may have landed while the release did not; drain it so the key
+        // is not left held down.
         return drainAfterFailure(std::move(delivered).error(), "key");
     }
 
@@ -88,26 +85,21 @@ namespace uf::cli::platform
     {
         UF_TRY_VALUE(delta, WheelDelta::create(notches));
 
-        // WHERE THE WHEEL IS AIMED, and why the choice is made here rather than
-        // above. WM_MOUSEWHEEL carries a position the target hit-tests to decide
-        // which control scrolls, so a position has to exist even though the verb
-        // named none -- and only this layer knows the live client rectangle.
-        //
-        // The centre of the bound target's client area is the "no anchor was
-        // named" answer: it addresses the window itself and no annotated region,
-        // which leaves open question 5 of
-        // docs/plans/2026-08-01-three-layers-and-agent-operator.md open instead of
-        // quietly answering it with whichever position happened to be convenient.
-        // It is always inside the rectangle, because DeliveryTarget::create
-        // refuses to build an empty one.
+        // WM_MOUSEWHEEL carries a position the target hit-tests to decide which
+        // control scrolls, so a position has to exist even though the verb named
+        // none, and only this layer knows the live client rectangle. The centre is
+        // the "no anchor was named" answer -- it addresses the window itself and no
+        // annotated region, leaving open question 5 of
+        // docs/plans/2026-08-01-three-layers-and-agent-operator.md open -- and it is
+        // always inside the rectangle, since DeliveryTarget::create refuses an empty
+        // one.
         auto const centre = Point<ClientSpace>{
             static_cast<float>(m_target.clientWidth()) / 2.0F,
             static_cast<float>(m_target.clientHeight()) / 2.0F,
         };
 
-        // No compensation drain follows a failure here, and none is owed: a wheel
-        // is one posted message that holds nothing down, so there is no half-press
-        // for a failed scroll to strand in the target.
+        // No compensation drain is owed: a wheel is one posted message that holds
+        // nothing down, so a failed scroll strands no half-press in the target.
         return uf::scroll(m_target, lease, centre, delta, m_held, m_audit);
     }
 
@@ -117,24 +109,13 @@ namespace uf::cli::platform
         ObservationLease const& lease
     ) -> Status
     {
-        // WHAT THE REFRESH CALLBACK CAN HONESTLY RE-READ HERE, because a fence
-        // that confirms nothing is worse than no fence.
-        //
-        // controller::longPress asks for the delivery target again after the hold
-        // and refuses to post the release if its identity moved, because a hold
-        // spans time and a window can be replaced inside it. This composition
-        // holds a target SNAPSHOT and re-resolves nothing during a run, so the
-        // window handle, the capture session and the generation this callback
-        // hands back are necessarily the ones it was given -- the identity
-        // comparison downstream is a no-op against this sink and will stop being
-        // one the day a composition root re-resolves a target mid-run, which is
-        // exactly the seam the callback exists for.
-        //
-        // What it does do here, and what makes it worth running at all, is FAIL.
-        // The live enumeration is re-read across the hold, so a window destroyed,
-        // minimised to an empty client area, or otherwise gone by the time the
-        // button should come up is reported instead of being posted to -- and the
-        // drain below then releases the press this sink is still holding.
+        // controller::longPress asks for the delivery target again after the hold and
+        // refuses to post the release if its identity moved. This composition holds a
+        // snapshot and re-resolves nothing, so that comparison is a no-op here until
+        // a composition root re-resolves a target mid-run -- the seam the callback
+        // exists for. What it does do here is FAIL: the live enumeration is re-read
+        // across the hold, so a window gone by the time the button should come up is
+        // reported rather than posted to.
         auto refreshTarget = [this]() -> Result<DeliveryTarget>
         {
             UF_TRY_VALUE(candidates, enumerateCandidates());
@@ -180,11 +161,9 @@ namespace uf::cli::platform
             return ok();
         }
 
-        // The drain matters more here than anywhere else in this file. A long
-        // press is the one verb whose failure mode is a button that WENT down and
-        // did not come up -- the refresh across the hold can refuse the release
-        // that was always meant to follow -- so the guarantee the port states
-        // ("leaves the button released on every exit path") is kept exactly here.
+        // A long press is the one verb whose failure mode is a button that WENT down
+        // and did not come up, since the refresh across the hold can refuse the
+        // release. The port's "released on every exit path" guarantee is kept here.
         return drainAfterFailure(std::move(delivered).error(), "long press");
     }
 }

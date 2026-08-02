@@ -6,44 +6,36 @@
 -- over bytes for a name inside the project directory and nothing else, so
 -- everything about what those bytes MEAN is here.
 --
--- WHY A TOML SUBSET AND NOT A LUAU TABLE. The file is written by an agent, read
--- by a human reviewing a diff, and diffed by git. A line-oriented format with
--- one field per line makes a one-field change a one-line diff; a serialised
--- Luau table makes it a re-indented block. The subset is deliberately small
--- enough to parse in a page of code and to refuse everything it does not
--- support by name rather than by guessing.
+-- It is a TOML subset rather than a serialised Luau table because the file is
+-- written by an agent and reviewed as a git diff: one field per line makes a
+-- one-field change a one-line diff. The subset refuses what it does not support
+-- by name rather than guessing.
 --
--- TWO RULES CARRY THE WHOLE FORWARD-COMPATIBILITY STORY, and both are here
--- because a file outlives the build that wrote it:
+-- Two rules carry forward compatibility, because a file outlives the build that
+-- wrote it:
 --
---   1. A PROJECT'S OWN FIELDS LIVE UNDER `extra`. This layer owns every key
---      that is not under an `extra` subtable, so it can add one next year
---      without silently colliding with a project that invented the same name.
---   2. AN UNKNOWN KEY SURVIVES A REWRITE, BYTE FOR BYTE. A file written by a
---      newer build, opened and saved by an older one, must come back whole.
---      The alternative is not an error -- it is a silent deletion, which is the
---      worst failure a persistence layer has. Every line this parser did not
---      consume is carried on the object it belonged to as `residual` and
---      written back verbatim.
+--   1. A project's own fields live under `extra`, so this layer can add a
+--      top-level key next year without colliding with a project that invented
+--      the same name.
+--   2. An unknown key survives a rewrite BYTE FOR BYTE. Every line this parser
+--      did not consume is carried on the object it belonged to as `residual`
+--      and written back verbatim, because the alternative is silent deletion.
 --
--- WHAT ROUND-TRIPPING GUARANTEES, EXACTLY. `save(load(bytes)) == bytes` holds
--- for bytes already in canonical form. For any other input the known keys come
--- back canonical -- sections grouped and sorted by name, fields in a fixed
--- order -- while unknown lines come back with their own bytes intact, moved to
--- the end of the section they were found in. Blank lines are structural and are
--- regenerated rather than preserved.
+-- `save(load(bytes)) == bytes` holds for bytes already in canonical form. For
+-- any other input the known keys come back canonical -- sections grouped and
+-- sorted by name, fields in a fixed order -- while unknown lines keep their own
+-- bytes, moved to the end of the section they were found in. Blank lines are
+-- structural and regenerated rather than preserved.
 --
--- ORDER IS NOT ALWAYS SORTED, AND THE EXCEPTIONS ARE SEMANTIC. Elements and
--- pages are written sorted by name, because their order means nothing.
--- Appearances within an element and references within a page keep their
--- declared order, because it does: declaration order is what breaks a tie
--- between two appearances, and sorting them would quietly change which pixels a
--- click lands on.
+-- ORDER IS NOT ALWAYS SORTED. Elements and pages are written sorted by name,
+-- because their order means nothing. Appearances within an element and
+-- references within a page keep their declared order, because declaration order
+-- is what breaks a tie between two appearances -- sorting them would change
+-- which pixels a click lands on.
 --
--- LOAD ORDER. `project` sorts after `mint`, `model`, `navigation`, `observe`
--- and `oracle`, so it can name all five. It names three of them: the
--- constructors in `model`, `navigation` and `oracle`, and nothing from
--- `observe` at all -- parsing and writing a file costs no capture.
+-- `project` sorts after `mint`, `model`, `navigation`, `observe` and `oracle`.
+-- It names the constructors in `model`, `navigation` and `oracle`, and nothing
+-- from `observe`: parsing and writing a file costs no capture.
 
 local k_schema   = "umbraflow-project/l2-v1"
 local k_fileName = "page-model.toml"
@@ -59,12 +51,9 @@ local k_sectionKinds: { [string]: boolean } = {
 }
 
 -- Which section kinds carry a parsed `[<kind>.extra]` subtable. An appearance
--- does NOT: it is a row of one element's ordered list rather than a thing a
--- project addresses, and the model has nowhere to hold its extra. Leaving it out
--- of this set is what routes an `[appearance.extra]` block into the raw residual
--- path instead, so a project that wrote one still gets those bytes back --
--- parsing it into a field nothing writes out would be exactly the silent
--- deletion this file exists to prevent.
+-- does NOT, because the model has nowhere to hold one; leaving it out routes an
+-- `[appearance.extra]` block down the raw residual path, so those bytes come
+-- back instead of being parsed into a field nothing writes out.
 local k_extraOwners: { [string]: boolean } = {
     element   = true,
     page      = true,
@@ -83,11 +72,9 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         read_floor    = true,
     },
     -- `key` is the colour key the template blob was cut under, written as
-    -- [red, green, blue, tolerance] on the same reasoning `rect` is written as
-    -- four numbers: it is one value with four components rather than four
-    -- fields, and a reader scanning an appearance should see it as one line.
-    -- The mask itself is in the PNG's alpha channel; this is the record of what
-    -- carved it, which is what a later session needs to re-cut the same glyph.
+    -- [red, green, blue, tolerance] because it is one value with four
+    -- components. The mask itself is in the PNG's alpha channel; this is the
+    -- record of what carved it, which a later session needs to re-cut the glyph.
     appearance = {
         element   = true,
         name      = true,
@@ -100,11 +87,9 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         overlay   = true,
         interrupt = true,
     },
-    -- `expected_text` on a row is the per-page half of the element of the same
-    -- name: what the shared region reads on THIS page. It is written between the
-    -- identify polarity and the interact refinements below because that is what
-    -- it belongs to -- an identify row on an element with no template is checked
-    -- against it.
+    -- `expected_text` on a row is the per-page half of the element field of the
+    -- same name: what the shared region reads on THIS page. An identify row on
+    -- an element with no template is checked against it.
     reference = {
         page              = true,
         element           = true,
@@ -115,12 +100,10 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         pinned_appearance = true,
         rect_override     = true,
     },
-    -- An edge is a top-level section rather than a subtable of its from page,
-    -- because it is a fact about a PAIR of pages and a trigger: filing it under
-    -- one end would make the other end's block depend on which page was written
-    -- first, and a `to` set spanning three pages would have no single owner at
-    -- all. `via_element` names an element on the from page and `via_key` names a
-    -- key; a pop writes no `to`, because where it lands is the run's business.
+    -- An edge is a top-level section because it is a fact about a PAIR of pages
+    -- and a trigger, and a `to` set spanning three pages has no single owner.
+    -- `via_element` names an element on the from page and `via_key` names a key;
+    -- a pop writes no `to`, because where it lands is the run's business.
     edge = {
         from        = true,
         to          = true,
@@ -131,33 +114,25 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
     },
     -- A screen carries a name and the content hash of its PNG, and no path: the
     -- path is `assets/screens/<hash>.png` by construction, so a project cannot
-    -- come to hold two facts about one picture that disagree.
-    --
-    -- `page` is the optional third: which page this picture is OF. It is written
-    -- last of the three because it is the only one that names something ELSE in
-    -- this file, and a reader scanning a screen block should have its identity in
-    -- hand before its relations.
+    -- hold two facts about one picture that disagree. `page` is the optional
+    -- third, which page this picture is OF, written last because it is the only
+    -- one naming something else in this file.
     screen = {
         name = true,
         hash = true,
         page = true,
     },
     -- What the model states about one cell of the falsification matrix. It is a
-    -- top-level section rather than a subtable of either end for the reason an
-    -- edge is: it is a fact about a PAIR, and filing it under the element would
-    -- make the screen's block depend on which was written first.
+    -- top-level section for the reason an edge is: it is a fact about a PAIR.
     --
-    -- `rect` is WHERE the cell was measured, and it is written straight after
-    -- the two names because it is part of the cell's identity rather than part
-    -- of the measurement: a shape with no rectangle of its own can be claimed
-    -- several times on one screen, and the rectangle is what tells those claims
-    -- apart. An element that draws its own writes none, because it already said.
+    -- `rect` is WHERE the cell was measured and is part of the cell's identity
+    -- rather than of the measurement: a shape with no rectangle of its own can
+    -- be claimed several times on one screen, and the rectangle is what tells
+    -- those claims apart. An element that draws its own writes none.
     --
     -- `appearance` and `text` name the two things a cell can be measured by --
     -- one template searched alone, or what the region reads on this screen --
-    -- and a cell carries at most one of them. They are written next to each
-    -- other, before the state they qualify, because a reader scanning a claim
-    -- needs to know what was measured before what was expected of it.
+    -- and a cell carries at most one of them.
     expect = {
         screen     = true,
         element    = true,
@@ -169,11 +144,9 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
 }
 
 -- Everything `load_project` hands back. The element and page entries are the
--- frozen tables `model` minted, spelled `any` here because a chunk loaded under
--- the framework environment cannot name another chunk's exported types -- there
--- is no module resolver in this VM, only a global binding. The definitions on
--- both sides are written to be correct the day one exists; today they are the
--- shape documentation a `--!strict` reader works from.
+-- frozen tables `model` minted, spelled `any` because there is no module
+-- resolver in this VM, only a global binding, so a chunk cannot name another
+-- chunk's exported types.
 export type Model = {
     schema: string,
     elements: { any },
@@ -182,12 +155,10 @@ export type Model = {
     page_by_name: { [string]: any },
     graph: any,
     -- The screens this model is measured against and what it states about each
-    -- cell, as one `oracle.Claims`. It is here rather than beside the model in
-    -- a second file because an expectation names an element and a screen, and
-    -- two files that have to stay in step are two files that will not
-    -- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.1: the
-    -- matrix's conclusions land in the project file, and that is what makes
-    -- them falsifiable and replayable rather than a reviewer's memory).
+    -- cell, as one `oracle.Claims`. It shares this file rather than sitting in a
+    -- second one because an expectation names an element and a screen, and two
+    -- files that have to stay in step will not
+    -- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.1).
     claims: any,
     residual: {
         preamble: { string },
@@ -213,9 +184,8 @@ local function renderString(value: string): string
         ["\n"] = "\\n",
         ["\t"] = "\\t",
     })
-    -- Anything else below space would survive the write and come back as a
-    -- different byte or not at all, so it is refused where it can still be
-    -- attributed to a field rather than discovered in a diff months later.
+    -- Any other control character would come back as a different byte or not at
+    -- all, so it is refused while it can still be attributed to a field.
     if string.find(out, "%c") ~= nil then
         error(
             "a project file value contains a control character this format "
@@ -334,8 +304,8 @@ function project.encode(built: any): string
         )
         -- Written only when the element drew one. An element that leaves it out
         -- is placed by whoever uses it -- one confirm button reused on nine
-        -- screens -- and materialising the rectangle it happened to be cut from
-        -- would put back exactly the fact this model stopped stating.
+        -- screens -- so materialising the rectangle it was cut from would put
+        -- back the fact this model stopped stating.
         if element.rect ~= nil then
             table.insert(lines, "rect = " .. renderValue(rectList(element.rect)))
         end
@@ -345,10 +315,9 @@ function project.encode(built: any): string
                 "expected_text = " .. renderString(element.expected_text)
             )
         end
-        -- Written only when the element stated one, for the reason a page flag
-        -- is written only when true: the framework's own floor is the reading of
-        -- an absent line, so materialising it here would put a number nobody
-        -- chose into every file and make it look chosen.
+        -- Written only when the element stated one: the framework's own floor is
+        -- the reading of an absent line, so materialising it would put a number
+        -- nobody chose into every file and make it look chosen.
         if element.read_floor ~= nil then
             table.insert(
                 lines,
@@ -386,9 +355,8 @@ function project.encode(built: any): string
         table.insert(lines, "")
         table.insert(lines, "[[page]]")
         table.insert(lines, "name = " .. renderString(page.name))
-        -- A flag is written only when it is true. False is the absence of a
-        -- refinement rather than a value with something to say, and writing it
-        -- out would put two lines nobody reads on every ordinary page.
+        -- A flag is written only when true: false is the absence of a refinement
+        -- rather than a value with something to say.
         if page.overlay then
             table.insert(lines, "overlay = true")
         end
@@ -434,10 +402,8 @@ function project.encode(built: any): string
         end
     end
 
-    -- Edges come after every page, because each one names two of them and a
-    -- reader following an edge should already have read both ends. A model
-    -- assembled by hand with no graph at all writes none, which loses nothing:
-    -- it never had any.
+    -- Edges come after every page, because each names two of them. A model
+    -- assembled by hand with no graph writes none.
     local edges: { any } = if built.graph ~= nil
         then table.clone(built.graph.edges)
         else {}
@@ -474,10 +440,8 @@ function project.encode(built: any): string
         pushExtra(lines, "[edge.extra]", edge.extra)
     end
 
-    -- The screens and what the model claims about them come last of the known
-    -- sections, because they are read AGAINST everything above: an expectation
-    -- names an element and a screen, and a reader following one should already
-    -- have both in hand.
+    -- The screens and the claims about them come last of the known sections,
+    -- because an expectation names an element and a screen from above.
     local claims: any = built.claims
     local screens: { any } = if claims ~= nil then table.clone(claims.screens) else {}
     table.sort(screens, function(left, right)
@@ -489,9 +453,8 @@ function project.encode(built: any): string
         table.insert(lines, "[[screen]]")
         table.insert(lines, "name = " .. renderString(screen.name))
         table.insert(lines, "hash = " .. renderString(screen.hash))
-        -- Written only when the screen said one, for the reason a page flag and
-        -- an element's `read_floor` are: an absent line is a screen nobody has
-        -- annotated yet, and materialising a name for it would be this layer
+        -- Written only when the screen said one: an absent line is a screen
+        -- nobody has annotated yet, and materialising a name would be this layer
         -- inventing a claim the matrix then measures.
         if screen.page ~= nil then
             table.insert(lines, "page = " .. renderString(screen.page))
@@ -503,11 +466,10 @@ function project.encode(built: any): string
     local expectations: { any } = if claims ~= nil
         then table.clone(claims.expectations)
         else {}
-    -- The rectangle is part of the sort key and not only of the row, because one
-    -- element can now be claimed several times on one screen and a sort that
-    -- stopped at the appearance would leave those rows in whatever order the
-    -- list happened to hold -- which is a file whose bytes depend on the order it
-    -- was edited in. It compares as its four numbers rather than as text, so
+    -- The rectangle is part of the sort key because one element can be claimed
+    -- several times on one screen, and a sort stopping at the appearance would
+    -- leave those rows in list order -- a file whose bytes depend on the order
+    -- it was edited in. It compares as four numbers rather than as text, so
     -- [9, 0, 1, 1] sorts before [10, 0, 1, 1].
     table.sort(expectations, function(left, right)
         if left.screen ~= right.screen then
@@ -742,9 +704,8 @@ function project.parse(text: string): any
                 }
                 table.insert(document.sections, current)
             else
-                -- A whole section kind this build does not know. It is kept as
-                -- raw lines and written back at the end of the file, so a
-                -- newer build's section survives an older build's save.
+                -- A section kind this build does not know: kept as raw lines and
+                -- written back at the end of the file.
                 current   = nil
                 rawTarget = { line }
                 table.insert(document.blocks, rawTarget)
@@ -858,13 +819,10 @@ local function rectOf(section: any, key: string, value: any): any
     }
 end
 
--- The colour key an appearance section wrote, or nil when it wrote none.
---
--- Only the LIST SHAPE is checked here, in the file's own voice, because that is
--- the part `Element.new` cannot say anything useful about: by the time the
--- constructor sees a malformed key it no longer knows which line of which file
--- it came from. Whether the four numbers are a channel and a tolerance the rule
--- can express is the constructor's, and it is left there rather than copied.
+-- The colour key an appearance section wrote, or nil when it wrote none. Only
+-- the LIST SHAPE is checked here, because by the time `Element.new` sees a
+-- malformed key it no longer knows which line of which file it came from.
+-- Whether the four numbers are a channel and a tolerance stays the constructor's.
 local function colourKeyOf(section: any, value: any): any
     if value == nil then
         return nil
@@ -890,9 +848,9 @@ end
 -- project.build(ctx, document) -> the model.
 --
 -- Every appearance's template blob is read from the project directory and
--- decoded here, which is the only thing in this file that touches the host.
--- Loading the same blob twice returns the same handle, so the cache below saves
--- a read rather than changing an answer.
+-- decoded here, the only thing in this file that touches the host. Loading the
+-- same blob twice returns the same handle, so the cache below saves a read
+-- rather than changing an answer.
 function project.build(ctx: any, document: any): any
     if type(ctx) ~= "table" then
         error("project.build needs the ctx it should load templates through", 2)
@@ -966,10 +924,9 @@ function project.build(ctx: any, document: any): any
             }
         end
 
-        -- `rect` is read where it is written and required nowhere: an element
-        -- that omits it is placed by whoever uses it, and the rows and claims
-        -- that do the placing are refused by their own constructors when they
-        -- name no rectangle either.
+        -- `rect` is required nowhere: an element that omits it is placed by
+        -- whoever uses it, and the rows and claims that do the placing are
+        -- refused by their own constructors when they name no rectangle either.
         local rectValue = section.fields.rect
         local element   = model.Element.new({
             name          = name,
@@ -991,8 +948,8 @@ function project.build(ctx: any, document: any): any
     end
 
     -- One element has AT MOST ONE owning page. Holding is not exclusivity --
-    -- other pages may reference it freely -- it answers "where does this element
-    -- live", and two answers to that is a model with no home for its own pixels
+    -- other pages may reference it freely -- it answers where the element lives,
+    -- and two answers is a model with no home for its own pixels
     -- (docs/plans/2026-07-31-annotation-model-capabilities.md 5.4).
     local ownedBy: { [string]: string } = {}
 
@@ -1063,10 +1020,8 @@ function project.build(ctx: any, document: any): any
         table.insert(pages, page)
     end
 
-    -- A page an edge names has to be one this file declares, and saying so here
-    -- rather than inside Edge.new is what gives the message a LINE NUMBER: the
-    -- graph is what knows every page, and the section is what knows where the
-    -- author wrote it.
+    -- A page an edge names has to be one this file declares. Saying so here
+    -- rather than inside Edge.new is what gives the message a LINE NUMBER.
     local function pageOf(section: any, key: string, name: any): any
         local page = pageByName[name]
         if page == nil then
@@ -1139,13 +1094,11 @@ function project.build(ctx: any, document: any): any
     local screens: { any }                = {}
     local screenByName: { [string]: any } = {}
     for _, section in screenSections do
-        -- A page a screen names has to be one this file declares, and saying so
-        -- HERE is the same ruling `pageOf` above makes for an edge, for the same
-        -- two reasons. `Screen.new` cannot make it -- it is handed one screen's
-        -- own facts and can see no pages -- and this loop can also say WHERE the
-        -- author wrote it. It runs before the constructor rather than after, so a
-        -- file naming a page nothing declares is refused rather than minted and
-        -- then thrown away.
+        -- A page a screen names has to be one this file declares, checked here
+        -- for the reason `pageOf` above is: `Screen.new` is handed one screen's
+        -- own facts and can see no pages, and this loop knows the line number. It
+        -- runs before the constructor, so such a file is refused rather than
+        -- minted and thrown away.
         local declaredPage = section.fields.page
         if declaredPage ~= nil and pageByName[declaredPage] == nil then
             error(
@@ -1233,10 +1186,9 @@ end
 
 -- project.load_project(ctx) -> the model in the generation's project directory.
 --
--- The file name is a constant of the schema rather than a parameter, for the
--- same reason the schema string is: a project whose model lives under a name
--- this layer does not know is a project this layer cannot open. It is exported
--- as `project.file_name` so nothing has to spell it twice.
+-- The file name is a constant of the schema rather than a parameter: a project
+-- whose model lives under a name this layer does not know is one it cannot open.
+-- It is exported as `project.file_name` so nothing spells it twice.
 function project.load_project(ctx: any): any
     if type(ctx) ~= "table" then
         error("project.load_project needs the ctx to read the file through", 2)
@@ -1247,8 +1199,8 @@ end
 -- project.save_project(ctx, model) -> ()
 --
 -- Writes the model back over the file it came from. Everything the parser did
--- not understand rides along on the objects and is written out again, so this
--- build saving a newer build's file loses nothing.
+-- not understand rides along on the objects and is written out again, so saving
+-- a newer build's file loses nothing.
 function project.save_project(ctx: any, built: any)
     if type(ctx) ~= "table" then
         error("project.save_project needs the ctx to write the file through", 2)

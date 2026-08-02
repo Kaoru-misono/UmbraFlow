@@ -1558,8 +1558,7 @@ namespace uf
         );
     }
 
-    // Helpers for the frame-analysis cases below. Kept in their own block
-    // because nothing above needs colour planes.
+    // Helpers for the frame-analysis cases below; nothing above needs colour.
     namespace
     {
         [[nodiscard]]
@@ -1597,10 +1596,9 @@ namespace uf
         }
 
         // A grey plane widened into BGRA8. The BT.601 weights sum to 256, so a
-        // grey value written to all three channels reads back as exactly that
-        // grey: measurements over a widened frame are exact, not approximate.
-        // Only its colour is gone, which is why the colour cases below use the
-        // real RGB planes instead.
+        // grey written to all three channels reads back exactly: measurements
+        // over a widened frame are exact. Only its colour is gone, which is why
+        // the colour cases below use the real RGB planes instead.
         [[nodiscard]]
         auto bgraFromGray(std::vector<std::byte> const& gray) -> std::vector<std::byte>
         {
@@ -1698,11 +1696,10 @@ namespace uf
         constexpr auto k_bandedHeight = uint32{60};
 
         // Two stable bands over a background that differs in every pixel of
-        // every frame, laid out like a menu label with a sub-label under it:
-        // rows 5..20 and rows 31..45, separated by a ten row gap, which is the
-        // gap the 「故事」 entry has at y 166..175 on the real screen. The third
-        // frame repeats the second's background and moves one band pixel, which
-        // is the animation a two-frame comparison cannot see.
+        // every frame: rows 5..20 and rows 31..45, a ten row gap apart, which is
+        // the gap the 「故事」 entry has at y 166..175 on the real screen. The
+        // third frame repeats the second's background and moves one band pixel,
+        // the animation a two-frame comparison cannot see.
         struct BandedFrames final
         {
             std::vector<std::byte> first{};
@@ -1836,8 +1833,7 @@ namespace uf
         );
 
         // Control: a frame paired with itself is stable everywhere, so the
-        // numbers above are a property of the two backgrounds and not of the
-        // comparison always failing.
+        // numbers above are the two backgrounds and not a comparison that fails.
         auto const identical = std::array{blue, blue};
         auto const selfReport = stabilityOf(
             identical,

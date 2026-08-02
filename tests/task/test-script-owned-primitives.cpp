@@ -48,21 +48,18 @@
 
 // The layer-one half of the script-owned page model: raw template matching, text
 // reading, project file I/O, and the bare-point click the trusted framework
-// gates. Every case here drives the host contract directly, because that
-// contract is what the Luau layer will be built on and the Luau layer does not
-// exist yet.
+// gates. Cases here drive the host contract directly, because that contract is
+// what the Luau layer is built on.
 namespace uf::task
 {
     namespace
     {
-        // What a fake OCR engine was asked for and what it answers.
-        //
-        // The layout it records is load-bearing: the two layouts cost different
-        // things and refuse on different terms, so a host that quietly asked for
-        // the wrong one would work against a fake and misbehave on the real
-        // engine. The line ceiling is recorded for the same reason -- a block
-        // read that did not hand its remaining budget down would let the engine
-        // recognise a region the cycle cannot pay for.
+        // What a fake OCR engine was asked for and what it answers. The layout it
+        // records is load-bearing: the two layouts cost different things and refuse
+        // on different terms, so a host that quietly asked for the wrong one would
+        // work against a fake and misbehave on the real engine. The line ceiling is
+        // recorded because a block read that did not hand its remaining budget down
+        // would let the engine recognise a region the cycle cannot pay for.
         class FakeOcrEngine final : public ocr::IOcrEngine
         {
             ocr::Readout                       m_readout;
@@ -88,9 +85,8 @@ namespace uf::task
             {
             }
 
-            // The two-layout fake. `block` is what a Block read answers with,
-            // and supplying one is what makes this engine claim to have a
-            // detector at all.
+            // The two-layout fake. `block` is what a Block read answers with, and
+            // supplying one is what makes this engine claim to have a detector.
             FakeOcrEngine(ocr::Readout readout, ocr::Readout block) noexcept
                 : m_readout{std::move(readout)}
                 , m_block{std::move(block)}
@@ -177,9 +173,8 @@ namespace uf::task
             return readout;
         }
 
-        // How one harness differs from the default. Everything here exists
-        // because some case has to move it: a mismatched fingerprint, an already
-        // dead lease, a budget of zero comparisons, or an OCR adapter.
+        // How one harness differs from the default. Everything here exists because
+        // some case has to move it.
         struct HarnessSpec final
         {
             std::optional<ProjectFingerprint> liveFingerprint{};
@@ -196,9 +191,8 @@ namespace uf::task
             Result<engine::EngineSession>         session;
             CountingActionSink*                   clicks;
 
-            // Null unless the case asked for a recording sink. Only a case that
-            // asserts what the run WROTE needs one, and the rest would pay to
-            // keep every line of every run in memory for nobody to read.
+            // Null unless the case asked for a recording sink: only a case that
+            // asserts what the run WROTE needs to keep every line in memory.
             RecordingTraceSink* traces;
         };
 
@@ -265,9 +259,8 @@ namespace uf::task
             return frames;
         }
 
-        // The PNG bytes of the one-by-one grey template the fixture runtime uses,
-        // taken through the same encoder so a script-loaded template and a
-        // catalog template are the same bytes.
+        // The PNG bytes of the one-by-one grey template, through the same encoder
+        // so a script-loaded template and a catalog template are the same bytes.
         [[nodiscard]]
         auto templateBlob(uint8 gray) -> std::vector<std::byte>
         {
@@ -352,10 +345,9 @@ namespace uf::task
             REQUIRE(first.has_value());
             CHECK(first->hash.toString() == hexOf(blob));
 
-            // Determinism, and the whole reason the verb is handle-based: the same
-            // bytes name the same template however often a script loads them, so a
-            // model that loads its templates in a different order still holds the
-            // same handles.
+            // The same bytes name the same template however often a script loads
+            // them, so a model that loads its templates in a different order still
+            // holds the same handles.
             auto const second = context.loadTemplate(blob);
             REQUIRE(second.has_value());
             CHECK(second->ticket.generation == first->ticket.generation);
@@ -436,12 +428,10 @@ namespace uf::task
 
         TEST_CASE("A cycle_match stopped by its budget is a failure, never a miss")
         {
-            // Zero comparisons stops the search before it has decided anything.
-            // The distinction this pins is the three-layer fail-closed rule: a
-            // stop reported as nil would tell a script the template is absent
-            // from a screen nothing ever looked at. Remove the stop branch in
-            // EngineSession::matchTemplate and this case goes red -- the failure
-            // becomes an empty optional.
+            // Zero comparisons stops the search before it has decided anything, and
+            // a stop reported as nil would tell a script the template is absent from
+            // a screen nothing ever looked at. Remove the stop branch in
+            // EngineSession::matchTemplate and this case goes red.
             auto built = buildHarness(
                 matchableFrames(),
                 HarnessSpec{.maximumPixelComparisons = 0}
@@ -536,11 +526,9 @@ namespace uf::task
 
         TEST_CASE("A cycle_read past its per-cycle budget is a failure, never a miss")
         {
-            // The budget is a dimension of its own -- see
-            // k_defaultMaximumReadsPerCycle -- and exhausting it must not read as
-            // "there was no text here". Remove the charge in
-            // TaskContext::cycleRead and the second read succeeds, so this case
-            // goes red.
+            // Exhausting the per-cycle read budget must not read as "there was no
+            // text here". Remove the charge in TaskContext::cycleRead and the
+            // second read succeeds, so this case goes red.
             auto built = buildHarness(
                 matchableFrames(),
                 HarnessSpec{
@@ -580,10 +568,9 @@ namespace uf::task
             CHECK(third->has_value());
         }
 
-        // Three lines wherever a block-reading fake is asked for one, at three
-        // different places inside a 3x1 frame's only row. The rectangles differ
-        // from each other and from any region a case reads, which is what makes
-        // "every line carries its OWN place" checkable at all.
+        // Three lines at three different places inside a 3x1 frame's only row. The
+        // rectangles differ from each other and from any region a case reads, which
+        // is what makes "every line carries its OWN place" checkable at all.
         [[nodiscard]]
         auto threeLineReadout() -> ocr::Readout
         {
@@ -635,9 +622,8 @@ namespace uf::task
             REQUIRE(lines.has_value());
             REQUIRE(lines->size() == 3U);
 
-            // Each line's OWN rectangle, and not the region that was read. Feed
-            // the requested rect back onto every reading instead and this goes
-            // red on the second line.
+            // Each line's OWN rectangle, and not the region that was read. Feed the
+            // requested rect back onto every reading and this goes red on line two.
             CHECK((*lines)[0].text == "battle");
             CHECK((*lines)[0].rect == test::pixelRect(0, 0, 1, 1));
             CHECK((*lines)[1].text == "rest");
@@ -653,9 +639,9 @@ namespace uf::task
 
         TEST_CASE("A block read costs one for locating and one for each line found")
         {
-            // The budget decision, and the only place it is observable. Charge
-            // one flat read per block read instead and the second call below
-            // succeeds, so this goes red.
+            // The budget decision, and the only place it is observable. Charge one
+            // flat read per block read instead and the second call below succeeds,
+            // so this goes red.
             auto built = buildHarness(
                 matchableFrames(),
                 HarnessSpec{
@@ -703,10 +689,9 @@ namespace uf::task
         TEST_CASE("A block read hands its remaining budget down to the engine")
         {
             // What stops a region from being recognised line by line before the
-            // budget can object: the ceiling travels with the read, so the
-            // engine refuses having located rather than having read. Stop
-            // passing `remaining` and the ceiling arrives absent, so this goes
-            // red on the recorded value.
+            // budget can object: the ceiling travels with the read, so the engine
+            // refuses having located rather than having read. Stop passing
+            // `remaining` and the ceiling arrives absent, so this goes red.
             auto ocrEngine = std::make_unique<FakeOcrEngine>(
                 oneLineReadout("battle", 9'000),
                 threeLineReadout()
@@ -745,12 +730,11 @@ namespace uf::task
 
         TEST_CASE("A block read writes one engine line carrying every line it found")
         {
-            // WHAT MAKES A CLICK AT A LOCATED LINE AUDITABLE AFTERWARDS. A
-            // single-line read's region and its answer are one rectangle, so one
-            // `readRect` says both; a block read's are not, and a reader
-            // checking that a delivered click landed on text this frame actually
-            // held has only the per-line rectangles to check it against. Drop
-            // the `lines` the engine fills in and this goes red.
+            // A single-line read's region and its answer are one rectangle, so one
+            // `readRect` says both; a block read's are not, and a reader checking
+            // that a delivered click landed on text this frame actually held has
+            // only the per-line rectangles to check it against. Drop the `lines`
+            // the engine fills in and this goes red.
             auto built = buildHarness(
                 matchableFrames(),
                 HarnessSpec{
@@ -795,9 +779,9 @@ namespace uf::task
 
         TEST_CASE("A single-line read still writes the line it always wrote")
         {
-            // The control for the case above: adding a per-line list must not
-            // change what the older verb records, because a stream written
-            // before block reads existed has to keep meaning what it meant.
+            // The control for the case above: adding a per-line list must not change
+            // what the older verb records, because a stream written before block
+            // reads existed has to keep meaning what it meant.
             auto built = buildHarness(
                 matchableFrames(),
                 HarnessSpec{
@@ -858,9 +842,8 @@ namespace uf::task
 
         TEST_CASE("cycle_read_lines hands a script a frozen array of readings")
         {
-            // The primitive's own contract, on both surfaces. The array is
-            // frozen because the layer above treats what the host returned as
-            // evidence; drop the deepFreeze and the first half goes red.
+            // The array is frozen because the layer above treats what the host
+            // returned as evidence; drop the deepFreeze and the first half goes red.
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local lines = ctx:cycle_read_lines(cycle, 0, 0, 3, 1)
@@ -990,9 +973,8 @@ namespace uf::task
             REQUIRE(found.has_value());
             REQUIRE(found->has_value());
 
-            // No page was resolved on this cycle, and that is the point: the page
-            // requirement moved up a layer with the model, so a match delivers
-            // without one.
+            // No page was resolved on this cycle: the page requirement moved up a
+            // layer with the model, so a match delivers without one.
             auto const receipt = context.cycleClickPoint(
                 *ticket,
                 ticket->ordinal,
@@ -1017,10 +999,9 @@ namespace uf::task
 
         TEST_CASE("A match from a spent cycle cannot click on the next frame")
         {
-            // The same-frame requirement, which is one of the four the host keeps.
-            // Remove the requireOpenOrdinal call in cycleClickPoint and the second
-            // cycle happily delivers a coordinate the first frame produced, so
-            // this case goes red.
+            // The same-frame requirement. Remove the requireOpenOrdinal call in
+            // cycleClickPoint and the second cycle happily delivers a coordinate
+            // the first frame produced, so this case goes red.
             auto built = buildHarness(matchableFrames(), HarnessSpec{});
             REQUIRE(built.session.has_value());
             auto* const p_clicks = built.clicks;
@@ -1058,9 +1039,9 @@ namespace uf::task
         {
             SUBCASE("an expired lease refuses the click")
             {
-                // Remove the lease check in EngineSession::clickPoint and the
-                // click is delivered against a frame whose coordinate has already
-                // expired, so this case goes red.
+                // Remove the lease check in EngineSession::clickPoint and the click
+                // is delivered against a frame whose coordinate has already expired,
+                // so this case goes red.
                 auto built = buildHarness(
                     matchableFrames(),
                     HarnessSpec{
@@ -1132,9 +1113,9 @@ namespace uf::task
             CHECK(p_clicks->scrolls().front() == int32{-3});
 
             // The cycle is spent, exactly as a keystroke spends it: the screen
-            // moved, so the frame this ticket named no longer describes it. Drop
-            // the spend in TaskContext::cycleScroll and one frame delivers as many
-            // wheel messages as a script asks for, so this goes red.
+            // moved, so the frame this ticket named no longer describes it. Drop the
+            // spend in TaskContext::cycleScroll and one frame delivers as many wheel
+            // messages as a script asks for, so this goes red.
             CHECK_FALSE(context.hasOpenCycle());
             auto const again = context.cycleScroll(*ticket, int32{-3});
             REQUIRE_FALSE(again.has_value());
@@ -1183,9 +1164,9 @@ namespace uf::task
                 auto const ticket = context.openCycle();
                 REQUIRE(ticket.has_value());
 
-                // The live cycle's ordinal under a stamp this ledger never minted:
-                // a ticket left over from a spent generation must be rejected
-                // rather than collide with the ordinal that is open now.
+                // The live cycle's ordinal under a stamp this ledger never minted: a
+                // ticket left over from a spent generation must be rejected rather
+                // than collide with the ordinal that is open now.
                 auto const foreign = context.cycleScroll(
                     CycleTicket{
                         .generation = ticket->generation + 1,
@@ -1210,11 +1191,10 @@ namespace uf::task
 
         TEST_CASE("cycle_scroll is on the run surface and the exploration surface")
         {
-            // Decision (b) of the capability split, and the only place it is
-            // observable: scrolling a list too long to fit is ordinary business
-            // work, so unlike cycle_crop and probe this primitive is bound on both
-            // surfaces. Move its installation inside buildPrivateSurface's
-            // Exploration branch and the first half goes red.
+            // Decision (b) of the capability split: scrolling a list too long to fit
+            // is ordinary business work, so unlike cycle_crop and probe this
+            // primitive is bound on both surfaces. Move its installation inside
+            // buildPrivateSurface's Exploration branch and the first half goes red.
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 ctx:cycle_scroll(cycle, -2)
@@ -1260,9 +1240,9 @@ namespace uf::task
 
         TEST_CASE("cycle_scroll refuses a notch count that is not a whole number")
         {
-            // Refused before the cycle is spent, which is what makes it worth
-            // checking here rather than leaving to the delivery layer: a script
-            // that passed a string or a fraction still holds its frame.
+            // Refused BEFORE the cycle is spent, which is what makes it worth
+            // checking here rather than leaving to the delivery layer: a script that
+            // passed a string or a fraction still holds its frame.
             auto built = buildHarness(matchableFrames(), HarnessSpec{});
             REQUIRE(built.session.has_value());
             auto* const p_clicks = built.clicks;
@@ -1303,12 +1283,10 @@ namespace uf::task
                 context.cycleLongPress(*ticket, PixelPoint{1, 0}, hold);
             REQUIRE(receipt.has_value());
 
-            // The hold is asserted and not merely the delivery, which is the
-            // whole point of the case: replace `hold` with anything else in the
-            // sink call inside EngineSession::longPress -- a zero, a constant,
-            // the argument dropped -- and every layer still delivers a press
-            // while this goes red. A duration the caller named that does not
-            // arrive is exactly the failure a default would hide.
+            // The hold is asserted and not merely the delivery: replace `hold` with
+            // anything else in the sink call inside EngineSession::longPress -- a
+            // zero, a constant, the argument dropped -- and every layer still
+            // delivers a press while this goes red.
             REQUIRE(p_clicks->longPresses().size() == 1U);
             CHECK(p_clicks->longPresses().front().hold == hold);
             CHECK(receipt->hold == hold);
@@ -1317,9 +1295,9 @@ namespace uf::task
             // point; what matters is that the coordinate travelled at all.
             CHECK(p_clicks->longPresses().front().point.x() == doctest::Approx(1.0));
 
-            // It is NOT a click, on the port or on the wire. A long press folded
-            // into click() would leave a reader counting delivered clicks
-            // counting acts that magnified a card instead of pressing a button.
+            // It is NOT a click, on the port or on the wire: a long press folded
+            // into click() would leave a reader counting delivered clicks counting
+            // acts that magnified a card instead of pressing a button.
             CHECK(p_clicks->clickCount() == 0U);
         }
 
@@ -1339,12 +1317,11 @@ namespace uf::task
                 context.cycleLongPress(*ticket, PixelPoint{1, 0}, hold).has_value()
             );
 
-            // The decision this case records: a long press spends its frame like
-            // every other delivered input. It has to -- the press magnifies what
-            // it pressed, so the frame that authorised it describes a screen the
-            // press has already replaced. Drop the spend in
-            // TaskContext::cycleLongPress and one frame delivers as many presses
-            // as a script asks for, so this goes red.
+            // A long press spends its frame like every other delivered input: the
+            // press magnifies what it pressed, so the frame that authorised it
+            // describes a screen the press has already replaced. Drop the spend in
+            // TaskContext::cycleLongPress and one frame delivers as many presses as
+            // a script asks for, so this goes red.
             CHECK_FALSE(context.hasOpenCycle());
             auto const again =
                 context.cycleLongPress(*ticket, PixelPoint{1, 0}, hold);
@@ -1359,13 +1336,11 @@ namespace uf::task
         {
             SUBCASE("an expired lease refuses the press")
             {
-                // The paired case is "A bare-point click still honours the lease
-                // and the fingerprint" above, and the pairing is the point: the
-                // same harness, the same expiry, the same refusal. Remove the
-                // lease check from EngineSession::longPress and a press is
-                // delivered against a frame whose coordinate has already expired
-                // -- a second and laxer path to the same window -- so this goes
-                // red while the click case stays green.
+                // Paired with "A bare-point click still honours the lease and the
+                // fingerprint" above: the same harness, the same expiry, the same
+                // refusal. Remove the lease check from EngineSession::longPress --
+                // a second and laxer path to the same window -- and this goes red
+                // while the click case stays green.
                 auto built = buildHarness(
                     matchableFrames(),
                     HarnessSpec{
@@ -1421,10 +1396,9 @@ namespace uf::task
 
         TEST_CASE("cycle_long_press refuses a hold it cannot honour")
         {
-            // Every refusal below happens BEFORE the cycle is spent, which is
-            // what makes them worth checking here: a script that mistyped a hold
-            // still holds its frame, and the target is never left mid-press while
-            // the author finds out. Delete the k_maxLongPressHold check in
+            // Every refusal below happens BEFORE the cycle is spent, so a script
+            // that mistyped a hold still holds its frame and the target is never
+            // left mid-press. Delete the k_maxLongPressHold check in
             // cycleLongPressFn and the third line stops raising, so this goes red.
             auto built = buildHarness(matchableFrames(), HarnessSpec{});
             REQUIRE(built.session.has_value());
@@ -1467,32 +1441,27 @@ namespace uf::task
 
         TEST_CASE("cycle_long_press is bound on both surfaces and forwarded on one")
         {
-            // The capability split for this verb, and the only place it is
-            // observable. A long press names a BARE COORDINATE, so it carries
-            // cycle_click_point's privilege exactly: the primitive is installed
-            // on both private surfaces, because the trusted framework needs it in
-            // run mode for an element the page model placed -- and no project
-            // environment may name it, because a business task clicking or
-            // pressing wherever it likes is the hole `ctx` closed.
+            // The capability split for this verb. A long press names a BARE
+            // COORDINATE, so it carries cycle_click_point's privilege exactly: the
+            // primitive is installed on both private surfaces, because the trusted
+            // framework needs it in run mode for an element the page model placed --
+            // and no project environment may name it, because a business task
+            // clicking or pressing wherever it likes is the hole `ctx` closed.
             //
-            // THE ADDITIVE MUTATION THIS CASE EXISTS FOR. The first subcase would
-            // pass just as well against a build where the primitive did not exist
-            // at all, which would prove nothing about confinement. So add a
-            // forward to ctx.luau --
+            // A case asserting only that `ctx` has no such key would pass just as
+            // well against a build where the primitive did not exist at all, so each
+            // subcase pairs the absence with something that shows the primitive
+            // really is there. Add a forward to ctx.luau --
             //
             //     function ctx:cycle_long_press(ticket, x, y, hold)
             //         return native.cycle_long_press(ticket, x, y, hold)
             //     end
             //
-            // -- and BOTH subcases go red, which is the fence being HELD rather
-            // than merely absent: the primitive is there, trusted code reaches
-            // it, and the only thing keeping a project away from it is that no
-            // table a project can name forwards it.
-            //
-            // That the run surface really binds it is proved where it can be
-            // proved -- by delivering one, in test-script-owned-model.cpp's
-            // "observe.long_press presses a page-positioned element" -- because a
-            // run VM publishes no `explore` to ask the question with.
+            // -- and BOTH subcases go red, which is the fence being HELD rather than
+            // merely absent. That the run surface really binds it is proved by
+            // delivering one in test-script-owned-model.cpp's "observe.long_press
+            // presses a page-positioned element", because a run VM publishes no
+            // `explore` to ask the question with.
             SUBCASE("no project environment can name it on ctx")
             {
                 auto built = buildHarness(matchableFrames(), HarnessSpec{});
@@ -1500,10 +1469,10 @@ namespace uf::task
                 auto* const p_clicks = built.clicks;
                 TaskContext context{*std::move(built.session), *built.recorder};
 
-                // Asserted in the EXPLORATION VM, where `explore.long_press`
-                // proves in the same breath that the primitive is bound and
-                // reachable. `ctx` is published into both project environments,
-                // so its silence here is its silence in a run VM too.
+                // Asserted in the EXPLORATION VM, where `explore.long_press` proves
+                // in the same breath that the primitive is bound and reachable.
+                // `ctx` is published into both project environments, so its silence
+                // here is its silence in a run VM too.
                 constexpr std::string_view source = R"lua(
                     if rawget(ctx, "cycle_long_press") ~= nil then return 0 end
                     if rawget(ctx, "cycle_click_point") ~= nil then return 0 end
@@ -1523,11 +1492,10 @@ namespace uf::task
 
             SUBCASE("a run VM has neither the ctx forward nor the explore module")
             {
-                // The other half of the confinement. `explore` is what publishes
-                // the forward, and it is in the exploration environment's list
-                // and in no other -- so a business task has no `ctx` key for the
-                // verb AND no module to reach it through. Publish `explore` into
-                // the run environment and this goes red.
+                // The other half of the confinement: `explore` publishes the forward
+                // and is in the exploration environment's list and no other, so a
+                // business task has no `ctx` key AND no module to reach it through.
+                // Publish `explore` into the run environment and this goes red.
                 auto built = buildHarness(matchableFrames(), HarnessSpec{});
                 REQUIRE(built.session.has_value());
                 auto* const p_clicks = built.clicks;
@@ -1657,9 +1625,8 @@ namespace uf::task
             };
 
             // The blob is written and read back through the project verbs, then
-            // decoded by template_load, matched, judged in Luau, and clicked --
-            // which is the whole layer-one surface the script-owned page model
-            // stands on, driven the way the framework will drive it.
+            // decoded by template_load, matched, judged in Luau and clicked -- the
+            // whole layer-one surface, driven the way the framework will drive it.
             auto const blob = templateBlob(k_targetActionGray);
             REQUIRE(context.projectWrite("action.png", blob).has_value());
 

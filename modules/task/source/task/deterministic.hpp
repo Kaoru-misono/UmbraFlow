@@ -4,23 +4,16 @@
 
 namespace uf::task
 {
-    // A script reads no clock of any kind. The logical DeterministicClock that
-    // once backed ctx:now() was deleted with that primitive: it was honest --
-    // a reproducible ordinal, never wall time -- and useless, because
-    // `until ctx:now() - t0 > 5000` counted iterations rather than milliseconds,
-    // so it invited exactly the timing logic a replay cannot reproduce. Waiting
-    // is now evidence-based (ctx:wait against a host-minted deadline) or
-    // declarative (ctx:settle), and both are host effects the trace records.
-    // Enforcing a real wall-clock budget stays the host interrupt's job.
+    // A script reads no clock of any kind. Waiting is evidence-based (ctx:wait
+    // against a host-minted deadline) or declarative (ctx:settle), and both are
+    // host effects the trace records; enforcing a real wall-clock budget stays the
+    // host interrupt's job.
 
     // A task's sole source of randomness (ctx:random), replacing the math.random
-    // the sandbox removed. It is a self-contained PCG32 generator -- a fixed,
-    // version-stable algorithm implemented here rather than a std::mt19937 paired
-    // with a std::uniform_int_distribution, whose library implementations are not
-    // guaranteed identical across toolchains and would break same-machine
-    // reproducibility. The seed is host-injected (TaskContextConfig::randomSeed);
-    // the same seed drawn in the same order yields the same sequence, on this
-    // machine, every run.
+    // the sandbox removed. A self-contained PCG32 rather than a std::mt19937
+    // paired with a std::uniform_int_distribution, whose library implementations
+    // are not guaranteed identical across toolchains and would break same-machine
+    // reproducibility. The seed is host-injected (TaskContextConfig::randomSeed).
     class DeterministicRng final
     {
         uint64 m_state;

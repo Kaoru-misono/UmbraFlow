@@ -56,12 +56,9 @@ namespace uf::script::testing
         }
     }
 
-    // Bind mark() as a C closure carrying `counter` as its lightuserdata upvalue.
-    // Runs on the main state before luaL_sandbox, so the global is frozen with the
-    // rest yet stays callable from the sandboxed task thread. `counter` is a
-    // non-owning observation of caller-owned state that the closure mutates
-    // through the Luau upvalue ABI, which admits only a raw pointer -- the same
-    // shape installInterrupt uses for its control block.
+    // The closure mutates caller-owned state through the Luau upvalue ABI, which
+    // admits only a raw pointer -- the same shape installInterrupt uses for its
+    // control block.
     auto installMarkCounter(lua_State* state, uint64* counter) -> void
     {
         lua_pushlightuserdata(state, counter);
@@ -75,9 +72,9 @@ namespace uf::script::testing
         uint64 budgetTicks
     ) -> CancellationProbe
     {
-        // Host-owned counter the bound mark() bumps. It lives for the whole run
-        // and is read only after the VM is closed below, so the lightuserdata
-        // pointer handed into the sandbox stays valid throughout.
+        // Host-owned counter the bound mark() bumps. Declared before the state
+        // and read only after it is closed, so the lightuserdata pointer handed
+        // into the sandbox stays valid throughout.
         uint64 markCount = 0;
 
         // No memory ceiling: this probe isolates cancellation, so only the

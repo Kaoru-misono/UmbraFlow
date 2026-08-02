@@ -19,10 +19,10 @@ namespace uf::script::testing
 
     // Build a quota'd, sandboxed VM (limitBytes caps the accounting allocator; 0
     // disables the ceiling), run `source` on a sandboxed task thread with its
-    // result discarded, close the VM, and report the ledger's peak and post-close
-    // residual. Luau-free so tests may include it; exercises the accounting
-    // allocator before the real uf.* host tables exist (phase 2). Not part of
-    // the public Engine surface.
+    // result discarded, close the VM, and report the ledger's peak and
+    // post-close residual. It exercises the accounting allocator with no host
+    // tables installed. Luau-free so tests may include it; not part of the
+    // public Engine surface.
     [[nodiscard]]
     auto measureMemory(
         std::string_view source,

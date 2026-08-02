@@ -44,12 +44,9 @@
 
 // The layer-two half of the script-owned page model: the element and page
 // vocabulary in modules/task/runtime/model.luau, the verbs in observe.luau, and
-// the project file in project.luau.
-//
-// Everything here drives real Luau against a real session, because the whole
-// claim of that layer is that a model built from Luau tables plus the four host
-// primitives behaves the way the C++ model used to. A pure-Luau harness would
-// prove the tables are shaped right and nothing about what they do with pixels.
+// the project file in project.luau. Everything here drives real Luau against a
+// real session, because a pure-Luau harness would prove the tables are shaped
+// right and nothing about what they do with pixels.
 namespace uf::task
 {
     namespace
@@ -116,8 +113,8 @@ namespace uf::task
 
         // The one-by-one grey templates every model in this file is built from,
         // written into the project directory under the names the Luau side reads
-        // them back by. A model's appearances are project files, so seeding them
-        // is what makes template_load reachable from a script at all.
+        // them back by. A model's appearances are project files, so seeding them is
+        // what makes template_load reachable from a script at all.
         auto seedTemplates(std::filesystem::path const& root) -> void
         {
             for (auto const gray :
@@ -131,17 +128,15 @@ namespace uf::task
             }
         }
 
-        // A fake OCR adapter that answers one line, so the read verb has
-        // something to compare against. It refuses Block exactly as the shipped
-        // adapter does, so a host that quietly asked for Block fails here too.
+        // A fake OCR adapter that answers one line, so the read verb has something
+        // to compare against. It refuses Block exactly as the shipped adapter does,
+        // so a host that quietly asked for Block fails here too.
         //
-        // IT CAN ANSWER A DIFFERENT LINE EACH TIME IT IS CALLED, in the order
-        // the readouts were given, repeating the last one once they run out.
-        // That is what lets a case put two screens in front of the falsification
-        // matrix and have the same region read something different on each: the
-        // matrix opens one observation per screen and reads once per claimed
-        // cell, so call order IS screen order there. A single-readout engine
-        // behaves exactly as it did before -- one entry never runs out.
+        // It can answer a DIFFERENT line each call, in the order the readouts were
+        // given, repeating the last once they run out. That is what lets a case put
+        // two screens in front of the falsification matrix and have the same region
+        // read something different on each: the matrix opens one observation per
+        // screen and reads once per claimed cell, so call order IS screen order.
         class FakeOcrEngine final : public ocr::IOcrEngine
         {
             std::vector<ocr::Readout> m_readouts;
@@ -161,10 +156,9 @@ namespace uf::task
                 REQUIRE(!m_readouts.empty());
             }
 
-            // The block-reading fake. `block` is what every Block read answers
-            // with, and supplying one is what makes this engine claim to have a
-            // detector at all; the single-line sequence is untouched, so a case
-            // can use both layouts on one engine.
+            // The block-reading fake. Supplying a `block` readout is what makes
+            // this engine claim to have a detector at all; the single-line sequence
+            // is untouched, so a case can use both layouts on one engine.
             FakeOcrEngine(ocr::Readout readout, ocr::Readout block)
                 : m_readouts{std::move(readout)}
                 , m_block{std::move(block)}
@@ -278,19 +272,14 @@ namespace uf::task
         }
 
         // The VM a layer-three script would boot, plus the framework modules the
-        // script-owned page model added, published under their own names.
+        // script-owned page model added, published under their own names. They are
+        // published HERE rather than in frameworkProjectGlobals() because wiring
+        // them into every task VM is a host decision that belongs with whoever
+        // lands the layer-three loader.
         //
-        // They are published HERE rather than in frameworkProjectGlobals()
-        // because wiring them into every task VM is a host decision that belongs
-        // with whoever lands the layer-three loader; the modules themselves are
-        // in the bundle already, and a test that publishes them is exactly what
-        // a project environment will do once that wiring exists.
-        //
-        // `mint` is deliberately NOT among them. It is the spec-checking toolkit
-        // the constructors share, so every one of its functions is reachable
-        // through a constructor that already calls it; publishing it would put a
-        // second, unchecked way to shape a model in front of a project script
-        // for no gain.
+        // `mint` is deliberately NOT among them: it is the spec-checking toolkit
+        // the constructors share, so publishing it would put a second, unchecked
+        // way to shape a model in front of a project script for no gain.
         [[nodiscard]]
         auto modelVmConfig(TaskContext& context) -> script::EngineConfig
         {
@@ -312,12 +301,10 @@ namespace uf::task
             return engine->runNumber(source, "script-owned-model");
         }
 
-        // Frames, by what the model built on them sees.
-        //
-        // The fixture frame is three grey pixels. gray 2 sits at x = 0 and gray 5
-        // at x = 1 on the resolving frame, so a one-by-one template of either
-        // grey is an element that hits at a known pixel and misses on a frame
-        // that does not carry it.
+        // Frames, by what the model built on them sees. The fixture frame is three
+        // grey pixels: gray 2 at x = 0 and gray 5 at x = 1 on the resolving frame,
+        // so a one-by-one template of either grey is an element that hits at a
+        // known pixel and misses on a frame that does not carry it.
         [[nodiscard]]
         auto pixels(uint8 first, uint8 second, uint8 third) -> std::vector<std::byte>
         {
@@ -338,18 +325,13 @@ namespace uf::task
             return std::string{k_prelude} + std::string{body};
         }
 
-        // A constructor refusal, expressed as the smallest body that proves it:
-        // the call raises, and the sentence it raised names the thing that is
-        // wrong. Returning 1 only on both counts is what keeps a refusal for the
-        // WRONG reason from passing.
-        //
-        // The fragment goes in a long-bracket literal because the sentences under
-        // test quote the field names they are about, so half of them carry a
-        // quote character of one kind or the other.
-        //
-        // It is the BODY rather than the whole script, because a refusal list
-        // whose subject needs its own fixture -- a screen and three elements, say
-        // -- puts that fixture between the prelude and this.
+        // A constructor refusal, expressed as the smallest body that proves it: the
+        // call raises, and the sentence it raised names the thing that is wrong.
+        // Returning 1 only on both counts is what keeps a refusal for the WRONG
+        // reason from passing. The fragment goes in a long-bracket literal because
+        // the sentences under test quote the field names they are about. It is the
+        // BODY rather than the whole script, because a refusal list whose subject
+        // needs its own fixture puts that fixture between the prelude and this.
         [[nodiscard]]
         auto refusalBody(std::string_view body, std::string_view fragment)
             -> std::string
@@ -1006,8 +988,7 @@ namespace uf::task
             // The inheritance ruling, made observable: layer three extends a
             // layer-two element with setmetatable and __index, and the page that
             // references the derived table is built rather than refused. Tighten
-            // the check to plain identity and this goes red, which is what keeps
-            // the mint from becoming a ban on extending anything.
+            // the check to plain identity and this goes red.
             auto const directory = TemporaryDirectory{"uf-model-derived-element"};
             seedTemplates(directory.path());
             auto built = refusalHarness(directory.path());
@@ -1059,17 +1040,18 @@ namespace uf::task
 
         TEST_CASE("An element that draws no rectangle is placed by each row that uses it")
         {
-            // THE FAILURE THIS EXISTS FOR. `rect` has only ever meant where to
-            // LOOK, and some shapes have no answer of their own: one confirm
-            // button drawn once sits somewhere different on every screen that
-            // shows it. Carrying the rectangle it happened to be cut from made
-            // the model state a fact nothing could contradict, and nine copies of
-            // one element made it state that fact nine times.
+            // `rect` has only ever meant where to LOOK, and some shapes have no
+            // answer of their own: one confirm button drawn once sits somewhere
+            // different on every screen that shows it, so carrying the rectangle it
+            // was cut from made the model state a fact nothing could contradict.
             //
             // Two pages place the same pixels at two rectangles here, and the
             // find answers where each row says. Delete the rect_override branch
-            // in observe.searchRect and both halves go red at once: the first
-            // finds nothing at [1, 0] and the second raises on a nil rectangle.
+            // in observe.luau's local searchRect and the chunk raises on the
+            // very first find -- `confirm` draws no rectangle, so what is left
+            // is the branch that refuses. That is why the case asserts both a
+            // nil find at [0, 0] and a hit at [1, 0]: only the two together show
+            // the ROW deciding where to look rather than the element.
             auto const directory = TemporaryDirectory{"uf-model-placed-element"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -1173,10 +1155,9 @@ namespace uf::task
         TEST_CASE("Reading an unplaced element needs the row that places it")
         {
             // The read verbs take a BARE element as well as a page's row, so they
-            // are the one door a shape with no rectangle can reach without the
-            // row that gives it one. `Page.new` guards the other door; this one
-            // has to answer for itself, because the alternative is indexing a nil
-            // field inside cycle_read and reporting it as a host failure.
+            // are the one door a shape with no rectangle can reach without the row
+            // that gives it one. `Page.new` guards the other door; the alternative
+            // here is indexing a nil inside cycle_read and reporting a host failure.
             auto const directory = TemporaryDirectory{"uf-model-unplaced-read"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -1376,10 +1357,9 @@ namespace uf::task
 
             SUBCASE("a forbidden element that is present refuses the page")
             {
-                // The overlay case, in miniature: the page is only this page
-                // while the grey-5 element is absent. Delete the forbidden branch
-                // and the page resolves on a frame that carries it, so this goes
-                // red.
+                // The overlay case in miniature: the page is only this page while
+                // the grey-5 element is absent. Delete the forbidden branch and the
+                // page resolves on a frame that carries it, so this goes red.
                 auto built = buildHarness(
                     HarnessSpec{
                         .framePixels = {pixels(2, 5, 0)},
@@ -1453,14 +1433,11 @@ namespace uf::task
 
         TEST_CASE("identify folds across every appearance and ignores the page's pin")
         {
-            // The correction that had to be made when the C++ model was built and
-            // survives the move to Luau: the identify sweep runs BEFORE the page
-            // is known, so it cannot consult a page's pin. The page below pins
-            // on_dark; the frame carries only the on_light pixels; the page must
-            // still resolve.
-            //
-            // Honour the pin inside resolve_page and this goes red immediately,
-            // which is the whole reason the pin is documented as interact-only.
+            // The identify sweep runs BEFORE the page is known, so it cannot consult
+            // a page's pin. The page below pins on_dark, the frame carries only the
+            // on_light pixels, and the page must still resolve. Honour the pin
+            // inside resolve_page and this goes red -- which is the whole reason the
+            // pin is documented as interact-only.
             auto const directory = TemporaryDirectory{"uf-model-identify-fold"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -1493,14 +1470,12 @@ namespace uf::task
 
         TEST_CASE("A match stopped by its budget is a control error, never a miss")
         {
-            // The fail-closed rule, one layer up. cycle_match raises when a
-            // budget stopped the search, and no verb here may turn that into
-            // "the element is not on screen": a page that reported itself absent
-            // because a number ran out would make the model's answer a function
-            // of a configuration value.
-            //
-            // Wrap the cycle_match call in observe.foldAppearances with a pcall
-            // and this case goes red -- resolve_page starts returning false.
+            // The fail-closed rule, one layer up. cycle_match raises when a budget
+            // stopped the search, and no verb here may turn that into "the element
+            // is not on screen": a page that reported itself absent because a number
+            // ran out would make the model's answer a function of a configuration
+            // value. Wrap the cycle_match call in observe.foldAppearances with a
+            // pcall and this case goes red -- resolve_page starts returning false.
             auto const directory = TemporaryDirectory{"uf-model-budget-stop"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -1538,13 +1513,12 @@ namespace uf::task
 
             SUBCASE("the better margin wins even when a worse appearance is declared first")
             {
-                // The case that turns "declaration order only breaks ties" from a
-                // sentence into a fact. On a [2, 5, 0] frame the grey-3 template
-                // is declared first and DOES clear its own threshold, at x = 0
-                // with a score of one; the grey-5 template scores zero at x = 1.
-                // Under "first past the threshold wins" the hit would name
-                // wide_first and point at x = 0, and a click would land on the
-                // wrong pixel with nothing downstream noticing.
+                // "Declaration order only breaks ties", as a fact. On a [2, 5, 0]
+                // frame the grey-3 template is declared first and DOES clear its
+                // own threshold, at x = 0 with a score of one; the grey-5 template
+                // scores zero at x = 1. Under "first past the threshold wins" the
+                // hit would name wide_first and a click would land on the wrong
+                // pixel with nothing downstream noticing.
                 auto built = buildHarness(
                     HarnessSpec{
                         .framePixels = {pixels(2, 5, 0)},
@@ -1699,17 +1673,13 @@ namespace uf::task
 
         TEST_CASE("observe.long_press presses a page-positioned element")
         {
-            // THE RUN-MODE HALF OF THE LONG-PRESS CAPABILITY, and the only place
-            // it can be shown. A run VM publishes no `explore`, so the one way to
-            // prove its private surface really binds cycle_long_press is to
-            // deliver one through the trusted framework -- which is also the
-            // shape the capability exists for: the target prints "long-press a
-            // card to see its details", and reading the magnified name is how a
-            // script stops guessing which card a clipped fragment belongs to.
-            //
-            // Move the installPrimitive call for cycle_long_press inside
-            // buildPrivateSurface's Exploration branch and this goes red, because
-            // `native.cycle_long_press` is then nil on a run VM.
+            // The run-mode half of the long-press capability, and the only place it
+            // can be shown: a run VM publishes no `explore`, so the one way to prove
+            // its private surface really binds cycle_long_press is to deliver one
+            // through the trusted framework. Move the installPrimitive call for
+            // cycle_long_press inside buildPrivateSurface's Exploration branch and
+            // this goes red, because `native.cycle_long_press` is then nil on a run
+            // VM.
             auto const directory = TemporaryDirectory{"uf-model-long-press"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -1739,8 +1709,7 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
 
             // The hold the script named arrived, and it arrived as a press rather
-            // than as a click: two separate claims, both of which a sloppier
-            // wiring would break independently.
+            // than as a click: two claims a sloppier wiring would break separately.
             REQUIRE(p_clicks->longPresses().size() == 1U);
             CHECK(
                 p_clicks->longPresses().front().hold
@@ -1751,13 +1720,13 @@ namespace uf::task
 
         TEST_CASE("observe.long_press demands the same authorisation a click does")
         {
-            // A long press delivers pointer input at a hit exactly as a click
-            // does, so it goes through the same door: the same receipt for this
-            // ticket, the same page, the same hit from this frame, the same
-            // interact edge. This is the case that would catch a second and
-            // weaker door being opened beside the first -- swap the
-            // requireAuthorisedHit call in observe.long_press for nothing at all
-            // and every subcase here goes red while observe.click stays green.
+            // A long press delivers pointer input at a hit exactly as a click does,
+            // so it goes through the same door: the same receipt for this ticket,
+            // the same page, the same hit from this frame, the same interact edge.
+            // Swap the requireAuthorisedHit call in observe.long_press for nothing
+            // at all and the first two subcases go red while observe.click stays
+            // green. The third is behind that door rather than part of it: the hold
+            // is this verb's own argument, checked after the authorisation passes.
             auto const directory = TemporaryDirectory{"uf-model-long-press-auth"};
             seedTemplates(directory.path());
 
@@ -1896,15 +1865,12 @@ namespace uf::task
 
         TEST_CASE("Finding is allowed without interact and clicking is not")
         {
-            // The enforcement that moved out of C++ with the model. A state
-            // element the page only identifies must stay queryable -- reading
-            // which appearance hit is how a script knows what state the game is
-            // in -- while the click is refused HERE, by the trusted framework,
-            // because the host's four remaining guarantees no longer include
-            // "the page authorises this element".
-            //
-            // Drop the interact test in observe.click and the click is delivered,
-            // so the counter below goes to one and this case goes red.
+            // The enforcement that moved out of C++ with the model. A state element
+            // the page only identifies must stay queryable -- reading which
+            // appearance hit is how a script knows what state the game is in --
+            // while the click is refused HERE, by the trusted framework. Drop the
+            // interact test in observe.click and the click is delivered, so the
+            // counter below goes to one and this case goes red.
             auto const directory = TemporaryDirectory{"uf-model-find-without-click"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -2013,18 +1979,13 @@ namespace uf::task
             CHECK(p_clicks->clickCount() == 0U);
         }
 
-        // The same-frame authorisation rule, which the move of the page model
-        // into Luau dissolved and the receipt restores.
-        //
-        // While the model was C++ the ledger recorded which page a cycle had
-        // resolved and `cycle_click` read it back, so "the page authorising this
-        // element resolved on THIS frame" held by construction. `resolve_page`
-        // returning a boolean carried no trace of the ticket that produced it,
-        // and nothing then stopped a script from resolving on one frame and
-        // clicking on the next. Each subcase below is a way of arriving at
-        // `observe.click` without that evidence, and each one must refuse with
-        // no click delivered. Delete the corresponding check in `observe.click`
-        // and exactly one of them goes red.
+        // The same-frame authorisation rule, which the move of the page model into
+        // Luau dissolved and the receipt restores. `resolve_page` returning a
+        // boolean carries no trace of the ticket that produced it, so nothing would
+        // stop a script from resolving on one frame and clicking on the next. Each
+        // subcase below is a way of arriving at `observe.click` without that
+        // evidence, and each one must refuse with no click delivered. Delete the
+        // corresponding check in `observe.click` and exactly one of them goes red.
         TEST_CASE("clicking requires this cycle's own proof of the page")
         {
             auto const directory = TemporaryDirectory{"uf-model-receipt"};
@@ -2115,10 +2076,10 @@ namespace uf::task
                         if ok then return 0 end
                         return report(err)
                     )lua",
-                    // "interactive" rather than "clickable": the refusal is
-                    // written once and serves observe.click and
-                    // observe.long_press alike, so its wording names acting on
-                    // the element rather than one way of doing so.
+                    // "interactive" rather than "clickable": the refusal is written
+                    // once and serves observe.click and observe.long_press alike,
+                    // so its wording names acting on the element rather than one
+                    // way of doing so.
                     .fragment = "interactive on the page that was recognised",
                 },
             };
@@ -2141,9 +2102,9 @@ namespace uf::task
                     TaskContextConfig{.projectRoot = directory.path()},
                 };
 
-                // The refusal has to be the RIGHT refusal: a case that failed
-                // for some unrelated reason would otherwise pass while proving
-                // nothing about the receipt.
+                // The refusal has to be the RIGHT refusal: a case that failed for
+                // an unrelated reason would pass while proving nothing about the
+                // receipt.
                 auto source = std::string{
                     "local function report(err)\n"
                     "    if type(err) ~= 'string' then return 0 end\n"
@@ -2205,10 +2166,9 @@ namespace uf::task
 
             SUBCASE("a different comparison is a different answer on the same pixels")
             {
-                // The point of passing the rule in: the reading is the same and
-                // the verdict is not, because "what counts as a match" is this
-                // layer's policy and never the host's. cycle_read takes no
-                // expected text for exactly this reason.
+                // The point of passing the rule in: the reading is the same and the
+                // verdict is not, because "what counts as a match" is this layer's
+                // policy. cycle_read takes no expected text for exactly that reason.
                 auto built = buildHarness(
                     HarnessSpec{
                         .framePixels = {pixels(2, 5, 0)},
@@ -2321,13 +2281,12 @@ namespace uf::task
             }
         }
 
-        // The model the identify-by-text cases are written against.
-        //
-        // `title` is the shared box every page in the target prints its own name
-        // in: one rectangle, no template, and nothing said here about what it
-        // reads, because that is different on every page. `anchor` keeps its
-        // template, so a case can put a forbidden text clause on a page that
-        // still has a required clause of the older kind.
+        // The model the identify-by-text cases are written against. `title` is the
+        // shared box every page in the target prints its own name in: one
+        // rectangle, no template, and nothing said here about what it reads,
+        // because that is different on every page. `anchor` keeps its template, so
+        // a case can put a forbidden text clause on a page that still has a
+        // required clause of the older kind.
         constexpr std::string_view k_titleModel = R"lua(
             local title = model.Element.new{
                 name = "title",
@@ -2382,10 +2341,10 @@ namespace uf::task
 
             SUBCASE("the page whose name is in the box resolves")
             {
-                // The reading arrives padded because a single-line read of a
-                // drawn rectangle does. Drop the trim from observe.exact_text and
-                // this goes red, which is the whole reason the trim is in the
-                // comparison rather than in the project file's data.
+                // The reading arrives padded because a single-line read of a drawn
+                // rectangle does. Drop the trim from observe.exact_text and this
+                // goes red -- which is why the trim is in the comparison rather
+                // than in the project file's data.
                 auto built = buildHarness(
                     HarnessSpec{
                         .framePixels = {pixels(2, 5, 0)},
@@ -2421,10 +2380,10 @@ namespace uf::task
 
             SUBCASE("a longer name that merely starts with it is another page")
             {
-                // The case the whole comparison rule exists for. Every screen
-                // prints its name in this box, and one name is a prefix of
-                // another; make the comparison a `string.find` and this page
-                // resolves on the wrong screen with nothing downstream noticing.
+                // The case the comparison rule exists for. Every screen prints its
+                // name in this box and one name is a prefix of another; make the
+                // comparison a `string.find` and this page resolves on the wrong
+                // screen with nothing downstream noticing.
                 auto built = buildHarness(
                     HarnessSpec{
                         .framePixels = {pixels(2, 5, 0)},
@@ -2468,14 +2427,12 @@ namespace uf::task
             SUBCASE("a reading the engine was unsure of is not evidence either way")
             {
                 // Reading fails OPEN: the engine returns plausible text for any
-                // rectangle, so the confidence is the only thing separating a
-                // reading from a guess. Below the floor the clause is NOT
-                // satisfied and the text is not "found" either -- which is why
-                // the forbidden page below resolves on the same frame.
-                //
-                // Delete the floor check and the required page resolves on a
-                // guess; make a low reading a match instead and the forbidden
-                // page stops resolving. Either way one of the two halves is red.
+                // rectangle, so confidence is the only thing separating a reading
+                // from a guess. Below the floor the clause is NOT satisfied and the
+                // text is not "found" either -- which is why the forbidden page
+                // below resolves on the same frame. Delete the floor check and the
+                // required page resolves on a guess; make a low reading a match and
+                // the forbidden page stops resolving. Either way a half goes red.
                 auto built = buildHarness(
                     HarnessSpec{
                         .framePixels = {pixels(2, 5, 0)},
@@ -2527,10 +2484,9 @@ namespace uf::task
 
             SUBCASE("an element that states its own floor is judged at that one")
             {
-                // 9000 clears the framework's 8000 and not this element's 9500,
-                // so the same reading that resolves a page above refuses one
-                // here. Read the constant instead of the element's field and
-                // this goes red.
+                // 9000 clears the framework's 8000 and not this element's 9500, so
+                // the same reading that resolves a page above refuses one here.
+                // Read the constant instead of the element's field and this goes red.
                 auto built = buildHarness(
                     HarnessSpec{
                         .framePixels = {pixels(2, 5, 0)},
@@ -2645,11 +2601,10 @@ namespace uf::task
 
         TEST_CASE("The row's expected text outranks the element's")
         {
-            // The precedence, in both directions on one frame: the page that
-            // states the text resolves, and the page that leaves it to the
-            // element is judged by the element's. Read the element's field first
-            // and the first page fails; forget the fallback and the second one
-            // stops being able to explain itself.
+            // The precedence, in both directions on one frame: the page that states
+            // the text resolves, and the page that leaves it to the element is
+            // judged by the element's. Read the element's field first and the first
+            // page fails; forget the fallback and the second stops explaining itself.
             auto const directory = TemporaryDirectory{"uf-model-text-precedence"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -2721,13 +2676,11 @@ namespace uf::task
         TEST_CASE("An element with a template identifies by pixels whatever its row reads")
         {
             // The older path, unchanged. This page's row says the region reads
-            // "battle" and the engine reads something else entirely, and the
-            // page still resolves -- because an element that HAS pixels
-            // identifies by them, and a row's text is a fact about a reading
-            // rather than a second identity clause.
-            //
-            // Let the text path run whenever a row carries expected text and
-            // this goes red immediately.
+            // "battle" and the engine reads something else entirely, and the page
+            // still resolves -- an element that HAS pixels identifies by them, and
+            // a row's text is a fact about a reading rather than a second identity
+            // clause. Let the text path run whenever a row carries expected text
+            // and this goes red immediately.
             auto const directory = TemporaryDirectory{"uf-model-pixels-win"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -2794,14 +2747,11 @@ namespace uf::task
 
         TEST_CASE("read_element reads what the page's own row says about the element")
         {
-            // One element, two answers, and both are right: on its own it reads
-            // its own rectangle against its own expected text, and through a
-            // page's row it reads what THAT page refined -- the text and the
-            // rectangle both.
-            //
-            // Ignore the row's expected text and the first pair goes red; read
-            // the element's rectangle instead of the row's and the width checks
-            // do.
+            // One element, two answers, and both are right: on its own it reads its
+            // own rectangle against its own expected text, and through a page's row
+            // it reads what THAT page refined -- text and rectangle both. Ignore the
+            // row's expected text and the first pair goes red; read the element's
+            // rectangle instead of the row's and the width checks do.
             auto const directory = TemporaryDirectory{"uf-model-read-row"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -2882,10 +2832,9 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
         }
 
-        // Three lines wherever the block-reading fake is asked for one, each at
-        // its own place in the fixture frame's only row. They are what a
-        // scrolling grid gives a run: text the project file never named, at
-        // positions the frame alone knows.
+        // Three lines wherever the block-reading fake is asked for one, each at its
+        // own place in the fixture frame's only row: what a scrolling grid gives a
+        // run, text the project file never named at positions the frame alone knows.
         [[nodiscard]]
         auto rosterReadout() -> ocr::Readout
         {
@@ -2916,11 +2865,10 @@ namespace uf::task
 
         TEST_CASE("read_lines locates the text a page never named and clicks it")
         {
-            // The whole shape of the feature in one script: resolve the page,
-            // read the annotated region, pick the line by what it says, and
-            // click THAT line -- through the same observe.click a template hit
-            // goes through, on the same ticket, with the receipt that ticket
-            // minted.
+            // The whole shape of the feature in one script: resolve the page, read
+            // the annotated region, pick the line by what it says, and click THAT
+            // line -- through the same observe.click a template hit goes through,
+            // on the same ticket, with the receipt that ticket minted.
             auto const directory = TemporaryDirectory{"uf-model-read-lines"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -2976,9 +2924,9 @@ namespace uf::task
 
         TEST_CASE("A line located on one frame cannot authorise a click on another")
         {
-            // THE RULE THE FEATURE TURNS ON. A line's position is read off one
-            // frame and is true of that frame alone -- there is no match handle
-            // for C++ to re-check, because the click reaches the host as a bare
+            // The rule the feature turns on. A line's position is read off one
+            // frame and is true of that frame alone -- there is no match handle for
+            // C++ to re-check, because the click reaches the host as a bare
             // coordinate. Remove the ticket comparison in observe.click and the
             // click below is delivered at where the text used to be.
             auto const directory = TemporaryDirectory{"uf-model-read-lines-stale"};
@@ -3221,16 +3169,14 @@ namespace uf::task
 
         TEST_CASE("A region that read nothing is not a region holding nothing")
         {
-            // THE FAILURE THIS ARGUMENT EXISTS FOR, reproduced. The engine finds
-            // no line at all in the annotated region -- which is what a reward
-            // card's name band gives a run that reads it before the card has
-            // finished drawing, and equally what a badge gives on a screen that
-            // genuinely carries none. The bytes are identical; only the caller
-            // knows which of the two it would be willing to act on.
-            //
-            // Delete the raise in observe.read_lines and the first subcase gets
-            // its empty list back, so it goes red. Raise regardless of the
-            // policy and the second one does.
+            // The failure this argument exists for. The engine finds no line at all
+            // in the annotated region -- which is what a reward card's name band
+            // gives a run that reads it before the card has finished drawing, and
+            // equally what a badge gives on a screen that genuinely carries none.
+            // The bytes are identical; only the caller knows which of the two it
+            // would act on. Delete the raise in observe.read_lines and the first
+            // subcase gets its empty list back, so it goes red; raise regardless of
+            // the policy and the second one does.
             auto const directory = TemporaryDirectory{"uf-model-empty-region"};
             seedTemplates(directory.path());
 
@@ -3327,14 +3273,12 @@ namespace uf::task
 
         TEST_CASE("A forbidden clause is still satisfied by a region reading nothing")
         {
-            // The identify sweep asks the emptiness question on every frame, and
-            // it must keep getting the emptiness answer: a page whose signature
-            // is "this box does NOT read 'battle'" resolves on a screen where the
-            // box reads nothing at all. That path reads the region itself rather
-            // than through read_element, so this is what says the policy argument
-            // did not leak into it.
-            //
-            // Make an empty read raise inside resolve_page and this goes red.
+            // The identify sweep asks the emptiness question on every frame and must
+            // keep getting the emptiness answer: a page whose signature is "this box
+            // does NOT read 'battle'" resolves on a screen where the box reads
+            // nothing at all. That path reads the region itself rather than through
+            // read_element, so this is what says the policy argument did not leak
+            // into it. Make an empty read raise inside resolve_page and this goes red.
             auto const directory = TemporaryDirectory{"uf-model-empty-forbidden"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -3387,11 +3331,10 @@ namespace uf::task
         {
             // The same hole one rectangle down. A nil reading is quieter than an
             // empty list and conflates the same two states: the caller writes
-            // `reading == nil or not reading.matches` and a region nobody has
-            // drawn yet reads as "this is not that text".
-            //
-            // Delete the raise in observe.read_element and the first subcase goes
-            // red; raise regardless of the policy and the second one does.
+            // `reading == nil or not reading.matches` and a region nobody has drawn
+            // yet reads as "this is not that text". Delete the raise in
+            // observe.read_element and the first subcase goes red; raise regardless
+            // of the policy and the second one does.
             auto const directory = TemporaryDirectory{"uf-model-empty-reading"};
             seedTemplates(directory.path());
 
@@ -3530,14 +3473,12 @@ namespace uf::task
 
         TEST_CASE("wait_until needs K agreeing observations in a row")
         {
-            // Four frames: hold, break, hold, hold. With K = 2 the streak the
-            // first frame opened is broken by the second, so the wait ends on the
-            // FOURTH capture and not the third.
-            //
-            // Return on the first hold -- drop the streak entirely -- and the run
-            // ends after one capture, so the count below goes red. Decrement the
-            // streak instead of resetting it and the wait ends on the third, so
-            // it goes red the other way.
+            // Four frames: hold, break, hold, hold. With K = 2 the streak the first
+            // frame opened is broken by the second, so the wait ends on the FOURTH
+            // capture and not the third. Drop the streak entirely and the run ends
+            // after one capture, so the count below goes red; decrement the streak
+            // instead of resetting it and the wait ends on the third, so it goes red
+            // the other way.
             auto const directory = TemporaryDirectory{"uf-model-wait-consecutive"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -3576,12 +3517,10 @@ namespace uf::task
         TEST_CASE("wait_until that runs out of budget raises rather than reporting a no")
         {
             // A zero budget takes exactly one turn: one observation, a deadline
-            // already spent, and a host-minted Tier B timeout. Returning false
-            // here instead would tell a script the page is not up when in truth
-            // nothing waited long enough to know.
-            //
-            // Replace the raise with `return false` and this goes red; the run
-            // still terminates, which is what keeps proving it red cheap.
+            // already spent, and a host-minted Tier B timeout. Returning false here
+            // would tell a script the page is not up when nothing waited long enough
+            // to know. Replace the raise with `return false` and this goes red; the
+            // run still terminates, which is what keeps proving it red cheap.
             auto const directory = TemporaryDirectory{"uf-model-wait-timeout"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -3666,17 +3605,15 @@ namespace uf::task
 
         // ------------------------------------------------------ the page graph
 
-        // Five pages over five one-by-one greys, which is the smallest model the
-        // 2026-08-01 graph ruling can be exercised against: a base screen, an
-        // overlay over it, a second overlay over that, a popup that can appear
-        // over anything, and a screen the game can jump to on its own.
-        //
-        // Each page is recognised by one grey, so a three-pixel frame decides
-        // exactly which of them are on screen. `pixels(2, 20, 0)` carries the
-        // base marker AND the overlay marker at once, which is not an accident:
-        // an overlay COVERS the page underneath rather than replacing it, and the
-        // page underneath is still recognisable and still clickable while it is
-        // up (docs/plans/2026-07-31-script-owned-page-model.md 1).
+        // Five pages over five one-by-one greys, the smallest model the 2026-08-01
+        // graph ruling can be exercised against: a base screen, an overlay over it,
+        // a second overlay over that, a popup that can appear over anything, and a
+        // screen the game can jump to on its own. Each page is recognised by one
+        // grey, so a three-pixel frame decides exactly which are on screen.
+        // `pixels(2, 20, 0)` carries the base marker AND the overlay marker at once,
+        // which is not an accident: an overlay COVERS the page underneath rather
+        // than replacing it, and that page is still recognisable and still clickable
+        // while it is up (docs/plans/2026-07-31-script-owned-page-model.md 1).
         constexpr std::string_view k_graphModel = R"lua(
             local function marker(name, source)
                 return model.Element.new{
@@ -4444,12 +4381,11 @@ namespace uf::task
 
             SUBCASE("a click edge refuses to walk off a page this frame is not")
             {
-                // Fail closed BEFORE the trigger, and fail on the FIRST question
-                // rather than the second. A click is authorised by the page the
-                // frame in front of the run resolved, so walking away from a
-                // page whose own marker is absent is refused for that reason and
-                // never for the missing click target -- which is the same
-                // ordering `observe.click` enforces with its receipt.
+                // Fail closed BEFORE the trigger, and on the FIRST question rather
+                // than the second. A click is authorised by the page the frame in
+                // front of the run resolved, so walking away from a page whose own
+                // marker is absent is refused for that reason and never for the
+                // missing click target.
                 auto built = buildHarness(
                     HarnessSpec{
                         .framePixels = {pixels(0, 0, 0)},
@@ -4487,12 +4423,11 @@ namespace uf::task
 
             SUBCASE("a click edge whose element is not on screen refuses to walk")
             {
-                // The second question, reached only once the first is answered:
-                // the page IS this page and the thing to click is not on it. The
-                // model here identifies its from page by one mark and clicks
-                // another, so the frame below resolves the page and misses the
-                // target -- which the shared graph above cannot express, since
-                // every page there is identified by the element it clicks.
+                // The second question, reached only once the first is answered: the
+                // page IS this page and the thing to click is not on it. The model
+                // here identifies its from page by one mark and clicks another,
+                // which the shared graph above cannot express, since every page
+                // there is identified by the element it clicks.
                 auto built = buildHarness(
                     HarnessSpec{
                         .framePixels = {pixels(2, 0, 0)},
@@ -4588,13 +4523,12 @@ namespace uf::task
 
         TEST_CASE("push and pop keep the page underneath and give it back")
         {
-            // The first touchstone the ruling named: open an overlay, open a
-            // second one over it, close that one, and land back where the stack
-            // said you were. The destination of each pop is never written in the
-            // model -- it is read off the stack at walk time -- so replacing the
-            // pop branch with the edge's own `to` cannot even compile a
-            // destination, and dropping the entry the pop removes lands the run
-            // one page too shallow.
+            // The first touchstone the ruling named: open an overlay, open a second
+            // over it, close that one, and land back where the stack said you were.
+            // The destination of each pop is read off the stack at walk time and is
+            // never written in the model, so replacing the pop branch with the
+            // edge's own `to` cannot even compile a destination, and dropping the
+            // entry the pop removes lands the run one page too shallow.
             auto const directory = TemporaryDirectory{"uf-model-push-pop"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -4697,15 +4631,12 @@ namespace uf::task
 
         TEST_CASE("A base page that resolves resets the stack, whatever it believed")
         {
-            // The ruling's own instance, made mechanical: a run standing in a
-            // battle with the card detail open, when the battle ends and the game
-            // jumps to the result screen on its own. The overlay AND the page it
-            // covered are gone together, so belief has to be thrown away rather
-            // than popped once.
-            //
-            // Make the arrival always push instead and the stack ends three deep;
-            // make it always pop and it ends two deep with the wrong base. Both
-            // go red here.
+            // The ruling's own instance, made mechanical: a run standing in a battle
+            // with the card detail open, when the battle ends and the game jumps to
+            // the result screen on its own. The overlay AND the page it covered are
+            // gone together, so belief has to be thrown away rather than popped
+            // once. Make the arrival always push and the stack ends three deep; make
+            // it always pop and it ends two deep with the wrong base. Both go red.
             auto const directory = TemporaryDirectory{"uf-model-belief-reset"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -4747,14 +4678,12 @@ namespace uf::task
 
         TEST_CASE("The depth cap refuses the push before the input is delivered")
         {
-            // A runaway push is a script bug, so the cap raises a plain Luau
-            // error rather than a Tier B automation failure -- nothing about the
-            // target went wrong.
-            //
-            // The ORDER is the other half of the case. Move the check to the
-            // moment the belief is applied and the keystroke is delivered first:
-            // the target moves, and only then does the run refuse to reason about
-            // where it is. The key count below is what goes red.
+            // A runaway push is a script bug, so the cap raises a plain Luau error
+            // rather than a Tier B automation failure -- nothing about the target
+            // went wrong. The ORDER is the other half: move the check to the moment
+            // the belief is applied and the keystroke is delivered first, so the
+            // target moves before the run refuses to reason about where it is. The
+            // key count below is what goes red.
             auto const directory = TemporaryDirectory{"uf-model-depth-cap"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -4806,15 +4735,12 @@ namespace uf::task
             SUBCASE("an interrupt page on screen becomes the walk's outcome")
             {
                 // The popup is declared ONCE, as a flag on its own page, and is
-                // reached by no inbound edge at all. Delete the interrupt sweep
-                // and this walk raises a timeout instead, which is the whole
-                // difference the flag buys: a sentence naming what is actually on
-                // screen rather than one naming what is not.
-                //
-                // The walk does not dismiss it. Closing a popup is a policy some
-                // projects answer differently, so the framework's job ends at
-                // handing the page over -- and at recording that an overlay went
-                // onto the stack, because that is what was observed.
+                // reached by no inbound edge at all. Delete the interrupt sweep and
+                // this walk raises a timeout instead, which is the difference the
+                // flag buys: a sentence naming what is actually on screen rather
+                // than one naming what is not. The walk does not dismiss it --
+                // closing a popup is a policy projects answer differently -- but it
+                // does record that an overlay went onto the stack.
                 auto built = buildHarness(
                     HarnessSpec{
                         .framePixels = {pixels(2, 5, 0)},
@@ -4891,14 +4817,12 @@ namespace uf::task
 
         TEST_CASE("A destination set settles on one page rather than on any of them")
         {
-            // `to` is a set because an outcome can be uncertain, and the streak
-            // has to be about ONE of them: seeing the base page once and the
-            // result page once is two observations of a screen in motion, not two
-            // agreeing observations of anything.
-            //
-            // Count the streak per walk instead of per page and the wait below
-            // returns on the second frame with whichever page it happened to see
-            // last, so the arrival name goes red.
+            // `to` is a set because an outcome can be uncertain, and the streak has
+            // to be about ONE of them: seeing the base page once and the result page
+            // once is two observations of a screen in motion, not two agreeing
+            // observations of anything. Count the streak per walk instead of per
+            // page and the wait returns on the second frame with whichever page it
+            // saw last, so the arrival name goes red.
             auto const directory = TemporaryDirectory{"uf-model-destination-set"};
             seedTemplates(directory.path());
             auto built = buildHarness(
@@ -4952,12 +4876,11 @@ namespace uf::task
             CHECK(p_frames->captureCount() == 4U);
         }
 
-        // The canonical project file, in exactly the form project.encode writes.
-        //
-        // It carries three things a naive writer would destroy: a key inside
-        // [[element]] this schema version does not know, a [element.extra]
-        // subtable that belongs to the project rather than to this layer, and a
-        // whole [[gadget]] section kind nothing here understands.
+        // The canonical project file, in exactly the form project.encode writes. It
+        // carries three things a naive writer would destroy: a key inside
+        // [[element]] this schema version does not know, a [element.extra] subtable
+        // that belongs to the project rather than to this layer, and a whole
+        // [[gadget]] section kind nothing here understands.
         constexpr std::string_view k_canonicalProject =
             "schema = \"umbraflow-project/l2-v1\"\n"
             "\n"
@@ -5015,12 +4938,9 @@ namespace uf::task
 
         // The same model, written the way a hand edit leaves it: elements out of
         // order, one capability list out of order, and the unknown section in the
-        // middle instead of at the end.
-        //
-        // It is what the case below actually starts from, so a save that never
-        // ran would leave these bytes on disk and the comparison against the
-        // canonical form would fail. Starting from the canonical form instead
-        // would let a no-op save pass.
+        // middle instead of at the end. It is what the case below actually starts
+        // from, so a save that never ran would leave these bytes on disk; starting
+        // from the canonical form instead would let a no-op save pass.
         constexpr std::string_view k_unsortedProject =
             "schema = \"umbraflow-project/l2-v1\"\n"
             "\n"
@@ -5079,15 +4999,13 @@ namespace uf::task
 
         TEST_CASE("A project file round trips byte for byte and keeps what it does not know")
         {
-            // The load-bearing persistence case. A build that dropped an unknown
-            // key would not fail -- it would silently delete a newer build's
-            // data, which is the worst failure a file format has, so the proof
-            // has to be on the bytes rather than on the model.
-            //
-            // Remove the residual list from Element.new (or stop writing it in
-            // project.encode) and the rewritten file loses `future_field = 7`, so
-            // the comparison below goes red. Merge [element.extra] into the
-            // element's own fields and the isolation checks go red instead.
+            // The load-bearing persistence case. A build that dropped an unknown key
+            // would not fail -- it would silently delete a newer build's data, which
+            // is the worst failure a file format has, so the proof has to be on the
+            // bytes rather than on the model. Remove the residual list from
+            // Element.new (or stop writing it in project.encode) and the rewritten
+            // file loses `future_field = 7`; merge [element.extra] into the element's
+            // own fields and the isolation checks go red instead.
             auto const directory = TemporaryDirectory{"uf-model-project-roundtrip"};
             seedTemplates(directory.path());
             auto const modelPath = directory.path() / "page-model.toml";
@@ -5176,13 +5094,10 @@ namespace uf::task
         }
 
         // The graph half of the file format, canonical. Three edges, both page
-        // flags, one key inside [[edge]] this schema version does not know, and
-        // an [edge.extra] subtable that belongs to the project rather than to
-        // this layer.
-        //
-        // The pop edge is the shape worth looking at twice: it carries no `to`
-        // line at all, because where a pop lands is the run's page stack rather
-        // than anything a file can state.
+        // flags, one key inside [[edge]] this schema version does not know, and an
+        // [edge.extra] subtable that belongs to the project rather than to this
+        // layer. The pop edge carries no `to` line at all, because where a pop lands
+        // is the run's page stack rather than anything a file can state.
         constexpr std::string_view k_canonicalGraphProject =
             "schema = \"umbraflow-project/l2-v1\"\n"
             "\n"
@@ -5265,11 +5180,10 @@ namespace uf::task
             "via_key = \"Z\"\n"
             "kind = \"navigate\"\n";
 
-        // The same model as a hand edit leaves it: pages out of order, edges
-        // written before the pages they name, and the three edges in the reverse
-        // of the order a save puts them in. A save that never ran would leave
-        // these bytes on disk and the comparison against the canonical form
-        // would fail.
+        // The same model as a hand edit leaves it: pages out of order, edges written
+        // before the pages they name, and the three edges in the reverse of the
+        // order a save puts them in. A save that never ran would leave these bytes
+        // on disk and the comparison against the canonical form would fail.
         constexpr std::string_view k_unsortedGraphProject =
             "schema = \"umbraflow-project/l2-v1\"\n"
             "\n"
@@ -5354,16 +5268,14 @@ namespace uf::task
 
         TEST_CASE("A project file carries the page graph and round trips it too")
         {
-            // The persistence half of the graph ruling. Edges are DATA, so they
-            // have to survive a load and a save the same way an element does --
-            // including the parts this schema version does not understand.
-            //
-            // Stop writing [[edge]] sections and the rewritten file loses the
-            // whole graph. Stop writing the page flags and `detail` comes back as
-            // an ordinary page, which makes the push edge that leads to it
-            // unbuildable on the next load. Drop the edge residual and
-            // `future_edge_field = 9` is silently deleted. Each of those turns
-            // the byte comparison below red.
+            // The persistence half of the graph ruling. Edges are DATA, so they have
+            // to survive a load and a save the same way an element does, including
+            // the parts this schema version does not understand. Stop writing
+            // [[edge]] sections and the file loses the whole graph; stop writing the
+            // page flags and `detail` comes back an ordinary page, which makes the
+            // push edge to it unbuildable on the next load; drop the edge residual
+            // and `future_edge_field = 9` is silently deleted. Each turns the byte
+            // comparison below red.
             auto const directory = TemporaryDirectory{"uf-model-graph-roundtrip"};
             seedTemplates(directory.path());
             auto const modelPath = directory.path() / "page-model.toml";
@@ -5519,15 +5431,13 @@ namespace uf::task
 
         TEST_CASE("A project file whose screen names a page it never declared is refused")
         {
-            // ONE OF THE TWO DOORS. `oracle.Screen.new` is handed a screen's own
-            // two facts and can see no pages, so the name a screen declares is
-            // checked by whoever CAN see them -- here, while the line the author
-            // wrote is still known. The other door is `scribe.add_screen`, in
-            // tests/task/test-annotation-routines.cpp.
-            //
-            // What gets through an unguarded door is the one state this field
-            // must never reach: a declaration `recognition` has no page to
-            // resolve, so the screen's own claim cannot be measured at all.
+            // One of the two doors. `oracle.Screen.new` is handed a screen's own two
+            // facts and can see no pages, so the name a screen declares is checked
+            // by whoever CAN see them -- here, while the line the author wrote is
+            // still known; the other door is `scribe.add_screen`, in
+            // tests/task/test-annotation-routines.cpp. What gets through an
+            // unguarded door is a declaration `recognition` has no page to resolve,
+            // so the screen's own claim cannot be measured at all.
             auto const directory = TemporaryDirectory{"uf-model-screen-dangling"};
             seedTemplates(directory.path());
             constexpr std::string_view dangling =
@@ -5701,19 +5611,15 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
         }
 
-        // ------------------------------------------------------------------
-        // The falsification matrix over a cell no template can answer.
-        // ------------------------------------------------------------------
+        // ------------- the falsification matrix over a cell no template answers
 
         // Two screen files, written under the content hashes the matrix derives
-        // their paths from, handed back in the order the walk will visit them.
-        //
-        // THE SORT IS THE CONTRACT AND NOT A TIDINESS. `regress.check` opens one
-        // observation per screen in CONTENT-HASH order, and each claimed text
-        // cell spends one read of that observation -- so the Nth readout the fake
-        // engine answers with belongs to the Nth hash here. A case that assumed
-        // declaration order instead would pass or fail according to which grey
-        // happened to hash lower.
+        // their paths from, handed back in the order the walk will visit them. The
+        // sort is the contract: `regress.check` opens one observation per screen in
+        // CONTENT-HASH order and each claimed text cell spends one read of it, so
+        // the Nth readout the fake engine answers with belongs to the Nth hash here.
+        // A case that assumed declaration order instead would pass or fail according
+        // to which grey happened to hash lower.
         [[nodiscard]]
         auto seedScreens(std::filesystem::path const& root)
             -> std::vector<std::string>
@@ -5740,10 +5646,10 @@ namespace uf::task
         }
 
         // One shared title box with no pixels of its own, two screens, and a
-        // `matrix` helper that walks whatever claims a case hands it. The model
-        // is assembled in memory rather than loaded from a file, because what is
-        // under test is the walk and the judging; the file is round-tripped by
-        // its own case below.
+        // `matrix` helper that walks whatever claims a case hands it. The model is
+        // assembled in memory rather than loaded from a file, because what is under
+        // test is the walk and the judging; the file is round-tripped by its own
+        // case below.
         constexpr std::string_view k_matrixPreludeHead = R"lua(
             local title = model.Element.new{
                 name = "title",
@@ -5868,15 +5774,14 @@ namespace uf::task
 
         TEST_CASE("The matrix judges a cell by what its region reads")
         {
-            // THE HALF OF THE MODEL THE MATRIX USED TO BE SILENT ABOUT. An
-            // element with no templates identifies by the text its rectangle
-            // reads, and until this existed `Expectation.new` refused to claim
-            // one at all -- so every page identified that way was outside the one
-            // guard in this repository that has ever caught anything real.
-            //
-            // Confidence is what makes it measurable: a reading is a match when
-            // it says the claimed text AND clears the element's read floor, which
-            // is exactly a score against a threshold.
+            // The half of the model the matrix used to be silent about. An element
+            // with no templates identifies by the text its rectangle reads, and
+            // until this existed `Expectation.new` refused to claim one at all -- so
+            // every page identified that way was outside the one guard in this
+            // repository that has ever caught anything real. Confidence is what
+            // makes it measurable: a reading is a match when it says the claimed
+            // text AND clears the element's read floor, which is exactly a score
+            // against a threshold.
             auto const directory = TemporaryDirectory{"uf-model-matrix-text"};
             seedTemplates(directory.path());
             auto const hashes = seedScreens(directory.path());
@@ -6002,16 +5907,14 @@ namespace uf::task
 
             SUBCASE("a reading under the floor is an absence and never a match")
             {
-                // THE RULE THAT MAKES CONFIDENCE A SCORE AND NOT DECORATION, and
-                // both halves of it on ONE reading. The engine spells the claimed
-                // word and is not sure enough to be believed, so the screen that
-                // claims a match has a hole and the screen that claims an absence
-                // is satisfied -- a reading nobody is sure of is not evidence of
-                // presence and it is not evidence of absence either.
-                //
-                // Drop observe.confident from reading.measure and the first
-                // becomes a match and the second a misfire; both assertions
-                // below go red, in opposite directions.
+                // The rule that makes confidence a score and not decoration, both
+                // halves of it on ONE reading. The engine spells the claimed word
+                // and is not sure enough to be believed, so the screen claiming a
+                // match has a hole and the screen claiming an absence is satisfied
+                // -- a reading nobody is sure of is evidence of neither. Drop
+                // observe.confident from reading.measure and the first becomes a
+                // match and the second a misfire; both assertions below go red, in
+                // opposite directions.
                 auto const result = runMatrix(
                     directory.path(),
                     hashes,
@@ -6064,13 +5967,12 @@ namespace uf::task
 
             SUBCASE("two screens claiming one region reads one text cannot be told apart")
             {
-                // THE RULE THIS WHOLE HALF IS WORTH BUILDING FOR, and the text
-                // analogue of "no two appearances of one element may hit one
-                // screen". EVERY recorded expectation below holds: the region
+                // The text analogue of "no two appearances of one element may hit
+                // one screen". EVERY recorded expectation below holds: the region
                 // reads "battle" on both screens and the file says match on both.
-                // Only a rule that looks at the claims themselves can see that
-                // this element separates nothing, and that a page signature
-                // resting on it resolves on whichever screen is in front.
+                // Only a rule that looks at the claims themselves can see that this
+                // element separates nothing, and that a page signature resting on it
+                // resolves on whichever screen is in front.
                 auto const result = runMatrix(
                     directory.path(),
                     hashes,
@@ -6120,10 +6022,10 @@ namespace uf::task
             SUBCASE("one region reading two different names on two screens is accepted")
             {
                 // The control for the rule above. Same element, same two screens,
-                // same two matches -- and the texts differ, which is the whole
-                // point of one title box serving every page. Without this, the
-                // rule could be rejecting every text element in every project and
-                // the case above would still pass.
+                // same two matches -- and the texts differ, which is the point of
+                // one title box serving every page. Without this the rule could be
+                // rejecting every text element in every project and the case above
+                // would still pass.
                 auto const result = runMatrix(
                     directory.path(),
                     hashes,
@@ -6159,19 +6061,19 @@ namespace uf::task
 
         TEST_CASE("A screen says which page it is and both rules read the word")
         {
-            // THE FALSE POSITIVE THIS FIELD EXISTS FOR. A real project captured
-            // ONE page at two scroll positions -- a scrolling grid, with the
-            // page's anchors deliberately outside the scrolling area -- and both
-            // captures legitimately read the same name in the same title box.
+            // The false positive this field exists for. A real project captured ONE
+            // page at two scroll positions -- a scrolling grid, its anchors
+            // deliberately outside the scrolling area -- and both captures
+            // legitimately read the same name in the same title box, so
             // `reading.confusions` reported the property being verified as two
-            // defects and the check exited 1. The rule was right and had no way
-            // to know the two screens were one page, because a screen carried a
-            // name and a hash and nothing else.
+            // defects. The rule was right and had no way to know the two screens
+            // were one page, because a screen carried a name and a hash and nothing
+            // else.
             //
-            // THE READOUTS COME IN THE ORDER THE WALK SPENDS THEM, and the walk
-            // measures a screen's own declaration BEFORE its cells -- so a screen
-            // that declares a page and claims a text costs two readings of the
-            // same box, and a screen that declares nothing costs one.
+            // The readouts come in the order the walk spends them, and the walk
+            // measures a screen's own declaration BEFORE its cells: a screen that
+            // declares a page and claims a text costs two readings of the same box,
+            // and one that declares nothing costs one.
             auto const directory = TemporaryDirectory{"uf-model-matrix-page"};
             seedTemplates(directory.path());
             auto const hashes = seedScreens(directory.path());
@@ -6260,14 +6162,12 @@ namespace uf::task
 
             SUBCASE("a screen that declares nothing is never assumed to be another")
             {
-                // THE THIRD CASE AND THE RULING ON IT. One screen says which page
-                // it is and the other says nothing, so nothing in the file says
-                // they are one page -- and silence is not a fact. The rule fires,
-                // and the way to clear it is to write down something true, which
-                // the matrix then measures.
-                //
-                // Three readouts and not four: the undeclared screen has no page
-                // to resolve, so it spends only its cell's read.
+                // The third case and the ruling on it. One screen says which page it
+                // is and the other says nothing, so nothing in the file says they
+                // are one page -- and silence is not a fact. The rule fires, and the
+                // way to clear it is to write down something true, which the matrix
+                // then measures. Three readouts and not four: the undeclared screen
+                // has no page to resolve, so it spends only its cell's read.
                 auto const result = runMatrix(
                     directory.path(),
                     hashes,
@@ -6303,15 +6203,13 @@ namespace uf::task
 
             SUBCASE("a declared page that does not resolve is its own finding")
             {
-                // THE FREE STRENGTHENING. A declaration is a claim, and this is
-                // the only cell of the matrix that measures a whole page
-                // signature rather than one element: the page says its title box
-                // reads "roster" and the box reads something else, so the model
-                // holds a page that resolves on nothing.
-                //
-                // Nothing is CLAIMED here, so the one reading spent on the first
-                // screen is the resolution's own -- which is what makes the
-                // finding below attributable to the declaration alone.
+                // A declaration is a claim, and this is the only cell of the matrix
+                // that measures a whole page signature rather than one element: the
+                // page says its title box reads "roster" and the box reads something
+                // else, so the model holds a page that resolves on nothing. Nothing
+                // is CLAIMED here, so the one reading spent on the first screen is
+                // the resolution's own -- which is what makes the finding below
+                // attributable to the declaration alone.
                 auto const result = runMatrix(
                     directory.path(),
                     hashes,
@@ -6366,10 +6264,9 @@ namespace uf::task
 
             SUBCASE("a page that is not a name is refused where it was written")
             {
-                // The shape check `Screen.new` CAN make, beside the one it
-                // cannot: an empty string is not a page name any project
-                // declares, and it would otherwise sit in the file as a
-                // declaration nothing can resolve.
+                // The shape check `Screen.new` CAN make, beside the one it cannot:
+                // an empty string is not a page name any project declares, and it
+                // would otherwise sit in the file as a declaration nothing resolves.
                 auto const result = runMatrix(
                     directory.path(),
                     hashes,
@@ -6399,10 +6296,10 @@ namespace uf::task
 
             SUBCASE("a page the model does not hold is a raise and not a finding")
             {
-                // A construction error filed under evidence about the target
-                // would be a finding that no measurement produced. Both doors
-                // into a model refuse this already, so reaching the walk with one
-                // means the model was assembled past them.
+                // A construction error filed under evidence about the target would
+                // be a finding no measurement produced. Both doors into a model
+                // refuse this already, so reaching the walk with one means the
+                // model was assembled past them.
                 auto const result = runMatrix(
                     directory.path(),
                     hashes,
@@ -6431,18 +6328,15 @@ namespace uf::task
 
         TEST_CASE("A declared page spends the same observation's read budget")
         {
-            // THE ARITHMETIC entry/cli/check.cpp SIZES A RUN FROM. One screen
-            // costs at most two reads per element the project declares: once for
-            // the element's own cell, and once more for the page the screen says
-            // it is, whose identify rows are elements of the same file. Both
-            // halves are spent on ONE observation, because the frames come from a
-            // directory served one file per capture and a re-opened cycle would
-            // be the next screen's pixels.
-            //
-            // A budget that covered only the cells would not report a smaller
-            // matrix -- it would end the run part-way through with a
-            // RecognitionIncomplete, which says truly what stopped and nothing
-            // about why.
+            // The arithmetic entry/cli/check.cpp sizes a run from. One screen costs
+            // at most two reads per element the project declares: once for the
+            // element's own cell, and once more for the page the screen says it is,
+            // whose identify rows are elements of the same file. Both halves are
+            // spent on ONE observation, because the frames come from a directory
+            // served one file per capture and a re-opened cycle would be the next
+            // screen's pixels. A budget covering only the cells would end the run
+            // part-way through with a RecognitionIncomplete, which says truly what
+            // stopped and nothing about why.
             auto const directory = TemporaryDirectory{"uf-model-page-budget"};
             seedTemplates(directory.path());
             auto const hashes = seedScreens(directory.path());
@@ -6546,15 +6440,13 @@ namespace uf::task
         TEST_CASE("A text cell nobody claimed is measured by nothing at all")
         {
             // A reading needs something to be read AGAINST, and only a claim says
-            // what that is on THIS screen -- so an unclaimed text cell is not a
-            // cell the matrix declined to measure, it is a cell with no question
-            // in it. The falsification pressure the template half gets from
-            // unclaimed cells, this half gets from the two-screens rule instead.
-            //
-            // THE SESSION HAS NO OCR ENGINE, which is what turns "it read anyway"
-            // from an invisible cost into a red case: cycle_read raises on a host
-            // with nothing to read through, so a walk that read an unclaimed cell
-            // could not finish.
+            // what that is on THIS screen -- so an unclaimed text cell is not a cell
+            // the matrix declined to measure, it is a cell with no question in it.
+            // The falsification pressure the template half gets from unclaimed
+            // cells, this half gets from the two-screens rule instead. The session
+            // has NO OCR engine, which turns "it read anyway" from an invisible cost
+            // into a red case: cycle_read raises on a host with nothing to read
+            // through, so a walk that read an unclaimed cell could not finish.
             auto const directory = TemporaryDirectory{"uf-model-matrix-unclaimed"};
             seedTemplates(directory.path());
             auto const hashes = seedScreens(directory.path());
@@ -6593,15 +6485,14 @@ namespace uf::task
 
         TEST_CASE("The matrix measures a shape with no rectangle where each claim says")
         {
-            // THE CELL A SHAPE WITH NO AUTHORED REGION ENTERS THE MATRIX BY. A
-            // minimap cell is matched at coordinates the script works out for
-            // each frame, because the map pans -- so the only falsifiable form of
-            // the fact is "on THESE stored pixels, this shape matches HERE and
-            // stays away from THERE". That is two claims about one element on one
-            // screen, which is the shape `Claims.new` used to refuse outright.
-            //
-            // THE SESSION HAS NO OCR ENGINE, so a walk that took a reading here
-            // could not finish: this half is pixels and nothing else.
+            // The cell a shape with no authored region enters the matrix by. A
+            // minimap cell is matched at coordinates the script works out for each
+            // frame, because the map pans -- so the only falsifiable form of the
+            // fact is "on THESE stored pixels, this shape matches HERE and stays
+            // away from THERE". That is two claims about one element on one screen,
+            // which `Claims.new` used to refuse outright. The session has NO OCR
+            // engine, so a walk that took a reading here could not finish: this half
+            // is pixels and nothing else.
             auto const directory = TemporaryDirectory{"uf-model-matrix-placed"};
             seedTemplates(directory.path());
             auto const hashes = seedScreens(directory.path());
@@ -6698,16 +6589,14 @@ namespace uf::task
 
         TEST_CASE("One region reads one text on two screens only at one rectangle")
         {
-            // The text half of the same argument. `reading.confusions` catches
-            // one region claimed to read one text on two screens, because then
-            // that region is not what separates them -- and a page signature
-            // resting on it resolves on whichever screen is in front of the run.
-            //
-            // A shape drawn once and placed many times breaks the premise: nine
-            // confirm buttons are ONE element and nine regions, each reading
-            // "confirm", and reporting that as nine models that cannot tell nine
-            // screens apart is a rule an author switches off. So the rule is
-            // keyed by the region and not by the element.
+            // The text half of the same argument. `reading.confusions` catches one
+            // region claimed to read one text on two screens, because then that
+            // region is not what separates them -- and a page signature resting on
+            // it resolves on whichever screen is in front of the run. A shape drawn
+            // once and placed many times breaks the premise: nine confirm buttons
+            // are ONE element and nine regions, each reading "confirm", and
+            // reporting that as nine models that cannot tell nine screens apart is a
+            // rule an author switches off. So the rule is keyed by the region.
             auto const directory = TemporaryDirectory{"uf-model-placed-confusion"};
             seedTemplates(directory.path());
             auto const hashes = seedScreens(directory.path());
@@ -7176,12 +7065,11 @@ namespace uf::task
 
         TEST_CASE("A claim about what a region reads round trips byte for byte")
         {
-            // The text a cell claims is DATA, and data that does not survive a
-            // save is data a second session invents again. Stop writing the
-            // `text` line and this file does not merely lose a field: it comes
-            // back as a claim about an element with no pixels and no text, which
-            // `Expectation.new` refuses -- so the reload fails outright and the
-            // byte comparison never happens.
+            // The text a cell claims is DATA, and data that does not survive a save
+            // is data a second session invents again. Stop writing the `text` line
+            // and the file comes back as a claim about an element with no pixels and
+            // no text, which `Expectation.new` refuses -- so the reload fails
+            // outright and the byte comparison never happens.
             auto const directory = TemporaryDirectory{"uf-model-claims-roundtrip"};
             seedTemplates(directory.path());
             auto const modelPath = directory.path() / "page-model.toml";
@@ -7386,14 +7274,13 @@ namespace uf::task
 
         TEST_CASE("A rectangle nobody drew round trips on the row and on the claim")
         {
-            // BOTH NEW FIELDS AT ONCE, because they are one fact split across two
-            // sections: the element states no rectangle, the row says where it
-            // sits on this page, and the claims say where it was measured on one
-            // screen. Stop writing either line and this does not merely lose a
-            // field -- the file comes back as a row that places nothing and a
-            // claim about a shape with nowhere to look, which `Page.new` and
-            // `Expectation.new` both refuse, so the reload fails outright and the
-            // byte comparison never happens.
+            // Both new fields at once, because they are one fact split across two
+            // sections: the element states no rectangle, the row says where it sits
+            // on this page, and the claims say where it was measured on one screen.
+            // Stop writing either line and the file comes back as a row that places
+            // nothing and a claim about a shape with nowhere to look, which
+            // `Page.new` and `Expectation.new` both refuse, so the reload fails
+            // outright and the byte comparison never happens.
             auto const directory = TemporaryDirectory{"uf-model-placed-roundtrip"};
             seedTemplates(directory.path());
             auto const modelPath = directory.path() / "page-model.toml";
@@ -7456,10 +7343,10 @@ namespace uf::task
 
         TEST_CASE("The three model modules are in the framework bundle")
         {
-            // The modules ship with the binary rather than with a project, which
-            // is the whole of what makes them trusted. Nothing else in this file
-            // would notice a module that failed to be embedded, because the
-            // config the tests boot names them by hand.
+            // The modules ship with the binary rather than with a project, which is
+            // the whole of what makes them trusted. Nothing else in this file would
+            // notice a module that failed to be embedded, because the config the
+            // tests boot names them by hand.
             auto const entries = frameworkBundleEntries();
             for (auto const& expected : {"model", "observe", "project"})
             {

@@ -48,10 +48,9 @@ namespace uf::engine
 {
     namespace
     {
-        // Prefills a trace event with the frame identity every downstream event
-        // shares, so each emit site sets only the fields unique to its kind. The
-        // frame group is the join key that ties an engine event to the capture it
-        // came from.
+        // Prefills the frame identity every engine event shares -- the join key
+        // tying an event to its capture -- so each emit site sets only its own
+        // fields.
         [[nodiscard]]
         auto identityEvent(
             trace::TraceEventKind kind,
@@ -65,15 +64,9 @@ namespace uf::engine
         }
 
         // Hands `continuation` the frame's pixels as a BGRA8 view, widening a
-        // Gray8 frame into a buffer that lives on this stack frame for the whole
-        // synchronous call. It mirrors vision's withGrayFrame, and for the
-        // same reason: the view must not outlive the storage behind it, and a
-        // continuation is the only shape that says so structurally.
-        //
-        // A Gray8 frame is widened rather than refused because the recognition
-        // path already accepts one, and an OCR read that worked on a colour
-        // capture but not on a grey one would be a difference nothing in the
-        // model explains.
+        // Gray8 frame into a buffer this stack frame owns for the whole
+        // synchronous call. A continuation, as in vision's withGrayFrame,
+        // because the view must not outlive that storage.
         template <typename Continuation>
         [[nodiscard]]
         auto withBgraFrame(
@@ -170,8 +163,7 @@ namespace uf::engine
         , m_sessionIdentity{other.m_sessionIdentity}
         , m_invalidated{other.m_invalidated}
     {
-        // D0/D1: a moved-from handle must be as dead as a consumed one, so the
-        // source fails StaleObservation on any later use.
+        // A moved-from handle must be as dead as a consumed one; see the header.
         other.m_invalidated = true;
     }
 
@@ -188,7 +180,6 @@ namespace uf::engine
         m_sessionIdentity = other.m_sessionIdentity;
         m_invalidated     = other.m_invalidated;
 
-        // D0/D1: invalidate the source so the moved-from handle fails closed.
         other.m_invalidated = true;
         return *this;
     }
@@ -269,11 +260,9 @@ namespace uf::engine
             frame,
             [this, rect](BgraImage const& image) -> Result<ocr::Readout>
             {
-                // SingleLine and never Block. The adapter this project ships
-                // refuses Block because it runs no detector, and the refusal is
-                // the honest answer: the caller asserted the region holds one
-                // line, so asking for detection here would be working around a
-                // contract rather than honouring it.
+                // SingleLine and never Block: the caller asserted the region
+                // holds one line, so running detection here would work around
+                // that contract rather than honour it.
                 return m_ocrEngine->read(
                     image,
                     ocr::ReadSpec{
@@ -298,9 +287,8 @@ namespace uf::engine
         };
         if (!readout->lines.empty())
         {
-            // The first line, and under SingleLine there is at most one: the
-            // ordering is a contract, so "the first" is the same line on every
-            // run over the same pixels.
+            // Under SingleLine there is at most one line, and ocr's ordering is
+            // a contract, so "the first" is the same line on every run.
             auto& line   = readout->lines.front();
             attempt.line = TextReading{
                 .text         = std::move(line.text),
@@ -375,10 +363,8 @@ namespace uf::engine
         attempt.lines.reserve(readout->lines.size());
         for (auto& line : readout->lines)
         {
-            // The line's OWN rectangle, which is the whole point of the verb:
-            // it is where the frame found the text, not where the caller asked
-            // it to look, and it is already in frame pixels because
-            // ocr::TextLine promises that.
+            // The line's OWN rectangle -- where the frame held the text, not
+            // where the caller looked -- in frame pixels per ocr::TextLine.
             attempt.lines.emplace_back(
                 TextReading{
                     .text         = std::move(line.text),
@@ -404,13 +390,9 @@ namespace uf::engine
         return m_recorder.emit(event);
     }
 
-    // The former engine-trace/v1 SessionStarted event has no successor here. It
-    // carried no fields at all, and the run's own `run.started` -- written by
-    // task::TaskHost with the project, task, source hash, framework version and
-    // hash, seed, run id and generation id -- records strictly more about the same
-    // instant, since a run binds exactly one engine session. Every session a
-    // product run builds now comes from TaskHost, so there is no path left that
-    // opens a trace on the first engine.observed.
+    // Opens no trace line of its own: a run binds exactly one engine session, and
+    // task::TaskHost's `run.started` already records that instant with the
+    // project, task, hashes, seed and ids a bare session event never carried.
     auto EngineSession::create(
         std::unique_ptr<IFrameSource> frameSource,
         std::unique_ptr<IActionSink> actionSink,
@@ -439,8 +421,7 @@ namespace uf::engine
 
     auto EngineSession::observe() -> Result<Observation>
     {
-        // An external stop requested before observation aborts the capture before
-        // any frame is taken, so a cancelled run stops promptly at the loop head.
+        // Refusing here stops a cancelled run at the loop head, before a capture.
         if (m_config.cancellation.stop_requested())
         {
             return fail(
@@ -451,13 +432,10 @@ namespace uf::engine
 
         UF_TRY(m_frameSource->validateTargetInstance());
 
-        // Every capture is bounded. The deadline is minted here, from the one
-        // configured capture timeout, so no adapter decides for itself how long
-        // an observation may block, and the session's own cancel source travels
-        // with it so a stop requested while a frame pool is empty ends the wait
-        // instead of being noticed one whole capture later. A timeout that
-        // overflows the monotonic clock is a configuration error rather than a
-        // licence to wait forever, so it fails closed here.
+        // The deadline is minted here so no adapter decides for itself how long
+        // an observation may block, and the cancel source travels with it so an
+        // empty frame pool cannot swallow a stop for a whole capture. An
+        // overflowing timeout is a configuration error, not a licence to wait.
         auto const captureDeadline = MonotonicInstant::now().checkedAdd(
             m_config.captureTimeout
         );
@@ -500,10 +478,8 @@ namespace uf::engine
         auto const& frame    = observation.m_frame;
         auto const  identity = FrameIdentity::fromFrame(frame);
 
-        // The compatibility gate. A search on a frame of the wrong geometry still
-        // returns a number, so skipping it is invisible; it runs here, on the
-        // fingerprint the host read out of the page model, because this is the
-        // only search left in the module.
+        // A search on a frame of the wrong geometry still returns a number, so
+        // skipping this gate would be invisible.
         auto compatible = ensureCompatibleFrame(
             frame,
             m_config.liveFingerprint,
@@ -520,9 +496,8 @@ namespace uf::engine
                   std::unexpected{std::move(compatible).error()}
               };
 
-        // Every exit writes one engine.action_found whose outcome names how the
-        // search ended; the template's identity stands in for the element id a
-        // raw template does not have.
+        // Every exit writes one engine.action_found naming how the search ended;
+        // the template identity stands in for the element id it does not have.
         if (!attempt)
         {
             auto event   = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
@@ -570,9 +545,8 @@ namespace uf::engine
             return std::optional<MatchFound>{std::nullopt};
         }
 
-        // Integer division truncates, so the centre is one reproducible pixel for
-        // both even and odd extents. There is no click offset to add: an offset
-        // is authored on a catalog element, and this template has none.
+        // Truncating division makes the centre one reproducible pixel at either
+        // parity. No click offset to add: an offset is authored on an element.
         auto const centerX = match->matchedRect.x() + match->matchedRect.width() / 2U;
         auto const centerY = match->matchedRect.y() + match->matchedRect.height() / 2U;
 
@@ -652,12 +626,10 @@ namespace uf::engine
             return std::unexpected{std::move(reading).error()};
         }
 
-        // ONE event for the call, carrying the REGION and the whole cost, with
-        // every located line inside it. One event per line would restate the
-        // region and the duration once per line and let a reader adding the
-        // durations up count the same milliseconds several times; one event with
-        // no lines in it would leave a click at a line with nothing in the
-        // stream to check it against.
+        // ONE event for the call, carrying the region, the whole cost and every
+        // located line. Per-line events would let a reader summing durations
+        // count the same milliseconds twice; a lineless event would leave a click
+        // at a line with nothing in the stream to check it against.
         auto lines = std::vector<trace::TraceEvent::Reading::Line>{};
         lines.reserve(reading->lines.size());
         for (auto const& line : reading->lines)
@@ -770,8 +742,8 @@ namespace uf::engine
         PixelPoint point
     ) -> Result<ActReceipt>
     {
-        // The same three fail-closed gates act() opens with, in the same order
-        // and for the same reasons.
+        // Fail closed before the sink is touched: a requested stop outranks every
+        // other outcome, and the handle must be this session's and unspent.
         if (m_config.cancellation.stop_requested())
         {
             return fail(
@@ -783,11 +755,10 @@ namespace uf::engine
 
         auto const identity = observation.m_frameIdentity;
 
-        // What survives of the coordinate authorization once the element and the
-        // page have moved up a layer: the target must still be the geometry the
-        // page model was authored against, and the frame the coordinate was
-        // derived from must still be within its lease. Both are refused here,
-        // with zero sink calls.
+        // What survives of the coordinate authorization now the element and page
+        // are layer two's: the geometry must still be what the page model was
+        // authored against, the frame still within its lease. Both refuse here,
+        // before any sink call.
         if (m_config.liveFingerprint != m_config.projectFingerprint)
         {
             auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
@@ -834,15 +805,14 @@ namespace uf::engine
 
         UF_TRY(m_actionSink->click(clientPoint, observation.m_lease));
 
-        // D0/D1: the click has landed, so the handle dies before any fallible
-        // post-click emit, exactly as in act().
+        // The click has landed, so the handle dies before any fallible emit: a
+        // retry over a surviving alias must find it dead rather than deliver
+        // twice.
         observation.m_invalidated = true;
 
-        // The one place the delivered click's spelling is chosen. See the header
-        // for why the exploration stream gets its own vocabulary; the annotation
-        // line carries the FRAME point the caller named as well as the client
-        // point the desktop received, because on that stream the first of the
-        // two is what the agent believed it was doing.
+        // The annotation line carries the FRAME point the caller named as well as
+        // the client point the desktop received -- on that stream the first is
+        // what the agent believed it was doing. Why the spelling differs: header.
         auto clickEvent = identityEvent(
             m_recorder.frontEnd() == trace::FrontEnd::Annotation
                 ? trace::TraceEventKind::AnnotationClickDelivered
@@ -878,10 +848,7 @@ namespace uf::engine
         KeyName key
     ) -> Result<KeyReceipt>
     {
-        // The same three fail-closed gates act() opens with, in the same order and
-        // for the same reasons: a requested stop outranks every other outcome, a
-        // foreign handle is rejected before anything else touches it, and a
-        // consumed or moved-from handle is dead.
+        // clickPoint's fail-closed gates, in its order and for its reasons.
         if (m_config.cancellation.stop_requested())
         {
             return fail(
@@ -893,11 +860,9 @@ namespace uf::engine
 
         auto const identity = observation.m_frameIdentity;
 
-        // Revalidate the bound target instance immediately before the post, exactly
-        // as act() does. This is the whole of what replaces the coordinate
-        // authorization: the keystroke must reach the target instance the
-        // observation came from, and a window replaced since then is refused here
-        // with zero sink calls.
+        // The whole of what replaces the coordinate authorization: the keystroke
+        // must reach the target instance the observation came from, so a window
+        // replaced since is refused here, before any sink call.
         auto revalidation = m_frameSource->validateTargetInstance();
         if (!revalidation)
         {
@@ -926,10 +891,7 @@ namespace uf::engine
             return std::unexpected{std::move(delivered).error()};
         }
 
-        // The keystroke has landed, so the handle dies before any fallible
-        // post-delivery emit -- the same ordering act() uses, and for the same
-        // reason: a retry over a surviving alias must find the handle already dead
-        // rather than deliver twice.
+        // The keystroke has landed; the handle dies for clickPoint's reason.
         observation.m_invalidated = true;
 
         auto keyEvent = identityEvent(
@@ -959,10 +921,7 @@ namespace uf::engine
         int32 notches
     ) -> Result<ScrollReceipt>
     {
-        // pressKey's gates, in pressKey's order, for pressKey's reasons: a
-        // requested stop outranks every other outcome, a foreign handle is
-        // rejected before anything else touches it, and a consumed or moved-from
-        // handle is dead.
+        // clickPoint's fail-closed gates, in its order and for its reasons.
         if (m_config.cancellation.stop_requested())
         {
             return fail(
@@ -974,10 +933,8 @@ namespace uf::engine
 
         auto const identity = observation.m_frameIdentity;
 
-        // The bound target instance is revalidated immediately before the post,
-        // which is the whole of what stands in for a coordinate authorization
-        // here: the wheel must reach the target instance the observation came
-        // from, and a window replaced since then is refused with zero sink calls.
+        // pressKey's revalidation, for pressKey's reason: the wheel must reach
+        // the target instance the observation came from.
         auto revalidation = m_frameSource->validateTargetInstance();
         if (!revalidation)
         {
@@ -1006,10 +963,7 @@ namespace uf::engine
             return std::unexpected{std::move(delivered).error()};
         }
 
-        // The scroll has landed, so the handle dies before any fallible
-        // post-delivery emit -- the ordering clickPoint and pressKey both use, and
-        // for the same reason: a retry over a surviving alias must find the handle
-        // already dead rather than deliver twice.
+        // The scroll has landed; the handle dies for clickPoint's reason.
         observation.m_invalidated = true;
 
         auto scrollEvent         = identityEvent(
@@ -1040,10 +994,9 @@ namespace uf::engine
         MonotonicInstant::Duration hold
     ) -> Result<LongPressReceipt>
     {
-        // Everything down to the delivery is clickPoint's, in clickPoint's order,
-        // for clickPoint's reasons. It is spelled out rather than shared because
-        // the two verbs differ only after the post, and a helper hiding the gate
-        // sequence is exactly how one of the two comes to be missing a gate.
+        // Everything down to the delivery is clickPoint's, in its order and for
+        // its reasons. Spelled out rather than shared: a helper hiding the gate
+        // sequence is how one of the two verbs comes to be missing a gate.
         if (m_config.cancellation.stop_requested())
         {
             return fail(
@@ -1053,12 +1006,10 @@ namespace uf::engine
         }
         UF_TRY(ensureUsable(observation, "longPress"));
 
-        // Not the ceiling -- that belongs to the host surface a script reaches --
-        // but the one thing about a hold this layer cannot pass on: a negative
-        // duration is not a shorter press, it is a receipt and a trace line
-        // describing an act nobody can have performed. Refused with zero sink
-        // calls and before the observation is spent, so a caller that arrived
-        // here with a sign error keeps its frame.
+        // Not the ceiling -- that is the host surface's -- but the one thing about
+        // a hold this layer cannot pass on: a negative duration is a receipt and a
+        // trace line describing an act nobody performed. Refused before the
+        // observation is spent, so a caller with a sign error keeps its frame.
         if (hold < MonotonicInstant::Duration::zero())
         {
             return fail(
@@ -1123,10 +1074,8 @@ namespace uf::engine
             return std::unexpected{std::move(delivered).error()};
         }
 
-        // The press has landed and been released, so the handle dies before any
-        // fallible post-delivery emit -- the ordering every delivering verb here
-        // uses, and for the same reason: a retry over a surviving alias must find
-        // the handle already dead rather than deliver twice.
+        // The press has landed and been released; the handle dies for
+        // clickPoint's reason.
         observation.m_invalidated = true;
 
         auto pressEvent        = identityEvent(

@@ -19,14 +19,9 @@
 #include <vector>
 
 // The stream protocol every run's evidence must obey, driven through a real
-// TraceRecorder because that is the only way any emitter reaches it -- the
-// validator is not separately reachable, exactly as the sequence counter is not.
-//
-// Every case pairs a refusal with a control that would fail if the rule were
-// vacuous: a well-formed sequence in the same shape must be accepted, and a
-// refused event must leave no line and no sequence number behind. "Rejected at
-// the request boundary, never silently truncated" is only meaningful if the
-// second half is asserted.
+// TraceRecorder because the validator is not separately reachable. Every case
+// pairs a refusal with a control that would fail if the rule were vacuous: the
+// same shape well-formed is accepted, and a refusal leaves no line and no number.
 namespace uf::trace
 {
     namespace
@@ -54,9 +49,8 @@ namespace uf::trace
             }
         };
 
-        // One run's stream. The buffer is declared before the recorder that owns
-        // the sink borrowing it, and the type is non-movable, so the borrow stays
-        // valid for the whole case.
+        // One run's stream. The buffer is declared before the recorder owning the
+        // sink that borrows it, and the type is non-movable, so the borrow holds.
         class Stream final
         {
             std::vector<StampedTraceEvent> m_events{};
@@ -149,10 +143,9 @@ namespace uf::trace
         TEST_CASE("only the task stream may hold a framework event")
         {
             // The rule is stated against FrontEnd::Task, so a front-end added
-            // later inherits the refusal instead of needing to be listed. This
-            // pins that for the third one: an annotation session runs no Luau
-            // framework at all, so a framework.* line on its stream could only be
-            // a host bug attributing task structure to it.
+            // later inherits the refusal instead of being listed. An annotation
+            // session runs no Luau framework, so a framework.* line on its stream
+            // could only be a host bug.
             auto annotation = Stream{FrontEnd::Annotation};
             CHECK(
                 refusedKind(
@@ -162,12 +155,9 @@ namespace uf::trace
                 )
                 == AutomationErrorKind::InternalInvariant
             );
-            // The refusal leaves nothing behind: no line, and no sequence spent.
             CHECK(annotation.events().empty());
 
-            // The control, on the same stream: everything the host itself
-            // authors is still admitted, so the refusal is about the event kind
-            // and not about the stream having stopped accepting anything.
+            // The control: host-authored lines still pass, so the kind was refused.
             REQUIRE(annotation.emit(plain(TraceEventKind::RunStarted)).has_value());
             REQUIRE(annotation.emit(nativeCall()).has_value());
             REQUIRE(annotation.events().size() == 2U);
@@ -182,11 +172,8 @@ namespace uf::trace
 
         TEST_CASE("a delivered scroll must say how far it scrolled")
         {
-            // A scroll is the one delivered input whose line has nothing else on
-            // it: a click carries its client point and a key its name, while a
-            // wheel names no coordinate the verb chose. Without the delta the line
-            // says only that something was delivered, so the stream refuses it
-            // rather than record a scroll of unknown size.
+            // A wheel names no coordinate the verb chose, unlike a click or a key,
+            // so without the delta the line says only that something was delivered.
             auto stream = Stream{};
             CHECK(
                 refusedKind(stream.emit(plain(TraceEventKind::EngineScrollDelivered)))
@@ -194,28 +181,24 @@ namespace uf::trace
             );
             CHECK(stream.events().empty());
 
-            // The control: the same kind with its delta is admitted, so the
-            // refusal is about the missing field and not about the kind.
+            // The control: the same kind with its delta is admitted.
             auto delivered         = plain(TraceEventKind::EngineScrollDelivered);
             delivered.wheelNotches = int32{-3};
             REQUIRE(stream.emit(delivered).has_value());
             REQUIRE(stream.events().size() == 1U);
             CHECK(stream.events().front().sequence() == 1U);
 
-            // Zero is a delta the delivery layer refuses, but it is a stated one:
-            // the stream's rule is about evidence being present, not about the
-            // count being deliverable, and folding the two would put the wheel's
-            // wire bound in a second place.
+            // Zero is a delta the delivery layer refuses, but a stated one:
+            // enforcing it here too would put the wheel's wire bound in two places.
             delivered.wheelNotches = int32{0};
             CHECK(stream.emit(delivered).has_value());
         }
 
         TEST_CASE("a delivered long press must say where and for how long")
         {
-            // It needs BOTH halves, which is what makes it different from every
-            // other delivered input. The point alone describes a click; the hold
-            // alone describes a press at nowhere. Drop either clause from
-            // requireLongPressPayload and the matching refusal below goes red.
+            // It needs BOTH halves: the point alone is a click, the hold alone a
+            // press at nowhere. Drop either clause from requireLongPressPayload
+            // and the matching refusal below goes red.
             auto stream = Stream{};
 
             auto pointOnly        = plain(TraceEventKind::EngineLongPressDelivered);
@@ -233,19 +216,17 @@ namespace uf::trace
             );
             CHECK(stream.events().empty());
 
-            // The control: both together are admitted, so the refusals above are
-            // about the missing fields and not about the kind.
+            // The control: both together are admitted.
             auto delivered        = plain(TraceEventKind::EngineLongPressDelivered);
             delivered.clickClient = Point<ClientSpace>{4.0F, 2.0F};
             delivered.holdMillis  = uint64{400};
             REQUIRE(stream.emit(delivered).has_value());
             REQUIRE(stream.events().size() == 1U);
 
-            // And it is admitted on the EXPLORATION stream too, unlike
-            // engine.action_delivered. That is the decided vocabulary rule for
-            // this kind: it claims no recognition, so there is nothing for an
-            // annotation spelling to correct. Add it to
-            // refuseAnnotationVocabularyClash's kinds and this goes red.
+            // Admitted on the exploration stream too, unlike
+            // engine.action_delivered: it claims no recognition, so no annotation
+            // spelling corrects it. Send this kind through
+            // refuseAnnotationVocabularyClash and this goes red.
             auto annotation = Stream{FrontEnd::Annotation};
             CHECK(annotation.emit(delivered).has_value());
         }
@@ -260,8 +241,7 @@ namespace uf::trace
                 == AutomationErrorKind::InternalInvariant
             );
 
-            // The control: the refusal above is about the SECOND run.started and
-            // not about the stream having stopped accepting anything.
+            // The control: the refusal above is about the SECOND run.started.
             REQUIRE(stream.emit(nativeCall()).has_value());
             REQUIRE(
                 stream.emit(scoped(TraceEventKind::FrameworkStepStarted, "live"))
@@ -289,8 +269,8 @@ namespace uf::trace
                 == AutomationErrorKind::InternalInvariant
             );
 
-            // Five lines were accepted and every refusal wrote none, so the
-            // sequence has no number spent on a line that was never written.
+            // Five accepted, every refusal none: no number spent on a line never
+            // written.
             REQUIRE(stream.events().size() == 5U);
             CHECK(stream.events().back().sequence() == 5U);
         }
@@ -308,8 +288,8 @@ namespace uf::trace
                     .has_value()
             );
 
-            // Closing the outer step around a still-open inner one would make
-            // every line stamped since then a lie about where it happened.
+            // Closing the outer step around an open inner one would make every
+            // line stamped since then a lie about where it happened.
             CHECK(
                 refusedKind(
                     stream.emit(scoped(TraceEventKind::FrameworkStepFinished, "outer"))
@@ -317,8 +297,7 @@ namespace uf::trace
                 == AutomationErrorKind::InternalInvariant
             );
 
-            // The control: the same two finishes in the right order are accepted,
-            // so the refusal is about the ORDER and not about finishing at all.
+            // The control: in the right ORDER the same two finishes are accepted.
             REQUIRE(
                 stream.emit(scoped(TraceEventKind::FrameworkStepFinished, "inner"))
                     .has_value()
@@ -347,8 +326,8 @@ namespace uf::trace
                 REQUIRE(status.has_value());
             }
 
-            // One past the ceiling. It is the project's own nesting, so it is a
-            // refused request rather than a framework bug.
+            // One past the ceiling, and the project's own nesting, so a refused
+            // request rather than a framework bug.
             CHECK(
                 refusedKind(
                     stream.emit(scoped(TraceEventKind::FrameworkStepStarted, "over"))
@@ -356,8 +335,8 @@ namespace uf::trace
                 == AutomationErrorKind::InvalidResource
             );
 
-            // Nothing opened: the innermost step is still the last accepted one,
-            // which the stamp on the next line reports.
+            // Nothing opened: the stamp on the next line still reports the last
+            // accepted step as the innermost.
             REQUIRE(stream.emit(nativeCall()).has_value());
             auto const& steps = stream.events().back().openSteps();
             REQUIRE(steps.size() == k_maxScopeDepth);
@@ -435,10 +414,9 @@ namespace uf::trace
 
             SUBCASE("nested retry scopes each count for themselves")
             {
-                // The control that keeps the two refusals above from being a rule
-                // against retrying at all: an inner policy that gives up and an
-                // outer one that then takes its next attempt is a legal sequence
-                // whose numbers do not read monotonically end to end.
+                // The control against reading the two refusals above as a rule
+                // against retrying: an inner policy that gives up and an outer
+                // one taking its next attempt is legal, and reads non-monotonic.
                 auto stream = Stream{};
                 REQUIRE(stream.emit(retryAttempt(1, 3)).has_value());
                 REQUIRE(stream.emit(retryAttempt(1, 2)).has_value());
@@ -466,8 +444,7 @@ namespace uf::trace
                     .has_value()
             );
 
-            // A different id cannot close this match, and the same id cannot open
-            // a second one inside it.
+            // A different id cannot close this match, nor the same id open a second.
             CHECK(
                 refusedKind(
                     stream.emit(
@@ -485,8 +462,8 @@ namespace uf::trace
                 == AutomationErrorKind::InternalInvariant
             );
 
-            // The control: the matching close is accepted, and so is a match that
-            // ran out of budget rather than being handled.
+            // The control: the matching close is accepted, and so is an exhausted
+            // match.
             REQUIRE(
                 stream.emit(scoped(TraceEventKind::FrameworkInterruptHandled, "popup"))
                     .has_value()
@@ -506,7 +483,6 @@ namespace uf::trace
         {
             auto stream = Stream{};
 
-            // A name one byte past the ceiling.
             auto const tooLong = std::string(k_maxScopeLabelBytes + 1U, 'a');
             CHECK(
                 refusedKind(
@@ -515,9 +491,9 @@ namespace uf::trace
                 == AutomationErrorKind::InvalidResource
             );
 
-            // A control byte, which a reader's terminal would act on rather than
-            // print, and a byte sequence that is not UTF-8 at all, which would
-            // make the trace file itself ill-formed.
+            // A control byte a reader's terminal would act on rather than print,
+            // and a byte sequence that is not UTF-8, which would make the trace
+            // file itself ill-formed.
             CHECK(
                 refusedKind(
                     stream.emit(
@@ -541,9 +517,8 @@ namespace uf::trace
                 == AutomationErrorKind::InvalidResource
             );
 
-            // The control, and the reason the rule is UTF-8 rather than ASCII:
-            // this project's tasks are written in Chinese as often as in English,
-            // so a non-ASCII step name must be ordinary rather than refused.
+            // The control, and why the rule is UTF-8 rather than ASCII: this
+            // project's tasks are written in Chinese as often as in English.
             REQUIRE(
                 stream
                     .emit(
@@ -552,8 +527,7 @@ namespace uf::trace
                     .has_value()
             );
 
-            // Nothing was truncated into the stream: exactly one step opened, and
-            // it is the one that was accepted whole.
+            // Nothing was truncated in: one step opened, the one accepted whole.
             REQUIRE(stream.events().size() == 1U);
             REQUIRE(stream.emit(nativeCall()).has_value());
             auto const& steps = stream.events().back().openSteps();
@@ -564,10 +538,9 @@ namespace uf::trace
         TEST_CASE("the open step path has a total budget of its own")
         {
             // Each name is legal and the depth stays far inside the ceiling, so
-            // the only thing that can refuse the last one is the TOTAL payload
-            // budget -- which is the point of having one: the path is stamped on
-            // every line written while those steps are open, so what matters is
-            // their sum rather than any single name.
+            // only the TOTAL payload budget can refuse the last one: the path is
+            // stamped on every line those steps are open for, so their sum is
+            // what matters rather than any single name.
             auto stream = Stream{};
 
             auto opened = std::size_t{0};
@@ -607,8 +580,8 @@ namespace uf::trace
                 stream.emit(scoped(TraceEventKind::FrameworkStepStarted, "outer"))
                     .has_value()
             );
-            // A step's own start reports the scope it opened INSIDE; the step it
-            // opens is named by the event itself.
+            // A start reports the scope it opened INSIDE; its own step is named
+            // by the event.
             CHECK(stream.events().back().openSteps().empty());
 
             REQUIRE(

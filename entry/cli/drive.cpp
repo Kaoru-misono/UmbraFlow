@@ -33,10 +33,9 @@ namespace uf::cli
 {
     namespace
     {
-        // How often the session looks for newly appended command lines. It bounds
-        // command latency and nothing else -- no guarantee depends on it -- and it is
-        // the session's own plumbing rather than task policy, which is why it is a
-        // constant here and not a command field.
+        // How often the session looks for newly appended command lines: it bounds
+        // command latency and nothing else, and is session plumbing rather than task
+        // policy, which is why it is a constant here and not a command field.
         inline constexpr auto k_queuePollInterval = std::chrono::milliseconds{25};
 
         [[nodiscard]]
@@ -88,14 +87,11 @@ namespace uf::cli
             return canonical;
         }
 
-        // The execution of a command the session refused.
-        //
-        // A refused command is normally an ordinary outcome: the operator reads the
-        // line and tries something else. A CANCELLATION is not, and that is the one
-        // distinction made here. Once the generation is spent every later primitive
-        // refuses on the terminal latch, so continuing would spin the queue until the
-        // idle timeout and fill the results file with the same refusal; the session
-        // ends on it instead, and run.finished reports it.
+        // A refused command is normally ordinary: the operator reads the line and
+        // tries something else. A CANCELLATION is not, and that is the one
+        // distinction made here -- every later primitive refuses on the terminal
+        // latch, so continuing would spin the queue to the idle timeout filling the
+        // results file with the same refusal.
         [[nodiscard]]
         auto refused(std::string_view operation, Error error) -> DriveExecution
         {
@@ -122,12 +118,10 @@ namespace uf::cli
             };
         }
 
-        // Reads whole lines appended to one file since the last call.
-        //
-        // The offset is the session's own, so a line is read exactly once however many
-        // times the queue is polled, and a partial trailing line is held back until its
-        // terminator arrives -- an operator appending a command in two writes must not
-        // have half of it executed.
+        // Reads whole lines appended since the last call. A line is read exactly once
+        // however often the queue is polled, and a partial trailing line is held back
+        // until its terminator arrives -- an operator appending a command in two
+        // writes must not have half of it executed.
         class QueueReader final
         {
             std::filesystem::path m_path;
@@ -439,13 +433,11 @@ namespace uf::cli
                 if (!command)
                 {
                     // A refused line is an ordinary outcome the operator reads and
-                    // corrects, never something that ends the session.
-                    //
-                    // A results file that cannot be written IS a session-ending
-                    // failure, and it ends the session THROUGH `failure` rather than
-                    // by returning: a return here would leave the run bracket open,
-                    // and a trace whose run.finished is missing is worse evidence
-                    // than one that closes on the failure.
+                    // corrects, never something that ends the session. A results file
+                    // that cannot be written is session-ending, but it ends the
+                    // session through `failure` rather than by returning: a return
+                    // would leave the run bracket open, and a trace missing
+                    // run.finished is worse evidence.
                     auto refusal = writer.write(
                         serializeDriveParseFailure(command.error())
                     );

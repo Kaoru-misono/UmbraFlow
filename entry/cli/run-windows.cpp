@@ -14,15 +14,14 @@ namespace uf::cli
 {
     auto runProduct(RunArgs const& args) -> Result<task::TaskRunReport>
     {
-        // Install Ctrl-C cancellation before anything can block. The registration
-        // is held here, ahead of every later local, so it stays installed for the
+        // Held ahead of every later local, so cancellation stays installed for the
         // whole run and is removed last; its token is what lets the generation --
         // and through it the engine and the VM interrupt -- observe a stop.
         UF_TRY_VALUE(cancellation, platform::ConsoleCancellation::install());
 
-        // Load the project before touching the desktop, so a bad project path or
-        // a corrupt manifest fails without declaring DPI awareness, enumerating
-        // windows, or opening any capture resource.
+        // Before touching the desktop, so a bad project path or a corrupt manifest
+        // fails without declaring DPI awareness, enumerating windows, or opening any
+        // capture resource.
         auto host = task::TaskHost{};
         UF_TRY_VALUE(
             generation,
@@ -34,13 +33,12 @@ namespace uf::cli
             )
         );
 
-        // Build the OCR engine before the target, for the same reason the project
-        // loads first: a model directory that will not build an engine must fail
-        // before DPI awareness is declared or any window is enumerated.
+        // Before the target, for the same reason: a model directory that will not
+        // build an engine must fail before any window is enumerated.
         UF_TRY_VALUE(ocrEngine, platform::bindOcrEngine(args.ocrModels));
 
-        // The target binding is platform/target-binding.hpp's, shared with `drive`, so
-        // the two front-ends cannot come to bind a target differently.
+        // Shared with `drive`, so the two front-ends cannot bind a target
+        // differently.
         UF_TRY_VALUE(bound, platform::bindTarget(args.selector));
 
         return host.startTask(
@@ -59,9 +57,8 @@ namespace uf::cli
         );
     }
 
-    // Reads the process-lifetime console cancellation source, which outlives the
-    // ConsoleCancellation registration installed during a run, so a Ctrl-C remains
-    // observable at the exit-code boundary after the run has returned.
+    // The process-lifetime source outlives the ConsoleCancellation registration, so
+    // a Ctrl-C remains observable at the exit-code boundary after the run returns.
     auto runCancellationRequested() noexcept -> bool
     {
         return platform::ConsoleCancellation::stopRequested();

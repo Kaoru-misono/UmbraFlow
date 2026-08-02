@@ -20,8 +20,7 @@ namespace uf::script
 {
     namespace
     {
-        // A modest ceiling that a runaway allocator fills fast while leaving
-        // ample headroom above the VM's openlibs/sandbox baseline.
+        // Fills fast under a runaway allocator, yet clears the openlibs/sandbox baseline.
         constexpr uint64 k_smallQuotaBytes = uint64{16} * 1024 * 1024;
 
         // Run `return (<expr>) and 1 or 0`; 1.0 means the expression was truthy.
@@ -32,10 +31,8 @@ namespace uf::script
             return engine.runNumber(source, "sandbox-expr");
         }
 
-        // Run `source` under an Engine whose only break lever is an external stop
-        // token (the instruction and time budgets are disabled), have a watchdog
-        // thread request the stop shortly after the run starts, and assert the
-        // run returns Cancelled well within the 500ms cancellation budget.
+        // Isolate an external stop token as the only break lever, then assert the
+        // run returns Cancelled well inside the 500ms cancellation budget.
         auto expectExternalStopCancels(
             std::string_view source,
             std::string_view chunkName
@@ -152,8 +149,8 @@ namespace uf::script
             auto engine = Engine::create();
             REQUIRE(engine.has_value());
 
-            // Bytecode/loader egress (never present under Luau's base lib), the
-            // survivors luaL_sandbox leaves behind, and the residual clock/RNG.
+            // Bytecode/loader egress, the survivors luaL_sandbox leaves behind, and
+            // the residual clock/RNG.
             constexpr std::string_view absent[] = {
                 "load == nil",
                 "loadstring == nil",
@@ -187,8 +184,8 @@ namespace uf::script
             auto engine = Engine::create();
             REQUIRE(engine.has_value());
 
-            // Guards the removal test above against becoming vacuous: the safe
-            // library surface must survive the sandbox intact.
+            // Anti-vacuity guard for the removal case above: the safe library surface
+            // must survive the sandbox intact.
             constexpr std::string_view present[] = {
                 "type('x') == 'string'",
                 "math.floor(3.7) == 3",
@@ -279,9 +276,8 @@ namespace uf::script
             }
             SUBCASE("a value inherited through the metatable is readable")
             {
-                // Anti-vacuity control for the metatable subcase below: the
-                // metatable is genuinely installed and consulted, so a rejected
-                // write to it cannot be an artifact of there being no metatable.
+                // Anti-vacuity control for the metatable subcases: a rejected write
+                // cannot be an artifact of there being no metatable at all.
                 auto const result =
                     runWithFrozenHostTable("return host.inherited", "probe-meta-read");
                 REQUIRE(result.has_value());
@@ -289,11 +285,9 @@ namespace uf::script
             }
             SUBCASE("the metatable is not handed out at all")
             {
-                // deepFreeze requires a __metatable field on every metatable it
-                // walks, so getmetatable returns that label instead of the real
-                // table. This is the outer of the two guards on the monkey-patch
-                // hole a values-only walk would leave open, and the reason the
-                // write below fails.
+                // deepFreeze stamps __metatable on every metatable it walks, so
+                // getmetatable hands out the label, not the table. Outer of the two
+                // guards on the monkey-patch hole a values-only walk would leave open.
                 auto const isLabel = runWithFrozenHostTable(
                     "return getmetatable(host) == 'probe.host' and 1 or 0",
                     "probe-meta-label-value"
@@ -303,9 +297,8 @@ namespace uf::script
             }
             SUBCASE("rewriting the host metatable is rejected")
             {
-                // The inner guard: even reached directly, the metatable is
-                // read-only, so a script cannot swap __index on it and shadow
-                // every frozen field underneath.
+                // Inner guard: reached directly the metatable is still read-only, so
+                // __index cannot be swapped to shadow every frozen field underneath.
                 auto const result = runWithFrozenHostTable(
                     "getmetatable(host).__index = { inherited = 99 }\nreturn 0",
                     "probe-meta-write"
@@ -339,29 +332,22 @@ namespace uf::script
 
         TEST_CASE("A cancelled script never executes past the break")
         {
-            // The real uncatchability property, made observable. A hard lua_break
-            // unwinds the whole task coroutine, so the script cannot catch it with
-            // pcall and cannot run any statement after a cancelled runaway section.
-            // The Engine boundary reports Cancelled the instant
-            // InterruptState::broken is set -- but it would report Cancelled even
-            // if a swallowed break had let the script run on, so that assertion
-            // alone cannot witness uncatchability. This probe binds a host-visible
-            // mark() after the runaway loop and asserts the script never reaches
-            // it: markCount stays 0. The check would FAIL if lua_break regressed to
-            // a pcall-catchable error (the luaL_error failure mode the hardening
-            // ledger forbids), because then control would reach mark() and bump the
-            // counter. The break lever here is the instruction budget, the same
-            // lua_break primitive every cancel source (stop token, budget,
-            // deadline) funnels through in onInterrupt.
+            // Uncatchability made observable. Engine reports Cancelled the instant
+            // InterruptState::broken is set -- it would say so even if a swallowed
+            // break had let the script run on -- so that assertion alone cannot
+            // witness it. This probe binds a host-visible mark() after the runaway
+            // and asserts markCount stays 0; it goes red if lua_break regresses to a
+            // pcall-catchable error, because control would then reach mark(). The
+            // lever is the instruction budget, the same lua_break primitive every
+            // cancel source funnels through in onInterrupt.
             using testing::probeCancellation;
 
             constexpr uint64 k_tripBudget = uint64{100'000};
 
             SUBCASE("positive control: mark() is reached on an uncancelled run")
             {
-                // Guards the discriminator against vacuity: with no break lever
-                // armed the script runs to completion and mark() is reached once,
-                // so a zero markCount below can only mean the break cut it off.
+                // Anti-vacuity guard: with no break lever armed mark() is reached, so
+                // a zero markCount below can only mean the break cut the script off.
                 auto const probe =
                     probeCancellation("mark()\nreturn 1", "mark-control", 0);
                 CHECK_FALSE(probe.cancelled);
@@ -398,12 +384,9 @@ namespace uf::script
             auto engine = Engine::create(config);
             REQUIRE(engine.has_value());
 
-            // With neither a stop token nor a deadline armed, only the instruction
-            // budget can break the run; the interrupt trips it even inside a pcall,
-            // and the Engine boundary reports Cancelled. This exercises the
-            // public-API budget path; that the break is uncatchable by the script
-            // is proven separately by "A cancelled script never executes past the
-            // break".
+            // Only the instruction budget is armed, and the interrupt trips it even
+            // inside a pcall. This is the public-API budget path; uncatchability is
+            // proven by "A cancelled script never executes past the break".
             auto const result = engine->runNumber(
                 "pcall(function() while true do end end)",
                 "budget"
@@ -435,12 +418,9 @@ namespace uf::script
 
         TEST_CASE("The wall clock measures the running script, not the VM's age")
         {
-            // The defect this fixes, at the smallest scale that reproduces it: a
-            // VM answers one chunk, sits idle far longer than its ceiling while
-            // whoever is driving it decides what to send next, and answers
-            // another. Anchoring the deadline at construction charged the VM for
-            // that idle gap and killed the second chunk -- which is how an
-            // `explore` session died at thirty minutes, BETWEEN two chunks.
+            // Anchoring the deadline at construction charges the VM for the idle gap
+            // between two chunks and kills the second one, so it is re-anchored per
+            // run. Restore the construction anchor and the 300ms gap below goes red.
             auto config                 = EngineConfig{};
             config.interruptBudgetTicks = 0;                       // isolate the clock
             config.maxRuntime           = std::chrono::milliseconds{120};
@@ -457,11 +437,9 @@ namespace uf::script
             REQUIRE(second.has_value());
             CHECK(*second == doctest::Approx(2.0));
 
-            // The other direction, on the SAME engine and after the same gap:
-            // the clock is re-anchored, not disarmed. A bounded loop long enough
-            // to take seconds unguarded is stopped inside its own ceiling, so a
-            // runaway chunk is still stopped whether it is the first the VM runs
-            // or the third.
+            // The other direction on the SAME engine after the same gap: the clock is
+            // re-anchored, not disarmed, so a runaway third chunk is still stopped
+            // inside its own ceiling.
             auto const start   = std::chrono::steady_clock::now();
             auto const runaway = engine->runNumber(
                 "local n = 0 for i = 1, 100000000 do n = n + 1 end return n",
@@ -476,10 +454,8 @@ namespace uf::script
 
         TEST_CASE("A hard cancel names the trigger that caused it")
         {
-            // What the failure SAYS, which is the second half of the defect: all
-            // three triggers land on one lua_break, and a sentence naming none of
-            // them is what produced three wrong diagnoses of a session dying on
-            // the clock.
+            // All three triggers land on one lua_break, so only the message can say
+            // which of them fired.
             SUBCASE("an expired ceiling names the clock, at both boundaries")
             {
                 auto config                 = EngineConfig{};
@@ -496,18 +472,17 @@ namespace uf::script
                 REQUIRE_FALSE(stopped.has_value());
                 CHECK(stopped.error().message().contains("wall-clock ceiling"));
 
-                // And on every call the spent generation refuses afterwards,
-                // which is the only message an agent still gets once its session
-                // is over -- it said nothing at all about the clock before.
+                // The refusal a spent generation returns afterwards is the only message
+                // an agent still gets once its session is over, so it must name the
+                // clock too.
                 auto const after = engine->runNumber("return 1", "after-the-clock");
                 REQUIRE_FALSE(after.has_value());
                 CHECK(after.error().message().contains("wall-clock ceiling"));
             }
             SUBCASE("a spent instruction budget names the budget instead")
             {
-                // The contrast that makes the case above worth anything: the
-                // sentence is read off what actually fired, so a constant string
-                // mentioning the clock would fail here.
+                // The sentence is read off what actually fired: a constant string
+                // mentioning the clock passes the case above and fails here.
                 auto config                 = EngineConfig{};
                 config.interruptBudgetTicks = 1000;
                 config.maxRuntime           = std::chrono::hours{1};
@@ -534,8 +509,8 @@ namespace uf::script
             REQUIRE_FALSE(tripped.has_value());
             CHECK(automationErrorKind(tripped.error()) == AutomationErrorKind::Cancelled);
 
-            // The VM generation is spent: even a trivial script is refused
-            // without resuming the abandoned VM.
+            // The generation is spent: a trivial script is refused without resuming
+            // the abandoned VM.
             auto const after = engine->runNumber("return 1", "after-terminal");
             REQUIRE_FALSE(after.has_value());
             CHECK(automationErrorKind(after.error()) == AutomationErrorKind::Cancelled);
@@ -559,8 +534,7 @@ namespace uf::script
         {
             auto config             = EngineConfig{};
             config.memoryQuotaBytes = k_smallQuotaBytes;
-            // Isolate the ceiling: neither the instruction budget nor the
-            // deadline may trip, so only the allocator can stop the run.
+            // Isolate the ceiling: only the allocator may stop the run.
             config.interruptBudgetTicks = 0;
             config.maxRuntime           = std::chrono::hours{1};
 
@@ -569,9 +543,9 @@ namespace uf::script
 
             SUBCASE("an uncaught over-quota allocation is a recoverable runtime error")
             {
-                // Unbounded live growth: distinct table objects kept reachable
-                // in `t`. An uncaught out-of-memory error surfaces as an ordinary
-                // runtime failure, NOT the uncatchable Cancelled of a hard break.
+                // Distinct table objects kept reachable in `t`. An uncaught
+                // out-of-memory is an ordinary runtime failure, NOT the uncatchable
+                // Cancelled of a hard break.
                 auto const result = engine->runNumber(
                     "local t = {} while true do t[#t + 1] = {} end",
                     "quota-oom"
@@ -584,9 +558,8 @@ namespace uf::script
             }
             SUBCASE("the over-quota error can be caught by pcall")
             {
-                // Were the breach an uncatchable break, the outer script would
-                // fail with Cancelled. Instead pcall catches the out-of-memory
-                // error, the script runs to completion, and ok is false -> 0.
+                // Were the breach an uncatchable break the outer script would fail
+                // Cancelled; instead pcall catches it and ok is false -> 0.
                 auto const result = engine->runNumber(
                     "local ok = pcall(function()\n"
                     "  local t = {} while true do t[#t + 1] = {} end\n"
@@ -614,9 +587,8 @@ namespace uf::script
             );
             REQUIRE_FALSE(breach.has_value());
 
-            // A brand-new Engine in the same process has its own independent
-            // ledger and runs normally: the breach neither corrupted nor
-            // exhausted the host.
+            // A fresh Engine in the same process has its own ledger: the breach
+            // neither corrupted nor exhausted the host.
             auto fresh = Engine::create();
             REQUIRE(fresh.has_value());
             auto const ok = fresh->runNumber("return 20 + 22", "after-oom");
@@ -633,8 +605,7 @@ namespace uf::script
 
             SUBCASE("uncaught non-tail recursion is a recoverable runtime error")
             {
-                // `1 + f(n)` is not a tail call, so every level keeps a frame and
-                // the Lua stack grows until Luau raises a stack-overflow error.
+                // `1 + f(n)` is not a tail call, so every level keeps a frame.
                 auto const result = engine->runNumber(
                     "local function f(n) return 1 + f(n) end\n"
                     "return f(0)",
@@ -669,8 +640,7 @@ namespace uf::script
             auto engine = Engine::create(config);
             REQUIRE(engine.has_value());
 
-            // Thousands of entries -- well within the ceiling -- must be vended
-            // without interference.
+            // Thousands of entries, well within the ceiling, must be vended untouched.
             auto const result = engine->runNumber(
                 "local t = {} for i = 1, 10000 do t[i] = i * 2 end return t[10000]",
                 "in-quota"
@@ -683,15 +653,14 @@ namespace uf::script
         {
             using testing::measureMemory;
 
-            // A closed VM must return every accounted byte: the residual is the
-            // leak check, and a non-trivial peak guards against a vacuously empty
-            // ledger. Zero limitBytes leaves the ceiling disabled.
+            // The residual is the leak check; a non-trivial peak guards against a
+            // vacuously empty ledger. Zero limitBytes disables the ceiling.
             auto const baseline = measureMemory("return 1 + 1", "ledger-baseline", 0);
             CHECK(baseline.peak > 0);
             CHECK(baseline.residual == 0);
 
-            // A script that keeps thousands of objects live drives the peak far
-            // above baseline, yet closing the VM still frees everything to zero.
+            // Thousands of live objects drive the peak above baseline, yet closing
+            // the VM still frees everything to zero.
             auto const grown = measureMemory(
                 "local t = {} for i = 1, 5000 do t[i] = {} end return 0",
                 "ledger-grow",
@@ -716,15 +685,12 @@ namespace uf::script
             CHECK(idle.usedBytes > 0);
             CHECK(idle.headroomBytes() == idle.ceilingBytes - idle.usedBytes);
 
-            // Four megabytes REACHABLE from the run's own thread at the instant
-            // it returns, so no step of the incremental collector can have taken
-            // them during the run: whatever the ledger reads afterwards is
-            // garbage the collector has not got to, which is exactly the state
-            // the ceiling is wrongly measured against.
-            //
-            // The index is concatenated on because Luau interns EVERY string,
-            // long ones included: sixty-four copies of string.rep('x', 65536)
-            // are one 64 KiB object and this case would measure nothing.
+            // Four megabytes REACHABLE from the run's own thread at the instant it
+            // returns, so no step of the incremental collector can have taken them
+            // during the run and the ledger afterwards reads uncollected garbage. The
+            // index is concatenated on because Luau interns every string, long ones
+            // included: sixty-four bare copies of string.rep('x', 65536) would be one
+            // 64 KiB object and this case would measure nothing.
             auto const ran = engine->runNumber(
                 "local t = {} for i = 1, 64 do"
                 " t[i] = string.rep('x', 65536) .. tostring(i) end"
@@ -742,17 +708,16 @@ namespace uf::script
             CHECK(after.usedBytes < before.usedBytes);
             CHECK(after.usedBytes < idle.usedBytes + (uint64{1} * 1024 * 1024));
 
-            // The ceiling is a property of the VM and the peak is a record, so
-            // neither may move because a collection ran.
+            // The ceiling is a VM property and the peak a record: a collection running
+            // may move neither.
             CHECK(after.ceilingBytes == before.ceilingBytes);
             CHECK(after.peakBytes == before.peakBytes);
         }
 
         TEST_CASE("Repeated create/destroy of quota'd engines stays process-stable")
         {
-            // Coarse process-level check: a leak in the accounting allocator or
-            // the VM teardown would accumulate across generations. Each iteration
-            // builds a full sandboxed VM, does real allocating work, destroys it.
+            // A leak in the accounting allocator or in VM teardown would accumulate
+            // across these 200 build/run/destroy generations.
             for (int i = 0; i < 200; ++i)
             {
                 auto config             = EngineConfig{};

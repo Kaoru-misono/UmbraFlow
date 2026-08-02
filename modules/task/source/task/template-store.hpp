@@ -14,29 +14,25 @@
 
 namespace uf::task
 {
-    // The largest template blob one template_load may decode.
-    //
-    // Templates are crops of one screen, so the biggest one this project has
-    // authored is a few hundred kilobytes of PNG. A megabyte leaves room for a
-    // whole-panel crop and still refuses a script that hands the loader an
-    // arbitrary file.
+    // The largest template blob one template_load may decode. Templates are crops
+    // of one screen, so the biggest one this project has authored is a few hundred
+    // kilobytes of PNG. A megabyte leaves room for a whole-panel crop and still
+    // refuses a script that hands the loader an arbitrary file.
     inline constexpr auto k_maximumTemplateBytes = std::size_t{1} * 1024U * 1024U;
 
-    // How many distinct templates one generation may hold decoded at once.
-    //
-    // The store never forgets a template, because a page model loads its
-    // templates once and matches them for the life of the run; the ceiling is
-    // what keeps "never forgets" from meaning "grows without bound". Sixty-four
-    // elements with several appearances each is already an order of magnitude
-    // above the largest project annotated so far.
+    // How many distinct templates one generation may hold decoded at once. The
+    // store never forgets a template, because a page model loads its templates
+    // once and matches them for the life of the run; this ceiling is what keeps
+    // "never forgets" from meaning "grows without bound". Sixty-four elements with
+    // several appearances each is already an order of magnitude above the largest
+    // project annotated so far.
     inline constexpr auto k_maximumLoadedTemplates = std::size_t{512};
 
     // All a script ever holds of a decoded template: a name, never the pixels.
-    //
-    // The same shape as a cycle ticket and for the same reason. The decoded
-    // planes are megabytes that belong to the generation, so they are released
-    // when the generation is torn down rather than whenever the Lua collector
-    // gets to a handle.
+    // The same shape as a cycle ticket and for the same reason -- the decoded
+    // planes are megabytes belonging to the generation, so they are released when
+    // the generation is torn down rather than whenever the Lua collector gets to a
+    // handle.
     struct TemplateTicket final
     {
         uint64 generation{};
@@ -45,23 +41,22 @@ namespace uf::task
 
     // The generation's decoded templates, addressed by ticket.
     //
-    // A template is decoded ONCE. The alternative -- decode on every match --
-    // was considered and rejected: a wait loop matching one template per poll
-    // would pay a PNG decode per poll, and the decode is deterministic, so
-    // repeating it can only cost time and never change an answer.
+    // A template is decoded ONCE: a wait loop matching one template per poll would
+    // otherwise pay a PNG decode per poll, and the decode is deterministic, so
+    // repeating it can only cost time.
     //
-    // Loading the same bytes twice returns the SAME ticket. That is what makes
-    // the verb deterministic in the sense section 10 requires: a script that
-    // loads its model file's templates in a different order still ends up with
-    // the same handle for the same pixels, and the store holds one copy.
+    // Loading the same bytes twice returns the SAME ticket, which is what makes
+    // the verb deterministic in the sense section 10 requires: a script that loads
+    // its model file's templates in a different order still ends up with the same
+    // handle for the same pixels, and the store holds one copy.
     //
     // NOT thread-safe: every method runs on the VM's owning thread.
     class TemplateStore final
     {
-        // One decoded template beside the hash of the blob it came from. The
-        // hash is the store's rather than the image's because vision decodes and
-        // hashes nothing: identical bytes must return the same ticket, and this
-        // is what answers "have I already decoded these".
+        // One decoded template beside the hash of the blob it came from. The hash
+        // is the store's rather than the image's because vision decodes and hashes
+        // nothing: identical bytes must return the same ticket, and this is what
+        // answers "have I already decoded these".
         struct Entry final
         {
             uint64            ordinal{};
@@ -98,13 +93,11 @@ namespace uf::task
         auto find(TemplateTicket ticket) const noexcept UF_LIFETIME_BOUND
             -> GrayTemplateImage const*;
 
-        // The content hash of the blob `ticket`'s template was decoded from,
-        // with the same null answer and the same borrow contract as find().
-        //
-        // It is a second lookup rather than a field of the decoded image because
-        // vision, which owns the decoding, hashes nothing and must not name a
-        // project's content-address type. Only template_load asks, once per
-        // distinct blob, so the second scan costs nothing that matters.
+        // The content hash of the blob `ticket`'s template was decoded from, with
+        // the same null answer and the same borrow contract as find(). A second
+        // lookup rather than a field of the decoded image because vision, which
+        // owns the decoding, hashes nothing and must not name a project's
+        // content-address type.
         [[nodiscard]]
         auto hashOf(TemplateTicket ticket) const noexcept UF_LIFETIME_BOUND
             -> ContentHash const*;

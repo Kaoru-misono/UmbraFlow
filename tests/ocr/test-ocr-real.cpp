@@ -26,16 +26,10 @@
 #endif
 
 // What the OCR adapter actually reads off a real frame of this project's target.
-//
-// Local-only, for the reason every real-screenshot test here is: the fixture is
-// a game screenshot that is never committed, so CI has nothing to run this
-// against. It exists because the alternative -- a synthetic image of text --
-// would prove that the pipeline runs without proving it reads anything, and the
-// whole engine choice was made on what it reads.
-//
-// The expectations are exact strings rather than "not empty". An OCR that
-// returns plausible nonsense fails nothing under a looser assertion, and
-// plausible nonsense is this component's characteristic failure.
+// Local-only: the fixture is a game screenshot that is never committed, so CI
+// has nothing to run this against. The expectations are exact strings rather
+// than "not empty" because plausible nonsense is this component's characteristic
+// failure and passes any looser assertion.
 namespace uf::ocr
 {
     namespace
@@ -55,13 +49,10 @@ namespace uf::ocr
             return *rect;
         }
 
-        // The decoded fixture, kept as BGRA so a BgraImage can view it.
-        //
-        // The swizzle is load-bearing rather than housekeeping: image::loadPng
-        // yields RGBA, the recognition model was trained on OpenCV's BGR, and a
-        // model fed the wrong channel order returns confident nonsense instead of
-        // failing. Captured frames arrive BGRA already, so this conversion is the
-        // PNG path's alone.
+        // The decoded fixture, kept as BGRA so a BgraImage can view it. The swizzle
+        // is load-bearing: image::loadPng yields RGBA, the recognition model was
+        // trained on OpenCV's BGR, and the wrong channel order returns confident
+        // nonsense instead of failing. Captured frames arrive BGRA; this is PNG-only.
         struct DecodedFixture final
         {
             std::vector<std::byte> pixels{};
@@ -114,10 +105,9 @@ namespace uf::ocr
         );
         REQUIRE(image.has_value());
 
-        // Digits, a digit-and-separator pair, two-character labels and a full
-        // sentence. The sentence is the one that matters most: it is the case a
-        // template matcher can never cover, and 擇 in it is a character the
-        // previous model generation's dictionary could not spell at all.
+        // Digits, a digit-and-separator pair, two-character labels, and a
+        // sentence a template matcher can never cover -- 擇 in it is a character
+        // the previous model generation's dictionary could not spell at all.
         auto const cases = std::vector<ReadCase>{
             {.name = "hp",       .rect = rectOf(262, 14, 138, 36),   .expected = "621/922"},
             {.name = "currency", .rect = rectOf(1240, 22, 80, 40),   .expected = "124"},
@@ -148,9 +138,9 @@ namespace uf::ocr
             CHECK(line.text == testCase.expected);
             CHECK(line.bounds == testCase.rect);
 
-            // A confidence floor, not a score to tune: every one of these read
-            // at 0.95 and above when the engine was chosen, so a drop past this
-            // means the pipeline changed rather than the frame did.
+            // A floor, not a score to tune: all of these read at 0.95 and above
+            // when the engine was chosen, so a drop past it means the pipeline
+            // changed, not the frame.
             CHECK(line.confidenceBp >= 9000U);
         }
     }
@@ -170,11 +160,10 @@ namespace uf::ocr
         auto const image  = BgraImage::create(pixels, 4, 4, 16);
         REQUIRE(image.has_value());
 
-        // The recognition-only engine still exists and still refuses, because a
-        // product that never reads a region must not pay ten megabytes for
-        // weights it will not load. The refusal is by name rather than an empty
-        // answer: an engine that cannot find lines has not established that the
-        // region held none.
+        // The recognition-only engine exists because a product that never reads a
+        // region must not pay ten megabytes for weights it will not load. It
+        // refuses by name rather than empty: finding no lines is not establishing
+        // that the region held none.
         auto const readout = (*engine)->read(*image, ReadSpec{.layout = TextLayout::Block});
         REQUIRE_FALSE(readout.has_value());
         CHECK(
@@ -183,17 +172,12 @@ namespace uf::ocr
         );
     }
 
-    // What the detector actually finds on a real frame of this project's target,
-    // and where it says each line is.
-    //
-    // The region below is a panel holding several labels the case above already
-    // reads one at a time, so the two halves are measured against the same
-    // pixels: the single-line cases prove the recogniser, and this proves that
-    // nobody had to tell it where to look. The expectations are exact strings
-    // and rectangles that must CONTAIN the hand-measured ones, because both
-    // failure modes of a detector are silent -- boxes in the wrong place read
-    // plausible nonsense, and boxes in crop coordinates land a click one origin
-    // away from the text.
+    // What the detector finds on a real frame of this project's target, and where
+    // it says each line is. The region below is a panel of labels the case above
+    // reads one at a time, so both halves are measured against the same pixels:
+    // those prove the recogniser, this proves nobody had to tell it where to look.
+    // Both failure modes of a detector are silent -- boxes in the wrong place read
+    // plausible nonsense, and boxes in crop coordinates land a click one origin away.
     TEST_CASE("A block read locates this target's lines and reads each one")
     {
         auto const modelRoot = std::filesystem::path{UF_OCR_MODEL_ROOT};
@@ -233,16 +217,14 @@ namespace uf::ocr
             ? std::string{}
             : std::string{readout.error().message()};
         REQUIRE_MESSAGE(readout.has_value(), readReason);
-        // Exactly the two labels a human reads in that panel. A count is worth
-        // asserting here where it usually is not: the two ways a detector goes
-        // wrong are splitting one label into pieces and merging two into one,
-        // and both leave the strings below still findable in a longer list.
+        // A count is worth asserting here where it usually is not: a detector goes
+        // wrong by splitting one label into pieces or merging two into one, and
+        // both leave the strings below still findable in a longer list.
         REQUIRE(readout->lines.size() == 2U);
 
-        // The two labels the single-line cases read at (488, 640, 82, 42) and
-        // (503, 682, 55, 30). Naming them by their text and then checking the
-        // rectangle is the order that matters: a detector that found the right
-        // number of boxes in the wrong places would pass a count assertion.
+        // Naming a line by its text and then checking its rectangle is the order
+        // that matters: the right number of boxes in the wrong places passes the
+        // count above.
         auto const findLine = [&readout](std::string_view text) -> TextLine const*
         {
             for (auto const& line : readout->lines)
@@ -264,24 +246,19 @@ namespace uf::ocr
             auto const* p_line = findLine(expected.expected);
             REQUIRE(p_line != nullptr);
 
-            // TARGET pixels, not crop-relative. A box reported inside the crop
-            // would sit near the origin and pass every "is it in range" test a
-            // careless assertion could make, so this checks the interval the
-            // hand-measured label actually occupies.
+            // TARGET pixels, not crop-relative: a box reported inside the crop
+            // would sit near the origin and pass any careless range assertion.
             CHECK(p_line->bounds.x() >= region.x());
             CHECK(p_line->bounds.y() >= region.y());
             CHECK(p_line->bounds.right() <= region.right());
             CHECK(p_line->bounds.bottom() <= region.bottom());
 
-            // NEITHER RECTANGLE CONTAINS THE OTHER, and asserting that either
-            // did would be wrong rather than strict. The detector's box hugs the
-            // glyphs and then grows by the unclip distance; the hand-measured
-            // rect was drawn with whatever padding made a single-line read work.
-            // Measured, the two overlap and are offset by a few pixels each way.
-            // What is true of two rectangles around one label and false of two
-            // around different ones is that each holds the other's centre, so
-            // that is what is checked -- it pins the box to this label without
-            // pinning the unclip ratio through a proxy.
+            // Neither rectangle contains the other: the detector's box hugs the
+            // glyphs then grows by the unclip distance, the hand-measured one
+            // carries whatever padding made a single-line read work, and measured
+            // they overlap offset by a few pixels each way. Each holding the other's
+            // centre is true of two rectangles around one label and false of two
+            // around different ones, and pins no unclip ratio by proxy.
             auto const holdsCentre = [](PixelRect const& outer, PixelRect const& inner)
             {
                 auto const centreX = inner.x() + inner.width() / 2U;
@@ -351,16 +328,11 @@ namespace uf::ocr
     }
 
 
-    // The case the block read exists for, on the fixture that already proves
-    // the recogniser: one long sentence whose first and last glyphs sit at the
-    // edges of whatever box the detector draws.
-    //
-    // It reads MORE than the single-line case above does. That case hands the
-    // recogniser (1080, 720, 460, 40), a rectangle a human drew, and gets
+    // The block read reads MORE than the single-line case above: that one hands
+    // the recogniser (1080, 720, 460, 40), a rectangle a human drew, and gets
     // "請選擇1種想要在安全區域使用的功能"; the detector finds the sentence's own
     // extent and the recogniser then reads the closing "。" the drawn rectangle
-    // cut off. Which is the whole argument for the verb in one line: a
-    // rectangle somebody drew is a guess about where text is, and a frame knows.
+    // cut off.
     TEST_CASE("A block read finds a sentence a drawn rectangle would have clipped")
     {
         auto const modelRoot = std::filesystem::path{UF_OCR_MODEL_ROOT};
@@ -394,9 +366,8 @@ namespace uf::ocr
         );
         REQUIRE(readout.has_value());
 
-        // ONE line and not several. A detector whose boxes are too tight splits
-        // a sentence at its widest gaps, and every piece would still be readable
-        // text -- so the count is what catches it and the strings would not.
+        // ONE line and not several: a detector whose boxes are too tight splits a
+        // sentence at its widest gaps, and every piece still reads as text.
         REQUIRE(readout->lines.size() == 1U);
 
         auto const& line = readout->lines.front();

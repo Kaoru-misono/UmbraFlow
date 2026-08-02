@@ -81,11 +81,10 @@ namespace uf::script::testing
                 }
             }
 
-            // The chunk runs under the main globals, which the boot has already
-            // stripped of the clock and RNG entry points by the time a private
-            // capability installer is called. It is neither environment a task
-            // sees: a fake surface is host code that happens to be written in
-            // Luau, so it is loaded the way the host loads its own boot steps.
+            // The chunk runs under the main globals -- neither environment a task
+            // sees -- which the boot has already stripped of the clock and RNG
+            // entry points by the time a private capability installer is called.
+            // A fake surface is host code that happens to be written in Luau.
             auto options              = lua_CompileOptions{};
             options.optimizationLevel = 1;
             options.debugLevel        = 1;

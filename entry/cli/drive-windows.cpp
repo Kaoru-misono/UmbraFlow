@@ -15,11 +15,10 @@ namespace uf::cli
 {
     auto driveProduct(DriveArgs const& args) -> Result<task::TaskRunReport>
     {
-        // The IPC paths are checked first, before anything observable exists: a
-        // results file that already exists, or a queue that does not, must fail
-        // without declaring DPI awareness, enumerating windows or opening a capture
-        // resource -- and above all without appending to a file that was some earlier
-        // session's evidence.
+        // First, before anything observable exists: a results file that already
+        // exists, or a queue that does not, must fail without declaring DPI
+        // awareness, enumerating windows, opening a capture resource, or appending
+        // to an earlier session's evidence.
         UF_TRY_VALUE(paths, validateDriveIpcPaths(args));
 
         UF_TRY_VALUE(cancellation, platform::ConsoleCancellation::install());
@@ -35,15 +34,14 @@ namespace uf::cli
             )
         );
 
-        // Built before the target, for the same reason `run` orders it that way:
-        // a model directory that will not build an engine must fail before any
-        // window is enumerated.
+        // Before the target, as `run` orders it: a model directory that will not
+        // build an engine must fail before any window is enumerated.
         UF_TRY_VALUE(ocrEngine, platform::bindOcrEngine(args.ocrModels));
 
         UF_TRY_VALUE(bound, platform::bindTarget(args.selector));
 
-        // Every bound below is the same field with the same default `run` passes, and
-        // startOperatorSession is where the generation's front-end claim is latched: a
+        // Every bound below is the same field with the same default `run` passes.
+        // startOperatorSession latches the generation's front-end claim, so a
         // generation a task run already drove refuses here.
         UF_TRY_VALUE(
             session,

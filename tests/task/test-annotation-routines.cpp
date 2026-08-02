@@ -40,13 +40,10 @@
 // claim what it should do, save, reload, and let the falsification matrix
 // measure it.
 //
-// WHY THE ROUND TRIP IS THE TEST. Each step in isolation proves almost nothing:
-// an element built in memory that is never written cannot be reloaded, and a
-// file written by hand proves nothing about the routine that would write it. The
-// property the whole thing exists for is that what an agent authored through
-// this module is a project the RUNTIME reads back and the matrix accepts -- so
-// the case authors, saves, drops the model, loads it from disk, and runs
-// regress.check over the reloaded one.
+// The round trip is the test: each step in isolation proves almost nothing, and
+// the property is that what an agent authored through this module is a project
+// the RUNTIME reads back and the matrix accepts. So a case authors, saves, drops
+// the model, loads it from disk, and runs regress.check over the reloaded one.
 namespace uf::task
 {
     namespace
@@ -103,10 +100,8 @@ namespace uf::task
 
         // The screen the matrix measures against: the fixture's own three grey
         // pixels, stored under the content hash the oracle derives its path from.
-        //
         // A screen is a FILE the project holds, so the project file's `hash` and
-        // the file's own bytes have to agree -- which is the point of naming it
-        // by its hash rather than by a label someone typed.
+        // the file's own bytes have to agree -- hence naming it by its hash.
         [[nodiscard]]
         auto seedScreen(std::filesystem::path const& root) -> std::string
         {
@@ -137,9 +132,9 @@ namespace uf::task
             return hex;
         }
 
-        // A project holding one screen, one element and one claim, so the case
-        // has something to ADD to rather than something to invent whole. The
-        // existing element is the anchor grey; the agent authors a second one.
+        // A project holding one screen, one element and one claim, so a case has
+        // something to ADD to rather than something to invent whole. The existing
+        // element is the anchor grey; the agent authors a second one.
         auto seedProject(
             std::filesystem::path const& root,
             std::string const& screenHash
@@ -190,17 +185,13 @@ namespace uf::task
         }
 
         // A project with two pages and a real edge in each direction, so a case
-        // has something to REBUILD and something to remap. Everything here is in
-        // the writer's canonical order already, so the file is its own
-        // round-trip baseline.
-        //
-        // THE UNKNOWN KEYS ARE THE POINT OF HALF OF IT. `mood` on the page and
+        // has something to REBUILD and something to remap. Everything is already
+        // in the writer's canonical order, so the file is its own round-trip
+        // baseline. The unknown keys are half the point: `mood` on the page and
         // `note` on its first reference are lines this build's parser does not
-        // understand, and the two `extra` blocks are fields the project owns.
-        // Adding a reference rebuilds the page and every one of its rows through
-        // constructors that were never handed those lines, so a rebuild is
-        // exactly where they would be lost -- silently, which is the failure the
-        // format exists to prevent.
+        // understand, and adding a reference rebuilds the page and every one of
+        // its rows through constructors that were never handed them -- which is
+        // exactly where they would be lost, silently.
         auto seedGraphProject(
             std::filesystem::path const& root,
             std::string const&           screenHash
@@ -308,22 +299,16 @@ namespace uf::task
             );
         }
 
-        // A project that says which schema it is and nothing else: no element,
-        // no page, no screen. It is the file a target nobody has annotated yet
-        // starts life as, and it is the one the exploration channel used to have
-        // no way into -- `add_reference` writes a row ON a page, so a project
-        // with no page refused every row, and no verb made the first one.
+        // A project that says which schema it is and nothing else: the file a
+        // target nobody has annotated yet starts life as. The single line is also
+        // the round-trip baseline -- everything the case below compares against
+        // came out of the agent's own save.
         //
-        // The single line is also the round-trip baseline. Everything the case
-        // below compares against came out of the agent's own save.
-        //
-        // The empty template directory is not part of the model and is here for
-        // the host's rule rather than the schema's: `project_write` refuses a
-        // name whose parent directory does not exist, because proving a write
-        // stays inside the project means canonicalising a parent that is really
-        // there. Laying out the skeleton is therefore the CLI's job, and a
-        // project directory with no `assets/templates` in it is one no authored
-        // element could ever store its pixels in.
+        // The empty template directory is the host's rule rather than the
+        // schema's: `project_write` refuses a name whose parent directory does not
+        // exist, because proving a write stays inside the project means
+        // canonicalising a parent that is really there. Laying out the skeleton is
+        // therefore the CLI's job.
         auto seedEmptyProject(std::filesystem::path const& root) -> void
         {
             auto error = std::error_code{};
@@ -400,11 +385,10 @@ namespace uf::task
                 TaskContextConfig{.projectRoot = directory.path()},
             };
 
-            // The whole loop, as an agent would drive it through the explore
-            // channel: measure, author, claim, save. The threshold is the
-            // CALLER's -- 10000 basis points, an exact match -- because the
-            // measurement below says the crop is one solid colour and nothing in
-            // the framework is entitled to decide what that is worth.
+            // The whole loop as an agent drives it through the explore channel:
+            // measure, author, claim, save. The threshold is the CALLER's -- 10000
+            // basis points, an exact match -- because nothing in the framework is
+            // entitled to decide what a one-solid-colour crop is worth.
             constexpr std::string_view author = R"lua(
                 local built = project.load_project(ctx)
 
@@ -629,16 +613,10 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
         }
 
-        // THE HOLE THIS PAIR OF CASES CLOSES: A CAPTURED SCREEN WITH NOWHERE TO
-        // REGISTER ITSELF.
-        //
-        // Every screen in every project used to come out of the file by hand, so
-        // pixels a capture had already written to `assets/screens/<hash>.png`
-        // were invisible to `claim`/`claim_text` until somebody typed a
-        // `[[screen]]` block in by hand -- the same hole `add_page` closed for
-        // pages, one size smaller. `scribe.add_screen` is the verb that turns a
-        // name and the hash a capture already wrote into a screen the rest of
-        // this module can address.
+        // `scribe.add_screen` turns a name and the hash a capture already wrote
+        // into a screen the rest of this module can address. Without it, pixels
+        // already written to `assets/screens/<hash>.png` stay invisible to
+        // `claim`/`claim_text` until somebody types a `[[screen]]` block by hand.
         TEST_CASE("An agent registers a captured screen and claims text about it")
         {
             auto const directory  = TemporaryDirectory{"uf-scribe-add-screen"};
@@ -654,8 +632,8 @@ namespace uf::task
             };
 
             // The hash is spliced in as a Lua local up front, so the rest of the
-            // chunk below reads exactly as an agent would write it against a
-            // hash `explore.crop` or a full-frame capture handed back.
+            // chunk reads exactly as an agent would write it against a hash
+            // `explore.crop` or a full-frame capture handed back.
             auto const author = std::string{"local screenHash = \""} + screenHash
                 + "\"\n" + R"lua(
                 local built = project.load_project(ctx)
@@ -782,16 +760,12 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
         }
 
-        // THE OTHER DOOR INTO A MODEL, and the same refusal as the one
-        // `project.build` makes for a hand-edited file.
-        //
-        // `oracle.Screen.new` is handed a screen's own two facts and can see no
-        // pages at all, so it cannot ask whether the page a screen says it is of
-        // exists. Guarding only the file would leave a hole in the exact shape of
-        // this verb, and what fits through it is the one state the field must
-        // never reach: a declaration `recognition` has no page to resolve, so the
-        // screen's own claim cannot be measured at all -- while every cell of the
-        // matrix still passes.
+        // The other door into a model, and the same refusal `project.build` makes
+        // for a hand-edited file. `oracle.Screen.new` is handed a screen's own two
+        // facts and can see no pages, so it cannot ask whether the page a screen
+        // says it is of exists. Guarding only the file would leave a hole shaped
+        // like this verb: a declaration `recognition` has no page to resolve, so
+        // the screen's claim cannot be measured while every matrix cell passes.
         TEST_CASE("A screen naming a page the project does not declare is refused")
         {
             auto const directory  = TemporaryDirectory{"uf-scribe-screen-page"};
@@ -863,20 +837,14 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
         }
 
-        // THE DECISION THIS CASE PINS DOWN: `add_screen` DOES NOT READ THE PNG.
-        //
-        // `Screen.new` checks the hash's SHAPE and says so in its own comment --
-        // a malformed hash otherwise "surfaces as a capture that ran out of
-        // frames" rather than as a refusal at construction -- and a hand-edited
-        // `[[screen]]` block is trusted the same way by `project.build`. Reading
-        // the file inside `add_screen` too would make a screen's measurability
-        // depend on HOW it was declared, and `regress.check` still has to
+        // `add_screen` does not read the PNG. `Screen.new` checks the hash's SHAPE
+        // only, and a hand-edited `[[screen]]` block is trusted the same way by
+        // `project.build`; reading the file here too would make a screen's
+        // measurability depend on HOW it was declared, and `regress.check` has to
         // re-check on every walk regardless, because a file present today can be
-        // deleted before the next one. So a screen with no backing file is
-        // registered without complaint here, and is refused the first time
-        // anything tries to MEASURE it -- by the walk's own existence proof, in
-        // `regress.luau`, which reads every declared screen's file before it
-        // opens a cycle for it.
+        // deleted before the next one. So a screen with no backing file registers
+        // without complaint and is refused the first time anything tries to MEASURE
+        // it, by the existence proof in `regress.luau`.
         TEST_CASE("A screen with no captured PNG is refused when the walk measures it")
         {
             auto const directory  = TemporaryDirectory{"uf-scribe-screen-no-png"};
@@ -924,19 +892,14 @@ namespace uf::task
             CHECK(message.find("cannot inspect project file") != std::string::npos);
         }
 
-        // THE REMAP IS THE PROPERTY THIS CASE EXISTS FOR.
-        //
-        // A page is frozen, so writing a reference rebuilds it, and every edge
-        // that named the old page is left naming an object the model no longer
-        // has. That is invisible in the saved file -- a stale edge still carries
-        // the right page NAME, so the graph accepts it and the bytes are
-        // correct. It is visible only by identity, and it is fatal to the one
-        // thing the new row was written for: `observe.walk_edge` resolves
-        // `edge.from` itself, so it would keep resolving the superseded page and
-        // keep failing to find the element the agent just annotated.
-        //
-        // So the assertions below are identity assertions, and they are what a
-        // rebuild that forgets the remap fails.
+        // The remap is the property. A page is frozen, so writing a reference
+        // rebuilds it and every edge that named the old page is left naming an
+        // object the model no longer has. That is invisible in the saved file -- a
+        // stale edge still carries the right page NAME -- and visible only by
+        // identity: `observe.walk_edge` resolves `edge.from` itself, so it would
+        // keep resolving the superseded page and keep failing to find the element
+        // the agent just annotated. The assertions below are identity assertions,
+        // and they are what a rebuild that forgets the remap fails.
         TEST_CASE("A written reference carries the graph's edges with it")
         {
             auto const directory  = TemporaryDirectory{"uf-scribe-reference"};
@@ -1129,15 +1092,12 @@ namespace uf::task
             CHECK(*verified == doctest::Approx(1.0));
         }
 
-        // THE PAGE WHOSE ONLY SIGNATURE IS ITS OWN PRINTED NAME.
-        //
-        // Every screen in this target writes its name in the same top-left box,
-        // so the cheapest honest annotation of a new page is one shared element
-        // with no template at all plus a row per page saying what that box reads
-        // there. This is the authoring half of it: no crop, no threshold, no
-        // asset -- and then a SECOND row written onto the same page, because
-        // that is what rebuilds every row already on it and is therefore where
-        // the first row's own text would quietly be lost.
+        // The page whose only signature is its own printed name. Every screen in
+        // this target writes its name in the same top-left box, so the cheapest
+        // honest annotation of a new page is one shared element with no template
+        // plus a row per page saying what that box reads there. The SECOND row
+        // written onto the same page is what rebuilds every row already on it, and
+        // is therefore where the first row's own text would quietly be lost.
         TEST_CASE("An agent annotates a page by the name its title box reads")
         {
             auto const directory  = TemporaryDirectory{"uf-scribe-text-identify"};
@@ -1311,23 +1271,18 @@ namespace uf::task
             CHECK(*verified == doctest::Approx(1.0));
         }
 
-        // THE SHAPE THAT KNOWS WHAT IT LOOKS LIKE AND NOT WHERE IT IS.
+        // The shape that knows what it looks like and not where it is: a minimap
+        // mark matched at coordinates the script works out per frame, a confirm
+        // button that sits somewhere different on every screen showing it. Both
+        // carry a template and neither carries a rectangle, which `author_element`
+        // has no spelling for -- so one authored through that verb came out
+        // carrying the rectangle it happened to be cropped from, which the model
+        // then states as a fact and which is false.
         //
-        // A minimap mark is matched at coordinates the script works out for each
-        // frame, and a confirm button drawn once sits somewhere different on
-        // every screen that shows it. Both carry a template and neither carries a
-        // rectangle -- and until this verb existed the agent channel could not
-        // write one: `author_element` has no spelling for "no rectangle", so such
-        // an element had to be hand-edited into the TOML, and every one that went
-        // through the channel instead came out carrying the rectangle it happened
-        // to be cropped from, which the model then states as a fact and which is
-        // false.
-        //
-        // WHY THE REFUSED PAGE ROW IS IN THE MIDDLE OF THE ROUND TRIP. It is the
-        // only thing that can tell "the element has no rectangle" from "the
-        // element has the one it was cut from": an element carrying that rectangle
-        // takes the row happily, loads, searches and matches, and is wrong only in
-        // what it CLAIMS about the model. So the case asks `Page.new` -- which
+        // The refused page row mid-round-trip is the only thing that can tell "no
+        // rectangle" from "the one it was cut from": an element carrying that
+        // rectangle takes the row happily, loads, searches and matches, and is
+        // wrong only in what it CLAIMS. So the case asks `Page.new` -- which
         // refuses a row that neither inherits a rectangle nor states one -- and
         // only then writes the row that says where.
         TEST_CASE("An agent authors a shape each row places for itself")
@@ -1594,22 +1549,18 @@ namespace uf::task
             CHECK(entries.size() == 1U);
         }
 
-        // THE SECOND FACE OF ONE ELEMENT, AND THE PAGES THAT HAVE TO FOLLOW IT.
+        // The second face of one element, and the pages that have to follow it. An
+        // element is frozen and a page's reference row holds the element ITSELF, so
+        // adding an appearance rebuilds it and every page that named it has to be
+        // re-pointed at the replacement. Skipping that half is invisible in the
+        // file -- a row names its element by NAME -- and shows up only as a page
+        // that goes on searching yesterday's appearance list.
         //
-        // An element is frozen and a page's reference row holds the element
-        // ITSELF, so adding an appearance cannot be an append: the element is
-        // rebuilt and every page that named it has to be re-pointed at the
-        // replacement. Skipping that half is invisible in the file -- a row names
-        // its element by NAME, so the project saves and loads correctly either
-        // way -- and shows up only as a page that goes on searching yesterday's
-        // appearance list.
-        //
-        // WHICH IS WHY THE ELEMENT IS BUILT SO THAT ITS FIRST APPEARANCE CANNOT
-        // MATCH. The badge is searched at the action-grey pixel and its first
-        // template was cut from the black one, so a page still holding the old
-        // element finds NOTHING, and a page holding the new one finds the grey
-        // face by name. `#appearances == 2` would pass with every page stranded;
-        // this cannot.
+        // Hence an element built so its first appearance CANNOT match: the badge is
+        // searched at the action-grey pixel and its first template was cut from the
+        // black one, so a page still holding the old element finds NOTHING and a
+        // page holding the new one finds the grey face by name. `#appearances == 2`
+        // would pass with every page stranded; this cannot.
         TEST_CASE("A second appearance reaches every page that referenced the element")
         {
             auto const directory  = TemporaryDirectory{"uf-scribe-appearance"};
@@ -1816,16 +1767,12 @@ namespace uf::task
             CHECK(*verified == doctest::Approx(1.0));
         }
 
-        // WHAT A REBUILT ELEMENT WOULD LOSE SILENTLY.
-        //
         // Adding an appearance hands the element's own fields back to
         // `Element.new`, so the rebuild is exactly where a project's `extra`, an
-        // element's unknown line and an appearance's unknown line would fall
-        // out -- and the file would still parse, still load, and still match.
-        // That is the silent deletion the format exists to prevent, happening in
-        // memory rather than on disk, so the seed here is written to carry one of
-        // each. Everything is already in the writer's canonical order, so the
-        // file is its own round-trip baseline.
+        // element's unknown line and an appearance's unknown line would fall out --
+        // and the file would still parse, still load, and still match. So the seed
+        // here carries one of each. Everything is already in the writer's canonical
+        // order, so the file is its own round-trip baseline.
         TEST_CASE("A rebuilt element keeps the lines nobody was looking at")
         {
             auto const directory  = TemporaryDirectory{"uf-scribe-appearance-carry"};
@@ -1952,12 +1899,11 @@ namespace uf::task
             CHECK(*verified == doctest::Approx(1.0));
         }
 
-        // Every way of adding an appearance nothing could address afterwards.
-        //
-        // ONE CHUNK RETURNING A BITMASK, one bit per refusal, because a chunk
-        // that returned 0 for the first failure would say a refusal is missing
-        // without saying which. The expected value below is every bit set; a
-        // failure prints the actual number and the missing bit names the rule.
+        // Every way of adding an appearance nothing could address afterwards, as
+        // one chunk returning a bitmask: a chunk that returned 0 for the first
+        // failure would say a refusal is missing without saying which. Expected is
+        // every bit set; a failure prints the number and the missing bit names the
+        // rule.
         //
         //   1  an element name the project does not declare
         //   2  an appearance name the element already has
@@ -1967,10 +1913,10 @@ namespace uf::task
         //   32 an element with no appearances at all
         //   64 a superseded element handed back to add_reference
         //
-        // The last one is the other half of the re-pointing: `add_appearance` is
-        // what makes an element stale, so a row written from one an agent was
-        // still holding is a page searching an appearance list the file no longer
-        // carries -- and it saves and loads correctly, so only identity sees it.
+        // The last is the other half of the re-pointing: `add_appearance` makes an
+        // element stale, so a row written from one an agent was still holding is a
+        // page searching an appearance list the file no longer carries -- and it
+        // saves and loads correctly, so only identity sees it.
         TEST_CASE("Adding an appearance refuses what nothing could address")
         {
             auto const directory  = TemporaryDirectory{"uf-scribe-appearance-refusal"};
@@ -2302,20 +2248,14 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
         }
 
-        // THE FIRST PAGE, WHICH NOTHING COULD WRITE BEFORE.
-        //
-        // Every page in every project used to come out of the file, so a target
-        // whose model was still one schema line could not be annotated through
-        // this channel at all. And a page is born COMPLETE -- `Page.new` refuses
-        // one with no required identify reference -- so the missing verb could
-        // not have been "make an empty page and let `add_reference` fill it in";
-        // there is no legal empty page for that sequence to start from.
-        //
-        // So the case authors a whole model from that one line: three elements,
-        // two pages born with their rows, an edge between them, and then a row
-        // written onto a page this run invented -- which is where a page that
-        // reached the model without reaching the graph, or the graph without the
-        // name index, is the difference between a green run and a red one.
+        // The first page. A page is born COMPLETE -- `Page.new` refuses one with no
+        // required identify reference -- so the verb could not have been "make an
+        // empty page and let `add_reference` fill it in"; there is no legal empty
+        // page for that sequence to start from. So the case authors a whole model
+        // from one schema line: three elements, two pages born with their rows, an
+        // edge between them, and then a row written onto a page this run invented
+        // -- which is where a page that reached the model without reaching the
+        // graph, or the graph without the name index, is a red run.
         TEST_CASE("An agent authors the first page of a project that had none")
         {
             auto const directory = TemporaryDirectory{"uf-scribe-first-page"};
@@ -2666,16 +2606,11 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
         }
 
-        // THE FIRST THING AN AGENT MEETS IN A PROJECT DIRECTORY NOBODY HAS LAID
-        // OUT, and what it is told about it.
-        //
-        // The refusal itself is deliberate: proving a write stayed inside the
-        // project means canonicalizing a parent that is really there, so the
-        // store creates no directory and a missing one has to fail. What was
-        // wrong is that both halves of the sentence were lost on the way out --
-        // the store blamed canonicalization rather than the absent directory, and
-        // the carrier the host raises is a userdata, which the boundary rendered
-        // as "(non-string error value)". An agent driving the explore channel
+        // The first thing an agent meets in a project directory nobody has laid
+        // out, and what it is told about it. The refusal is deliberate: proving a
+        // write stayed inside the project means canonicalizing a parent that is
+        // really there, so the store creates no directory and a missing one has to
+        // fail. The sentence matters because an agent driving the explore channel
         // reads exactly this text on its result line and has no trace file open.
         TEST_CASE("a write into a directory nobody laid out says which one is missing")
         {

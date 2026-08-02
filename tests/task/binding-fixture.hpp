@@ -46,29 +46,20 @@
 #include <utility>
 #include <vector>
 
-// Shared test fixture for every modules/task suite that boots a real task VM:
-// the fixture geometry, the grey frame builders, the template blobs, the fake
-// frame sources, the recording sinks, and the bound-VM runners.
-// test-task-binding.cpp, test-adversarial-surface.cpp,
-// test-determinism-harness.cpp, test-framework-context.cpp,
-// test-framework-surface.cpp and test-veto-blocking.cpp all build sessions from
-// these, so they live here once rather than being copied into each translation
-// unit. Everything is inline or a header-defined type, so including it in more
-// than one TU is safe.
+// Shared fixture for every modules/task suite that boots a real task VM: the
+// frame geometry, the grey frame builders, the template blobs, the fake frame
+// sources, the recording sinks, and the bound-VM runners. Everything is inline
+// or a header-defined type, so including it in more than one TU is safe.
 //
-// IT BUILDS NO RECOGNITION RUNTIME ANY MORE. It used to compile a one-page and a
-// two-page annotation catalog so a session could resolve a page and find an
-// element; both verbs retired with the C++ page model
-// (docs/plans/2026-07-31-script-owned-page-model.md 9), and an engine session now
-// takes a fingerprint and nothing else. What is left of the old fixture is the
-// part that was always about pixels: a three-by-one grey frame, and the
-// one-by-one grey template blobs a script matches against it.
+// It builds no recognition runtime: an engine session takes a fingerprint and
+// nothing else (docs/plans/2026-07-31-script-owned-page-model.md 9), so what is
+// left is a three-by-one grey frame and the one-by-one grey template blobs a
+// script matches against it.
 namespace uf::task
 {
-    // The grey levels the fixture frames are painted with. They are distinct, so
-    // a template cut from one scores zero where it was painted and nonzero
-    // everywhere else -- which is what lets a case say "this template is on this
-    // frame" and "this one is not" without a page model.
+    // Distinct greys, so a template cut from one scores zero where it was
+    // painted and nonzero everywhere else -- which is how a case says "this
+    // template is on this frame" and "this one is not" without a page model.
     inline constexpr auto k_targetAnchorGray = uint8{2};
     inline constexpr auto k_targetActionGray = uint8{5};
 
@@ -86,9 +77,8 @@ namespace uf::task
         std::vector<std::byte> pngBytes{};
     };
 
-    // A one-by-one grey RGBA template addressed by its content hash, encoded
-    // exactly as an authored template is, so a script that loads it searches for
-    // the same pixels the real loop would.
+    // A one-by-one grey RGBA template encoded exactly as an authored template
+    // is, so a script that loads it searches the same pixels the real loop would.
     [[nodiscard]]
     inline auto encodedTemplate(uint8 gray) -> FixtureTemplate
     {
@@ -108,10 +98,10 @@ namespace uf::task
         };
     }
 
-    // The geometry every fixture frame is captured at, and therefore the
-    // fingerprint every fixture session is configured with on both sides. Three
-    // by one is the smallest frame a one-by-one template can be searched in at
-    // more than one position.
+    // The geometry every fixture frame is captured at, and the fingerprint every
+    // fixture session is configured with on both sides. Three by one is the
+    // smallest frame a one-by-one template can be searched in at more than one
+    // position.
     [[nodiscard]]
     inline auto fixtureFingerprint() -> ProjectFingerprint
     {
@@ -189,14 +179,11 @@ namespace uf::task
         return std::vector<std::byte>{asByte(0), asByte(0), asByte(0)};
     }
 
-    // Replays a fixed sequence of frames, repeating the last once exhausted.
-    //
-    // It returns without blocking, which is how it honours the capture budget:
-    // a source that never waits cannot outlive a deadline and has no wait for a
-    // stop to interrupt. Every fake below that ignores its budget does so for
-    // this reason; the one that does not is DeadlineHonouringFrameSource in
-    // tests/engine/test-session.cpp, which is where the budget's own contract is
-    // exercised.
+    // Replays a fixed sequence of frames, repeating the last once exhausted. It
+    // returns without blocking, which is how it honours the capture budget: a
+    // source that never waits cannot outlive a deadline. Every fake here ignores
+    // its budget for that reason; the budget's own contract is exercised by
+    // DeadlineHonouringFrameSource in tests/engine/test-session.cpp.
     class FakeFrameSource final : public engine::IFrameSource
     {
         std::vector<Frame> m_frames;
@@ -228,9 +215,8 @@ namespace uf::task
             return ok();
         }
 
-        // How many captures this source served. A test that must prove the host
-        // refused an operation BEFORE observing reads it: a refusal that still
-        // spent a frame is a different, weaker guarantee.
+        // How many captures this source served. A refusal that still spent a
+        // frame is a different, weaker guarantee than the one under test.
         [[nodiscard]] auto captureCount() const noexcept -> std::size_t
         {
             return m_index;
@@ -241,10 +227,9 @@ namespace uf::task
     class CountingActionSink final : public engine::IActionSink
     {
     public:
-        // One long press this sink was asked for. Both halves are recorded
-        // because a case proving the duration reached the port has to read the
-        // duration, and a point alone would pass just as well against a sink that
-        // dropped it.
+        // One long press this sink was asked for. Both halves are recorded: a
+        // point alone would pass just as well against a sink that dropped the
+        // duration.
         struct LongPressDelivery final
         {
             Point<ClientSpace>         point;
@@ -310,9 +295,8 @@ namespace uf::task
             return m_clickCount;
         }
 
-        // The keys this sink was asked to deliver, in order. A test that must prove
-        // a keystroke was refused reads it: a refusal that still posted input would
-        // be a different, weaker guarantee.
+        // The keys this sink was asked to deliver, in order. A refusal that still
+        // posted input would be a different, weaker guarantee.
         [[nodiscard]] auto keys() const noexcept UF_LIFETIME_BOUND
             -> std::vector<KeyName> const&
         {
@@ -320,17 +304,14 @@ namespace uf::task
         }
 
         // The detent counts this sink was asked to deliver, in order. A refusal
-        // that still posted a wheel message would be a weaker guarantee than the
-        // one under test, which is why the cases read the deliveries rather than
-        // only the returned error.
+        // that still posted a wheel message would be a weaker guarantee, which is
+        // why cases read the deliveries rather than only the returned error.
         [[nodiscard]] auto scrolls() const noexcept UF_LIFETIME_BOUND
             -> std::vector<int32> const&
         {
             return m_scrolls;
         }
 
-        // The long presses this sink was asked to deliver, in order, with the
-        // hold each one named.
         [[nodiscard]] auto longPresses() const noexcept UF_LIFETIME_BOUND
             -> std::vector<LongPressDelivery> const&
         {
@@ -338,9 +319,8 @@ namespace uf::task
         }
     };
 
-    // Records every delivered click point in order, so a determinism run can read
-    // back the exact coordinate sequence a script produced and fold it into the
-    // canonical action trace.
+    // Records every delivered click point in order, so a determinism run can
+    // fold the exact coordinate sequence into its canonical action trace.
     class RecordingActionSink final : public engine::IActionSink
     {
         std::vector<Point<ClientSpace>> m_points{};
@@ -374,9 +354,9 @@ namespace uf::task
             return ok();
         }
 
-        // Recorded into the same point list a click is: a determinism run's
-        // canonical action trace is the sequence of coordinates a script aimed
-        // at, and a long press aims at one exactly as a click does.
+        // Recorded into the same point list a click is: the canonical action
+        // trace is the coordinates a script aimed at, and a long press aims at
+        // one exactly as a click does.
         [[nodiscard]]
         auto longPress(
             Point<ClientSpace> point,
@@ -406,9 +386,8 @@ namespace uf::task
     };
 
     // Records every stamped event a run emits, so a test can assert both the
-    // sequence of events and the identity stamped onto each one. The sink owns
-    // its buffer, and the recorder owns the sink through a unique_ptr, so an
-    // observing pointer to the sink stays valid for the recorder's life.
+    // sequence and the identity stamped onto each one. The recorder owns the
+    // sink, so an observing pointer to it stays valid for the recorder's life.
     class RecordingTraceSink final : public trace::ITraceSink
     {
         std::vector<trace::StampedTraceEvent> m_events{};
@@ -429,9 +408,8 @@ namespace uf::task
         }
     };
 
-    // The verb of every native call a run recorded, in order. Two suites read
-    // it -- the binding suite for the cycle verbs, the time-primitive suite for
-    // settle -- so it lives here rather than in either.
+    // The verb of every native call a run recorded, in order. Two suites read it
+    // -- the binding suite and the time-primitive suite -- so it lives here.
     [[nodiscard]]
     inline auto nativeCallVerbs(std::vector<trace::StampedTraceEvent> const& events)
         -> std::vector<std::string>
@@ -447,9 +425,8 @@ namespace uf::task
         return verbs;
     }
 
-    // The first native call recorded for `verb`, or null when the run made
-    // none. The returned pointer observes storage owned by the recording sink
-    // behind `events`, which the annotation on that parameter states.
+    // The first native call recorded for `verb`, or null when the run made none.
+    // The returned pointer observes storage owned by the sink behind `events`.
     [[nodiscard]]
     inline auto findNativeCall(
         std::vector<trace::StampedTraceEvent> const& events UF_LIFETIME_BOUND,
@@ -469,18 +446,14 @@ namespace uf::task
 
     // The run identity these fixtures stamp. The binding layer never authors it
     // -- TaskHost does -- so a fixed pair is enough to prove every event of a run
-    // lands under one identity.
+    // lands under one.
     inline constexpr auto k_fixtureRunId        = TaskRunId{5};
     inline constexpr auto k_fixtureGenerationId = GenerationId{1};
 
     // The EngineConfig a real task VM boots with, assembled in one place so no
-    // test can accidentally assert against a surface shape the host does not
-    // ship: the real framework bundle under the framework environment, the
-    // private capability surface handed to it as a chunk argument, the uf data
-    // table as a project global, and the framework's own ctx published beside it.
-    //
-    // `context` must outlive the Engine built from the returned config, because
-    // the private surface holds its address (see task/script-bindings.hpp).
+    // test can assert against a surface shape the host does not ship. `context`
+    // must outlive the Engine built from the returned config, because the private
+    // surface holds its address (see task/script-bindings.hpp).
     [[nodiscard]]
     inline auto taskVmConfig(TaskContext& context) -> script::EngineConfig
     {
@@ -498,11 +471,9 @@ namespace uf::task
     }
 
     // The VM the agent front-end boots: the wider private surface, and the two
-    // modules only an exploration environment publishes.
-    //
-    // It is the same assembly ExplorationSession::create performs, spelled here
-    // so a test asserts against the surface the host actually ships rather than
-    // one a fixture invented.
+    // modules only an exploration environment publishes. Same assembly
+    // ExplorationSession::create performs, spelled here so a test asserts against
+    // the surface the host ships rather than one a fixture invented.
     [[nodiscard]]
     inline auto explorationVmConfig(TaskContext& context) -> script::EngineConfig
     {
@@ -533,16 +504,11 @@ namespace uf::task
         };
     }
 
-    // Fails the FIRST capture with Cancelled and serves a good frame on every
-    // one after it, with no stop token armed anywhere.
-    //
-    // That combination is what isolates the terminal latch. In a real cancel
-    // the VM interrupt also breaks the thread, so a test cannot tell which
-    // layer refused the next call. Here the interrupt never fires and the
-    // engine would happily capture again, so the only thing that can refuse
-    // the second primitive is the fatal latch the first one set -- which is
-    // exactly the guarantee that has to survive a script that swallowed the
-    // Tier C sentinel and kept running.
+    // Fails the FIRST capture with Cancelled and serves a good frame on every one
+    // after it, with no stop token armed anywhere. That combination isolates the
+    // terminal latch: the interrupt never fires and the engine would happily
+    // capture again, so the only thing that can refuse the second primitive is
+    // the fatal latch the first one set.
     class CancelOnceFrameSource final : public engine::IFrameSource
     {
         Frame       m_frame;
@@ -579,11 +545,9 @@ namespace uf::task
     };
 
     // The run's recorder, a constructed EngineSession over it, and a non-owning
-    // observer of the click sink.
-    //
-    // The recorder is declared first and held through a unique_ptr: the
-    // session borrows it (see engine/session.hpp), so it must outlive the
-    // session and keep a stable address when this struct is moved.
+    // observer of the click sink. The recorder is declared first and held through
+    // a unique_ptr: the session borrows it (see engine/session.hpp), so it must
+    // outlive the session and keep a stable address when this struct is moved.
     struct Built final
     {
         std::unique_ptr<trace::TraceRecorder> recorder;
@@ -591,10 +555,10 @@ namespace uf::task
         CountingActionSink*                   clicks;
     };
 
-    // Builds a session over the fixture geometry from `frameSource` with
-    // `cancellation` armed on the engine config, recording into `traceSink`. One
-    // recorder serves both the engine session and the TaskContext built over it,
-    // which is what puts their events into a single ordered stream.
+    // Builds a session over the fixture geometry from `frameSource`, recording
+    // into `traceSink`. One recorder serves both the engine session and the
+    // TaskContext built over it, which is what puts their events into a single
+    // ordered stream.
     [[nodiscard]]
     inline auto buildBindingWith(
         std::unique_ptr<engine::IFrameSource> frameSource,
@@ -645,22 +609,18 @@ namespace uf::task
         return frames;
     }
 
-    // The PNG bytes of the one-by-one grey template a script loads through
-    // `template_load` to search a fixture frame for. It goes through the same
-    // encoder the fixture frames are painted from, so a match is exact.
+    // The PNG bytes a script loads through `template_load`. They go through the
+    // same encoder the fixture frames are painted from, so a match is exact.
     [[nodiscard]]
     inline auto templateBlob(uint8 gray) -> std::vector<std::byte>
     {
         return encodedTemplate(gray).pngBytes;
     }
 
-    // Those PNG bytes as a Luau string literal, so a script can load the
-    // template without a project directory on disk.
-    //
-    // Every byte is written as a three-digit decimal escape, PADDED. The padding
-    // is not cosmetic: an unpadded escape followed by a digit byte would be read
-    // as one larger number, so some blobs would silently decode to different
-    // pixels and others would not.
+    // Those PNG bytes as a Luau string literal, so a script can load the template
+    // without a project directory on disk. Every byte is PADDED to three decimal
+    // digits: an unpadded escape followed by a digit byte would be read as one
+    // larger number, so some blobs would silently decode to different pixels.
     [[nodiscard]]
     inline auto templateLiteral(uint8 gray) -> std::string
     {
@@ -675,9 +635,8 @@ namespace uf::task
     }
 
     // `body` with the fixture template's blob bound as the Luau local TEMPLATE,
-    // so a script can load it with `ctx:template_load(TEMPLATE)` and search a
-    // fixture frame for it. Spelled once here because almost every case that
-    // matches or clicks has to load one first.
+    // so a script can load it with `ctx:template_load(TEMPLATE)`. Spelled once
+    // here because almost every case that matches or clicks loads one first.
     [[nodiscard]]
     inline auto withTemplate(
         std::string_view body,
@@ -689,13 +648,11 @@ namespace uf::task
     }
 
     // A template larger than any region a three-by-one fixture frame can offer,
-    // as a Luau string literal.
-    //
-    // It is what a COMPLETED search with no candidate position needs: a template
-    // that fits always reports its best position and a distance, so an empty
-    // answer from cycle_match means the region could hold the template nowhere
-    // at all. Judging a distance is layer two's, which is why "not found" is not
-    // something this layer can say.
+    // as a Luau string literal. It is what a COMPLETED search with no candidate
+    // position needs: a template that fits always reports its best position and a
+    // distance, so an empty answer from cycle_match means the region could hold
+    // the template nowhere at all. Judging a distance is layer two's job, which
+    // is why "not found" is not something this layer can say.
     [[nodiscard]]
     inline auto oversizedTemplateLiteral() -> std::string
     {
@@ -719,10 +676,10 @@ namespace uf::task
         return out;
     }
 
-    // Runs `source` on a real task VM bound to `built`'s session and returns
-    // the script's numeric result. The VM is created and destroyed inside
-    // this call, so anything the host still holds afterwards is held by the
-    // host, not by a live Lua handle.
+    // Runs `source` on a real task VM bound to `built`'s session and returns the
+    // script's numeric result. The VM is created and destroyed inside this call,
+    // so anything the host still holds afterwards is not held by a live Lua
+    // handle.
     [[nodiscard]]
     inline auto runBound(TaskContext& context, Built& /*built*/, std::string_view source)
         -> double
@@ -734,9 +691,9 @@ namespace uf::task
         return *result;
     }
 
-    // The same run, without requiring it to succeed. A test that asks how
-    // the HOST classified a value the script let escape needs the failure
-    // itself, which runBound deliberately refuses to hand back.
+    // The same run, without requiring it to succeed. A test that asks how the
+    // HOST classified a value the script let escape needs the failure itself,
+    // which runBound deliberately refuses to hand back.
     [[nodiscard]]
     inline auto runBoundResult(
         TaskContext& context,
@@ -757,12 +714,10 @@ namespace uf::task
         uint64         markCount{0};
     };
 
-    // Runs `source` on a task VM bound to `surface` and `context` with
-    // `cancellation` armed on the VM interrupt (the session already shares the
-    // same token), plus a host mark() the script can call. Returns the run
-    // result and how many times mark() reached. markCount is declared before the
-    // Engine, so it outlives the VM and the closure's pointer into it stays
-    // valid for every call.
+    // Runs `source` with `cancellation` armed on the VM interrupt (the session
+    // already shares the same token), plus a host mark() the script can call.
+    // markCount is declared before the Engine, so it outlives the VM and the
+    // closure's pointer into it stays valid for every call.
     [[nodiscard]]
     inline auto runWithMark(
         TaskContext& context,

@@ -33,178 +33,108 @@
 
 namespace uf::task
 {
-    // The default seed for a task's deterministic RNG (ctx:random). A real run
-    // overrides it with a host-chosen seed recorded in the run.started trace
-    // event, so a run can be replayed by re-supplying the same seed; this constant
-    // only gives tests and unconfigured contexts a stable, non-zero starting point.
-    // Because the sandbox removed math.random, ctx:random seeded from this value
-    // is a script's only randomness, so nothing outside the host can perturb the
-    // sequence.
+    // Fallback seed for tests and unconfigured contexts; a real run gets a
+    // per-run seed recorded in run.started so it replays. The sandbox removed
+    // math.random, so ctx:random is a script's only randomness.
     inline constexpr auto k_defaultRandomSeed = uint64{0x9E3779B97F4A7C15};
 
-    // The longest a single ctx:settle may declare. A settle is a declarative
-    // pause a task asks for, so a request beyond this ceiling is a project
-    // error rather than a framework bug (design section 9 reserves the invariant
-    // kind for failures a project cannot cause), and the binding refuses it as a
-    // Tier B InvalidResource the author can catch and correct.
-    //
-    // CALIBRATION: thirty seconds is a conservative placeholder awaiting the
-    // first real daily. It is deliberately far above any settle a UI transition
-    // needs and far below the max-runtime budget, so it catches an author who
-    // meant minutes without capping anything a real animation waits for. Waiting
-    // longer than this is what ctx:wait plus a deadline is for -- that loop
-    // re-observes, where a settle only sleeps.
+    // The longest a single ctx:settle may declare. Beyond it is a project error
+    // the author can catch -- a Tier B InvalidResource, not an invariant failure.
+    // CALIBRATION: thirty seconds is a placeholder, far above any settle a UI
+    // transition needs and far below the max-runtime budget. Longer waits belong
+    // to ctx:wait, which re-observes where a settle only sleeps.
     inline constexpr auto k_maxSettleDuration = MonotonicInstant::Duration{
         std::chrono::seconds{30}
     };
 
-    // The longest a single long press may hold the button down.
-    //
-    // It is a SEPARATE ceiling from the settle one above and a much lower number,
-    // because the two bound different risks. A settle only sleeps; while a long
-    // press runs, the target has a pointer button physically down in it and this
-    // host is the only thing that will ever lift it. A hold nobody bounded is a
-    // target left mid-press for as long as the script asked, with every other
-    // input in the run queued behind it. A request beyond this is a project error
-    // and Tier B for k_maxSettleDuration's reason: an author asking to hold a
-    // card for a minute should be told so and be able to correct it.
-    //
-    // CALIBRATION: five seconds is a conservative placeholder awaiting the first
-    // real daily. Targets that publish a long-press gesture measure it in
-    // hundreds of milliseconds -- the one this was built for prints
-    // "long-press a card to see its details" and magnifies well under a second --
-    // so this is an order of magnitude above any real gesture and far below a
-    // hold anyone would notice as a hang.
+    // The longest a single long press may hold the button down. A separate and
+    // much lower ceiling than the settle one: a long press leaves a pointer
+    // button physically down in the target with only this host to lift it, and
+    // every other input in the run queued behind it. Beyond it is Tier B, for
+    // k_maxSettleDuration's reason.
+    // CALIBRATION: five seconds is a placeholder. Targets that publish a
+    // long-press gesture measure it in hundreds of milliseconds.
     inline constexpr auto k_maxLongPressHold = MonotonicInstant::Duration{
         std::chrono::seconds{5}
     };
 
-    // The floor a ctx:wait poll interval is clamped up to. Without it a
-    // framework loop could ask for a zero interval and spin the observation
-    // cycle as fast as captures complete, burning the instruction budget and the
-    // target's CPU for no extra evidence.
-    //
-    // CALIBRATION: ten milliseconds is a conservative placeholder awaiting the
-    // first real daily. It is low enough to be invisible next to a capture and
-    // high enough that a degenerate loop cannot become a busy wait.
+    // The floor a ctx:wait poll interval is clamped up to; without it a zero
+    // interval spins the observation cycle as fast as captures complete.
+    // CALIBRATION: ten milliseconds is a placeholder -- invisible next to a
+    // capture, high enough that a degenerate loop cannot become a busy wait.
     inline constexpr auto k_minWaitPollInterval = MonotonicInstant::Duration{
         std::chrono::milliseconds{10}
     };
 
-    // How many text reads one observation cycle may charge before the host
-    // refuses the next one.
+    // How many text reads one observation cycle may charge. Its own budget
+    // dimension rather than a share of the matcher's pixel-comparison pool
+    // because the units do not compare: a SAD comparison is nanoseconds, a line
+    // read is 2-13 ms. A block read spends this same pool -- one for its
+    // detection pass, one per line located -- because those lines cost exactly
+    // what a cycle_read costs.
     //
-    // OCR GETS ITS OWN BUDGET DIMENSION, and this is it. The pixel-comparison
-    // budget the matcher spends is a single shared pool drawn down anchor by
-    // anchor, and folding reads into it would let one read-heavy page quietly
-    // starve template matching and then blame whichever anchor happened to be
-    // searching when the pool ran dry. The two units are not comparable -- a SAD
-    // comparison is nanoseconds, a line read is 2-13 milliseconds -- so one
-    // number covering both describes neither.
-    //
-    // A BLOCK READ SPENDS THIS POOL TOO, one for its detection pass and one for
-    // every line that pass located, and it is the pattern the number below is
-    // now set by. It stays one pool rather than becoming a fourth dimension
-    // because the units DO compare here, which is the exact opposite of the crop
-    // budget's argument: a block read's lines go through the same recogniser at
-    // the same price as a cycle_read, so one number describes both honestly.
-    //
-    // CALIBRATION: thirty-two, raised from the eight that was set when a read
-    // meant one line the model had drawn a rectangle around. The page this verb
-    // exists for is a character grid showing on the order of twenty names at
-    // once, which is twenty-one reads for one block read, and a cycle that could
-    // not afford one would leave the verb unusable at its default. The ceiling
-    // is set by the observation lease rather than by taste: reads measured 2-13
-    // ms, so thirty-two of them is at most about 0.4 s of inference, which
-    // leaves room inside the 750 ms lease for the detection pass and for the
-    // click the cycle exists to deliver. Raise it here, or per run through
-    // TaskContextConfig, once a real page needs more.
+    // CALIBRATION: thirty-two, raised from the eight set when a read meant one
+    // rectangle the model had drawn. The character grid this verb exists for
+    // shows about twenty names at once, so one block read is twenty-one reads.
+    // The ceiling is the observation lease: at 2-13 ms a read, thirty-two is at
+    // most about 0.4 s of the 750 ms. Raise it here, or per run through
+    // TaskContextConfig.
     inline constexpr auto k_defaultMaximumReadsPerCycle = uint32{32};
 
-    // How many crops one observation cycle may charge before the host refuses
-    // the next one.
+    // How many crops one observation cycle may charge. A third dimension for the
+    // read budget's reason: a crop is a copy plus a PNG encode over a
+    // caller-chosen rectangle, so a shared pool would let one whole-panel crop
+    // starve a page's template matching. Exhaustion is RecognitionIncomplete and
+    // never an empty answer -- a refused crop established nothing about the
+    // screen, and this verb has no score to contradict a fail-open "no pixels".
     //
-    // A THIRD BUDGET DIMENSION, for the reason the read budget is a second one:
-    // the units do not compare. A SAD comparison is nanoseconds, a line read is
-    // 2-13 milliseconds, and a crop is a copy plus a PNG encode over a rectangle
-    // whose size the caller chose -- so a single pool covering all three would
-    // let one whole-panel crop starve a page's template matching and then blame
-    // whichever anchor was searching when the pool ran dry.
-    //
-    // Exhaustion is RecognitionIncomplete and never an empty answer. A crop that
-    // was refused because the host stopped looking has established nothing about
-    // the screen, exactly as a stopped search has, and returning "no pixels"
-    // would be a fail-open answer on a verb with no score to contradict it.
-    //
-    // CALIBRATION: eight is a conservative placeholder awaiting the first real
-    // annotation session. It is above the widest measured pattern -- crop the
-    // panel, then crop each of the candidate slots inside it once -- and low
-    // enough that a loop cropping per poll cannot turn one cycle into several
-    // megabytes of encoding. Raise it here, or per run through
-    // TaskContextConfig, once a real page needs more.
+    // CALIBRATION: eight is a placeholder, above the widest measured pattern (the
+    // panel, then each candidate slot inside it once) and low enough that a loop
+    // cropping per poll cannot turn one cycle into megabytes of encoding. Raise
+    // it here, or per run through TaskContextConfig.
     inline constexpr auto k_defaultMaximumCropsPerCycle = uint32{8};
 
-    // The two ends a colour-keyed mask has to stay between before its counts are
-    // worth anything, and the whole of what the host is willing to say about a
-    // key an agent chose.
+    // The two ends a colour-keyed mask has to stay between before its counts mean
+    // anything; measurements and reproductions in
+    // docs/pitfalls/colour-key-annotation.md. Under the floor a mask MEASURES
+    // nothing -- a 27-pixel white key scored zero on frames whose content had
+    // visibly changed, because a busy screen always offers some offset where
+    // those 27 land on white. At or above the share it DISTINGUISHES nothing --
+    // the measured 68.0% orange button fill was a solid patch any same-size patch
+    // matches. Every element that survived cross-page falsification selected
+    // between 6.6% and 25.8%.
     //
-    // Both come from measurement rather than from taste, and both are recorded
-    // with their reproductions in docs/pitfalls/colour-key-annotation.md. Under
-    // the floor a mask MEASURES nothing: a 46x20 rectangle whose white key took
-    // 27 pixels scored zero on frames whose content had visibly changed, because
-    // the search only has to find some offset inside the ROI where those 27 land
-    // on white, and on a busy screen there always is one. At or above the share a
-    // mask DISTINGUISHES nothing: a key selects pixels within tolerance of one
-    // colour by construction, so a mask covering most of its rectangle is a solid
-    // patch of that colour and any patch of it the same size matches -- the
-    // measured orange button fill took 68.0% and carried no structure at all.
-    // Every element that survived cross-page falsification in the reference
-    // project selected between 6.6% and 25.8% of its rectangle.
-    //
-    // THEY WARN AND THEY DO NOT REFUSE. A count is a guess from shape: it waves
-    // the 68% fill through on the strength of its size and it would reject a
-    // small glyph that happens to work. What actually settles whether an element
-    // discriminates is the falsification matrix, which measures the element
-    // against a screen it must not hit. So the host reports the numbers and says
-    // when they look wrong, and the judgement stays with the agent that chose the
-    // key and the developer reading its work.
-    //
-    // The share is in basis points, the unit every other ratio in this model is
-    // already in, so a reader who knows what a 9900 threshold means needs no
-    // second convention to read this one.
+    // They warn and do not refuse: what settles whether an element discriminates
+    // is the falsification matrix, which measures it against a screen it must not
+    // hit. The share is in basis points, the unit every other ratio in this model
+    // is already in.
     inline constexpr auto k_minimumUsefulMaskPixels  = uint64{50};
     inline constexpr auto k_maximumUsefulMaskShareBp = uint64{5000};
 
-    // Host-side configuration for one TaskContext: the single cancellation
-    // source shared with the owned EngineSession and the VM interrupt, plus this
-    // run's RNG seed. A default-constructed stop token never requests a stop, so
-    // an unconfigured context is never cancelled -- preserving the
-    // resource-only and Fake-driven paths that build a context without wiring a
-    // cancel source.
+    // Host-side configuration for one TaskContext: the single cancellation source
+    // shared with the owned EngineSession and the VM interrupt, plus this run's
+    // RNG seed. A default-constructed stop token never requests a stop, so the
+    // resource-only and Fake-driven paths that build a context without a cancel
+    // source are never cancelled.
     //
     // There are deliberately no wait budgets here. How long to wait for a page
-    // and how often to re-observe are policy, and policy lives in the framework:
-    // the wait loop is Luau now, so a default the framework cannot read would be
-    // a default nothing applies.
+    // and how often to re-observe are policy, and the wait loop is Luau now.
     struct TaskContextConfig final
     {
         std::stop_token cancellation{};
 
-        // Fixed seed for this task's deterministic RNG (ctx:random). Left at the
-        // stable default here; a real run gets a fresh per-run seed from
-        // TaskHost::startTask, which draws it and records it in run.started so
-        // the run reproduces on replay. See k_defaultRandomSeed.
+        // Left at the stable default here; a real run gets a fresh per-run seed
+        // from TaskHost::startTask, recorded in run.started so the run reproduces
+        // on replay.
         uint64          randomSeed{k_defaultRandomSeed};
 
-        // The directory project_read and project_write are confined to, which is
-        // the generation's own project root. Empty leaves the context with no
-        // project files at all, and both verbs then refuse -- which is the right
-        // answer for a context built by a test or a fake that has no project on
-        // disk, rather than a context that would reach the working directory.
+        // The directory project_read and project_write are confined to. Empty
+        // leaves the context with no project files and both verbs refuse, which
+        // is the right answer for a test or fake with no project on disk rather
+        // than a context that would reach the working directory.
         std::filesystem::path projectRoot{};
 
-        // See k_defaultMaximumReadsPerCycle for why this is a dimension of its
-        // own rather than a share of the pixel-comparison pool.
+        // See k_defaultMaximumReadsPerCycle for why this is its own dimension.
         uint32 maximumReadsPerCycle{k_defaultMaximumReadsPerCycle};
 
         // See k_defaultMaximumCropsPerCycle, on the same reasoning again.
@@ -212,38 +142,33 @@ namespace uf::task
     };
 
     // Host-owned bridge between one task VM and one EngineSession. It owns the
-    // session (moved in by the caller, who is responsible for constructing the WGC
-    // / controller ports) and the ledger holding the generation's single open
-    // observation cycle. The Luau binding layer reaches this object through a
-    // lightuserdata upvalue and never sees engine types: every engine call, and
-    // all ownership of the move-only Observation, stays here in host C++.
+    // session and the ledger holding the generation's single open observation
+    // cycle. The Luau binding layer reaches it through a lightuserdata upvalue and
+    // never sees engine types: every engine call, and all ownership of the
+    // move-only Observation, stays here in host C++.
     //
     // Lifetime contract: the caller MUST keep the TaskContext alive for at least
-    // as long as the script::Engine (task VM) that binds it, because the VM's host
-    // functions hold a raw pointer to it. The context is therefore non-movable so
-    // that pointer stays stable. The retained Observation carries only the engine
-    // session's stable immutable identity token, never a borrow into the session
-    // object. NOT thread-safe: every method runs on the VM's owning thread.
+    // as long as the script::Engine that binds it, whose host functions hold a raw
+    // pointer to it; the context is therefore non-movable so that pointer stays
+    // stable. The retained Observation carries only the session's stable immutable
+    // identity token, never a borrow into the session object. NOT thread-safe:
+    // every method runs on the VM's owning thread.
     //
-    // Trace lifetime contract: the context does NOT own a trace sink. It stores a
-    // non-owning borrow of the run's trace::TraceRecorder, which is owned by
-    // `task::TaskHost::startTask`: that function holds the recorder in a
-    // std::unique_ptr local declared before the context and the VM, so both are
-    // destroyed first on the normal path and on every early return, and the
-    // recorder is non-movable so its address cannot drift while the context
-    // borrows it. Any other owner MUST reproduce both properties. It is the SAME
-    // recorder the owned EngineSession borrows, which is what puts
-    // task.native_call and the engine.* events it caused into one ordered stream.
+    // Trace lifetime contract: the context does NOT own a trace sink. It borrows
+    // the run's trace::TraceRecorder, owned by `task::TaskHost::startTask` in a
+    // std::unique_ptr local declared before the context and the VM so both are
+    // destroyed first on every path, and non-movable so its address cannot drift
+    // while the context borrows it. Any other owner MUST reproduce both
+    // properties. It is the SAME recorder the owned EngineSession borrows, which
+    // is what puts task.native_call and the engine.* events it caused into one
+    // ordered stream.
     class TaskContext final
     {
     public:
         // What one loadTemplate produced: the ticket the script holds and the
-        // content hash of the blob it came from.
-        //
-        // The hash is returned rather than looked up again because the caller's
-        // trace line needs it and the store already computed it; recomputing a
-        // SHA-256 over the same megabyte to write one line would be the kind of
-        // duplicate truth this codebase keeps refusing.
+        // content hash of the blob it came from. The hash comes back rather than
+        // being recomputed because the caller's trace line needs it and the store
+        // already has it.
         struct LoadedTemplate final
         {
             TemplateTicket ticket{};
@@ -251,64 +176,51 @@ namespace uf::task
             ContentHash hash;
         };
 
-        // What the colour key a crop was cut under actually took.
-        //
-        // IT IS REPORTED BECAUSE THE KEY IS THE ONE AUTHORING DECISION NOTHING
-        // ELSE MEASURES. A masked template that selects almost nothing, or
-        // almost everything, matches every screen it is shown and looks like the
-        // healthiest element in the project; the crop verb is the one moment
-        // that holds both the pixels and the key, so it is the one place the
-        // count can be handed to the agent while the rectangle can still be
-        // redrawn. The counts are the same two `probe` reports under the same
-        // names, out of the same colourKeyAlpha rule, so the two verbs cannot
-        // come to disagree about one measurement.
+        // What the colour key a crop was cut under actually took. Reported
+        // because the key is the one authoring decision nothing else measures: a
+        // masked template that selects almost nothing, or almost everything,
+        // matches every screen and looks like the healthiest element in the
+        // project. The counts come out of the same colourKeyAlpha rule `probe`
+        // uses, so the two verbs cannot disagree about one measurement -- but NOT
+        // under the same names: the full-weight count is `selected_pixels` here
+        // and `fully_selected_pixels` on probe.
         struct CropMask final
         {
-            // The key these pixels were cut under, AS THE HOST APPLIED IT --
-            // which is not always as the caller spelled it, because a caller
-            // that names no tolerance gets the verb's default. It comes back so
-            // the layer that records the key in the project file records the one
-            // that actually produced the alpha channel, rather than a second
-            // copy of that default kept in Luau.
+            // The key AS THE HOST APPLIED IT, which is not always as the caller
+            // spelled it: a caller naming no tolerance gets the verb's default.
+            // It comes back so the layer that records the key in the project
+            // file records the one that produced the alpha channel.
             ProbeColourKey key{};
 
             uint64 rectPixels{};
 
-            // Pixels the key took at full weight, and pixels it took on the
-            // antialiasing ramp. The first is what the floor and the share are
-            // judged on, because it is the count the pitfall's measurements are
-            // in.
+            // Pixels the key took at full weight, and on the antialiasing ramp.
+            // The first is what the floor and the share are judged on.
             uint64 selectedPixels{};
             uint64 rampSelectedPixels{};
 
-            // Why these counts look wrong, or empty when they do not. It is a
-            // hint and never a refusal: see k_minimumUsefulMaskPixels.
+            // Why these counts look wrong, or empty when they do not. A hint and
+            // never a refusal: see k_minimumUsefulMaskPixels.
             std::string warning{};
         };
 
         // What one cycleCrop produced: the PNG a script holds, and the content
-        // hash of exactly those bytes.
-        //
-        // The hash comes back rather than staying in the trace line because the
-        // caller needs it to NAME the file it is about to write: a template
-        // asset lives at assets/templates/<hex>.png, and the sandbox gives Luau
-        // no hash function of its own. Recomputing it in the script layer is not
-        // merely wasteful, it is impossible -- so the one place that already
-        // computed it hands it over, and the file name and the trace line are
-        // then the same fact rather than two that could disagree.
+        // hash of exactly those bytes. The hash comes back because the caller
+        // needs it to NAME the file it is about to write -- a template asset
+        // lives at assets/templates/<hex>.png and the sandbox gives Luau no hash
+        // function, so recomputing it in the script layer is impossible rather
+        // than merely wasteful.
         struct CroppedBlob final
         {
             std::vector<std::byte> png{};
 
             ContentHash hash;
 
-            // Absent when the caller named no key, present whenever it did.
-            // Absent rather than zeroed, on probe's reasoning: "no key was
-            // asked for" and "the key took nothing" are different answers, and
-            // a caller that could not tell them apart would read the first as
-            // the second. The second never reaches here at all -- a key that
-            // takes nothing is refused, because the PNG it would produce is
-            // fully transparent and every later match of it aborts.
+            // Absent when the caller named no key rather than zeroed: "no key
+            // was asked for" and "the key took nothing" are different answers.
+            // The second never reaches here -- a key that takes nothing is
+            // refused, because its PNG is fully transparent and every later
+            // match of it aborts.
             std::optional<CropMask> mask{};
         };
 
@@ -348,10 +260,10 @@ namespace uf::task
         auto openCycle() -> Result<CycleTicket>;
 
         // Releases the frame the cycle `ticket` names retains and reports whether
-        // there was one to release. Idempotent: closing twice, closing a ticket a
-        // click already consumed, and closing a ticket from another generation
-        // are all no-ops. This is the only release path a running script can
-        // drive -- the Lua collector has no part in it.
+        // there was one. Idempotent: closing twice, closing a ticket a click
+        // already consumed, and closing another generation's ticket are all
+        // no-ops. The only release path a running script can drive -- the Lua
+        // collector has no part in it.
         [[nodiscard]]
         auto closeCycle(CycleTicket ticket) noexcept -> bool;
 
@@ -360,10 +272,9 @@ namespace uf::task
         // search with no candidate position; a budget, deadline or cancel stop is
         // a FAILURE, never a miss.
         //
-        // It requires no resolved page. The refined region, the pinned
-        // appearance and the interact edge that a page's reference row used to
-        // supply are the caller's now, because in the script-owned model the
-        // caller is the layer that owns those facts.
+        // It requires no resolved page: the refined region, the pinned appearance
+        // and the interact edge a page's reference row used to supply are the
+        // caller's now, because the script-owned model puts those facts there.
         [[nodiscard]]
         auto cycleMatch(
             CycleTicket ticket,
@@ -375,12 +286,10 @@ namespace uf::task
         // empty optional is a completed read that found no text.
         //
         // The read is charged against this cycle's own read budget BEFORE the
-        // engine is reached, and a cycle that has spent it fails
-        // RecognitionIncomplete -- the kind an exhausted comparison budget
-        // already uses, and for the same reason: the host stopped looking, so
-        // nothing has been established about the screen. Reporting it as "no
-        // text" would be a fail-open answer on the one capability that has no
-        // score to contradict it.
+        // engine is reached, and an exhausted cycle fails RecognitionIncomplete:
+        // the host stopped looking, so nothing has been established about the
+        // screen, and "no text" would be a fail-open answer on the one capability
+        // that has no score to contradict it.
         [[nodiscard]]
         auto cycleRead(
             CycleTicket ticket,
@@ -390,23 +299,16 @@ namespace uf::task
         // Finds every line of text inside `rect` of the frame `ticket`'s cycle
         // retains and reads each one, with its own rectangle in FRAME pixels.
         //
-        // It is cycleRead's sibling and not its replacement. cycleRead is right
-        // wherever the caller drew the rectangle; this one is for the region
-        // nobody CAN draw a rectangle inside, because what is in it moves -- a
-        // grid that scrolls continuously, where a name's position is a fact
-        // about the frame rather than about the model.
+        // cycleRead's sibling, not its replacement: cycleRead is right wherever
+        // the caller drew the rectangle, this one is for a region nobody CAN draw
+        // a rectangle inside because what is in it moves -- a grid that scrolls,
+        // where a name's position is a fact about the frame rather than the model.
         //
-        // WHAT IT COSTS, which is the only budget question this verb raises: one
-        // read for the detection pass plus one for every line the detector
-        // located, out of the same pool cycleRead spends. The full reasoning is
-        // at the charge in the implementation; the consequence a caller sees is
-        // that a region holding more lines than the cycle can still pay for
-        // fails RecognitionIncomplete and reads NONE of them, rather than
-        // handing back the first few of a region nobody finished looking at.
-        //
-        // It does NOT consume the cycle. Reading changes nothing on the target,
-        // so the same cycle goes on to click one of the lines it found -- which
-        // is the whole point of the verb.
+        // It costs one read for the detection pass plus one for every line
+        // located, out of the pool cycleRead spends, so a region holding more
+        // lines than the cycle can still pay for fails RecognitionIncomplete and
+        // reads NONE of them. It does NOT consume the cycle, so the same cycle
+        // goes on to click one of the lines it found.
         [[nodiscard]]
         auto cycleReadLines(
             CycleTicket ticket,
@@ -414,41 +316,30 @@ namespace uf::task
         ) -> Result<std::vector<engine::TextReading>>;
 
         // Copies `rect` of the frame `ticket`'s cycle retains, encodes it as a
-        // PNG, and hands back the bytes with their content hash.
+        // PNG, and hands back the bytes with their content hash. It writes
+        // annotation.region_saved -- the rect, the byte size and hash, and the
+        // frame identity -- which is the whole record of the crop, because the
+        // bytes themselves go to the agent rather than into the stream.
         //
-        // WHO MAY REACH THIS. Only the exploration environment: it is the one
-        // verb that hands raw pixels to the script layer, and a business script
-        // holding pixels would be able to make a decision no evidence in the
-        // trace could falsify (docs/plans/2026-08-01-three-layers-and-agent-
-        // operator.md 2). The primitive is not installed on a run VM's private
-        // surface at all, which is what makes the rule structural rather than a
-        // refusal a caller has to be told about.
+        // Only the exploration environment may reach it: it is the one verb that
+        // hands raw pixels to the script layer, and a business script holding
+        // pixels could decide something no trace evidence could falsify. It is not
+        // installed on a run VM's private surface at all, which makes the rule
+        // structural (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
         //
-        // It does NOT spend the cycle. Reading pixels changes nothing on the
-        // target, so the same cycle can go on to click; the crop budget rather
-        // than consumption is what bounds it, and an exhausted budget fails
-        // RecognitionIncomplete -- the kind an exhausted comparison budget uses,
-        // and never an empty answer.
+        // It does NOT spend the cycle -- reading pixels changes nothing on the
+        // target. The crop budget bounds it instead, and exhaustion fails
+        // RecognitionIncomplete rather than returning an empty answer.
         //
-        // It writes annotation.region_saved: the rect it copied, the size and
-        // hash of the bytes, and the frame identity they came from. That line is
-        // the whole record of the crop, because the bytes themselves go to the
-        // agent rather than into the stream.
-        //
-        // A `key` MAKES THE CROP A MASKED TEMPLATE, and that is the whole reason
-        // it is here. The weights the key hands out over the rectangle become
-        // the PNG's alpha channel, which decodeTemplateImage reads back as the
-        // matcher's mask plane -- so a template cut under a key compares its
-        // glyph rather than its whole rectangle, which is the difference between
-        // a minimap node icon that scores 8885/8549/8582 against three different
-        // cells and one that tells them apart. With no key the bytes are exactly
-        // what they were before this argument existed: fully opaque, same hash.
-        //
-        // A key that takes NO pixel is refused here rather than persisted. The
-        // PNG it would produce is fully transparent, and every later match of it
-        // fails InternalInvariant deep in the matcher, on a run that no longer
-        // knows which key was chosen or over what rectangle. This call knows
-        // both, so it says so while the author can still act on it.
+        // A `key` makes the crop a masked template: the weights it hands out
+        // become the PNG's alpha channel, which decodeTemplateImage reads back as
+        // the matcher's mask plane, so the template compares its glyph rather than
+        // its whole rectangle -- the difference between a minimap node icon that
+        // scores 8885/8549/8582 against three different cells and one that tells
+        // them apart. A key that takes NO pixel is refused here rather than
+        // persisted, because its fully transparent PNG fails InternalInvariant
+        // deep in a later match that no longer knows which key was chosen or over
+        // what rectangle.
         [[nodiscard]]
         auto cycleCrop(
             CycleTicket ticket,
@@ -456,12 +347,10 @@ namespace uf::task
             std::optional<ProbeColourKey> key
         ) -> Result<CroppedBlob>;
 
-        // Releases whatever cycle is open and reports whether there was one.
-        //
-        // NOT a script verb and never installed as a primitive: see
-        // CycleLedger::closeOpen for why this exists and who is allowed to call
-        // it, which is the exploration session between two agent-supplied
-        // chunks and nothing else.
+        // Releases whatever cycle is open and reports whether there was one. NOT
+        // a script verb and never installed as a primitive: see
+        // CycleLedger::closeOpen for who may call it, which is the exploration
+        // session between two agent-supplied chunks and nothing else.
         auto sweepOpenCycle() noexcept -> bool;
 
         // Decodes one template PNG into this generation's template store and
@@ -487,21 +376,19 @@ namespace uf::task
 
         // Spends the cycle `ticket` names and delivers a click at `point`.
         //
-        // WHO MAY REACH THIS. It is the layer-two-held privilege: the trusted
-        // Luau framework binds it as a closure upvalue and the environment a
-        // business task runs in never names it. That is where "a task only
-        // clicks annotated elements" is now enforced, because the element and the
-        // page moved up with the model. What C++ still enforces is the rest of
-        // the four: the frame is this ticket's, the observation's lease is still
+        // A layer-two-held privilege: the trusted Luau framework binds it as a
+        // closure upvalue and a business task's environment never names it. That
+        // is where "a task only clicks annotated elements" is now enforced, since
+        // the element and the page moved up with the model. C++ still enforces
+        // the rest: the frame is this ticket's, the observation's lease is still
         // fresh, the live fingerprint matches the project, and the cycle is spent
         // exactly once.
         //
         // `hitCycleOrdinal` is the ordinal a match handle carries, or empty when
-        // the caller named a bare point and there is no handle to check. When
-        // present it must be the open cycle's own; anything else names a cycle
-        // that no longer exists and fails StaleObservation, which is what makes
-        // "the hit came from THIS frame" a check the caller cannot skip by
-        // reaching for the point spelling with a stale match in hand.
+        // the caller named a bare point. When present it must be the open cycle's
+        // own; anything else fails StaleObservation, so "the hit came from THIS
+        // frame" cannot be skipped by reaching for the point spelling with a
+        // stale match in hand.
         [[nodiscard]]
         auto cycleClickPoint(
             CycleTicket ticket,
@@ -509,90 +396,59 @@ namespace uf::task
             PixelPoint point
         ) -> Result<engine::ActReceipt>;
 
-        // Spends the cycle `ticket` names and delivers one keystroke.
+        // Spends the cycle `ticket` names and delivers one keystroke. The
+        // engine-side reasoning is at engine::EngineSession::pressKey; what the
+        // ledger decides is below.
         //
-        // ITS CONTRACT, and where it differs from cycleClick's. The full reasoning
-        // is at engine::EngineSession::pressKey; what this layer decides is the
-        // part the ledger owns.
-        //
-        // It requires the ticket to name the generation's OPEN cycle, and that is
-        // the whole of what it requires. There is no hit ordinal, because there is
-        // no hit: a keystroke names no screen position, so nothing has to have
-        // been found on this frame, and no fingerprint check applies for the same
-        // reason.
-        //
-        // Requiring the open cycle is not ceremony. It is what puts the keystroke
-        // in the single-open-cycle ordering with every observation and click around
-        // it, and what gives its trace line a cycle ordinal to join on, so a reader
-        // can see which frame the operator or the task was looking at when it
-        // pressed the key.
+        // It requires the ticket to name the generation's OPEN cycle and nothing
+        // else. There is no hit ordinal because there is no hit: a keystroke names
+        // no screen position, so no fingerprint check applies either. Requiring the
+        // open cycle is what puts the keystroke in the single-open-cycle ordering
+        // with the observations and clicks around it and gives its trace line a
+        // cycle ordinal to join on.
         //
         // It CONSUMES the cycle, exactly as a click does. A delivered keystroke
-        // changes the screen, so the frame the cycle retains no longer describes the
-        // target; leaving the cycle open would let a later find or click in the same
-        // cycle act on a screen this key had already changed. "A delivered input
-        // ends its observation" therefore holds for both verbs, which is a stricter
-        // rule than the click alone needed.
+        // changes the screen, so leaving the cycle open would let a later find or
+        // click act on a screen this key had already changed.
         [[nodiscard]] auto cycleKey(CycleTicket ticket, KeyName key) -> Status;
 
         // Spends the cycle `ticket` names and delivers one wheel scroll of
         // `notches` detents, positive away from the operator and negative toward
         // them.
         //
-        // IT IS cycleKey's CONTRACT, not cycleClickPoint's, and every clause of it
-        // for the same reason. It requires the ticket to name the generation's
-        // OPEN cycle and requires nothing else: there is no hit ordinal because
-        // there is no hit, and no fingerprint check because the verb names no
-        // coordinate for a geometry to invalidate. It CONSUMES the cycle, because
-        // a delivered scroll moves what is on the screen exactly as a keystroke
-        // does, and a frame that survived it would describe a target that has
-        // moved underneath it.
+        // It is cycleKey's contract, not cycleClickPoint's, and every clause for
+        // the same reason: the ticket must name the generation's OPEN cycle,
+        // there is no hit ordinal and no fingerprint check because the verb names
+        // no coordinate for a geometry to invalidate, and it CONSUMES the cycle
+        // because a delivered scroll moves what is on the screen.
         //
-        // Requiring the open cycle is what puts the scroll in the
-        // single-open-cycle ordering with the observations around it and gives its
-        // trace line a cycle ordinal to join on -- so a reader can see which frame
-        // the caller was looking at when it scrolled.
-        //
-        // WHO MAY REACH THIS: both environments. A business task legitimately
-        // scrolls a list it cannot see all of, so this is not one of the
-        // exploration privileges; nothing about it hands a script pixels or a bare
-        // coordinate (docs/plans/2026-08-01-three-layers-and-agent-operator.md
-        // section 7 lists it under the run-mode action verbs).
+        // Both environments may reach it. A business task legitimately scrolls a
+        // list it cannot see all of, and nothing about it hands a script pixels
+        // or a bare coordinate
+        // (docs/plans/2026-08-01-three-layers-and-agent-operator.md section 7).
         [[nodiscard]] auto cycleScroll(CycleTicket ticket, int32 notches) -> Status;
 
         // Spends the cycle `ticket` names and delivers one long press at `point`,
         // holding the button down for `hold`.
         //
-        // IT IS cycleClickPoint's CONTRACT AND NOT cycleKey's, because the verb
-        // names a coordinate. The ticket must name the generation's open cycle
-        // and the frame leaves the ledger here, so this ticket delivers nothing
-        // else; the rest -- fingerprint, lease, single delivery -- is the
-        // engine's, unchanged, and every clause of it applies. There is no looser
-        // path to the same window and there must not be one.
+        // It is cycleClickPoint's contract and not cycleKey's, because the verb
+        // names a coordinate: the ticket must name the generation's open cycle,
+        // the frame leaves the ledger here, and the rest -- fingerprint, lease,
+        // single delivery -- is the engine's, unchanged.
         //
         // It takes NO hit ordinal, where cycleClickPoint takes an optional one.
-        // That is not a check being dropped: the ordinal exists so C++ can verify
-        // a MATCH HANDLE came from this frame, and there is no match-handle
-        // spelling of this verb -- the hits it is asked about are text lines and
-        // page-positioned rectangles, which reach the host as bare coordinates
-        // with no handle to check. The same-frame rule for those is enforced
-        // where it has to be, in observe.luau, for every kind of hit alike. A
-        // parameter that could only ever be empty would advertise a check nobody
-        // performs.
+        // The ordinal verifies that a MATCH HANDLE came from this frame, and this
+        // verb has no match-handle spelling: the hits it is asked about are text
+        // lines and page-positioned rectangles, which reach the host as bare
+        // coordinates. observe.luau enforces the same-frame rule for those.
         //
-        // `hold` has NO DEFAULT anywhere on this surface. How long a target needs
+        // `hold` has NO DEFAULT anywhere on this surface: how long a target needs
         // a button held before it treats the press as a long one is a fact about
-        // that target, which the author measured and this host never guesses. It
-        // is bounded here by k_maxLongPressHold, because a ceiling is a
-        // guarantee -- it stops a script leaving the target mid-press -- while a
+        // that target, which the author measured. k_maxLongPressHold bounds it,
+        // because a ceiling stops a script leaving the target mid-press while a
         // default would be a decision.
         //
-        // WHO MAY REACH THIS: whoever may reach cycleClickPoint, and by the same
-        // mechanism. A long press names a bare coordinate, so it carries the bare
-        // coordinate's privilege exactly: the trusted Luau framework binds it as a
-        // closure upvalue, the exploration environment publishes a forward for an
-        // agent that has no model yet, and no business project environment names
-        // it. See the primitive's own comment in ffi/uf-tables.cpp.
+        // Whoever may reach cycleClickPoint may reach this, by the same mechanism.
         [[nodiscard]]
         auto cycleLongPress(
             CycleTicket ticket,
@@ -603,9 +459,8 @@ namespace uf::task
         // Sleeps until `deadline`, or for `interval`, whichever comes first, and
         // reports whether budget remains afterwards -- false means the deadline
         // has passed and the caller's wait loop is over. It backs the `wait`
-        // primitive, which is why it decides nothing else: the framework owns
-        // what is polled between two calls, and this owns only the pause and the
-        // verdict on the deadline.
+        // primitive and decides nothing else: the framework owns what is polled
+        // between two calls.
         //
         // The sleep is the shared core::pollSleep, so it wakes at a slice
         // boundary once the run's cancel source is requested. The caller then
@@ -618,42 +473,36 @@ namespace uf::task
         ) const -> bool;
 
         // Sleeps for `duration`, returning early once the run's cancel source is
-        // requested. It backs the `settle` primitive: a declarative bounded pause
-        // whose length is part of the replayable record, which is why the binding
-        // traces it. The caller enforces the k_maxSettleDuration ceiling and
-        // re-checks cancellationRequested() afterwards.
+        // requested. It backs the `settle` primitive, whose length is part of the
+        // replayable record. The caller enforces the k_maxSettleDuration ceiling
+        // and re-checks cancellationRequested() afterwards.
         auto settle(MonotonicInstant::Duration duration) const -> void;
 
-        // Whether the run's single cancel source has requested a stop.
-        //
-        // The observation and action primitives never need this: they reach the
-        // engine, which already fails closed on the same token. The time
-        // primitives do, because they reach nothing -- a sleep that ignored the
-        // token would be the one place a cancelled generation could still burn
-        // its whole wait -- so they consult it before pausing and again after.
+        // Whether the run's single cancel source has requested a stop. The
+        // observation and action primitives never need it: they reach the engine,
+        // which already fails closed on the same token. The time primitives do,
+        // because they reach nothing -- a sleep that ignored the token would be
+        // the one place a cancelled generation could still burn its whole wait.
         [[nodiscard]]
         auto cancellationRequested() const noexcept -> bool;
 
         // Whether an observation cycle is open, and so whether the host is still
-        // holding a frame. This is the host-side truth a test asserts release
-        // against; nothing about it involves the Lua collector.
+        // holding a frame. The host-side truth a test asserts release against;
+        // nothing about it involves the Lua collector.
         [[nodiscard]]
         auto hasOpenCycle() const noexcept -> bool;
 
         // Latches that this generation is spent, under the kind that spent it.
         // The binding layer sets it BEFORE raising, and gates every primitive on
         // it at the C guard entry, so a spent VM cannot resume automation even if
-        // a script swallowed what was raised. Since ctx:try is pure Luau and
-        // consults nothing, this latch is the whole of the terminal guarantee on
-        // the Luau side.
+        // a script swallowed what was raised. ctx:try is pure Luau and consults
+        // nothing, so this latch is the whole terminal guarantee on the Luau side.
         //
-        // Two kinds reach it, and both need the same before-raising order for the
-        // same reason. Cancelled is the host's own verdict on the generation.
-        // InternalInvariant is a framework bug the trace state machine caught --
-        // design section 9's rule 5 says latching first is what stops a project
-        // pcall from swallowing it and driving one more primitive. Latching is
-        // idempotent and keeps the FIRST kind: what spent the generation is what
-        // ended it, and a later refusal is a consequence rather than a cause.
+        // Cancelled (the host's own verdict) and InternalInvariant (a framework
+        // bug the trace state machine caught) both need the before-raising order,
+        // so a project pcall cannot swallow one and drive one more primitive.
+        // Latching is idempotent and keeps the FIRST kind: a later refusal is a
+        // consequence rather than a cause.
         void markTerminal(AutomationErrorKind kind) noexcept;
 
         [[nodiscard]]
@@ -669,9 +518,7 @@ namespace uf::task
         // Latches that a trace event could not be recorded. A verb that is
         // already failing cannot raise the sink's failure instead of its own --
         // that would let a broken sink downgrade a cancellation into an error a
-        // script can catch -- so it latches here and raises its real cause. The
-        // owning host reads this after the run to report that the trace is
-        // incomplete.
+        // script can catch -- so it latches here and raises its real cause.
         void latchTraceFailure() noexcept;
 
         [[nodiscard]]
@@ -679,11 +526,9 @@ namespace uf::task
 
         // Records one event through the run's recorder, which stamps the sequence,
         // run id and generation id. A sink failure returns the error so the caller
-        // can abort the operation whose evidence was lost, matching the engine's
-        // trace discipline. The observation and action verbs call this at their
-        // exit to emit task.native_call; the owning host emits the surrounding
-        // run.started / run.resources_validated / run.finished directly on the
-        // same recorder.
+        // can abort the operation whose evidence was lost. The observation and
+        // action verbs call this at their exit to emit task.native_call; the
+        // owning host emits the surrounding run.* events on the same recorder.
         [[nodiscard]]
         auto emitTrace(trace::TraceEvent const& event) -> Status;
 
@@ -693,10 +538,10 @@ namespace uf::task
         auto nextRandomUnitDouble() noexcept -> double;
 
         // A uniform integer in [lowInclusive, highInclusive] from the task's seeded
-        // RNG, backing ctx:random(m) and ctx:random(m, n). The mapping is
-        // unbiased (rejection sampling in DeterministicRng). Precondition, enforced
-        // by the binding that parses the script arguments: lowInclusive <=
-        // highInclusive and both within +/-2^53, so the result is an exact integer.
+        // RNG, backing ctx:random(m) and ctx:random(m, n), unbiased by rejection
+        // sampling in DeterministicRng. Precondition, enforced by the binding that
+        // parses the script arguments: lowInclusive <= highInclusive and both
+        // within +/-2^53, so the result is an exact integer.
         [[nodiscard]]
         auto nextRandomInRange(int64 lowInclusive, int64 highInclusive) noexcept
             -> int64;

@@ -12,35 +12,25 @@
 
 namespace uf::task
 {
-    // The largest project file the host will read or write in one call.
-    //
-    // A primitive has to be bounded, and this is the bound for the two that
-    // touch the disk: without it a script could ask the host to hold an
-    // arbitrary file in memory, and a run's memory ceiling would be a property
-    // of whatever happens to be in the project directory. Eight mebibytes is far
-    // above any page model a project writes -- the largest authored model this
-    // repository has ever produced is measured in tens of kilobytes -- and
-    // far below the frame budget a run already lives inside.
+    // The largest project file the host will read or write in one call. Without a
+    // bound a script could ask the host to hold an arbitrary file in memory, and a
+    // run's memory ceiling would be a property of whatever happens to be in the
+    // project directory. Eight mebibytes is far above any page model a project
+    // writes -- the largest authored so far is tens of kilobytes -- and far below
+    // the frame budget a run already lives inside.
     inline constexpr auto k_maximumProjectFileBytes = std::size_t{8} * 1024U * 1024U;
 
-    // Reads and writes files inside ONE project directory, and refuses every
-    // name that would leave it.
-    //
-    // WHY THIS EXISTS AT ALL. The page model moved into the trusted Luau layer,
-    // and a model that cannot be written down is not a model. So layer one has
-    // to hand the script layer a way to reach its own project's bytes -- and the
-    // moment it does, "which bytes" becomes an argument a script supplies. The
+    // Reads and writes files inside ONE project directory, and refuses every name
+    // that would leave it. The page model lives in the trusted Luau layer, so
+    // layer one has to hand the script layer a way to reach its own project's
+    // bytes, and "which bytes" is then an argument a script supplies; the
     // confinement below is the whole of what stops that argument from naming the
-    // rest of the disk. It has the shape the retired input agent's output
-    // confinement had, restated here rather than shared, because the two had
-    // opposite freshness rules: an agent capture had to be a file that did not
-    // exist yet, while a project file is rewritten in place every time the model
-    // changes.
+    // rest of the disk.
     //
     // The root is stored, not the canonical form of it, and every call
     // canonicalises afresh. A generation outlives the individual calls, and a
-    // directory replaced by a symbolic link between two of them must be caught
-    // by the second call rather than trusted because the first one passed.
+    // directory replaced by a symbolic link between two of them must be caught by
+    // the second call rather than trusted because the first one passed.
     class ProjectFileStore final
     {
         std::filesystem::path m_root;
@@ -61,13 +51,10 @@ namespace uf::task
         // what closes the symbolic-link route out of the project.
         //
         // Creating missing directories is deliberately NOT part of this: a name
-        // whose parent does not exist is a typo far more often than it is an
-        // intent to lay out a new tree, and a store that silently created
-        // directories would turn that typo into litter nothing later reads.
-        // Laying out a project's skeleton is therefore whoever opens the project
-        // -- the CLI, in entry/cli/project-skeleton.hpp -- and the refusal here
-        // names the directory that is missing so a caller that meets it knows
-        // which one.
+        // whose parent does not exist is a typo far more often than an intent to
+        // lay out a new tree. Laying out a project's skeleton belongs to whoever
+        // opens the project (entry/cli/project-skeleton.hpp), and the refusal here
+        // names the directory that is missing.
         [[nodiscard]]
         auto resolve(std::string_view name) const -> Result<std::filesystem::path>;
 

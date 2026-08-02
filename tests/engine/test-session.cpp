@@ -36,23 +36,18 @@
 #include <vector>
 
 // The engine session's whole surface after the script-owned page model's first
-// retirement wave: observe, matchTemplate, clickPoint and pressKey.
-//
-// It names no annotation type. resolvePage, findAction and act went with the C++
-// page model (docs/plans/2026-07-31-script-owned-page-model.md 9), and with them
-// the recognition runtime this suite used to compile a catalog into. What the
+// retirement wave: observe, matchTemplate, clickPoint and pressKey. It names no
+// annotation type -- resolvePage, findAction and act went with the C++ page
+// model (docs/plans/2026-07-31-script-owned-page-model.md 9) -- and what the
 // cases below still prove is every guarantee that never mentioned a page: the
 // frame identity fence, the lease, the fingerprint, single consumption, the
-// delivery-edge revalidation, the cancel gates and the capture deadline. Each one
-// used to be reached through act(); each one is now reached through clickPoint(),
-// which is where they live.
+// delivery-edge revalidation, the cancel gates and the capture deadline.
 namespace uf::engine
 {
     namespace
     {
-        // The identity the session's recorder stamps. The engine never authors it
-        // -- task::TaskHost does -- so any fixed pair proves the same thing:
-        // every engine event lands in one identified run.
+        // The identity the session's recorder stamps. The engine never authors
+        // it -- task::TaskHost does -- so any fixed pair proves the same thing.
         constexpr auto k_runId        = TaskRunId{11};
         constexpr auto k_generationId = GenerationId{2};
 
@@ -97,9 +92,8 @@ namespace uf::engine
             return *result;
         }
 
-        // A solid grey template of `extent` by `extent`, decoded exactly as the
-        // script layer's template_load decodes one, so a match here is a match
-        // there.
+        // Decoded exactly as the script layer's template_load decodes one, so a
+        // match here is a match there.
         [[nodiscard]]
         auto grayTemplate(uint8 gray, uint32 extent = 1) -> GrayTemplateImage
         {
@@ -199,9 +193,8 @@ namespace uf::engine
             {
             }
 
-            // Flips the bound-target revalidation to fail, modeling the HWND-reuse
-            // window the delivery-edge guard closes: the instance is valid during
-            // observe and invalid by the time the click revalidates it.
+            // Models the HWND-reuse window the delivery-edge guard closes: valid
+            // during observe, invalid by the time the click revalidates it.
             void invalidateTargetInstance() noexcept
             {
                 m_targetValid = false;
@@ -236,16 +229,11 @@ namespace uf::engine
             }
         };
 
-        // Blocks until the deadline its budget carries, then reports the expiry,
-        // and records what it was handed.
-        //
-        // It is the one frame source in the suite that HONOURS its budget rather
-        // than satisfying it vacuously. Every other fake returns at once, which
-        // says nothing about a deadline, because it would return without one:
-        // only a source that actually waits can show that the wait ends where the
-        // session said it would, and only a source that keeps the budget can show
-        // the session minted a real one rather than an instant an adapter would
-        // be free to ignore.
+        // Blocks until the deadline its budget carries, then reports the expiry
+        // and keeps what it was handed. The one frame source here that HONOURS
+        // its budget: every other fake returns at once, which would say nothing
+        // about a deadline, and only a source that keeps the budget can show the
+        // session minted a real one rather than an instant an adapter may ignore.
         class DeadlineHonouringFrameSource final : public IFrameSource
         {
             std::optional<MonotonicInstant> m_deadline{};
@@ -285,18 +273,16 @@ namespace uf::engine
                 return m_deadline;
             }
 
-            // Whether the token that arrived could ever request a stop. A default
-            // std::stop_token cannot, so this tells a session that forwarded its
-            // own cancel source from one that forwarded nothing.
+            // A default std::stop_token can never request a stop, so this tells a
+            // session that forwarded its own cancel source from one that did not.
             [[nodiscard]] auto cancellable() const noexcept -> bool
             {
                 return m_cancellable;
             }
         };
 
-        // Counts delivered clicks so fail-closed cases can assert that none
-        // escaped, and keeps the last client point and lease so the happy path can
-        // confirm the delivered lease still carries the observation's identity.
+        // Counts delivered clicks so fail-closed cases can assert none escaped,
+        // and keeps the last client point and lease for the happy path.
         class CountingActionSink final : public IActionSink
         {
             uint32                            m_clickCount{0};
@@ -330,8 +316,7 @@ namespace uf::engine
             }
 
             // A keystroke carries no lease, so this records the generation it was
-            // fenced on instead: that is the whole of what pressKey forwards, and the
-            // difference from click() above is the authorization difference under test.
+            // fenced on -- the whole of what pressKey forwards.
             [[nodiscard]]
             auto pressKey(
                 KeyName key,
@@ -344,9 +329,8 @@ namespace uf::engine
                 return ok();
             }
 
-            // A scroll carries the lease and no coordinate, so this records both
-            // halves: that a wheel message was asked for at all, and that the
-            // lease reaching the delivery layer is still the observation's own.
+            // A scroll carries the lease and no coordinate: this records that a
+            // wheel was asked for, and that the lease reaching delivery is intact.
             [[nodiscard]]
             auto scroll(
                 int32 notches,
@@ -359,11 +343,9 @@ namespace uf::engine
                 return ok();
             }
 
-            // A long press carries all three: the coordinate it was aimed at, the
-            // hold the caller named, and the lease. All three are recorded
-            // because all three are separately droppable, and a case asserting
-            // only that a press happened would pass against a sink handed a hold
-            // it threw away.
+            // Coordinate, hold and lease are all recorded because all three are
+            // separately droppable: a case asserting only that a press happened
+            // would pass against a sink handed a hold it threw away.
             [[nodiscard]]
             auto longPress(
                 Point<ClientSpace> point,
@@ -501,11 +483,9 @@ namespace uf::engine
             }
         };
 
-        // Owns the run's recorder and the session built over it, plus non-owning
-        // observers of the sinks living inside them. Declaration order is the
-        // lifetime order the trace contract requires: the recorder outlives the
-        // session that borrows it, and holding it through a unique_ptr keeps its
-        // address stable when this struct is moved out of makeSession.
+        // Declaration order is the lifetime order the trace contract requires:
+        // the recorder outlives the session that borrows it, and the unique_ptr
+        // keeps its address stable when this struct is moved out of makeSession.
         struct SessionUnderTest final
         {
             std::unique_ptr<trace::TraceRecorder> recorder{};
@@ -590,10 +570,9 @@ namespace uf::engine
             return kinds;
         }
 
-        // The first event of `kind`, or null when the run never emitted one. The
-        // returned pointer observes storage owned by the collecting sink behind
-        // `events`, so it stays valid for as long as that sink lives -- which is
-        // what the annotation on that parameter states.
+        // The first event of `kind`, or null. The returned pointer observes
+        // storage owned by the sink behind `events` and lives as long as it does,
+        // which is what the annotation on that parameter states.
         [[nodiscard]]
         auto findEvent(
             std::span<trace::TraceEvent const> events UF_LIFETIME_BOUND,
@@ -683,8 +662,7 @@ namespace uf::engine
         // A two-by-two template cannot sit anywhere in a three-by-one region, so
         // the search COMPLETES with nowhere to have looked. That empty optional
         // is the only "nothing" this verb reports: a template that fits always
-        // has a best position, and whether that position counts as a hit is
-        // layer two's judgement and deliberately not made here.
+        // has a best position, and judging it is layer two's.
         auto const found = session.matchTemplate(
             *observation,
             grayTemplate(k_presentGray, 2),
@@ -717,10 +695,9 @@ namespace uf::engine
         auto observation = session.observe();
         REQUIRE(observation.has_value());
 
-        // The score, not a verdict. A template that fits reports its best
-        // position and the distance there, and the caller decides -- so the pair
-        // below is what distinguishes "found" from "not found" now, and the
-        // matching case above is the control that a zero is reachable at all.
+        // The score, not a verdict: a template that fits reports its best
+        // position and the distance there, and the caller decides. The matching
+        // case above is the control that a zero is reachable at all.
         auto const found = session.matchTemplate(
             *observation,
             grayTemplate(k_presentGray),
@@ -957,10 +934,8 @@ namespace uf::engine
         auto observation = session->observe();
         REQUIRE(observation.has_value());
 
-        // clickPoint takes Observation&&, so binding the rvalue through a named
-        // handle keeps a caller-side alias that survives the call. The first
-        // delivery lands the click, then the ActionDelivered emit fails and
-        // propagates.
+        // Binding the rvalue through a named handle keeps a caller-side alias
+        // that survives the call, which the retry below needs.
         auto handle        = *std::move(observation);
         auto const receipt = session->clickPoint(std::move(handle), PixelPoint{1, 0});
         REQUIRE_FALSE(receipt.has_value());
@@ -993,9 +968,8 @@ namespace uf::engine
         );
         REQUIRE_FALSE(found.has_value());
         requireErrorKind(found.error(), AutomationErrorKind::RecognitionIncomplete);
-        // The search never looked, so the session must not report the absence a
-        // completed miss reports: a miss returns an empty optional with no error,
-        // and this returns an error whose response is Retry.
+        // The search never looked, so it must not report the absence a completed
+        // miss reports: a miss is an empty optional with no error, this is not.
         CHECK(failureResponse(found.error()) == FailureResponse::Retry);
         CHECK(under.clicks->clickCount() == 0);
 
@@ -1019,9 +993,8 @@ namespace uf::engine
         REQUIRE(under.session.has_value());
         auto& session = *under.session;
 
-        // observe() gates on cancellation, so the stop is requested only after
-        // the observation exists. The search policy then surfaces it as Cancelled
-        // rather than the observe or delivery guards doing so.
+        // observe() gates on cancellation, so the stop is requested after the
+        // observation exists and the search policy is what surfaces it.
         auto observation = session.observe();
         REQUIRE(observation.has_value());
         auto const didRequest = cancellation.request_stop();
@@ -1056,9 +1029,8 @@ namespace uf::engine
         auto observation = session.observe();
         REQUIRE(observation.has_value());
 
-        // The bound target instance passed validation during observe but is
-        // switched to fail before delivery, modeling an HWND reused between the
-        // two. The delivery-edge revalidation rejects the click before the sink.
+        // Valid during observe, invalid before delivery: an HWND reused between
+        // the two, which the delivery-edge revalidation rejects before the sink.
         under.source->invalidateTargetInstance();
 
         auto const receipt = session.clickPoint(
@@ -1143,16 +1115,14 @@ namespace uf::engine
         REQUIRE(under.clicks->lastNotches().has_value());
         CHECK(*under.clicks->lastNotches() == int32{-2});
 
-        // The lease reaching the sink is still this observation's own, which is
-        // what keeps the controller's delivery-time fence in the loop: the verb
-        // enforces no lease here, but it must not swallow one either.
+        // The verb enforces no lease here, but it must not swallow one either:
+        // the controller's delivery-time fence needs the observation's own.
         REQUIRE(under.clicks->lastScrollLease().has_value());
         CHECK(under.clicks->lastScrollLease()->frameId() == FrameId{17});
 
-        // A delivered scroll moves the screen exactly as a keystroke does, so the
-        // observation is spent and a second delivery on the same handle is
-        // refused. Remove the invalidation in EngineSession::scroll and one frame
-        // delivers two wheel messages, so this goes red.
+        // A delivered scroll moves the screen, so the observation is spent.
+        // Remove the invalidation in EngineSession::scroll and one frame delivers
+        // two wheel messages, so this goes red.
         auto const retry = session.scroll(std::move(handle), int32{-2});
         REQUIRE_FALSE(retry.has_value());
         requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
@@ -1164,9 +1134,8 @@ namespace uf::engine
             == 1
         );
 
-        // The delta on the line is the delta that was delivered, sign included.
-        // Nothing downstream of this could notice a scroll recorded upward that
-        // went downward, because the wheel leaves no other trace of itself.
+        // Sign included: nothing downstream could notice a scroll recorded upward
+        // that went downward, because the wheel leaves no other trace of itself.
         auto const* p_scroll = findEvent(
             under.traces->events(),
             trace::TraceEventKind::EngineScrollDelivered
@@ -1186,10 +1155,9 @@ namespace uf::engine
         auto observation = session.observe();
         REQUIRE(observation.has_value());
 
-        // The bound target passed validation during observe and is switched to
-        // fail before delivery, modeling an HWND reused between the two. Remove
-        // the revalidation in EngineSession::scroll and the wheel reaches whatever
-        // now owns that handle, so this goes red.
+        // Valid during observe, invalid before delivery: an HWND reused between
+        // the two. Remove the revalidation in EngineSession::scroll and the wheel
+        // reaches whatever now owns that handle, so this goes red.
         under.source->invalidateTargetInstance();
 
         auto const receipt = session.scroll(std::move(*observation), int32{1});
@@ -1245,16 +1213,12 @@ namespace uf::engine
 
     TEST_CASE("engine session scrolls without the fences a coordinate needs")
     {
-        // The decided contract, and the half a test has to pin because nothing
-        // else can: a scroll names no screen position, so the engine applies
-        // NEITHER the project-fingerprint check nor the observation's lease --
-        // both of which ask whether a coordinate still means what it meant. Add
-        // either to EngineSession::scroll and one of these two goes red.
-        //
-        // This is the engine's contract only. The delivery layer still receives
-        // the lease and fences the position it chooses on it; what is asserted
-        // here is that the refusal does not happen a layer too early, where it
-        // would refuse a wheel for a reason that cannot apply to it.
+        // A scroll names no screen position, so the engine applies NEITHER the
+        // project-fingerprint check nor the observation's lease -- both ask
+        // whether a coordinate still means what it meant. Add either to
+        // EngineSession::scroll and one of these two goes red. The delivery layer
+        // still receives the lease and fences the position it chooses on it; the
+        // refusal must just not happen a layer too early.
         auto const fingerprint = fingerprintOf(3, 1, 96);
 
         SUBCASE("a mismatched fingerprint does not refuse a scroll")
@@ -1310,24 +1274,22 @@ namespace uf::engine
         CHECK(receipt->frameId == FrameId{17});
         CHECK(receipt->hold == hold);
 
-        // The hold the caller named reached the PORT. Every other assertion here
-        // would still hold if the duration were dropped between the session and
-        // the sink, so this is the one that makes the parameter load-bearing:
-        // replace `hold` with a constant in the sink call and only this goes red.
+        // The hold the caller named reached the PORT: every other assertion here
+        // would still hold if the duration were dropped between session and sink.
+        // Replace `hold` with a constant in the sink call and only this goes red.
         REQUIRE(under.clicks->lastHold().has_value());
         CHECK(*under.clicks->lastHold() == hold);
         REQUIRE(under.clicks->lastLongPress().has_value());
         CHECK(under.clicks->lastLongPress()->x() == doctest::Approx(1.0));
 
-        // The lease reaching the sink is this observation's own, which is what
-        // keeps the controller's delivery-time fence in the loop as layer two.
+        // The lease reaching the sink is this observation's own, which keeps the
+        // controller's delivery-time fence in the loop as layer two.
         REQUIRE(under.clicks->lastLongPressLease().has_value());
         CHECK(under.clicks->lastLongPressLease()->frameId() == FrameId{17});
 
-        // The press changed the screen -- that is the entire reason to ask for
-        // one -- so the observation is spent and a second delivery on the same
-        // handle is refused. Remove the invalidation in EngineSession::longPress
-        // and one frame delivers two presses, so this goes red.
+        // The press changed the screen, so the observation is spent. Remove the
+        // invalidation in EngineSession::longPress and one frame delivers two
+        // presses, so this goes red.
         auto const retry = session.longPress(std::move(handle), PixelPoint{1, 0}, hold);
         REQUIRE_FALSE(retry.has_value());
         requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
@@ -1342,9 +1304,8 @@ namespace uf::engine
             == 1
         );
 
-        // And it is NOT recorded as a click. A reader counting delivered clicks
-        // would otherwise count an act that magnified a card rather than pressing
-        // a button, which is the mistake engine.scroll_delivered exists to avoid.
+        // And NOT as a click: a reader counting delivered clicks would otherwise
+        // count an act that magnified a card rather than pressing a button.
         CHECK(
             std::ranges::count(kinds, trace::TraceEventKind::EngineActionDelivered)
             == 0
@@ -1362,13 +1323,15 @@ namespace uf::engine
 
     TEST_CASE("engine session fences a long press exactly as it fences a click")
     {
-        // THE POINT OF THIS CASE IS THE PAIRING. A long press names a coordinate,
-        // so every gate a click gets must apply to it -- and the failure this
-        // guards against is not a missing gate in the abstract, it is a SECOND
-        // and laxer path to the same window sitting beside the first. Each
-        // subcase below has an exact twin among the clickPoint cases above;
-        // remove the matching check from EngineSession::longPress and the twin
-        // stays green while this goes red, which is what that failure looks like.
+        // The pairing is the point: a long press names a coordinate, so the
+        // failure guarded against is a SECOND and laxer path to the same window
+        // beside the click's. The first four subcases each have an exact twin
+        // among the click cases -- expired lease, mismatched fingerprint and
+        // replaced target instance above, cancelled run just below -- and
+        // removing the matching check from EngineSession::longPress leaves the
+        // twin green while this goes red. The fifth has no twin and cannot:
+        // clickPoint names no hold, so the backwards hold is this verb's own
+        // argument check rather than a shared gate.
         auto const fingerprint = fingerprintOf(3, 1, 96);
         auto const hold = MonotonicInstant::Duration{std::chrono::milliseconds{200}};
 
@@ -1545,9 +1508,8 @@ namespace uf::engine
         );
         REQUIRE(under.has_value());
 
-        // A source that waits for a frame that never arrives returns at the
-        // deadline instead of hanging, which is the whole content of the port's
-        // contract.
+        // A source waiting for a frame that never arrives returns at the deadline
+        // instead of hanging, which is the whole of the port's contract.
         auto const start       = MonotonicInstant::now();
         auto const observation = under->observe();
         auto const elapsed     = MonotonicInstant::now().saturatingDurationSince(start);
@@ -1560,10 +1522,9 @@ namespace uf::engine
             )
         );
 
-        // What reached the port was the configured budget, not a placeholder an
-        // adapter could satisfy by returning immediately: the deadline is at
-        // least the configured timeout away and nowhere near the five-second
-        // recognition timeout, and the token can actually request a stop.
+        // The configured budget reached the port, not a placeholder an adapter
+        // could satisfy by returning at once: the deadline is at least the
+        // capture timeout away and nowhere near the five-second recognition one.
         auto const floor = start.checkedAdd(captureTimeout);
         REQUIRE(floor.has_value());
         auto const ceiling = start.checkedAdd(

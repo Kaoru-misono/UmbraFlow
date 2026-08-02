@@ -112,12 +112,9 @@ namespace uf::cli
 
     TEST_CASE("parseRunArguments no longer accepts the removed run-shape flags")
     {
-        // --page and --action selected a single-step run that a task script now
-        // covers. --timeout and --poll set the host's page-wait budget, which no
-        // longer exists: the wait loop is the framework's Luau and a task writes
-        // its own timeout_ms and poll_ms. None of the four is merely ignored --
-        // an invocation carrying one is refused, so a stale script fails loudly
-        // instead of quietly running under a budget nobody applies.
+        // None of the four is merely ignored: an invocation carrying one is
+        // refused by name, so a stale script fails loudly instead of quietly
+        // running under a budget nobody applies.
         auto constexpr removed = std::array<std::string_view, 4>{
             "--page",
             "--action",
@@ -197,11 +194,9 @@ namespace uf::cli
 
     TEST_CASE("parseCheckArguments accepts the same optional --ocr-models flag")
     {
-        // The matrix gained this flag on 2026-08-01, when an element with no
-        // template started identifying by the text its rectangle reads and the
-        // reading's confidence became the score such a cell is falsified
-        // against. Before that the parser refused the flag by name, so a check
-        // that accepts it and drops it would look exactly like the old build.
+        // An element with no template identifies by the text its rectangle
+        // reads, so the matrix needs the models directory: a parser that
+        // accepts the flag and then drops it must go red on the read-back.
         auto const withoutFlag = std::vector<std::string>{"--project", "proj"};
         auto const withoutResult = parseCheckArguments(withoutFlag);
         REQUIRE(withoutResult.has_value());
@@ -217,16 +212,13 @@ namespace uf::cli
         REQUIRE(withResult->ocrModels.has_value());
         CHECK(*withResult->ocrModels == std::filesystem::path{"models"});
 
-        // And the operator reading the usage is told the flag exists and when
-        // it stops being optional.
         CHECK(checkUsageText().find("--ocr-models") != std::string_view::npos);
     }
 
     TEST_CASE("the default comparison budget covers a page evaluation but not a full frame")
     {
-        // The cost model the default is derived from, spelled once: a candidate
-        // position costs the template's pixels, and a search walks one position
-        // per placement that still fits inside the region.
+        // A candidate position costs the template's pixels; a search walks one
+        // position per placement that still fits inside the region.
         auto constexpr searchCost = [](
             uint64 templateWidth,
             uint64 templateHeight,
@@ -247,17 +239,15 @@ namespace uf::cli
         static_assert(widestAnchor == 115'210'000U);
 
         // evaluatePage shares one budget across every page anchor in the catalog,
-        // so covering the widest single anchor is not enough: the figure to cover
-        // is the sum over a whole page evaluation. Eight pages identified by two
-        // anchors each, all as costly as the widest, is the envelope.
+        // so the figure to cover is the sum over a whole evaluation: eight pages
+        // of two anchors each, all as costly as the widest.
         auto constexpr anchorsPerPageEvaluation = uint64{16};
         auto constexpr pageEvaluation = widestAnchor * anchorsPerPageEvaluation;
         CHECK(k_defaultPixelComparisonBudget >= pageEvaluation);
         CHECK(k_defaultPixelComparisonBudget >= narrowAnchor);
 
-        // And the ceiling stays real: a small template over a whole 1600x900
-        // frame is genuinely unbounded work and has to be asked for with
-        // --budget rather than granted by default, or nothing fails closed.
+        // The ceiling stays real: a small template over a whole 1600x900 frame
+        // has to be asked for with --budget, or nothing fails closed.
         auto constexpr fullFrameSmallTemplate = searchCost(66, 46, 1600, 900);
         static_assert(fullFrameSmallTemplate == 3'984'522'300U);
         CHECK(k_defaultPixelComparisonBudget < fullFrameSmallTemplate);
@@ -345,8 +335,7 @@ namespace uf::cli
 
     TEST_CASE("ExitCode preserves the documented process values")
     {
-        // 3 is deliberately absent and stays absent: it was ActionAbsent, whose
-        // only producer was the removed smoke path. Reassigning it would tell an
+        // 3 stays absent: it was ActionAbsent, and reassigning it would tell an
         // operator reading an old 3 that it meant something else.
         auto constexpr cases = std::array{
             std::pair{ExitCode::Success, uint8{0}},
@@ -454,8 +443,6 @@ namespace uf::cli
 
         SUBCASE("a run that completed as a stop arrived still succeeds")
         {
-            // The task did what it was asked to do before the stop landed, so it
-            // is not reported as cancelled.
             CHECK(
                 exitCodeForReport(task::TaskRunReport{.taskName = "daily"}, true)
                 == ExitCode::Success

@@ -11,26 +11,22 @@
 #include <string>
 #include <string_view>
 
-// The public script/engine.hpp forward-declares `struct lua_State;` and defines
-// FrameworkModule; this internal header reuses both rather than redeclaring
-// them, so the seam has a single definition.
+// `struct lua_State;` and FrameworkModule are reused from the public
+// script/engine.hpp rather than redeclared, so the seam has one definition.
 
 namespace uf::script
 {
     // Builds the framework environment and registers it in the VM registry,
-    // leaving the stack as it found it.
-    //
-    // Environment isolation in Luau is per-closure, not per-thread: luau_load
-    // takes the env table a chunk's closure carries (lvmload.cpp), and a new
-    // thread's globals table is copied from its parent (lstate.cpp), so the
-    // luaL_sandboxthread proxy shape cannot separate two trust levels on one VM.
-    // Two explicit env tables can.
-    //
-    // The framework environment is a writable table whose frozen metatable
+    // leaving the stack as it found it: a writable table whose frozen metatable
     // chains __index to the main globals, so trusted framework code sees the
     // admitted standard library and keeps its own globals off the main table.
     // That proxy shape is deliberate HERE and forbidden for the project
     // environment, which is exactly the `_G` escape the design rules out.
+    //
+    // Isolation in Luau is per-closure, not per-thread: luau_load takes the env
+    // table a chunk's closure carries (lvmload.cpp) and a new thread's globals
+    // table is copied from its parent (lstate.cpp), so luaL_sandboxthread cannot
+    // separate two trust levels on one VM. Two explicit env tables can.
     auto installFrameworkEnvironment(lua_State* state) -> void;
 
     // Pushes the registered framework environment onto `state`'s stack.
@@ -42,15 +38,12 @@ namespace uf::script
     // earlier one and nothing outside the framework can reach either.
     //
     // `privateCapabilities`, when present, is a `state` stack index holding the
-    // private capability surface; every module receives it as its single chunk
-    // argument (`local native = ...`). That is what makes the primitives closure
-    // upvalues of trusted code rather than keys of a reachable table: nothing
-    // binds the surface into either environment, so the only way to hold it is
-    // to have been handed it here.
-    //
-    // A module that fails to compile, load, run, or freeze fails the whole
-    // generation: the framework is first-party and compiled into the binary, so
-    // a broken module is a broken host rather than bad user input.
+    // private capability surface, passed to every module as its single chunk
+    // argument (`local native = ...`); nothing binds it into either environment,
+    // so the only way to hold it is to have been handed it here. A module that
+    // fails to compile, load, run, or freeze fails the whole generation: the
+    // framework is first-party, so a broken module is a broken host rather than
+    // bad user input.
     [[nodiscard]]
     auto loadFrameworkModules(
         lua_State* state,
@@ -64,15 +57,12 @@ namespace uf::script
     // surviving globals by value and a name removed later would still be in it.
     //
     // The prototype is an explicit whitelist: the deterministic base functions
-    // and libraries this file names one by one, plus `hostGlobals`, the names
-    // the host installer registered, plus `frameworkGlobals`, the framework
-    // module names whose frozen exports the project may name. It carries NO
-    // metatable, so there is no __index chain to the framework environment or to
-    // the main globals -- the one structural property that makes the whole
-    // denial list hold, and the reason publishing a framework export copies the
-    // value rather than opening a route to its neighbours. A whitelisted name
-    // that is absent from its source table fails InternalInvariant rather than
-    // silently producing a thinner environment.
+    // and libraries the .cpp names one by one, plus `hostGlobals` and
+    // `frameworkGlobals`. It carries NO metatable, so there is no __index chain
+    // to the framework environment or to the main globals -- the one structural
+    // property that makes the whole denial list hold, and the reason publishing
+    // a framework export copies the value. A whitelisted name absent from its
+    // source table fails InternalInvariant rather than thinning the environment.
     [[nodiscard]]
     auto installProjectEnvironmentPrototype(
         lua_State* state,
@@ -98,12 +88,11 @@ namespace uf::script
     // non-yieldable C frame (a table.sort comparator, a string.gsub callback)
     // surfaces as an ordinary runtime error rather than LUA_BREAK, and only
     // `control->broken` distinguishes it from a genuine script error. A null
-    // `control` means no cancellation is armed on this VM.
-    //
-    // `classify` observes the config's classifier for the raised value of a run
-    // that failed; null, or an empty classifier, reports every raise as
-    // InvalidResource. It is borrowed for the call only -- the EngineConfig-owned
-    // std::function it names outlives every call the Engine makes.
+    // `control` means no cancellation is armed on this VM. `classify` observes
+    // the config's classifier for the raised value of a failed run -- null, or
+    // an empty classifier, reports every raise as InvalidResource -- and is
+    // borrowed for the call only: the EngineConfig-owned std::function it names
+    // outlives every call the Engine makes.
     [[nodiscard]]
     auto runNumberInEnvironment(
         lua_State* mainState,
@@ -114,9 +103,8 @@ namespace uf::script
         RaisedErrorClassifier const* classify
     ) -> Result<double>;
 
-    // Runs `source` under a project environment freshly built for this call, and
-    // discards that environment afterwards. This is the one entry point a
-    // project chunk ever takes: every run of a task script goes through it, so
+    // Runs `source` under a project environment freshly built for this call and
+    // discarded afterwards. Every run of a task script goes through here, so
     // "the project script sees only the project environment" is a property of
     // the runner rather than of each caller remembering to build one.
     [[nodiscard]]

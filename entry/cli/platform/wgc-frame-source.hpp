@@ -28,8 +28,7 @@ namespace uf::cli::platform
         // Honours the budget by turning the caller's absolute deadline into the
         // remaining wall time the compositor wait may consume, and by handing the
         // stop token to that wait rather than only testing it here. An expired
-        // deadline is a Timeout before any frame work: waiting past it would be
-        // the exact defect the budget exists to prevent.
+        // deadline is a Timeout before any frame work.
         [[nodiscard]]
         auto capture(CaptureBudget const& budget) -> Result<Frame> override
         {

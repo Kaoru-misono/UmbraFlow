@@ -31,27 +31,20 @@
 #include <utility>
 #include <vector>
 
-// The falsification matrix, end to end through the product verb that runs it.
-//
-// Every case here drives cli::checkProduct over a project written to disk,
-// because that is the whole claim of this work: the matrix is data in the
-// project file, the walk is trusted Luau, the frames come from the project's own
-// screens, and the exit code says whether the model survived. A test that
-// exercised the Luau in isolation would prove the judging and nothing about the
-// three boundaries it has to cross to be useful.
+// The falsification matrix, end to end through cli::checkProduct over a project
+// written to disk: the claim is the crossing of three boundaries -- matrix as
+// data in the project file, walk in trusted Luau, frames from the project's own
+// screens -- and not the judging alone.
 namespace uf::cli
 {
     namespace
     {
-        // The synthetic geometry every project below is built at.
-        //
-        // A screen is small and a search region is small, and both are
-        // deliberate: this file measures what the matrix DECIDES, and the cost
-        // of the deciding, rather than how fast a sum of absolute differences
-        // runs. An authored search region is a usability precondition for a real
-        // project too -- eight elements searched over a whole frame did not
-        // finish in ten minutes, and the same eight finished in 17.3 seconds
-        // once each had one (docs/plans/2026-07-31-script-owned-page-model.md 7).
+        // Small screens and small search regions keep the measurement on what
+        // the matrix DECIDES rather than on how fast a sum of absolute
+        // differences runs. An authored search region is a real precondition
+        // too: eight elements searched over a whole frame did not finish in ten
+        // minutes and finished in 17.3 seconds once each had one
+        // (docs/plans/2026-07-31-script-owned-page-model.md 7).
         constexpr auto k_screenSize = uint32{48};
         constexpr auto k_markSize   = uint32{8};
         constexpr auto k_rectSize   = uint32{12};
@@ -134,16 +127,15 @@ namespace uf::cli
             // expressed.
             std::optional<std::size_t> screen{};
 
-            // The grey the screen is painted in, when it differs from the grey
-            // the template holds. Equal greys make every hit exact and every
-            // margin infinite; a small difference is what puts a measurable
-            // distance between an owner and its rival.
+            // The grey the screen is painted in when it differs from the
+            // template's. Equal greys make every hit exact and every margin
+            // infinite; a small difference puts a measurable distance between an
+            // owner and its rival.
             std::optional<uint8> paintGray{};
 
-            // Screens that carry this appearance's block WITHOUT owning it. It
-            // is how a mark that the model says is absent somewhere is made to
-            // turn up there anyway, which is the failure the matrix exists to
-            // catch and the only way to produce it with one appearance.
+            // Screens that carry this appearance's block WITHOUT owning it: how
+            // a mark the model says is absent turns up there anyway, which is
+            // the failure the matrix exists to catch.
             std::vector<std::size_t> alsoOn{};
         };
 
@@ -160,23 +152,20 @@ namespace uf::cli
             std::vector<SyntheticElement> elements{};
             std::size_t                   screens{};
 
-            // When false only the cells an appearance OWNS are written into the
-            // project file, which is an author's natural habit: measure each mark
-            // on its own screen and leave the rest blank. It is what the rules
-            // that fire without an expectation are aimed at.
+            // When false only the cells an appearance OWNS are written down --
+            // an author's natural habit, and what the rules that fire without an
+            // expectation are aimed at.
             bool claimOffDiagonal{true};
 
             // How wide each element's search region is. The default leaves room
-            // for the mark to sit somewhere inside it, so a search actually
-            // searches; the timing case also builds one at exactly the mark's
-            // size, which leaves a single candidate position and so measures the
-            // boundary crossing with almost no comparison work behind it.
+            // for the mark inside it so a search actually searches; the timing
+            // case also builds one at exactly the mark's size, leaving a single
+            // candidate position so the boundary crossing dominates.
             uint32 rectSize{k_rectSize};
 
-            // Which page each screen says it IS, by index. An entry that is
-            // absent or empty writes no `page` line, which is a screen nobody has
-            // annotated yet rather than a defect -- so the default leaves every
-            // screen undeclared and the baseline project unchanged.
+            // Which page each screen says it IS, by index. An absent or empty
+            // entry writes no `page` line -- a screen nobody annotated yet, not
+            // a defect -- so the baseline project stays unchanged.
             std::vector<std::string> screenPages{};
         };
 
@@ -203,10 +192,9 @@ namespace uf::cli
             );
         }
 
-        // A solid square of one grey, as PNG bytes. A uniform block is the right
-        // shape for a mark here: it is unambiguous, it matches at exactly one
-        // offset inside a region painted with anything else, and the distance to
-        // every other grey is a number the test can reason about.
+        // A solid square of one grey, as PNG bytes. A uniform block matches at
+        // exactly one offset inside a region painted with anything else, and its
+        // distance to every other grey is a number the test can reason about.
         [[nodiscard]]
         auto solidPng(uint32 size, uint8 gray) -> std::vector<std::byte>
         {
@@ -292,8 +280,7 @@ namespace uf::cli
             return std::format("assets/marks/{}-{}.png", element.name, appearance.name);
         }
 
-        // Writes every screen PNG and returns the content hash of each, in screen
-        // order.
+        // Returns the hash of each screen PNG it writes, in screen order.
         [[nodiscard]]
         auto writeScreens(
             std::filesystem::path const& root,
@@ -429,10 +416,9 @@ namespace uf::cli
             return text;
         }
 
-        // Lays the whole project out on disk. Its effect is the layout; the
-        // page-model text it hands back is a convenience for the cases that
-        // rewrite that one file to make the project malformed in exactly one way,
-        // and is ignored by every other case.
+        // Lays the whole project out on disk. The page-model text it returns is
+        // for the cases that rewrite that one file to make the project malformed
+        // in exactly one way; every other case ignores it.
         auto layOutProject(
             std::filesystem::path const& root,
             SyntheticProject const& project
@@ -455,10 +441,9 @@ namespace uf::cli
             return text;
         }
 
-        // Twenty elements over four screens, each owning exactly one screen, laid
-        // out in a five-by-four grid of non-overlapping rectangles. This is the
-        // shape the work order asks to be measured on and the baseline every
-        // rejection case perturbs.
+        // Twenty elements over four screens, each owning exactly one, in a
+        // five-by-four grid of non-overlapping rectangles: the shape the
+        // measurement is asked for on, and the baseline every rejection perturbs.
         [[nodiscard]]
         auto twentyElementProject() -> SyntheticProject
         {
@@ -524,14 +509,10 @@ namespace uf::cli
 
     TEST_CASE("a screen that says which page it is has that page resolved on it")
     {
-        // THE CLAIM A SCREEN MAKES ABOUT ITSELF, measured end to end through the
-        // real binary: the frames come off disk in content-hash order, the page
-        // is resolved on the screen's own observation, and the budget the host
-        // sized from the file has to cover it.
-        //
-        // It is the only cell of the matrix that measures a whole page SIGNATURE
-        // rather than one element -- a conjunction over identify rows, which no
-        // element-level cell walks end to end.
+        // The only cell of the matrix that measures a whole page SIGNATURE
+        // rather than one element: a conjunction over identify rows, resolved on
+        // the screen's own observation, which no element-level cell walks end to
+        // end.
         SUBCASE("the screen its page really is stays accepted")
         {
             auto const directory = TemporaryDirectory{"uf-check-page-declared"};
@@ -551,10 +532,9 @@ namespace uf::cli
 
         SUBCASE("a screen that is not its declared page is rejected")
         {
-            // The same declaration moved one screen along. Every cell of the
-            // matrix still holds -- nothing about the elements changed -- and the
-            // model is rejected anyway, because screen1 says it is a page whose
-            // required mark is not on it.
+            // The same declaration moved one screen along: every cell of the
+            // matrix still holds, and the model is rejected anyway because
+            // screen1 says it is a page whose required mark is not on it.
             auto const directory = TemporaryDirectory{"uf-check-page-wrong"};
             auto project        = twentyElementProject();
             project.screenPages = {"", "only"};
@@ -582,9 +562,8 @@ namespace uf::cli
             REQUIRE(report.has_value());
             REQUIRE(report->run.failure.has_value());
             // The FILE's own refusal, named precisely: `recognition` refuses the
-            // same declaration a second time when a model somehow reaches the
-            // walk with one, and a fragment both sentences share would pass on
-            // either. This case is about the door that closes first.
+            // same declaration again further in, so a fragment both sentences
+            // share would pass on either door.
             auto const text = failureText(*report);
             CHECK(text.find("says it is page 'nowhere'") != std::string::npos);
             CHECK(
@@ -597,14 +576,11 @@ namespace uf::cli
 
     TEST_CASE("a mark that matches a screen the model says it is absent from is rejected")
     {
-        // The whole point of the matrix, in its simplest form: the file claims a
-        // mark is absent from three screens, and one of them carries it. Nothing
-        // about the model itself is malformed -- it is the measurement that
-        // contradicts what was written down.
-        //
-        // The element keeps its single appearance, so no rule about a set of
-        // appearances can fire and the per-cell judgement is the only thing that
-        // can reject this model.
+        // The file claims a mark is absent from three screens and one of them
+        // carries it: nothing about the model is malformed, the measurement
+        // contradicts what was written down. The element keeps its single
+        // appearance, so no rule about a set of appearances can fire and the
+        // per-cell judgement is the only thing that can reject this model.
         auto const directory = TemporaryDirectory{"uf-check-misfire"};
         auto project = twentyElementProject();
         project.elements.front().appearances.front().alsoOn = {std::size_t{1}};
@@ -622,13 +598,10 @@ namespace uf::cli
     TEST_CASE("two appearances of one element may not match one screen")
     {
         // The rule 2026-07-31-annotation-model-capabilities 4-2.4 asks for, and
-        // the one that does not need an expectation to fire.
-        //
-        // The two greys below are one level apart, which is what a pair of speed
-        // icons differing by a single digit looks like to a mask drawn a little
-        // too generously. Both clear the threshold on the screen either of them
-        // owns, so the element tells nothing apart -- and the fold's answer is
-        // whichever happened to score better on the day.
+        // the one that fires without an expectation. The two greys are one level
+        // apart -- a pair of speed icons under a mask drawn a little too
+        // generously -- so both clear the threshold on either owner's screen and
+        // the element tells nothing apart.
         auto const directory = TemporaryDirectory{"uf-check-confusable"};
         auto project = twentyElementProject();
         project.elements.front().appearances = {
@@ -651,11 +624,9 @@ namespace uf::cli
 
         SUBCASE("with only the diagonal claimed, the pairwise rule still rejects it")
         {
-            // THIS IS THE CASE THE RULE EXISTS FOR. The author measured each
-            // appearance on its own screen, wrote down what they saw, and every
-            // recorded expectation is satisfied. Only the rule that fires without
-            // an expectation -- no two appearances of one element may match one
-            // screen -- can see that the element distinguishes nothing.
+            // Every recorded expectation is satisfied -- the author measured each
+            // appearance on its own screen -- so only the rule that fires without
+            // an expectation can see that the element distinguishes nothing.
             project.claimOffDiagonal = false;
             layOutProject(directory.path(), project);
 
@@ -671,11 +642,10 @@ namespace uf::cli
 
     TEST_CASE("a well separated appearance set with only the diagonal claimed is accepted")
     {
-        // The control for the case above. Same file shape, same missing
+        // The control for the case above: same file shape, same missing
         // off-diagonal claims, greys far enough apart that each appearance owns
-        // its screen alone -- and the verdict is accepted. Without this, the
-        // pairwise rule could be rejecting every multi-appearance element and
-        // the case above would still pass.
+        // its screen alone. Without it the pairwise rule could be rejecting every
+        // multi-appearance element and the case above would still pass.
         auto const directory = TemporaryDirectory{"uf-check-separated"};
         auto project             = twentyElementProject();
         project.claimOffDiagonal = false;
@@ -697,17 +667,14 @@ namespace uf::cli
     TEST_CASE("an owner that only just beats its rival is reported")
     {
         // P4 of docs/plans/2026-07-31-annotation-model-capabilities.md 2.3: both
-        // outcomes are CORRECT here, and that is exactly what makes it worth
-        // reporting rather than waiting for. The owning appearance clears its
-        // threshold and the rival does not, so every recorded expectation holds
-        // and the per-cell rules see nothing; only the separation factor does.
+        // outcomes are CORRECT here, so every recorded expectation holds and the
+        // per-cell rules see nothing; only the separation factor does.
         //
-        // The numbers are exact. An 8x8 template at 9900 basis points has a
-        // ceiling of 16320, so a hit needs a score of at most 163. The screen is
-        // painted grey 100: the owner's grey 98 scores 64 x 2 = 128 and hits, and
-        // the rival's grey 106 scores 64 x 6 = 384 and misses -- a lead of three
-        // times, under the factor of four a healthy mark has been measured to
-        // deliver.
+        // The numbers are exact. An 8x8 template at 9900 basis points ceils at
+        // 16320, so a hit needs a score of at most 163. On a screen painted grey
+        // 100 the owner's grey 98 scores 64 x 2 = 128 and hits, the rival's 106
+        // scores 64 x 6 = 384 and misses -- a lead of three times, under the
+        // factor of four a healthy mark has been measured to deliver.
         auto const directory = TemporaryDirectory{"uf-check-thin"};
         auto project = twentyElementProject();
         project.elements.front().appearances = {
@@ -820,17 +787,12 @@ namespace uf::cli
 
     TEST_CASE("a project claiming what a region reads refuses a check with no engine")
     {
-        // THE HALF THE MATRIX MUST NOT SILENTLY SKIP. An element with no
-        // templates identifies by the text its rectangle reads, and measuring
-        // such a cell means running an OCR engine -- which is an optional
-        // binding. A check started without one over a project that holds such a
-        // claim can produce no verdict about that half of the model.
-        //
-        // Reporting those cells as "unclaimed" instead would be a green matrix
-        // over exactly the cells nobody measured, and it would look identical to
-        // a project that genuinely claimed nothing. So the routine refuses
-        // before the first screen and NAMES THE FLAG, which is the only thing an
-        // operator can act on.
+        // An element with no templates identifies by the text its rectangle
+        // reads, and measuring such a cell needs an OCR engine -- an optional
+        // binding. Reporting those cells as "unclaimed" would be a green matrix
+        // over exactly the cells nobody measured, indistinguishable from a
+        // project that claimed nothing, so the routine refuses before the first
+        // screen and NAMES THE FLAG.
         auto const directory = TemporaryDirectory{"uf-check-text-no-engine"};
         auto const baseline  = layOutProject(directory.path(), twentyElementProject());
 
@@ -859,9 +821,9 @@ namespace uf::cli
 
         SUBCASE("a project claiming no reading needs no engine and is accepted")
         {
-            // The control. Same binary, same absent flag, and a project whose
-            // every cell is a template distance -- so the refusal above is about
-            // what the project claims rather than about the flag being missing.
+            // The control: same binary, same absent flag, every cell a template
+            // distance -- so the refusal above is about what the project claims
+            // and not about the flag being missing.
             auto const report = checkProduct(
                 checkArgs(directory.path(), directory.path() / "trace.jsonl")
             );
@@ -872,12 +834,11 @@ namespace uf::cli
 
         SUBCASE("a page a screen declares can need the engine on its own")
         {
-            // The claims here say nothing about any reading, so the question
-            // `oracle.Claims.reads_text` answers is "no" -- and the check needs
-            // an engine anyway, because screen0 says it is a page whose signature
-            // is what a title box READS. A routine that asked only the claims
-            // would open the first screen and fail inside a resolution, which
-            // names the missing engine and not the project that needs it.
+            // `oracle.Claims.reads_text` answers "no" here and the check needs an
+            // engine anyway, because screen0 says it is a page whose signature is
+            // what a title box READS. A routine that asked only the claims would
+            // fail inside a resolution instead, naming the engine and not the
+            // project that needs it.
             auto const nested = TemporaryDirectory{"uf-check-page-text-no-engine"};
             auto project        = twentyElementProject();
             project.screenPages = {"only"};
@@ -904,11 +865,10 @@ namespace uf::cli
 
         SUBCASE("a --ocr-models directory that will not build an engine fails first")
         {
-            // The wiring itself, and the one case that fails if `checkProduct`
-            // accepted the flag and then ignored it: an engine is built from the
-            // directory before any screen is opened, so a directory with no
-            // model behind it ends the check before it starts rather than at the
-            // first read.
+            // The one case that fails if `checkProduct` accepted the flag and
+            // then ignored it: the engine is built before any screen is opened,
+            // so a directory with no model behind it ends the check before it
+            // starts rather than at the first read.
             auto const report = checkProduct(
                 CheckArgs{
                     .project   = directory.path(),
@@ -922,19 +882,15 @@ namespace uf::cli
 
     TEST_CASE("a screen claiming more text cells than the default budget is still checkable")
     {
-        // THE SHAPE THE REAL PROJECT HAS. One title box, drawn once and reused,
-        // reads a different name on every page -- so the box is claimed on every
-        // screen, and a project of fifteen pages claims it fifteen times. That is
-        // the normal case rather than a runaway, and the per-cycle read budget a
-        // wait loop is bounded by (eight) has nothing to do with it: the matrix
-        // opens one observation per screen and spends one read per claimed cell
-        // on it, so what a cycle here needs is a fact about the file.
-        //
-        // The check therefore takes its budget from the project's own element
-        // count, and the routine compares that budget against the widest screen
-        // BEFORE the first capture. Put the default back and this case goes red:
-        // the nine cells below exceed eight, and the run ends on the budget
-        // refusal instead of reaching the clause it should reach.
+        // One title box, drawn once and reused, reads a different name on every
+        // page, so a project of fifteen pages claims it fifteen times -- normal
+        // rather than a runaway. The per-cycle read budget a wait loop is bounded
+        // by (eight) has nothing to do with it: the matrix opens one observation
+        // per screen and spends one read per claimed cell, so the check sizes the
+        // budget from the project's own element count and compares it against the
+        // widest screen BEFORE the first capture. Put the default back and this
+        // goes red -- the nine cells below exceed eight and the run ends on the
+        // budget refusal instead of the clause it should reach.
         auto const directory = TemporaryDirectory{"uf-check-wide-text-screen"};
         auto const baseline  = layOutProject(directory.path(), twentyElementProject());
 
@@ -942,8 +898,8 @@ namespace uf::cli
         auto claims = std::string{};
         for (auto index = 0U; index < k_claimedCells; ++index)
         {
-            // Elements with no appearances of their own, which is what a region
-            // verified by what it reads is. Each is claimed once, on one screen.
+            // Elements with no appearances of their own -- what a region verified
+            // by what it reads is. Each is claimed once, on one screen.
             claims += std::format(
                 "\n[[element]]\nname = \"slot_{0}\"\ncapabilities = [\"read\"]\n"
                 "rect = [0, 0, 4, 4]\n"
@@ -1059,10 +1015,9 @@ namespace uf::cli
 
     TEST_CASE("a screen captured at another geometry is refused by name")
     {
-        // Every template a project holds was cut at the project's own geometry,
-        // so a screen of another size measures one model's marks against another
-        // model's pixels. Refusing it here names the file; letting it through
-        // would report a matrix of misses and blame the marks.
+        // Every template was cut at the project's own geometry, so a screen of
+        // another size measures one model's marks against another's pixels.
+        // Refusing here names the file; letting it through would blame the marks.
         auto const directory = TemporaryDirectory{"uf-check-geometry"};
         writeFile(directory.path() / "screens" / "small.png", markPng(uint8{30}));
 
@@ -1083,20 +1038,16 @@ namespace uf::cli
         CHECK(toString(frame.error()).find("small.png") != std::string::npos);
     }
 
-    // MEASURE, DO NOT OPTIMIZE. docs/plans/2026-07-31-script-owned-page-model.md
-    // 10.5 leaves the question of a batch matching primitive open until the
-    // boundary cost of a whole matrix has been measured on a realistic project,
-    // and forbids guessing. This case is that measurement and asserts nothing
-    // about the numbers: it reports the wall time of a twenty-element,
-    // four-screen matrix and the cost of one Luau-to-C++ crossing within it, so
-    // the decision is taken against data.
+    // docs/plans/2026-07-31-script-owned-page-model.md 10.5 leaves the batch
+    // matching primitive open until the boundary cost of a whole matrix is
+    // measured on a realistic project. This case is that measurement and asserts
+    // nothing about the numbers it reports.
     TEST_CASE("the cost of a twenty-element four-screen matrix is measured")
     {
-        // Two sizes rather than one, because a single number cannot answer the
-        // question. Most of a small matrix is fixed cost -- loading the project,
-        // booting the VM, decoding four PNGs -- and none of that is what a batch
-        // primitive would remove. The MARGINAL cost of a cell is, so both sizes
-        // are timed and the difference is divided by the difference in cells.
+        // Two sizes, because most of a small matrix is fixed cost -- project
+        // load, VM boot, four PNG decodes -- and none of that is what a batch
+        // primitive would remove. The MARGINAL cost of a cell is, so the
+        // difference in time is divided by the difference in cells.
         struct Measured final
         {
             std::size_t crossings{};
@@ -1130,10 +1081,9 @@ namespace uf::cli
                 best = std::min(best, elapsed);
             }
 
-            // One cycle_match per (screen, appearance), which is the crossing the
-            // open question is about. Every element here declares one appearance,
-            // so the folded row reuses that measurement rather than paying for a
-            // second search.
+            // One cycle_match per (screen, appearance), the crossing the open
+            // question is about. Every element declares one appearance, so the
+            // folded row reuses that measurement rather than searching twice.
             auto crossings = std::size_t{0};
             for (auto const& element : project.elements)
             {
@@ -1162,9 +1112,8 @@ namespace uf::cli
 
         // The same matrix with the region narrowed to the mark: one candidate
         // position, 64 comparisons. What is left of the marginal cost is the
-        // Luau-to-C++ crossing plus a rounding error, which is the number
-        // docs/plans/2026-07-31-script-owned-page-model.md 10.5 left the batch
-        // primitive question open on.
+        // Luau-to-C++ crossing plus rounding error -- the number 10.5 left the
+        // batch primitive question open on.
         auto const tightSmall = measure("uf-check-crossing-small", 5U, k_markSize);
         auto const tightFull  = measure("uf-check-crossing-full", 20U, k_markSize);
         auto const crossing   = marginalPerCell(tightSmall, tightFull);

@@ -18,11 +18,9 @@
 #include <utility>
 #include <vector>
 
-// Luau's Ast headers are third-party and do not build clean under the project's
-// /W4 /WX profile; a manifest-driven module has no CMakeLists to mark them
-// external, so wrap the includes exactly as modules/task's other ffi source and
-// modules/script's ffi layer do. Only the parser and AST are needed here -- no
-// VM -- so the compiler/VM headers stay out of this translation unit.
+// Luau's Ast headers are third-party and do not build clean under /W4 /WX; a
+// manifest-driven module has no CMakeLists to mark them external, so the
+// includes are wrapped as modules/script's ffi layer wraps its own.
 #if defined(_MSC_VER)
 #pragma warning(push, 0)
 #elif defined(__clang__)
@@ -52,31 +50,26 @@ namespace uf::task
 {
     namespace
     {
-        // The canonical script-visible root object. It carries data alone --
-        // named element and page handles and the error-kind constants -- so
-        // every reference to it must be one of the three approved two-level
-        // literal accesses; any other contact is rejected (annotation-design 4).
-        //
-        // There is deliberately no verb form. The capability surface moved into
-        // the trusted framework's closure, so `uf:anything(...)` names nothing
-        // that exists and is rejected here rather than left to fail as a runtime
-        // nil call.
+        // The canonical script-visible root. It carries data alone, so every
+        // reference must be one of the approved two-level literal accesses and
+        // any other contact is rejected (annotation-design 4). There is no verb
+        // form: the capability surface lives in the trusted framework's closure,
+        // so `uf:anything(...)` names nothing and is rejected here rather than
+        // left to fail as a runtime nil call.
         constexpr auto k_namespace = "uf";
 
-        // The two resource sub-namespaces that carry named handles, plus the
-        // error-kind constant table. errors is validated the same way but is host
-        // vocabulary rather than a project resource, so a reference to it is
-        // approved without entering the resource report.
+        // The resource sub-namespaces that carry named handles, plus the
+        // error-kind constants. errors is validated the same way but is host
+        // vocabulary, so a reference to it never enters the resource report.
         constexpr auto k_elementsTable = "elements";
         constexpr auto k_pagesTable       = "pages";
         constexpr auto k_errorsTable      = "errors";
 
-        // Luau's base library binds `_G` to the global table itself. It is not a
-        // resource path but a reflexive handle to the whole global environment, so
-        // any chain rooted at it (_G.uf, _G['uf'], rawget(_G, 'uf')) would reach
-        // the uf namespace WITHOUT rooting at the literal uf global the rest of
-        // this validator keys on. It is therefore rejected outright, the pre-VM
-        // twin of installSandbox niling `_G` on the task thread.
+        // `_G` is the reflexive handle to the whole global environment, so any
+        // chain rooted at it (_G.uf, rawget(_G, 'uf')) reaches the uf namespace
+        // without rooting at the literal uf global the rest of this validator
+        // keys on. Rejected outright, the pre-VM twin of installSandbox niling
+        // `_G` on the task thread.
         constexpr auto k_globalEnv = "_G";
 
         [[nodiscard]]
@@ -109,14 +102,11 @@ namespace uf::task
                 + std::to_string(location.begin.column + 1);
         }
 
-        // Follows a pure dot/colon member-access chain from `expr` down to its
-        // base and reports whether that base is the global uf. Any non
-        // AstExprIndexName link -- a parenthesised group, a call, a computed
-        // index -- breaks the "direct literal" chain, so only an unbroken member
-        // chain over the global uf roots at the namespace. This is what makes
-        // (uf).elements.x and uf.elements[x].y fall through to their
-        // bare-global or computed-index rejection rather than being mistaken for
-        // an approved access.
+        // Whether a pure dot/colon member-access chain from `expr` bottoms out at
+        // the global uf. Any other link -- a parenthesised group, a call, a
+        // computed index -- breaks the chain, which is what makes (uf).elements.x
+        // and uf.elements[x].y fall through to their own rejections rather than
+        // being mistaken for an approved access.
         [[nodiscard]]
         auto rootsAtNamespace(Luau::AstExpr* expr) -> bool
         {
@@ -130,13 +120,10 @@ namespace uf::task
         }
 
         // Walks one script's AST and enumerates every uf resource reference,
-        // rejecting the first contact with the uf namespace that is not an
-        // approved two-level literal access. A uf.errors.<kind> literal is
-        // checked the same way but contributes no resource, since the kinds are
-        // host vocabulary. Latches the first violation and turns every later
-        // visit into a no-op, so the reported location is the earliest offending
-        // one and traversal order is the message's tie-break. NOT reused across
-        // scripts: one visitor per parse.
+        // rejecting the first contact that is not an approved two-level literal
+        // access. The first violation latches and every later visit is a no-op,
+        // so the reported location is the earliest offending one. One visitor per
+        // parse; never reused across scripts.
         class ResourceVisitor final : public Luau::AstVisitor
         {
             std::unordered_set<std::string_view> m_elementNames{};
@@ -148,9 +135,8 @@ namespace uf::task
             std::optional<std::string> m_failure{};
 
         public:
-            // The views borrow `model`'s strings, which the caller keeps alive
-            // for the whole parse -- the visitor is built, used and dropped
-            // inside validateScriptResources below.
+            // The views borrow `model`'s strings; the visitor is built, used and
+            // dropped inside validateScriptResources, which keeps them alive.
             explicit ResourceVisitor(PageModelFacts const& model)
             {
                 for (auto const& name : model.elementNames)
@@ -169,9 +155,8 @@ namespace uf::task
                 return m_failure;
             }
 
-            // Moves the enumerated references into a deterministic report: both
-            // lists deduplicated (via the sets) and sorted, so identical scripts
-            // yield identical reports regardless of reference order.
+            // Deduplicated and sorted, so identical scripts yield identical
+            // reports regardless of reference order.
             [[nodiscard]]
             auto takeReport() -> ScriptResourceReport
             {
@@ -197,10 +182,9 @@ namespace uf::task
                 }
                 if (isNamespace(node->name))
                 {
-                    // A bare uf global reached by recursion is never approved:
-                    // every approved form consumes its uf root before descent
-                    // could reach it. So this is an alias, an argument, a return,
-                    // or a traversal target -- all rejected.
+                    // Every approved form consumes its uf root before descent
+                    // could reach it, so a bare uf global here is an alias, an
+                    // argument, a return or a traversal target.
                     recordFailure(
                         node->location,
                         "the uf namespace may be used only as "
@@ -212,12 +196,8 @@ namespace uf::task
                 }
                 if (isGlobalEnv(node->name))
                 {
-                    // `_G` is the reflexive global-table handle. Every chain built
-                    // on it (_G.uf:capture(), _G['uf'], rawget(_G, 'uf')) roots
-                    // here, never at the uf global the other checks key on, so it
-                    // would otherwise sail through as unrelated code. Reject the
-                    // handle itself: a task script has no legitimate use for the
-                    // raw global environment.
+                    // Every chain built on `_G` roots here rather than at the uf
+                    // global the other checks key on; see k_globalEnv.
                     recordFailure(
                         node->location,
                         "the raw global environment '_G' is not accessible from a "
@@ -243,10 +223,9 @@ namespace uf::task
                     // keep walking so nested uf references are still checked.
                     return true;
                 }
-                // This is the outermost uf-rooted member chain. Classify it as
-                // the one approved two-level literal or reject it, then stop
-                // descending (return false) so its uf root is never revisited
-                // by the bare-global net above.
+                // The outermost uf-rooted chain: classify or reject it, then
+                // stop descending so its uf root never reaches the bare-global
+                // net above.
                 classifyResourceAccess(node);
                 return false;
             }
@@ -261,12 +240,10 @@ namespace uf::task
                 m_failure = formatLocation(location) + ": " + std::move(message);
             }
 
-            // Classifies a uf-rooted member-access chain whose outermost node is
-            // `node`. The only approved shape is exactly two dot levels:
-            // uf . (elements|pages|errors) . <name>. Everything else -- a
-            // one-level field (uf.elements as a value, uf.foo), a deeper chain
-            // (uf.elements.x.y), a colon index (uf:anything), or an unknown
-            // sub-namespace -- is rejected.
+            // Classifies a uf-rooted member-access chain. The only approved
+            // shape is exactly two dot levels, uf.(elements|pages|errors).<name>;
+            // a one-level field, a deeper chain, a colon index and an unknown
+            // sub-namespace are all rejected.
             void classifyResourceAccess(Luau::AstExprIndexName* node)
             {
                 if (node->op == '.')
@@ -314,10 +291,8 @@ namespace uf::task
                 );
             }
 
-            // Resolves an element or page leaf `name` against the set the
-            // project file declares, recording the reference on success and a
-            // precise missing-resource failure otherwise. Split so the pages
-            // branch reuses it; see classifyResourceAccess for the dispatch.
+            // Resolves an element leaf against the set the project file
+            // declares, recording the reference or a missing-resource failure.
             void resolveElement(std::string_view name, Luau::Location const& location)
             {
                 if (m_elementNames.contains(name))
@@ -346,13 +321,10 @@ namespace uf::task
                 );
             }
 
-            // Resolves an error-kind leaf against AutomationErrorKind's single
-            // wire spelling, which is exactly what uf.errors is keyed by. A
-            // misspelling would otherwise be a nil that makes every comparison
-            // against it silently false, so it is closed here for the same reason
-            // a missing element is. Nothing is recorded on success: the kinds
-            // are host vocabulary, fixed for the binary, and the report enumerates
-            // the project resources a run depends on.
+            // Resolves an error-kind leaf against the wire spelling uf.errors is
+            // keyed by. A misspelling would otherwise be a nil that makes every
+            // comparison against it silently false. Nothing is recorded: the
+            // kinds are host vocabulary, not project resources.
             void resolveErrorKind(std::string_view name, Luau::Location const& location)
             {
                 for (auto const& entry : enumEntries<AutomationErrorKind>())
@@ -381,9 +353,8 @@ namespace uf::task
 
         try
         {
-            // The Ast allocator, name table, and default parse options; parse
-            // collects recoverable syntax errors into result.errors and catches
-            // its own fatal ParseError, returning a possibly-null root.
+            // parse collects recoverable syntax errors into result.errors and
+            // catches its own fatal ParseError, returning a possibly-null root.
             auto allocator = Luau::Allocator{};
             auto names     = Luau::AstNameTable{allocator};
             auto options   = Luau::ParseOptions{};
@@ -429,9 +400,8 @@ namespace uf::task
         }
         catch (std::exception const& error)
         {
-            // The parser is third-party: a pathological input that escapes its
-            // own error collection still fails closed as an invalid resource
-            // rather than propagating an exception across this boundary.
+            // The parser is third-party: an input that escapes its own error
+            // collection fails closed rather than crossing this boundary.
             return fail(
                 AutomationErrorKind::InvalidResource,
                 "task script '" + chunk + "' could not be parsed: " + error.what()

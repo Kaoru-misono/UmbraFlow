@@ -20,21 +20,15 @@ namespace uf::trace
 {
     namespace
     {
-        // The separator one nested step costs in the open path, so the total
-        // payload budget measures what a reader actually sees rather than the
-        // bare sum of the names.
+        // The separator one nested step costs in the open path, so the budget
+        // measures what a reader sees rather than the bare sum of the names.
         constexpr auto k_stepPathSeparatorBytes = std::size_t{1};
 
-        // Refuses a label a project supplied: empty, over-long, not valid UTF-8,
-        // or carrying a control byte.
-        //
-        // UTF-8 rather than ASCII is the rule on purpose. A step name is written
-        // to be read by whoever wrote the task, and this project's tasks are
-        // written in Chinese as often as in English; an ASCII-only character set
-        // would refuse the names a real daily uses. What is refused is what
-        // corrupts a line rather than what is unfamiliar: an ill-formed sequence
-        // (which would make the trace file itself invalid UTF-8) and a control
-        // byte (which a reader's terminal would act on rather than print).
+        // Refuses a label a project supplied. UTF-8 rather than ASCII because this
+        // project's tasks are written in Chinese as often as in English; what is
+        // refused is what corrupts a line rather than what is unfamiliar -- an
+        // ill-formed sequence makes the trace file itself invalid UTF-8, and a
+        // control byte is acted on by a reader's terminal rather than printed.
         [[nodiscard]]
         auto checkLabel(std::string const& label, std::string_view what) -> Status
         {
@@ -73,9 +67,8 @@ namespace uf::trace
             return ok();
         }
 
-        // The payload a framework event must carry. Its absence is a broken host
-        // rather than a broken request: nothing outside this binary builds a
-        // TraceEvent.
+        // Its absence is a broken host rather than a broken request: nothing
+        // outside this binary builds a TraceEvent.
         [[nodiscard]]
         auto requirePayload(TraceEvent const& event) -> Status
         {
@@ -277,42 +270,29 @@ namespace uf::trace
 
         case TraceEventKind::FrameworkRetryBackoff:
         case TraceEventKind::FrameworkSettled:
-            // A declared pause opens no scope: its whole content is the duration,
-            // which the emitting boundary already converted and bounded.
+            // A declared pause opens no scope: its whole content is the duration.
             UF_TRY(requireFramework());
             return requirePayload(event);
 
         case TraceEventKind::EngineActionDelivered:
-            // The mirror of the rule below, and the half that gives "never
-            // engine.action_delivered" teeth. On the exploration stream a
-            // delivered click is written under the annotation vocabulary, so
-            // this spelling reaching that stream means an emitter chose the
-            // wrong one -- which is a bug in this binary and not something a
-            // reader should have to notice for themselves.
+            // On the exploration stream a delivered click is written under the
+            // annotation vocabulary, so this spelling reaching that stream means
+            // an emitter chose the wrong one.
             return refuseAnnotationVocabularyClash();
 
         case TraceEventKind::EngineScrollDelivered:
-            // Host-authored like the engine lines below, so the run bracket is the
-            // only structural rule that binds it -- but a scroll whose delta is
-            // missing says only that something was delivered, and the delta is the
-            // whole of what distinguishes one from another.
+            // Host-authored, so the run bracket is the only structural rule that
+            // binds it -- but the delta is the whole of what it records.
             return requireScrollPayload(event);
 
         case TraceEventKind::EngineLongPressDelivered:
-            // Host-authored like the scroll above, and admitted on EVERY stream
-            // including the exploration one. That is the scroll's precedent
-            // rather than the click's: the annotation vocabulary exists so a
-            // bare coordinate is not recorded under a spelling that claims a
-            // recognition, and this kind claims none -- `long_press_delivered`
-            // says what happened and says nothing about why it was allowed.
+            // Host-authored, and admitted on EVERY stream including the exploration
+            // one -- the scroll's precedent rather than the click's, because
+            // `long_press_delivered` claims no recognition, only what happened.
             return requireLongPressPayload(event);
 
         case TraceEventKind::AnnotationClickDelivered:
         case TraceEventKind::AnnotationRegionSaved:
-            // Stated against the one front-end that has these verbs, exactly as
-            // requireFramework is stated against FrontEnd::Task: a front-end
-            // added later is refused by construction rather than by someone
-            // remembering to list it.
             UF_TRY(requireAnnotation());
             return requireAnnotationPayload(event);
 
@@ -325,10 +305,9 @@ namespace uf::trace
         case TraceEventKind::EngineKeyDelivered:
         case TraceEventKind::EngineObservationInvalidated:
         case TraceEventKind::TaskNativeCall:
-            // Host-authored lines. The only rule that binds them is the run
-            // bracket above; the step scope they belong to is stamped rather than
-            // asserted, which is what makes "a native call falls inside the step
-            // scope open at the time" hold by construction.
+            // Host-authored, bound only by the run bracket above. Their step scope
+            // is stamped rather than asserted, which is what makes "a native call
+            // falls inside the step scope open at the time" hold by construction.
             return ok();
         }
 
@@ -378,8 +357,7 @@ namespace uf::trace
         }
         if (m_steps.back() != payload.label)
         {
-            // Strict well-nestedness, stated as the only thing a finish may say:
-            // naming an outer step would close it around a still-open inner one,
+            // Naming an outer step would close it around a still-open inner one,
             // and the path stamped on every line since would have been a lie.
             return fail(
                 AutomationErrorKind::InternalInvariant,
@@ -432,14 +410,11 @@ namespace uf::trace
 
         if (attempt == 1U)
         {
-            // Retry scopes are matched rather than bracketed: section 12 gives
-            // the framework no scope-open or scope-close event, so a first
-            // attempt is what opens one. The stack is capped and drops its
-            // OUTERMOST entry when full, which bounds the memory a long loop of
-            // short retries can cost. What that costs is only matching reach for
-            // an outer scope nested beyond the cap; every rule below -- an
-            // attempt never exceeding its declared total, and never skipping a
-            // number within a scope -- is checked before the stack is consulted.
+            // Retry scopes are matched rather than bracketed: section 12 gives the
+            // framework no scope-open event, so a first attempt opens one. The stack
+            // drops its OUTERMOST entry when full, bounding what a long loop of
+            // short retries costs; all that loses is matching reach for a scope
+            // nested beyond the cap, since every rule above is checked first.
             if (m_retries.size() >= k_maxTrackedRetryScopes)
             {
                 m_retries.erase(m_retries.begin());
@@ -489,10 +464,9 @@ namespace uf::trace
         }
         if (std::ranges::contains(m_interrupts, payload.label))
         {
-            // Section 12's "that id must have no nested match": one interrupt
-            // handling itself is a handler that never dismissed what it matched,
-            // and the hit budget could not bound it because each nesting level
-            // spends a fresh one.
+            // Section 12's "that id must have no nested match": an interrupt
+            // handling itself never dismissed what it matched, and the hit budget
+            // cannot bound it because each nesting level spends a fresh one.
             return fail(
                 AutomationErrorKind::InternalInvariant,
                 "interrupt_matched nests a match of an id already matched"

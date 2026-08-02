@@ -35,47 +35,26 @@
 #include <vector>
 
 // Roadmap veto #6, made executable: block every long-running host binding in
-// turn and prove the whole run still exits inside its budget once it is
-// cancelled. Design section 8 records that this veto had never been run.
+// turn and prove the whole run still exits inside its budget once cancelled.
 //
-// The twelve primitives of design section 5, and what each one can block on:
+// Where each blocking primitive of design section 5 is blocked. cycle_open
+// blocks in IFrameSource::capture, the only port whose contract carries a
+// cancellation channel of its own (CaptureBudget), and it is blocked on THAT
+// token, so a session that stopped forwarding the run's stop fails this case.
+// cycle_close, cycle_match, cycle_read and emit block in the trace recorder,
+// the only host call any of them can wait in; cycle_click in
+// IActionSink::click; wait and settle in their own sliced sleep. The other
+// four -- deadline, raise, terminal, random -- reach no host call at all and
+// have no case here.
 //
-//   cycle_open   IFrameSource::capture -- the real screenshot, and the only
-//                port whose contract carries a cancellation channel of its own
-//                (CaptureBudget). Blocked here on THAT token, so a session that
-//                stopped forwarding the run's stop would fail this case.
-//   cycle_close  the trace recorder. The verb releases a frame and records one
-//                line; the recorder is the only host call in it that can wait.
-//   cycle_match  the trace recorder, for the same reason. The search itself is
-//                bounded by EngineSessionConfig's deadline and comparison cap.
-//   cycle_read   the trace recorder, as above.
-//   cycle_click  IActionSink::click -- the real input delivery.
-//   wait         its own sliced sleep (core::pollSleep).
-//   settle       its own sliced sleep.
-//   emit         the trace recorder.
-//
-//   deadline     EXEMPT. One MonotonicInstant::now() and a checked add. No port,
-//                no sleep, no recorder.
-//   raise        EXEMPT. Mints a Tier B carrier out of VM allocations and
-//                longjmps. It records nothing -- a raise is traced by the verb
-//                that failed, not by the mint -- so it reaches no host call at
-//                all.
-//   terminal     EXEMPT. Reads one bool off the TaskContext. It is deliberately
-//                the one primitive that does not even pass through guardFatal.
-//   random       EXEMPT. One draw from the in-process seeded RNG.
-//
-// Determinism under load is deliberate. Wherever a port exists, the stop is
-// requested the instant that port reports it has entered its block, so "the
-// cancel landed while the binding was blocked" is a fixed point of the sequence
-// rather than a wall-clock race. The two sleeping primitives have no port -- the
-// sleep IS the block -- so those two use a timed stop, and both bounds asserted
-// there are one-sided: a loaded machine can only make the delay longer, never
-// shorter.
-//
-// Every fake block is bounded by k_blockCeiling. A regression that stops
-// releasing the block therefore fails the exit-budget assertion after a few
-// seconds instead of hanging the suite, which is what keeps a broken host
-// reportable rather than a timeout nobody can read.
+// Wherever a port exists the stop is requested the instant that port reports
+// it has entered its block, so "the cancel landed while the binding was
+// blocked" is a fixed point of the sequence rather than a wall-clock race. The
+// two sleeping primitives have no port, so they use a timed stop and both
+// bounds asserted there are one-sided: a loaded machine can only make the
+// delay longer. Every fake block is bounded by k_blockCeiling, so a regression
+// that stops releasing it fails the exit-budget assertion after a few seconds
+// instead of hanging the suite.
 namespace uf::task
 {
     namespace
@@ -97,10 +76,9 @@ namespace uf::task
         // lands while that primitive is already sleeping.
         constexpr auto k_stopDelay = std::chrono::milliseconds{200};
 
-        // The floor the two timed cases assert the run took. Below the delay
+        // The floor the two timed cases assert the run took: below the delay
         // above and far above the microseconds a run spends on fake ports, so a
-        // primitive that returned without sleeping at all fails it -- which is
-        // what keeps "it exited fast" from passing vacuously.
+        // primitive that returned without sleeping at all fails it.
         constexpr auto k_pausedFloor = MonotonicInstant::Duration{
             std::chrono::milliseconds{150}
         };
@@ -115,10 +93,9 @@ namespace uf::task
             AfterDelay,
         };
 
-        // The state a blocked port, the trigger thread and the case all share.
-        // It is shared through a std::shared_ptr rather than captured by
-        // reference, so the trigger thread owns a share of what it touches
-        // instead of pointing back into the gate.
+        // The state a blocked port, the trigger thread and the case all share. A
+        // shared_ptr rather than a reference capture, so the trigger thread owns
+        // a share of what it touches instead of pointing back into the gate.
         struct GateState final
         {
             std::stop_source      stop{};
@@ -126,8 +103,8 @@ namespace uf::task
             std::atomic<bool>     blocked{false};
         };
 
-        // One cancellation for one veto case: the stop token every layer of the
-        // run shares, the one-shot block a fake port takes, and the thread that
+        // One cancellation for one veto case: the token every layer of the run
+        // shares, the one-shot block a fake port takes, and the thread that
         // requests the stop.
         class CancelGate final
         {
@@ -146,11 +123,10 @@ namespace uf::task
                           }
                           else
                           {
-                              // The ceiling is what keeps this thread joinable
-                              // when a case never reaches its block at all: the
-                              // stop is requested either way, so the trigger
-                              // always finishes and the case fails on its own
-                              // assertions rather than on a hang.
+                              // The ceiling keeps this thread joinable when a
+                              // case never reaches its block: the stop is
+                              // requested either way, so the case fails on its
+                              // own assertions rather than on a hang.
                               static_cast<void>(
                                   state->entered.try_acquire_for(k_blockCeiling)
                               );
@@ -167,10 +143,9 @@ namespace uf::task
             }
 
             // Takes the one-shot block, waiting on `cancellation` rather than on
-            // the gate's own token. A port with a real cancellation channel is
-            // therefore tested against that channel and not against a back door
-            // the fake gave itself. Later calls return at once: the point is
-            // made by the first one.
+            // the gate's own token, so a port with a real cancellation channel
+            // is tested against that channel and not a back door the fake gave
+            // itself. Later calls return at once.
             auto blockOn(std::stop_token const& cancellation) -> void
             {
                 if (m_state->blocked.exchange(true))
@@ -188,21 +163,18 @@ namespace uf::task
                 }
             }
 
-            // Whether a port ever entered the block. The control that keeps a
-            // fast, cancelled exit from passing without anything having been
-            // blocked in the first place.
+            // Whether a port ever entered the block: the control that keeps a
+            // fast, cancelled exit from passing with nothing having blocked.
             [[nodiscard]] auto blocked() const noexcept -> bool
             {
                 return m_state->blocked.load();
             }
         };
 
-        // Blocks inside capture(), on the budget's OWN cancellation token.
-        //
-        // That is the contract IFrameSource::CaptureBudget states, and testing
-        // against it is the point: a session that stopped putting the run's stop
-        // token into the budget would leave this capture sitting out the whole
-        // ceiling, and the case would fail on the exit budget.
+        // Blocks inside capture(), on the budget's OWN cancellation token: a
+        // session that stopped putting the run's stop token into the budget
+        // would leave this capture sitting out the whole ceiling, and the case
+        // would fail on the exit budget.
         class BlockingFrameSource final : public engine::IFrameSource
         {
             CancelGate* m_gate;
@@ -228,14 +200,12 @@ namespace uf::task
             }
         };
 
-        // Blocks inside click().
-        //
-        // IActionSink::click carries no cancellation parameter -- the port is
-        // expected to be bounded by the controller's own input timeouts -- so
-        // this fake waits on the run's stop token directly, which is the most a
-        // fake can honour here. What the case then proves is the half that IS
-        // the host's: once delivery returns, the run ends terminally inside its
-        // budget instead of carrying on to the next verb.
+        // Blocks inside click(). IActionSink::click carries no cancellation
+        // parameter -- the port is bounded by the controller's own input
+        // timeouts -- so this fake waits on the run's stop token directly, and
+        // what the case proves is the half that IS the host's: once delivery
+        // returns, the run ends terminally inside its budget instead of
+        // carrying on to the next verb.
         class BlockingActionSink final : public engine::IActionSink
         {
             CancelGate* m_gate;
@@ -256,8 +226,8 @@ namespace uf::task
                 return ok();
             }
 
-            // A keystroke reaches the same port, so it blocks on the same gate: what
-            // the veto cases prove about a blocked click holds for a blocked key.
+            // A keystroke reaches the same port, so what the veto cases prove
+            // about a blocked click holds for a blocked key.
             [[nodiscard]]
             auto pressKey(
                 KeyName /*key*/,
@@ -279,10 +249,9 @@ namespace uf::task
                 return ok();
             }
 
-            // And for a blocked long press. It blocks on the gate rather than
-            // sleeping for the hold, because what the veto cases are about is a
-            // sink that does not return, and a real hold would only make the case
-            // slower without making it stronger.
+            // And a blocked long press. It blocks on the gate rather than
+            // sleeping for the hold: the cases are about a sink that does not
+            // return, and a real hold would only make this one slower.
             [[nodiscard]]
             auto longPress(
                 Point<ClientSpace> /*point*/,
@@ -295,19 +264,14 @@ namespace uf::task
             }
         };
 
-        // Blocks inside emit(), on the first event matching its target.
-        //
-        // The recorder is the only blocking surface inside cycle_close,
-        // cycle_match, cycle_read and emit: none of those verbs reaches a port of
-        // its own, so the host call they all make is the one that records what
-        // they did. Like the action sink, ITraceSink::emit carries no
-        // cancellation channel of its own.
+        // Blocks inside emit(), on the first event matching its target. Like the
+        // action sink, ITraceSink::emit carries no cancellation channel of its
+        // own, so the fake waits on the run's stop token.
         class BlockingTraceSink final : public trace::ITraceSink
         {
         public:
             // What the sink waits for before it blocks: one task.native_call
-            // named by its verb, or the first framework semantic event, which is
-            // the only way a run reaches `emit` at all.
+            // named by its verb, or the first framework semantic event.
             struct Target final
             {
                 std::string nativeVerb{};
@@ -341,10 +305,10 @@ namespace uf::task
             }
         };
 
-        // The recorder and the session over it. The recorder is held through a
-        // unique_ptr because the session borrows it, exactly as binding-fixture's
-        // Built does; this suite needs its own because it varies the ACTION sink,
-        // which the shared builder always supplies itself.
+        // The recorder and the session over it, held through a unique_ptr
+        // because the session borrows it. This suite needs its own rather than
+        // binding-fixture's Built because it varies the ACTION sink, which the
+        // shared builder always supplies itself.
         struct VetoParts final
         {
             std::unique_ptr<trace::TraceRecorder> recorder;
@@ -423,13 +387,11 @@ namespace uf::task
         }
 
         // The three things a blocked binding must not cost the run: time, the
-        // correct verdict, and control.
-        //
-        // markCount is the discriminator, and it carries its own control: every
+        // correct verdict, and control. markCount is the discriminator: every
         // script below calls mark() BEFORE the blocked primitive and again
-        // after, so exactly one is the assertion that the first ran and the
-        // second did not. A wiring mistake that made mark() unreachable would
-        // read zero, and a cancel the script rode through would read two.
+        // after, so exactly one asserts the first ran and the second did not --
+        // an unreachable mark() reads zero, and a cancel the script rode
+        // through reads two.
         auto expectPromptCancelledExit(BlockedRun const& run) -> void
         {
             CHECK(run.elapsed < k_exitBudget);
@@ -446,10 +408,9 @@ namespace uf::task
             return grayFrame(fixtureFingerprint(), resolvingPixels(), frameId);
         }
 
-        // The frame source for every case whose block is somewhere else: it
-        // serves one frame the fixture template is on, so the script can reach
-        // the verb under test without any of the setup blocking on its way
-        // there.
+        // The frame source for every case whose block is somewhere else: one
+        // frame the fixture template is on, so the script reaches the verb under
+        // test without any of the setup blocking on its way there.
         [[nodiscard]]
         auto servingFrameSource() -> std::unique_ptr<engine::IFrameSource>
         {
@@ -541,9 +502,9 @@ namespace uf::task
         {
             auto gate = CancelGate{StopTrigger::OnFirstBlock};
 
-            // The session binds no OCR adapter, so the read refuses -- but it
-            // refuses THROUGH the trace recorder, which is the blocking surface
-            // under test. What is being timed is the exit, not the answer.
+            // No OCR adapter is bound, so the read refuses -- but it refuses
+            // THROUGH the trace recorder, the blocking surface under test. What
+            // is being timed is the exit, not the answer.
             constexpr std::string_view source = R"lua(
                 local ticket = ctx:cycle_open()
                 mark()
@@ -571,9 +532,9 @@ namespace uf::task
         {
             auto gate = CancelGate{StopTrigger::OnFirstBlock};
 
-            // The click needs a real match from this frame to reach the sink at
-            // all, so gate.blocked() below is also the proof that the whole
-            // authorization path ran before delivery blocked.
+            // The click needs a real match to reach the sink at all, so
+            // gate.blocked() below is also proof the whole authorization path
+            // ran before delivery blocked.
             auto const source = std::string{"local TEMPLATE = "}
                 + templateLiteral(k_targetActionGray) + "\n" + R"lua(
                 local template = ctx:template_load(TEMPLATE)
@@ -603,8 +564,8 @@ namespace uf::task
             auto gate = CancelGate{StopTrigger::OnFirstBlock};
 
             // ctx:step is the only route a project has to `emit`: the primitive
-            // is a framework upvalue, and step_started is the first thing the
-            // framework asks the host to record.
+            // is a framework upvalue, and step_started is the first thing it
+            // asks the host to record.
             constexpr std::string_view source = R"lua(
                 mark()
                 pcall(function() ctx:step('blocked', function() end) end)
@@ -632,8 +593,8 @@ namespace uf::task
             auto gate = CancelGate{StopTrigger::AfterDelay};
 
             // Twenty seconds of poll interval against a minute of deadline: only
-            // the stop can end this early, and the floor asserted below is what
-            // says the sleep was really entered rather than refused on the way in.
+            // the stop can end this early, and the floor asserted below says the
+            // sleep was really entered rather than refused on the way in.
             constexpr std::string_view source = R"lua(
                 mark()
                 pcall(function()

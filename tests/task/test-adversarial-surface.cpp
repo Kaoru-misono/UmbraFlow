@@ -28,31 +28,26 @@
 
 // The adversarial suite for stage 2's four guarantees, written from the
 // attacker's side: environment isolation, the private capability surface, the
-// terminal cancellation latch, and the unforgeable Tier B carrier.
-//
-// It is deliberately separate from test-task-binding.cpp, which asserts what the
-// binding DOES. Everything here asserts what a hostile project script cannot
-// make it do, and every absence is paired with a control that would fail if the
-// probe never ran -- an attack that fails for the wrong reason proves nothing.
+// terminal cancellation latch, and the unforgeable Tier B carrier. Separate from
+// test-task-binding.cpp, which asserts what the binding DOES; everything here
+// asserts what a hostile project script cannot make it do, and every absence is
+// paired with a control that would fail if the probe never ran.
 namespace uf::task
 {
     namespace
     {
         // The framework-only value ctx.luau assigns as a framework GLOBAL rather
-        // than exporting. Reaching it from a project script would mean the
-        // project environment found a route into the framework environment, so
-        // it is the target of every reachability scan below. Spelled here exactly
-        // as modules/task/runtime/ctx.luau spells it; the control cases prove the
-        // scanner can find the string when it is genuinely present, so a typo
-        // surfaces as a failing control rather than as a silent pass.
+        // than exporting, and so the target of every reachability scan below.
+        // Spelled exactly as modules/task/runtime/ctx.luau spells it; the control
+        // cases find the string when it is genuinely present, so a typo surfaces
+        // as a failing control rather than as a silent pass.
         constexpr auto k_frameworkSentinel =
             std::string_view{"uf-framework-sentinel-6b21f0"};
 
         // Requests the stop as it fails a capture with a kind that is NOT
         // Cancelled, so the primitive mints a Tier B carrier while a hard cancel
-        // is already pending. That is the one arrangement in which a script could
-        // hope to trade the host's terminal control for a recoverable failure it
-        // is allowed to catch and continue past.
+        // is already pending -- the one arrangement in which a script could hope
+        // to trade the host's terminal control for a failure it may catch.
         class StallAndStopFrameSource final : public engine::IFrameSource
         {
             std::stop_source m_stop;
@@ -81,11 +76,10 @@ namespace uf::task
 
         // Serves a good frame every time and requests the stop on the Nth
         // capture, so a script can mint a Tier B carrier first and only then
-        // arrange for the hard cancel -- which is the only way to hold a
-        // catchable automation error and a pending cancellation at the same time.
-        //
-        // `stopAt == 0` never requests the stop, which is how the control run
-        // shares one source with the attack instead of needing a second class.
+        // arrange the hard cancel -- the only way to hold a catchable automation
+        // error and a pending cancellation at once. `stopAt == 0` never requests
+        // the stop, which is how the control run shares one source with the
+        // attack.
         class StopOnNthCaptureFrameSource final : public engine::IFrameSource
         {
             Frame            m_frame;
@@ -122,9 +116,8 @@ namespace uf::task
             }
         };
 
-        // Fails every capture with a Tier B kind and never requests a stop. It is
-        // the control for the source above: the same recoverable failure, with
-        // nothing cancelled, so a run that reports Cancelled there and
+        // Fails every capture with a Tier B kind and never requests a stop: the
+        // control for the source above, so a run that reports Cancelled there and
         // CaptureStalled here is discriminating on the cancel rather than on the
         // failure.
         class StallOnlyFrameSource final : public engine::IFrameSource
@@ -147,18 +140,16 @@ namespace uf::task
 
         // One attack: a label naming it and a Luau expression that must be truthy
         // on a real task VM. Each probe runs on its own VM, so a probe that
-        // corrupts its environment cannot make the next one pass or fail; the
-        // label is what a failure reports, which is why the attacks are written
-        // one per expression rather than folded into one long script.
+        // corrupts its environment cannot make the next one pass or fail, and the
+        // label is what a failure reports -- hence one expression per attack.
         struct Attack final
         {
             std::string label;
             std::string expression;
         };
 
-        // Runs every attack against `context`'s bound session and requires each
-        // to hold. Every expression must leave the cycle ledger as it found it,
-        // because one context serves them all.
+        // Runs every attack against `context`'s bound session. One context serves
+        // them all, so every expression must leave the cycle ledger as it found it.
         auto expectEveryAttackHolds(
             TaskContext& context,
             Built& built,
@@ -175,14 +166,10 @@ namespace uf::task
         }
 
         // One of §11's non-yieldable host C frames, with `body` executed exactly
-        // once inside it.
-        //
-        // These are where guarantees historically break: a primitive called from
-        // one of them cannot yield, and a lua_break landing in one degrades from
-        // a clean LUA_BREAK into an ordinary catchable error. The design answers
-        // both by keeping every primitive a direct, non-yielding C call and by
-        // latching terminal state in C++ rather than relying on the break, so the
-        // matrix below has to hold for every frame in the list.
+        // once inside it. A primitive called from one cannot yield, and a
+        // lua_break landing in one degrades from a clean LUA_BREAK into an
+        // ordinary catchable error, so the matrix below has to hold for every
+        // frame in the list.
         struct NonYieldableForm final
         {
             std::string_view name;
@@ -301,11 +288,10 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // ctx is the one framework object a project script can name, so it is
-            // the natural place to start an escalation. Each attack below is a
-            // route from ctx back into the framework: replace what a method does,
-            // read a method's captured surface, or get a second, writable ctx
-            // whose methods still answer.
+            // Each attack is a route from ctx -- the one framework object a
+            // project script can name -- back into the framework: replace what a
+            // method does, read its captured surface, or get a second, writable
+            // ctx whose methods still answer.
             auto const attacks = std::vector<Attack>{
                 // Controls first: an attack list against an object that answered
                 // nothing would pass every refusal below.
@@ -323,11 +309,9 @@ namespace uf::task
                 {"ctx wears no metatable to subvert", "getmetatable(ctx) == nil"},
                 {"a metatable cannot be attached to ctx",
                  "not pcall(setmetatable, ctx, { __index = print })"},
-                // A clone of ctx IS obtainable -- ctx has no protected metatable,
-                // so table.clone copies it. That is not an escalation and the
-                // next two attacks say why: the copy holds the same closures,
-                // which reach the same guarded primitives, and holds no name for
-                // anything else.
+                // A clone of ctx IS obtainable -- ctx has no protected metatable
+                // -- and is not an escalation: the copy holds the same closures,
+                // which reach the same guarded primitives, and names nothing else.
                 {"control: ctx can be cloned", "type(table.clone(ctx)) == 'table'"},
                 {"a clone confers no new name",
                  "(function()\n"
@@ -347,22 +331,20 @@ namespace uf::task
                  "    copy.cycle_close(copy, c)\n"
                  "    return not pcall(function() return copy.cycle_close(copy, {}) end)\n"
                  "end)()"},
-                // Calling a method with a foreign self is allowed -- the thin ctx
-                // methods ignore self entirely -- and buys nothing: the primitive
-                // behind it still validates its handle arguments.
+                // A foreign self is allowed -- the thin ctx methods ignore self
+                // entirely -- and buys nothing: the primitive behind it still
+                // validates its handle arguments.
                 {"a foreign self cannot smuggle a handle",
                  "not pcall(function() return ctx.cycle_close({}, {ordinal = 1}) end)"},
                 {"the framework's own globals are not exported on ctx",
                  "rawget(ctx, 'frameworkSentinel') == nil"
                  " and rawget(ctx, 'native') == nil"
                  " and rawget(ctx, 'error_tag') == nil"},
-                // The semantic-event primitives are the framework's alone. A
-                // project that could name emit could write a history of a run
-                // that never happened -- steps it never entered, retries it never
-                // took -- into the same stream the host writes, and the
-                // validation state machine would accept it because the sequence
-                // would be well formed. So they are absent from ctx, and the only
-                // route to them is the closure upvalue no project can name.
+                // A project that could name emit could write a history of a run
+                // that never happened into the same stream the host writes, and
+                // the validation state machine would accept it as well formed. So
+                // they are absent from ctx, and the only route to them is the
+                // closure upvalue no project can name.
                 {"the semantic-event primitives are not on ctx",
                  "rawget(ctx, 'emit') == nil and rawget(ctx, 'terminal') == nil"},
             };
@@ -370,16 +352,13 @@ namespace uf::task
             expectEveryAttackHolds(context, built, attacks);
         }
 
-        // A bounded, cycle-safe search for `target` that follows every route the
-        // brief names out of a value: table values, table KEYS, metatables, a
-        // userdata's printed form and its readable fields, and strings by
-        // SUBSTRING rather than by equality -- error() prefixes a source position
-        // onto a raised string, so an exact-match scan would miss a leak that
-        // travelled through a message.
-        //
-        // It is one definition shared by the control and the attack below, which
-        // is what makes the pair a discriminator: the same scanner finds a
-        // planted value and fails to find the framework's.
+        // A bounded, cycle-safe search for `target` following every route out of
+        // a value: table values, table KEYS, metatables, a userdata's printed
+        // form and its readable fields, and strings by SUBSTRING rather than by
+        // equality -- error() prefixes a source position onto a raised string, so
+        // an exact-match scan would miss a leak that travelled through a message.
+        // One definition serves the control and the attack, which is what makes
+        // the pair a discriminator.
         constexpr auto k_reachabilityScan = std::string_view{R"lua(
             local function scan(value, depth, seen)
                 if depth > 6 then return false end
@@ -443,10 +422,9 @@ namespace uf::task
             {
                 // The roots are everything a project script has: ctx, the uf
                 // tables, live handles, the whitelisted libraries and every base
-                // function that takes or returns a function or a table. The
-                // second half adds the error paths, because a message, a
-                // traceback or a __tostring is a route out of the framework just
-                // as much as a field is.
+                // function that takes or returns a function or a table. The second
+                // half adds the error paths -- a message, a traceback or a
+                // __tostring is a route out just as much as a field is.
                 auto const source = prelude + R"lua(
                     local cycle = ctx:cycle_open()
                     local template = ctx:template_load(TEMPLATE)
@@ -514,10 +492,9 @@ namespace uf::task
             // the main globals, so `string` in a project script and `string` in
             // the framework are the same object. A writable one would be the
             // shortest path to the framework there is: redefine string.format and
-            // trusted code calls the redefinition. luaL_sandbox freezes them, and
-            // these attacks are what holds that to it -- including the string
-            // metatable, which the sandbox freezes without protecting, so it
-            // stays readable and must stay unwritable.
+            // trusted code calls the redefinition. These attacks hold luaL_sandbox
+            // to freezing them -- including the string metatable, which it freezes
+            // without protecting, so it stays readable and must stay unwritable.
             auto const attacks = std::vector<Attack>{
                 {"control: the libraries are readable",
                  "type(string.format) == 'function' and type(table.concat) == 'function'"
@@ -543,9 +520,9 @@ namespace uf::task
                  "not pcall(function() getmetatable('').__index = {} end)"},
                 {"a clone of the string metatable cannot be attached to anything",
                  "not pcall(setmetatable, '', table.clone(getmetatable('')))"},
-                // Shadowing the NAME is allowed and is not a hole: the project
-                // environment is a fresh writable copy per run, so the binding
-                // dies with the run and never reaches the framework's own.
+                // Shadowing the NAME is not a hole: the project environment is a
+                // fresh writable copy per run, so the binding dies with the run
+                // and never reaches the framework's own.
                 {"control: shadowing a library name only rebinds this run's copy",
                  "(function()\n"
                  "    local real = string\n"
@@ -565,12 +542,12 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // The carrier is host-minted userdata under a host tag. ctx:try keys
-            // on `type(err) == 'userdata'` plus the label; C++ keys on the tag
-            // alone. The table-shaped forgeries are already refused by
-            // test-task-binding.cpp; what this adds is the routes that produce a
-            // value of the RIGHT type -- the other host userdata a script legally
-            // holds, and Luau's own non-table opaque values.
+            // The carrier is host-minted userdata under a host tag: ctx:try keys
+            // on `type(err) == 'userdata'` plus the label, C++ on the tag alone.
+            // Table-shaped forgeries are already refused by test-task-binding.cpp;
+            // what this adds is the routes that produce a value of the RIGHT type
+            // -- the other host userdata a script holds, and Luau's own non-table
+            // opaque values.
             auto const source = std::string{"local TEMPLATE = "}
                 + templateLiteral(k_targetActionGray) + "\n" + R"lua(
                 local cycle = ctx:cycle_open()
@@ -629,7 +606,7 @@ namespace uf::task
             // The C++ half: a handle raised uncaught must not choose the kind its
             // run is reported under. The control is the genuine carrier, which
             // must choose it -- otherwise a classifier that named nothing would
-            // pass this vacuously.
+            // pass vacuously.
             SUBCASE("a host handle names no automation kind")
             {
                 auto built = buildBinding(resolvingFrames(FrameId{204}));
@@ -680,16 +657,11 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // The uf root and the live handles are identities the host hands
-            // out. A script that could write one could redirect a click; a script
-            // that could add a key to the error table could make a comparison
-            // against it silently false.
-            //
-            // The element and page handle tables are gone from this list because
-            // they are gone from the surface
-            // (docs/plans/2026-07-31-script-owned-page-model.md 9); what replaced
-            // them as the opaque host object a project holds is the cycle ticket,
-            // the template and the match.
+            // The uf root and the live handles are identities the host hands out.
+            // A script that could write one could redirect a click; a script that
+            // could add a key to the error table could make a comparison against
+            // it silently false. The opaque host objects a project holds are the
+            // cycle ticket, the template and the match.
             auto const attacks = std::vector<Attack>{
                 {"control: the error table is readable",
                  "uf.errors.timeout == 'timeout'"},
@@ -707,9 +679,8 @@ namespace uf::task
                  "not pcall(rawset, uf.errors, 'forged', 'forged')"},
                 {"a live ticket, template and match are opaque",
                  templateAttackSource()},
-                // A clone of uf IS obtainable, because uf carries no protected
-                // metatable. It confers nothing: the sub-table it copies is the
-                // same frozen one.
+                // A clone of uf IS obtainable -- no protected metatable -- and
+                // confers nothing: the sub-table it copies is the same frozen one.
                 {"a clone of uf shares the same frozen table",
                  "(function()\n"
                  "    local copy = table.clone(uf)\n"
@@ -726,9 +697,7 @@ namespace uf::task
         {
             // §11's matrix, driven forwards: a primitive is a direct, non-yielding
             // C call, so calling one from inside a host C frame must simply work.
-            // If any of these ever stopped working it would mean a primitive had
-            // acquired a yield -- the exact regression the design's first
-            // invariant (no primitive calls back into Lua) exists to prevent.
+            // One of these breaking would mean a primitive had acquired a yield.
             constexpr std::string_view body =
                 "        local c = ctx:cycle_open()\n"
                 "        local d = ctx:deadline(1000)\n"
@@ -763,15 +732,13 @@ namespace uf::task
 
         TEST_CASE("The terminal latch refuses a primitive called from any context")
         {
-            // The same matrix, with the cancellation both RAISED and CAUGHT
-            // inside the non-yieldable frame. The first cycle_open is cancelled
-            // by the frame source and NO stop token is armed anywhere, so the VM
+            // The same matrix, with the cancellation both RAISED and CAUGHT inside
+            // the non-yieldable frame. The first cycle_open is cancelled by the
+            // frame source and NO stop token is armed anywhere, so the VM
             // interrupt never fires: the only thing that can refuse the second
             // call is the latch the first one set, checked at the C guard entry
-            // before the engine is touched.
-            //
-            // captureCount staying at one is what makes "before the engine" an
-            // observation rather than an inference.
+            // before the engine is touched. captureCount staying at one is what
+            // makes "before the engine" an observation rather than an inference.
             constexpr std::string_view body =
                 "        local first = pcall(function() return ctx:cycle_open() end)\n"
                 "        local again = pcall(function() return ctx:cycle_open() end)\n"
@@ -814,12 +781,11 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // The Tier C sentinel is a plain string a project pcall MAY catch,
-            // and the design accepts that: control is not what the sentinel
-            // protects, the latch is. Here the sentinel is caught through every
-            // nesting a script has -- bare pcall, ctx:try, pcall inside try, try
-            // inside pcall -- and the run keeps going. Every later primitive is
-            // still refused, and the frame source is never reached again.
+            // The Tier C sentinel is a plain string a project pcall MAY catch, and
+            // the design accepts that: the latch is what it protects, not control.
+            // Here it is caught through every nesting a script has and the run
+            // keeps going; every later primitive is still refused, and the frame
+            // source is never reached again.
             constexpr std::string_view source = R"lua(
                 local function open() return ctx:cycle_open() end
 
@@ -863,11 +829,9 @@ namespace uf::task
         TEST_CASE("A hard cancel cannot be traded for a recoverable Tier B failure")
         {
             // The failure-priority rule of §9: a cancel wins, fail closed. The
-            // attack is the only shape that can even try -- a primitive that
-            // mints a Tier B carrier while a hard cancel is pending -- and the
-            // script catches that carrier and keeps running, which is exactly
-            // what `retryable` invites an author to do.
-            //
+            // attack is the only shape that can even try -- a primitive that mints
+            // a Tier B carrier while a hard cancel is pending -- and the script
+            // catches it and keeps running, which is what `retryable` invites.
             // mark() is the discriminator: a host-visible witness that only runs
             // if the script really did continue past the cancel.
             auto const stalledRun = [](bool requestStop) -> DiscriminatorRun
@@ -932,9 +896,9 @@ namespace uf::task
                     automationErrorKind(run.result.error())
                     == AutomationErrorKind::Cancelled
                 );
-                // The carrier was catchable and was caught, and it still bought
-                // no statement: the interrupt breaks the thread at the next
-                // safepoint, which is the call to mark() itself.
+                // The carrier was caught and still bought no statement: the
+                // interrupt breaks the thread at the next safepoint, which is the
+                // call to mark() itself.
                 CHECK(run.markCount == 0);
             }
         }
@@ -943,16 +907,12 @@ namespace uf::task
         {
             // The sharpest form of §9's failure priority, and the only shape in
             // which a script can hold a catchable automation error while a hard
-            // cancel is already pending.
-            //
-            // The script mints a real Tier B carrier first, then walks into a
-            // non-yieldable C frame (§11's table.sort), arms the stop from inside
-            // it, swallows the C-boundary error the break degrades into, and
-            // re-raises its carrier -- an attempt to have the run reported under
-            // the kind IT chose rather than as cancelled. What actually happens
-            // is that the interrupt fires again at the very call op that would
-            // raise the carrier, so the carrier never becomes the pending error
-            // and the run is reported Cancelled either way.
+            // cancel is already pending: mint a real Tier B carrier, walk into a
+            // non-yieldable C frame (§11's table.sort), arm the stop from inside
+            // it, swallow the C-boundary error the break degrades into, and
+            // re-raise the carrier so the run reports the kind IT chose. The
+            // interrupt fires again at the very call op that would raise the
+            // carrier, so the carrier never becomes the pending error.
             auto const carrierRun = [](bool armStop) -> DiscriminatorRun
             {
                 auto stop  = std::stop_source{};
@@ -966,8 +926,8 @@ namespace uf::task
                         std::move(frame),
                         stop,
                         // Capture 1 mints the carrier; capture 2 happens inside
-                        // the comparator, which is where the stop is armed. A
-                        // stop that is never requested is the control.
+                        // the comparator, where the stop is armed. Never
+                        // requesting it is the control.
                         armStop ? std::size_t{2} : std::size_t{0}
                     ),
                     stop.get_token(),
@@ -1040,10 +1000,9 @@ namespace uf::task
 
         TEST_CASE("A task VM stops a runaway that never calls a primitive")
         {
-            // The interrupt-driven half of cancellation, on a REAL task VM rather
-            // than a bare one: a script that touches no primitive is stopped by
-            // the instruction budget alone, so the latch is not the only thing
-            // standing between a hostile script and the host.
+            // The interrupt-driven half of cancellation on a REAL task VM: a
+            // script touching no primitive is stopped by the instruction budget
+            // alone, so the latch is not the only thing guarding the host.
             auto built = buildBinding(resolvingFrames(FrameId{213}));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};

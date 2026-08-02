@@ -46,36 +46,26 @@
 
 // Colour-key masking through the AUTHORING half: a crop cut under a key, the
 // alpha plane it bakes, the counts it reports, and the two authoring mistakes
-// the host is willing to say something about.
-//
-// WHY THE SCORES ARE THE TEST AND NOT THE ALPHA BYTES. A mask that reaches the
-// PNG but never reaches the matcher would satisfy any assertion about pixels,
-// and that is exactly the state this whole change exists to leave: the measured
-// failure was a minimap icon scoring 8885/8549/8582 against a lit node, a dimmed
-// node and an empty cell, because the grid around it did the matching. So the
-// case below cuts one template two ways from the same pixels and matches both
-// against a frame the glyph is absent from, where the two answers have to
-// differ.
+// the host is willing to say something about. The scores are the test rather
+// than the alpha bytes, because a mask that reaches the PNG but never reaches
+// the matcher would satisfy any assertion about pixels -- so each case cuts one
+// template two ways from the same pixels and compares what the matcher reports.
 namespace uf::task
 {
     namespace
     {
-        // The fixture screen, shaped like the thing that broke: a glyph that is
-        // a small part of its own rectangle, on a background that is most of it.
-        //
-        // Forty by eight is chosen so BOTH ends of the mask floor are reachable
-        // on one frame. The glyph takes 60 of 320 pixels (18.8%), which is
-        // inside the 6.6-25.8% band every element that survived cross-page
-        // falsification in the reference project measured; the speck takes 10,
-        // under the floor; the background takes 250, over the share. A smaller
-        // frame could not tell those three apart.
+        // The fixture screen: a glyph that is a small part of its own rectangle,
+        // on a background that is most of it. Forty by eight so BOTH ends of the
+        // mask floor are reachable on one frame -- the glyph takes 60 of 320
+        // pixels (18.8%), inside the 6.6-25.8% band every element that survived
+        // cross-page falsification in the reference project measured; the speck
+        // takes 10, under the floor; the background 250, over the share.
         inline constexpr auto k_backgroundLevel = uint8{16};
         inline constexpr auto k_glyphLevel      = uint8{240};
 
         // The background repainted, for the frame where the glyph holds still
-        // and the scenery behind it does not. Eighty grey levels away, which is
-        // far enough that an unmasked template cannot ignore it and near enough
-        // that no channel saturates.
+        // and the scenery does not. Eighty grey levels away: far enough that an
+        // unmasked template cannot ignore it, near enough that nothing saturates.
         inline constexpr auto k_sceneryLevel    = uint8{96};
         inline constexpr auto k_sceneryDistance = uint64{80};
 
@@ -107,10 +97,9 @@ namespace uf::task
             return y == 0U && x >= 30U;
         }
 
-        // The three frames this file needs, and the two ways one screen can
-        // differ from the screen a template was cut on. They are one closed set
-        // rather than two booleans because exactly one of them varies at a time,
-        // which is what makes each score attributable.
+        // The three frames this file needs. One closed set rather than two
+        // booleans because exactly one thing varies at a time, which is what
+        // makes each score attributable.
         enum class Scene : uint8
         {
             // The screen the template is cut from.
@@ -122,9 +111,7 @@ namespace uf::task
 
             // The glyph is byte-identical and the scenery behind it is
             // repainted: the same element on a different map, which an element
-            // must still HIT. This is the frame the measured minimap failure is
-            // about -- the grid did the matching, so the icon scored the same
-            // 8885/8549/8582 whatever the cell held.
+            // must still HIT. The frame the measured minimap failure is about.
             SceneryChanged,
         };
 
@@ -145,10 +132,9 @@ namespace uf::task
             {
                 for (auto x = uint32{0}; x < k_screenWidth; ++x)
                 {
-                    // The speck is painted identically on every scene. It exists
-                    // for the mask floor below, and holding it still keeps the
-                    // arithmetic of the two score cases attributable to one
-                    // group of pixels each.
+                    // The speck is painted identically on every scene: it exists
+                    // for the mask floor below, and holding it still keeps each
+                    // score attributable to one group of pixels.
                     if (isSpeck(x, y))
                     {
                         pixels.emplace_back(asByte(k_speckBlue));
@@ -276,16 +262,13 @@ namespace uf::task
             };
         }
 
-        // The score one decoded template gets on one scene. A raw match takes no
-        // threshold, so this is the whole of what the two spellings of one
-        // template can be compared on.
-        //
-        // The search ROI is the whole screen and the template covers it, so
-        // there is exactly one candidate position and the score is not an argmin
-        // over offsets. That matters: a tiny mask's real failure is that it
-        // finds SOME offset where its pixels land well, and a case that left the
-        // search room to wander would be measuring that instead of what the mask
-        // excludes.
+        // The score one decoded template gets on one scene; a raw match takes no
+        // threshold, so it is the whole of what two spellings of one template
+        // can be compared on. The search ROI is the whole screen and the
+        // template covers it, so there is exactly one candidate position and the
+        // score is not an argmin over offsets -- a search with room to wander
+        // would measure a tiny mask finding SOME lucky offset instead of what
+        // the mask excludes.
         [[nodiscard]]
         auto scoreAgainst(GrayTemplateImage const& templateImage, Scene scene)
             -> uint64
@@ -326,7 +309,7 @@ namespace uf::task
             CHECK(keyed->mask->warning.empty());
 
             // And the same counts come back out of `probe`, measured
-            // independently off the encoded bytes. The two verbs are one
+            // independently off the encoded bytes: the two verbs are one
             // measurement or they are two numbers that can drift.
             auto const probed = probePngRegion(
                 keyed->png,
@@ -338,8 +321,8 @@ namespace uf::task
             CHECK(*probed->fullySelectedPixels == keyed->mask->selectedPixels);
 
             // The mask survives the encode: decodeTemplateImage is what the
-            // matcher loads every template through, and a mask it reads as
-            // empty is a mask that was never there.
+            // matcher loads every template through, and one it reads as empty
+            // was never there.
             auto const decodedKeyed = decodeTemplateImage(keyed->png, "keyed");
             REQUIRE(decodedKeyed.has_value());
             REQUIRE(!decodedKeyed->mask.empty());
@@ -354,14 +337,12 @@ namespace uf::task
             REQUIRE(decodedPlain.has_value());
             CHECK(decodedPlain->mask.empty());
 
-            // WHAT THIS PAIR MEASURES, AND WHAT IT DOES NOT. Two spellings of
-            // one template on one frame: the mask REACHES the matcher and
-            // changes the number it reports. On the empty cell the pixels that
-            // changed ARE the pixels the key kept, so this cannot show the mask
-            // excluding anything -- what it shows is the rescaling onto the
-            // template's own pixel count, 320/60 of the unmasked distance. The
-            // case below is the one that shows the exclusion, and the two
-            // together bracket the claim.
+            // Two spellings of one template on one frame: the mask REACHES the
+            // matcher and changes the number it reports. On the empty cell the
+            // pixels that changed ARE the pixels the key kept, so this shows
+            // not exclusion but the rescaling onto the template's own pixel
+            // count, 320/60 of the unmasked distance. The case below shows the
+            // exclusion, and the two together bracket the claim.
             auto const plainScore =
                 scoreAgainst(*decodedPlain, Scene::GlyphGone);
             auto const maskedScore =
@@ -381,12 +362,11 @@ namespace uf::task
 
         TEST_CASE("A masked template ignores the scenery an unmasked one matches on")
         {
-            // THE FAILURE THIS WHOLE CHANGE IS ABOUT, as a frame. The glyph is
-            // byte-identical to the pixels the template was cut from and only
-            // the scenery behind it moved -- a second battle map, a different
-            // grid. An element that cannot survive that is the measured minimap
-            // icon, which scored 8885 / 8549 / 8582 for a lit node, a dim node
-            // and an EMPTY cell because the grid was doing the matching
+            // The glyph is byte-identical to the pixels the template was cut
+            // from and only the scenery behind it moved. An element that cannot
+            // survive that is the measured minimap icon, which scored
+            // 8885 / 8549 / 8582 for a lit node, a dim node and an EMPTY cell
+            // because the grid was doing the matching
             // (docs/pitfalls/colour-key-annotation.md).
             auto harness = buildScreenHarness();
             REQUIRE(harness.session.has_value());
@@ -414,22 +394,20 @@ namespace uf::task
                 scoreAgainst(*decodedKeyed, Scene::SceneryChanged);
 
             // Unmasked, the template reports on scenery it does not care about:
-            // every one of the 250 background pixels moved 80 grey levels, and
-            // all 250 of them vote.
+            // all 250 background pixels moved 80 grey levels, and all 250 vote.
             CHECK(plainScore == k_backgroundPixels * k_sceneryDistance);
 
-            // Masked, none of the changed pixels carry weight, so the score is
-            // the glyph's own distance from itself. Exactly zero rather than
-            // "small": the mask either excludes the background or it does not.
+            // Masked, none of the changed pixels carry weight. Exactly zero
+            // rather than "small": the mask either excludes the background or
+            // it does not.
             CHECK(maskedScore == 0U);
             CHECK(maskedScore < plainScore);
 
-            // AND THE DISEASE ITSELF, IN ONE COMPARISON. Unmasked, this template
-            // scores WORSE on the frame its glyph is present on (20000) than on
-            // the frame its glyph is ABSENT from (13440) -- it prefers the wrong
-            // screen, which is how an element comes to hit every state it was
-            // meant to tell apart. Masked, the same two frames come out 0 and
-            // 71680, in the order an element is supposed to rank them.
+            // Unmasked, this template scores WORSE on the frame its glyph is
+            // present on (20000) than on the frame it is ABSENT from (13440):
+            // it prefers the wrong screen, which is how an element comes to hit
+            // every state it was meant to tell apart. Masked, the same two
+            // frames come out 0 and 71680, in the order it should rank them.
             auto const plainOnEmpty =
                 scoreAgainst(*decodedPlain, Scene::GlyphGone);
             auto const maskedOnEmpty =
@@ -452,9 +430,8 @@ namespace uf::task
             REQUIRE(plain.has_value());
 
             // Rebuilt from the frame this fixture painted, through the same
-            // encoder and nothing else. If the unkeyed path ever grew a step,
-            // this hash stops matching -- which is what "byte-identical to
-            // today's" has to mean to be checkable at all.
+            // encoder and nothing else, so the hash stops matching the moment
+            // the unkeyed path grows a step.
             auto const bgra     = screenPixels(Scene::Authored);
             auto expectedRgba = std::vector<std::byte>{};
             expectedRgba.reserve(bgra.size());
@@ -478,7 +455,7 @@ namespace uf::task
 
             // A key that takes EVERY pixel is the other end of the same claim:
             // an alpha plane of nothing but 255 is what an unkeyed crop already
-            // wrote, so the bytes have to be the same file.
+            // wrote, so the bytes are the same file.
             auto const total = context.cycleCrop(
                 *ticket,
                 wholeScreen(),
@@ -504,10 +481,10 @@ namespace uf::task
             auto const ticket = context.openCycle();
             REQUIRE(ticket.has_value());
 
-            // A colour this screen does not wear anywhere. Persisted, it becomes
-            // a fully transparent template, and every later match of it fails
-            // InternalInvariant inside the matcher on a run that no longer knows
-            // which key was chosen or over what rectangle.
+            // A colour this screen does not wear. Persisted, it becomes a fully
+            // transparent template, and every later match fails
+            // InternalInvariant on a run that no longer knows which key was
+            // chosen or over what rectangle.
             auto const nothing = context.cycleCrop(
                 *ticket,
                 wholeScreen(),
@@ -524,16 +501,14 @@ namespace uf::task
                 == AutomationErrorKind::InvalidResource
             );
 
-            // The sentence has to name the key and the rectangle, because the
-            // whole complaint about the old behaviour was a failure that said
-            // neither.
+            // The sentence has to name the key and the rectangle; one that
+            // named neither is a failure an agent cannot act on.
             auto const message = std::string{nothing.error().message()};
             CHECK(message.contains("1,2,3"));
             CHECK(message.contains("40x8"));
 
             // The control: the same rectangle with a key the screen does wear is
-            // served, so the refusal is about the selection and not about the
-            // region.
+            // served, so the refusal is about the selection, not the region.
             auto const served =
                 context.cycleCrop(*ticket, wholeScreen(), glyphKey(0));
             REQUIRE(served.has_value());
@@ -545,9 +520,8 @@ namespace uf::task
             REQUIRE(harness.session.has_value());
             TaskContext context{*std::move(harness.session), *harness.recorder};
 
-            // Three keys on one screen, one for each verdict. The middle one is
-            // the reason the warning is a warning: a mask in the band that
-            // works must not carry one, or the hint says nothing.
+            // Three keys on one screen, one per verdict. A mask in the band that
+            // works must not carry a warning, or the hint says nothing.
             auto const source = std::string{R"lua(
                 local ticket = ctx:cycle_open()
 
@@ -685,9 +659,9 @@ namespace uf::task
                 TaskContextConfig{.projectRoot = directory.path()},
             };
 
-            // The authoring loop as an agent drives it, with a key this time.
-            // The key it wrote down is the one the HOST applied, tolerance
-            // included, so the file records what really carved the alpha plane.
+            // The authoring loop as an agent drives it, with a key. The key it
+            // wrote down is the one the HOST applied, tolerance included, so the
+            // file records what really carved the alpha plane.
             auto const author = std::string{R"lua(
                 local built  = project.load_project(ctx)
                 local ticket = ctx:cycle_open()
@@ -765,8 +739,8 @@ namespace uf::task
             CHECK(*verified == doctest::Approx(1.0));
 
             // The key reached the FILE, not merely the model: an appearance the
-            // writer dropped would reload as nil on the next build, and the
-            // check above would be measuring one run's memory.
+            // writer dropped would reload as nil, and the check above would be
+            // measuring one run's memory.
             auto stream = std::ifstream{
                 directory.path() / "page-model.toml",
                 std::ios::binary

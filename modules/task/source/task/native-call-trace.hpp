@@ -18,14 +18,11 @@ namespace uf::task
 {
     // The private capability surface has TWO consumers at the same level: the
     // trusted Luau framework (through the primitives in ffi/uf-tables.cpp) and an
-    // operator sending commands from outside (through OperatorSession). This
-    // header is what they share.
-    //
-    // What they must NOT each own a copy of is exactly this: the shape of a
-    // task.native_call line, and what happens when the sink loses one. A second
-    // copy of either would let one front-end's evidence drift from the other's,
-    // and a trace whose two halves are written to different rules cannot be read
-    // as one stream.
+    // operator sending commands from outside (through OperatorSession). What they
+    // share is here: the shape of a task.native_call line, and what happens when
+    // the sink loses one. A second copy of either would let one front-end's
+    // evidence drift from the other's, and a trace whose two halves are written to
+    // different rules cannot be read as one stream.
     //
     // What they each keep is how a failure SURFACES -- the Luau side raises through
     // the Tier ladder, the operator side returns a Result and writes a result line
@@ -48,14 +45,13 @@ namespace uf::task
         // The duration this call was handed, in whole milliseconds: the pause a
         // settle declared, or the hold a long press named. One field rather than
         // two because a line carries at most one duration and the verb already
-        // says which, exactly as `contentHash` serves three verbs.
+        // says which, exactly as `contentHash` serves four verbs.
         //
         // A settle reaches no engine verb, so this is the only evidence it
         // happened and a replay cannot reconstruct the run without it. A long
-        // press does reach one, and records the hold here as well for `key`'s
-        // reason: a press the host refuses before the engine is reached produces
-        // no engine line at all, and the hold may be exactly what the refusal was
-        // about.
+        // press records the hold here as well for `key`'s reason: a press the host
+        // refuses before the engine is reached produces no engine line at all, and
+        // the hold may be exactly what the refusal was about.
         std::optional<uint64> durationMillis{};
 
         // The key a `key` call was handed. Recorded on the native call as well as
@@ -64,10 +60,8 @@ namespace uf::task
         // is what the refusal was about.
         std::optional<KeyName> key{};
 
-        // The detent count a `cycle_scroll` call was handed, recorded on the same
-        // reasoning `key` is: a scroll the host refuses before the engine is
-        // reached produces no engine line at all, and the count is what the
-        // refusal was about.
+        // The detent count a `cycle_scroll` call was handed, recorded on `key`'s
+        // reasoning.
         std::optional<int32> wheelNotches{};
 
         // The project file a project_read or project_write named, and how many
@@ -77,9 +71,9 @@ namespace uf::task
         std::optional<uint64>           byteCount{};
 
         // The SHA-256 the call is about: the bytes a project verb moved, the blob
-        // a template_load decoded, or the template a cycle_match searched for. It
-        // is one field rather than three because a line carries at most one of
-        // them and the verb already says which.
+        // a template_load decoded, or the pixels a cycle_crop encoded. It is one
+        // field rather than three because a line carries at most one of them and
+        // the verb already says which.
         std::optional<std::string_view> contentHash{};
     };
 
@@ -101,28 +95,23 @@ namespace uf::task
     ) -> Status;
 
     // Records a failed native call. It reports nothing, and that is the contract:
-    // the caller already holds the verb's own error and surfaces THAT, however its
-    // front-end surfaces failures.
-    //
-    // Deliberately not returning the sink's failure. A caller asking why its click
-    // failed must not be told the trace file was unwritable, and for a cancellation
-    // the Tier C sentinel has to stay on the raise path. The verb is failing either
-    // way, so its own cause wins and the sink failure is latched on the context,
-    // where the run's owner reads it afterwards rather than losing it silently.
+    // the caller already holds the verb's own error and surfaces THAT. A caller
+    // asking why its click failed must not be told the trace file was unwritable,
+    // and for a cancellation the Tier C sentinel has to stay on the raise path.
+    // The sink failure is latched on the context, where the run's owner reads it
+    // afterwards rather than losing it silently.
     auto recordNativeCallFailure(
         TaskContext& context,
         NativeCallIdentity const& call,
         Error const& error
     ) -> void;
 
-    // Whether this generation is still live, or the failure that spent it.
-    //
-    // Both front-ends ask this before every primitive, so a caller that swallowed
-    // what was raised cannot drive one more engine verb before the generation is
-    // torn down. It re-reports under the kind that spent the generation rather than
-    // one fixed value: a cancelled run and a run stopped by a framework bug are
-    // different verdicts, and reporting either as the other sends a reader looking
-    // in the wrong place.
+    // Whether this generation is still live, or the failure that spent it. Both
+    // front-ends ask this before every primitive, so a caller that swallowed what
+    // was raised cannot drive one more engine verb before the generation is torn
+    // down. It re-reports under the kind that spent the generation rather than one
+    // fixed value: a cancelled run and a run stopped by a framework bug are
+    // different verdicts.
     [[nodiscard]] auto requireLiveGeneration(TaskContext const& context) -> Status;
 
     // Latches the generation terminal and reports the cancellation when the run's
@@ -133,9 +122,7 @@ namespace uf::task
     // while a sleep reaches nothing and would otherwise burn its whole budget on a
     // generation that is already over. It latches BEFORE reporting, which is what
     // makes the next primitive refuse at requireLiveGeneration even if the caller
-    // swallowed this.
-    //
-    // It takes a mutable context because latching that state is the point of the
+    // swallowed this. The context is mutable because latching is the point of the
     // call rather than a side effect of a query.
     [[nodiscard]] auto requireNotCancelled(TaskContext& context) -> Status;
 }

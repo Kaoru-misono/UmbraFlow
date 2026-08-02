@@ -93,11 +93,9 @@ namespace uf::image
         REQUIRE(result.has_value());
         auto const& encoded = *result;
 
-        // The eight-byte PNG signature and the full IHDR chunk are fixed by the
-        // format and by the pinned encoder configuration. Any stb change that
-        // altered the header would break template identity, so assert them
-        // exactly. The IHDR CRC (bytes 29..32) is deliberately covered by the
-        // full-sequence golden below rather than recomputed here.
+        // Signature and IHDR are fixed by the format and the pinned encoder
+        // configuration; an stb change that altered them would break template
+        // identity. The IHDR CRC (bytes 29..32) is left to the golden below.
         auto const header = std::array{
             asByte(0x89), asByte(0x50), asByte(0x4E), asByte(0x47),
             asByte(0x0D), asByte(0x0A), asByte(0x1A), asByte(0x0A),
@@ -118,10 +116,8 @@ namespace uf::image
             == std::vector<std::byte>{header.begin(), header.end()}
         );
 
-        // Full-sequence pin. The compression payload cannot be derived by hand,
-        // so the golden constant is captured from a green build and frozen here.
-        // Any stb or configuration change that alters the encoded stream must be
-        // reviewed against this exact sequence.
+        // The compression payload cannot be derived by hand, so the golden was
+        // captured from a green build; any stb or configuration change breaks here.
         auto const golden = std::vector<std::byte>{
             asByte(0x89), asByte(0x50), asByte(0x4E), asByte(0x47),
             asByte(0x0D), asByte(0x0A), asByte(0x1A), asByte(0x0A),
@@ -171,8 +167,7 @@ namespace uf::image
         auto const nativeCode = result.error().nativeCode();
         CHECK(nativeCode.value() != 0);
         CHECK_FALSE(nativeCode.message().empty());
-        // The point of carrying a category is that this is distinguishable from
-        // a Win32 status with the same numeric value.
+        // A category makes this distinguishable from a Win32 status of the same value.
         CHECK(nativeCode.category() != std::system_category());
         CHECK(result.error().message().find("failed to open PNG") != std::string_view::npos);
     }

@@ -30,9 +30,9 @@ namespace uf::task
         auto const entries = frameworkBundleEntries();
         REQUIRE(!entries.empty());
 
-        // Each module name and its published project global are the same string,
-        // and nothing derives one from the other: the generator takes the name
-        // from a file stem while frameworkProjectGlobals() is a C++ constant. A
+        // Each module name and its published project global are the same string
+        // and nothing derives one from the other -- the generator takes the name
+        // from a file stem, frameworkProjectGlobals() is a C++ constant -- so a
         // rename that touched only one side fails here rather than at VM boot.
         auto const published = frameworkProjectGlobals();
         CHECK(
@@ -65,8 +65,7 @@ namespace uf::task
 
         // The declaration module reaches the context module's registry channel,
         // which only holds because modules load in bundle order and `ctx` sorts
-        // first. Asserting the order here keeps a rename that reverses it from
-        // failing later as a nil index inside task.define.
+        // first; a rename that reversed it would fail later as a nil index.
         CHECK(std::string_view{entries.front().name} == "ctx");
 
         CHECK(!frameworkVersion().empty());
@@ -85,10 +84,9 @@ namespace uf::task
         CHECK(std::ranges::adjacent_find(names) == names.end());
     }
 
-    // The load-bearing case: the digest scripts/embed_luau.py recorded at build
-    // time must equal the one sha256 computes at run time. A failure
-    // here means the Python and C++ hash definitions have drifted, or that
-    // embedding did not reproduce the source bytes exactly.
+    // The digest scripts/embed_luau.py recorded at build time must equal the one
+    // sha256 computes at run time; a failure means the Python and C++ hash
+    // definitions drifted, or embedding did not reproduce the source bytes.
     TEST_CASE("each recorded hash equals sha256 of the embedded source")
     {
         for (auto const& entry : frameworkBundleEntries())
@@ -110,12 +108,10 @@ namespace uf::task
         CHECK(frameworkBundleHash() == hexDigestOf(preimage));
     }
 
-    // The repository's syntax gate for .luau sources. It runs the vendored Luau
-    // parser the host itself uses, so a malformed framework module fails under
-    // `ctest -L CI` instead of at VM load time. The vendored tree is configured
-    // with LUAU_BUILD_CLI OFF, so no luau-ast or luau-compile executable exists
-    // for a script gate to shell out to; driving the parser from here behind the
-    // module's ffi boundary adds no build surface at all.
+    // The repository's syntax gate for .luau sources: it runs the vendored Luau
+    // parser the host itself uses, so a malformed module fails under
+    // `ctest -L CI` instead of at VM load time. The vendored tree is built with
+    // LUAU_BUILD_CLI OFF, so no luau-ast executable exists to shell out to.
     TEST_CASE("every embedded framework module parses as valid Luau")
     {
         for (auto const& entry : frameworkBundleEntries())

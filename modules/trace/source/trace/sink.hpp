@@ -6,18 +6,13 @@
 
 namespace uf::trace
 {
-    // A port that records one stamped trace event. Traceability is a load-bearing
-    // constraint, so an emit failure is an error rather than a best-effort side
-    // effect: an emitter writes at the decision instant, before any caller can
-    // swallow the failure it describes, and treats a failed emit as aborting the
-    // operation whose evidence was lost.
-    //
-    // The parameter is a StampedTraceEvent rather than a TraceEvent, so a sink can
-    // only ever be reached through the TraceRecorder that stamps the sequence, run
-    // id and generation id. The invariant is on construction, not on ownership:
-    // StampedTraceEvent's constructor is private to TraceRecorder, so no code
-    // outside modules/trace can mint one, while any sink may keep the events it is
-    // handed -- a recording test sink owns a vector of them.
+    // A port that records one stamped trace event. Traceability is load-bearing, so
+    // an emit failure is an error rather than a best-effort side effect: an emitter
+    // writes at the decision instant and treats a failed emit as aborting the
+    // operation whose evidence was lost. StampedTraceEvent rather than TraceEvent
+    // because its constructor is private to TraceRecorder: a sink is reachable only
+    // through the recorder that stamps the sequence and run identity, while any
+    // sink may keep the events it is handed.
     class ITraceSink
     {
     public:

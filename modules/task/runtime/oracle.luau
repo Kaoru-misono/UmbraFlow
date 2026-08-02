@@ -2,55 +2,42 @@
 -- oracle: the screens a model is measured against, and what each one is
 -- supposed to show.
 --
--- WHY THIS IS DATA AND NOT A TEST. A template always matches the image it was
--- cut from, at a distance of zero, so a mark that hits the screen it was
--- authored on has demonstrated nothing at all. The only evidence that it
+-- It is DATA rather than a test because a template always matches the image it
+-- was cut from at a distance of zero, so the only evidence that a mark
 -- identifies ONE screen is what it does on the others
--- (docs/pitfalls/colour-key-annotation.md). That measurement is worthless
--- unless something says which answer was expected, and an expectation that
--- lives in a reviewer's head is not falsifiable and not replayable -- so it is
--- written into the project file, exactly as an element's expected text is
--- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4). This module
--- is that vocabulary. `regress` is what walks it.
+-- (docs/pitfalls/colour-key-annotation.md) -- and that measurement is worthless
+-- unless the file says which answer was expected
+-- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4). `regress`
+-- walks this vocabulary.
 --
 -- THREE STATES AND NOT TWO. A page's signature is a conjunction over the marks
--- that identify it, never an inventory of everything on its screen, so "the
--- model says nothing about this element here" is a different sentence from
--- "these pixels are not there". The card-detail overlay is the proof: it is the
--- battle screen with a card selected, and the draw pile, the discard pile and
--- the end-turn button are all still on it, merely dimmed. Reading each of those
--- as a defect trains an author to break a model that is correct
--- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.1, and the
--- ModelCellExpectation this replaces).
+-- that identify it, never an inventory of its screen, so "the model says nothing
+-- about this element here" is a different sentence from "these pixels are not
+-- there". A card-detail overlay is the battle screen with a card selected, draw
+-- pile and end-turn button still on it and merely dimmed; reading each of those
+-- as a defect trains an author to break a correct model
+-- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.1).
 --
--- A CELL NOBODY CLAIMED IS `unclaimed`, AND THAT IS DELIBERATELY PERMISSIVE.
--- The falsification pressure does not come from forcing an author to fill in
--- every cell -- they would fill it in with whatever they measured -- it comes
--- from the rules `regress` applies whatever the file says: two appearances of
--- one element may never hit one screen, the winner must beat every rival by a
--- factor, and one region may not be claimed to read one text on two screens.
--- The first two hold on unclaimed cells too, which is exactly where an author's
--- natural habit leaves the holes (the same document, 2.3 correction (b)); the
--- third is the pressure on the text half, where there is no unclaimed cell to
--- measure because nothing would say what the region was supposed to read.
+-- A cell nobody claimed is `unclaimed`, deliberately permissively: the
+-- falsification pressure comes from the rules `regress` applies whatever the file
+-- says -- two appearances of one element may never hit one screen, the winner
+-- must beat every rival by a factor, and one region may not be claimed to read
+-- one text on two screens. The first two hold on unclaimed cells too, which is
+-- where an author's habit leaves the holes (the same document, 2.3 correction
+-- (b)).
 --
--- A SCREEN MAY ALSO SAY WHICH PAGE IT IS OF, and that is the one optional field
--- on a screen. It is not a licence to be measured less: the third rule stops
--- firing between two captures of ONE page, and in exchange the declaration is
--- itself measured -- that page must resolve on that screen. Both halves are
--- `recognition`'s and the reasoning is written there.
+-- A screen may also say which page it is of. That is not a licence to be measured
+-- less: the third rule stops firing between two captures of ONE page, and in
+-- exchange the declaration is itself measured. Both halves are `recognition`'s.
 --
--- LOAD ORDER. Framework modules load in the sorted order of their file names.
--- `oracle` sorts after `mint`, `model`, `navigation` and `observe`, and before
--- `project` and `regress` -- which is what lets `project` build these objects
--- while reading a file and `regress` read them while walking one. It names
--- `mint` and `model`.
+-- Framework modules load in the sorted order of their file names. `oracle` sorts
+-- after `mint`, `model`, `navigation` and `observe`, and before `project` and
+-- `regress`. It names `mint` and `model`.
 
 -- Where a screen's pixels live, relative to the project root. The file name is
--- the content hash, so the path is DERIVED and never authored: one fact about a
--- screen (which bytes it is) cannot then disagree with a second fact (where
--- they are). It follows the store the runtime templates already use,
--- `assets/templates/<hex>.png`.
+-- the content hash, so the path is DERIVED and never authored: which bytes a
+-- screen is cannot then disagree with where they are. It follows the store the
+-- runtime templates use, `assets/templates/<hex>.png`.
 local k_screenDirectory = "assets/screens/"
 local k_screenSuffix    = ".png"
 
@@ -94,27 +81,18 @@ local k_claimsKeys: { [string]: boolean } = {
 -- `name` is what a verdict row and a finding are read by, because a hex digest
 -- tells a reader nothing about which screen went wrong.
 --
--- `page` IS WHAT ONE PICTURE SAYS ABOUT ANOTHER, and it is the only field here a
--- rule reads about a PAIR of screens. Until it existed a screen carried a name
--- and a hash and nothing else, so nothing in the model could tell two captures
--- of one page from two pages: a project that photographed one scrolling grid at
--- two scroll positions -- its anchors deliberately outside the scrolling area --
--- read the same title in the same box on both, and `reading.confusions` reported
--- the property it was built to verify as a defect. Two rules read this word, and
--- both are in `recognition`.
+-- `page` is the only field a rule reads about a PAIR of screens, and it is what
+-- tells two captures of one page from two pages. Both rules that read it are in
+-- `recognition`.
 --
--- IT IS OPTIONAL, AND THAT IS NOT A CONCESSION. A screen captured while
--- exploring is usually of a page nobody has annotated yet -- the pixels are the
--- FIRST thing an agent obtains and the page model is what it writes afterwards
--- -- so a required name would make the matrix refuse exactly the screens a
--- session starts with, and the answer an author would find is to invent a page
--- to satisfy it.
+-- It is OPTIONAL because a screen captured while exploring is usually of a page
+-- nobody has annotated yet -- the pixels come first and the page model is written
+-- afterwards -- so requiring it would refuse exactly the screens a session starts
+-- with and push an author to invent a page.
 --
--- IT IS A NAME AND NOT A PAGE, which is the same ruling `scribe.add_edge` makes
--- for the ends of an edge and for the same reason: writing one reference
--- REBUILDS a page, so a frozen screen holding the page OBJECT would go on
--- naming the superseded one -- the copy missing the row that was just written --
--- while a name always resolves to the page the model holds today.
+-- It is a NAME and not a page, the same ruling `scribe.add_edge` makes for the
+-- ends of an edge: writing one reference REBUILDS a page, so a frozen screen
+-- holding the page object would go on naming the superseded copy.
 export type Screen = {
     name: string,
     hash: string,
@@ -124,12 +102,11 @@ export type Screen = {
     residual: { string },
 }
 
--- A rectangle in target pixels: the same four numbers `model.Rect` is. It is
--- restated rather than named because a chunk loaded under the framework
--- environment cannot name another chunk's exported types -- there is no module
--- resolver in this VM, only a global binding. What is NOT restated is the check:
--- `model.check_rect` is what every rectangle in the project passes through, so
--- the two files cannot come to disagree about what a rectangle is.
+-- A rectangle in target pixels: the same four numbers `model.Rect` is, restated
+-- because a chunk loaded under the framework environment cannot name another
+-- chunk's exported types -- there is no module resolver in this VM, only a global
+-- binding. The CHECK is not restated: every rectangle passes through
+-- `model.check_rect`.
 export type Rect = {
     x: number,
     y: number,
@@ -139,39 +116,32 @@ export type Rect = {
 
 -- What the model states about one cell of the matrix.
 --
--- `rect` IS WHERE THE CELL WAS MEASURED, and it exists for the element that
--- draws no rectangle of its own. A minimap cell is searched at a rectangle the
--- script works out for each frame, because the map pans and a cell's position is
--- a fact about the FRAME rather than about the model -- so the only place that
--- position can be written down and falsified is a claim about ONE stored screen:
--- "on these pixels, this shape matches at these coordinates". An element that
--- draws its own rectangle states none here, because then the element already
--- said it and two answers would be one too many.
+-- `rect` is WHERE THE CELL WAS MEASURED, and it exists for the element that draws
+-- no rectangle of its own: a minimap cell is searched where the script works out
+-- per frame because the map pans, so the only place that position can be written
+-- down and falsified is a claim about ONE stored screen. An element that draws
+-- its own rectangle states none here.
 --
--- IT IS ALSO WHAT MAKES A SECOND CLAIM ABOUT ONE ELEMENT ON ONE SCREEN LEGAL,
--- and that is the point rather than a side effect: the shape a minimap tells
--- apart is the same shape everywhere, so the measurement worth taking is "it
--- matches HERE and stays away from THERE" -- two claims, one element, one
--- screen, two rectangles. The cell a claim occupies is therefore keyed by its
--- rectangle as well as by its appearance.
+-- It is also what makes a second claim about one element on one screen legal --
+-- "it matches HERE and stays away from THERE" is two claims, one element, one
+-- screen, two rectangles -- so a cell is keyed by its rectangle as well as by its
+-- appearance.
 --
--- `appearance` and `text` name the two VERIFICATION SOURCES, and a cell is about
--- exactly one of them, so at most one of the pair is ever set:
+-- `appearance` and `text` name the two VERIFICATION SOURCES and at most one of
+-- the pair is ever set:
 --
---   * NEITHER, and the subject is the folded element measured against its
---     templates -- the answer a page signature and a click actually read.
---   * `appearance`, and the subject is one template searched alone. It is the
---     only way to ask whether a mark discriminates on a screen another
---     appearance owns, where a hit is invisible once folded with a correct one
+--   * NEITHER: the subject is the folded element measured against its templates,
+--     which is what a page signature and a click read.
+--   * `appearance`: one template searched alone. It is the only way to ask
+--     whether a mark discriminates on a screen another appearance owns, where a
+--     hit is invisible once folded with a correct one
 --     (docs/plans/2026-07-31-annotation-model-capabilities.md 2.3 correction
 --     (c)).
---   * `text`, and the subject is what the element's rectangle READS on this
---     screen. It is the cell an element with no templates has: such an element
---     is positioned by the page and identifies by its own script
---     (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4), so the
---     text has to be stated per screen -- one shared title box reads a different
---     name on every screen in the target, and a claim that did not say which
---     name would be a claim about nothing.
+--   * `text`: what the element's rectangle READS on this screen, which is the
+--     cell an element with no templates has
+--     (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4). It is
+--     stated per screen because one shared title box reads a different name on
+--     every screen.
 export type Expectation = {
     screen: string,
     element: string,
@@ -185,18 +155,15 @@ export type Expectation = {
 
 -- Every screen and every expectation of one project, checked against each other
 -- and indexed for the walk.
--- `text_by_cell` is a second index rather than a field of the first, because the
--- two answer different questions and only one of them has an answer for every
--- cell: every claim has a state, and only a claim about what a region reads has
--- a text. Keying both the same way is what lets a walk ask for the text of the
--- cell it is standing on without first finding the expectation.
 --
--- `rects_by_subject` is the third, and it is keyed by screen and element ALONE
--- because it answers a question the other two cannot be asked: "which rectangles
--- does this file want this element measured at on this screen". A walk cannot
--- reach a cell without first knowing the rectangle the cell is filed under, so
--- something has to hand it the list, and the list is a property of the pairing
--- rather than of any one cell.
+-- `text_by_cell` is a second index keyed like the first, so a walk can ask for
+-- the text of the cell it is standing on without first finding the expectation.
+-- Only a claim about what a region reads has a text, while every claim has a
+-- state, which is why the two are not one index.
+--
+-- `rects_by_subject` is keyed by screen and element ALONE, because a walk cannot
+-- reach a cell without first knowing the rectangle it is filed under; the list of
+-- rectangles is a property of the pairing rather than of any one cell.
 export type Claims = {
     screens: { Screen },
     screen_by_name: { [string]: Screen },
@@ -238,11 +205,9 @@ function oracle.screen_path(hash: string): string
 end
 
 -- One rectangle as the text a key is built from, and the empty string when there
--- is none. Published because two other modules file things by the same rectangle
--- -- `reading` tells one region's claims apart from another's, and `regress`
--- looks a cell up by the rectangle it just measured at -- and three spellings of
--- "which rectangle" is three ways for a lookup to miss the row it wanted, which
--- reads as a cell nobody claimed rather than as a defect.
+-- is none. Published because `reading` and `regress` file things by the same
+-- rectangle, and a second spelling of "which rectangle" is a way for a lookup to
+-- miss its row -- which reads as a cell nobody claimed rather than as a defect.
 function oracle.rect_key(rect: any): string
     if rect == nil then
         return ""
@@ -258,11 +223,9 @@ end
 
 -- The key one cell is filed under. NUL separates the parts because none of the
 -- four can contain it, so two different cells cannot collide by concatenation.
---
--- THE RECTANGLE IS PART OF THE KEY, which is what lets one element be claimed
--- twice on one screen. Two claims about one shape at two coordinates are two
--- measurements and not a contradiction; two claims at ONE rectangle still are,
--- and `Claims.new` still refuses them.
+-- The rectangle is part of the key, which is what lets one element be claimed
+-- twice on one screen; two claims at ONE rectangle are still a contradiction and
+-- `Claims.new` still refuses them.
 local function cellKey(
     screen: string,
     element: string,
@@ -288,22 +251,16 @@ oracle.Screen = Screen
 
 -- Screen.new{ name = , hash = , page = } -> a frozen screen.
 --
--- The hash is checked for shape here rather than trusted, because it is what
--- the path is built from: a hash with a stray character names a file that does
--- not exist, and the failure would otherwise surface as a capture that ran out
--- of frames rather than as the line the author wrote.
+-- The hash is checked for shape rather than trusted, because the path is built
+-- from it: a stray character names a file that does not exist, and the failure
+-- would otherwise surface as a capture that ran out of frames.
 --
--- WHETHER THE PROJECT DECLARES THAT PAGE IS NOT ASKED HERE, and the reason is
--- structural rather than a choice about strictness: this constructor is handed
--- one screen's own two facts and can see no pages at all, exactly as
--- `Expectation.new` can check that an element was minted and not that the file
--- carries it. The two callers that CAN see them both refuse it, because a model
--- reaches the matrix through exactly two doors and one guarded door is a hole in
--- the shape of the other: `project.build` refuses it with the line number the
--- author wrote it on, and `scribe.add_screen` refuses it in the voice it already
--- refuses a taken screen name in. A name checked at neither would be a screen
--- whose declaration cannot be measured -- `recognition` has no page to resolve
--- -- which is the one state this field must never be able to reach.
+-- Whether the project declares that PAGE is not asked here, because this
+-- constructor is handed one screen's own facts and can see no pages. Both callers
+-- that can see them refuse it -- `project.build` with the line number the author
+-- wrote it on, `scribe.add_screen` in the voice it refuses a taken screen name --
+-- because a name checked at neither would be a declaration `recognition` cannot
+-- measure.
 function Screen.new(spec: { [string]: any }): Screen
     if type(spec) ~= "table" then
         error("Screen.new needs a table of fields", 2)
@@ -381,38 +338,30 @@ end
 local Expectation = {}
 oracle.Expectation = Expectation
 
--- Expectation.new{ screen = , element = , appearance = , text = , state = }
+-- Expectation.new{ screen = , element = , rect = , appearance = , text = , state = }
 --
 -- `screen` is a screen this project declares and `element` is an element built
 -- by `Element.new`; both are the OBJECTS rather than names, so an expectation
 -- about a screen or an element nothing declares cannot be constructed at all.
 --
--- Four rulings, all failing closed at construction:
+-- Five rulings, all failing closed at construction:
 --
---   * A CELL IS ABOUT ONE VERIFICATION SOURCE. `appearance` names a template
---     and `text` names a reading, so stating both is stating two subjects for
---     one cell with nothing saying which was measured.
---   * AN ELEMENT WITH NO APPEARANCES IS CLAIMED BY WHAT IT READS, AND ONLY
---     THAT. It carries no template, so there is nothing to search for and no
---     score any answer could be read against; it is positioned BY the page that
---     was recognised (docs/plans/2026-07-31-annotation-model-capabilities.md
---     4-2.2). Until 2026-08-01 a claim about one was refused outright, because
---     accepting it would put a permanently green cell in the matrix. What the
---     region READS is the second measurement, and its confidence is the score
---     it is falsified against -- so such a cell is claimed with `text` and a
---     cell with no text stays refused for the old reason, unchanged.
---   * AN ELEMENT NOTHING MAY READ CANNOT BE CLAIMED BY TEXT. The element has to
---     declare the `read` capability before anything asks its rectangle for a
---     reading, exactly as `observe.read_element` demands.
---   * A NAMED APPEARANCE MUST BE ONE THE ELEMENT HAS. A misspelled appearance
---     would otherwise file its claim under a cell the walk never visits, which
---     is the same silence as having written nothing.
---   * EXACTLY ONE THING SAYS WHERE THE CELL WAS MEASURED. An element that draws
---     its own rectangle is measured there and may not be given a second answer
---     here; an element that draws none has nowhere to be searched until this
---     claim says so, and a claim that does not is a row the matrix can only
---     report as unmeasurable -- which is the permanently green cell this
---     constructor has refused since it existed, arriving through a new door.
+--   * A cell is about ONE verification source: `appearance` names a template and
+--     `text` names a reading, so stating both leaves nothing saying which was
+--     measured.
+--   * An element with no appearances is claimed by what it READS and only that.
+--     It carries no template, so there is nothing to search for and no score to
+--     read an answer against; it is positioned BY the page that was recognised
+--     (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.2). A cell with
+--     no text is a permanently green cell, so it is refused.
+--   * An element nothing may read cannot be claimed by text: it has to declare
+--     the `read` capability first, as `observe.read_element` demands.
+--   * A named appearance must be one the element has, or the claim is filed under
+--     a cell the walk never visits -- the same silence as writing nothing.
+--   * EXACTLY ONE thing says where the cell was measured. An element that draws
+--     its own rectangle may not be given a second answer here; an element that
+--     draws none has nowhere to be searched until this claim says so, and a claim
+--     that does not is another permanently green cell.
 function Expectation.new(spec: { [string]: any }): Expectation
     if type(spec) ~= "table" then
         error("Expectation.new needs a table of fields", 2)
@@ -538,8 +487,8 @@ function Expectation.new(spec: { [string]: any }): Expectation
 
     -- Where this cell is measured, asked after the verification source because
     -- the two are independent: a shape with no rectangle of its own may be
-    -- claimed by a template or by a reading, and the answer to "where" is the
-    -- same question either way.
+    -- claimed by a template or by a reading, and "where" is the same question
+    -- either way.
     if spec.rect ~= nil then
         if element.rect ~= nil then
             error(
@@ -601,11 +550,10 @@ oracle.Claims = Claims
 -- Claims.new{ screens = { ... }, expectations = { ... } } -> frozen claims.
 --
 -- The collection is where a screen and an expectation stop being locally well
--- formed and start being consistent with each other: no two screens share a
--- name, no two share a hash, and no cell is claimed twice. All three are things
--- one constructor cannot see, and each one silently costs a measurement --
--- two screens with one hash are one screen measured twice under two names, and
--- two claims about one cell mean whichever the walk reads last is the model.
+-- formed and start being consistent with each other: no two screens share a name,
+-- no two share a hash, and no cell is claimed twice. Each failure silently costs
+-- a measurement -- two screens with one hash are one screen measured twice, and
+-- two claims about one cell make the model whichever line was read last.
 function Claims.new(spec: { [string]: any }): Claims
     if type(spec) ~= "table" then
         error("Claims.new needs a table of fields", 2)
@@ -725,10 +673,9 @@ function Claims.new(spec: { [string]: any }): Claims
         if expectation.text ~= nil then
             textByCell[key] = expectation.text
         end
-        -- Collected in the order the file names them, each one once. The order
-        -- is the file's rather than sorted, because a verdict is read beside the
-        -- file that produced it and a reader following one element down the
-        -- report should meet its cells in the order they were written.
+        -- Collected in the order the file names them, each one once, so a reader
+        -- following one element down the verdict meets its cells in the order
+        -- they were written.
         if expectation.rect ~= nil then
             local subject = subjectKey(
                 expectation.screen,
@@ -767,11 +714,8 @@ function Claims.new(spec: { [string]: any }): Claims
 end
 
 -- What the model states about one cell, or "unclaimed" when it states nothing.
---
--- `rect` is the rectangle the cell was measured at, and it is nil for every
--- element that draws its own -- which is every element a project had before a
--- rectangle could be absent, so a caller with no rectangle in hand asks exactly
--- the question it always did.
+-- `rect` is the rectangle the cell was measured at, nil for every element that
+-- draws its own.
 function Claims.state_for(
     claims: Claims,
     screen: string,
@@ -789,12 +733,11 @@ end
 -- The text one cell claims its element's region reads there, or nil when the
 -- cell claims nothing about a reading.
 --
--- It takes no appearance, and that is the ruling rather than a convenience: a
--- cell is measured by ONE verification source, so the cell a text belongs to is
--- always the folded one. Asking for the text of an appearance cell would be
--- asking a question `Expectation.new` refuses to let anyone answer. It does take
--- the rectangle, because one region drawn once and placed nine times reads nine
--- different things and the rectangle is what tells those nine claims apart.
+-- It takes no appearance, because a cell is measured by ONE verification source
+-- so the cell a text belongs to is always the folded one -- the text of an
+-- appearance cell is a question `Expectation.new` refuses to let anyone answer.
+-- It does take the rectangle, because one region drawn once and placed nine times
+-- reads nine different things.
 function Claims.text_for(
     claims: Claims,
     screen: string,
@@ -807,14 +750,12 @@ end
 -- Every rectangle this file wants `element` measured at on `screen`, in the
 -- order the file names them, and an empty list when it names none.
 --
--- IT IS THE WALK'S ONLY ENTRY INTO A SHAPE WITH NO RECTANGLE OF ITS OWN. An
--- element that draws one is measured there on every screen, claimed or not,
--- which is where the matrix catches a mark answering somewhere nobody thought to
--- look. An element that draws none cannot be measured anywhere until something
--- says where -- there is no such thing as searching "in general" -- so its cells
--- exist exactly where its claims put them, and its falsification pressure comes
--- from the author writing both the rectangle it must match and the ones it must
--- not.
+-- It is the walk's only entry into a shape with no rectangle of its own. An
+-- element that draws one is measured there on every screen, claimed or not, which
+-- is where the matrix catches a mark answering somewhere nobody thought to look;
+-- an element that draws none has cells exactly where its claims put them, so its
+-- falsification pressure comes from the author writing both the rectangle it must
+-- match and the ones it must not.
 --
 -- A fresh list each call, so nothing outside can reorder what a walk reads.
 function Claims.rects_for(
@@ -831,32 +772,25 @@ end
 
 -- Whether anything this project claims can only be measured by reading a region.
 --
--- It exists for the composition root rather than for the walk. Reading costs an
--- OCR engine, the engine is an optional binding, and a run that measured those
--- cells without one would report them as unmeasured -- so whoever assembles the
--- run asks this BEFORE the walk starts and refuses in its own words, naming the
--- flag it is missing. The walk itself never asks: by the time it reaches a cell
--- the engine is either there or the read fails as the control error it is.
+-- It exists for the composition root rather than for the walk: reading costs an
+-- optional OCR engine binding, so whoever assembles the run asks this BEFORE the
+-- walk starts and refuses in its own words, naming the missing flag. The walk
+-- never asks -- by then the engine is there or the read fails as a control error.
 function Claims.reads_text(claims: Claims): boolean
     return next(claims.text_by_cell) ~= nil
 end
 
 -- How many text cells the most-claimed single screen holds.
 --
--- It exists for the composition root, next to `reads_text` and for a sharper
--- version of the same reason. A walk opens ONE observation per screen and reads
--- once per claimed cell on it, and a host's per-cycle read budget is a number
--- fixed before the VM starts -- so this is exactly what that budget has to
--- cover, and it is knowable from the file alone.
+-- It exists for the composition root beside `reads_text`. A walk opens ONE
+-- observation per screen and reads once per claimed cell on it, and the host's
+-- per-cycle read budget is fixed before the VM starts, so this is exactly what
+-- that budget must cover and it is knowable from the file alone. Whoever
+-- assembles the run refuses in its own words when the budget is short; the
+-- alternative is a RecognitionIncomplete on screen three attributed to a read,
+-- which says what stopped and nothing about why.
 --
--- Whoever assembles the run asks this and refuses in its own words when the
--- budget is short, because the alternative is a RecognitionIncomplete in the
--- middle of screen three attributed to a read: a true statement about what
--- stopped, and a useless one about why. It is the same trade `reads_text`
--- makes against a read failing with no engine.
---
--- It counts cells rather than distinct elements because a cell IS a read: two
--- claims about one screen are two reads whatever they name.
+-- It counts cells rather than distinct elements, because a cell IS a read.
 function Claims.most_reads_on_one_screen(claims: Claims): number
     local perScreen: { [string]: number } = {}
     local most = 0
@@ -876,14 +810,13 @@ end
 
 -- The screens in the order the host serves their pixels: by content hash.
 --
--- THIS ORDER IS A CONTRACT WITH THE FRAME SOURCE and not a presentation choice.
--- A screen's file is `assets/screens/<hash>.png`, the host's file-backed frame
--- source serves that directory one file per capture in file-name order, and the
--- walk opens one observation per screen -- so sorting by hash here is what
--- pairs the Nth capture with the Nth screen. The set the two sides walk is kept
--- equal by two facts checked elsewhere: `regress.check` reads every declared
--- screen's file, so a screen with no file fails by name, and the host refuses
--- the run unless it served exactly as many frames as it holds files.
+-- This order is a CONTRACT with the frame source. A screen's file is
+-- `assets/screens/<hash>.png`, the host's file-backed frame source serves that
+-- directory one file per capture in file-name order, and the walk opens one
+-- observation per screen, so sorting by hash pairs the Nth capture with the Nth
+-- screen. The two sides walk the same set because `regress.check` reads every
+-- declared screen's file -- a screen with no file fails by name -- and the host
+-- refuses the run unless it served as many frames as it holds files.
 --
 -- A fresh list each call, so nothing outside can reorder what a walk reads.
 function Claims.screens_in_frame_order(claims: Claims): { Screen }

@@ -164,13 +164,11 @@ namespace uf::task
 
         auto const candidate = canonicalRoot / relative;
 
-        // The parent is inspected BEFORE it is canonicalized, because a parent
-        // that is not there is what canonicalization fails on -- and its own
-        // failure names the wrong fact. "cannot canonicalize the parent of
-        // <absolute path>: the system cannot find the path specified" reads as a
-        // broken path when what happened is that nobody has laid this directory
-        // out yet, and an agent authoring a project from nothing meets it once
-        // per directory. So the refusal below says which directory is missing,
+        // The parent is inspected BEFORE it is canonicalized, because a parent that
+        // is not there is what canonicalization fails on and its own failure names
+        // the wrong fact: "cannot canonicalize the parent of <absolute path>" reads
+        // as a broken path when what happened is that nobody has laid this
+        // directory out yet. So the refusal below says which directory is missing,
         // in the project-relative spelling the caller wrote, and says that this
         // store will not create it.
         auto const parent         = candidate.parent_path();

@@ -36,21 +36,9 @@ from pathlib import Path
 # stem must be a usable identifier-like key rather than an arbitrary filename.
 MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
-# MSVC caps a SINGLE string literal at 65535 bytes (C2026).  Adjacent-literal
-# concatenation does NOT count toward that cap, which is what makes an
-# arbitrarily large .luau file embeddable at all.  Both halves are measured
-# rather than assumed, on the MSVC this repository builds with (14.44):
-#
-#   * one literal of 70000 bytes  -> error C2026, string too big
-#   * 500000 bytes emitted as 250 adjacent 2000-byte literals -> compiles clean
-#     at /W4, with static_assert on the concatenated size passing
-#
-# So this constant is the whole of the guard: it holds every emitted literal 32x
-# under the real limit, and there is no per-file limit left to enforce.  A cap on
-# the SOURCE size used to sit beside it, refusing any .luau over 60000 bytes and
-# telling the author to split the module; it was justified by the claim that
-# concatenation counted toward 65535, which the second measurement above
-# falsifies, so it was removed rather than renumbered.
+# MSVC caps one string literal at 16383 bytes (C2026); adjacent-literal
+# concatenation does not count toward it.  Both measured on cl 19.44, which is
+# why a .luau file of any size embeds and why no per-file cap belongs here.
 MAXIMUM_CHUNK_BYTES = 2000
 
 # Separator between a module name and its bytes in the bundle-hash preimage.

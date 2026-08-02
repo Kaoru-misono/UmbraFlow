@@ -64,10 +64,9 @@ namespace uf::trace
         };
 
         // Fails the first emit and records every later one into a caller-owned
-        // buffer. Failing only once is what lets a test read back what the
-        // recorder stamped AFTER a lost event: the surviving line's own seq is the
-        // only evidence that the counter advanced across the failure instead of
-        // reusing the number the failed event was given.
+        // buffer. Failing only once lets a test read what the recorder stamped
+        // AFTER a lost event: the surviving seq is the only evidence the counter
+        // advanced across the failure instead of reusing the lost number.
         class FailFirstTraceSink final : public ITraceSink
         {
             std::vector<std::string>* m_lines;
@@ -95,8 +94,7 @@ namespace uf::trace
         };
 
         // One recorder over a collecting sink. Nothing outside modules/trace can
-        // build a StampedTraceEvent, so every test that needs a serialized line
-        // goes through a recorder -- which is the property under test.
+        // build a StampedTraceEvent, so every serialized line goes through one.
         class RecordedRun final
         {
             std::vector<std::string> m_lines{};
@@ -184,8 +182,7 @@ namespace uf::trace
     {
         // Deliberately synthetic: no real event carries a page group, an action
         // group and a click at once. It pins the field order the golden lines
-        // below depend on, so a reordering breaks here once rather than
-        // everywhere.
+        // below depend on, so a reordering breaks here once rather than everywhere.
         auto event = TraceEvent{
             .kind  = TraceEventKind::EngineActionFound,
             .frame = FrameIdentity{
@@ -263,9 +260,8 @@ namespace uf::trace
     {
         // The stamp is the only thing on a line that says who produced it, so two
         // front-ends sharing a spelling would merge two streams a reader has to
-        // tell apart. The table is exhaustive by construction rather than by
-        // discipline: frontEndWireName switches with no default, so a value added
-        // without a spelling fails to compile before it can reach a line unnamed.
+        // tell apart. The table is exhaustive by construction: frontEndWireName
+        // switches with no default, so an unspelled value fails to compile.
         auto const spellings = std::array<std::pair<FrontEnd, std::string_view>, 3>{
             {
                 {FrontEnd::Task, "task"},
@@ -347,10 +343,9 @@ namespace uf::trace
 
     TEST_CASE("run.started distinguishes two runs of the same task on framework build")
     {
-        // The whole point of stamping the framework version and bundle hash: a
-        // task whose own bytes did not change, run against a rebuilt framework,
-        // must not produce the same line. Before they were recorded, these two
-        // events serialized identically.
+        // Why the framework version and bundle hash are stamped: a task whose own
+        // bytes did not change, run against a rebuilt framework, must not produce
+        // the same line.
         auto run = TraceEvent::Run{
             .projectId        = "personal.game",
             .taskName         = "daily",
@@ -374,10 +369,8 @@ namespace uf::trace
 
     TEST_CASE("serializeTraceEvent sorts the resource name lists before emitting")
     {
-        // The lists arrive unordered on purpose: an unordered container's
-        // iteration order must never reach the wire (a determinism-ledger
-        // constraint), so the serializer sorts them and the golden line is sorted
-        // regardless of input order.
+        // The lists arrive unordered on purpose: an unordered container's iteration
+        // order must never reach the wire (a determinism-ledger constraint).
         auto const event = TraceEvent{
             .kind      = TraceEventKind::RunResourcesValidated,
             .resources = TraceEvent::Resources{
@@ -414,13 +407,11 @@ namespace uf::trace
 
     TEST_CASE("serializeTraceEvent records every task.native_call outcome")
     {
-        // Succeeded and Empty both completed; Empty is the Tier A completed miss,
-        // and a failure names its kind with the snake_case spelling the script
-        // itself saw.
+        // Succeeded and Empty both completed -- Empty is the Tier A completed miss
+        // -- and a failure names its kind in the snake_case spelling the script saw.
         SUBCASE("succeeded")
         {
-            // capture mints its own sequence, so it is the one verb whose line
-            // carries no argument identity.
+            // capture mints its own sequence, so its line carries no argument id.
             auto const event = TraceEvent{
                 .kind       = TraceEventKind::TaskNativeCall,
                 .nativeCall = TraceEvent::NativeCall{
@@ -460,10 +451,9 @@ namespace uf::trace
 
         SUBCASE("failed")
         {
-            // The failure a host-side guard produces: the ledger rejects the
-            // frame before the engine sees it, so this is the ONLY line the
-            // failure writes -- and the two sequences on it are the only record
-            // of which frames the script tried to use.
+            // The failure a host-side guard produces: the ledger rejects the frame
+            // before the engine sees it, so this is the ONLY line the failure
+            // writes, and its two sequences the only record of the frames used.
             auto const event = TraceEvent{
                 .kind       = TraceEventKind::TaskNativeCall,
                 .nativeCall = TraceEvent::NativeCall{
@@ -536,9 +526,8 @@ namespace uf::trace
 
     TEST_CASE("engine.observed pins its wire kind name and the frame join key")
     {
-        // umbraflow-trace/v3 is a wire contract, so every kind name is pinned by
-        // a full line somewhere. These two were the only ones no assertion
-        // covered, which made a typo in either shippable in silence.
+        // umbraflow-trace/v3 is a wire contract, so every kind name is pinned by a
+        // full line somewhere; otherwise a typo in one ships in silence.
         auto const event = TraceEvent{
             .kind  = TraceEventKind::EngineObserved,
             .frame = FrameIdentity{
@@ -578,10 +567,9 @@ namespace uf::trace
 
     TEST_CASE("engine.scroll_delivered pins its wire kind name and its delta")
     {
-        // The delta reaches the wire as a signed literal rather than a string,
-        // because a reader sums and compares it. Both directions are pinned: a
-        // sign dropped anywhere between the verb and this line would turn every
-        // scroll up into a scroll down with nothing to notice it.
+        // The delta reaches the wire as a signed literal because a reader sums and
+        // compares it. Both directions are pinned: a sign dropped between the verb
+        // and this line would turn every scroll up into a scroll down unnoticed.
         auto event = TraceEvent{
             .kind  = TraceEventKind::EngineScrollDelivered,
             .frame = FrameIdentity{
@@ -683,8 +671,7 @@ namespace uf::trace
             == "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"run.started\",\"seq\":1}"
         );
 
-        // A difference anywhere else survives, so the helper cannot mask a real
-        // divergence.
+        // A difference anywhere else survives, so the helper cannot mask one.
         CHECK(stripNonGoldenFields(withEarlyClock) != stripNonGoldenFields(withOtherSeq));
 
         // A leading meta drops its trailing comma instead, and a line without a
@@ -720,11 +707,9 @@ namespace uf::trace
             CHECK(line.find("\"generationId\":3,\"frontEnd\":\"task\"") != std::string::npos);
             CHECK(line.find("\"meta\":{\"wallClock\":") != std::string::npos);
 
-            // A frozen clock, or one stubbed to zero, would satisfy every other
-            // assertion in this suite: nothing else reads the value. Pin that it
-            // is a real reading -- milliseconds since the Unix epoch, past
-            // 2020-01-01T00:00:00Z. A lower bound rather than a window keeps the
-            // case free of any dependence on how long the run takes.
+            // A frozen clock, or one stubbed to zero, satisfies every other
+            // assertion in this suite: nothing else reads the value. A lower bound
+            // rather than a window keeps the case independent of the run's length.
             constexpr auto k_epoch2020Millis = int64{1'577'836'800'000};
             CHECK(wallClockOf(line) > k_epoch2020Millis);
         }
@@ -732,8 +717,7 @@ namespace uf::trace
 
     TEST_CASE("TraceRecorder surfaces a sink failure and still advances the sequence")
     {
-        // The buffer outlives the sink, which the recorder owns, so it is declared
-        // first.
+        // The buffer outlives the sink the recorder owns, so it is declared first.
         auto lines    = std::vector<std::string>{};
         auto recorder = TraceRecorder{
             std::make_unique<FailFirstTraceSink>(&lines),
@@ -748,10 +732,8 @@ namespace uf::trace
         CHECK(lines.empty());
 
         // A lost event leaves a visible gap rather than a silently renumbered
-        // stream: the event after the failure is stamped 2, so a reader sees that
-        // one line is missing instead of reading a complete-looking stream. This
-        // is the assertion the invariant in this case's name lives or dies on --
-        // a recorder that advanced only on success would stamp 1 here.
+        // stream: the event after the failure is stamped 2, so a reader sees one
+        // line missing. A recorder that advanced only on success would stamp 1.
         REQUIRE(
             recorder
                 .emit(

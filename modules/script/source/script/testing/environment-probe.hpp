@@ -20,14 +20,11 @@ namespace uf::script::testing
 
     // Test seam: boot a VM whose framework bundle is the single module `probe`
     // with body `frameworkSource`, then run `source` in `environment` and return
-    // its numeric result.
-    //
-    // It exists so the isolation claim can be stated as a difference rather than
-    // an absence. Asserting only that a project script cannot see a framework
-    // value proves nothing on its own -- the same assertion passes if the
-    // framework never ran. Running the SAME expression on both sides turns it
-    // into a real discriminator: the framework side must find the value the
-    // project side must not.
+    // its numeric result. It states the isolation claim as a difference rather
+    // than an absence: asserting only that a project script cannot see a
+    // framework value passes just as well if the framework never ran, whereas
+    // the SAME expression on both sides discriminates -- the framework side must
+    // find the value the project side must not.
     //
     // Luau-free header; not part of the public Engine surface, because nothing
     // in production may run arbitrary source under the framework environment.
@@ -50,9 +47,8 @@ namespace uf::script::testing
         // Times the VM ran the destructor of a host userdata the failing
         // installer registered before returning its error. Exactly one is
         // host-visible proof that the VM create() had already allocated was
-        // closed rather than abandoned -- lua_close runs every userdata
-        // destructor, and nothing else in this probe can. A leaked VM leaves it
-        // at zero.
+        // closed rather than abandoned: only lua_close runs that destructor, so
+        // a leaked VM leaves this at zero.
         uint64 finalizedHostObjects{0};
     };
 

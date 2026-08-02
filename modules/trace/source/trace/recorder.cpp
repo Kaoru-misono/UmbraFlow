@@ -18,9 +18,8 @@ namespace uf::trace
 {
     namespace
     {
-        // Milliseconds since the Unix epoch. The wall clock is the one field a
-        // trace may not reproduce, which is exactly why it lives in the
-        // non-golden `meta` member.
+        // Milliseconds since the Unix epoch. The one field a trace may not
+        // reproduce, which is why it lives in the non-golden `meta` member.
         [[nodiscard]]
         auto wallClockUnixMillis() noexcept -> int64
         {

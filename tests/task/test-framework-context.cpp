@@ -26,13 +26,6 @@
 // The trusted Luau framework's policy layer, driven through a real task VM:
 // ctx:step and ctx:cycle over the real cycle ledger.
 //
-// `ctx:wait_for_page` and the interrupt registry were most of what this file
-// drove, and both retired with the C++ page model
-// (docs/plans/2026-07-31-script-owned-page-model.md 9). Their successors --
-// observe.wait_until and the interrupt flag walk_edge consults -- are exercised
-// against a real session in test-script-owned-model.cpp, including the K-in-a-row
-// streak, the host-minted timeout and the absence of any default budget.
-//
 // Every case is driven from fake ENGINE ports and asserts only on facts the host
 // can see -- how many frames were served, how many clicks were delivered,
 // whether the ledger still holds a cycle -- so a green run finishes in
@@ -53,7 +46,7 @@ namespace uf::task
         // A build over the fixture geometry, with observing pointers to the
         // frame source and the click sink. The frame count is what several cases
         // below assert against: a refusal that still spent a capture would be a
-        // weaker guarantee than the one under test.
+        // weaker guarantee.
         struct FrameworkBuild final
         {
             Built               built;
@@ -61,11 +54,10 @@ namespace uf::task
             RecordingTraceSink* traces{};
         };
 
-        // Every case records its trace rather than discarding it. Most read only
-        // the counts below, but the framework's semantic events pass the host's
-        // validation state machine on their way to this sink, so a run that
-        // completes here is also a run whose step, retry and interrupt sequence
-        // the host accepted -- and the interrupt case reads the sink directly.
+        // Every case records its trace rather than discarding it: the
+        // framework's semantic events pass the host's validation state machine
+        // on their way to this sink, so a run that completes here is also a run
+        // whose event sequence the host accepted.
         [[nodiscard]]
         auto buildOver(std::vector<Frame> frames) -> FrameworkBuild
         {
@@ -115,10 +107,9 @@ namespace uf::task
         }
 
         // Requests the run's stop from inside the first capture, so a
-        // cancellation that lands WHILE the framework's wait loop is running is
-        // a fixed point of the sequence: exactly one frame was served when the
-        // stop arrived, and every later capture would be a capture the terminal
-        // guard failed to prevent.
+        // cancellation landing WHILE the framework's wait loop runs is a fixed
+        // point: exactly one frame was served when the stop arrived, and any
+        // later capture is one the terminal guard failed to prevent.
         class StopOnFirstCaptureFrameSource final : public engine::IFrameSource
         {
             Frame            m_frame;
@@ -164,8 +155,7 @@ namespace uf::task
             };
 
             // Three exits, asserted on the host side rather than by asking Lua:
-            // hasOpenCycle() is the ledger's own answer, and the ledger is what
-            // holds the 8 MiB frame.
+            // hasOpenCycle() is the ledger's own answer, and it holds the frame.
             constexpr std::string_view normal = R"lua(
                 return ctx:cycle(function(cycle)
                     return 1
@@ -199,8 +189,7 @@ namespace uf::task
             CHECK_FALSE(context.hasOpenCycle());
 
             // The control that keeps the three closed-ness checks from passing
-            // vacuously: each run really did open a cycle, so each really had
-            // one to close.
+            // vacuously: each run really did open a cycle to close.
             CHECK(framework.frames->captureCount() == 3U);
             CHECK(framework.built.clicks->clickCount() == 0);
         }
@@ -214,12 +203,11 @@ namespace uf::task
                 *framework.built.recorder,
             };
 
-            // The framework refuses the second open itself, with a sentence an
-            // author can act on, and the value it raises is a STRING. The
-            // control below reaches the host's InternalInvariant deliberately,
-            // through the primitive-level surface the framework's bookkeeping
-            // cannot see, and that one is a Tier B userdata carrier. The two are
-            // different values of different types, so this case cannot be
+            // The framework refuses the second open itself, raising a STRING an
+            // author can act on. The control below reaches the host's
+            // InternalInvariant through the primitive-level surface the
+            // framework's bookkeeping cannot see, and that one is a Tier B
+            // userdata carrier -- two different types, so this case cannot be
             // passing because the C++ backstop produced the failure.
             constexpr std::string_view source = R"lua(
                 local ok, err = pcall(function()
@@ -248,9 +236,8 @@ namespace uf::task
             CHECK_FALSE(context.hasOpenCycle());
 
             // Two captures: the outer ctx:cycle and the control's bare open.
-            // Neither refusal spent a frame -- the framework's refusal happens
-            // before it calls cycle_open at all, and the host's happens before
-            // it observes.
+            // Neither refusal spent a frame -- the framework refuses before it
+            // calls cycle_open at all, and the host before it observes.
             CHECK(framework.frames->captureCount() == 2U);
         }
 
@@ -263,9 +250,9 @@ namespace uf::task
                 *framework.built.recorder,
             };
 
-            // The open-step path is what makes well-nestedness observable at all,
-            // and observing it while nested is the control: a path that were
-            // always empty would pass the "closed afterwards" checks for free.
+            // The open-step path is what makes well-nestedness observable, and
+            // reading it while nested is the control: an always-empty path would
+            // pass the "closed afterwards" checks for free.
             constexpr std::string_view source = R"lua(
                 local function path()
                     return table.concat(ctx:step_path(), '/')
@@ -337,8 +324,7 @@ namespace uf::task
             // The stop is requested from inside the first capture, so it lands
             // while the script's own observation loop is running. mark() is the
             // discriminator: it is reached only if the script kept executing
-            // past the cancel, and a retry policy with five attempts is exactly
-            // the shape that would try to.
+            // past the cancel, and five retry attempts is the shape that would.
             constexpr std::string_view source = R"lua(
                 local swallowed = pcall(function()
                     ctx:retry({ attempts = 5 }, function()
@@ -371,11 +357,10 @@ namespace uf::task
             );
             auto* const p_frames = frameSource.get();
 
-            // No stop token on the ENGINE config and none on the VM interrupt,
-            // deliberately: the engine would happily capture again and the
-            // interrupt never fires, so the only thing that can refuse the
-            // primitives after the cancelled loop is the terminal latch the
-            // loop itself set.
+            // No stop token on the ENGINE config and none on the VM interrupt:
+            // the engine would happily capture again and the interrupt never
+            // fires, so only the terminal latch the loop itself set can refuse
+            // the primitives that follow.
             auto built = buildBindingWith(
                 std::move(frameSource),
                 std::stop_token{},

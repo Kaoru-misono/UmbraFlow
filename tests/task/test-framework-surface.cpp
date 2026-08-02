@@ -19,22 +19,10 @@
 // The trusted Luau framework as a UNIT: ctx runs against a scripted stand-in for
 // the private capability surface, so what a case asserts is the sequence of
 // primitive calls the framework produced and the arguments it produced them
-// with.
-//
-// That is the difference from test-framework-context.cpp, which drives the same
-// framework through fake ENGINE ports. There every assertion travels through the
-// real cycle ledger, so a case can only say how many frames were served and
-// whether a cycle stayed open; it cannot say that a retry paused between two
-// attempts and not after the last, or that the block's own failure outranks the
-// close that follows it. Here those are the assertion.
-//
-// WHAT LEFT THIS FILE WITH THE PAGE MODEL. `ctx:wait_for_page` and the interrupt
-// registry were most of what it proved, and both retired with the C++ page model
-// (docs/plans/2026-07-31-script-owned-page-model.md 9): the wait is
-// `observe.wait_until` now and an interrupt page is a flag the walk consults, and
-// both are exercised against a real session in test-script-owned-model.cpp. What
-// stayed is the policy that never mentioned a page -- the scoped cycle and the
-// retry loop -- and it is asserted here exactly as it was.
+// with. That is the difference from test-framework-context.cpp, which drives the
+// same framework through fake ENGINE ports and can therefore only say how many
+// frames were served and whether a cycle stayed open -- not that a retry paused
+// between two attempts and not after the last.
 //
 // Nothing below observes, matches or clicks anything: the session's frame source
 // holds no frames at all, so any primitive that reached the real engine would
@@ -47,12 +35,10 @@ namespace uf::task
     namespace
     {
         // The scripted private capability surface, handed the REAL surface as its
-        // chunk argument.
-        //
-        // Every primitive records what it was asked and answers from a plan the
-        // project script installs, so "the third match hits" or "wait reports its
-        // deadline expired" is one line of test setup rather than a sequence of
-        // fake frames chosen to make a search say so.
+        // chunk argument. Every primitive records what it was asked and answers
+        // from a plan the project script installs, so "the third match hits" is
+        // one line of setup rather than fake frames chosen to make a search
+        // say so.
         constexpr auto k_fakeSurfaceSource = std::string_view{R"lua(
             local real = ...
 
@@ -220,18 +206,17 @@ namespace uf::task
             return fake
         )lua"};
 
-        // A framework module that exists only to carry the fake's control
-        // channel across into the project environment. It receives the same one
-        // table ctx does, which is the whole reason it can: a private capability
-        // surface is reachable from nowhere else.
+        // A framework module that exists only to carry the fake's control channel
+        // into the project environment. It receives the same one table ctx does,
+        // which is the whole reason it can.
         constexpr auto k_probeSource = std::string_view{R"lua(
             local native = ...
             return native.__probe
         )lua"};
 
-        // A session whose frame source holds NO frames. Nothing here should ever
-        // observe, and a capture that happened anyway fails loudly instead of
-        // serving a frame a case might have been passing on.
+        // A session whose frame source holds NO frames, so a capture that
+        // happened anyway fails loudly instead of serving a frame a case might
+        // have been passing on.
         [[nodiscard]]
         auto buildUnbound() -> Built
         {
@@ -279,7 +264,7 @@ namespace uf::task
             // Two raises out of the block, one of each shape a project can
             // produce: its own Luau error, and a Tier B failure from a primitive.
             // Both must leave a cycle_close behind, and the raise must survive
-            // the close rather than being replaced by it.
+            // the close.
             constexpr std::string_view source = R"lua(
                 probe.plan('key', { 'invalid_resource' })
 
@@ -308,8 +293,7 @@ namespace uf::task
             CHECK(runOnFakeSurface(context, built, source) == doctest::Approx(1.0));
 
             // The control on the whole file's premise: the framework's policy ran
-            // to completion without the host holding anything, so nothing below
-            // the surface was involved.
+            // to completion without the host holding anything.
             CHECK_FALSE(context.hasOpenCycle());
             CHECK(built.clicks->clickCount() == 0);
         }
@@ -320,10 +304,9 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // No cycle_close after either delivery. The ledger spends the cycle
+            // No cycle_close after either delivery: the ledger spends the cycle
             // on a click and on a keystroke alike, so a framework that also
-            // closed would be closing a cycle that no longer exists -- and the
-            // surface is the only place both halves of that are visible at once.
+            // closed would be closing a cycle that no longer exists.
             constexpr std::string_view source = R"lua(
                 ctx:cycle(function(cycle)
                     cycle:click({ ordinal = 1 })
@@ -353,9 +336,9 @@ namespace uf::task
             TaskContext context{*std::move(built.session), *built.recorder};
 
             // Three attempts, two pauses. The placement is the point: a backoff
-            // after the final attempt would be a pause nobody waits through, and
-            // the surface is the only place the pause and the attempt that
-            // follows it can be seen in one order.
+            // after the final attempt is a pause nobody waits through, and the
+            // surface is the only place the pause and the attempt that follows
+            // it are seen in one order.
             constexpr std::string_view source = R"lua(
                 probe.plan(
                     'key',
@@ -405,9 +388,8 @@ namespace uf::task
             TaskContext context{*std::move(built.session), *built.recorder};
 
             // The only remaining framework-owned default, and the surface is the
-            // one place it is observable: a policy naming no total still announces
-            // "attempt N of 3" on the wire, so the number is the framework's and
-            // not the host's.
+            // one place it is observable: a policy naming no total still
+            // announces "attempt N of 3", so the number is the framework's.
             constexpr std::string_view source = R"lua(
                 probe.plan(
                     'key',
@@ -444,17 +426,11 @@ namespace uf::task
             TaskContext context{*std::move(built.session), *built.recorder};
 
             // Four directions over two kinds whose retryable flags differ:
-            // `timeout` is Abort and therefore retryable = false, while
-            // `stale_observation` is Retry and therefore true.
-            //
-            //   1. `on` names timeout            -> retried, though not retryable
-            //   2. no `on`, timeout              -> not retried, retryable rules
-            //   3. no `on`, stale_observation    -> retried, retryable rules
-            //   4. `on` names timeout only, and
-            //      the failure is retryable      -> NOT retried
-            //
-            // The fourth is what pins the semantics: with `on` present,
-            // `retryable` is not consulted at all.
+            // `timeout` is Abort (retryable = false), `stale_observation` is
+            // Retry (true). `on` naming timeout retries it anyway; without `on`,
+            // retryable rules; and the fourth -- `on` names timeout only while
+            // the failure IS retryable -- is what pins the semantics: with `on`
+            // present, `retryable` is not consulted at all.
             constexpr std::string_view source = R"lua(
                 local function count(policy, kind)
                     probe.reset()

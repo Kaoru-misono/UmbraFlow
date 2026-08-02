@@ -1,45 +1,34 @@
 --!strict
 -- model: the trusted framework's element and page vocabulary.
 --
--- The page model used to be C++ types under modules/annotation. It is here
--- instead because of one observation repeated three times in a single day of
--- annotating a real game (docs/plans/2026-07-31-script-owned-page-model.md 1):
--- C++ held a fixed opinion about what a page IS, and the game kept not growing
--- that way. Every collision cost a C++ change, and the next game would collide
--- again. So C++ keeps the primitives that carry a GUARANTEE -- pixels for a
--- rectangle, text for a rectangle, a click delivered against a live ticket --
--- and the vocabulary that carries an OPINION lives here, where changing it is
--- a Luau edit.
+-- C++ keeps the primitives that carry a GUARANTEE -- pixels for a rectangle,
+-- text for a rectangle, a click delivered against a live ticket -- and the
+-- vocabulary that carries an OPINION lives here, where changing it for the next
+-- game is a Luau edit (docs/plans/2026-07-31-script-owned-page-model.md 1).
 --
--- WHAT THIS FILE IS NOT. It is not a place any guarantee rests on. The ticket
--- ledger, the observation lease, the fingerprint and the single-consumption
--- rule are all in C++ and are all checked against the TICKET, never against a
--- table this file built (the same document, 5). A layer-three script that
--- corrupts an element table breaks its own run and cannot produce a click at a
--- wrong pixel. Nothing here may ever cache a fingerprint, a lease or a ticket
--- identity to make that faster.
+-- No guarantee rests on this file. The ticket ledger, the observation lease, the
+-- fingerprint and the single-consumption rule are in C++ and are checked against
+-- the TICKET, never against a table built here (the same document, 5), so a
+-- layer-three script that corrupts an element table breaks only its own run.
+-- Nothing here may cache a fingerprint, a lease or a ticket identity.
 --
--- INHERITANCE. Layer three extends what is built here the way Luau does it:
--- `setmetatable({ ... }, { __index = base })` (the same document, 3). Both
--- constructors below accept an element derived that way, so an extension does
--- not have to re-mint its base; what they refuse is a table nobody minted.
+-- Layer three extends what is built here with
+-- `setmetatable({ ... }, { __index = base })` (the same document, 3), and both
+-- constructors accept an element derived that way; what they refuse is a table
+-- nobody minted.
 --
--- THE PAGE GRAPH IS NEXT DOOR, IN `navigation`. Edges, the collection that
--- checks them against each other, and the runtime page stack are a second
--- vocabulary built on this one, and they are a file of their own rather than
--- more of this one. See `Page.new` for why the two page FLAGS are here while
--- the edges are not.
+-- The page graph is next door in `navigation`: an edge is a fact about a PAIR of
+-- pages, so it has no single owner here. See `Page.new` for why the two page
+-- flags are here while the edges are not.
 --
--- LOAD ORDER. Framework modules load in bundle order, which is the sorted
--- order of their file names, and each module's frozen exports are bound in the
--- framework environment under its own name. `model` sorts after `ctx` and
--- `mint` and before `navigation`, `observe` and `project`, which is what lets
--- those three name it. The only module it names itself is `mint`.
+-- Framework modules load in the sorted order of their file names, and each
+-- module's frozen exports are bound in the framework environment under its own
+-- name. `model` sorts after `ctx` and `mint` and before `navigation`, `observe`
+-- and `project`. The only module it names is `mint`.
 
 -- Every capability an element can declare, in the one canonical order the
--- project file writes them in. Serialising a set needs an order, and taking it
--- from a constant rather than from a table walk is what keeps two runs over the
--- same model producing the same bytes.
+-- project file writes them in. Serialising a set needs an order, and a constant
+-- rather than a table walk is what makes two runs produce the same bytes.
 local k_capabilityOrder = { "identify", "interact", "read" }
 
 local k_capabilityKnown: { [string]: boolean } = {
@@ -61,39 +50,28 @@ local k_polarityKnown: { [string]: boolean } = {
 -- How sure the engine has to be, in basis points, before a reading of a region
 -- counts as evidence about it -- for an element that does not say.
 --
--- WHY THERE IS A FLOOR AT ALL. Reading is the one capability that fails OPEN. A
--- template search on the wrong screen returns nothing; a text read on the wrong
--- screen returns plausible text, because the engine is built to find letters in
--- whatever it is given and will find some. A page identified by what a rectangle
--- reads therefore has to ask two questions rather than one -- does it say what
--- we expect, and was the engine reading rather than guessing -- and the second
--- one has no answer at all without a number to compare the confidence against.
+-- There is a floor because reading is the one capability that fails OPEN: a
+-- template search on the wrong screen returns nothing, while a text read on the
+-- wrong screen returns plausible text. So identity by reading asks two questions,
+-- and "was the engine reading rather than guessing" needs a number.
 --
--- WHY 8000. The engine this project ships reads the target's own page titles at
--- 9600 basis points and above, so a floor of 8000 sits well below every reading
--- the model is built on and well above the range a guess off a title lands in.
--- An element may raise it where the glyphs are small or lower it where the font
--- is hostile; what no element may do is leave the question unasked, which is why
--- an absent `read_floor` reads as this number rather than as zero.
+-- 8000 because the engine this project ships reads the target's own page titles
+-- at 9600 basis points and above. An element may raise it where the glyphs are
+-- small or lower it where the font is hostile; an absent `read_floor` reads as
+-- this number rather than as zero, so the question is never left unasked.
 local k_defaultReadFloor = 8000
 
--- The widest colour-key tolerance that means anything. A key's distance is the
--- sum of the three channel distances, so 765 already admits every colour; the
--- host refuses anything above it, and this file says so at the line that wrote
--- the number rather than leaving an author to discover it from a crop.
---
--- It is a mirror of `k_maximumColourKeyTolerance` in
--- modules/vision/source/vision/frame-analysis.hpp, and it is a mirror rather
--- than a second opinion: 255 * 3 is arithmetic, not policy, so the two cannot
--- drift without the channel range itself changing.
+-- The widest colour-key tolerance that means anything: a key's distance is the
+-- sum of the three channel distances, so 765 already admits every colour and the
+-- host refuses anything above it. A mirror of `k_maximumColourKeyTolerance` in
+-- modules/vision/source/vision/frame-analysis.hpp rather than a second opinion,
+-- since 255 * 3 is arithmetic and not policy.
 local k_maximumColourTolerance = 765
 
 -- The keys each constructor owns. Anything else in a spec table is refused and
--- the author is pointed at `extra`, which is the reserved subtable a project
--- may put its own fields under (docs/plans/2026-07-31-script-owned-page-model.md
--- 8). The refusal is the whole reason `extra` works: this layer may add a key
--- next year, and a project that had quietly put its own key of that name at the
--- top level would silently lose it.
+-- the author is pointed at `extra`, the reserved subtable a project puts its own
+-- fields under (docs/plans/2026-07-31-script-owned-page-model.md 8); see
+-- `mint.unknown_key` for why the refusal is what makes `extra` work.
 local k_elementKeys: { [string]: boolean } = {
     name          = true,
     capabilities  = true,
@@ -144,10 +122,9 @@ export type Rect = {
     height: number,
 }
 
--- The three capabilities, as a set rather than a list. A set is what every
--- reader of it actually asks -- "does this element identify?" -- and it is what
--- makes `exercised` a subset check rather than a nested loop. The FILE form is
--- a list, and `k_capabilityOrder` is the bridge between the two.
+-- The three capabilities as a set, which is what every reader asks and what
+-- makes `exercised` a subset check rather than a nested loop. The FILE form is a
+-- list, and `k_capabilityOrder` is the bridge between the two.
 export type CapabilitySet = {
     identify: boolean,
     interact: boolean,
@@ -156,26 +133,22 @@ export type CapabilitySet = {
 
 -- One way a single element can look. An appearance changes what a rectangle
 -- LOOKS LIKE; it never changes where the rectangle is or what it means
--- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.4). A geometry
--- change is not an appearance and does not belong in this model at all.
+-- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.4), so a geometry
+-- change is not an appearance.
 --
--- `template` is the opaque handle `ctx:template_load` minted; `source` is the
--- project file the blob came from. Both are required, and that is deliberate:
--- an appearance holding only a handle cannot be written back to the project
--- file, so a model loaded and saved would silently lose its own pixels.
+-- `template` is the opaque handle `ctx:template_load` minted and `source` is the
+-- project file the blob came from. Both are required: an appearance holding only
+-- a handle cannot be written back, so a model loaded and saved would silently
+-- lose its own pixels.
 --
--- `threshold` is in basis points of similarity, so 10000 demands an exact
--- match. Judging a score against it is `observe.matched`, in the module that
--- owns the verbs; a threshold on its own decides nothing.
+-- `threshold` is in basis points of similarity, so 10000 demands an exact match.
+-- Judging a score against it is `observe.matched`.
 --
--- `key` is the colour key the template blob was CUT under, and it is a record
--- rather than an instruction: the mask already lives in the PNG's alpha channel
--- and nothing reads this field to match anything. It is here because a masked
--- template with no key written down is a picture nobody can redraw -- the author
--- is the only one who ever knew which colour carved it, and a later session
--- widening the rectangle or re-cutting it on a newer capture would be guessing.
--- Absent on every unkeyed appearance, which is what the whole model was before
--- the annotation channel could bake a mask at all.
+-- `key` is the colour key the template blob was CUT under: a record rather than
+-- an instruction, since the mask already lives in the PNG's alpha channel and
+-- nothing reads this field to match. It is written down because a masked
+-- template whose key is unrecorded cannot be re-cut on a newer capture without
+-- guessing. Absent on every unkeyed appearance.
 export type Appearance = {
     name: string?,
     source: string,
@@ -186,9 +159,8 @@ export type Appearance = {
 }
 
 -- A colour key: the RGB triple a mask was cut around, and how far a pixel may
--- sit from it and still be taken. The tolerance is carried rather than defaulted
--- because the host's default is the host's, and a file that omitted it would be
--- a file whose mask cannot be reproduced from what it says.
+-- sit from it and still be taken. The tolerance is carried rather than defaulted,
+-- because a file that omitted it is a file whose mask cannot be reproduced.
 export type ColourKey = {
     red: number,
     green: number,
@@ -198,31 +170,23 @@ export type ColourKey = {
 
 -- `expected_text` is what this region should read wherever the element is used,
 -- and `read_floor` is how sure the engine has to be before a reading of it is
--- worth anything. Both are absent on most elements: the first because the
--- element verifies itself by pixels or because the text differs from page to
--- page (see `Reference`), the second because the project's own floor is right
--- until an element proves otherwise. `Element.read_floor` is how the second one
--- is asked, so nothing outside has to know the default.
+-- worth anything. Both are absent on most elements: the first because the element
+-- verifies itself by pixels or because the text differs from page to page (see
+-- `Reference`), the second because the project's floor holds. Ask the second
+-- through `Element.read_floor`, so nothing outside has to know the default.
 --
--- `rect` HAS ONLY EVER MEANT WHERE TO LOOK, AND SOME ELEMENTS HAVE NO ANSWER.
--- It is a search region: `observe.find` searches it and reports the hit's own
--- position, so a title box at [125, 14, 300, 56] and a flag anywhere in
--- [1170, 20, 300, 850] are one field at two extremes rather than two ideas. That
--- is why it can be absent. A minimap cell is matched at a rectangle the SCRIPT
--- computes for each frame, because the map pans and a cell's position is a fact
--- about the FRAME; a confirm button drawn once and reused on nine screens sits
--- somewhere different on each. Both used to carry the rectangle they happened to
--- be cut from, which the model then stated as a fact about the element -- and a
--- fact nothing can contradict is the kind of annotation this repository keeps
--- deleting.
+-- `rect` means WHERE TO LOOK and nothing else: `observe.find` searches it and
+-- reports the hit's own position, so a title box at [125, 14, 300, 56] and a flag
+-- anywhere in [1170, 20, 300, 850] are one field at two extremes.
 --
--- WHAT REPLACES IT IS NOT NOTHING. A rectangle is supplied by the element, by
--- the page reference (`rect_override`), or by the falsification claim
--- (`oracle.Expectation.rect`), and for any one use exactly one of the three
--- supplies it. So an element that omits it is not an element nobody knows where
--- to find: `Page.new` refuses a row that neither inherits one nor states one,
--- and `Expectation.new` refuses a cell that does the same. Absent here means
--- "the caller says where", never "nobody said".
+-- It can be absent, because some elements have no answer -- a minimap cell is
+-- matched where the SCRIPT computes for each frame since the map pans, and a
+-- confirm button drawn once and reused on nine screens sits somewhere different
+-- on each. A rectangle is then supplied by the page reference
+-- (`rect_override`) or by the falsification claim (`oracle.Expectation.rect`),
+-- and for any one use exactly one of the three supplies it: `Page.new` refuses a
+-- row that neither inherits one nor states one and `Expectation.new` refuses a
+-- cell that does the same, so absent here means "the caller says where".
 export type Element = {
     name: string,
     capabilities: CapabilitySet,
@@ -237,49 +201,36 @@ export type Element = {
 -- What one page does with one element. The holding relation and the exercised
 -- capabilities live HERE and not on the element, because "which page owns these
 -- pixels" and "what does THIS page use them for" are properties of the pairing
--- (docs/plans/2026-07-31-annotation-model-capabilities.md 2.2).
+-- (docs/plans/2026-07-31-annotation-model-capabilities.md 2.2). `expected_text`
+-- and `rect_override` are here for the same reason.
 --
 -- `identify` is the polarity, present exactly when identify is exercised:
--- required means the page needs this element on screen, forbidden means the
--- page is not this page if the element is there.
+-- required means the page needs this element on screen, forbidden means the page
+-- is not this page if the element is there.
 --
--- `pinned_appearance` names the appearance this page's pixels actually wear.
--- It applies to INTERACT ONLY. Identify folds across every appearance no matter
--- what is pinned, because the identify sweep runs before the page is known and
--- therefore cannot consult a page's pin (the same document, 4-2.4 correction).
--- The constructor accepts a pin beside an exercised identify and documents that
--- identify ignores it, rather than refusing, so an element that is both a page
--- anchor and a click target can still pin the appearance its click needs.
+-- `pinned_appearance` names the appearance this page's pixels wear, and it
+-- applies to INTERACT ONLY: identify folds across every appearance whatever is
+-- pinned, because the identify sweep runs before the page is known (the same
+-- document, 4-2.4 correction). A pin beside an exercised identify is accepted
+-- rather than refused, so an element that is both a page anchor and a click
+-- target can pin the appearance its click needs.
 --
--- `expected_text` is what THIS page's copy of the region should read, and it is
--- the field that lets one drawn rectangle serve every page in the game. The
--- target prints its own name in the same top-left box on every screen, so the
--- element carries the geometry and the read capability while the fact that this
--- box says "出擊" here and "戰鬥員配置" next door is a property of the pairing --
--- the same reasoning that put `holding`, `exercised` and `rect_override` here
--- (docs/plans/2026-07-31-annotation-model-capabilities.md 2.2). The row wins over
--- the element, and `Reference.expected_text` is the one place that precedence is
--- written down.
+-- `expected_text` is what THIS page's copy of the region should read, which is
+-- what lets one drawn rectangle serve every page: the element carries the
+-- geometry and the read capability, and the fact that the box says "出擊" here
+-- and "戰鬥員配置" next door belongs to the pairing. The row wins over the
+-- element, and `Reference.expected_text` is where that precedence is written.
 --
--- `rect_override` is where THIS page's copy of the region sits. On an element
--- that draws its own rectangle it is a refinement and is usually absent; on an
--- element that draws none it is REQUIRED, and that is what stops "a rectangle is
--- optional" from turning into "nobody said where to look". One drawn confirm
--- button referenced by nine pages is nine rows each naming its own corner of the
--- screen, which is the same reasoning that put `expected_text` here: the shared
--- thing is the element, and where it sits on THIS page is a property of the
--- pairing. It is refused beside an exercised identify, because the identify
--- sweep runs before the page is known -- so an element with no rectangle of its
--- own can never be part of a page signature, and `Page.new` says so in those
--- words rather than leaving an author to add an override and be refused twice.
+-- `rect_override` is where THIS page's copy of the region sits: a refinement on
+-- an element that draws its own rectangle, REQUIRED on an element that draws
+-- none. It is refused beside an exercised identify, because the identify sweep
+-- runs before the page is known, so an element with no rectangle of its own can
+-- never be part of a page signature.
 --
--- `page` is the NAME of the page that declared this row. It is not a field an
--- author writes -- `Page.new` stamps it, and the file already spells it as the
--- `[[reference]]` section's own `page` key -- and it exists so a row can answer
--- "which page authorised me" on its own. `observe.click` is what needs that
--- answer: it holds a receipt proving one page resolved on this frame, and it
--- has to check that the hit in front of it belongs to THAT page rather than to
--- some other page that happens to reference the same element.
+-- `page` is the NAME of the page that declared this row; `Page.new` stamps it and
+-- an author never writes it. `observe.click` needs it: it holds a receipt proving
+-- one page resolved on this frame, and has to check the hit belongs to THAT page
+-- rather than to another page referencing the same element.
 export type Reference = {
     element: Element,
     page: string,
@@ -294,22 +245,17 @@ export type Reference = {
 }
 
 -- `overlay` says this page COVERS the screen it appeared over instead of
--- replacing it, which is the fact the runtime stack is built on: closing an
--- overlay returns you to where you were, and that is a stack rather than an edge
--- (docs/plans/2026-07-31-script-owned-page-model.md 10). It is a property of the
--- page and not of the edge that reaches it, because the same overlay opened from
--- three screens covers all three.
+-- replacing it, which is what the runtime page stack is built on
+-- (docs/plans/2026-07-31-script-owned-page-model.md 10). It belongs to the page
+-- rather than to the edge, because the same overlay opened from three screens
+-- covers all three.
 --
 -- `interrupt` says this page can appear over ANYTHING -- a network error box, a
 -- daily-reward popup -- so it is declared once here rather than as an inbound
--- edge from every page it can interrupt. `observe.walk_edge` consults the flag
--- when a walk runs out of budget; what to do about the page it found is the
--- caller's policy and never this layer's.
+-- edge from every page it can interrupt. `observe.walk_edge` consults it when a
+-- walk runs out of budget; what to do about the page found is the caller's.
 --
--- Both default to false and both are refinements: an ordinary page states
--- neither. That is not a hidden policy default -- it is the reading of an absent
--- fact, the same way an element with no `expected_text` is an element with no
--- expected text.
+-- Both default to false: an ordinary page states neither.
 export type Page = {
     name: string,
     overlay: boolean,
@@ -319,15 +265,12 @@ export type Page = {
     residual: { string },
 }
 
--- The tables this module minted, held by identity, exactly as the task
--- declaration surface holds its interrupt descriptors. It is what makes
--- `Page.new` refuse a hand-written table that merely looks like an element:
--- not because a forged one would confer anything -- authorisation is checked
--- against the reference row at click time, and the click itself is checked
--- against the ticket in C++ -- but because the failure mode of accepting one is
--- SILENCE. A misspelled `capabilities` yields an element that exercises
--- nothing, and a page that never authorises a click looks exactly like a game
--- that never reached that page.
+-- The tables this module minted, held by identity. They make `Page.new` refuse a
+-- hand-written table that merely looks like an element -- not because a forged
+-- one would confer anything (C++ checks the click against the ticket) but
+-- because accepting one fails SILENTLY: a misspelled `capabilities` yields an
+-- element that exercises nothing, and a page that never authorises a click looks
+-- exactly like a game that never reached that page.
 local mintedElements: { [any]: boolean } = {}
 local mintedPages: { [any]: boolean } = {}
 local mintedReferences: { [any]: boolean } = {}
@@ -335,10 +278,9 @@ local mintedReferences: { [any]: boolean } = {}
 local model = {}
 
 -- The bounded inheritance walk is `mint`'s, so `navigation` asks the same
--- question of its own registries through the same code rather than a second copy
--- of it. The registries above stay private and are reachable only as the
--- PREDICATES below, because a script that could write to one could mint
--- anything.
+-- question of its own registries through the same code. The registries above
+-- stay private and are reachable only as the predicates below, because a script
+-- that could write to one could mint anything.
 local mintedOrDerived = mint.derives_from
 
 function model.is_element(value: any): boolean
@@ -349,10 +291,9 @@ function model.is_page(value: any): boolean
     return mintedOrDerived(value, mintedPages)
 end
 
--- References are minted too, so a verb handed one directly can tell a real page
--- row from a table shaped like one. There is no Reference.new: a reference only
--- exists as part of the page that declared it, which is the whole point of
--- putting holding and exercised on the pairing.
+-- References are minted too, so a verb handed one can tell a real page row from a
+-- table shaped like one. There is no Reference.new: a reference exists only as
+-- part of the page that declared it.
 function model.is_reference(value: any): boolean
     return mintedOrDerived(value, mintedReferences)
 end
@@ -364,12 +305,10 @@ function model.capability_order(): { string }
 end
 
 -- Every validator below returns a SENTENCE or nil rather than raising, so the
--- constructor can raise once, at level 2, and the author reads their own call
--- site instead of a line of this file. The sentences say what is wrong in plain
--- language and name the field, because a model is authored by an agent reading
--- the message and trying again. The four every constructor in this framework
--- repeats -- unknown keys, extra, residual, and the mint walk -- are in `mint`,
--- because `navigation` asks them of its own spec tables too.
+-- constructor raises once at level 2 and the author reads their own call site.
+-- The sentences name the field in plain language, because a model is authored by
+-- an agent reading the message and trying again. The four checks every
+-- constructor repeats are in `mint`, which `navigation` shares.
 local wholeNumber      = mint.whole_number
 local checkExtra       = mint.check_extra
 local frozenExtra      = mint.frozen_extra
@@ -405,26 +344,18 @@ local function frozenRect(value: Rect): Rect
     })
 end
 
--- The rectangle checker and the rectangle freezer, published because a rectangle
--- is now authored in THREE places and only one of them is here. `oracle` builds
--- the third -- the rectangle a falsification claim searches at -- and a second
--- copy of "four whole numbers, on screen, at least one pixel each" is a second
--- thing that can come to disagree with this one about what a rectangle is. The
--- checker returns a SENTENCE or nil, exactly as it does for the callers in this
--- file, so each constructor still raises at its own level and names its own
--- field.
+-- Published because a rectangle is authored in three places and only one of them
+-- is here; `oracle` builds the third, the rectangle a falsification claim
+-- searches at. The checker returns a SENTENCE or nil as it does for the callers
+-- in this file, so each constructor raises at its own level.
 model.check_rect  = checkRect
 model.frozen_rect = frozenRect
 
--- Checks the shape of a recorded colour key and nothing about its worth.
---
--- WHETHER A KEY IS A GOOD KEY IS NOT ASKED HERE, and that is the same line the
--- threshold sits on. How many pixels this key takes is a fact about the PIXELS,
--- which this layer does not hold: the crop verb measures it at the moment it
--- cuts, refuses the one key that can never work, and warns about counts that
--- historically measured nothing (docs/pitfalls/colour-key-annotation.md). What
--- is checkable from a file alone is that the channels are channels and the
--- tolerance is one the rule can express, so that is what this asks.
+-- Checks the shape of a recorded colour key and nothing about its worth. How many
+-- pixels a key takes is a fact about the PIXELS, which this layer does not hold:
+-- the crop verb measures it as it cuts, refuses the key that can never work, and
+-- warns about counts that measured nothing
+-- (docs/pitfalls/colour-key-annotation.md).
 local function checkColourKey(what: string, value: any): string?
     if type(value) ~= "table" then
         return what
@@ -502,38 +433,28 @@ model.Element = Element
 
 -- Element.new{ ... } -> a frozen element.
 --
--- `capabilities` is a LIST of names on the way in and a SET on the way out, and
--- that asymmetry is on purpose: the list is the file's form and the set is what
--- every reader asks. `element.capabilities.identify` is the reading.
+-- `capabilities` is a LIST of names on the way in and a SET on the way out: the
+-- list is the file's form, the set is what every reader asks.
 --
--- Two invariants here are not shape checks but rulings, and both fail closed:
+-- Two rulings here fail closed:
 --
---   * An element with no appearances is positioned BY THE PAGE, not by its own
---     pixels, so before it may identify it has to offer some OTHER evidence.
---     Until 2026-08-01 there was none and identify was refused outright
---     (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.2); the text a
---     region reads is now the second kind, so what is refused here is an element
---     with neither -- no appearances and no `read` capability, which cannot
---     produce pixels or a reading and therefore cannot produce evidence at all.
---
---     WHAT the region should read is NOT asked here, and that split is the whole
---     design. The case this exists for is one title rectangle shared by every
---     page in the game, reading a different name on each: only the page knows
---     which name, so `Page.new` is where an identify row is made to say it. An
---     element that reads the same text everywhere may still state it here, and
---     every row inherits it.
+--   * An element with no appearances is positioned BY THE PAGE, so before it may
+--     identify it has to offer other evidence
+--     (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.2). What is
+--     refused is an element with neither -- no appearances and no `read`
+--     capability -- which can produce no evidence at all. WHAT the region should
+--     read is not asked here: one title rectangle shared by every page reads a
+--     different name on each, and only the page knows which, so `Page.new` is
+--     where an identify row is made to say it. An element that reads the same
+--     text everywhere may state it here and every row inherits it.
 --   * An element declares ONE verification source: template appearances, or
 --     expected text (docs/plans/2026-08-01-three-layers-and-agent-operator.md
---     5-4). Both at once is not a stronger element, it is two answers to "did I
---     find it" with nothing saying which one wins.
+--     5-4). Both at once is two answers to "did I find it" with no rule between
+--     them.
 --
--- `rect` IS THE ONE FIELD WHOSE ABSENCE IS RULED ON SOMEWHERE ELSE, and the
--- reason is the one that put `expected_text` on a row: this constructor is handed
--- one element and can see no use of it. "Where do I look" has an answer per USE
--- -- the identify sweep looks in the element's own rectangle, a click looks in
--- the row's, a matrix cell looks in the claim's -- so the check belongs at each
--- of those, and putting a weaker copy here would only refuse the elements the
--- change exists for. See the type for what supplies it instead.
+-- `rect` is the one field whose absence is ruled on elsewhere, because "where do
+-- I look" has an answer per USE: the identify sweep looks in the element's own
+-- rectangle, a click in the row's, a matrix cell in the claim's. See the type.
 function Element.new(spec: { [string]: any }): Element
     if type(spec) ~= "table" then
         error("Element.new needs a table of fields", 2)
@@ -609,10 +530,9 @@ function Element.new(spec: { [string]: any }): Element
                     2
                 )
             end
-            -- The handle, not the blob. Both are values an author has in hand at
-            -- this point and only one of them can be matched against, and the
-            -- wrong one would otherwise be found out at the first search rather
-            -- than at the line that chose it.
+            -- The handle, not the blob: an author holds both here and only one
+            -- can be matched against, so the wrong one would otherwise be found
+            -- out at the first search rather than at the line that chose it.
             if typeof(entry.template) ~= "userdata" then
                 error(
                     what
@@ -762,13 +682,9 @@ function Element.new(spec: { [string]: any }): Element
 end
 
 -- How sure a reading of this element has to be before it counts as evidence, in
--- basis points.
---
--- It is a question asked OF an element rather than a field read off one, because
--- the field is absent on almost every element and the answer never is: an
--- element that states no floor is judged at `k_defaultReadFloor`, whose reasons
--- are written where the constant is. Reading `element.read_floor` directly is
--- how a caller ends up comparing a confidence against nil.
+-- basis points. Asked OF an element rather than read off one, because the field
+-- is absent on almost every element and the answer never is: reading
+-- `element.read_floor` directly is how a caller compares a confidence to nil.
 function Element.read_floor(element: Element): number
     if element.read_floor ~= nil then
         return element.read_floor :: number
@@ -791,26 +707,15 @@ end
 local Page = {}
 model.Page = Page
 
--- THE TRANSITION GRAPH LANDED BESIDE THIS TABLE RATHER THAN INSIDE IT.
---
--- A page is still a set of references plus two flags: what has to be on screen
--- for this to be that page, what this page lets a script do, and whether it
--- covers the screen or can appear over anything. It carries no outbound edge and
--- no target page.
---
--- That is the shape the 2026-08-01 ruling settled on
--- (docs/plans/2026-07-31-script-owned-page-model.md 10). Edges are their own
--- objects collected by `Graph.new`, for a reason worth stating where a reader
--- looking for `page.edges` will find it: an edge is a fact about a PAIR of pages
--- and a trigger, so hanging it off one end makes the other end's model depend on
--- the order the two were built in, and a `to` set spanning three pages would
--- have no single owner at all.
---
--- The two flags ARE on the page, and by the same test: "this screen covers the
--- one underneath" and "this screen can appear over anything" are properties of
--- the page itself, true of every way of reaching it.
---
 -- Page.new{ ... } -> a frozen page.
+--
+-- A page is a set of references plus two flags, and carries no outbound edge and
+-- no target page (docs/plans/2026-07-31-script-owned-page-model.md 10). A reader
+-- looking for `page.edges` will not find one: an edge is a fact about a PAIR of
+-- pages and a trigger, so hanging it off one end would make the other end's model
+-- depend on build order, and a `to` set spanning three pages has no single owner.
+-- `Graph.new` collects them instead. The two flags are on the page by the same
+-- test, being true of every way of reaching it.
 function Page.new(spec: { [string]: any }): Page
     if type(spec) ~= "table" then
         error("Page.new needs a table of fields", 2)
@@ -932,18 +837,15 @@ function Page.new(spec: { [string]: any }): Page
             end
         end
 
-        -- The per-page refinement of what a shared region says. It is checked
-        -- before the identify clause below because that clause consults it.
+        -- The per-page refinement of what a shared region says, checked before
+        -- the identify clause below because that clause consults it.
         --
-        -- IT IS ALLOWED BESIDE APPEARANCES, WHICH THE ELEMENT-LEVEL FIELD IS
-        -- NOT, and the two rules do not contradict each other. The element-level
-        -- ban exists because an element declares ONE verification source
-        -- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4), and
-        -- identify never consults this field on an element that HAS pixels --
-        -- the template fold runs then, unchanged. Here the text says what the
-        -- region should READ on this page, which is a fact worth writing down
-        -- for a click that picks between authorised targets; it becomes identity
-        -- evidence only for the element that has nothing else to offer.
+        -- Unlike the element-level field it is allowed beside appearances. The
+        -- element-level ban enforces one verification source per element
+        -- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4); here
+        -- the text says what the region should READ on this page, useful to a
+        -- click picking between authorised targets, and it becomes identity
+        -- evidence only for an element with nothing else to offer.
         if entry.expected_text ~= nil then
             if
                 type(entry.expected_text) ~= "string"
@@ -984,12 +886,10 @@ function Page.new(spec: { [string]: any }): Page
             if entry.identify == "required" then
                 requiredCount += 1
             end
-            -- The half of the identify ruling `Element.new` cannot make. An
-            -- element with no template identifies by what its rectangle READS,
-            -- and on the shared title element that text is different on every
-            -- page, so the row is the only thing that can state it. Refusing
-            -- here is what keeps "identify with neither pixels nor text"
-            -- impossible while the shared element stays legal to build.
+            -- The half of the identify ruling `Element.new` cannot make: on a
+            -- shared element the text differs per page, so the row is the only
+            -- thing that can state it. This keeps "identify with neither pixels
+            -- nor text" impossible while the shared element stays buildable.
             if
                 #element.appearances == 0
                 and entry.expected_text == nil
@@ -1008,12 +908,10 @@ function Page.new(spec: { [string]: any }): Page
                     2
                 )
             end
-            -- The other half of the same sentence, and it has to come first. An
-            -- identify sweep runs BEFORE the page is known, so the only
-            -- rectangle available to it is the element's own -- which means an
-            -- element that draws none can never be part of a signature, whatever
-            -- this row says. Without this the author is refused twice: once for
-            -- omitting the override, and again for supplying it.
+            -- Must come before the rect_override refusal below, or the author is
+            -- refused twice: once for omitting the override, again for supplying
+            -- it. An identify sweep runs BEFORE the page is known, so an element
+            -- that draws no rectangle can never be part of a signature.
             if element.rect == nil then
                 error(
                     what
@@ -1083,12 +981,10 @@ function Page.new(spec: { [string]: any }): Page
                 error(overrideProblem, 2)
             end
         elseif element.rect == nil then
-            -- THE RULE THAT KEEPS "A RECT IS OPTIONAL" FROM MEANING "NOBODY SAID
-            -- WHERE TO LOOK". An element with no rectangle of its own is drawn
-            -- once and placed by whoever uses it, so a row that inherits nothing
-            -- and states nothing leaves `observe.find` with no region to search
-            -- -- and it would be found out as a nil field deep inside a verb
-            -- rather than at the line that wrote the row.
+            -- What keeps "a rect is optional" from meaning "nobody said where to
+            -- look": a row that inherits no rectangle and states none leaves
+            -- `observe.find` with no region, found out as a nil field deep inside
+            -- a verb rather than at the line that wrote the row.
             error(
                 what
                     .. " references element '"
@@ -1178,24 +1074,16 @@ end
 local Reference = {}
 model.Reference = Reference
 
--- What this row expects its element's region to read, or nil when neither the
--- row nor the element says anything about it.
+-- What this row expects its element's region to read, or nil when neither the row
+-- nor the element says anything about it.
 --
--- THE ROW WINS, AND THE PRECEDENCE IS WRITTEN DOWN HERE. Two callers ask it of a
--- finished row -- the identify clause in `observe.resolve_page` and a caller's
--- own read through `observe.read_element` -- and two copies of "the reference's,
--- else the element's" is where they would come to disagree about a page's
--- identity, which is a disagreement nothing downstream could notice.
+-- THE ROW WINS, and this is the only place that precedence is written down.
+-- `observe.resolve_page`'s identify clause and `observe.read_element` both ask
+-- it, and two copies of "the reference's, else the element's" would come to
+-- disagree about a page's identity where nothing downstream could notice.
 --
--- `Page.new` asks a related question of the SPEC, where the row does not exist
--- yet and so cannot be passed in. That one is deliberately the weaker form: it
--- asks whether EITHER source has text at all, never which of them wins, so it
--- has nothing to disagree with this function about.
---
--- It is a namespace of its own rather than a member of `Page` because it is a
--- question about ONE row, and a row answers it without its page. There is no
--- Reference.new for it to sit beside, for the reason stated at the type: a
--- reference exists only as part of the page that declared it.
+-- `Page.new` asks the weaker question of the SPEC, where the row does not exist
+-- yet: whether EITHER source has text at all, never which wins.
 function Reference.expected_text(reference: Reference): string?
     if reference.expected_text ~= nil then
         return reference.expected_text
