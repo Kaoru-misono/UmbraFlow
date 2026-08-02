@@ -89,7 +89,8 @@ function explore.click_point(ticket: any, x: number, y: number)
     return (native :: any).cycle_click_point(ticket, x, y)
 end
 
--- explore.crop(ticket, x, y, width, height) -> (blob, hash)
+-- explore.crop(ticket, x, y, width, height, key?, tolerance?)
+--     -> (blob, hash, mask?)
 --
 -- The pixels of one rectangle as a PNG, and the lowercase hex SHA-256 of exactly
 -- those bytes. The hash comes back because a template asset is NAMED by it and
@@ -98,15 +99,48 @@ end
 -- The blob is the same kind of value `project_read` hands back, so it goes
 -- straight into `project_write` with no conversion -- which is how a crop
 -- becomes a file an agent can look at.
+--
+-- WITH A KEY THE CROP IS A MASKED TEMPLATE. The key is the same optional
+-- { red, green, blue } table `explore.probe` takes, with the same optional
+-- tolerance, and it is unpacked here for the same reason -- the private surface
+-- takes scalars and a Luau table is neither. What the host does with it is bake
+-- the weights into the PNG's alpha channel, which is what makes the matcher
+-- compare the glyph rather than the whole rectangle. The third return says what
+-- the key took: `rect_pixels`, `selected_pixels`, `ramp_selected_pixels`, and a
+-- `warning` when those counts look like a mask that cannot measure anything. It
+-- is nil when no key was given, and a key that selects NO pixel is refused by
+-- the host rather than reported here.
 function explore.crop(
     ticket: any,
     x: number,
     y: number,
     width: number,
-    height: number
-): (string, string)
+    height: number,
+    key: { red: number, green: number, blue: number }?,
+    tolerance: number?
+): (string, string, any)
     requirePrimitive("cycle_crop", "explore.crop")
-    return (native :: any).cycle_crop(ticket, x, y, width, height)
+    if key == nil then
+        return (native :: any).cycle_crop(ticket, x, y, width, height)
+    end
+    if type(key) ~= "table" then
+        error(
+            "explore.crop takes key = { red = r, green = g, blue = b } or no "
+                .. "key at all",
+            2
+        )
+    end
+    return (native :: any).cycle_crop(
+        ticket,
+        x,
+        y,
+        width,
+        height,
+        key.red,
+        key.green,
+        key.blue,
+        tolerance
+    )
 end
 
 -- explore.probe(blob, x, y, width, height, key?, tolerance?) -> stats

@@ -114,6 +114,20 @@ export type Measurement = {
     -- fields are the host's vocabulary and reducing them here would be this file
     -- forming an opinion.
     stats: any,
+
+    -- What the colour key took out of the crop, as the CROP verb reported it,
+    -- or nil when there was no key. It is the host's own handle -- the same
+    -- selected counts `stats` carries, measured on the same pixels by the same
+    -- rule -- plus the `warning` sentence the host attaches when those counts
+    -- look like a mask that cannot measure anything, and the key it actually
+    -- applied.
+    mask: any,
+
+    -- That key as four plain numbers, ready to be written into an appearance.
+    -- It is read off `mask` rather than off the caller's argument, because a
+    -- caller that named no tolerance got the host's default and the project file
+    -- has to record the key that really cut these pixels.
+    key: { red: number, green: number, blue: number, tolerance: number }?,
 }
 
 -- scribe.measure(ctx, ticket, rect, key?, tolerance?) -> Measurement
@@ -122,6 +136,22 @@ export type Measurement = {
 -- verb because they are one question -- "what is here" -- asked of pixels that
 -- must be the SAME pixels: cropping on one frame and probing a crop of another
 -- would report counts about a screen that had already moved on.
+--
+-- THE KEY REACHES BOTH HALVES, WHICH IS THE WHOLE POINT OF IT BEING ONE VERB.
+-- It used to reach only the probe, so an agent measured a masked selection and
+-- then stored an UNMASKED template -- the counts described one thing and the
+-- file held another. The same key now cuts the crop as well, so the pixels the
+-- probe measured are the pixels the template compares. An agent with no key yet
+-- passes none and gets exactly the bytes it always got; choosing a key is done
+-- by cropping unkeyed first and probing that blob, which is what `explore.probe`
+-- is for.
+--
+-- IT DECIDES NOTHING ABOUT THE KEY, on the same line the threshold is decided
+-- on. Whether a key is worth using, and which colour it should be, are the
+-- agent's; the host refuses only the one key that cannot work at all -- one that
+-- selects no pixel, whose template would be fully transparent -- and warns about
+-- counts that historically measured nothing. Both come back in `mask` for the
+-- caller to read.
 --
 -- It spends one crop out of this cycle's budget and does not consume the cycle,
 -- so a caller may go on to click on the same frame it measured.
@@ -142,8 +172,16 @@ function scribe.measure(
         )
     end
 
-    local png, hash = explore.crop(ticket, rect.x, rect.y, rect.width, rect.height)
-    local stats     = explore.probe(
+    local png, hash, mask = explore.crop(
+        ticket,
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+        key,
+        tolerance
+    )
+    local stats = explore.probe(
         png,
         0,
         0,
@@ -152,6 +190,17 @@ function scribe.measure(
         key,
         tolerance
     )
+
+    local applied: { red: number, green: number, blue: number, tolerance: number }? =
+        nil
+    if mask ~= nil then
+        applied = {
+            red       = mask.key_red,
+            green     = mask.key_green,
+            blue      = mask.key_blue,
+            tolerance = mask.tolerance,
+        }
+    end
 
     return {
         png    = png,
@@ -164,6 +213,8 @@ function scribe.measure(
             height = rect.height,
         },
         stats  = stats,
+        mask   = mask,
+        key    = applied,
     }
 end
 
@@ -204,6 +255,17 @@ end
 -- It writes the template asset as part of the same call. An element whose
 -- appearance names a file the project does not hold is one that loads and then
 -- fails at its first search, and there is no reason to be able to build one.
+--
+-- THE COLOUR KEY RIDES ACROSS FROM THE MEASUREMENT, AND IS NOT DECIDED HERE.
+-- A crop cut under a key carries the mask in its own alpha channel, so an
+-- element would work perfectly with the key written down nowhere -- and that is
+-- exactly the state worth refusing: a mysteriously masked PNG whose author is
+-- the only one who ever knew which colour it was cut on, and who cannot redraw
+-- the rectangle a year later without guessing. The appearance therefore records
+-- the key the HOST applied (`measurement.key`), so the file says what was keyed
+-- as well as what came out. It is copied, never chosen: `spec` has no key field,
+-- because a key that did not cut these pixels would be a caption on someone
+-- else's picture.
 function scribe.author_element(
     ctx: any,
     measurement: Measurement,
@@ -233,6 +295,7 @@ function scribe.author_element(
                 source    = source,
                 template  = ctx:template_load(measurement.png),
                 threshold = spec.threshold,
+                key       = measurement.key,
             },
         },
         expected_text = spec.expected_text,

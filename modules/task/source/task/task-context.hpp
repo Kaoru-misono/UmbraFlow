@@ -2,6 +2,7 @@
 
 #include <task/cycle-ledger.hpp>
 #include <task/deterministic.hpp>
+#include <task/pixel-probe.hpp>
 #include <task/project-files.hpp>
 #include <task/template-store.hpp>
 
@@ -26,6 +27,7 @@
 #include <optional>
 #include <span>
 #include <stop_token>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -121,6 +123,37 @@ namespace uf::task
     // TaskContextConfig, once a real page needs more.
     inline constexpr auto k_defaultMaximumCropsPerCycle = uint32{8};
 
+    // The two ends a colour-keyed mask has to stay between before its counts are
+    // worth anything, and the whole of what the host is willing to say about a
+    // key an agent chose.
+    //
+    // Both come from measurement rather than from taste, and both are recorded
+    // with their reproductions in docs/pitfalls/colour-key-annotation.md. Under
+    // the floor a mask MEASURES nothing: a 46x20 rectangle whose white key took
+    // 27 pixels scored zero on frames whose content had visibly changed, because
+    // the search only has to find some offset inside the ROI where those 27 land
+    // on white, and on a busy screen there always is one. At or above the share a
+    // mask DISTINGUISHES nothing: a key selects pixels within tolerance of one
+    // colour by construction, so a mask covering most of its rectangle is a solid
+    // patch of that colour and any patch of it the same size matches -- the
+    // measured orange button fill took 68.0% and carried no structure at all.
+    // Every element that survived cross-page falsification in the reference
+    // project selected between 6.6% and 25.8% of its rectangle.
+    //
+    // THEY WARN AND THEY DO NOT REFUSE. A count is a guess from shape: it waves
+    // the 68% fill through on the strength of its size and it would reject a
+    // small glyph that happens to work. What actually settles whether an element
+    // discriminates is the falsification matrix, which measures the element
+    // against a screen it must not hit. So the host reports the numbers and says
+    // when they look wrong, and the judgement stays with the agent that chose the
+    // key and the developer reading its work.
+    //
+    // The share is in basis points, the unit every other ratio in this model is
+    // already in, so a reader who knows what a 9900 threshold means needs no
+    // second convention to read this one.
+    inline constexpr auto k_minimumUsefulMaskPixels  = uint64{50};
+    inline constexpr auto k_maximumUsefulMaskShareBp = uint64{5000};
+
     // Host-side configuration for one TaskContext: the single cancellation
     // source shared with the owned EngineSession and the VM interrupt, plus this
     // run's RNG seed. A default-constructed stop token never requests a stop, so
@@ -197,6 +230,41 @@ namespace uf::task
             ContentHash hash;
         };
 
+        // What the colour key a crop was cut under actually took.
+        //
+        // IT IS REPORTED BECAUSE THE KEY IS THE ONE AUTHORING DECISION NOTHING
+        // ELSE MEASURES. A masked template that selects almost nothing, or
+        // almost everything, matches every screen it is shown and looks like the
+        // healthiest element in the project; the crop verb is the one moment
+        // that holds both the pixels and the key, so it is the one place the
+        // count can be handed to the agent while the rectangle can still be
+        // redrawn. The counts are the same two `probe` reports under the same
+        // names, out of the same colourKeyAlpha rule, so the two verbs cannot
+        // come to disagree about one measurement.
+        struct CropMask final
+        {
+            // The key these pixels were cut under, AS THE HOST APPLIED IT --
+            // which is not always as the caller spelled it, because a caller
+            // that names no tolerance gets the verb's default. It comes back so
+            // the layer that records the key in the project file records the one
+            // that actually produced the alpha channel, rather than a second
+            // copy of that default kept in Luau.
+            ProbeColourKey key{};
+
+            uint64 rectPixels{};
+
+            // Pixels the key took at full weight, and pixels it took on the
+            // antialiasing ramp. The first is what the floor and the share are
+            // judged on, because it is the count the pitfall's measurements are
+            // in.
+            uint64 selectedPixels{};
+            uint64 rampSelectedPixels{};
+
+            // Why these counts look wrong, or empty when they do not. It is a
+            // hint and never a refusal: see k_minimumUsefulMaskPixels.
+            std::string warning{};
+        };
+
         // What one cycleCrop produced: the PNG a script holds, and the content
         // hash of exactly those bytes.
         //
@@ -212,6 +280,15 @@ namespace uf::task
             std::vector<std::byte> png{};
 
             ContentHash hash;
+
+            // Absent when the caller named no key, present whenever it did.
+            // Absent rather than zeroed, on probe's reasoning: "no key was
+            // asked for" and "the key took nothing" are different answers, and
+            // a caller that could not tell them apart would read the first as
+            // the second. The second never reaches here at all -- a key that
+            // takes nothing is refused, because the PNG it would produce is
+            // fully transparent and every later match of it aborts.
+            std::optional<CropMask> mask{};
         };
 
     private:
@@ -336,8 +413,27 @@ namespace uf::task
         // hash of the bytes, and the frame identity they came from. That line is
         // the whole record of the crop, because the bytes themselves go to the
         // agent rather than into the stream.
+        //
+        // A `key` MAKES THE CROP A MASKED TEMPLATE, and that is the whole reason
+        // it is here. The weights the key hands out over the rectangle become
+        // the PNG's alpha channel, which decodeTemplateImage reads back as the
+        // matcher's mask plane -- so a template cut under a key compares its
+        // glyph rather than its whole rectangle, which is the difference between
+        // a minimap node icon that scores 8885/8549/8582 against three different
+        // cells and one that tells them apart. With no key the bytes are exactly
+        // what they were before this argument existed: fully opaque, same hash.
+        //
+        // A key that takes NO pixel is refused here rather than persisted. The
+        // PNG it would produce is fully transparent, and every later match of it
+        // fails InternalInvariant deep in the matcher, on a run that no longer
+        // knows which key was chosen or over what rectangle. This call knows
+        // both, so it says so while the author can still act on it.
         [[nodiscard]]
-        auto cycleCrop(CycleTicket ticket, PixelRect rect) -> Result<CroppedBlob>;
+        auto cycleCrop(
+            CycleTicket ticket,
+            PixelRect rect,
+            std::optional<ProbeColourKey> key
+        ) -> Result<CroppedBlob>;
 
         // Releases whatever cycle is open and reports whether there was one.
         //

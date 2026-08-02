@@ -1,11 +1,15 @@
 #include <task/task-context.hpp>
 
 #include <task/cycle-ledger.hpp>
+#include <task/pixel-probe.hpp>
 #include <task/project-files.hpp>
 #include <task/template-store.hpp>
 
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
+#include <core/numeric/checked-arithmetic.hpp>
+#include <core/numeric/checked-cast.hpp>
+#include <core/safety/checked-access.hpp>
 #include <core/time/monotonic-time.hpp>
 #include <core/time/poll-sleep.hpp>
 #include <core/types/integer.hpp>
@@ -24,10 +28,14 @@
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
 
+#include <vision/bgra-image.hpp>
+#include <vision/frame-analysis.hpp>
+
 #include <cstddef>
 #include <format>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -35,6 +43,196 @@
 
 namespace uf::task
 {
+    namespace
+    {
+        // One crop's mask before and after it is reduced to what the caller
+        // sees: the plane that becomes the PNG's alpha channel, and the counts
+        // that go back to the agent. They travel together because they are one
+        // walk over one rectangle, and splitting them would be two walks that
+        // could report different pixels.
+        struct MeasuredCropMask final
+        {
+            std::vector<std::byte> weights{};
+            TaskContext::CropMask  reported{};
+        };
+
+        // Why `selected` of `total` looks like a mask that cannot measure
+        // anything, or an empty string when it does not.
+        //
+        // Both ends and the reasoning behind them are at
+        // k_minimumUsefulMaskPixels; what is here is only the wording.
+        [[nodiscard]]
+        auto maskWarning(uint64 selected, uint64 total) -> std::string
+        {
+            if (selected < k_minimumUsefulMaskPixels)
+            {
+                return std::format(
+                    "this key selects {} of {} pixels, under the {} a mask needs "
+                    "to measure anything: a handful of saturated pixels finds "
+                    "some offset in any busy search region, so the element hits "
+                    "every screen and scores near zero on all of them",
+                    selected,
+                    total,
+                    k_minimumUsefulMaskPixels
+                );
+            }
+
+            auto const scaled = checkedMultiply(selected, uint64{10'000});
+            UF_CHECK(scaled.has_value());
+            auto const shareBp = *scaled / total;
+            if (shareBp >= k_maximumUsefulMaskShareBp)
+            {
+                return std::format(
+                    "this key selects {} of {} pixels ({}.{:02} percent), at or "
+                    "above the {} basis points where a mask stops distinguishing "
+                    "anything: a key takes one colour by construction, so a mask "
+                    "this large is a solid patch that any patch of the same "
+                    "colour matches",
+                    selected,
+                    total,
+                    shareBp / 100U,
+                    shareBp % 100U,
+                    k_maximumUsefulMaskShareBp
+                );
+            }
+            return {};
+        }
+
+        // The weights `key` hands out over `region`, with the counts that go
+        // back to the agent.
+        //
+        // `rect` is the rectangle in FRAME coordinates, carried only so a
+        // refusal can name what the author drew rather than the crop-relative
+        // box they never typed.
+        [[nodiscard]]
+        auto measureCropMask(
+            engine::CroppedRegion const& region,
+            PixelRect rect,
+            ProbeColourKey const& key
+        ) -> Result<MeasuredCropMask>
+        {
+            if (key.tolerance > k_maximumColourKeyTolerance)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "a colour tolerance of {} is beyond {}, the widest the "
+                        "summed per-channel distance can express",
+                        key.tolerance,
+                        k_maximumColourKeyTolerance
+                    )
+                );
+            }
+
+            auto const widthSize = checkedCast<std::size_t>(region.width);
+            if (!widthSize)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "the cropped region's width is beyond range"
+                );
+            }
+            UF_TRY_VALUE(
+                view,
+                BgraImage::create(
+                    region.pixels,
+                    region.width,
+                    region.height,
+                    *widthSize * 4U
+                )
+            );
+            UF_TRY_VALUE(
+                cropRect,
+                PixelRect::create(0, 0, region.width, region.height)
+            );
+            UF_TRY_VALUE(
+                measured,
+                maskColourKey(
+                    view,
+                    ColourProbeSpec{
+                        .rect      = cropRect,
+                        .keyRed    = key.red,
+                        .keyGreen  = key.green,
+                        .keyBlue   = key.blue,
+                        .tolerance = key.tolerance,
+                    }
+                )
+            );
+
+            auto const selected =
+                measured.fullySelectedPixels + measured.rampSelectedPixels;
+            if (selected == 0U)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "the colour key {},{},{} at tolerance {} selects no "
+                        "pixel of the {}x{}+{}+{} region; the template it would "
+                        "cut is fully transparent and every match of it aborts, "
+                        "so key on the colour the glyph really is or widen the "
+                        "tolerance",
+                        key.red,
+                        key.green,
+                        key.blue,
+                        key.tolerance,
+                        rect.width(),
+                        rect.height(),
+                        rect.x(),
+                        rect.y()
+                    )
+                );
+            }
+
+            return MeasuredCropMask{
+                .weights  = std::move(measured.weights),
+                .reported = TaskContext::CropMask{
+                    .key                = key,
+                    .rectPixels         = measured.rectPixels,
+                    .selectedPixels     = measured.fullySelectedPixels,
+                    .rampSelectedPixels = measured.rampSelectedPixels,
+                    .warning            = maskWarning(
+                        measured.fullySelectedPixels,
+                        measured.rectPixels
+                    ),
+                },
+            };
+        }
+
+        // `rgba` with every pixel's alpha replaced by the weight `weights` gives
+        // it, which is the whole of what makes a crop a masked template:
+        // decodeTemplateImage reads that channel back as the matcher's mask
+        // plane.
+        //
+        // The buffer is taken by value and handed back rather than written
+        // through a reference, so nothing here is an output parameter and the
+        // caller's move is visible at the call site.
+        [[nodiscard]]
+        auto applyMaskAlpha(
+            std::vector<std::byte> rgba,
+            std::span<std::byte const> weights
+        ) -> Result<std::vector<std::byte>>
+        {
+            auto const expected = checkedMultiply(weights.size(), std::size_t{4});
+            if (!expected || rgba.size() != *expected)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    std::format(
+                        "a mask of {} weights does not cover {} RGBA bytes",
+                        weights.size(),
+                        rgba.size()
+                    )
+                );
+            }
+
+            for (auto index = std::size_t{0}; index < weights.size(); ++index)
+            {
+                checkedAt(rgba, (index * 4U) + 3U) = checkedAt(weights, index);
+            }
+            return rgba;
+        }
+    }
+
     TaskContext::TaskContext(
         engine::EngineSession session,
         trace::TraceRecorder& recorder,
@@ -178,7 +376,8 @@ namespace uf::task
 
     auto TaskContext::cycleCrop(
         CycleTicket ticket,
-        PixelRect rect
+        PixelRect rect,
+        std::optional<ProbeColourKey> key
     ) -> Result<CroppedBlob>
     {
         UF_TRY(m_cycles.requireOpen(ticket));
@@ -201,7 +400,28 @@ namespace uf::task
         m_cycles.chargeCrop();
 
         UF_TRY_VALUE(region, m_session.cropRegion(m_cycles.observation(), rect));
+
+        // The mask is measured BEFORE the pixels are converted, because
+        // maskColourKey reads BGRA and bgra8ToRgba8 consumes the buffer it reads
+        // from. It also has to happen before the encode for the reason the
+        // refusal exists at all: an all-transparent PNG is bytes no matcher can
+        // use, so it must never become a file an agent could save.
+        auto measured = std::optional<MeasuredCropMask>{};
+        if (key.has_value())
+        {
+            UF_TRY_VALUE(built, measureCropMask(region, rect, *key));
+            measured = std::move(built);
+        }
+
         UF_TRY_VALUE(rgba, image::bgra8ToRgba8(std::move(region.pixels)));
+        if (measured.has_value())
+        {
+            UF_TRY_VALUE(
+                masked,
+                applyMaskAlpha(std::move(rgba), measured->weights)
+            );
+            rgba = std::move(masked);
+        }
         UF_TRY_VALUE(
             png,
             image::encodeRgbaPng("cycle crop", region.width, region.height, rgba)
@@ -231,10 +451,15 @@ namespace uf::task
         };
         UF_TRY(m_recorder.emit(event));
 
-        return CroppedBlob{
+        auto blob = CroppedBlob{
             .png  = std::move(png),
             .hash = *hash,
         };
+        if (measured.has_value())
+        {
+            blob.mask = std::move(measured->reported);
+        }
+        return blob;
     }
 
     auto TaskContext::sweepOpenCycle() noexcept -> bool

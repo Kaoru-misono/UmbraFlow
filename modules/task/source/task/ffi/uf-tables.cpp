@@ -91,6 +91,7 @@ namespace uf::task
         constexpr auto k_matchType   = "uf.match";
         constexpr auto k_readingType = "uf.reading";
         constexpr auto k_probeType   = "uf.probe";
+        constexpr auto k_maskType    = "uf.mask";
 
         // The single global name the DATA installer registers, and therefore the
         // one host name the project environment whitelists. Spelled once here so
@@ -136,6 +137,15 @@ namespace uf::task
 
         constexpr auto k_probeUserdataTag = 4;
         static_assert(k_probeUserdataTag > 0 && k_probeUserdataTag < LUA_UTAG_LIMIT);
+
+        // A crop's mask is a kind of its own rather than a second probe, because
+        // the two answer different questions about different bytes: a probe
+        // measures a rectangle of a blob the caller already holds, and this
+        // reports what the key a crop was CUT UNDER actually took out of the
+        // pixels that crop encoded. One label per kind is what keeps tostring on
+        // a host object an honest name.
+        constexpr auto k_maskUserdataTag = 5;
+        static_assert(k_maskUserdataTag > 0 && k_maskUserdataTag < LUA_UTAG_LIMIT);
 
         // The colour tolerance a probe uses when the caller named a key but no
         // tolerance, matching the v4 authoring line's own `--tolerance` default
@@ -622,6 +632,19 @@ namespace uf::task
             lua_setfield(state, -2, name);
         }
 
+        // Adds one string field to the field table on the stack top. Pushed with
+        // its length rather than as a C string, so a sentence the host formatted
+        // reaches the script whole whatever it contains.
+        auto addTextField(
+            lua_State* state,
+            char const* name,
+            std::string_view value
+        ) -> void
+        {
+            lua_pushlstring(state, value.data(), value.size());
+            lua_setfield(state, -2, name);
+        }
+
         // Refuses the call outright when a prior verb already latched the
         // generation terminal, so a script that swallowed what was raised cannot
         // drive one more engine verb before the host tears the generation down.
@@ -784,6 +807,40 @@ namespace uf::task
                 );
             }
             return static_cast<uint8>(value);
+        }
+
+        // Reads the optional colour key at `first` and the three positions after
+        // it: red, green, blue, tolerance.
+        //
+        // ONE READER FOR BOTH VERBS. `probe` measures what a key takes and
+        // `cycle_crop` cuts under one, and an agent's whole loop is to do the
+        // first and then the second with the SAME key -- so a second reader
+        // would be a second place the default tolerance, the channel range and
+        // the "no key at all" case could come to differ, and the two verbs would
+        // stop being about one measurement.
+        //
+        // Presence is decided by the FIRST position alone. A caller that names a
+        // red channel and stops has written half a key, and being told which
+        // channel is missing beats silently keying on black.
+        [[nodiscard]]
+        auto checkColourKey(
+            lua_State* state,
+            int first,
+            std::string const& what
+        ) -> std::optional<ProbeColourKey>
+        {
+            if (lua_isnoneornil(state, first))
+            {
+                return std::nullopt;
+            }
+            return ProbeColourKey{
+                .red   = checkColourChannel(state, first, what + " red"),
+                .green = checkColourChannel(state, first + 1, what + " green"),
+                .blue  = checkColourChannel(state, first + 2, what + " blue"),
+                .tolerance = lua_isnoneornil(state, first + 3)
+                    ? k_defaultProbeTolerance
+                    : checkPixelExtent(state, first + 3, what + " tolerance"),
+            };
         }
 
         // Reads four numbers starting at `first` as one rectangle.
@@ -1292,9 +1349,24 @@ namespace uf::task
             return 0;
         }
 
-        // cycle_crop(ticket, x, y, width, height) -> (blob, hash). The agent's
-        // eye: the pixels of one rectangle, encoded as a PNG, plus the lowercase
-        // hex SHA-256 of exactly those bytes.
+        // cycle_crop(ticket, x, y, width, height[, key_r, key_g, key_b,
+        // tolerance]) -> (blob, hash[, mask]). The agent's eye: the pixels of one
+        // rectangle, encoded as a PNG, plus the lowercase hex SHA-256 of exactly
+        // those bytes.
+        //
+        // THE KEY SITS AT THE SAME FOUR POSITIONS `probe` PUTS IT, and carries
+        // the same default tolerance, because it is meant to be the same key: an
+        // agent probes a rectangle to choose one and then cuts under the one it
+        // chose. With a key the PNG carries an alpha plane -- opaque where the
+        // key took the pixel, transparent where it did not -- which is what makes
+        // the template a MASKED template all the way down to the matcher. With no
+        // key the bytes are what they were before this argument existed.
+        //
+        // THE THIRD RETURN IS THE MASK THE CALLER JUST DREW, and it is absent
+        // exactly when no key was given, on probe's reasoning: a zeroed handle
+        // would read as a key that took nothing, which is a different answer and
+        // one this verb never returns at all -- a key that takes nothing is
+        // refused, not reported.
         //
         // ONLY THE EXPLORATION SURFACE HAS IT. Handing raw pixels to a business
         // script would give it a way to decide things no evidence can falsify,
@@ -1318,13 +1390,14 @@ namespace uf::task
 
             auto* ticket    = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
             auto const rect = checkPixelRect(state, 2, "cycle_crop region");
+            auto const key  = checkColourKey(state, 6, "cycle_crop key");
 
             auto const call = NativeCallIdentity{
                 .verb         = "cycle_crop",
                 .cycleOrdinal = ticket->ordinal,
             };
 
-            auto result = context->cycleCrop(*ticket, rect);
+            auto result = context->cycleCrop(*ticket, rect, key);
             if (!result)
             {
                 traceHostCallFailure(state, context, call, result.error());
@@ -1355,7 +1428,30 @@ namespace uf::task
             auto const* p_chars = reinterpret_cast<char const*>(result->png.data());
             lua_pushlstring(state, p_chars, result->png.size());
             lua_pushlstring(state, scriptHash.data(), scriptHash.size());
-            return 2;
+            if (!result->mask.has_value())
+            {
+                return 2;
+            }
+
+            auto const& mask = *result->mask;
+            beginFieldHandle<uint8>(state, uint8{0}, k_maskUserdataTag);
+            addNumberField(state, "key_red", mask.key.red);
+            addNumberField(state, "key_green", mask.key.green);
+            addNumberField(state, "key_blue", mask.key.blue);
+            addNumberField(state, "tolerance", mask.key.tolerance);
+            addNumberField(state, "rect_pixels", mask.rectPixels);
+            addNumberField(state, "selected_pixels", mask.selectedPixels);
+            addNumberField(
+                state,
+                "ramp_selected_pixels",
+                mask.rampSelectedPixels
+            );
+            if (!mask.warning.empty())
+            {
+                addTextField(state, "warning", mask.warning);
+            }
+            finishFieldHandle(state, context, k_maskType);
+            return 3;
         }
 
         // probe(blob, x, y, width, height[, key_r, key_g, key_b, tolerance])
@@ -1387,18 +1483,7 @@ namespace uf::task
             auto const blob = checkText(state, 1, "probe blob");
             auto const rect = checkPixelRect(state, 2, "probe region");
 
-            auto key = std::optional<ProbeColourKey>{};
-            if (!lua_isnoneornil(state, 6))
-            {
-                key = ProbeColourKey{
-                    .red   = checkColourChannel(state, 6, "probe key red"),
-                    .green = checkColourChannel(state, 7, "probe key green"),
-                    .blue  = checkColourChannel(state, 8, "probe key blue"),
-                    .tolerance = lua_isnoneornil(state, 9)
-                        ? k_defaultProbeTolerance
-                        : checkPixelExtent(state, 9, "probe tolerance"),
-                };
-            }
+            auto const key = checkColourKey(state, 6, "probe key");
 
             auto const call = NativeCallIdentity{
                 .verb      = "probe",

@@ -835,4 +835,71 @@ namespace uf
             .dominant        = std::move(ranked),
         };
     }
+
+    auto maskColourKey(
+        BgraImage const& frame,
+        ColourProbeSpec const& spec
+    ) -> Result<ColourKeyMask>
+    {
+        UF_TRY(spec.rect.ensureWithinExtent(frame.width(), frame.height()));
+        if (spec.tolerance > k_maximumColourKeyTolerance)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                std::format(
+                    "colour key tolerance {} exceeds {}",
+                    spec.tolerance,
+                    k_maximumColourKeyTolerance
+                )
+            );
+        }
+        UF_TRY_VALUE(pixels, rectPixelCount(spec.rect));
+
+        auto weights = std::vector<std::byte>{};
+        auto const planeSize = checkedCast<std::size_t>(pixels);
+        if (!planeSize)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                std::format(
+                    "rect {}x{} is too large to mask",
+                    spec.rect.width(),
+                    spec.rect.height()
+                )
+            );
+        }
+        weights.reserve(*planeSize);
+
+        auto fullySelected = uint64{0};
+        auto rampSelected  = uint64{0};
+        for (auto y = spec.rect.y(); y < spec.rect.bottom(); ++y)
+        {
+            for (auto x = spec.rect.x(); x < spec.rect.right(); ++x)
+            {
+                auto const weight = colourKeyAlpha(
+                    frame.pixelAt(x, y),
+                    spec.keyRed,
+                    spec.keyGreen,
+                    spec.keyBlue,
+                    spec.tolerance
+                );
+                weights.emplace_back(std::byte{weight});
+                if (weight == 255U)
+                {
+                    ++fullySelected;
+                }
+                else if (weight != 0U)
+                {
+                    ++rampSelected;
+                }
+            }
+        }
+
+        return ColourKeyMask{
+            .weights             = std::move(weights),
+            .rectPixels          = pixels,
+            .fullySelectedPixels = fullySelected,
+            .rampSelectedPixels  = rampSelected,
+        };
+    }
 }

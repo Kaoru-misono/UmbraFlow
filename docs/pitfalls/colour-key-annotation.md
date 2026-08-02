@@ -20,6 +20,12 @@ add-target` / `page add-info` when this was recorded; they collapsed into
 The failure is unchanged — `page create` and `page add` are still the two verbs
 that draw pixels, and neither checks the key.)
 
+(Corrected again 2026-08-02: all of those verbs are gone with `umbra-authoring`,
+and the verb that draws pixels is `explore.crop`, through `scribe.measure`. This
+failure can no longer be authored at all — see the Regression check below for
+what refuses it and why that one is a refusal where the floor below is not. The
+reproduction is kept because the mechanism it names, `sad.cpp`, is unchanged.)
+
 ```
 InternalInvariant: template mask excludes every pixel of its template | at sad.cpp:325
 {"ok":false,"error":{"kind":"InternalInvariant","response":"abort",...}}
@@ -52,8 +58,8 @@ giving 0.274 over 211 pixels.
 
 ### Regression check
 
-Before saving, run `umbra-authoring frames probe` with the same rectangle and key
-and read `fully_selected_pixels`. Zero means this failure.
+Before saving, probe the same rectangle with the same key and read
+`fully_selected_pixels`. Zero means this failure.
 
 > **2026-07-31: the drawing verbs now say it themselves.** `page create` and
 > `page add` measure the mask they just drew and report it under
@@ -63,6 +69,30 @@ and read `fully_selected_pixels`. Zero means this failure.
 > not a refusal — the element is still authored and `ok` stays true — so the
 > probe remains worth running, and this failure is now visible at the moment it
 > is made rather than at a match much later.
+>
+> **Superseded 2026-08-02, and the zero case is now REFUSED.** The CLI that note
+> describes is gone: `umbra-authoring`, `entry/authoring/` and
+> `tests/authoring/` were deleted with the v4 line on 2026-08-01, and the mask
+> is measured by `explore.crop` now — the exploration primitive an agent cuts
+> its template with, which is also where the key is applied. Read `frames probe`
+> as `explore.probe`, and `authored.mask` as the crop's third return value:
+> `rect_pixels`, `selected_pixels`, `ramp_selected_pixels`, and a `warning`.
+>
+> What changed besides the spelling is the verdict on THIS failure. A key that
+> selects no pixel is refused where it was chosen, as an `InvalidResource`
+> naming the key and the rectangle, rather than warned about. The reason is not
+> that the count is more trustworthy than it was — it is that the artifact is
+> not merely poor, it is unusable: the crop's mask IS the PNG's alpha channel
+> now, so a key that takes nothing produces a fully transparent template, and
+> `sad.cpp:322` aborts on every match of one. A verb that handed back bytes
+> whose only future is an abort would be handing back garbage, and refusing
+> costs the agent one retry with a different colour. The floor below stays a
+> warning, for the reasons that section gives.
+>
+> Deciding artifact: `measureCropMask` in
+> `modules/task/source/task/task-context.cpp`, and the case
+> `A key that selects nothing is refused where it was chosen` in
+> `tests/task/test-colour-key-crop.cpp`.
 
 ## A mask with too few selected pixels passes everything and measures nothing
 
@@ -159,10 +189,10 @@ and small enough that what got selected is the figure rather than the ground.
 
 ### Fix
 
-Check `fully_selected_pixels` from `frames probe` against **both** ends. Under
-roughly 50 it measures nothing; at half the rectangle or more it distinguishes
-nothing. Widen the rectangle, loosen the tolerance, key the glyph instead of the
-fill, or pick a different feature.
+Check the fully selected count against **both** ends. Under roughly 50 it
+measures nothing; at half the rectangle or more it distinguishes nothing. Widen
+the rectangle, loosen the tolerance, key the glyph instead of the fill, or pick a
+different feature.
 
 > **2026-07-31: landed as a warning on the drawing verbs, not as a refusal.**
 > `page create` and `page add` measure the mask and attach
@@ -173,6 +203,23 @@ fill, or pick a different feature.
 > `tests/authoring/test-authoring-cli.cpp`, whose third subcase exists to keep
 > the warning off the good masks above.
 >
+> **Moved 2026-08-02, unchanged in substance.** That CLI is deleted. The same
+> two ends, the same 50 and the same half, are now measured by `explore.crop` at
+> the moment it cuts the template, and reported on its third return value under
+> `warning`. Deciding artifact: `maskWarning` and
+> `k_minimumUsefulMaskPixels` / `k_maximumUsefulMaskShareBp` in
+> `modules/task/source/task/task-context.{cpp,hpp}`, and the case
+> `The crop warns about a mask that can measure nothing` in
+> `tests/task/test-colour-key-crop.cpp` — whose first of three keys is the good
+> mask, and exists for the same reason the old third subcase did: a hint that
+> fires on a working mask says nothing.
+>
+> It stays a warning for exactly the two reasons given here, and the wider
+> falsification matrix is still the gate. What did NOT stay a warning is the
+> zero-selection case above, and the line between them is worth naming: this
+> floor rejects masks that are *probably* useless, where a zero mask is one that
+> *provably* cannot be matched at all.
+>
 > [The capability plan](../plans/2026-07-31-annotation-model-capabilities.md)
 > §2.3 P0 originally wanted this floor as a construction-time refusal in
 > `Appearance::create`. That was **demoted to a warning** (see the plan's
@@ -181,7 +228,8 @@ fill, or pick a different feature.
 > anything; and a pixel count is the wrong measure on its own, since it waves the
 > 68% orange fill straight through. **The gate stays the falsification matrix**,
 > `umbra-authoring check` — that measures whether the element hits a screen it
-> must not, where these two numbers only guess from shape.
+> must not, where these two numbers only guess from shape. (The matrix is
+> `regress.check` and `umbra-flow check` now; the ruling is unchanged.)
 
 The general rule this taught, which is the part worth carrying: **an element that
 hits every state it is meant to distinguish is worse than no element, because it
@@ -239,3 +287,19 @@ the coin's gold, 0.000 over 362 pixels.
 Author from frames of at least two different locations of the same screen, and
 require every element to hit both. One location's frames cannot distinguish a
 template that matches a glyph from one that matches a background.
+
+> **2026-08-02: this mechanism now has a case in the repository.**
+> `A masked template ignores the scenery an unmasked one matches on` in
+> `tests/task/test-colour-key-crop.cpp` builds exactly the frame this section
+> describes — one where the glyph is byte-identical and only the scenery behind
+> it is repainted — and measures both spellings of one template on it. Unmasked
+> it scores 20000 where it should score nothing, and worse than the 13440 it
+> scores on a frame its glyph is ABSENT from: it prefers the wrong screen, which
+> is how an element comes to hit every state it was meant to tell apart. Masked
+> it scores 0, because none of the changed pixels carry weight.
+>
+> It exists because the case beside it does NOT prove this. That one changes the
+> glyph and leaves the scenery alone, so the pixels that moved are already the
+> only pixels the mask keeps, and a mask covering the whole rectangle would pass
+> it. The two together bracket the claim: one shows the mask reaching the
+> matcher, the other shows it excluding.

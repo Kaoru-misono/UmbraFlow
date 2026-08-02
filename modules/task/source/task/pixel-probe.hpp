@@ -27,6 +27,14 @@ namespace uf::task
     // probe an agent runs is the one that has no key yet -- "what colours are in
     // this rectangle" is how a key gets chosen, and demanding one up front would
     // make the verb useless for exactly the question it exists to answer.
+    //
+    // IT IS THE CROP'S KEY TOO. TaskContext::cycleCrop takes one of these and
+    // bakes the weights it implies into the PNG's alpha channel, which is what
+    // makes an authored template a masked template. One type rather than two
+    // because a key an agent probed with and a key it then cut with have to be
+    // the same key -- two spellings of it would be two things that could come to
+    // mean different tolerances, and the counts the two verbs report would stop
+    // being about one measurement.
     struct ProbeColourKey final
     {
         uint8 red{};

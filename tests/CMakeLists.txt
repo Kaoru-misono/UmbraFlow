@@ -140,6 +140,7 @@ if(TARGET ${PROJECT_NAME}_task)
             task/test-determinism-harness.cpp
             task/test-exploration.cpp
             task/test-annotation-routines.cpp
+            task/test-colour-key-crop.cpp
             task/test-framework-bundle.cpp
             task/test-framework-context.cpp
             task/test-framework-surface.cpp

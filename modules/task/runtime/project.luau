@@ -82,11 +82,18 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         expected_text = true,
         read_floor    = true,
     },
+    -- `key` is the colour key the template blob was cut under, written as
+    -- [red, green, blue, tolerance] on the same reasoning `rect` is written as
+    -- four numbers: it is one value with four components rather than four
+    -- fields, and a reader scanning an appearance should see it as one line.
+    -- The mask itself is in the PNG's alpha channel; this is the record of what
+    -- carved it, which is what a later session needs to re-cut the same glyph.
     appearance = {
         element   = true,
         name      = true,
         source    = true,
         threshold = true,
+        key       = true,
     },
     page = {
         name      = true,
@@ -289,6 +296,10 @@ local function rectList(rect: any): { number }
     return { rect.x, rect.y, rect.width, rect.height }
 end
 
+local function colourKeyList(key: any): { number }
+    return { key.red, key.green, key.blue, key.tolerance }
+end
+
 -- project.encode(model) -> the file's text.
 function project.encode(built: any): string
     if type(built) ~= "table" then
@@ -343,6 +354,12 @@ function project.encode(built: any): string
             end
             table.insert(lines, "source = " .. renderString(appearance.source))
             table.insert(lines, "threshold = " .. renderNumber(appearance.threshold))
+            if appearance.key ~= nil then
+                table.insert(
+                    lines,
+                    "key = " .. renderValue(colourKeyList(appearance.key))
+                )
+            end
             pushResidual(lines, appearance.residual)
         end
     end
@@ -803,6 +820,35 @@ local function rectOf(section: any, key: string, value: any): any
     }
 end
 
+-- The colour key an appearance section wrote, or nil when it wrote none.
+--
+-- Only the LIST SHAPE is checked here, in the file's own voice, because that is
+-- the part `Element.new` cannot say anything useful about: by the time the
+-- constructor sees a malformed key it no longer knows which line of which file
+-- it came from. Whether the four numbers are a channel and a tolerance the rule
+-- can express is the constructor's, and it is left there rather than copied.
+local function colourKeyOf(section: any, value: any): any
+    if value == nil then
+        return nil
+    end
+    if type(value) ~= "table" or #value ~= 4 then
+        error(
+            "the [["
+                .. section.kind
+                .. "]] starting at line "
+                .. tostring(section.line)
+                .. " needs key = [red, green, blue, tolerance]",
+            0
+        )
+    end
+    return {
+        red       = value[1],
+        green     = value[2],
+        blue      = value[3],
+        tolerance = value[4],
+    }
+end
+
 -- project.build(ctx, document) -> the model.
 --
 -- Every appearance's template blob is read from the project directory and
@@ -874,6 +920,10 @@ function project.build(ctx: any, document: any): any
                 source    = source,
                 template  = templateOf(source),
                 threshold = requireField(appearanceSection, "threshold"),
+                key       = colourKeyOf(
+                    appearanceSection,
+                    appearanceSection.fields.key
+                ),
                 residual  = appearanceSection.residual,
             }
         end

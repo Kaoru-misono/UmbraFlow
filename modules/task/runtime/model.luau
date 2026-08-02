@@ -77,6 +77,17 @@ local k_polarityKnown: { [string]: boolean } = {
 -- an absent `read_floor` reads as this number rather than as zero.
 local k_defaultReadFloor = 8000
 
+-- The widest colour-key tolerance that means anything. A key's distance is the
+-- sum of the three channel distances, so 765 already admits every colour; the
+-- host refuses anything above it, and this file says so at the line that wrote
+-- the number rather than leaving an author to discover it from a crop.
+--
+-- It is a mirror of `k_maximumColourKeyTolerance` in
+-- modules/vision/source/vision/frame-analysis.hpp, and it is a mirror rather
+-- than a second opinion: 255 * 3 is arithmetic, not policy, so the two cannot
+-- drift without the channel range itself changing.
+local k_maximumColourTolerance = 765
+
 -- The keys each constructor owns. Anything else in a spec table is refused and
 -- the author is pointed at `extra`, which is the reserved subtable a project
 -- may put its own fields under (docs/plans/2026-07-31-script-owned-page-model.md
@@ -99,6 +110,7 @@ local k_appearanceKeys: { [string]: boolean } = {
     source    = true,
     template  = true,
     threshold = true,
+    key       = true,
     residual  = true,
 }
 
@@ -155,12 +167,33 @@ export type CapabilitySet = {
 -- `threshold` is in basis points of similarity, so 10000 demands an exact
 -- match. Judging a score against it is `observe.matched`, in the module that
 -- owns the verbs; a threshold on its own decides nothing.
+--
+-- `key` is the colour key the template blob was CUT under, and it is a record
+-- rather than an instruction: the mask already lives in the PNG's alpha channel
+-- and nothing reads this field to match anything. It is here because a masked
+-- template with no key written down is a picture nobody can redraw -- the author
+-- is the only one who ever knew which colour carved it, and a later session
+-- widening the rectangle or re-cutting it on a newer capture would be guessing.
+-- Absent on every unkeyed appearance, which is what the whole model was before
+-- the annotation channel could bake a mask at all.
 export type Appearance = {
     name: string?,
     source: string,
     template: any,
     threshold: number,
+    key: ColourKey?,
     residual: { string },
+}
+
+-- A colour key: the RGB triple a mask was cut around, and how far a pixel may
+-- sit from it and still be taken. The tolerance is carried rather than defaulted
+-- because the host's default is the host's, and a file that omitted it would be
+-- a file whose mask cannot be reproduced from what it says.
+export type ColourKey = {
+    red: number,
+    green: number,
+    blue: number,
+    tolerance: number,
 }
 
 -- `expected_text` is what this region should read wherever the element is used,
@@ -340,6 +373,49 @@ local function frozenRect(value: Rect): Rect
     })
 end
 
+-- Checks the shape of a recorded colour key and nothing about its worth.
+--
+-- WHETHER A KEY IS A GOOD KEY IS NOT ASKED HERE, and that is the same line the
+-- threshold sits on. How many pixels this key takes is a fact about the PIXELS,
+-- which this layer does not hold: the crop verb measures it at the moment it
+-- cuts, refuses the one key that can never work, and warns about counts that
+-- historically measured nothing (docs/pitfalls/colour-key-annotation.md). What
+-- is checkable from a file alone is that the channels are channels and the
+-- tolerance is one the rule can express, so that is what this asks.
+local function checkColourKey(what: string, value: any): string?
+    if type(value) ~= "table" then
+        return what
+            .. " must be a table { red = , green = , blue = , tolerance = }"
+    end
+    for _, channel in { "red", "green", "blue" } do
+        local component = (value :: any)[channel]
+        if not wholeNumber(component) or component < 0 or component > 255 then
+            return what .. "." .. channel .. " must be a channel value 0-255"
+        end
+    end
+    local key = value :: ColourKey
+    if
+        not wholeNumber(key.tolerance)
+        or key.tolerance < 0
+        or key.tolerance > k_maximumColourTolerance
+    then
+        return what
+            .. ".tolerance must be a whole number between 0 and "
+            .. tostring(k_maximumColourTolerance)
+            .. ", the widest the summed per-channel distance can express"
+    end
+    return nil
+end
+
+local function frozenColourKey(value: ColourKey): ColourKey
+    return table.freeze({
+        red       = value.red,
+        green     = value.green,
+        blue      = value.blue,
+        tolerance = value.tolerance,
+    })
+end
+
 -- Turns the file's list form into the set form everything else reads. Returns
 -- the set, or nil and a sentence.
 local function capabilitySet(
@@ -505,6 +581,12 @@ function Element.new(spec: { [string]: any }): Element
                     2
                 )
             end
+            if entry.key ~= nil then
+                local keyProblem = checkColourKey(what .. " key", entry.key)
+                if keyProblem ~= nil then
+                    error(keyProblem, 2)
+                end
+            end
             local residualProblem = checkResidual(what, entry.residual)
             if residualProblem ~= nil then
                 error(residualProblem, 2)
@@ -515,6 +597,9 @@ function Element.new(spec: { [string]: any }): Element
                 source    = entry.source,
                 template  = entry.template,
                 threshold = entry.threshold,
+                key       = if entry.key ~= nil
+                    then frozenColourKey(entry.key :: ColourKey)
+                    else nil,
                 residual  = frozenResidual(entry.residual),
             })
         end

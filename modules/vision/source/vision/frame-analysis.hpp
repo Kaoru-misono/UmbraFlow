@@ -13,8 +13,9 @@
 #include <variant>
 #include <vector>
 
-// Three questions about a set of frames of one screen, each answered by hand
-// once and each too slow to answer that way twice.
+// Questions about a set of frames of one screen, each answered by hand once and
+// each too slow to answer that way twice, plus the one plane an author's answer
+// turns into.
 //
 // Frames arrive already decoded, as BGRA8 planes; this module never touches a
 // file. Every function takes the frames as one span rather than a pair, because
@@ -219,6 +220,41 @@ namespace uf
         uint64 maximumPixelVisits,
         SadSearchPoll const& poll
     ) -> Result<ColourProbeScan>;
+
+    // The weights one colour key hands out over one rect, kept rather than
+    // counted away.
+    struct ColourKeyMask final
+    {
+        // Full weight where the key takes the pixel outright, the ramp weight
+        // where it takes it partly, and zero elsewhere -- the same rule
+        // probeColour weights by, because it is the same colourKeyAlpha call.
+        // Row major and tightly packed over spec.rect, shaped exactly like
+        // StabilityReport::stableMask so it can become a template's alpha
+        // plane with no reshaping on the way.
+        std::vector<std::byte> weights{};
+
+        uint64 rectPixels{};
+
+        // The two counts probeColour reports under the same names. They are
+        // here so a caller that bakes this mask into a template can say what it
+        // baked without measuring the same pixels a second time through a
+        // second verb that could come to disagree with this one.
+        uint64 fullySelectedPixels{};
+        uint64 rampSelectedPixels{};
+    };
+
+    // Builds the alpha plane `spec`'s key implies over `spec.rect` of `frame`.
+    //
+    // It is probeColour's other half and not a duplicate of it: that one asks
+    // whether a key isolates what holds still ACROSS frames and throws the
+    // per-pixel weights away, while this one is single-frame and keeps them,
+    // because the caller is about to write them into a PNG's alpha channel.
+    // Single frame and O(pixels), so like censusColours it takes no budget.
+    [[nodiscard]]
+    auto maskColourKey(
+        BgraImage const& frame,
+        ColourProbeSpec const& spec
+    ) -> Result<ColourKeyMask>;
 
     struct ColourCount final
     {
