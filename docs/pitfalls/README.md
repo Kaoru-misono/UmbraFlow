@@ -14,6 +14,9 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
 - [Element choice and thresholds](element-choice-and-thresholds.md) — what to
   annotate and what number to give it; start here before drawing a rectangle.
 - [Colour-key annotation](colour-key-annotation.md)
+- [Embedded VM memory ceilings](embedded-vm-memory-ceiling.md) — what a hard
+  ceiling measures when the runtime has no emergency GC, and the two shapes of
+  memory test that prove nothing.
 - [Workbench authoring UI](workbench-authoring-ui.md) — **historical since
   2026-07-31**: the GUI it documents was archived, so every prescription is
   unreachable. Its banner lists the rules that still transfer.

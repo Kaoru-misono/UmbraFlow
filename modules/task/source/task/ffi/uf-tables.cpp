@@ -22,6 +22,8 @@
 
 #include <engine/session.hpp>
 
+#include <script/engine.hpp>
+
 #include <trace/event.hpp>
 
 #include <algorithm>
@@ -1349,6 +1351,11 @@ namespace uf::task
             return 0;
         }
 
+        // How much free room under the memory ceiling a crop insists on before
+        // it mints its PNG string, as a multiple of that string's own bytes.
+        // The reasoning for the number is at the check that reads it, below.
+        constexpr auto k_cropHeadroomFactor = uint64{4};
+
         // cycle_crop(ticket, x, y, width, height[, key_r, key_g, key_b,
         // tolerance]) -> (blob, hash[, mask]). The agent's eye: the pixels of one
         // rectangle, encoded as a PNG, plus the lowercase hex SHA-256 of exactly
@@ -1421,6 +1428,37 @@ namespace uf::task
                 .contentHash  = traceHash,
             };
             traceHostCall(state, context, done, trace::NativeCallOutcome::Succeeded);
+
+            // RECLAIM BEFORE MINTING, WHEN THE LEDGER IS CLOSE TO ITS CEILING.
+            //
+            // This is the one verb that hands a script a multi-megabyte value,
+            // and an agent's loop drops each blob as soon as it has looked at
+            // it -- so the ledger fills with garbage rather than with anything
+            // live. Luau throws LUA_ERRMEM the moment the allocator refuses and
+            // never collects and retries, so without this the loop dies with a
+            // bare "not enough memory" while almost the whole ceiling is
+            // reclaimable. A full collection HERE is sound where one inside the
+            // allocator would not be: this is an ordinary lua_CFunction, no
+            // allocation is in flight, and every value this frame holds is a
+            // stack root.
+            //
+            // FOUR TIMES THE PAYLOAD of free headroom, and each multiple is a
+            // separate claim. One is the string lua_pushlstring is about to
+            // copy, which must fit or the call raises. The second covers what
+            // the push costs BESIDES the bytes -- interning, a string-table
+            // rehash, the hash string beside it. The remaining two are
+            // hysteresis: collecting at exactly the payload would leave the
+            // next crop against the ceiling again, because the string this one
+            // just minted is live and no collection can reclaim it, so a
+            // session would pay a full sweep per crop from then on. Above the
+            // threshold nothing is paid at all.
+            if (
+                script::heapUsage(state).headroomBytes()
+                < k_cropHeadroomFactor * static_cast<uint64>(result->png.size())
+            )
+            {
+                script::collectGarbage(state);
+            }
 
             // SAFETY: reinterpreting the byte buffer as characters for one
             // lua_pushlstring call. Lua copies the bytes into VM-owned string

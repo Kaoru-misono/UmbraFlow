@@ -714,6 +714,108 @@ exercised = ["interact"]
         CHECK(lines.front().contains("\"frameworkHash\""));
     }
 
+    TEST_CASE("a chunk is a reclamation point, so what it allocated dies with it")
+    {
+        auto const temp = TemporaryDir{"exploration-reclaim"};
+        publishProject(temp.path(), "daily", k_taskSource);
+
+        auto host             = TaskHost{};
+        auto const generation = host.loadProject(temp.path());
+        REQUIRE(generation.has_value());
+
+        auto session = host.startExplorationSession(
+            *generation,
+            runConfig(temp.path() / "explore.jsonl")
+        );
+        REQUIRE(session.has_value());
+
+        auto const idle = (*session)->heapUsage();
+        REQUIRE(idle.ceilingBytes > 0);
+        REQUIRE(idle.usedBytes > 0);
+
+        // Six megabytes still REACHABLE when the chunk returns, so the
+        // incremental collector cannot have taken them mid-run. Nothing is
+        // supposed to survive a chunk except the project files on disk, and the
+        // ceiling is measured against garbage as well as live data, so the
+        // boundary is where the host has to reclaim.
+        //
+        // The index is concatenated on because Luau interns EVERY string, long
+        // ones included: ninety-six copies of one string.rep would be one
+        // object and this case would measure nothing.
+        auto const ran = (*session)->evaluate(
+            "local t = {} for i = 1, 96 do"
+            " t[i] = string.rep('x', 65536) .. tostring(i) end"
+            " return #t",
+            "garbage"
+        );
+        REQUIRE(ran.has_value());
+        CHECK(ran->number() == 96.0);
+
+        auto const after = (*session)->heapUsage();
+
+        // The control, without which this case would pass against a chunk that
+        // allocated nothing: the six megabytes were really there.
+        CHECK(after.peakBytes > idle.usedBytes + (uint64{5} * 1024 * 1024));
+
+        // And none of them are still charged to the ledger.
+        CHECK(after.usedBytes < idle.usedBytes + (uint64{1} * 1024 * 1024));
+
+        auto const report = (*session)->finish(std::nullopt);
+        CHECK(report.outcome() == TaskRunOutcome::Completed);
+    }
+
+    TEST_CASE("a chunk that ran the ledger into the ceiling names both figures")
+    {
+        auto const temp = TemporaryDir{"exploration-ceiling"};
+        publishProject(temp.path(), "daily", k_taskSource);
+
+        auto host             = TaskHost{};
+        auto const generation = host.loadProject(temp.path());
+        REQUIRE(generation.has_value());
+
+        auto session = host.startExplorationSession(
+            *generation,
+            runConfig(temp.path() / "explore.jsonl")
+        );
+        REQUIRE(session.has_value());
+
+        auto const ceiling = (*session)->heapUsage().ceilingBytes;
+        REQUIRE(ceiling > 0);
+
+        // Unbounded LIVE growth, so the ceiling is reached with nothing to
+        // reclaim and the allocator refuses. Each string is made distinct
+        // because Luau interns every one of them, and a loop reallocating the
+        // same object would spin rather than fill.
+        auto const failed = (*session)->evaluate(
+            "local t = {} local n = 0 while true do n = n + 1"
+            " t[n] = string.rep('x', 65536) .. tostring(n) end",
+            "ceiling"
+        );
+        REQUIRE_FALSE(failed.has_value());
+
+        auto const message = std::string{failed.error().message()};
+        CAPTURE(message);
+
+        // Luau's own sentence survives verbatim -- it is still what happened --
+        // and the reading that explains it is added behind it. Without the
+        // second half an agent reads "not enough memory" and has no way to tell
+        // an exhausted ceiling from a chunk that asked for something absurd,
+        // which is a difference worth several chunks of guessing.
+        CHECK(message.contains("not enough memory"));
+        CHECK(message.contains("memory ledger"));
+        CHECK(message.contains(std::to_string(ceiling)));
+
+        // A chunk that failed for its own reasons keeps its message untouched:
+        // the reading is added because the ledger was against the ceiling, not
+        // because a chunk failed.
+        auto const ordinary = (*session)->evaluate("error('deliberate')", "plain");
+        REQUIRE_FALSE(ordinary.has_value());
+        CHECK(!std::string{ordinary.error().message()}.contains("memory ledger"));
+
+        auto const report = (*session)->finish(std::nullopt);
+        CHECK(report.outcome() == TaskRunOutcome::Completed);
+    }
+
     TEST_CASE("TaskHost cancel spends the generation and queryTask reports it")
     {
         auto const temp = TemporaryDir{"cancel"};

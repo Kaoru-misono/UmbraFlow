@@ -124,6 +124,46 @@ namespace uf::script
         ~Impl() = default;
     };
 
+    auto HeapUsage::headroomBytes() const noexcept -> uint64
+    {
+        if (ceilingBytes == 0)
+        {
+            return std::numeric_limits<uint64>::max();
+        }
+        return ceilingBytes > usedBytes ? ceilingBytes - usedBytes : uint64{0};
+    }
+
+    auto heapUsage(lua_State* state) noexcept -> HeapUsage
+    {
+        auto const* p_quota = quotaFor(state);
+        if (p_quota == nullptr)
+        {
+            return HeapUsage{};
+        }
+
+        // Widening from the ledger's size_t to the report's uint64 loses
+        // nothing on any host this project builds for, so it needs no checked
+        // cast; the narrowing direction is quotaLimit's, above.
+        return HeapUsage{
+            .usedBytes    = static_cast<uint64>(p_quota->used),
+            .ceilingBytes = static_cast<uint64>(p_quota->limitBytes),
+            .peakBytes    = static_cast<uint64>(p_quota->peak),
+        };
+    }
+
+    auto collectGarbage(lua_State* state) -> HeapUsage
+    {
+        if (state != nullptr)
+        {
+            // Runs no Lua: Luau has no __gc metamethod, and the only thing a
+            // sweep can call is a C userdata destructor. So this is safe from
+            // inside a lua_CFunction, where the calling frame's own values are
+            // stack roots and cannot be collected under it.
+            lua_gc(state, LUA_GCCOLLECT, 0);
+        }
+        return heapUsage(state);
+    }
+
     ScriptValue::ScriptValue(bool value) noexcept
         : m_value{value}
     {
@@ -271,5 +311,15 @@ namespace uf::script
         }
 
         return result;
+    }
+
+    auto Engine::collectGarbage() -> HeapUsage
+    {
+        return uf::script::collectGarbage(m_impl->m_state.get());
+    }
+
+    auto Engine::heapUsage() const noexcept -> HeapUsage
+    {
+        return uf::script::heapUsage(m_impl->m_state.get());
     }
 }

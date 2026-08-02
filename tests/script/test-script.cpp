@@ -612,6 +612,53 @@ namespace uf::script
             CHECK(grown.residual == 0);
         }
 
+        TEST_CASE("A full collection reclaims a spent chunk, and the ledger reports it")
+        {
+            auto config                 = EngineConfig{};
+            config.memoryQuotaBytes     = k_smallQuotaBytes;
+            config.interruptBudgetTicks = 0;
+            config.maxRuntime           = std::chrono::hours{1};
+
+            auto engine = Engine::create(config);
+            REQUIRE(engine.has_value());
+
+            auto const idle = engine->heapUsage();
+            CHECK(idle.ceilingBytes == k_smallQuotaBytes);
+            CHECK(idle.usedBytes > 0);
+            CHECK(idle.headroomBytes() == idle.ceilingBytes - idle.usedBytes);
+
+            // Four megabytes REACHABLE from the run's own thread at the instant
+            // it returns, so no step of the incremental collector can have taken
+            // them during the run: whatever the ledger reads afterwards is
+            // garbage the collector has not got to, which is exactly the state
+            // the ceiling is wrongly measured against.
+            //
+            // The index is concatenated on because Luau interns EVERY string,
+            // long ones included: sixty-four copies of string.rep('x', 65536)
+            // are one 64 KiB object and this case would measure nothing.
+            auto const ran = engine->runNumber(
+                "local t = {} for i = 1, 64 do"
+                " t[i] = string.rep('x', 65536) .. tostring(i) end"
+                " return #t",
+                "gc-garbage"
+            );
+            REQUIRE(ran.has_value());
+            CHECK(*ran == doctest::Approx(64.0));
+
+            auto const before = engine->heapUsage();
+            CHECK(before.usedBytes > idle.usedBytes + (uint64{3} * 1024 * 1024));
+            CHECK(before.peakBytes >= before.usedBytes);
+
+            auto const after = engine->collectGarbage();
+            CHECK(after.usedBytes < before.usedBytes);
+            CHECK(after.usedBytes < idle.usedBytes + (uint64{1} * 1024 * 1024));
+
+            // The ceiling is a property of the VM and the peak is a record, so
+            // neither may move because a collection ran.
+            CHECK(after.ceilingBytes == before.ceilingBytes);
+            CHECK(after.peakBytes == before.peakBytes);
+        }
+
         TEST_CASE("Repeated create/destroy of quota'd engines stays process-stable")
         {
             // Coarse process-level check: a leak in the accounting allocator or

@@ -141,30 +141,70 @@ namespace uf::cli
             CHECK(parsed.error().message().contains("id"));
         }
 
+        // The ledger reading a result line is built with. Fixed rather than
+        // measured: what is under test here is the rendering, not the figures.
+        constexpr auto k_lineHeap = script::HeapUsage{
+            .usedBytes    = 1024,
+            .ceilingBytes = 67'108'864,
+            .peakBytes    = 4096,
+        };
+
+        constexpr auto k_lineHeapText =
+            std::string_view{R"("heap":{"used":1024,"ceiling":67108864})"};
+
         TEST_CASE("a result line distinguishes the four things a chunk can return")
         {
             CHECK(
-                exploreSuccess("a", script::ScriptValue{})
-                == R"({"id":"a","ok":true})"
+                exploreSuccess("a", script::ScriptValue{}, k_lineHeap)
+                == R"({"id":"a","ok":true,"heap":{"used":1024,"ceiling":67108864}})"
             );
             CHECK(
-                exploreSuccess("a", script::ScriptValue{false})
-                == R"({"id":"a","ok":true,"value":false})"
+                exploreSuccess("a", script::ScriptValue{false}, k_lineHeap)
+                == R"({"id":"a","ok":true,"value":false,)"
+                    R"("heap":{"used":1024,"ceiling":67108864}})"
             );
             CHECK(
-                exploreSuccess("a", script::ScriptValue{std::string{"home"}})
-                == R"({"id":"a","ok":true,"value":"home"})"
+                exploreSuccess(
+                    "a",
+                    script::ScriptValue{std::string{"home"}},
+                    k_lineHeap
+                )
+                == R"({"id":"a","ok":true,"value":"home",)"
+                    R"("heap":{"used":1024,"ceiling":67108864}})"
             );
 
-            auto const number = exploreSuccess("a", script::ScriptValue{3.0});
+            auto const number =
+                exploreSuccess("a", script::ScriptValue{3.0}, k_lineHeap);
             CHECK(number.starts_with(R"({"id":"a","ok":true,"value":3)"));
 
             // A chunk that returned nothing and one that returned false are
             // different answers, and the line says which.
             CHECK(
-                exploreSuccess("a", script::ScriptValue{})
-                != exploreSuccess("a", script::ScriptValue{false})
+                exploreSuccess("a", script::ScriptValue{}, k_lineHeap)
+                != exploreSuccess("a", script::ScriptValue{false}, k_lineHeap)
             );
+        }
+
+        TEST_CASE("every answered chunk carries the heap against its ceiling")
+        {
+            // AN AGENT HAS TO SEE THE WALL BEFORE IT HITS IT. The ceiling is
+            // measured against garbage as well as live data, so a figure that
+            // appeared only on the failing line would arrive one chunk late --
+            // which is precisely how a session came to be debugged by guessing.
+            CHECK(
+                exploreSuccess("a", script::ScriptValue{}, k_lineHeap)
+                    .contains(k_lineHeapText)
+            );
+
+            auto const error =
+                fail(AutomationErrorKind::InvalidResource, "boom").error();
+            CHECK(exploreFailure("a", error, k_lineHeap).contains(k_lineHeapText));
+
+            // A line that answered no chunk never reached a VM, so there is no
+            // reading to report and it carries none.
+            auto const refused =
+                fail(AutomationErrorKind::InvalidResource, "bad line").error();
+            CHECK(!serializeExploreParseFailure(refused).contains("heap"));
         }
 
         TEST_CASE("a failed chunk reports the domain's own kind and the id it came from")
@@ -174,7 +214,7 @@ namespace uf::cli
                 "this observation cycle is no longer open"
             ).error();
 
-            auto const line = exploreFailure("step-7", error);
+            auto const line = exploreFailure("step-7", error, k_lineHeap);
             CHECK(line.contains(R"("id":"step-7")"));
             CHECK(line.contains(R"("ok":false)"));
             CHECK(line.contains(R"("error":"stale_observation")"));
@@ -200,7 +240,7 @@ namespace uf::cli
                 AutomationErrorKind::InvalidResource,
                 "a \"quoted\" thing\nand a newline"
             ).error();
-            auto const line = exploreFailure("a", error);
+            auto const line = exploreFailure("a", error, k_lineHeap);
 
             CHECK(line.contains(R"(\"quoted\")"));
             CHECK(line.contains(R"(\n)"));

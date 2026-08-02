@@ -339,11 +339,16 @@ namespace uf::cli
     ) -> ExploreExecution
     {
         auto value = session.evaluate(chunk.chunk, chunk.id);
+
+        // Read AFTER the chunk, which is after the session reclaimed it: the
+        // figure the agent needs is the live set it is carrying into the next
+        // chunk, not the garbage this one happened to leave behind.
+        auto const heap = session.heapUsage();
         if (!value)
         {
             auto error     = std::move(value).error();
             auto execution = ExploreExecution{
-                .resultLine = exploreFailure(chunk.id, error),
+                .resultLine = exploreFailure(chunk.id, error, heap),
             };
 
             // A chunk that raised is an ordinary outcome and the session goes on.
@@ -365,7 +370,7 @@ namespace uf::cli
         }
 
         auto execution = ExploreExecution{
-            .resultLine = exploreSuccess(chunk.id, *value),
+            .resultLine = exploreSuccess(chunk.id, *value, heap),
         };
         if (auto const terminal = session.terminalKind(); terminal.has_value())
         {

@@ -382,6 +382,18 @@ namespace uf::cli
             line += ",\"message\":";
             line += escapeJsonString(*result.message);
         }
+        if (result.heap.has_value())
+        {
+            // A nested object rather than two flat members, because the two
+            // figures are only meaningful against each other: an agent reads
+            // "used out of ceiling", and a line that carried `used` alone would
+            // invite it to compare against a ceiling it assumed.
+            line += std::format(
+                ",\"heap\":{{\"used\":{},\"ceiling\":{}}}",
+                result.heap->usedBytes,
+                result.heap->ceilingBytes
+            );
+        }
 
         line += '}';
         return line;
@@ -389,12 +401,14 @@ namespace uf::cli
 
     auto exploreSuccess(
         std::string_view id,
-        script::ScriptValue const& value
+        script::ScriptValue const& value,
+        script::HeapUsage heap
     ) -> std::string
     {
         auto result = ExploreResult{
-            .id = std::string{id},
-            .ok = true,
+            .id   = std::string{id},
+            .ok   = true,
+            .heap = heap,
         };
 
         // A chunk that returned nothing sets none of the three, so its line
@@ -418,7 +432,11 @@ namespace uf::cli
         return serializeExploreResult(result);
     }
 
-    auto exploreFailure(std::string_view id, Error const& error) -> std::string
+    auto exploreFailure(
+        std::string_view id,
+        Error const& error,
+        script::HeapUsage heap
+    ) -> std::string
     {
         return serializeExploreResult(
             ExploreResult{
@@ -431,6 +449,7 @@ namespace uf::cli
                     )
                 },
                 .message = std::string{error.message()},
+                .heap    = heap,
             }
         );
     }

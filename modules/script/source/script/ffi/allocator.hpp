@@ -40,4 +40,17 @@ namespace uf::script
     // state: it is read on every allocation, including those lua_close triggers.
     [[nodiscard]]
     auto createStateWithQuota(MemoryQuota* quota) -> lua_State*;
+
+    // The ledger behind `state`, or null when `state` was not created by
+    // createStateWithQuota.
+    //
+    // The identity check is not ceremony. Luau hands back whatever userdata the
+    // state's allocator was installed with, so a state built by luaL_newstate --
+    // every probe in this module's testing/ layer builds one -- would yield a
+    // pointer to something that is not a ledger, and casting it blind would read
+    // another allocator's private state as byte counts. Observation only: the
+    // returned pointer never owns the ledger, which belongs to the Engine::Impl
+    // that outlives the VM.
+    [[nodiscard]]
+    auto quotaFor(lua_State* state) noexcept -> MemoryQuota const*;
 }

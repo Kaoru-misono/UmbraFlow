@@ -22,6 +22,7 @@
 #include <trace/recorder.hpp>
 
 #include <filesystem>
+#include <format>
 #include <memory>
 #include <optional>
 #include <string>
@@ -64,6 +65,28 @@ namespace uf::task
                     .seed             = seed,
                 },
             };
+        }
+
+        // Whether the ledger stood close enough to its ceiling that a failure
+        // recorded at that moment is worth reporting as a memory failure.
+        //
+        // AN EIGHTH OF THE CEILING, and the fraction is chosen to be generous
+        // rather than precise. At the default 64 MiB that leaves 8 MiB of
+        // headroom, which is more than four full-frame crops -- so a chunk that
+        // failed with less than that left is one the ceiling was plausibly
+        // involved in, and the sentence costs nothing when it was not: the
+        // figures are true either way and the original message is kept verbatim
+        // in front of them. Being wrong in the other direction is what this
+        // exists to prevent, and it cost three chunks of an agent's session to
+        // find out once.
+        //
+        // A VM with no ceiling never qualifies: headroomBytes reports the widest
+        // value, so the comparison is false whatever `used` says.
+        [[nodiscard]]
+        auto nearTheCeiling(script::HeapUsage const& heap) noexcept -> bool
+        {
+            return heap.ceilingBytes != 0
+                && heap.headroomBytes() <= heap.ceilingBytes / 8U;
         }
 
         [[nodiscard]]
@@ -220,6 +243,13 @@ namespace uf::task
 
         auto result = m_vm->runValue(chunk, chunkName);
 
+        // Read the ledger BEFORE anything reclaims. A chunk that died for want
+        // of memory is only recognisable at this instant: Luau raises a bare
+        // "not enough memory" naming neither figure, and by the time the
+        // collection below has run `used` is back at the live set, so the
+        // evidence that the ceiling was involved would be gone.
+        auto const atOutcome = m_vm->heapUsage();
+
         // Sweep whatever cycle the chunk left open, WHETHER OR NOT it failed.
         //
         // A chunk is one agent-written line, and an agent that raised between
@@ -232,6 +262,47 @@ namespace uf::task
         // ticket the chunk kept somehow stays dead.
         static_cast<void>(m_context.sweepOpenCycle());
 
+        // Reclaim the chunk, on the same reasoning that sweeps its cycle.
+        //
+        // A chunk is the natural reclamation point because NOTHING is supposed
+        // to survive one except the project files on disk: the environment is
+        // rebuilt per chunk, the thread is discarded, and every host object the
+        // chunk held is either swept above or dead with it. So a full collection
+        // here reclaims garbage and cannot reclaim anything the next chunk
+        // needs.
+        //
+        // It has to be here rather than in the allocator because there is no
+        // emergency-GC seam to put it in: Luau throws LUA_ERRMEM the instant
+        // frealloc returns null and never retries, and adding a retry would mean
+        // re-entering the collector from inside the allocator callback -- which
+        // that callback also runs UNDER, so it is not sound. The ceiling is
+        // therefore measured against live bytes plus whatever the incremental
+        // collector has not reached, and this is where the host fixes that.
+        m_vm->collectGarbage();
+
+        // A failure with the ledger against the ceiling has to SAY so. Luau's
+        // own sentence is "not enough memory" and nothing else -- no figure, no
+        // hint that the ceiling rather than the chunk is the subject -- and an
+        // agent reading that has no way to tell an out-of-memory session from a
+        // chunk that is simply wrong.
+        if (!result && nearTheCeiling(atOutcome))
+        {
+            auto const kind = automationErrorKind(result.error())
+                .value_or(AutomationErrorKind::InvalidResource);
+            result = fail(
+                kind,
+                std::format(
+                    "{} [the VM's memory ledger held {} of its {}-byte ceiling "
+                    "when this chunk failed, so read this as the ceiling rather "
+                    "than as the chunk: Luau refuses EVERY allocation once the "
+                    "ledger is full, however small]",
+                    result.error().message(),
+                    atOutcome.usedBytes,
+                    atOutcome.ceilingBytes
+                )
+            );
+        }
+
         return result;
     }
 
@@ -239,6 +310,11 @@ namespace uf::task
         -> std::optional<AutomationErrorKind>
     {
         return m_context.terminalKind();
+    }
+
+    auto ExplorationSession::heapUsage() const noexcept -> script::HeapUsage
+    {
+        return m_vm.has_value() ? m_vm->heapUsage() : script::HeapUsage{};
     }
 
     auto ExplorationSession::finish(std::optional<Error> failure) -> TaskRunReport

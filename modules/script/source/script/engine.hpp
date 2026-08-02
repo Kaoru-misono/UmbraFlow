@@ -178,6 +178,67 @@ namespace uf::script
         auto text() const noexcept UF_LIFETIME_BOUND -> std::string const*;
     };
 
+    // What the accounting allocator's ledger says about one VM's heap.
+    //
+    // THE THREE FIGURES ANSWER DIFFERENT QUESTIONS AND NONE OF THEM DERIVES THE
+    // OTHERS. `usedBytes` is what the NEXT allocation is measured against, and
+    // it counts garbage the incremental collector has not reached as well as
+    // reachable objects -- which is the whole reason it is worth reporting.
+    // `ceilingBytes` is what it is measured against, and `peakBytes` is how
+    // close the VM has ever come, which a run that recovered would otherwise
+    // hide.
+    //
+    // A readout is a SNAPSHOT and not a borrow: it is copied out of the ledger
+    // and the next allocation invalidates nothing, it merely makes it stale.
+    struct HeapUsage final
+    {
+        uint64 usedBytes{0};
+
+        // Zero means the VM was built with no ceiling at all, which is a
+        // different fact from a ceiling with no room left.
+        uint64 ceilingBytes{0};
+
+        uint64 peakBytes{0};
+
+        // Bytes still available under the ceiling; the widest representable
+        // value when there is no ceiling.
+        //
+        // It is a member rather than each caller's arithmetic because the zero
+        // convention above is a trap: `ceilingBytes - usedBytes` on an
+        // unlimited VM wraps to an enormous number by accident, which happens
+        // to be right, and a caller who instead guards `ceilingBytes != 0` and
+        // forgets the else branch gets a VM that reclaims on every call.
+        [[nodiscard]] auto headroomBytes() const noexcept -> uint64;
+    };
+
+    // Reads the ledger behind `state` without allocating or running any Lua.
+    //
+    // A VM this module did not create through its accounting allocator reports
+    // an all-zero readout. That is deliberate: the figures are the ALLOCATOR's,
+    // and Luau's own totalbytes could stand in for `usedBytes` but would have to
+    // invent a ceiling, which is the one figure a caller acts on.
+    [[nodiscard]]
+    auto heapUsage(lua_State* state) noexcept -> HeapUsage;
+
+    // Runs a FULL collection on `state` and reports the ledger afterwards.
+    //
+    // WHY THE HOST HAS TO ASK, rather than the allocator retrying on its own.
+    // Luau calls luaD_throw(L, LUA_ERRMEM) the moment frealloc returns null
+    // (VM/src/lmem.cpp:248, :505, :545); unlike PUC Lua's luaM_realloc_ it has
+    // no emergency collection to run before giving up, and adding one is not
+    // available to us either -- re-entering the collector from inside the
+    // allocator callback is not sound, because the callback runs during a
+    // collection as well. So the ceiling is measured against live bytes PLUS
+    // whatever the incremental collector has not reached yet, and the only
+    // place that can be fixed is a point where no allocation is in flight: a
+    // host call, or the boundary between two units of script.
+    //
+    // Full rather than a step, because one step is worth a fixed two kilobytes
+    // of marking (LUAI_GCSTEPSIZE * LUAI_GCSTEPMUL) however large the allocation
+    // that triggered it was -- which is exactly what a loop minting
+    // hundred-kilobyte strings outruns, measured.
+    auto collectGarbage(lua_State* state) -> HeapUsage;
+
     // Tunables for one task VM generation. Every field is live: the cancellation
     // source and the instruction/time budgets drive the interrupt callback, and
     // the memory ceiling drives the accounting allocator that backs the VM. The
@@ -322,5 +383,24 @@ namespace uf::script
             std::string_view source,
             std::string_view chunkName
         ) -> Result<ScriptValue>;
+
+        // Run a full collection over this VM and report the ledger afterwards.
+        //
+        // It is the host's only reclamation lever, and it exists because the
+        // ceiling this Engine enforces is measured against uncollected garbage
+        // as well as live data -- see the free collectGarbage above for why the
+        // allocator cannot do it for us. Callers run it where no allocation is
+        // in flight and nothing of theirs is expected to survive: between two
+        // units of script, or in a host call that is about to mint something
+        // large.
+        //
+        // The return value may be ignored; the ledger is readable at any time
+        // through heapUsage().
+        auto collectGarbage() -> HeapUsage;
+
+        // The ledger as it stands, which is what a caller watches to see itself
+        // approach the ceiling instead of meeting it.
+        [[nodiscard]]
+        auto heapUsage() const noexcept -> HeapUsage;
     };
 }

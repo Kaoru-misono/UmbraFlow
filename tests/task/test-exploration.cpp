@@ -707,7 +707,7 @@ namespace uf::task
 
             auto const rect = PixelRect::create(2, 0, 2, 2);
             REQUIRE(rect.has_value());
-            auto const crop = context.cycleCrop(*ticket, *rect);
+            auto const crop = context.cycleCrop(*ticket, *rect, std::nullopt);
             REQUIRE(crop.has_value());
 
             auto const measured = probePngRegion(crop->png, *rect, std::nullopt);
@@ -772,7 +772,7 @@ namespace uf::task
             auto const rect = PixelRect::create(0, 0, 3, 1);
             REQUIRE(rect.has_value());
 
-            auto const crop = context.cycleCrop(*ticket, *rect);
+            auto const crop = context.cycleCrop(*ticket, *rect, std::nullopt);
             REQUIRE(crop.has_value());
 
             auto const decoded = image::decodePng(crop->png, "gray crop");
@@ -812,6 +812,202 @@ namespace uf::task
             // Sweeping when nothing is open says so rather than pretending.
             CHECK(context.sweepOpenCycle());
             CHECK(!context.sweepOpenCycle());
+        }
+
+        // A frame big enough that one crop of it is a real payload, painted
+        // with bytes no PNG filter can compress away.
+        //
+        // The colour frame above is four by two, which encodes to a few dozen
+        // bytes: right for asking what a crop RETURNS and useless for asking
+        // what it COSTS. A hundred and ninety-two square of pseudo-random pixels
+        // encodes to about 150 KiB, which is the order of a real crop and enough
+        // that a dozen of them fill a test-sized ceiling. It is no larger
+        // because every one of them is really PNG-encoded and this suite shares
+        // one CTest timeout.
+        //
+        // The frame is WIDER than the crop so a loop can slide the rectangle and
+        // get different bytes each time. That is not decoration: Luau interns
+        // every string, so cropping one rectangle of one frame thirty times
+        // hands back the SAME object thirty times and allocates nothing at all
+        // after the first.
+        inline constexpr auto k_noiseExtent = uint32{256};
+
+        // How much room above the VM's boot cost the crop-pressure case leaves.
+        // Two megabytes is about fourteen crops, so a thirty-crop loop breaches
+        // it twice over.
+        inline constexpr auto k_noiseCeilingHeadroom = uint64{2} * 1024 * 1024;
+
+        [[nodiscard]]
+        auto noiseFingerprint() -> ProjectFingerprint
+        {
+            auto const fingerprint = ProjectFingerprint::create(
+                k_noiseExtent,
+                k_noiseExtent,
+                96,
+                96
+            );
+            REQUIRE(fingerprint.has_value());
+            return *fingerprint;
+        }
+
+        [[nodiscard]]
+        auto noisePixels() -> std::vector<std::byte>
+        {
+            // A fixed xorshift rather than <random>: the case needs
+            // incompressible bytes and needs the same ones on every host, so
+            // the payload size a crop produces does not drift between machines.
+            auto pixels = std::vector<std::byte>{};
+            pixels.reserve(std::size_t{k_noiseExtent} * k_noiseExtent * 4U);
+
+            auto state = uint32{0x9E3779B9U};
+            for (auto index = uint32{0}; index < k_noiseExtent * k_noiseExtent; ++index)
+            {
+                state ^= state << 13U;
+                state ^= state >> 17U;
+                state ^= state << 5U;
+                pixels.emplace_back(asByte(static_cast<uint8>(state & 0xFFU)));
+                pixels.emplace_back(asByte(static_cast<uint8>((state >> 8U) & 0xFFU)));
+                pixels.emplace_back(asByte(static_cast<uint8>((state >> 16U) & 0xFFU)));
+                pixels.emplace_back(asByte(255));
+            }
+            return pixels;
+        }
+
+        [[nodiscard]]
+        auto noiseFrame(FrameId frameId) -> Frame
+        {
+            auto const fingerprint = noiseFingerprint();
+            auto const transform   = CoordinateTransform::create(
+                Point<DesktopSpace>{0.0F, 0.0F},
+                static_cast<float>(fingerprint.width()),
+                static_cast<float>(fingerprint.height()),
+                fingerprint.width(),
+                fingerprint.height()
+            );
+            REQUIRE(transform.has_value());
+
+            auto const buffer = std::shared_ptr<FrameBuffer const>{
+                std::make_shared<FrameBuffer>(noisePixels())
+            };
+            auto frame = Frame::create(
+                frameId,
+                CaptureSessionId{7},
+                TargetGeneration::fromValue(3),
+                MonotonicInstant::now(),
+                fingerprint.width(),
+                fingerprint.height(),
+                std::size_t{k_noiseExtent} * 4U,
+                PixelFormat::Bgra8,
+                buffer,
+                *transform
+            );
+            REQUIRE(frame.has_value());
+            return *std::move(frame);
+        }
+
+        // A session over the noise frame. It is a second builder rather than a
+        // parameter on the colour one because the two differ in the thing each
+        // case is about: that fixture's geometry is the smallest on which a
+        // colour key can select part of a rect, and this one's is the smallest
+        // on which a crop costs anything.
+        [[nodiscard]]
+        auto buildNoiseHarness() -> ColourHarness
+        {
+            auto frames = std::vector<Frame>{};
+            frames.emplace_back(noiseFrame(FrameId{910}));
+
+            auto actionSink      = std::make_unique<CountingActionSink>();
+            auto* const p_clicks = actionSink.get();
+            auto recorder        = std::make_unique<trace::TraceRecorder>(
+                std::make_unique<DiscardingTraceSink>(),
+                k_fixtureRunId,
+                k_fixtureGenerationId,
+                trace::FrontEnd::Annotation
+            );
+            auto session = engine::EngineSession::create(
+                std::make_unique<FakeFrameSource>(std::move(frames)),
+                std::move(actionSink),
+                *recorder,
+                baseConfig(noiseFingerprint())
+            );
+            return ColourHarness{
+                .recorder = std::move(recorder),
+                .session  = std::move(session),
+                .clicks   = p_clicks,
+            };
+        }
+
+        // What an exploration VM over `context` costs to boot, measured rather
+        // than assumed: the framework bundle's weight is not the next case's
+        // subject, and a hard-coded ceiling would fail there every time that
+        // weight changed. The probe VM is closed before the caller builds its
+        // own, so only one is ever bound to the context.
+        [[nodiscard]]
+        auto explorationBootBytes(TaskContext& context) -> uint64
+        {
+            auto engine = script::Engine::create(explorationVmConfig(context));
+            REQUIRE(engine.has_value());
+            return engine->heapUsage().usedBytes;
+        }
+
+        TEST_CASE("A crop loop reclaims under pressure instead of dying on the ceiling")
+        {
+            auto harness = buildNoiseHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.maximumCropsPerCycle = 200},
+            };
+
+            auto config = explorationVmConfig(context);
+            config.memoryQuotaBytes =
+                explorationBootBytes(context) + k_noiseCeilingHeadroom;
+            // Isolate the ceiling: neither the instruction budget nor the
+            // deadline may trip, so only the allocator can stop this loop.
+            config.interruptBudgetTicks = 0;
+            config.maxRuntime           = std::chrono::hours{1};
+
+            auto engine = script::Engine::create(config);
+            REQUIRE(engine.has_value());
+
+            // Thirty crops of about 150 KiB each is four and a half megabytes
+            // through two megabytes of headroom, and every blob is dropped as
+            // soon as the loop has taken its length -- so all but the last is
+            // garbage. Luau raises LUA_ERRMEM the instant the allocator refuses
+            // and has no emergency collection behind it (VM/src/lmem.cpp), so
+            // the ceiling is measured against that garbage and this loop dies
+            // partway through unless the crop reclaims first.
+            //
+            // ONE CYCLE AND A SLIDING RECTANGLE, which is what makes this the
+            // case it claims to be. Luau's collector is stepped from the VM
+            // instruction loop and each step is worth two kilobytes of marking,
+            // so its progress is paced against INSTRUCTIONS while a crop's cost
+            // is a hundred and fifty kilobytes the collector never sees; opening
+            // a cycle per iteration would add enough interpreted work per
+            // megabyte to hide that, and it was measured doing so. The rectangle
+            // slides because a repeated crop of one rectangle is byte-identical
+            // and Luau interns it, so a fixed loop would allocate once and prove
+            // nothing -- that was measured too.
+            constexpr std::string_view source = R"lua(
+                local ticket = ctx:cycle_open()
+                local total = 0
+                for i = 1, 30 do
+                    local blob = explore.crop(ticket, i - 1, i - 1, 192, 192)
+                    total = total + #blob
+                end
+                ctx:cycle_close(ticket)
+                return total
+            )lua";
+
+            auto const result = engine->runNumber(source, "crop-pressure");
+            REQUIRE(result.has_value());
+
+            // The control, without which a loop cropping something tiny would
+            // satisfy the case without making its claim: the payloads were real
+            // and their sum is well past the ceiling they ran under.
+            CHECK(*result > 4'000'000.0);
+            CHECK(*result > static_cast<double>(config.memoryQuotaBytes));
         }
 
         TEST_CASE("An annotation event is refused on a stream no agent drove")

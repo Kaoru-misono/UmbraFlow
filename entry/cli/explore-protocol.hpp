@@ -85,6 +85,19 @@ namespace uf::cli
         // the same string the trace line and a Tier B error carry.
         std::optional<std::string> errorKind{};
         std::optional<std::string> message{};
+
+        // The VM's memory ledger after this chunk, rendered as
+        // `"heap":{"used":U,"ceiling":C}`.
+        //
+        // EVERY CHUNK CARRIES IT, and that is the point: the ceiling is measured
+        // against garbage as well as live data, so an agent that only learns the
+        // figure when a chunk fails learns it one chunk too late. A ceiling of
+        // zero means the VM was built without one.
+        //
+        // Absent only on a line that answered no chunk -- a queue line that
+        // could not be parsed never reached a VM, so there is no reading to
+        // report.
+        std::optional<script::HeapUsage> heap{};
     };
 
     [[nodiscard]]
@@ -96,12 +109,17 @@ namespace uf::cli
     [[nodiscard]]
     auto exploreSuccess(
         std::string_view id,
-        script::ScriptValue const& value
+        script::ScriptValue const& value,
+        script::HeapUsage heap
     ) -> std::string;
 
     // The line for a chunk that failed, built from the error it failed with.
     [[nodiscard]]
-    auto exploreFailure(std::string_view id, Error const& error) -> std::string;
+    auto exploreFailure(
+        std::string_view id,
+        Error const& error,
+        script::HeapUsage heap
+    ) -> std::string;
 
     // The line for a queue line that could not be parsed at all. It names no id,
     // because the line did not successfully carry one -- and inventing one would

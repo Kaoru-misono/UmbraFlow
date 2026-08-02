@@ -162,6 +162,15 @@ namespace uf::task
         [[nodiscard]]
         auto terminalKind() const noexcept -> std::optional<AutomationErrorKind>;
 
+        // The VM's memory ledger as it stands, which after an evaluate() is the
+        // reading AFTER that chunk's reclamation -- the live figure, not the
+        // garbage the chunk happened to leave behind.
+        //
+        // The caller reports it on every result line so an agent watches itself
+        // approach the ceiling. A session with no VM reports an empty readout.
+        [[nodiscard]]
+        auto heapUsage() const noexcept -> script::HeapUsage;
+
         // Closes the run bracket and reports how the session ended, on the same
         // terms a task run and an operator session report.
         [[nodiscard]]

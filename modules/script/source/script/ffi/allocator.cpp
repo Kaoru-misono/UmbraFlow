@@ -118,4 +118,25 @@ namespace uf::script
         // closes the state before the ledger member is destroyed.
         return lua_newstate(&accountingAlloc, quota);
     }
+
+    auto quotaFor(lua_State* state) noexcept -> MemoryQuota const*
+    {
+        if (state == nullptr)
+        {
+            return nullptr;
+        }
+
+        void* userdata            = nullptr;
+        lua_Alloc const allocator = lua_getallocf(state, &userdata);
+        if (allocator != &accountingAlloc)
+        {
+            return nullptr;
+        }
+
+        // SAFETY: this state's allocator IS accountingAlloc, and the only call
+        // that installs it is createStateWithQuota just above, which passes a
+        // live MemoryQuota as the userdata. The cast therefore recovers exactly
+        // the type the void* was erased from, and the object outlives the state.
+        return static_cast<MemoryQuota const*>(userdata);
+    }
 }
