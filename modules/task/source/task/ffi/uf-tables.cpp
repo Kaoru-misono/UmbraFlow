@@ -1823,6 +1823,87 @@ namespace uf::task
             return millisToDuration(state, lua_tonumber(state, index), what);
         }
 
+        // cycle_long_press(ticket, x, y, hold_ms) -> (). Consumes the cycle and
+        // delivers one long press at the point: the button goes down, stays down
+        // for `hold_ms`, and comes back up before this returns.
+        //
+        // IT SITS HERE, AWAY FROM THE OTHER CYCLE VERBS, only because it needs
+        // checkMillisDuration above; this file's helpers are defined before use
+        // and nothing else about its placement means anything.
+        //
+        // ITS AUTHORIZATION CONTRACT IS cycle_click_point's, not `key`'s, and the
+        // full reasoning is at TaskContext::cycleLongPress and
+        // EngineSession::longPress. In one sentence: it names a coordinate the
+        // caller measured off this frame, so the fingerprint check, the lease and
+        // the same-frame rule all apply exactly as they do to a click, and it
+        // consumes the cycle because a delivered press changes the screen -- on
+        // the target this exists for it magnifies the thing that was pressed,
+        // which is the whole reason to ask for one.
+        //
+        // WHY THERE IS ONE VERB AND NOT A PRESS AND A RELEASE. A long press is one
+        // complete act that begins and ends inside this call, so it fits the
+        // authorization model unchanged: the hit that authorises it was located on
+        // the frame it is delivered to, and no observation is left describing a
+        // target with a button stuck down in it. A bare press would span frames
+        // and the model has no answer yet for who guarantees the release; see
+        // engine::IActionSink::longPress, where that is decided.
+        //
+        // IT IS THE PRIVILEGED SPELLING, exactly as cycle_click_point is. It is
+        // installed on both surfaces for cycle_click_point's stated reason -- the
+        // trusted framework needs it in run mode for an element positioned by the
+        // page model -- and what makes it privileged is that no BUSINESS
+        // environment can name it: `ctx` publishes no forward, `observe.long_press`
+        // reaches it through this chunk's closure upvalue, and only the
+        // exploration environment publishes `explore.long_press`.
+        //
+        // The hold is checked here for the shape a Luau number can be wrong in and
+        // against the host's ceiling, and it has no default: a duration the caller
+        // cannot see is a decision the caller did not make.
+        auto cycleLongPressFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto* ticket = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
+            auto const x = checkPixelExtent(state, 2, "cycle_long_press x");
+            auto const y = checkPixelExtent(state, 3, "cycle_long_press y");
+            auto const hold =
+                checkMillisDuration(state, 4, "cycle_long_press hold_ms");
+            if (hold > k_maxLongPressHold)
+            {
+                // Refused before the cycle is spent, like every other argument
+                // rejection here: a hold the author mistyped must not cost a
+                // frame, and must not leave the target holding a button while
+                // they find out.
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "cycle_long_press exceeds the host's long-press ceiling; a "
+                    "hold that long leaves the target mid-press"
+                );
+            }
+
+            // millisToDuration built this from a whole, non-negative millisecond
+            // count and the ceiling above caps it far below any tick limit, so
+            // the round trip back to milliseconds is exact.
+            auto const call = NativeCallIdentity{
+                .verb           = "cycle_long_press",
+                .cycleOrdinal   = ticket->ordinal,
+                .durationMillis = static_cast<uint64>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(hold)
+                        .count()
+                ),
+            };
+
+            auto result = context->cycleLongPress(*ticket, PixelPoint{x, y}, hold);
+            if (!result)
+            {
+                traceHostCallFailure(state, context, call, result.error());
+            }
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+            return 0;
+        }
+
         // The automation kind whose domain wire spelling is `wireName`, or
         // nullopt when no kind carries it. The scan is over the reflected
         // entries and compares against the same domain function that produces
@@ -2602,6 +2683,20 @@ namespace uf::task
                 "cycle_click_point",
                 &cycleClickPointFn,
                 "uf_cycle_click_point",
+                context
+            );
+            // Bound on BOTH surfaces for the reason immediately above, because it
+            // is the same reason: a long press names a bare coordinate, so it is
+            // the same privilege under the same confinement. The framework needs
+            // it in run mode to press an element the page model placed, and the
+            // exploration environment needs it because an agent measuring a
+            // target is precisely who discovers that a long press magnifies one.
+            installPrimitive(
+                state,
+                surface,
+                "cycle_long_press",
+                &cycleLongPressFn,
+                "uf_cycle_long_press",
                 context
             );
             if (mode == ScriptTrustMode::Exploration)

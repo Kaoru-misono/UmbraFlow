@@ -311,6 +311,11 @@ namespace uf::engine
             std::optional<int32>            m_lastNotches{};
             std::optional<ObservationLease> m_lastScrollLease{};
 
+            uint32                                    m_longPressCount{0};
+            std::optional<Point<ClientSpace>>         m_lastLongPress{};
+            std::optional<MonotonicInstant::Duration> m_lastHold{};
+            std::optional<ObservationLease>           m_lastLongPressLease{};
+
         public:
             [[nodiscard]]
             auto click(
@@ -351,6 +356,25 @@ namespace uf::engine
                 ++m_scrollCount;
                 m_lastNotches     = notches;
                 m_lastScrollLease = lease;
+                return ok();
+            }
+
+            // A long press carries all three: the coordinate it was aimed at, the
+            // hold the caller named, and the lease. All three are recorded
+            // because all three are separately droppable, and a case asserting
+            // only that a press happened would pass against a sink handed a hold
+            // it threw away.
+            [[nodiscard]]
+            auto longPress(
+                Point<ClientSpace> point,
+                MonotonicInstant::Duration hold,
+                ObservationLease const& lease
+            ) -> Status override
+            {
+                ++m_longPressCount;
+                m_lastLongPress      = point;
+                m_lastHold           = hold;
+                m_lastLongPressLease = lease;
                 return ok();
             }
 
@@ -401,6 +425,31 @@ namespace uf::engine
             auto lastScrollLease() const noexcept -> std::optional<ObservationLease>
             {
                 return m_lastScrollLease;
+            }
+
+            [[nodiscard]] auto longPressCount() const noexcept -> uint32
+            {
+                return m_longPressCount;
+            }
+
+            [[nodiscard]]
+            auto lastLongPress() const noexcept -> std::optional<Point<ClientSpace>>
+            {
+                return m_lastLongPress;
+            }
+
+            [[nodiscard]]
+            auto lastHold() const noexcept
+                -> std::optional<MonotonicInstant::Duration>
+            {
+                return m_lastHold;
+            }
+
+            [[nodiscard]]
+            auto lastLongPressLease() const noexcept
+                -> std::optional<ObservationLease>
+            {
+                return m_lastLongPressLease;
             }
         };
 
@@ -1240,6 +1289,186 @@ namespace uf::engine
             );
             REQUIRE(receipt.has_value());
             CHECK(under.clicks->scrollCount() == 1);
+        }
+    }
+
+    TEST_CASE("engine session delivers a long press and spends the observation")
+    {
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+        auto under = matchingSession(fingerprint, baseConfig(fingerprint));
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+
+        auto const hold = MonotonicInstant::Duration{std::chrono::milliseconds{350}};
+        auto handle        = *std::move(observation);
+        auto const receipt = session.longPress(std::move(handle), PixelPoint{1, 0}, hold);
+        REQUIRE(receipt.has_value());
+        CHECK(under.clicks->longPressCount() == 1);
+        CHECK(receipt->frameId == FrameId{17});
+        CHECK(receipt->hold == hold);
+
+        // The hold the caller named reached the PORT. Every other assertion here
+        // would still hold if the duration were dropped between the session and
+        // the sink, so this is the one that makes the parameter load-bearing:
+        // replace `hold` with a constant in the sink call and only this goes red.
+        REQUIRE(under.clicks->lastHold().has_value());
+        CHECK(*under.clicks->lastHold() == hold);
+        REQUIRE(under.clicks->lastLongPress().has_value());
+        CHECK(under.clicks->lastLongPress()->x() == doctest::Approx(1.0));
+
+        // The lease reaching the sink is this observation's own, which is what
+        // keeps the controller's delivery-time fence in the loop as layer two.
+        REQUIRE(under.clicks->lastLongPressLease().has_value());
+        CHECK(under.clicks->lastLongPressLease()->frameId() == FrameId{17});
+
+        // The press changed the screen -- that is the entire reason to ask for
+        // one -- so the observation is spent and a second delivery on the same
+        // handle is refused. Remove the invalidation in EngineSession::longPress
+        // and one frame delivers two presses, so this goes red.
+        auto const retry = session.longPress(std::move(handle), PixelPoint{1, 0}, hold);
+        REQUIRE_FALSE(retry.has_value());
+        requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
+        CHECK(under.clicks->longPressCount() == 1);
+
+        auto const kinds = kindsOf(under.traces->events());
+        CHECK(
+            std::ranges::count(
+                kinds,
+                trace::TraceEventKind::EngineLongPressDelivered
+            )
+            == 1
+        );
+
+        // And it is NOT recorded as a click. A reader counting delivered clicks
+        // would otherwise count an act that magnified a card rather than pressing
+        // a button, which is the mistake engine.scroll_delivered exists to avoid.
+        CHECK(
+            std::ranges::count(kinds, trace::TraceEventKind::EngineActionDelivered)
+            == 0
+        );
+
+        auto const* p_press = findEvent(
+            under.traces->events(),
+            trace::TraceEventKind::EngineLongPressDelivered
+        );
+        REQUIRE(p_press != nullptr);
+        REQUIRE(p_press->holdMillis.has_value());
+        CHECK(*p_press->holdMillis == uint64{350});
+        CHECK(p_press->clickClient.has_value());
+    }
+
+    TEST_CASE("engine session fences a long press exactly as it fences a click")
+    {
+        // THE POINT OF THIS CASE IS THE PAIRING. A long press names a coordinate,
+        // so every gate a click gets must apply to it -- and the failure this
+        // guards against is not a missing gate in the abstract, it is a SECOND
+        // and laxer path to the same window sitting beside the first. Each
+        // subcase below has an exact twin among the clickPoint cases above;
+        // remove the matching check from EngineSession::longPress and the twin
+        // stays green while this goes red, which is what that failure looks like.
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+        auto const hold = MonotonicInstant::Duration{std::chrono::milliseconds{200}};
+
+        SUBCASE("an expired lease refuses the press")
+        {
+            auto config              = baseConfig(fingerprint);
+            config.maxActionFrameAge = MonotonicInstant::Duration::zero();
+            auto under               = matchingSession(fingerprint, std::move(config));
+            REQUIRE(under.session.has_value());
+
+            auto observation = under.session->observe();
+            REQUIRE(observation.has_value());
+            auto const receipt = under.session->longPress(
+                std::move(*observation),
+                PixelPoint{1, 0},
+                hold
+            );
+            REQUIRE_FALSE(receipt.has_value());
+            requireErrorKind(receipt.error(), AutomationErrorKind::StaleObservation);
+            CHECK(under.clicks->longPressCount() == 0);
+        }
+
+        SUBCASE("a mismatched fingerprint refuses the press")
+        {
+            auto config            = baseConfig(fingerprint);
+            config.liveFingerprint = fingerprintOf(3, 1, 120);
+            auto under             = matchingSession(fingerprint, std::move(config));
+            REQUIRE(under.session.has_value());
+
+            auto observation = under.session->observe();
+            REQUIRE(observation.has_value());
+            auto const receipt = under.session->longPress(
+                std::move(*observation),
+                PixelPoint{1, 0},
+                hold
+            );
+            REQUIRE_FALSE(receipt.has_value());
+            requireErrorKind(
+                receipt.error(),
+                AutomationErrorKind::TargetCompatibilityUnverified
+            );
+            CHECK(under.clicks->longPressCount() == 0);
+        }
+
+        SUBCASE("a replaced target instance refuses the press")
+        {
+            auto under = matchingSession(fingerprint, baseConfig(fingerprint));
+            REQUIRE(under.session.has_value());
+
+            auto observation = under.session->observe();
+            REQUIRE(observation.has_value());
+            under.source->invalidateTargetInstance();
+
+            auto const receipt = under.session->longPress(
+                std::move(*observation),
+                PixelPoint{1, 0},
+                hold
+            );
+            REQUIRE_FALSE(receipt.has_value());
+            requireErrorKind(receipt.error(), AutomationErrorKind::TargetUnavailable);
+            CHECK(under.clicks->longPressCount() == 0);
+        }
+
+        SUBCASE("a cancelled run refuses the press before any sink call")
+        {
+            auto cancellation   = std::stop_source{};
+            auto config         = baseConfig(fingerprint);
+            config.cancellation = cancellation.get_token();
+            auto under          = matchingSession(fingerprint, std::move(config));
+            REQUIRE(under.session.has_value());
+
+            auto observation = under.session->observe();
+            REQUIRE(observation.has_value());
+            REQUIRE(cancellation.request_stop());
+
+            auto const receipt = under.session->longPress(
+                std::move(*observation),
+                PixelPoint{1, 0},
+                hold
+            );
+            REQUIRE_FALSE(receipt.has_value());
+            requireErrorKind(receipt.error(), AutomationErrorKind::Cancelled);
+            CHECK(under.clicks->longPressCount() == 0);
+        }
+
+        SUBCASE("a hold that runs backwards refuses the press and keeps the frame")
+        {
+            auto under = matchingSession(fingerprint, baseConfig(fingerprint));
+            REQUIRE(under.session.has_value());
+
+            auto observation = under.session->observe();
+            REQUIRE(observation.has_value());
+            auto const receipt = under.session->longPress(
+                std::move(*observation),
+                PixelPoint{1, 0},
+                MonotonicInstant::Duration{-1}
+            );
+            REQUIRE_FALSE(receipt.has_value());
+            requireErrorKind(receipt.error(), AutomationErrorKind::ActionRejected);
+            CHECK(under.clicks->longPressCount() == 0);
         }
     }
 

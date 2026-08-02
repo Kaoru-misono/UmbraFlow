@@ -464,6 +464,14 @@ end
 -- either environment can name; and `explore.click_point` forwards it for the
 -- agent, in a module only the exploration environment publishes. Do not add a
 -- forward back here.
+--
+-- AND THERE IS NO ctx:cycle_long_press, FOR THE SAME REASON AND NOT A NEW ONE.
+-- A long press names a bare coordinate exactly as a bare click does; the extra
+-- argument is a duration, and a duration confers no authorisation. So it carries
+-- the same privilege, is confined the same way, and is absent from here on the
+-- same grounds. `observe.long_press` reaches it through the closure upvalue
+-- after checking the receipt, the hit and the interact edge; `explore.long_press`
+-- forwards it for the agent. Do not add a forward here for that one either.
 
 function ctx:project_read(name)
     return native.project_read(name)

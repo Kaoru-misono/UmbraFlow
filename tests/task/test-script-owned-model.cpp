@@ -1233,7 +1233,9 @@ namespace uf::task
 
                 local ticket = ctx:cycle_open()
                 local ok, err = pcall(function()
-                    return observe.read_element(ctx, ticket, confirm)
+                    return observe.read_element(
+                        ctx, ticket, confirm, observe.empty_is_absence
+                    )
                 end)
                 if ok then return 0 end
                 if type(err) ~= "string" then return 0 end
@@ -1245,7 +1247,9 @@ namespace uf::task
                 -- back, so the refusal is about the missing rectangle rather than
                 -- about the element.
                 local row = model.Page.reference_for(page, confirm)
-                local reading = observe.read_element(ctx, ticket, row)
+                local reading = observe.read_element(
+                    ctx, ticket, row, observe.empty_is_absence
+                )
                 if reading == nil then return 0 end
                 if reading.text ~= "confirm" then return 0 end
                 return 1
@@ -1693,6 +1697,169 @@ namespace uf::task
             CHECK(p_clicks->clickCount() == 1U);
         }
 
+        TEST_CASE("observe.long_press presses a page-positioned element")
+        {
+            // THE RUN-MODE HALF OF THE LONG-PRESS CAPABILITY, and the only place
+            // it can be shown. A run VM publishes no `explore`, so the one way to
+            // prove its private surface really binds cycle_long_press is to
+            // deliver one through the trusted framework -- which is also the
+            // shape the capability exists for: the target prints "long-press a
+            // card to see its details", and reading the magnified name is how a
+            // script stops guessing which card a clipped fragment belongs to.
+            //
+            // Move the installPrimitive call for cycle_long_press inside
+            // buildPrivateSurface's Exploration branch and this goes red, because
+            // `native.cycle_long_press` is then nil on a run VM.
+            auto const directory = TemporaryDirectory{"uf-model-long-press"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, battleScript(R"lua(
+                local ticket = ctx:cycle_open()
+                local receipt = observe.resolve_page(ctx, ticket, battle)
+                if receipt == nil then return 0 end
+                local hit = observe.find(ctx, ticket, battle, slot)
+                if hit == nil then return 0 end
+                observe.long_press(ctx, ticket, receipt, hit, 400)
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+
+            // The hold the script named arrived, and it arrived as a press rather
+            // than as a click: two separate claims, both of which a sloppier
+            // wiring would break independently.
+            REQUIRE(p_clicks->longPresses().size() == 1U);
+            CHECK(
+                p_clicks->longPresses().front().hold
+                == MonotonicInstant::Duration{std::chrono::milliseconds{400}}
+            );
+            CHECK(p_clicks->clickCount() == 0U);
+        }
+
+        TEST_CASE("observe.long_press demands the same authorisation a click does")
+        {
+            // A long press delivers pointer input at a hit exactly as a click
+            // does, so it goes through the same door: the same receipt for this
+            // ticket, the same page, the same hit from this frame, the same
+            // interact edge. This is the case that would catch a second and
+            // weaker door being opened beside the first -- swap the
+            // requireAuthorisedHit call in observe.long_press for nothing at all
+            // and every subcase here goes red while observe.click stays green.
+            auto const directory = TemporaryDirectory{"uf-model-long-press-auth"};
+            seedTemplates(directory.path());
+
+            struct PressCase final
+            {
+                std::string_view label;
+                std::string_view body;
+                std::string_view fragment;
+            };
+
+            auto const cases = std::vector<PressCase>{
+                PressCase{
+                    .label = "no receipt at all",
+                    .body  = R"lua(
+                        local ticket = ctx:cycle_open()
+                        local hit = observe.find(ctx, ticket, battle, slot)
+                        if hit == nil then return 0 end
+                        local ok, err = pcall(function()
+                            observe.long_press(ctx, ticket, nil, hit, 400)
+                        end)
+                        ctx:cycle_close(ticket)
+                        if ok then return 0 end
+                        return report(err)
+                    )lua",
+                    .fragment = "needs the receipt observe.resolve_page returned",
+                },
+                PressCase{
+                    .label = "a hit located on an earlier cycle",
+                    .body  = R"lua(
+                        local first = ctx:cycle_open()
+                        local stale = observe.find(ctx, first, battle, slot)
+                        ctx:cycle_close(first)
+                        if stale == nil then return 0 end
+
+                        local second = ctx:cycle_open()
+                        local receipt = observe.resolve_page(ctx, second, battle)
+                        if receipt == nil then return 0 end
+                        local ok, err = pcall(function()
+                            observe.long_press(ctx, second, receipt, stale, 400)
+                        end)
+                        ctx:cycle_close(second)
+                        if ok then return 0 end
+                        return report(err)
+                    )lua",
+                    .fragment = "hit located on another observation cycle",
+                },
+                PressCase{
+                    .label = "a hold nobody named",
+                    .body  = R"lua(
+                        local ticket = ctx:cycle_open()
+                        local receipt = observe.resolve_page(ctx, ticket, battle)
+                        if receipt == nil then return 0 end
+                        local hit = observe.find(ctx, ticket, battle, slot)
+                        if hit == nil then return 0 end
+                        local ok, err = pcall(function()
+                            observe.long_press(ctx, ticket, receipt, hit)
+                        end)
+                        ctx:cycle_close(ticket)
+                        if ok then return 0 end
+                        return report(err)
+                    )lua",
+                    .fragment = "it has no default",
+                },
+            };
+
+            for (auto const& subcase : cases)
+            {
+                CAPTURE(subcase.label);
+
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0), pixels(2, 5, 0)},
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto source = std::string{
+                    "local function report(err)\n"
+                    "    if type(err) ~= 'string' then return 0 end\n"
+                    "    if string.find(err, [==["
+                };
+                source += subcase.fragment;
+                source += "]==], 1, true) == nil then return 0 end\n"
+                          "    return 1\n"
+                          "end\n";
+                source += subcase.body;
+
+                auto const result = runModel(context, built, battleScript(source));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+                CHECK(p_clicks->longPresses().empty());
+                CHECK(p_clicks->clickCount() == 0U);
+            }
+        }
+
         TEST_CASE("A pixel hit clicks through the match the same cycle produced")
         {
             auto const directory = TemporaryDirectory{"uf-model-pixel-click"};
@@ -1948,7 +2115,11 @@ namespace uf::task
                         if ok then return 0 end
                         return report(err)
                     )lua",
-                    .fragment = "clickable on the page that was recognised",
+                    // "interactive" rather than "clickable": the refusal is
+                    // written once and serves observe.click and
+                    // observe.long_press alike, so its wording names acting on
+                    // the element rather than one way of doing so.
+                    .fragment = "interactive on the page that was recognised",
                 },
             };
 
@@ -2017,7 +2188,8 @@ namespace uf::task
                 auto const result = runModel(context, built, battleScript(R"lua(
                     local ticket = ctx:cycle_open()
                     local reading = observe.read_element(
-                        ctx, ticket, slot, observe.exact_text
+                        ctx, ticket, slot, observe.empty_is_absence,
+                        observe.exact_text
                     )
                     ctx:cycle_close(ticket)
                     if reading == nil then return 0 end
@@ -2056,10 +2228,12 @@ namespace uf::task
                 auto const result = runModel(context, built, battleScript(R"lua(
                     local ticket = ctx:cycle_open()
                     local strict = observe.read_element(
-                        ctx, ticket, slot, observe.exact_text
+                        ctx, ticket, slot, observe.empty_is_absence,
+                        observe.exact_text
                     )
                     local loose = observe.read_element(
-                        ctx, ticket, slot, function(actual, expected)
+                        ctx, ticket, slot, observe.empty_is_absence,
+                        function(actual, expected)
                             return string.find(actual, expected, 1, true) ~= nil
                         end
                     )
@@ -2094,7 +2268,9 @@ namespace uf::task
                 auto const result = runModel(context, built, battleScript(R"lua(
                     local ticket = ctx:cycle_open()
                     local ok, err = pcall(function()
-                        return observe.read_element(ctx, ticket, slot, nil)
+                        return observe.read_element(
+                            ctx, ticket, slot, observe.empty_is_absence, nil
+                        )
                     end)
                     ctx:cycle_close(ticket)
                     if ok then return 0 end
@@ -2129,7 +2305,8 @@ namespace uf::task
                     local ticket = ctx:cycle_open()
                     local ok, err = pcall(function()
                         return observe.read_element(
-                            ctx, ticket, anchor, observe.exact_text
+                            ctx, ticket, anchor, observe.empty_is_absence,
+                            observe.exact_text
                         )
                     end)
                     ctx:cycle_close(ticket)
@@ -2603,7 +2780,8 @@ namespace uf::task
                 -- And the same row's text is exactly what a READ of it compares
                 -- against, which is the other half of why it is allowed here.
                 local reading = observe.read_element(
-                    ctx, ticket, page.references[1], observe.exact_text
+                    ctx, ticket, page.references[1], observe.empty_is_absence,
+                    observe.exact_text
                 )
                 ctx:cycle_close(ticket)
                 if reading.expected ~= "battle" then return 0 end
@@ -2683,9 +2861,12 @@ namespace uf::task
 
                 local row = model.Page.reference_for(page, slot)
                 local ticket = ctx:cycle_open()
-                local viaRow = observe.read_element(ctx, ticket, row, observe.exact_text)
-                local viaElement =
-                    observe.read_element(ctx, ticket, slot, observe.exact_text)
+                local viaRow = observe.read_element(
+                    ctx, ticket, row, observe.empty_is_absence, observe.exact_text
+                )
+                local viaElement = observe.read_element(
+                    ctx, ticket, slot, observe.empty_is_absence, observe.exact_text
+                )
                 ctx:cycle_close(ticket)
 
                 if viaRow == nil or viaElement == nil then return 0 end
@@ -2766,7 +2947,9 @@ namespace uf::task
                 if receipt == nil then return 0 end
 
                 local row = model.Page.reference_for(battle, slot)
-                local lines = observe.read_lines(ctx, ticket, row)
+                local lines = observe.read_lines(
+                    ctx, ticket, row, observe.empty_is_unknown
+                )
                 if #lines ~= 3 then return 0 end
 
                 -- Every line carries its own place, its own text and its own
@@ -2821,7 +3004,9 @@ namespace uf::task
             auto const result = runModel(context, built, battleScript(R"lua(
                 local first = ctx:cycle_open()
                 local row = model.Page.reference_for(battle, slot)
-                local stale = observe.read_lines(ctx, first, row)[2]
+                local stale = observe.read_lines(
+                    ctx, first, row, observe.empty_is_unknown
+                )[2]
                 ctx:cycle_close(first)
 
                 -- A fresh frame, freshly resolved, so the receipt is beyond
@@ -2898,7 +3083,9 @@ namespace uf::task
                 if receipt == nil then return 0 end
 
                 local row = model.Page.reference_for(listing, list)
-                local lines = observe.read_lines(ctx, ticket, row)
+                local lines = observe.read_lines(
+                    ctx, ticket, row, observe.empty_is_unknown
+                )
                 if #lines ~= 3 then return 0 end
                 if lines[1].interact ~= false then return 0 end
 
@@ -2947,7 +3134,9 @@ namespace uf::task
                 if receipt == nil then return 0 end
 
                 local row = model.Page.reference_for(battle, slot)
-                local lines = observe.read_lines(ctx, ticket, row)
+                local lines = observe.read_lines(
+                    ctx, ticket, row, observe.empty_is_unknown
+                )
                 local name = hits.matching(lines, "battle", observe.exact_text)
                 if name == nil then return 0 end
 
@@ -3005,7 +3194,11 @@ namespace uf::task
             auto const result = runModel(context, built, battleScript(R"lua(
                 local first = ctx:cycle_open()
                 local row = model.Page.reference_for(battle, slot)
-                local stale = hits.offset(observe.read_lines(ctx, first, row)[1], 2, 0)
+                local stale = hits.offset(
+                    observe.read_lines(ctx, first, row, observe.empty_is_unknown)[1],
+                    2,
+                    0
+                )
                 ctx:cycle_close(first)
 
                 local second = ctx:cycle_open()
@@ -3024,6 +3217,315 @@ namespace uf::task
             REQUIRE(result.has_value());
             CHECK(*result == doctest::Approx(1.0));
             CHECK(p_clicks->clickCount() == 0U);
+        }
+
+        TEST_CASE("A region that read nothing is not a region holding nothing")
+        {
+            // THE FAILURE THIS ARGUMENT EXISTS FOR, reproduced. The engine finds
+            // no line at all in the annotated region -- which is what a reward
+            // card's name band gives a run that reads it before the card has
+            // finished drawing, and equally what a badge gives on a screen that
+            // genuinely carries none. The bytes are identical; only the caller
+            // knows which of the two it would be willing to act on.
+            //
+            // Delete the raise in observe.read_lines and the first subcase gets
+            // its empty list back, so it goes red. Raise regardless of the
+            // policy and the second one does.
+            auto const directory = TemporaryDirectory{"uf-model-empty-region"};
+            seedTemplates(directory.path());
+
+            SUBCASE("a caller that came for content is told it learned nothing")
+            {
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0)},
+                        // An empty block readout: the detector located nothing.
+                        .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                            oneLineReadout("battle", 9'000),
+                            ocr::Readout{}
+                        ),
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, battleScript(R"lua(
+                    local ticket = ctx:cycle_open()
+                    local receipt = observe.resolve_page(ctx, ticket, battle)
+                    if receipt == nil then return 0 end
+
+                    local row = model.Page.reference_for(battle, slot)
+                    local ok, err = ctx:try(function()
+                        return observe.read_lines(
+                            ctx, ticket, row, observe.empty_is_unknown
+                        )
+                    end)
+                    if ok ~= false then return 0 end
+
+                    -- A host-minted control error and not a value: there is no
+                    -- list to walk, so the choosing loop that turned a blank
+                    -- into "none of these" never runs.
+                    if type(err) ~= 'userdata' then return 0 end
+                    if err.kind ~= uf.errors.recognition_incomplete then return 0 end
+                    if err.retryable ~= true then return 0 end
+                    if string.find(err.message, "found no text at all", 1, true) == nil then
+                        return 0
+                    end
+                    if string.find(err.message, "has not been drawn", 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+                CHECK(p_clicks->clickCount() == 0U);
+            }
+
+            SUBCASE("a caller asking whether the region is clear gets its answer")
+            {
+                // The other direction, and the reason a verb that simply raised
+                // on empty would be wrong: some callers are asking precisely
+                // whether anything is there.
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0)},
+                        .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                            oneLineReadout("battle", 9'000),
+                            ocr::Readout{}
+                        ),
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, battleScript(R"lua(
+                    local ticket = ctx:cycle_open()
+                    local row = model.Page.reference_for(battle, slot)
+                    local lines = observe.read_lines(
+                        ctx, ticket, row, observe.empty_is_absence
+                    )
+                    ctx:cycle_close(ticket)
+                    if type(lines) ~= "table" then return 0 end
+                    if #lines ~= 0 then return 0 end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+        }
+
+        TEST_CASE("A forbidden clause is still satisfied by a region reading nothing")
+        {
+            // The identify sweep asks the emptiness question on every frame, and
+            // it must keep getting the emptiness answer: a page whose signature
+            // is "this box does NOT read 'battle'" resolves on a screen where the
+            // box reads nothing at all. That path reads the region itself rather
+            // than through read_element, so this is what says the policy argument
+            // did not leak into it.
+            //
+            // Make an empty read raise inside resolve_page and this goes red.
+            auto const directory = TemporaryDirectory{"uf-model-empty-forbidden"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .ocrEngine   = std::make_unique<FakeOcrEngine>(ocr::Readout{}),
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, titleScript(R"lua(
+                local notBattle = model.Page.new{
+                    name = "not_battle",
+                    references = {
+                        anchorRow(),
+                        titleRow({
+                            identify = "forbidden",
+                            expected_text = "battle",
+                        }),
+                    },
+                }
+                local isBattle = model.Page.new{
+                    name = "is_battle",
+                    references = { titleRow({ expected_text = "battle" }) },
+                }
+
+                local ticket = ctx:cycle_open()
+                local allowed = observe.resolve_page(ctx, ticket, notBattle)
+                local refused, why = observe.resolve_page(ctx, ticket, isBattle)
+                ctx:cycle_close(ticket)
+
+                if allowed == nil then return 0 end
+                if refused ~= nil then return 0 end
+                if string.find(why, "the region read nothing at all", 1, true) == nil then
+                    return 0
+                end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("read_element's empty reading is the caller's to interpret too")
+        {
+            // The same hole one rectangle down. A nil reading is quieter than an
+            // empty list and conflates the same two states: the caller writes
+            // `reading == nil or not reading.matches` and a region nobody has
+            // drawn yet reads as "this is not that text".
+            //
+            // Delete the raise in observe.read_element and the first subcase goes
+            // red; raise regardless of the policy and the second one does.
+            auto const directory = TemporaryDirectory{"uf-model-empty-reading"};
+            seedTemplates(directory.path());
+
+            SUBCASE("empty_is_unknown refuses to answer at all")
+            {
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0)},
+                        .ocrEngine   = std::make_unique<FakeOcrEngine>(ocr::Readout{}),
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, battleScript(R"lua(
+                    local ticket = ctx:cycle_open()
+                    local ok, err = ctx:try(function()
+                        return observe.read_element(
+                            ctx, ticket, slot, observe.empty_is_unknown,
+                            observe.exact_text
+                        )
+                    end)
+                    if ok ~= false then return 0 end
+                    if type(err) ~= 'userdata' then return 0 end
+                    if err.kind ~= uf.errors.recognition_incomplete then return 0 end
+                    if string.find(err.message, "observe.read_element", 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("empty_is_absence hands the nil reading back")
+            {
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0)},
+                        .ocrEngine   = std::make_unique<FakeOcrEngine>(ocr::Readout{}),
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, battleScript(R"lua(
+                    local ticket = ctx:cycle_open()
+                    local reading = observe.read_element(
+                        ctx, ticket, slot, observe.empty_is_absence,
+                        observe.exact_text
+                    )
+                    ctx:cycle_close(ticket)
+                    if reading ~= nil then return 0 end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+        }
+
+        TEST_CASE("Neither read verb has a default for what an empty region means")
+        {
+            // The policy has no default and cannot be spelled wrong. Give either
+            // argument a fallback -- or accept any string -- and the matching row
+            // stops raising, so it goes red.
+            auto const directory = TemporaryDirectory{"uf-model-empty-policy"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("battle", 9'000),
+                        rosterReadout()
+                    ),
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, battleScript(R"lua(
+                local ticket = ctx:cycle_open()
+                local row = model.Page.reference_for(battle, slot)
+
+                local function refuses(body, fragment)
+                    local ok, err = pcall(body)
+                    if ok then return false end
+                    if type(err) ~= "string" then return false end
+                    return string.find(err, fragment, 1, true) ~= nil
+                end
+
+                -- read_lines with no policy at all.
+                if not refuses(function()
+                    return observe.read_lines(ctx, ticket, row)
+                end, "has to be told what an empty region means") then return 0 end
+
+                -- read_element with no policy at all.
+                if not refuses(function()
+                    return observe.read_element(ctx, ticket, slot)
+                end, "has to be told what an empty region means") then return 0 end
+
+                -- A string that is not one of the two published spellings picks
+                -- no policy rather than the nearest one.
+                if not refuses(function()
+                    return observe.read_lines(ctx, ticket, row, "unknwon")
+                end, "has to be told what an empty region means") then return 0 end
+
+                -- The comparison in the empty-region slot is named as the swap
+                -- it is, because both arguments are policies.
+                if not refuses(function()
+                    return observe.read_element(ctx, ticket, slot, observe.exact_text)
+                end, "takes the empty-region policy before the comparison") then
+                    return 0
+                end
+
+                ctx:cycle_close(ticket)
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
         }
 
         TEST_CASE("wait_until needs K agreeing observations in a row")

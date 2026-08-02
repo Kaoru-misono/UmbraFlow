@@ -83,6 +83,8 @@ namespace uf::trace
             case TraceEventKind::EngineActionDelivered: return "engine.action_delivered";
             case TraceEventKind::EngineKeyDelivered: return "engine.key_delivered";
             case TraceEventKind::EngineScrollDelivered: return "engine.scroll_delivered";
+            case TraceEventKind::EngineLongPressDelivered:
+                return "engine.long_press_delivered";
             case TraceEventKind::EngineObservationInvalidated:
                 return "engine.observation_invalidated";
             case TraceEventKind::TaskNativeCall: return "task.native_call";
@@ -742,6 +744,13 @@ namespace uf::trace
         if (event.wheelNotches.has_value())
         {
             builder.addLiteral("wheelNotches", std::format("{}", *event.wheelNotches));
+        }
+
+        // A literal for wheelNotches' reason: a hold is a duration a reader
+        // compares against the target's own long-press threshold.
+        if (event.holdMillis.has_value())
+        {
+            builder.addLiteral("holdMillis", std::format("{}", *event.holdMillis));
         }
 
         // The non-golden member goes last, so a reader scanning a line meets the

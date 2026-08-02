@@ -241,6 +241,19 @@ namespace uf::engine
         int32   notches{};
     };
 
+    // The record of one delivered long press: the frame it was authorized
+    // against, the client-space point the button went down at, and how long it
+    // stayed down. It carries a point where ScrollReceipt carries none because
+    // this verb named one, and it carries the hold because that is the only
+    // thing separating this receipt from an ActReceipt for the same coordinate.
+    struct LongPressReceipt final
+    {
+        FrameId            frameId;
+        Point<ClientSpace> pressPoint;
+
+        MonotonicInstant::Duration hold{};
+    };
+
     // The recognition and action pipeline over one bound capture target.
     //
     // Trace lifetime contract: the session does NOT own its trace sink. It stores
@@ -538,5 +551,39 @@ namespace uf::engine
             Observation&& observation,
             int32 notches
         ) -> Result<ScrollReceipt>;
+
+        // Delivers one long press at `point` for `hold`, spending `observation`.
+        //
+        // ITS AUTHORIZATION CONTRACT IS clickPoint's, CLAUSE FOR CLAUSE, and that
+        // is the whole point of the verb existing here rather than beside
+        // pressKey. A long press names a coordinate a caller measured off this
+        // frame, so every check a click gets applies unchanged and for the
+        // unchanged reason: a requested stop refuses before any sink call, a
+        // foreign handle is an InternalInvariant and a consumed one is
+        // StaleObservation, the live fingerprint must match the project's, the
+        // observation's lease must still be valid at delivery, the bound target
+        // instance is revalidated immediately before the post, and the
+        // observation is spent. Nothing here is looser than a click, because a
+        // second and laxer path to the same window is the hole this rule exists
+        // to close.
+        //
+        // IT SPENDS THE OBSERVATION, and deliberately. A delivered long press
+        // changes the screen -- on the target this was built for it magnifies the
+        // thing that was pressed, which is the entire reason to ask for one -- so
+        // a frame that survived it would describe a screen the press had already
+        // replaced. Reading the magnified result therefore costs a fresh
+        // observation, which is correct: the magnification is not on the frame
+        // that authorized the press.
+        //
+        // `hold` is the caller's with no default at this layer or any layer
+        // above; see IActionSink::longPress. What this layer does NOT do is bound
+        // it -- the ceiling belongs to the host surface that a script reaches,
+        // where a refusal can name what the author wrote.
+        [[nodiscard]]
+        auto longPress(
+            Observation&& observation,
+            PixelPoint point,
+            MonotonicInstant::Duration hold
+        ) -> Result<LongPressReceipt>;
     };
 }

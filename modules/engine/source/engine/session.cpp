@@ -1033,4 +1033,125 @@ namespace uf::engine
             .notches = notches,
         };
     }
+
+    auto EngineSession::longPress(
+        Observation&& observation,
+        PixelPoint point,
+        MonotonicInstant::Duration hold
+    ) -> Result<LongPressReceipt>
+    {
+        // Everything down to the delivery is clickPoint's, in clickPoint's order,
+        // for clickPoint's reasons. It is spelled out rather than shared because
+        // the two verbs differ only after the post, and a helper hiding the gate
+        // sequence is exactly how one of the two comes to be missing a gate.
+        if (m_config.cancellation.stop_requested())
+        {
+            return fail(
+                AutomationErrorKind::Cancelled,
+                "cancelled before long press delivery"
+            );
+        }
+        UF_TRY(ensureUsable(observation, "longPress"));
+
+        // Not the ceiling -- that belongs to the host surface a script reaches --
+        // but the one thing about a hold this layer cannot pass on: a negative
+        // duration is not a shorter press, it is a receipt and a trace line
+        // describing an act nobody can have performed. Refused with zero sink
+        // calls and before the observation is spent, so a caller that arrived
+        // here with a sign error keeps its frame.
+        if (hold < MonotonicInstant::Duration::zero())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "a long press hold cannot run backwards"
+            );
+        }
+
+        auto const identity = observation.m_frameIdentity;
+
+        if (m_config.liveFingerprint != m_config.projectFingerprint)
+        {
+            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
+            event.errorKind = AutomationErrorKind::TargetCompatibilityUnverified;
+            event.message   = std::string{
+                "live size or DPI does not match the page model's fingerprint"
+            };
+            UF_TRY(emit(event));
+            return fail(
+                AutomationErrorKind::TargetCompatibilityUnverified,
+                "live size or DPI does not match the page model's fingerprint"
+            );
+        }
+
+        auto lease = observation.m_lease.validate(
+            identity.sessionId(),
+            identity.targetGeneration(),
+            identity.frameId(),
+            MonotonicInstant::now()
+        );
+        if (!lease)
+        {
+            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
+            event.errorKind = automationErrorKind(lease.error());
+            event.message   = std::string{lease.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(lease).error()};
+        }
+
+        UF_TRY(emit(identityEvent(trace::TraceEventKind::EngineActionAuthorized, identity)));
+
+        UF_TRY_VALUE(framePoint, pixelPointToFramePoint(point));
+        auto const clientPoint = observation.m_frame.transform().frameToClient(framePoint);
+
+        auto revalidation = m_frameSource->validateTargetInstance();
+        if (!revalidation)
+        {
+            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
+            event.errorKind = automationErrorKind(revalidation.error());
+            event.message   = std::string{revalidation.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(revalidation).error()};
+        }
+
+        auto delivered = m_actionSink->longPress(clientPoint, hold, observation.m_lease);
+        if (!delivered)
+        {
+            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
+            event.errorKind = automationErrorKind(delivered.error());
+            event.message   = std::string{delivered.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(delivered).error()};
+        }
+
+        // The press has landed and been released, so the handle dies before any
+        // fallible post-delivery emit -- the ordering every delivering verb here
+        // uses, and for the same reason: a retry over a surviving alias must find
+        // the handle already dead rather than deliver twice.
+        observation.m_invalidated = true;
+
+        auto pressEvent        = identityEvent(
+            trace::TraceEventKind::EngineLongPressDelivered,
+            identity
+        );
+        pressEvent.clickClient = clientPoint;
+        pressEvent.holdMillis  = static_cast<uint64>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(hold).count()
+        );
+        UF_TRY(emit(pressEvent));
+
+        UF_TRY(
+            emit(
+                identityEvent(
+                    trace::TraceEventKind::EngineObservationInvalidated,
+                    identity
+                )
+            )
+        );
+
+        return LongPressReceipt{
+            .frameId    = identity.frameId(),
+            .pressPoint = clientPoint,
+            .hold       = hold,
+        };
+    }
 }

@@ -45,9 +45,17 @@ namespace uf::task
         std::optional<uint64> cycleOrdinal{};
         std::optional<uint64> hitCycleOrdinal{};
 
-        // The pause a settle declared, in whole milliseconds. A settle reaches no
-        // engine verb, so this is the only evidence it happened, and a replay
-        // cannot reconstruct the run without it.
+        // The duration this call was handed, in whole milliseconds: the pause a
+        // settle declared, or the hold a long press named. One field rather than
+        // two because a line carries at most one duration and the verb already
+        // says which, exactly as `contentHash` serves three verbs.
+        //
+        // A settle reaches no engine verb, so this is the only evidence it
+        // happened and a replay cannot reconstruct the run without it. A long
+        // press does reach one, and records the hold here as well for `key`'s
+        // reason: a press the host refuses before the engine is reached produces
+        // no engine line at all, and the hold may be exactly what the refusal was
+        // about.
         std::optional<uint64> durationMillis{};
 
         // The key a `key` call was handed. Recorded on the native call as well as

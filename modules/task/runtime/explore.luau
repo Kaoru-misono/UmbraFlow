@@ -1,9 +1,9 @@
 --!strict
 -- explore: the verbs an agent has and a business script does not.
 --
--- WHY THIS IS A MODULE AND NOT THREE MORE METHODS ON `ctx`. `ctx` is published
--- into EVERY project environment, business runs included, so a forward added
--- there is a forward every task can call. These three must be reachable from one
+-- WHY THIS IS A MODULE AND NOT MORE METHODS ON `ctx`. `ctx` is published into
+-- EVERY project environment, business runs included, so a forward added there is
+-- a forward every task can call. These verbs must be reachable from one
 -- environment and unreachable from the other, and the mechanism this framework
 -- has for that is which module names a project environment publishes
 -- (docs/plans/2026-07-29-three-layer-task-system.md 7). So the privileged
@@ -12,9 +12,12 @@
 --
 -- The isolation is therefore structural rather than checked. A project
 -- environment is a whitelist with no metatable: a run VM has no `explore`, no
--- `__index` chain that could reach one, and -- for two of the three verbs -- no
+-- `__index` chain that could reach one, and -- for `crop` and `probe` -- no
 -- primitive behind it either, because a run VM's private surface never binds
--- `cycle_crop` or `probe` at all.
+-- `cycle_crop` or `probe` at all. `click_point` and `long_press` do have their
+-- primitives on both surfaces, because the trusted framework needs both to act
+-- on an element the page model placed; what confines those is that only this
+-- module forwards them, and only the exploration environment has this module.
 --
 -- WHAT IS NOT HERE. Frame differencing. The plan defers it deliberately: two
 -- crops and an agent's own eyes cover the cases anyone has actually met, and a
@@ -87,6 +90,40 @@ end
 function explore.click_point(ticket: any, x: number, y: number)
     requirePrimitive("cycle_click_point", "explore.click_point")
     return (native :: any).cycle_click_point(ticket, x, y)
+end
+
+-- explore.long_press(ticket, x, y, hold_ms) -> ()
+--
+-- Presses a bare coordinate, holds it for `hold_ms`, releases it, and spends the
+-- cycle. It is `click_point` with a duration, and it is here for `click_point`'s
+-- reason: an agent standing in front of a game it has no model of yet acts on
+-- coordinates it chose, and a business script acts on elements its page
+-- authorised.
+--
+-- WHY AN AGENT NEEDS THIS SPECIFICALLY. A long press is how a target volunteers
+-- what it will not show otherwise -- the one this framework was built for prints
+-- "long-press a card to see its details" and magnifies the card, which turns a
+-- name clipped by the card in front of it into a name that can simply be read.
+-- Discovering that a screen has such a gesture, and what it reveals, is
+-- measurement, and measurement is what this module is for.
+--
+-- The host fences it exactly as it fences click_point: the frame must be this
+-- ticket's, the observation lease must still be fresh, the live geometry must
+-- match the project's fingerprint, and the cycle is spent so one frame delivers
+-- one input. The hold is bounded by the host and has NO DEFAULT here: how long
+-- this target wants a press held is the thing being measured, so a number this
+-- module supplied would be a measurement nobody took.
+function explore.long_press(ticket: any, x: number, y: number, holdMillis: number)
+    requirePrimitive("cycle_long_press", "explore.long_press")
+    if type(holdMillis) ~= "number" then
+        error(
+            "explore.long_press needs hold_ms = how long to hold the button "
+                .. "down, in milliseconds; it has no default, because how long "
+                .. "a target wants a press held is a fact about that target",
+            2
+        )
+    end
+    return (native :: any).cycle_long_press(ticket, x, y, holdMillis)
 end
 
 -- explore.crop(ticket, x, y, width, height, key?, tolerance?)

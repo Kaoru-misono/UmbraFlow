@@ -159,6 +159,15 @@ namespace uf::trace
         // version bump.
         EngineScrollDelivered,
 
+        // One delivered long press: pointer down at a point, held, released.
+        // Its own kind for engine.scroll_delivered's reason -- a reader counting
+        // delivered clicks must not have to subtract the lines that turn out to
+        // be something else -- and here the distinction is sharper than a count,
+        // because a long press and a click are aimed identically and DO
+        // different things to the target. Additive to umbraflow-trace/v3 under
+        // the same rule that admitted the scroll.
+        EngineLongPressDelivered,
+
         EngineObservationInvalidated,
         TaskNativeCall,
         FrameworkStepStarted,
@@ -476,6 +485,14 @@ namespace uf::trace
         // distinguishes one delivered scroll from another, and a line without it
         // records that something happened without saying what.
         std::optional<int32> wheelNotches{};
+
+        // How long one engine.long_press_delivered held the button down, in
+        // whole milliseconds. It is half of what that event records -- the point
+        // is the other half -- because the hold is the entire difference between
+        // a long press and the click at the same coordinate, and a line without
+        // it says a pointer went down somewhere without saying what made it a
+        // long press.
+        std::optional<uint64> holdMillis{};
     };
 
     // A TraceEvent with the run identity stamped onto it. Only TraceRecorder can

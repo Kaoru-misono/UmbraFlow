@@ -546,6 +546,25 @@ namespace uf::task
         return ok();
     }
 
+    auto TaskContext::cycleLongPress(
+        CycleTicket ticket,
+        PixelPoint point,
+        MonotonicInstant::Duration hold
+    ) -> Result<engine::LongPressReceipt>
+    {
+        // The ledger's half of the fence: the ticket is checked against the one
+        // open cycle, and the frame leaves the ledger here so a stale ticket is
+        // refused before anything is delivered. There is no ordinal to check
+        // first -- see the header for why this verb has none -- so the spend is
+        // the whole of it, as it is for cycleKey and cycleScroll.
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+
+        // longPress consumes the frame by rvalue, so the cycle is spent whatever
+        // the outcome; spend already dropped the ledger entry, which is what
+        // makes every later use of this ticket fail StaleObservation.
+        return m_session.longPress(std::move(observation), point, hold);
+    }
+
     auto TaskContext::waitUntil(
         MonotonicInstant deadline,
         MonotonicInstant::Duration interval

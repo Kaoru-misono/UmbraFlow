@@ -1,5 +1,6 @@
 #include "controller-action-sink.hpp"
 
+#include <controller/discovery.hpp>
 #include <controller/input.hpp>
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
@@ -7,11 +8,39 @@
 #include <domain/detection.hpp>
 #include <domain/space.hpp>
 
+#include <algorithm>
+#include <format>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace uf::cli::platform
 {
+    auto ControllerActionSink::drainAfterFailure(
+        Error error,
+        std::string_view what
+    ) -> Status
+    {
+        // HeldInputs and AuditLog are cheap owned members, so this compensation
+        // is always affordable here. The original failure remains the reported
+        // error; a compensation release that itself fails only adds context.
+        auto releases = releaseHeld(m_target, m_held, m_audit);
+        for (auto const& release : releases)
+        {
+            if (!release.result)
+            {
+                error.addContext(
+                    std::format(
+                        "input compensation after a failed {} also failed: {}",
+                        what,
+                        release.result.error().message()
+                    )
+                );
+            }
+        }
+        return std::unexpected{std::move(error)};
+    }
+
     auto ControllerActionSink::click(
         Point<ClientSpace> point,
         ObservationLease const& lease
@@ -24,23 +53,8 @@ namespace uf::cli::platform
         }
 
         // The click failed after possibly leaving a pointer button held. Drain any
-        // residual held input so the target is not stranded mid-press. HeldInputs
-        // and AuditLog are cheap owned members, so this compensation is always
-        // affordable here. The original click failure remains the reported error;
-        // a compensation release that itself fails only adds context.
-        auto error    = std::move(delivered).error();
-        auto releases = releaseHeld(m_target, m_held, m_audit);
-        for (auto const& release : releases)
-        {
-            if (!release.result)
-            {
-                error.addContext(
-                    "input compensation after failed click also failed: "
-                        + std::string{release.result.error().message()}
-                );
-            }
-        }
-        return std::unexpected{std::move(error)};
+        // residual held input so the target is not stranded mid-press.
+        return drainAfterFailure(std::move(delivered).error(), "click");
     }
 
     auto ControllerActionSink::pressKey(
@@ -63,21 +77,8 @@ namespace uf::cli::platform
         // The press may have landed while the release did not, leaving the key held
         // down in the target. Drain any residual held input so the target is not
         // stranded mid-press -- the same compensation click() performs, and for the
-        // same reason. The original failure remains the reported error; a compensation
-        // release that itself fails only adds context.
-        auto error    = std::move(delivered).error();
-        auto releases = releaseHeld(m_target, m_held, m_audit);
-        for (auto const& release : releases)
-        {
-            if (!release.result)
-            {
-                error.addContext(
-                    "input compensation after a failed key also failed: "
-                        + std::string{release.result.error().message()}
-                );
-            }
-        }
-        return std::unexpected{std::move(error)};
+        // same reason.
+        return drainAfterFailure(std::move(delivered).error(), "key");
     }
 
     auto ControllerActionSink::scroll(
@@ -108,5 +109,82 @@ namespace uf::cli::platform
         // is one posted message that holds nothing down, so there is no half-press
         // for a failed scroll to strand in the target.
         return uf::scroll(m_target, lease, centre, delta, m_held, m_audit);
+    }
+
+    auto ControllerActionSink::longPress(
+        Point<ClientSpace> point,
+        MonotonicInstant::Duration hold,
+        ObservationLease const& lease
+    ) -> Status
+    {
+        // WHAT THE REFRESH CALLBACK CAN HONESTLY RE-READ HERE, because a fence
+        // that confirms nothing is worse than no fence.
+        //
+        // controller::longPress asks for the delivery target again after the hold
+        // and refuses to post the release if its identity moved, because a hold
+        // spans time and a window can be replaced inside it. This composition
+        // holds a target SNAPSHOT and re-resolves nothing during a run, so the
+        // window handle, the capture session and the generation this callback
+        // hands back are necessarily the ones it was given -- the identity
+        // comparison downstream is a no-op against this sink and will stop being
+        // one the day a composition root re-resolves a target mid-run, which is
+        // exactly the seam the callback exists for.
+        //
+        // What it does do here, and what makes it worth running at all, is FAIL.
+        // The live enumeration is re-read across the hold, so a window destroyed,
+        // minimised to an empty client area, or otherwise gone by the time the
+        // button should come up is reported instead of being posted to -- and the
+        // drain below then releases the press this sink is still holding.
+        auto refreshTarget = [this]() -> Result<DeliveryTarget>
+        {
+            UF_TRY_VALUE(candidates, enumerateCandidates());
+            auto const found = std::ranges::find_if(
+                candidates,
+                [this](TargetCandidate const& candidate)
+                {
+                    return candidate.handle() == m_target.windowHandle();
+                }
+            );
+            if (found == candidates.end())
+            {
+                return fail(
+                    AutomationErrorKind::TargetUnavailable,
+                    std::format(
+                        "the long press target {:#x} is gone from the desktop",
+                        static_cast<uintptr>(m_target.windowHandle().value())
+                    )
+                );
+            }
+
+            auto const client = found->clientSize();
+            return DeliveryTarget::create(
+                m_target.windowHandle(),
+                m_target.sessionId(),
+                m_target.generation(),
+                client.width(),
+                client.height()
+            );
+        };
+
+        auto delivered = uf::longPress(
+            m_target,
+            lease,
+            point,
+            hold,
+            m_held,
+            m_audit,
+            std::move(refreshTarget)
+        );
+        if (delivered)
+        {
+            return ok();
+        }
+
+        // The drain matters more here than anywhere else in this file. A long
+        // press is the one verb whose failure mode is a button that WENT down and
+        // did not come up -- the refresh across the hold can refuse the release
+        // that was always meant to follow -- so the guarantee the port states
+        // ("leaves the button released on every exit path") is kept exactly here.
+        return drainAfterFailure(std::move(delivered).error(), "long press");
     }
 }

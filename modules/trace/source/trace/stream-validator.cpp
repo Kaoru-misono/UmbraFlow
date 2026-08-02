@@ -184,6 +184,29 @@ namespace uf::trace
         return ok();
     }
 
+    auto TraceStreamValidator::requireLongPressPayload(
+        TraceEvent const& event
+    ) -> Status
+    {
+        if (!event.clickClient.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "engine.long_press_delivered carries no point, so nothing says "
+                "where the button went down"
+            );
+        }
+        if (!event.holdMillis.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "engine.long_press_delivered carries no hold, which is the whole "
+                "of what separates it from the click at the same point"
+            );
+        }
+        return ok();
+    }
+
     auto TraceStreamValidator::admit(
         TraceEvent const& event
     ) -> Result<std::vector<std::string>>
@@ -274,6 +297,15 @@ namespace uf::trace
             // missing says only that something was delivered, and the delta is the
             // whole of what distinguishes one from another.
             return requireScrollPayload(event);
+
+        case TraceEventKind::EngineLongPressDelivered:
+            // Host-authored like the scroll above, and admitted on EVERY stream
+            // including the exploration one. That is the scroll's precedent
+            // rather than the click's: the annotation vocabulary exists so a
+            // bare coordinate is not recorded under a spelling that claims a
+            // recognition, and this kind claims none -- `long_press_delivered`
+            // says what happened and says nothing about why it was allowed.
+            return requireLongPressPayload(event);
 
         case TraceEventKind::AnnotationClickDelivered:
         case TraceEventKind::AnnotationRegionSaved:

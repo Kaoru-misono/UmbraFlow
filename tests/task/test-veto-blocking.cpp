@@ -278,6 +278,21 @@ namespace uf::task
                 m_gate->blockOn(m_gate->token());
                 return ok();
             }
+
+            // And for a blocked long press. It blocks on the gate rather than
+            // sleeping for the hold, because what the veto cases are about is a
+            // sink that does not return, and a real hold would only make the case
+            // slower without making it stronger.
+            [[nodiscard]]
+            auto longPress(
+                Point<ClientSpace> /*point*/,
+                MonotonicInstant::Duration /*hold*/,
+                ObservationLease const& /*lease*/
+            ) -> Status override
+            {
+                m_gate->blockOn(m_gate->token());
+                return ok();
+            }
         };
 
         // Blocks inside emit(), on the first event matching its target.

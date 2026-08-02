@@ -58,6 +58,27 @@ namespace uf::task
         std::chrono::seconds{30}
     };
 
+    // The longest a single long press may hold the button down.
+    //
+    // It is a SEPARATE ceiling from the settle one above and a much lower number,
+    // because the two bound different risks. A settle only sleeps; while a long
+    // press runs, the target has a pointer button physically down in it and this
+    // host is the only thing that will ever lift it. A hold nobody bounded is a
+    // target left mid-press for as long as the script asked, with every other
+    // input in the run queued behind it. A request beyond this is a project error
+    // and Tier B for k_maxSettleDuration's reason: an author asking to hold a
+    // card for a minute should be told so and be able to correct it.
+    //
+    // CALIBRATION: five seconds is a conservative placeholder awaiting the first
+    // real daily. Targets that publish a long-press gesture measure it in
+    // hundreds of milliseconds -- the one this was built for prints
+    // "long-press a card to see its details" and magnifies well under a second --
+    // so this is an order of magnitude above any real gesture and far below a
+    // hold anyone would notice as a hang.
+    inline constexpr auto k_maxLongPressHold = MonotonicInstant::Duration{
+        std::chrono::seconds{5}
+    };
+
     // The floor a ctx:wait poll interval is clamped up to. Without it a
     // framework loop could ask for a zero interval and spin the observation
     // cycle as fast as captures complete, burning the instruction budget and the
@@ -538,6 +559,46 @@ namespace uf::task
         // coordinate (docs/plans/2026-08-01-three-layers-and-agent-operator.md
         // section 7 lists it under the run-mode action verbs).
         [[nodiscard]] auto cycleScroll(CycleTicket ticket, int32 notches) -> Status;
+
+        // Spends the cycle `ticket` names and delivers one long press at `point`,
+        // holding the button down for `hold`.
+        //
+        // IT IS cycleClickPoint's CONTRACT AND NOT cycleKey's, because the verb
+        // names a coordinate. The ticket must name the generation's open cycle
+        // and the frame leaves the ledger here, so this ticket delivers nothing
+        // else; the rest -- fingerprint, lease, single delivery -- is the
+        // engine's, unchanged, and every clause of it applies. There is no looser
+        // path to the same window and there must not be one.
+        //
+        // It takes NO hit ordinal, where cycleClickPoint takes an optional one.
+        // That is not a check being dropped: the ordinal exists so C++ can verify
+        // a MATCH HANDLE came from this frame, and there is no match-handle
+        // spelling of this verb -- the hits it is asked about are text lines and
+        // page-positioned rectangles, which reach the host as bare coordinates
+        // with no handle to check. The same-frame rule for those is enforced
+        // where it has to be, in observe.luau, for every kind of hit alike. A
+        // parameter that could only ever be empty would advertise a check nobody
+        // performs.
+        //
+        // `hold` has NO DEFAULT anywhere on this surface. How long a target needs
+        // a button held before it treats the press as a long one is a fact about
+        // that target, which the author measured and this host never guesses. It
+        // is bounded here by k_maxLongPressHold, because a ceiling is a
+        // guarantee -- it stops a script leaving the target mid-press -- while a
+        // default would be a decision.
+        //
+        // WHO MAY REACH THIS: whoever may reach cycleClickPoint, and by the same
+        // mechanism. A long press names a bare coordinate, so it carries the bare
+        // coordinate's privilege exactly: the trusted Luau framework binds it as a
+        // closure upvalue, the exploration environment publishes a forward for an
+        // agent that has no model yet, and no business project environment names
+        // it. See the primitive's own comment in ffi/uf-tables.cpp.
+        [[nodiscard]]
+        auto cycleLongPress(
+            CycleTicket ticket,
+            PixelPoint point,
+            MonotonicInstant::Duration hold
+        ) -> Result<engine::LongPressReceipt>;
 
         // Sleeps until `deadline`, or for `interval`, whichever comes first, and
         // reports whether budget remains afterwards -- false means the deadline

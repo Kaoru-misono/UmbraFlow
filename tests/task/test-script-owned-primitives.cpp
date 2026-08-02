@@ -1287,6 +1287,267 @@ namespace uf::task
             CHECK(p_clicks->scrolls().front() == int32{1});
         }
 
+        TEST_CASE("A long press reaches the sink at its point with the hold named")
+        {
+            auto built = buildHarness(matchableFrames(), HarnessSpec{});
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+            auto const hold = MonotonicInstant::Duration{
+                std::chrono::milliseconds{250}
+            };
+            auto const receipt =
+                context.cycleLongPress(*ticket, PixelPoint{1, 0}, hold);
+            REQUIRE(receipt.has_value());
+
+            // The hold is asserted and not merely the delivery, which is the
+            // whole point of the case: replace `hold` with anything else in the
+            // sink call inside EngineSession::longPress -- a zero, a constant,
+            // the argument dropped -- and every layer still delivers a press
+            // while this goes red. A duration the caller named that does not
+            // arrive is exactly the failure a default would hide.
+            REQUIRE(p_clicks->longPresses().size() == 1U);
+            CHECK(p_clicks->longPresses().front().hold == hold);
+            CHECK(receipt->hold == hold);
+
+            // The frame is 3x1 at scale 1, so the client point is the frame
+            // point; what matters is that the coordinate travelled at all.
+            CHECK(p_clicks->longPresses().front().point.x() == doctest::Approx(1.0));
+
+            // It is NOT a click, on the port or on the wire. A long press folded
+            // into click() would leave a reader counting delivered clicks
+            // counting acts that magnified a card instead of pressing a button.
+            CHECK(p_clicks->clickCount() == 0U);
+        }
+
+        TEST_CASE("A long press spends its cycle")
+        {
+            auto built = buildHarness(matchableFrames(), HarnessSpec{});
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+            auto const hold = MonotonicInstant::Duration{
+                std::chrono::milliseconds{200}
+            };
+            REQUIRE(
+                context.cycleLongPress(*ticket, PixelPoint{1, 0}, hold).has_value()
+            );
+
+            // The decision this case records: a long press spends its frame like
+            // every other delivered input. It has to -- the press magnifies what
+            // it pressed, so the frame that authorised it describes a screen the
+            // press has already replaced. Drop the spend in
+            // TaskContext::cycleLongPress and one frame delivers as many presses
+            // as a script asks for, so this goes red.
+            CHECK_FALSE(context.hasOpenCycle());
+            auto const again =
+                context.cycleLongPress(*ticket, PixelPoint{1, 0}, hold);
+            REQUIRE_FALSE(again.has_value());
+            CHECK(
+                kindOfError(again.error()) == AutomationErrorKind::StaleObservation
+            );
+            CHECK(p_clicks->longPresses().size() == 1U);
+        }
+
+        TEST_CASE("A long press honours the lease and the fingerprint like a click")
+        {
+            SUBCASE("an expired lease refuses the press")
+            {
+                // The paired case is "A bare-point click still honours the lease
+                // and the fingerprint" above, and the pairing is the point: the
+                // same harness, the same expiry, the same refusal. Remove the
+                // lease check from EngineSession::longPress and a press is
+                // delivered against a frame whose coordinate has already expired
+                // -- a second and laxer path to the same window -- so this goes
+                // red while the click case stays green.
+                auto built = buildHarness(
+                    matchableFrames(),
+                    HarnessSpec{
+                        .maxActionFrameAge = MonotonicInstant::Duration::zero(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                auto const ticket = context.openCycle();
+                REQUIRE(ticket.has_value());
+                auto const receipt = context.cycleLongPress(
+                    *ticket,
+                    PixelPoint{1, 0},
+                    MonotonicInstant::Duration{std::chrono::milliseconds{200}}
+                );
+                REQUIRE_FALSE(receipt.has_value());
+                CHECK(
+                    kindOfError(receipt.error())
+                    == AutomationErrorKind::StaleObservation
+                );
+                CHECK(p_clicks->longPresses().empty());
+            }
+
+            SUBCASE("a mismatched fingerprint refuses the press")
+            {
+                auto built = buildHarness(
+                    matchableFrames(),
+                    HarnessSpec{
+                        .liveFingerprint = test::fingerprint(3, 1, 120, 120),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                auto const ticket = context.openCycle();
+                REQUIRE(ticket.has_value());
+                auto const receipt = context.cycleLongPress(
+                    *ticket,
+                    PixelPoint{1, 0},
+                    MonotonicInstant::Duration{std::chrono::milliseconds{200}}
+                );
+                REQUIRE_FALSE(receipt.has_value());
+                CHECK(
+                    kindOfError(receipt.error())
+                    == AutomationErrorKind::TargetCompatibilityUnverified
+                );
+                CHECK(p_clicks->longPresses().empty());
+            }
+        }
+
+        TEST_CASE("cycle_long_press refuses a hold it cannot honour")
+        {
+            // Every refusal below happens BEFORE the cycle is spent, which is
+            // what makes them worth checking here: a script that mistyped a hold
+            // still holds its frame, and the target is never left mid-press while
+            // the author finds out. Delete the k_maxLongPressHold check in
+            // cycleLongPressFn and the third line stops raising, so this goes red.
+            auto built = buildHarness(matchableFrames(), HarnessSpec{});
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            constexpr std::string_view source = R"lua(
+                local cycle = ctx:cycle_open()
+                local missing = pcall(function()
+                    explore.long_press(cycle, 1, 0)
+                end)
+                if missing then return 0 end
+                local typed = pcall(function()
+                    explore.long_press(cycle, 1, 0, "a while")
+                end)
+                if typed then return 0 end
+                local huge = pcall(function()
+                    explore.long_press(cycle, 1, 0, 60000)
+                end)
+                if huge then return 0 end
+                local backwards = pcall(function()
+                    explore.long_press(cycle, 1, 0, -50)
+                end)
+                if backwards then return 0 end
+                explore.long_press(cycle, 1, 0, 200)
+                return 1
+            )lua";
+
+            auto engineVm = script::Engine::create(explorationVmConfig(context));
+            REQUIRE(engineVm.has_value());
+            auto const result = engineVm->runNumber(source, "long-press-holds");
+            REQUIRE(result.has_value());
+            CHECK(*result == 1.0);
+            REQUIRE(p_clicks->longPresses().size() == 1U);
+            CHECK(
+                p_clicks->longPresses().front().hold
+                == MonotonicInstant::Duration{std::chrono::milliseconds{200}}
+            );
+        }
+
+        TEST_CASE("cycle_long_press is bound on both surfaces and forwarded on one")
+        {
+            // The capability split for this verb, and the only place it is
+            // observable. A long press names a BARE COORDINATE, so it carries
+            // cycle_click_point's privilege exactly: the primitive is installed
+            // on both private surfaces, because the trusted framework needs it in
+            // run mode for an element the page model placed -- and no project
+            // environment may name it, because a business task clicking or
+            // pressing wherever it likes is the hole `ctx` closed.
+            //
+            // THE ADDITIVE MUTATION THIS CASE EXISTS FOR. The first subcase would
+            // pass just as well against a build where the primitive did not exist
+            // at all, which would prove nothing about confinement. So add a
+            // forward to ctx.luau --
+            //
+            //     function ctx:cycle_long_press(ticket, x, y, hold)
+            //         return native.cycle_long_press(ticket, x, y, hold)
+            //     end
+            //
+            // -- and BOTH subcases go red, which is the fence being HELD rather
+            // than merely absent: the primitive is there, trusted code reaches
+            // it, and the only thing keeping a project away from it is that no
+            // table a project can name forwards it.
+            //
+            // That the run surface really binds it is proved where it can be
+            // proved -- by delivering one, in test-script-owned-model.cpp's
+            // "observe.long_press presses a page-positioned element" -- because a
+            // run VM publishes no `explore` to ask the question with.
+            SUBCASE("no project environment can name it on ctx")
+            {
+                auto built = buildHarness(matchableFrames(), HarnessSpec{});
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                // Asserted in the EXPLORATION VM, where `explore.long_press`
+                // proves in the same breath that the primitive is bound and
+                // reachable. `ctx` is published into both project environments,
+                // so its silence here is its silence in a run VM too.
+                constexpr std::string_view source = R"lua(
+                    if rawget(ctx, "cycle_long_press") ~= nil then return 0 end
+                    if rawget(ctx, "cycle_click_point") ~= nil then return 0 end
+                    if not explore.has("cycle_long_press") then return 0 end
+                    local cycle = ctx:cycle_open()
+                    explore.long_press(cycle, 1, 0, 150)
+                    return 1
+                )lua";
+
+                auto engineVm = script::Engine::create(explorationVmConfig(context));
+                REQUIRE(engineVm.has_value());
+                auto const result = engineVm->runNumber(source, "long-press-ctx");
+                REQUIRE(result.has_value());
+                CHECK(*result == 1.0);
+                CHECK(p_clicks->longPresses().size() == 1U);
+            }
+
+            SUBCASE("a run VM has neither the ctx forward nor the explore module")
+            {
+                // The other half of the confinement. `explore` is what publishes
+                // the forward, and it is in the exploration environment's list
+                // and in no other -- so a business task has no `ctx` key for the
+                // verb AND no module to reach it through. Publish `explore` into
+                // the run environment and this goes red.
+                auto built = buildHarness(matchableFrames(), HarnessSpec{});
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                constexpr std::string_view source = R"lua(
+                    if rawget(ctx, "cycle_long_press") ~= nil then return 0 end
+                    if explore ~= nil then return 0 end
+                    return 1
+                )lua";
+
+                auto engineVm = script::Engine::create(taskVmConfig(context));
+                REQUIRE(engineVm.has_value());
+                auto const result = engineVm->runNumber(source, "long-press-run");
+                REQUIRE(result.has_value());
+                CHECK(*result == 1.0);
+                CHECK(p_clicks->longPresses().empty());
+            }
+        }
+
         TEST_CASE("Project file I/O round trips inside the project directory")
         {
             auto const directory = TemporaryDirectory{"uf-project-files-roundtrip"};

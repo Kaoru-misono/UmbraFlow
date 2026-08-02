@@ -210,6 +210,46 @@ namespace uf::trace
             CHECK(stream.emit(delivered).has_value());
         }
 
+        TEST_CASE("a delivered long press must say where and for how long")
+        {
+            // It needs BOTH halves, which is what makes it different from every
+            // other delivered input. The point alone describes a click; the hold
+            // alone describes a press at nowhere. Drop either clause from
+            // requireLongPressPayload and the matching refusal below goes red.
+            auto stream = Stream{};
+
+            auto pointOnly        = plain(TraceEventKind::EngineLongPressDelivered);
+            pointOnly.clickClient = Point<ClientSpace>{4.0F, 2.0F};
+            CHECK(
+                refusedKind(stream.emit(pointOnly))
+                == AutomationErrorKind::InternalInvariant
+            );
+
+            auto holdOnly       = plain(TraceEventKind::EngineLongPressDelivered);
+            holdOnly.holdMillis = uint64{400};
+            CHECK(
+                refusedKind(stream.emit(holdOnly))
+                == AutomationErrorKind::InternalInvariant
+            );
+            CHECK(stream.events().empty());
+
+            // The control: both together are admitted, so the refusals above are
+            // about the missing fields and not about the kind.
+            auto delivered        = plain(TraceEventKind::EngineLongPressDelivered);
+            delivered.clickClient = Point<ClientSpace>{4.0F, 2.0F};
+            delivered.holdMillis  = uint64{400};
+            REQUIRE(stream.emit(delivered).has_value());
+            REQUIRE(stream.events().size() == 1U);
+
+            // And it is admitted on the EXPLORATION stream too, unlike
+            // engine.action_delivered. That is the decided vocabulary rule for
+            // this kind: it claims no recognition, so there is nothing for an
+            // annotation spelling to correct. Add it to
+            // refuseAnnotationVocabularyClash's kinds and this goes red.
+            auto annotation = Stream{FrontEnd::Annotation};
+            CHECK(annotation.emit(delivered).has_value());
+        }
+
         TEST_CASE("a run bracket opens once and accepts nothing after it closes")
         {
             auto stream = Stream{};

@@ -133,6 +133,14 @@ namespace uf::trace
         [[nodiscard]]
         static auto requireScrollPayload(TraceEvent const& event) -> Status;
 
+        // The same rule again for engine.long_press_delivered, which needs BOTH
+        // halves: the point says where the button went down and the hold is the
+        // whole of what makes the line a long press rather than the click at the
+        // same coordinate. A line carrying only one of them describes an act
+        // nobody can tell apart from a different one.
+        [[nodiscard]]
+        static auto requireLongPressPayload(TraceEvent const& event) -> Status;
+
         [[nodiscard]] auto startStep(TraceEvent::Framework const& payload) -> Status;
         [[nodiscard]] auto finishStep(TraceEvent::Framework const& payload) -> Status;
         [[nodiscard]] auto retryAttempt(TraceEvent::Framework const& payload) -> Status;

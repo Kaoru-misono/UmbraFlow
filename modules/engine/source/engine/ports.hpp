@@ -142,5 +142,47 @@ namespace uf::engine
             int32 notches,
             ObservationLease const& lease
         ) -> Status = 0;
+
+        // Delivers one long press at `point`: the button goes down, stays down
+        // for `hold`, and comes back up before this returns.
+        //
+        // WHY THE PORT HAS THIS AND NOT pointerDown/pointerUp. The controller has
+        // had all three since D0, so the choice here is which of them becomes a
+        // verb anything above the engine can ask for, and it is decided by the
+        // authorization model rather than by convenience. A click is authorized
+        // by a hit located on the frame it is delivered to; that is a statement
+        // about ONE instant, and a long press is still one instant's worth of
+        // authorization because press, hold and release are one act that begins
+        // and ends inside this call -- nothing above ever holds a half-pressed
+        // target, and no observation is left describing a screen with a button
+        // stuck down in it. A bare pointerDown is not that. It would hand a
+        // caller a hold spanning many frames, and the model has no answer yet to
+        // "who guarantees the matching release" -- not which layer owns it, not
+        // what happens when the run is cancelled mid-hold, not what a frame
+        // captured during one even means. controller::releaseHeld exists because
+        // the platform layer thought that through for ITSELF; the semantics
+        // upward have not been decided, and shipping down/up would decide them
+        // by accident.
+        //
+        // The hold is the CALLER'S and has no default here or anywhere above:
+        // how long a target needs a button held to treat it as a long press is a
+        // fact about that target, and a duration the caller cannot see is one it
+        // never chose.
+        //
+        // It takes a lease for click()'s reason and not for scroll()'s: this verb
+        // names a coordinate the caller measured off a frame, so the lease is
+        // authorization here and not merely delivery material. The implementation
+        // MUST forward it to the delivery layer so the controller's D0 fencing
+        // re-runs at post time, MUST deliver strictly in the background, and MUST
+        // never steal focus or activate the target window. It MUST also leave the
+        // button released on every exit path, including a failed one -- a verb
+        // whose whole safety argument is that it strands no held state cannot
+        // strand held state when it fails.
+        [[nodiscard]]
+        virtual auto longPress(
+            Point<ClientSpace> point,
+            MonotonicInstant::Duration hold,
+            ObservationLease const& lease
+        ) -> Status = 0;
     };
 }

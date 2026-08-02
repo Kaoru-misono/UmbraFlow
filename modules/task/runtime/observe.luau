@@ -33,6 +33,19 @@
 -- "the element is not on screen" would make the model's answer a function of a
 -- configuration number, which is the one thing the determinism rule forbids.
 --
+-- AN EMPTY REGION IS THE SAME MISTAKE ONE LAYER UP, and the read verbs refuse
+-- to make it on the caller's behalf. A region reads nothing for two reasons --
+-- it is blank, or what belongs in it has not been drawn yet -- and no frame
+-- tells those apart, because the recogniser reports the same nothing for both.
+-- One caller is asking "is this region clear", and for it the empty read is the
+-- answer; the other is asking "what is in this region", and for it the empty
+-- read is a blank that reads like a conclusion: a list nobody can pick from
+-- looks exactly like a list holding nothing it wants. So `read_element` and
+-- `read_lines` take `observe.empty_is_absence` or `observe.empty_is_unknown`
+-- with no default, and the second raises rather than handing back a nothing the
+-- caller would go on to reason from. The verb cannot choose: the two callers
+-- differ in what they came for, not in what they read.
+--
 -- THE EXCEPTION. `wait_until` mints a Tier B timeout, and minting a host error
 -- has no `ctx` forward -- ctx.luau's own wait loop reaches for `native.raise`
 -- for exactly this. So this module takes the private surface as its chunk
@@ -185,6 +198,88 @@ end
 -- only thing standing between a guess and a page identity.
 function observe.confident(reading: any, floor: number): boolean
     return reading.confidence >= floor
+end
+
+-- What a region that read NOTHING means to the caller who asked. Both read verbs
+-- take one of these two and neither has a default.
+--
+-- WHY IT CANNOT BE ANSWERED HERE. The engine reports the same nothing whether
+-- the region is blank or whether what belongs in it has not been drawn yet, and
+-- one frame holds no evidence separating them. What separates them is the
+-- QUESTION: `empty_is_absence` is asked by a caller who wants to know whether
+-- the region is clear -- the shape a `forbidden` clause has, and the shape "is
+-- the popup gone" has -- and for it a region reading nothing is the answer.
+-- `empty_is_unknown` is asked by a caller who wants what is in the region, and
+-- for it a region reading nothing has said nothing at all: the read verb raises
+-- `uf.errors.recognition_incomplete`, which classifies as Retry, so the caller
+-- observes again instead of branching on a blank.
+--
+-- WHY IT IS A RAISE AND NOT A THIRD RETURN VALUE. Because the cost of this
+-- mistake is that it does not look like one. A caller holding an empty list runs
+-- its whole choosing loop, matches nothing, and prints a sentence that reads
+-- like a decision -- this framework watched one skip a card reward whose cards
+-- had not finished drawing. A second return value is dropped by writing one
+-- `local`, and a nil is a value a caller still has to remember to test. A raise
+-- is the only answer here that a caller cannot go on to reason from, and it is
+-- the same answer `cycle_match` gives a search that stopped looking.
+observe.empty_is_absence = "absence"
+observe.empty_is_unknown = "unknown"
+
+-- The closed set, so a misspelling picks no policy at all rather than the wrong
+-- one.
+local k_emptyMeaningKnown: { [string]: boolean } = table.freeze({
+    [observe.empty_is_absence] = true,
+    [observe.empty_is_unknown] = true,
+})
+
+-- The refusal blames level 3: level 1 is this function, level 2 is the read verb
+-- that called it, and the caller that left the policy out is one further again.
+local function emptyMeaning(verb: string, value: any): string
+    if type(value) ~= "string" or not k_emptyMeaningKnown[value] then
+        error(
+            verb
+                .. " has to be told what an empty region means before it reads "
+                .. "one: pass observe.empty_is_absence when a region holding "
+                .. "nothing is the answer you came for, and "
+                .. "observe.empty_is_unknown when you came for what is in it. "
+                .. "There is no default, because the engine reports the same "
+                .. "nothing for a blank region and for one the target has not "
+                .. "drawn yet, and only the caller knows which of the two it "
+                .. "would be willing to act on",
+            3
+        )
+    end
+    return value
+end
+
+-- What a read verb raises when it found nothing and the caller said nothing is
+-- not an answer.
+--
+-- It is a HOST-MINTED Tier B error rather than a Luau string, for `wait_until`'s
+-- reason: a project can catch it, a retry policy can name it, and the host
+-- classifies it with every other automation failure. The kind is
+-- `recognition_incomplete`, whose whole definition is "the caller learned
+-- nothing about the screen, so it must observe again instead of branching as
+-- though something had been ruled out" -- which is this case exactly.
+local function raiseUnread(verb: string, element: any, rect: any)
+    native.raise(
+        "recognition_incomplete",
+        verb
+            .. " found no text at all in the region element '"
+            .. element.name
+            .. "' reads at ["
+            .. tostring(rect.x)
+            .. ","
+            .. tostring(rect.y)
+            .. " "
+            .. tostring(rect.width)
+            .. "x"
+            .. tostring(rect.height)
+            .. "], and this call passed observe.empty_is_unknown; a region "
+            .. "reads nothing both when it is blank and when what belongs in it "
+            .. "has not been drawn, so this frame established neither and the "
+            .. "answer is another observation rather than a branch"
+    )
 end
 
 local function requireCtx(ctx: any, verb: string)
@@ -621,7 +716,8 @@ function observe.find(
     return hit
 end
 
--- observe.read_element(ctx, ticket, element_or_reference, compare) -> Reading?
+-- observe.read_element(ctx, ticket, element_or_reference, on_empty, compare)
+--     -> Reading?
 --
 -- Reads the element's rectangle and, when there is expected text, says whether
 -- the reading counts as that text.
@@ -637,8 +733,18 @@ end
 --
 -- It takes no page-plus-element form, unlike `observe.find`. A caller holding a
 -- page reaches the row through `model.Page.reference_for`, and one explicit line
--- there is better than a fifth argument on a verb whose fourth one is already a
--- policy.
+-- there is better than a sixth argument on a verb whose fourth and fifth are
+-- already policies.
+--
+-- `on_empty` COMES BEFORE `compare`, AND THAT ORDER IS THE POINT. It is required
+-- on every call; the comparison is required only when there is expected text to
+-- judge. Required before optional means the common call needs no `nil` place
+-- holder, and a caller who swaps the two is refused by name rather than having a
+-- function silently read as a policy. What each value means is on
+-- `observe.empty_is_absence` above; the short of it is that a nil reading is
+-- what a caller gets under `empty_is_absence`, and a raise is what it gets under
+-- `empty_is_unknown`, because a rectangle that read nothing has not said that
+-- the text it was pointed at is absent.
 --
 -- THE EXPECTED TEXT IS DATA AND THE COMPARISON IS POLICY. "This cell says 出击"
 -- is a fact about the UI, so it is written in the project file where it can be
@@ -659,9 +765,24 @@ function observe.read_element(
     ctx: any,
     ticket: any,
     elementOrReference: any,
+    onEmpty: any,
     compare: any
 ): Reading?
     requireCtx(ctx, "observe.read_element")
+    -- Named before the generic refusal, because the two policies are adjacent
+    -- and a comparison landing in the empty-region slot is the one mistake this
+    -- signature makes easy.
+    if type(onEmpty) == "function" then
+        error(
+            "observe.read_element takes the empty-region policy before the "
+                .. "comparison: read_element(ctx, ticket, target, "
+                .. "observe.empty_is_absence, observe.exact_text). Both are "
+                .. "policies with no default, so their order is the only thing "
+                .. "saying which is which",
+            2
+        )
+    end
+    local meaning = emptyMeaning("observe.read_element", onEmpty)
 
     local reference, element = readTarget("observe.read_element", elementOrReference)
     local expected: string? = if reference ~= nil
@@ -682,6 +803,9 @@ function observe.read_element(
     local reading =
         ctx:cycle_read(ticket, rect.x, rect.y, rect.width, rect.height)
     if reading == nil then
+        if meaning == observe.empty_is_unknown then
+            raiseUnread("observe.read_element", element, rect)
+        end
         return nil
     end
 
@@ -705,11 +829,22 @@ function observe.read_element(
     })
 end
 
--- observe.read_lines(ctx, ticket, element_or_reference) -> { Hit }
+-- observe.read_lines(ctx, ticket, element_or_reference, on_empty) -> { Hit }
 --
 -- Reads the element's whole region and returns one hit per line of text the
 -- FRAME found inside it, top to bottom then left to right, each carrying its own
--- rectangle in target pixels. An empty list means the region held no text.
+-- rectangle in target pixels.
+--
+-- WHAT AN EMPTY LIST MEANS IS `on_empty`'S, AND THIS VERB IS WHERE THAT RULE WAS
+-- BOUGHT. An empty list read like a fact about the region and was not one: a
+-- caller that reads three reward cards' name bands before the cards have
+-- finished drawing gets nothing from all three, walks its choosing loop over
+-- nothing, and reports "none of these is what the policy wants" -- a sentence
+-- shaped like a decision and made of a blank. Under `observe.empty_is_unknown`
+-- there is no list to walk, because the verb raises; under
+-- `observe.empty_is_absence` the empty list comes back and means what the caller
+-- said it means. See `observe.empty_is_absence` for why the verb cannot decide
+-- this itself.
 --
 -- WHY THIS EXISTS AT ALL, WHICH IS THE ONLY INTERESTING QUESTION ABOUT IT. Every
 -- other verb here starts from a rectangle the model drew: `find` searches one,
@@ -763,13 +898,23 @@ end
 --
 -- PICKING one of the lines out and AIMING beside it are `hits.matching` and
 -- `hits.offset`. Neither costs a capture, which is why neither is here.
-function observe.read_lines(ctx: any, ticket: any, elementOrReference: any): { Hit }
+function observe.read_lines(
+    ctx: any,
+    ticket: any,
+    elementOrReference: any,
+    onEmpty: any
+): { Hit }
     requireCtx(ctx, "observe.read_lines")
+    local meaning = emptyMeaning("observe.read_lines", onEmpty)
 
     local reference, element = readTarget("observe.read_lines", elementOrReference)
     local rect  = searchRect(reference, element)
     local found =
         ctx:cycle_read_lines(ticket, rect.x, rect.y, rect.width, rect.height)
+
+    if #found == 0 and meaning == observe.empty_is_unknown then
+        raiseUnread("observe.read_lines", element, rect)
+    end
 
     -- `located` rather than `hits`, which is the name of a published framework
     -- module: shadowing it inside the one verb whose results that module
@@ -839,32 +984,50 @@ end
 --
 -- A failed resolution mints nothing at all, which is what makes "resolve_page
 -- said no" and "resolve_page was never called" the same refusal here.
-function observe.click(ctx: any, ticket: any, receipt: any, hit: any)
-    requireCtx(ctx, "observe.click")
+--
+-- IT IS ONE FUNCTION SERVING TWO VERBS, and that is deliberate rather than
+-- tidy. `observe.long_press` delivers pointer input at a hit exactly as this
+-- does, and the read_lines comment above says why a second door into the same
+-- delivery is the wrong shape: the second door is always the one that is missing
+-- a lock. So the six requisites are written once, and a verb that delivers at a
+-- hit without passing through here would be visible as such.
+--
+-- `verb` names the caller because that is the only part of each sentence that
+-- differs; the refusals blame level 3, which is the caller of the verb that
+-- called this.
+local function requireAuthorisedHit(
+    verb: string,
+    ticket: any,
+    receipt: any,
+    hit: any
+)
     if not evidence.is_receipt(receipt) then
         error(
-            "observe.click needs the receipt observe.resolve_page returned for "
-                .. "the page this element belongs to; a resolution that failed "
+            verb
+                .. " needs the receipt observe.resolve_page returned for the "
+                .. "page this element belongs to; a resolution that failed "
                 .. "returns none, so there is nothing to pass and nothing to "
-                .. "click on",
-            2
+                .. "act on",
+            3
         )
     end
     if not rawequal(receipt.ticket, ticket) then
         error(
-            "observe.click was given a receipt for page '"
+            verb
+                .. " was given a receipt for page '"
                 .. receipt.page.name
-                .. "' minted on another observation cycle; a click is "
+                .. "' minted on another observation cycle; an action is "
                 .. "authorised by the page THIS frame resolved, and evidence "
                 .. "from an earlier frame describes a screen that has moved on",
-            2
+            3
         )
     end
     if evidence.hit_ticket(hit) == nil then
         error(
-            "observe.click takes a hit that observe.find returned on this "
-                .. "cycle, and nothing else",
-            2
+            verb
+                .. " takes a hit that observe.find returned on this cycle, and "
+                .. "nothing else",
+            3
         )
     end
     -- THE SIXTH REQUISITE, and the one a located line made necessary. A hit is
@@ -877,32 +1040,39 @@ function observe.click(ctx: any, ticket: any, receipt: any, hit: any)
     -- that would otherwise escape.
     if not rawequal(evidence.hit_ticket(hit), ticket) then
         error(
-            "observe.click was given a hit located on another observation "
-                .. "cycle; where a thing was on an earlier frame is not where it "
-                .. "is on this one, and a click authorised by this frame has to "
-                .. "be aimed by it too",
-            2
+            verb
+                .. " was given a hit located on another observation cycle; "
+                .. "where a thing was on an earlier frame is not where it is on "
+                .. "this one, and an action authorised by this frame has to be "
+                .. "aimed by it too",
+            3
         )
     end
     if receipt.page.name ~= hit.page then
         error(
-            "observe.click holds a receipt for page '"
+            verb
+                .. " holds a receipt for page '"
                 .. receipt.page.name
                 .. "' and a hit page '"
                 .. tostring(hit.page)
                 .. "' authorised; one element referenced by two pages is "
-                .. "clickable on the page that was recognised and on no other",
-            2
+                .. "interactive on the page that was recognised and on no other",
+            3
         )
     end
     if not hit.interact then
         error(
             "this page does not exercise interact on element '"
                 .. hit.element.name
-                .. "'; finding it is allowed and clicking it is not",
-            2
+                .. "'; finding it is allowed and acting on it is not",
+            3
         )
     end
+end
+
+function observe.click(ctx: any, ticket: any, receipt: any, hit: any)
+    requireCtx(ctx, "observe.click")
+    requireAuthorisedHit("observe.click", ticket, receipt, hit)
 
     if hit.match ~= nil then
         ctx:cycle_click(ticket, hit.match)
@@ -929,6 +1099,80 @@ function observe.click(ctx: any, ticket: any, receipt: any, hit: any)
         )
     end
     native.cycle_click_point(ticket, hit.click_x, hit.click_y)
+end
+
+-- observe.long_press(ctx, ticket, receipt, hit, hold_ms) -> ()
+--
+-- Presses where the hit is, holds the button down for `hold_ms`, releases it,
+-- and spends the observation cycle.
+--
+-- WHAT IT IS FOR. Some targets say more when they are pressed than when they are
+-- looked at. The one this framework was built for fans its battle cards so each
+-- name is clipped by the card in front of it, and it prints, on that very screen,
+-- "long-press a card to see its details" -- a press magnifies the card and the
+-- whole name becomes legible. The alternative is matching a fragment against a
+-- list of full names and guessing which card it belongs to, which on this target
+-- read as `萬人的英雄`, then `人的`, then `人的英` across three turns and once
+-- nearly matched the wrong card. This verb is how a script takes a good reading
+-- instead of tolerating a bad one.
+--
+-- IT IS AUTHORISED EXACTLY AS observe.click IS, through the same function, and
+-- that is the whole of why it is safe: the same receipt for this ticket, the same
+-- page, the same hit minted on this frame, the same interact edge. Delivering
+-- pointer input at a hit is what both verbs do, and neither gets its own weaker
+-- door into it.
+--
+-- EVERY HIT IS DELIVERED AT ITS POINT, including one that carries a match.
+-- `observe.click` hands a match back to C++ so the host can re-check that the
+-- handle came from this frame; there is no match-handle spelling of a long press
+-- and inventing one would be a second delivery path to maintain in step with the
+-- first. Nothing is relaxed by that: the same-frame rule is enforced above, in
+-- `requireAuthorisedHit`, for every kind of hit alike -- which is exactly the
+-- arrangement a located line already required, since a line reaches the host as
+-- a bare coordinate with no handle for C++ to check either.
+--
+-- IT SPENDS THE CYCLE, like every delivered input. That is not incidental here:
+-- the magnified card is on the NEXT frame by definition, so reading it means
+-- opening another observation, which is what the caller would have to do anyway
+-- and now cannot forget to.
+--
+-- `hold_ms` HAS NO DEFAULT. How long this target wants a press held before it
+-- treats it as a long one is a fact the author measured; a number this file
+-- supplied would be a decision the caller did not make and could not see. The
+-- host caps it, because a ceiling stops a script leaving the target mid-press
+-- while a default would merely choose for them.
+--
+-- IT GOES THROUGH `native` AND NOT THROUGH `ctx`, for observe.click's reason
+-- stated once there: `ctx` is published into every project environment, and a
+-- forward there would be a bare-coordinate press a business task could call
+-- directly, skipping every check above.
+function observe.long_press(
+    ctx: any,
+    ticket: any,
+    receipt: any,
+    hit: any,
+    holdMillis: number
+)
+    requireCtx(ctx, "observe.long_press")
+    requireAuthorisedHit("observe.long_press", ticket, receipt, hit)
+    if type(holdMillis) ~= "number" or holdMillis % 1 ~= 0 or holdMillis < 0 then
+        error(
+            "observe.long_press needs hold_ms = a whole number of milliseconds "
+                .. "to hold the button down; it has no default, because how long "
+                .. "a target wants a press held is a fact about that target and "
+                .. "not something this framework can know",
+            2
+        )
+    end
+
+    if native == nil then
+        error(
+            "observe.long_press needs the host's private surface to deliver a "
+                .. "press; this VM has no bound session",
+            2
+        )
+    end
+    native.cycle_long_press(ticket, hit.click_x, hit.click_y, holdMillis)
 end
 
 local function requireWholeAtLeast(

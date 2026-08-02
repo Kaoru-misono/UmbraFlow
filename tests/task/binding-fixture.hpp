@@ -240,9 +240,23 @@ namespace uf::task
     // Counts delivered clicks so fail-closed cases can assert none escaped.
     class CountingActionSink final : public engine::IActionSink
     {
+    public:
+        // One long press this sink was asked for. Both halves are recorded
+        // because a case proving the duration reached the port has to read the
+        // duration, and a point alone would pass just as well against a sink that
+        // dropped it.
+        struct LongPressDelivery final
+        {
+            Point<ClientSpace>         point;
+            MonotonicInstant::Duration hold{};
+        };
+
+    private:
         uint32               m_clickCount{0};
         std::vector<KeyName> m_keys{};
         std::vector<int32>   m_scrolls{};
+
+        std::vector<LongPressDelivery> m_longPresses{};
 
     public:
         [[nodiscard]]
@@ -275,6 +289,22 @@ namespace uf::task
             return ok();
         }
 
+        [[nodiscard]]
+        auto longPress(
+            Point<ClientSpace> point,
+            MonotonicInstant::Duration hold,
+            ObservationLease const& /*lease*/
+        ) -> Status override
+        {
+            m_longPresses.emplace_back(
+                LongPressDelivery{
+                    .point = point,
+                    .hold  = hold,
+                }
+            );
+            return ok();
+        }
+
         [[nodiscard]] auto clickCount() const noexcept -> uint32
         {
             return m_clickCount;
@@ -297,6 +327,14 @@ namespace uf::task
             -> std::vector<int32> const&
         {
             return m_scrolls;
+        }
+
+        // The long presses this sink was asked to deliver, in order, with the
+        // hold each one named.
+        [[nodiscard]] auto longPresses() const noexcept UF_LIFETIME_BOUND
+            -> std::vector<LongPressDelivery> const&
+        {
+            return m_longPresses;
         }
     };
 
@@ -333,6 +371,20 @@ namespace uf::task
             ObservationLease const& /*lease*/
         ) -> Status override
         {
+            return ok();
+        }
+
+        // Recorded into the same point list a click is: a determinism run's
+        // canonical action trace is the sequence of coordinates a script aimed
+        // at, and a long press aims at one exactly as a click does.
+        [[nodiscard]]
+        auto longPress(
+            Point<ClientSpace> point,
+            MonotonicInstant::Duration /*hold*/,
+            ObservationLease const& /*lease*/
+        ) -> Status override
+        {
+            m_points.emplace_back(point);
             return ok();
         }
 

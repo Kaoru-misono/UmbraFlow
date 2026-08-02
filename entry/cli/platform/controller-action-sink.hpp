@@ -1,7 +1,9 @@
 #pragma once
 
 #include <controller/input.hpp>
+#include <core/error/error.hpp>
 #include <core/error/result.hpp>
+#include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/detection.hpp>
@@ -9,6 +11,8 @@
 #include <domain/key.hpp>
 #include <domain/space.hpp>
 #include <engine/ports.hpp>
+
+#include <string_view>
 
 namespace uf::cli::platform
 {
@@ -22,6 +26,17 @@ namespace uf::cli::platform
         DeliveryTarget m_target;
         HeldInputs     m_held{};
         AuditLog       m_audit{};
+
+        // Drains whatever the failed verb left held and returns the verb's own
+        // error, with a note appended when the drain itself failed.
+        //
+        // Every verb here that can leave a button or a key down owes this, and
+        // the reason it is one function is that the three of them owe exactly the
+        // same thing: a target stranded mid-press is the same defect whichever
+        // verb stranded it. `what` names the verb, because that is the only part
+        // of the sentence that differs.
+        [[nodiscard]]
+        auto drainAfterFailure(Error error, std::string_view what) -> Status;
 
     public:
         explicit ControllerActionSink(DeliveryTarget target) noexcept
@@ -62,6 +77,22 @@ namespace uf::cli::platform
         [[nodiscard]]
         auto scroll(
             int32 notches,
+            ObservationLease const& lease
+        ) -> Status override;
+
+        // Posts the press, holds it, re-reads the bound window, and posts the
+        // release, through controller::longPress -- the same
+        // deliver -> postInputMessage -> PostMessageW route click() takes, with
+        // the same lease forwarded so the injection-layer fence runs at delivery
+        // time.
+        //
+        // It supplies the refresh-target callback controller::longPress requires;
+        // see the definition for what this composition can honestly re-read and
+        // what the callback is there to catch.
+        [[nodiscard]]
+        auto longPress(
+            Point<ClientSpace> point,
+            MonotonicInstant::Duration hold,
             ObservationLease const& lease
         ) -> Status override;
     };
