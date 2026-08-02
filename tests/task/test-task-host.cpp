@@ -798,6 +798,43 @@ exercised = ["interact"]
         CHECK(report.outcome() == TaskRunOutcome::Completed);
     }
 
+    TEST_CASE("a chunk broken with no host call still ends the exploration session")
+    {
+        auto const temp = TemporaryDir{"exploration-latch"};
+        publishProject(temp.path(), "daily", k_taskSource);
+
+        auto host             = TaskHost{};
+        auto const generation = host.loadProject(temp.path());
+        REQUIRE(generation.has_value());
+
+        auto session = host.startExplorationSession(
+            *generation,
+            runConfig(temp.path() / "explore.jsonl")
+        );
+        REQUIRE(session.has_value());
+        REQUIRE_FALSE((*session)->terminalKind().has_value());
+
+        REQUIRE(host.cancel(*generation).has_value());
+
+        // A PURE SPIN, and that is the whole case: it reaches no host call, so
+        // nothing writes the context latch the session used to be the only thing
+        // the session asked. The interrupt breaks the thread and only
+        // script::Engine records it. Delete the generationSpent() disjunct from
+        // ExplorationSession::terminalKind and this goes red while every other
+        // cancellation case stays green, because those all cancel THROUGH a verb.
+        auto const broken = (*session)->evaluate("while true do end", "spin");
+        REQUIRE_FALSE(broken.has_value());
+
+        auto const terminal = (*session)->terminalKind();
+        REQUIRE(terminal.has_value());
+        CHECK(*terminal == AutomationErrorKind::Cancelled);
+
+        // And the closing report says so. finish() destroys the VM, so it has to
+        // ask before it does; asking after loses the only latch that was set.
+        auto const report = (*session)->finish(std::nullopt);
+        CHECK(report.outcome() == TaskRunOutcome::Cancelled);
+    }
+
     TEST_CASE("TaskHost cancel spends the generation and queryTask reports it")
     {
         auto const temp = TemporaryDir{"cancel"};

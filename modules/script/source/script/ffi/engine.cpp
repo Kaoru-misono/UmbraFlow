@@ -334,6 +334,11 @@ namespace uf::script
         return uf::script::collectGarbage(m_impl->m_state.get());
     }
 
+    auto Engine::generationSpent() const noexcept -> bool
+    {
+        return m_impl->m_terminal;
+    }
+
     auto Engine::heapUsage() const noexcept -> HeapUsage
     {
         return uf::script::heapUsage(m_impl->m_state.get());

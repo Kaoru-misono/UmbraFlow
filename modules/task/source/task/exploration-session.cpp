@@ -304,7 +304,20 @@ namespace uf::task
     auto ExplorationSession::terminalKind() const noexcept
         -> std::optional<AutomationErrorKind>
     {
-        return m_context.terminalKind();
+        // TWO LATCHES, and asking only the first is what let a spent session
+        // look alive. The context latch is written by the host verbs, so it
+        // covers a cancellation observed inside a primitive. A break by the
+        // wall clock or the instruction budget reaches no primitive at all: it
+        // latches the VM, and only script::Engine knows.
+        if (auto const latched = m_context.terminalKind(); latched.has_value())
+        {
+            return latched;
+        }
+        if (m_vm.has_value() && m_vm->generationSpent())
+        {
+            return AutomationErrorKind::Cancelled;
+        }
+        return std::nullopt;
     }
 
     auto ExplorationSession::heapUsage() const noexcept -> script::HeapUsage
@@ -314,6 +327,9 @@ namespace uf::task
 
     auto ExplorationSession::finish(std::optional<Error> failure) -> TaskRunReport
     {
+        // Asked BEFORE the VM dies, because one of the two latches lives in it.
+        auto const terminal = terminalKind();
+
         // The VM dies before the closing line, so no chunk can still be running
         // when the bracket closes and nothing the VM holds outlives the context
         // it borrows.
@@ -329,7 +345,7 @@ namespace uf::task
         // did afterwards, exactly as for a task run and an operator session.
         if (!report.failure)
         {
-            if (auto const terminal = m_context.terminalKind(); terminal.has_value())
+            if (terminal.has_value())
             {
                 report.failure = fail(
                     *terminal,

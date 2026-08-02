@@ -413,9 +413,19 @@ dispatcher 一次认一页、做那一页要做的一件事,把这一局走完�
   阶段(读文件 / 建 element / 建 page / 建 reference / freeze)分段二分。
 - 注意 `heap.used` 是 Luau 账本,C++ 侧的模板库和截图缓存不计入,所以泄漏一定在 Luau 侧。
 
-## 两个 latch,explore 只看得见一个(2026-08-03 发现,未修)
+## 两个 latch,explore 只看得见一个(2026-08-03 发现并修复)
 
-- [ ] `ExplorationSession::terminalKind()` 只读 `TaskContext::m_terminal`,那是宿主动词
+已修:`script::Engine` 新增 `generationSpent()`,`ExplorationSession::terminalKind()`
+取两个 latch 的并集,`finish()` 改成在销毁 VM **之前**问(引擎那半就住在 VM 里)。
+证伪用例 `tests/task/test-task-host.cpp`「a chunk broken with no host call still ends
+the exploration session」:`while true do end` 不碰任何宿主动词,所以只有引擎那半会置位;
+拆掉并集这一半,恰好这一个测试转红,其余取消用例全绿——因为它们都是**穿过动词**取消的。
+`operator-session.cpp:189` 查过了,那边没有 Luau VM,不存在第二个 latch,保持原样。
+`entry/cli/explore.cpp:354` 那段注释现在是对的,不用改。
+
+<details><summary>原始记录</summary>
+
+- [x] `ExplorationSession::terminalKind()` 只读 `TaskContext::m_terminal`,那是宿主动词
   (`ffi/uf-tables.cpp` 的 `raiseCancelled` / `raiseInvariant`)写的。引擎自己的 latch
   (`script/ffi/engine.cpp:316-319`、`344-347`,在 `m_control.broken()` 后置位)传不到
   会话。于是被**墙钟或指令预算**打断的 chunk 会:引擎 latch 成 terminal,`explore.cpp:364`
@@ -428,6 +438,8 @@ dispatcher 一次认一页、做那一页要做的一件事,把这一局走完�
 - 修法方向:让会话的 terminal 判定取两个 latch 的并集(引擎需要暴露「这个世代已作废」),
   证伪测试用 stop token —— 撤掉修改后 `terminalKind()` 为空,测试转红。
   `operator-session.cpp:190` 和 `task-host.cpp:499` 同一模式,一并检查。
+
+</details>
 
 ## 项目任务脚本没有 require(2026-08-03 发现)
 

@@ -333,5 +333,17 @@ namespace uf::script
         // approach the ceiling instead of meeting it.
         [[nodiscard]]
         auto heapUsage() const noexcept -> HeapUsage;
+
+        // Whether a break has spent this generation, after which runNumber and
+        // runValue refuse without touching the VM.
+        //
+        // A front end that feeds one VM many units of script has to ask: the
+        // interrupt's three triggers reach no host call, so a break by the wall
+        // clock or the instruction budget latches HERE and nowhere the task
+        // layer can see. An exploration session that only consulted its own
+        // latch went on accepting chunks and refusing every one of them, with
+        // each refusal refreshing the idle clock.
+        [[nodiscard]]
+        auto generationSpent() const noexcept -> bool;
     };
 }
