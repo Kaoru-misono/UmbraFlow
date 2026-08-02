@@ -456,6 +456,22 @@ the exploration session」:`while true do end` 不碰任何宿主动词,所以�
 
 </details>
 
+## 一次瞬时停帧就终结一整局 task run(2026-08-03 真机遇到)
+
+- [ ] `capture_stalled` 让 `runOutcome` 直接变 `Failed`,一次已经投递 57 个动作的运行死在
+  这里。而它是**瞬时**的:同样的停帧在探索会话里重试一次就恢复,今晚查明其中一次的诱因是
+  游戏断线(屏幕上是「通訊不穩定。請點擊螢幕重新嘗試。」,已建模由脚本自己点掉重连)。
+  但没有横幅的停帧(重动画期间)仍然会直接终结运行,脚本无从自愈。
+- 要裁决的是宿主策略:停帧究竟是「这一帧没拿到」还是「这一代作废」。现在按后者处理。
+
+## `run` 把任务的返回值丢掉(2026-08-03 发现)
+
+- [ ] `TaskHost::startTask` 走 `runNumber`,所以任务返回的字符串被强制成数字;
+  `entry/cli/main.cpp` 的 run 分支也只打印 `task/hash/seed/trace` 四项。任务想说一句
+  「我做到哪了、为什么停」没有任何出口,trace 记的是每一次原生调用而不是任务自己的账。
+  现在靠 `daily.luau` 每步 `ctx:project_write` 自己写日志兜住,那是绕过去不是修好。
+- 修法:`runValue` + `TaskRunReport` 带上返回值,CLI 打印它。
+
 ## 项目任务脚本没有 require(2026-08-03 发现)
 
 - [ ] 项目任务是 `<projectRoot>/tasks/<name>.luau` 单个 chunk,宿主全仓库没有 `require`。
