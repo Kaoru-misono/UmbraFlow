@@ -78,6 +78,36 @@ function mint.unknown_key(
     return nil
 end
 
+-- How many tables deep an `extra` may nest, itself counted as the first. The
+-- bound is there for the reason `derives_from`'s is: a table that refers back to
+-- itself is one a project script can build, and neither the check nor the copy
+-- below would return on one. It is the same 8, and authored project data does
+-- not come near it.
+local k_extraDepth = 8
+
+-- The sentence for the first table under `value` that nests past the bound, or
+-- nil. A cycle reaches the bound rather than running forever, so it arrives here
+-- as the same sentence.
+local function nestingProblem(what: string, value: { [any]: any }, depth: number): string?
+    for key, entry in value do
+        if type(entry) == "table" then
+            if depth >= k_extraDepth then
+                return what
+                    .. ".extra nests more than "
+                    .. tostring(k_extraDepth)
+                    .. ' tables deep at "'
+                    .. tostring(key)
+                    .. '", or refers back to itself there'
+            end
+            local problem = nestingProblem(what, entry :: { [any]: any }, depth + 1)
+            if problem ~= nil then
+                return problem
+            end
+        end
+    end
+    return nil
+end
+
 function mint.check_extra(what: string, value: any): string?
     if value == nil then
         return nil
@@ -88,18 +118,37 @@ function mint.check_extra(what: string, value: any): string?
     if getmetatable(value) ~= nil then
         return what .. ".extra must be a plain table with no metatable"
     end
-    return nil
+    return nestingProblem(what, value :: { [any]: any }, 1)
 end
 
+local function frozenCopy(value: { [any]: any }, depth: number): any
+    local copy: { [any]: any } = {}
+    for key, entry in value do
+        if type(entry) == "table" then
+            if depth >= k_extraDepth then
+                error(
+                    "an extra table nests deeper than a snapshot can copy",
+                    0
+                )
+            end
+            copy[key] = frozenCopy(entry :: { [any]: any }, depth + 1)
+        else
+            copy[key] = entry
+        end
+    end
+    return table.freeze(copy)
+end
+
+-- A snapshot ALL THE WAY DOWN. Freezing one level would leave a nested table as
+-- the caller's own writable one, so the value handed back would still change
+-- under whoever was given it. `check_extra` refuses deeper nesting first, with a
+-- sentence carrying the author's own call site; the raise above is what keeps
+-- this function bounded for a caller that skipped that check.
 function mint.frozen_extra(value: any): { [string]: any }
     if value == nil then
         return table.freeze({})
     end
-    local copy: { [string]: any } = {}
-    for key, entry in value :: { [string]: any } do
-        copy[key] = entry
-    end
-    return table.freeze(copy)
+    return frozenCopy(value :: { [any]: any }, 1)
 end
 
 -- The raw file lines a schema version did not understand, carried on the object

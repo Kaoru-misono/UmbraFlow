@@ -203,7 +203,14 @@ local function renderNumber(value: number): string
     return string.format("%d", value)
 end
 
-local function renderValue(value: any): string
+-- `field` is the key whose line is being written. Every refusal names it,
+-- because the only values here this layer did not build itself are a project's
+-- own under `extra`, and nothing else in the message would say which one.
+--
+-- A table is written as an array, so one whose keys are not 1..n is refused
+-- instead: rendering it would put `[]` in the file and take every key with it,
+-- and a save that stops is louder than a file that is quietly short.
+local function renderValue(value: any, field: string): string
     local kind = type(value)
     if kind == "string" then
         return renderString(value)
@@ -215,18 +222,42 @@ local function renderValue(value: any): string
         return if value then "true" else "false"
     end
     if kind == "table" then
+        local list  = value :: { any }
+        local count = 0
+        for _ in list do
+            count += 1
+        end
+        if count ~= #list then
+            error(
+                'a project file cannot carry "'
+                    .. field
+                    .. '": a table is written as an array, and every key of '
+                    .. "this one would be dropped",
+                0
+            )
+        end
         local parts: { string } = {}
-        local list = value :: { any }
         for index = 1, #list do
             local entry = list[index]
             if type(entry) == "table" then
-                error("a project file array cannot contain another array", 0)
+                error(
+                    'a project file cannot carry "'
+                        .. field
+                        .. '": an array cannot contain another array',
+                    0
+                )
             end
-            parts[index] = renderValue(entry)
+            parts[index] = renderValue(entry, field)
         end
         return "[" .. table.concat(parts, ", ") .. "]"
     end
-    error("a project file cannot carry a value of type " .. kind, 0)
+    error(
+        'a project file cannot carry "'
+            .. field
+            .. '": it is a value of type '
+            .. kind,
+        0
+    )
 end
 
 local function sortedKeys(map: { [string]: any }): { string }
@@ -249,7 +280,7 @@ local function pushExtra(lines: { string }, header: string, extra: { [string]: a
     table.insert(lines, "")
     table.insert(lines, header)
     for _, key in keys do
-        table.insert(lines, key .. " = " .. renderValue(extra[key]))
+        table.insert(lines, key .. " = " .. renderValue(extra[key], key))
     end
 end
 
@@ -300,14 +331,18 @@ function project.encode(built: any): string
         table.insert(lines, "name = " .. renderString(element.name))
         table.insert(
             lines,
-            "capabilities = " .. renderValue(capabilityList(element.capabilities))
+            "capabilities = "
+                .. renderValue(capabilityList(element.capabilities), "capabilities")
         )
         -- Written only when the element drew one. An element that leaves it out
         -- is placed by whoever uses it -- one confirm button reused on nine
         -- screens -- so materialising the rectangle it was cut from would put
         -- back the fact this model stopped stating.
         if element.rect ~= nil then
-            table.insert(lines, "rect = " .. renderValue(rectList(element.rect)))
+            table.insert(
+                lines,
+                "rect = " .. renderValue(rectList(element.rect), "rect")
+            )
         end
         if element.expected_text ~= nil then
             table.insert(
@@ -339,7 +374,7 @@ function project.encode(built: any): string
             if appearance.key ~= nil then
                 table.insert(
                     lines,
-                    "key = " .. renderValue(colourKeyList(appearance.key))
+                    "key = " .. renderValue(colourKeyList(appearance.key), "key")
                 )
             end
             pushResidual(lines, appearance.residual)
@@ -374,7 +409,8 @@ function project.encode(built: any): string
             table.insert(lines, "holding = " .. renderString(reference.holding))
             table.insert(
                 lines,
-                "exercised = " .. renderValue(capabilityList(reference.exercised))
+                "exercised = "
+                    .. renderValue(capabilityList(reference.exercised), "exercised")
             )
             if reference.identify ~= nil then
                 table.insert(lines, "identify = " .. renderString(reference.identify))
@@ -394,7 +430,11 @@ function project.encode(built: any): string
             if reference.rect_override ~= nil then
                 table.insert(
                     lines,
-                    "rect_override = " .. renderValue(rectList(reference.rect_override))
+                    "rect_override = "
+                        .. renderValue(
+                            rectList(reference.rect_override),
+                            "rect_override"
+                        )
                 )
             end
             pushResidual(lines, reference.residual)
@@ -423,7 +463,7 @@ function project.encode(built: any): string
             for index, target in edge.to do
                 names[index] = target.name
             end
-            table.insert(lines, "to = " .. renderValue(names))
+            table.insert(lines, "to = " .. renderValue(names, "to"))
         end
         table.insert(lines, "via = " .. renderString(edge.via))
         if edge.via_element ~= nil then
@@ -502,7 +542,7 @@ function project.encode(built: any): string
         if expectation.rect ~= nil then
             table.insert(
                 lines,
-                "rect = " .. renderValue(rectList(expectation.rect))
+                "rect = " .. renderValue(rectList(expectation.rect), "rect")
             )
         end
         if expectation.appearance ~= nil then
