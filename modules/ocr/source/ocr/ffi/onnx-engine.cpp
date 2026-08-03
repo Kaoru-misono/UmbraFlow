@@ -72,20 +72,10 @@ namespace uf::ocr
         // here, and decode below depends on it.
         constexpr auto k_ctcBlankClass = std::size_t{0};
 
-        // WHERE THE DETECTION NUMBERS BELOW CAME FROM.
-        //
-        // Every one of them is copied from the detection model's own inference
-        // config, which ships beside its weights at
+        // Every detection number below is copied from the detection model's own
+        // inference config at
         // modules/ocr/external/models/ppocr-v6-small-det/inference.yml, and each
-        // names the key it was copied from. They are constants here rather than
-        // parsed out of that file for the reason k_recognitionHeight is one:
-        // they describe the graph the release published, so a reader checks them
-        // against a file in this repository and an argument about one is an
-        // argument about that file. The character dictionary is parsed instead
-        // of copied because it is the one input where being wrong is silent --
-        // a dictionary from another model spells every output wrong and fails
-        // nothing, where a wrong threshold offers too many boxes or too few and
-        // the boxes are right there to look at.
+        // names the key it was copied from.
         //
         // PostProcess.thresh: the probability above which one cell of the
         // model's output map counts as text at all.
@@ -153,12 +143,6 @@ namespace uf::ocr
         // The characters a recognition model can emit, read from the inference
         // config that ships beside its weights.
         //
-        // Parsed line by line rather than through a YAML library. What is needed
-        // is one list of scalars under one known key, and the file's own shape
-        // is fixed by the release that produced it; a parser for the rest of
-        // YAML would be a dependency bought to read eighteen thousand lines of
-        // "  - X".
-        //
         // A dictionary that fails to load is not a degraded engine, it is an
         // engine that would spell every output wrong while failing nothing, so
         // every path here refuses rather than returning what it managed to read.
@@ -213,7 +197,24 @@ namespace uf::ocr
                     && entry.back() == entry.front()
                 )
                 {
-                    entry = entry.substr(1, entry.size() - 2);
+                    auto const quote = entry.front();
+                    entry            = entry.substr(1, entry.size() - 2);
+
+                    // '' is the one escape a single-quoted YAML scalar has, and
+                    // the shipped dictionary spells its apostrophe class that
+                    // way. Left doubled it misspells every readout that holds an
+                    // apostrophe, and fails nothing.
+                    if (quote == '\'')
+                    {
+                        for (
+                            auto found = entry.find("''");
+                            found != std::string::npos;
+                            found = entry.find("''", found + 1U)
+                        )
+                        {
+                            entry.erase(found, 1U);
+                        }
+                    }
                 }
                 characters.emplace_back(std::move(entry));
             }
@@ -239,9 +240,8 @@ namespace uf::ocr
 
         // Bilinear sample of `source` at a fractional position, per channel.
         //
-        // Bilinear rather than nearest because the crop is usually shrunk, and a
-        // nearest sample of shrunk text drops whole stems of a glyph. It is the
-        // same reason the resize exists at all.
+        // Bilinear rather than nearest: a nearest sample of shrunk text drops
+        // whole stems of a glyph.
         [[nodiscard]]
         auto sampleChannels(
             BgraImage const& source,
@@ -369,11 +369,9 @@ namespace uf::ocr
         // Greedy CTC decode: take each timestep's most likely class, drop the
         // blank, and collapse a run of one class into one character.
         //
-        // Greedy rather than beam search, and the reason is the input rather
-        // than the algorithm's reputation: this reads short UI labels from a
-        // model that scores them at 0.99 and above, where a beam explores
-        // alternatives that are never chosen. Revisit against a measured case
-        // where the top path is wrong and a lower one is right.
+        // Greedy rather than beam search: this reads short UI labels a model
+        // scores at 0.99 and above; revisit against a measured case where the
+        // top path is wrong and a lower one is right.
         [[nodiscard]]
         auto decodeCtc(
             std::span<float const> scores,
@@ -549,17 +547,11 @@ namespace uf::ocr
 
         // Every connected run of above-threshold cells in `map`, in raster order.
         //
-        // WHERE THIS DIVERGES FROM PaddleOCR, AND WHY IT IS THE RIGHT DIVERGENCE.
-        // DBPostProcess runs cv2.findContours over the binarized map and fits a
-        // minimum-area ROTATED rectangle to each contour. This walks the same
-        // binarized map with the same 8-connectivity findContours uses, and
-        // keeps each run's axis-aligned bounding box instead. Two reasons, and
-        // neither is that a rotated box is hard: ocr::TextLine reports a
-        // PixelRect, so a rotated box would be reduced to its bounding box one
-        // line later anyway; and the target this reads is a desktop UI whose
-        // text is axis-aligned by construction, where the two boxes are the same
-        // box. A skewed photograph would need the rotated fit and would need a
-        // different TextLine to report it into.
+        // Diverges from DBPostProcess, which fits a minimum-area ROTATED
+        // rectangle to each cv2.findContours contour: this keeps each run's
+        // axis-aligned bounding box instead, which is the same box on the
+        // axis-aligned desktop UI this reads and is what ocr::TextLine's
+        // PixelRect can carry.
         [[nodiscard]]
         auto findMapComponents(
             std::span<float const> map,
@@ -648,9 +640,7 @@ namespace uf::ocr
         // The rectangle `component` names on the image the region was read from,
         // or nothing when it is too small or too uncertain to be a line.
         //
-        // The three steps are DBPostProcess's, in its order: reject on size,
-        // reject on the mean probability inside the candidate, then grow the
-        // survivor by the unclip distance and map it back to the source scale.
+        // The three steps and their order are DBPostProcess's.
         //
         // The score is the mean over the component's OWN cells, where PaddleOCR
         // takes the mean over the whole bounding box masked by the contour. For
@@ -891,11 +881,20 @@ namespace uf::ocr
                     );
                 }
 
-                // SAFETY: the tensor was just confirmed to be a tensor of rank 3,
-                // and Ort guarantees GetTensorData<float> yields its element
-                // count as the product of the reported dimensions. The span is
-                // read before `outputs` leaves scope, so it never outlives the
-                // storage Ort owns.
+                if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
+                {
+                    return external(
+                        "the recognition model emits a non-float tensor; this "
+                        "adapter reads float32"
+                    );
+                }
+
+                // SAFETY: the tensor was just confirmed to be rank 3 with
+                // float32 elements, so the product of the reported dimensions is
+                // the count of floats GetTensorData<float> points at; without
+                // the element-type check it would count another type's elements.
+                // The span is read before `outputs` leaves scope, so it never
+                // outlives the storage Ort owns.
                 auto const scores = std::span<float const>{
                     outputs.front().GetTensorData<float>(),
                     timesteps * classes,
@@ -974,11 +973,20 @@ namespace uf::ocr
                 auto const mapHeight = static_cast<uint32>(dimensions[2]);
                 auto const mapWidth  = static_cast<uint32>(dimensions[3]);
 
-                // SAFETY: the value was just confirmed to be a rank-4 tensor,
-                // and Ort guarantees GetTensorData<float> yields its element
-                // count as the product of the reported dimensions. The span is
-                // consumed before `outputs` leaves scope, so it never outlives
-                // the storage Ort owns.
+                if (info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
+                {
+                    return external(
+                        "the detection model emits a non-float tensor; this "
+                        "adapter reads float32"
+                    );
+                }
+
+                // SAFETY: the value was just confirmed to be a rank-4 tensor of
+                // float32 elements, so the product of the reported dimensions is
+                // the count of floats GetTensorData<float> points at; without
+                // the element-type check it would count another type's elements.
+                // The span is consumed before `outputs` leaves scope, so it
+                // never outlives the storage Ort owns.
                 auto const map = std::span<float const>{
                     outputs.front().GetTensorData<float>(),
                     static_cast<std::size_t>(mapWidth) * mapHeight,
@@ -1116,10 +1124,6 @@ namespace uf::ocr
 
                 try
                 {
-                    // A switch over the layout rather than a test for one of
-                    // them: the set is closed, so a third layout has to be
-                    // answered here rather than quietly taking whichever branch
-                    // the condition happened to fall through to.
                     switch (spec.layout)
                     {
                     case TextLayout::SingleLine:
