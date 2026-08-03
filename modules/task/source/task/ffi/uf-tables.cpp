@@ -1565,6 +1565,45 @@ namespace uf::task
             return 0;
         }
 
+        // cycle_move_pointer(ticket, x, y) -> (). Consumes the cycle and moves the
+        // pointer to the coordinate, pressing nothing.
+        //
+        // Its authorization contract is cycle_click_point's and not `key`'s: the
+        // point was measured off this frame, so the fingerprint check, the lease
+        // and the same-frame rule all apply, and it consumes the cycle because a
+        // pointer message changes what the target believes is hovered. See
+        // TaskContext::cycleMovePointer and EngineSession::movePointer.
+        //
+        // Where it parts company with cycle_click_point is the SURFACE. That verb
+        // is privileged because a bare coordinate lets a script activate something
+        // the recognised page never authorised; a move activates nothing, so the
+        // privilege has nothing to protect and this is published like cycle_scroll
+        // -- on both surfaces and forwarded on `ctx`. It is the input a scroll
+        // needs before it (docs/pitfalls/capture-and-target-selection.md), and a
+        // run-mode task that cannot reach it cannot page through a list.
+        auto cycleMovePointerFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto* ticket = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
+            auto const x = checkPixelExtent(state, 2, "cycle_move_pointer x");
+            auto const y = checkPixelExtent(state, 3, "cycle_move_pointer y");
+
+            auto const call = NativeCallIdentity{
+                .verb         = "cycle_move_pointer",
+                .cycleOrdinal = ticket->ordinal,
+            };
+
+            auto result = context->cycleMovePointer(*ticket, PixelPoint{x, y});
+            if (!result)
+            {
+                traceHostCallFailure(state, context, call, result.error());
+            }
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+            return 0;
+        }
+
         // A script's millisecond count as the monotonic Duration the host times
         // with; `what` names the script-facing spelling the author wrote.
         //
@@ -2446,6 +2485,18 @@ namespace uf::task
                 "cycle_scroll",
                 &cycleScrollFn,
                 "uf_cycle_scroll",
+                context
+            );
+            // Unprivileged too, which sharpens the coordinate rule above rather
+            // than bending it: what a bare coordinate buys a script is ACTIVATING
+            // an element the page did not authorise, and a move activates nothing.
+            // See cycleMovePointerFn.
+            installPrimitive(
+                state,
+                surface,
+                "cycle_move_pointer",
+                &cycleMovePointerFn,
+                "uf_cycle_move_pointer",
                 context
             );
             installPrimitive(state, surface, "raise", &raiseFn, "uf_raise", context);

@@ -1267,6 +1267,187 @@ namespace uf::task
             CHECK(p_clicks->scrolls().front() == int32{1});
         }
 
+        TEST_CASE("A pointer move spends its cycle and presses nothing")
+        {
+            auto built = buildHarness(matchableFrames(), HarnessSpec{});
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            // No template loaded, no match found, no page resolved: a move needs no
+            // hit, exactly as a scroll needs none.
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+            auto const receipt = context.cycleMovePointer(*ticket, PixelPoint{1, 0});
+            REQUIRE(receipt.has_value());
+
+            // One pointer message, and nothing pressed. Route cycleMovePointer to
+            // cycleClickPoint and the two counts swap.
+            REQUIRE(p_clicks->moves().size() == 1U);
+            CHECK(p_clicks->moves().front().x() == doctest::Approx(1.0));
+            CHECK(p_clicks->clickCount() == 0U);
+            CHECK(p_clicks->longPresses().empty());
+
+            // The cycle is spent, exactly as a scroll spends it: the target's idea
+            // of what is hovered moved, so the frame this ticket named no longer
+            // describes it. Drop the spend in TaskContext::cycleMovePointer and one
+            // frame delivers as many moves as a script asks for, so this goes red.
+            CHECK_FALSE(context.hasOpenCycle());
+            auto const again = context.cycleMovePointer(*ticket, PixelPoint{1, 0});
+            REQUIRE_FALSE(again.has_value());
+            CHECK(
+                kindOfError(again.error()) == AutomationErrorKind::StaleObservation
+            );
+            CHECK(p_clicks->moves().size() == 1U);
+        }
+
+        TEST_CASE("cycle_move_pointer refuses every ticket that names no open cycle")
+        {
+            auto built = buildHarness(matchableFrames(), HarnessSpec{});
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            SUBCASE("with no cycle ever opened")
+            {
+                auto const never = context.cycleMovePointer(
+                    CycleTicket{.generation = 0, .ordinal = 1},
+                    PixelPoint{1, 0}
+                );
+                REQUIRE_FALSE(never.has_value());
+                CHECK(
+                    kindOfError(never.error())
+                    == AutomationErrorKind::StaleObservation
+                );
+            }
+
+            SUBCASE("on a cycle the caller already closed")
+            {
+                auto const ticket = context.openCycle();
+                REQUIRE(ticket.has_value());
+                CHECK(context.closeCycle(*ticket));
+
+                auto const closed = context.cycleMovePointer(*ticket, PixelPoint{1, 0});
+                REQUIRE_FALSE(closed.has_value());
+                CHECK(
+                    kindOfError(closed.error())
+                    == AutomationErrorKind::StaleObservation
+                );
+            }
+
+            SUBCASE("on a ticket minted by another generation's ledger")
+            {
+                auto const ticket = context.openCycle();
+                REQUIRE(ticket.has_value());
+
+                auto const foreign = context.cycleMovePointer(
+                    CycleTicket{
+                        .generation = ticket->generation + 1,
+                        .ordinal    = ticket->ordinal,
+                    },
+                    PixelPoint{1, 0}
+                );
+                REQUIRE_FALSE(foreign.has_value());
+                CHECK(
+                    kindOfError(foreign.error())
+                    == AutomationErrorKind::StaleObservation
+                );
+
+                // And the refusal left the frame where it was, so the framework's
+                // own close still has a cycle to close.
+                CHECK(context.hasOpenCycle());
+            }
+
+            // Every refusal above is fail-closed: no pointer message escaped.
+            CHECK(p_clicks->moves().empty());
+        }
+
+        TEST_CASE("cycle_move_pointer is on the run surface and the exploration surface")
+        {
+            // The move is published like cycle_scroll and not like
+            // cycle_click_point: what makes a bare coordinate privileged is that it
+            // ACTIVATES something the page never authorised, and a move activates
+            // nothing. Move its installation inside buildPrivateSurface's
+            // Exploration branch, or drop the ctx forward, and the first half goes
+            // red -- which is the whole point of the work, since a run-mode task
+            // that cannot nudge cannot scroll a list.
+            constexpr std::string_view source = R"lua(
+                local cycle = ctx:cycle_open()
+                ctx:cycle_move_pointer(cycle, 1, 0)
+                return 1
+            )lua";
+
+            SUBCASE("a run VM reaches it")
+            {
+                auto built = buildHarness(matchableFrames(), HarnessSpec{});
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                auto engineVm = script::Engine::create(taskVmConfig(context));
+                REQUIRE(engineVm.has_value());
+                auto const result = engineVm->runNumber(source, "cycle-move-run");
+                REQUIRE(result.has_value());
+                CHECK(*result == 1.0);
+                REQUIRE(p_clicks->moves().size() == 1U);
+                CHECK(p_clicks->clickCount() == 0U);
+                CHECK_FALSE(context.hasOpenCycle());
+            }
+
+            SUBCASE("an exploration VM reaches the same one")
+            {
+                auto built = buildHarness(matchableFrames(), HarnessSpec{});
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                auto engineVm = script::Engine::create(explorationVmConfig(context));
+                REQUIRE(engineVm.has_value());
+                auto const result = engineVm->runNumber(
+                    source,
+                    "cycle-move-exploration"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == 1.0);
+                REQUIRE(p_clicks->moves().size() == 1U);
+            }
+        }
+
+        TEST_CASE("cycle_move_pointer refuses a coordinate that is not a whole pixel")
+        {
+            // Refused BEFORE the cycle is spent, cycle_scroll's rule: a script that
+            // passed a string or a fraction still holds its frame.
+            auto built = buildHarness(matchableFrames(), HarnessSpec{});
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            constexpr std::string_view source = R"lua(
+                local cycle = ctx:cycle_open()
+                local fractional = pcall(function()
+                    ctx:cycle_move_pointer(cycle, 1.5, 0)
+                end)
+                if fractional then return 0 end
+                local typed = pcall(function()
+                    ctx:cycle_move_pointer(cycle, "left", 0)
+                end)
+                if typed then return 0 end
+                local missing = pcall(function()
+                    ctx:cycle_move_pointer(cycle, 1)
+                end)
+                if missing then return 0 end
+                ctx:cycle_move_pointer(cycle, 1, 0)
+                return 1
+            )lua";
+
+            auto engineVm = script::Engine::create(taskVmConfig(context));
+            REQUIRE(engineVm.has_value());
+            auto const result = engineVm->runNumber(source, "cycle-move-typing");
+            REQUIRE(result.has_value());
+            CHECK(*result == 1.0);
+            REQUIRE(p_clicks->moves().size() == 1U);
+        }
+
         TEST_CASE("A long press reaches the sink at its point with the hold named")
         {
             auto built = buildHarness(matchableFrames(), HarnessSpec{});

@@ -113,6 +113,17 @@ namespace uf::trace
         // are aimed identically and do different things. Additive.
         EngineLongPressDelivered,
 
+        // One delivered pointer move: the cursor message arrives at a point and
+        // no button changes state. Its own kind for the scroll's reason: a reader
+        // counting delivered clicks must not have to subtract the lines that
+        // pressed nothing. Additive, so the schema version is unchanged.
+        //
+        // It carries its point on `clickClient`, the member the long press
+        // already shares with the click. A second coordinate member would be a
+        // second spelling of one thing, and a reader joining a move to the scroll
+        // it primed would have to know which verb used which.
+        EnginePointerMoveDelivered,
+
         EngineObservationInvalidated,
         TaskNativeCall,
         FrameworkStepStarted,

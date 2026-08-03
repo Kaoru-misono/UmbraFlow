@@ -361,14 +361,18 @@ function ctx:cycle_read_lines(ticket, x, y, width, height)
 end
 
 -- There is no ctx:cycle_click_point and no ctx:cycle_long_press, and do not add
--- one. Both name a bare coordinate, so both are privileged; `ctx` is published
--- into every project environment, and section 2 rule 2 of
+-- one. Both ACTIVATE at a bare coordinate, so both are privileged; `ctx` is
+-- published into every project environment, and section 2 rule 2 of
 -- docs/plans/2026-08-01-three-layers-and-agent-operator.md requires the
 -- privileged verbs to be unreachable from a business task rather than refused in
 -- it. `observe.click` / `observe.long_press` reach the primitives through the
 -- closure upvalue after checking the receipt, the hit and the interact edge, and
 -- `explore.click_point` / `explore.long_press` forward them in a module only the
 -- exploration environment publishes.
+--
+-- Activating is the operative word, and ctx:cycle_move_pointer below is the case
+-- that shows it: it names a bare coordinate too and is forwarded here anyway,
+-- because pressing nothing leaves the privilege nothing to protect.
 
 function ctx:project_read(name)
     return native.project_read(name)
@@ -392,6 +396,18 @@ end
 -- raw verb for now.
 function ctx:cycle_scroll(ticket, notches)
     return native.cycle_scroll(ticket, notches)
+end
+
+-- Moves the pointer to a target pixel, pressing nothing, and consumes the cycle.
+--
+-- Call it before ctx:cycle_scroll over the region you mean to scroll. A posted
+-- wheel does not scroll what its own message points at: the target scrolls
+-- whatever it already believes is hovered, and in a background session with no
+-- pointer message before it, that is somewhere else
+-- (docs/pitfalls/capture-and-target-selection.md). Two cycles, because each
+-- delivered input spends its frame.
+function ctx:cycle_move_pointer(ticket, x, y)
+    return native.cycle_move_pointer(ticket, x, y)
 end
 
 -- There is no ctx:now: a script reads no clock, so the only shapes waiting can

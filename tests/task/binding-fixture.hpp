@@ -241,7 +241,8 @@ namespace uf::task
         std::vector<KeyName> m_keys{};
         std::vector<int32>   m_scrolls{};
 
-        std::vector<LongPressDelivery> m_longPresses{};
+        std::vector<LongPressDelivery>  m_longPresses{};
+        std::vector<Point<ClientSpace>> m_moves{};
 
     public:
         [[nodiscard]]
@@ -290,6 +291,16 @@ namespace uf::task
             return ok();
         }
 
+        [[nodiscard]]
+        auto movePointer(
+            Point<ClientSpace> point,
+            ObservationLease const& /*lease*/
+        ) -> Status override
+        {
+            m_moves.emplace_back(point);
+            return ok();
+        }
+
         [[nodiscard]] auto clickCount() const noexcept -> uint32
         {
             return m_clickCount;
@@ -316,6 +327,15 @@ namespace uf::task
             -> std::vector<LongPressDelivery> const&
         {
             return m_longPresses;
+        }
+
+        // The points this sink was asked to move the pointer to, in order. Kept
+        // apart from the click count on purpose: a case proving a move pressed
+        // nothing reads both, and one list could not tell them apart.
+        [[nodiscard]] auto moves() const noexcept UF_LIFETIME_BOUND
+            -> std::vector<Point<ClientSpace>> const&
+        {
+            return m_moves;
         }
     };
 
@@ -361,6 +381,18 @@ namespace uf::task
         auto longPress(
             Point<ClientSpace> point,
             MonotonicInstant::Duration /*hold*/,
+            ObservationLease const& /*lease*/
+        ) -> Status override
+        {
+            m_points.emplace_back(point);
+            return ok();
+        }
+
+        // A move aims at a coordinate too, so it joins the same list for the
+        // reason above.
+        [[nodiscard]]
+        auto movePointer(
+            Point<ClientSpace> point,
             ObservationLease const& /*lease*/
         ) -> Status override
         {

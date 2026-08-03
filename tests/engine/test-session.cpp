@@ -302,6 +302,10 @@ namespace uf::engine
             std::optional<MonotonicInstant::Duration> m_lastHold{};
             std::optional<ObservationLease>           m_lastLongPressLease{};
 
+            uint32                            m_moveCount{0};
+            std::optional<Point<ClientSpace>> m_lastMove{};
+            std::optional<ObservationLease>   m_lastMoveLease{};
+
         public:
             [[nodiscard]]
             auto click(
@@ -357,6 +361,21 @@ namespace uf::engine
                 m_lastLongPress      = point;
                 m_lastHold           = hold;
                 m_lastLongPressLease = lease;
+                return ok();
+            }
+
+            // Counted separately from the click, which is the whole point of the
+            // verb: a case proving a move pressed nothing reads both counters,
+            // and a sink that folded them together could not say so.
+            [[nodiscard]]
+            auto movePointer(
+                Point<ClientSpace> point,
+                ObservationLease const& lease
+            ) -> Status override
+            {
+                ++m_moveCount;
+                m_lastMove      = point;
+                m_lastMoveLease = lease;
                 return ok();
             }
 
@@ -432,6 +451,23 @@ namespace uf::engine
                 -> std::optional<ObservationLease>
             {
                 return m_lastLongPressLease;
+            }
+
+            [[nodiscard]] auto moveCount() const noexcept -> uint32
+            {
+                return m_moveCount;
+            }
+
+            [[nodiscard]]
+            auto lastMove() const noexcept -> std::optional<Point<ClientSpace>>
+            {
+                return m_lastMove;
+            }
+
+            [[nodiscard]]
+            auto lastMoveLease() const noexcept -> std::optional<ObservationLease>
+            {
+                return m_lastMoveLease;
             }
         };
 
@@ -1432,6 +1468,188 @@ namespace uf::engine
             REQUIRE_FALSE(receipt.has_value());
             requireErrorKind(receipt.error(), AutomationErrorKind::ActionRejected);
             CHECK(under.clicks->longPressCount() == 0);
+        }
+    }
+
+    TEST_CASE("engine session moves the pointer without pressing anything")
+    {
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+        auto under = matchingSession(fingerprint, baseConfig(fingerprint));
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+
+        auto handle        = *std::move(observation);
+        auto const receipt = session.movePointer(std::move(handle), PixelPoint{1, 0});
+        REQUIRE(receipt.has_value());
+        CHECK(receipt->frameId == FrameId{17});
+
+        // Exactly one pointer message reached the port, and it was a move: route
+        // movePointer to the sink's click() and the first pair of counters swap,
+        // which is the whole guarantee this verb sells.
+        CHECK(under.clicks->moveCount() == 1);
+        CHECK(under.clicks->clickCount() == 0);
+        CHECK(under.clicks->longPressCount() == 0);
+        CHECK(under.clicks->keyCount() == 0);
+        CHECK(under.clicks->scrollCount() == 0);
+        REQUIRE(under.clicks->lastMove().has_value());
+        CHECK(under.clicks->lastMove()->x() == doctest::Approx(1.0));
+
+        // The lease reaching the sink is this observation's own, which keeps the
+        // controller's delivery-time fence in the loop as layer two.
+        REQUIRE(under.clicks->lastMoveLease().has_value());
+        CHECK(under.clicks->lastMoveLease()->frameId() == FrameId{17});
+
+        // A pointer message changes what the target believes is hovered, so the
+        // observation is spent. Remove the invalidation in
+        // EngineSession::movePointer and one frame delivers two moves, so this
+        // goes red.
+        auto const retry = session.movePointer(std::move(handle), PixelPoint{1, 0});
+        REQUIRE_FALSE(retry.has_value());
+        requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
+        CHECK(under.clicks->moveCount() == 1);
+
+        auto const kinds = kindsOf(under.traces->events());
+        CHECK(
+            std::ranges::count(
+                kinds,
+                trace::TraceEventKind::EnginePointerMoveDelivered
+            )
+            == 1
+        );
+
+        // And NOT as a click, for the long press's reason: a reader counting
+        // delivered clicks would otherwise count a message that pressed nothing.
+        CHECK(
+            std::ranges::count(kinds, trace::TraceEventKind::EngineActionDelivered)
+            == 0
+        );
+
+        auto const* p_move = findEvent(
+            under.traces->events(),
+            trace::TraceEventKind::EnginePointerMoveDelivered
+        );
+        REQUIRE(p_move != nullptr);
+        REQUIRE(p_move->clickClient.has_value());
+        CHECK(p_move->clickClient->x() == doctest::Approx(1.0));
+    }
+
+    TEST_CASE("engine session fences a pointer move exactly as it fences a click")
+    {
+        // A move names a coordinate, so it takes the coordinate authorization
+        // whole: nothing here may be looser than a click, or the pointer becomes
+        // a second and laxer path onto the same window. Each subcase has an exact
+        // twin among the click cases above, and removing the matching gate from
+        // EngineSession::movePointer leaves the twin green while this goes red.
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+
+        SUBCASE("an expired lease refuses the move")
+        {
+            auto config              = baseConfig(fingerprint);
+            config.maxActionFrameAge = MonotonicInstant::Duration::zero();
+            auto under               = matchingSession(fingerprint, std::move(config));
+            REQUIRE(under.session.has_value());
+
+            auto observation = under.session->observe();
+            REQUIRE(observation.has_value());
+            auto const receipt = under.session->movePointer(
+                std::move(*observation),
+                PixelPoint{1, 0}
+            );
+            REQUIRE_FALSE(receipt.has_value());
+            requireErrorKind(receipt.error(), AutomationErrorKind::StaleObservation);
+            CHECK(under.clicks->moveCount() == 0);
+        }
+
+        SUBCASE("a mismatched fingerprint refuses the move")
+        {
+            auto config            = baseConfig(fingerprint);
+            config.liveFingerprint = fingerprintOf(3, 1, 120);
+            auto under             = matchingSession(fingerprint, std::move(config));
+            REQUIRE(under.session.has_value());
+
+            auto observation = under.session->observe();
+            REQUIRE(observation.has_value());
+            auto const receipt = under.session->movePointer(
+                std::move(*observation),
+                PixelPoint{1, 0}
+            );
+            REQUIRE_FALSE(receipt.has_value());
+            requireErrorKind(
+                receipt.error(),
+                AutomationErrorKind::TargetCompatibilityUnverified
+            );
+            CHECK(under.clicks->moveCount() == 0);
+        }
+
+        SUBCASE("a replaced target instance refuses the move")
+        {
+            auto under = matchingSession(fingerprint, baseConfig(fingerprint));
+            REQUIRE(under.session.has_value());
+
+            auto observation = under.session->observe();
+            REQUIRE(observation.has_value());
+            under.source->invalidateTargetInstance();
+
+            auto const receipt = under.session->movePointer(
+                std::move(*observation),
+                PixelPoint{1, 0}
+            );
+            REQUIRE_FALSE(receipt.has_value());
+            requireErrorKind(receipt.error(), AutomationErrorKind::TargetUnavailable);
+            CHECK(under.clicks->moveCount() == 0);
+        }
+
+        SUBCASE("a cancelled run refuses the move before any sink call")
+        {
+            auto cancellation   = std::stop_source{};
+            auto config         = baseConfig(fingerprint);
+            config.cancellation = cancellation.get_token();
+            auto under          = matchingSession(fingerprint, std::move(config));
+            REQUIRE(under.session.has_value());
+
+            auto observation = under.session->observe();
+            REQUIRE(observation.has_value());
+            REQUIRE(cancellation.request_stop());
+
+            auto const receipt = under.session->movePointer(
+                std::move(*observation),
+                PixelPoint{1, 0}
+            );
+            REQUIRE_FALSE(receipt.has_value());
+            requireErrorKind(receipt.error(), AutomationErrorKind::Cancelled);
+            CHECK(under.clicks->moveCount() == 0);
+        }
+
+        SUBCASE("an observation from another session refuses the move")
+        {
+            auto underA = matchingSession(fingerprint, baseConfig(fingerprint));
+            REQUIRE(underA.session.has_value());
+
+            auto framesB = std::vector<Frame>{};
+            framesB.emplace_back(
+                grayFrame(
+                    fingerprint,
+                    matchingPixels(),
+                    FrameId{18},
+                    MonotonicInstant::now()
+                )
+            );
+            auto underB = makeSession(std::move(framesB), baseConfig(fingerprint));
+            REQUIRE(underB.session.has_value());
+
+            auto observation = underA.session->observe();
+            REQUIRE(observation.has_value());
+
+            auto const receipt = underB.session->movePointer(
+                std::move(*observation),
+                PixelPoint{1, 0}
+            );
+            REQUIRE_FALSE(receipt.has_value());
+            requireErrorKind(receipt.error(), AutomationErrorKind::InternalInvariant);
+            CHECK(underB.clicks->moveCount() == 0);
         }
     }
 

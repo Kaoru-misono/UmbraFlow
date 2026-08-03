@@ -53,10 +53,10 @@ namespace uf::engine
     };
 
     // A port that delivers one background input to the bound target: a click, a
-    // keystroke, a wheel scroll, or a long press. Each verb states its own
-    // authorization contract below; they do not share one, because what the
-    // engine has already authorized differs between a verb that names a
-    // coordinate and one that does not.
+    // keystroke, a wheel scroll, a long press, or a pointer move. Each verb
+    // states its own authorization contract below; they do not share one,
+    // because what the engine has already authorized differs between a verb that
+    // names a coordinate and one that does not.
     //
     // Owed by every verb regardless. For a coordinate-bearing verb the engine has
     // authorized the point (layer 1) by the time the call is made, but that is
@@ -155,6 +155,28 @@ namespace uf::engine
         virtual auto longPress(
             Point<ClientSpace> point,
             MonotonicInstant::Duration hold,
+            ObservationLease const& lease
+        ) -> Status = 0;
+
+        // Moves the pointer to `point` on the bound target, pressing nothing.
+        //
+        // It exists because a posted wheel does not scroll what the message
+        // points at: a target tracks which container is hovered from pointer
+        // messages and scrolls whatever it already believes is hovered, so a
+        // wheel with no pointer message before it moves nothing at all
+        // (docs/pitfalls/capture-and-target-selection.md). This is the verb that
+        // says "the pointer is over this region" without also pressing it.
+        //
+        // It takes a lease for click()'s reason and not for scroll()'s: the point
+        // was measured off a frame, so the lease is authorization here rather than
+        // only delivery material.
+        //
+        // The implementation MUST NOT press, release, or hold any button. That is
+        // the entire difference from click(), and it is what lets the engine admit
+        // this verb where the page model authorises no activation.
+        [[nodiscard]]
+        virtual auto movePointer(
+            Point<ClientSpace> point,
             ObservationLease const& lease
         ) -> Status = 0;
     };

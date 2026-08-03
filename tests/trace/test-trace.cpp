@@ -593,6 +593,33 @@ namespace uf::trace
         CHECK(goldenLine(event).find("\"wheelNotches\":3}") != std::string::npos);
     }
 
+    TEST_CASE("engine.pointer_move_delivered pins its wire kind name and its point")
+    {
+        // Its own kind and not an engine.action_delivered at the same coordinate:
+        // a reader summing delivered clicks would otherwise count a message that
+        // pressed nothing. The point rides the member the click and the long press
+        // already share, so a consumer joining a move to the scroll it primed
+        // reads one spelling rather than three.
+        auto event = TraceEvent{
+            .kind  = TraceEventKind::EnginePointerMoveDelivered,
+            .frame = FrameIdentity{
+                CaptureSessionId{uint64{7}},
+                TargetGeneration::fromValue(3),
+                FrameId{uint64{17}},
+            },
+        };
+        event.clickClient = Point<ClientSpace>{4.0F, 2.0F};
+
+        CHECK(
+            goldenLine(event)
+            == "{\"schema\":\"umbraflow-trace/v3\""
+               ",\"kind\":\"engine.pointer_move_delivered\""
+               ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
+               ",\"frameId\":17,\"sessionId\":7,\"targetGeneration\":3"
+               ",\"clickClientX\":4,\"clickClientY\":2}"
+        );
+    }
+
     TEST_CASE("engine.action_found keeps every outcome the old kinds distinguished")
     {
         auto const frame = FrameIdentity{

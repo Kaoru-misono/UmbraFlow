@@ -166,4 +166,17 @@ namespace uf::cli::platform
         // release. The port's "released on every exit path" guarantee is kept here.
         return drainAfterFailure(std::move(delivered).error(), "long press");
     }
+
+    auto ControllerActionSink::movePointer(
+        Point<ClientSpace> point,
+        ObservationLease const& lease
+    ) -> Status
+    {
+        // No compensation drain is owed, for the scroll's reason: one posted
+        // message that holds nothing down, so a failed move strands no half-press.
+        // controller::movePointer reads the held inputs to decide whether the
+        // message is a plain move or a drag; nothing this port exposes leaves a
+        // button held across calls, so the plain move is what it picks.
+        return uf::movePointer(m_target, lease, point, m_held, m_audit);
+    }
 }

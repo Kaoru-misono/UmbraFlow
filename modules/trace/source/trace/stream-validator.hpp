@@ -102,6 +102,12 @@ namespace uf::trace
         [[nodiscard]]
         static auto requireLongPressPayload(TraceEvent const& event) -> Status;
 
+        // The same rule for engine.pointer_move_delivered, whose whole content is
+        // the point: it presses nothing, so a line without one records that the
+        // pointer went somewhere unstated.
+        [[nodiscard]]
+        static auto requireMovePayload(TraceEvent const& event) -> Status;
+
         [[nodiscard]] auto startStep(TraceEvent::Framework const& payload) -> Status;
         [[nodiscard]] auto finishStep(TraceEvent::Framework const& payload) -> Status;
         [[nodiscard]] auto retryAttempt(TraceEvent::Framework const& payload) -> Status;

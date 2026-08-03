@@ -231,6 +231,34 @@ namespace uf::trace
             CHECK(annotation.emit(delivered).has_value());
         }
 
+        TEST_CASE("a delivered pointer move must say where the pointer went")
+        {
+            // Its whole content is the point: it presses nothing, carries no
+            // delta and no hold, so without the coordinate the line records that
+            // the pointer went somewhere unstated. Drop requireMovePayload's
+            // clause and the refusal below goes red.
+            auto stream = Stream{};
+            CHECK(
+                refusedKind(
+                    stream.emit(plain(TraceEventKind::EnginePointerMoveDelivered))
+                )
+                == AutomationErrorKind::InternalInvariant
+            );
+            CHECK(stream.events().empty());
+
+            auto delivered        = plain(TraceEventKind::EnginePointerMoveDelivered);
+            delivered.clickClient = Point<ClientSpace>{4.0F, 2.0F};
+            REQUIRE(stream.emit(delivered).has_value());
+            REQUIRE(stream.events().size() == 1U);
+
+            // Admitted on the exploration stream too, the long press's precedent:
+            // a move claims no recognition, so no annotation spelling corrects it.
+            // Send this kind through refuseAnnotationVocabularyClash and this
+            // goes red.
+            auto annotation = Stream{FrontEnd::Annotation};
+            CHECK(annotation.emit(delivered).has_value());
+        }
+
         TEST_CASE("a run bracket opens once and accepts nothing after it closes")
         {
             auto stream = Stream{};

@@ -200,6 +200,21 @@ namespace uf::trace
         return ok();
     }
 
+    auto TraceStreamValidator::requireMovePayload(
+        TraceEvent const& event
+    ) -> Status
+    {
+        if (!event.clickClient.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "engine.pointer_move_delivered carries no point, which is the "
+                "whole of what it records"
+            );
+        }
+        return ok();
+    }
+
     auto TraceStreamValidator::admit(
         TraceEvent const& event
     ) -> Result<std::vector<std::string>>
@@ -290,6 +305,12 @@ namespace uf::trace
             // one -- the scroll's precedent rather than the click's, because
             // `long_press_delivered` claims no recognition, only what happened.
             return requireLongPressPayload(event);
+
+        case TraceEventKind::EnginePointerMoveDelivered:
+            // Admitted on every stream, the long press's precedent: a move claims
+            // no recognition, and the exploration vocabulary has no spelling of
+            // its own for it to have chosen instead.
+            return requireMovePayload(event);
 
         case TraceEventKind::AnnotationClickDelivered:
         case TraceEventKind::AnnotationRegionSaved:

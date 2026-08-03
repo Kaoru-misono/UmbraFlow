@@ -84,6 +84,8 @@ namespace uf::trace
             case TraceEventKind::EngineScrollDelivered: return "engine.scroll_delivered";
             case TraceEventKind::EngineLongPressDelivered:
                 return "engine.long_press_delivered";
+            case TraceEventKind::EnginePointerMoveDelivered:
+                return "engine.pointer_move_delivered";
             case TraceEventKind::EngineObservationInvalidated:
                 return "engine.observation_invalidated";
             case TraceEventKind::TaskNativeCall: return "task.native_call";

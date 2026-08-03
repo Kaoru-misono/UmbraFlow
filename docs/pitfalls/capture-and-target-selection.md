@@ -379,22 +379,31 @@ screen did not change, and all of them dissolved by one click before the wheel.
 
 Deliver a pointer message over the region you intend to scroll, then scroll.
 
-The primitive that says exactly that is a pointer **move**, and
-`controller::movePointer` exists — but it stops at the controller. `IActionSink`
-exposes `click`, `pressKey`, `scroll` and `longPress`, and the script surface
-exposes `cycle_click`, `cycle_click_point`, `cycle_long_press`, `cycle_scroll`
-and `key`, so a chunk today cannot ask for a move. Until it is exposed, every
-pointer message a caller can deliver also presses the button — a click, or a
-long press at a point — which means choosing a point inside the scrollable
-region that does not activate anything: a gutter between cards, empty padding
-inside the list. That is a workaround and should read as one at the call site.
-A click is the one to reach for; `cycle_long_press` holds the button down for a
-caller-chosen duration, so it is strictly more likely to activate whatever it
-lands on.
+The primitive that says exactly that is `ctx:cycle_move_pointer(ticket, x, y)`,
+on both the run and the exploration surface since 2026-08-03. It posts one
+pointer message at the coordinate and presses nothing, which is the whole
+difference from the click that used to stand in for it:
+
+```lua
+local cycle = ctx:cycle_open()
+ctx:cycle_move_pointer(cycle, gridX, gridY)
+local scrolling = ctx:cycle_open()
+ctx:cycle_scroll(scrolling, -5)
+```
+
+Two cycles, because every delivered input spends its frame — the move changes
+what the target believes is hovered, so the frame that authorised it no longer
+describes the screen.
+
+The earlier workaround — a bare `explore.click_point` into a gutter between
+cards, chosen only because a click was the one pointer message a script could
+deliver — is no longer needed and should be replaced wherever it survives. It
+was never safe: it depended on finding a point inside the scrollable region that
+activated nothing.
 
 ### Regression check
 
-Before concluding that a target ignores the wheel, deliver a click inside the
+Before concluding that a target ignores the wheel, move the pointer inside the
 region and scroll again. If it moves, the wheel was never the subject. Assert
 the difference rather than the absolute: read the region, scroll, read it again,
 and compare — a scroll that "looks like it worked" is exactly the failure this

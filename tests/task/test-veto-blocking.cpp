@@ -262,6 +262,17 @@ namespace uf::task
                 m_gate->blockOn(m_gate->token());
                 return ok();
             }
+
+            // And a blocked pointer move, the last verb the port carries.
+            [[nodiscard]]
+            auto movePointer(
+                Point<ClientSpace> /*point*/,
+                ObservationLease const& /*lease*/
+            ) -> Status override
+            {
+                m_gate->blockOn(m_gate->token());
+                return ok();
+            }
         };
 
         // Blocks inside emit(), on the first event matching its target. Like the

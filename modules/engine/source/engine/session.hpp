@@ -212,6 +212,16 @@ namespace uf::engine
         MonotonicInstant::Duration hold{};
     };
 
+    // The record of one delivered pointer move: the frame it was authorized
+    // against and the client-space point the pointer was sent to. Shaped like an
+    // ActReceipt because a move is authorized like a click; what it does not
+    // carry is any evidence of a press, because there was none.
+    struct PointerMoveReceipt final
+    {
+        FrameId            frameId;
+        Point<ClientSpace> movePoint;
+    };
+
     // The recognition and action pipeline over one bound capture target.
     //
     // Trace lifetime contract: the session stores a non-owning borrow of the
@@ -477,5 +487,29 @@ namespace uf::engine
             PixelPoint point,
             MonotonicInstant::Duration hold
         ) -> Result<LongPressReceipt>;
+
+        // Moves the pointer to `point`, pressing nothing, and spends
+        // `observation`.
+        //
+        // Its authorization contract is clickPoint's clause for clause -- stop
+        // requested, foreign handle, consumed handle, live fingerprint, lease
+        // validity at delivery, target-instance revalidation before the post, and
+        // the spent observation -- and NOTHING is dropped. What the relaxations in
+        // pressKey and scroll rest on is that those verbs name no screen position;
+        // a move names one, so every gate that asks whether a coordinate still
+        // means what it meant applies here unchanged. That the verb presses
+        // nothing shortens the list of what a mis-aimed one can do, not the list
+        // of what makes it mis-aimed.
+        //
+        // It spends the observation for the reason every delivering verb does: a
+        // pointer message changes what the target believes is hovered, so the
+        // frame that authorized the move no longer describes the screen. The
+        // caller opens a second observation for the scroll that follows, which is
+        // also what keeps "one frame delivers at most one input" true.
+        [[nodiscard]]
+        auto movePointer(
+            Observation&& observation,
+            PixelPoint point
+        ) -> Result<PointerMoveReceipt>;
     };
 }

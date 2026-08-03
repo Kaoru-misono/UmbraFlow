@@ -456,6 +456,28 @@ namespace uf::task
             MonotonicInstant::Duration hold
         ) -> Result<engine::LongPressReceipt>;
 
+        // Spends the cycle `ticket` names and moves the pointer to `point`,
+        // pressing nothing.
+        //
+        // The ledger's half is cycleClickPoint's without the hit ordinal, and the
+        // engine's half is clickPoint's entire fence -- see
+        // engine::EngineSession::movePointer for why a verb that presses nothing
+        // still takes every gate a click takes.
+        //
+        // Both environments may reach it, and unlike cycleClickPoint a business
+        // task may name the coordinate directly. The privilege those two carry is
+        // over ACTIVATING something the recognised page did not authorise, and a
+        // move activates nothing: it cannot press, select, or submit, and no verb
+        // on this surface leaves a button held for it to drag with. What is left
+        // is cycleScroll's category, an input that needs no hit -- and it is the
+        // input a scroll needs before it, because a target scrolls whatever it
+        // believes is hovered (docs/pitfalls/capture-and-target-selection.md).
+        [[nodiscard]]
+        auto cycleMovePointer(
+            CycleTicket ticket,
+            PixelPoint point
+        ) -> Result<engine::PointerMoveReceipt>;
+
         // Sleeps until `deadline`, or for `interval`, whichever comes first, and
         // reports whether budget remains afterwards -- false means the deadline
         // has passed and the caller's wait loop is over. It backs the `wait`

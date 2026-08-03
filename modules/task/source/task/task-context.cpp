@@ -540,6 +540,22 @@ namespace uf::task
         return m_session.longPress(std::move(observation), point, hold);
     }
 
+    auto TaskContext::cycleMovePointer(
+        CycleTicket ticket,
+        PixelPoint point
+    ) -> Result<engine::PointerMoveReceipt>
+    {
+        // The ledger's half of the fence, cycleLongPress's exactly: the ticket is
+        // checked against the one open cycle, and the frame leaves the ledger here
+        // so a stale ticket is refused before anything is delivered.
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+
+        // movePointer consumes the frame by rvalue, so the cycle is spent whatever
+        // the outcome; spend already dropped the ledger entry, which is what makes
+        // every later use of this ticket fail StaleObservation.
+        return m_session.movePointer(std::move(observation), point);
+    }
+
     auto TaskContext::waitUntil(
         MonotonicInstant deadline,
         MonotonicInstant::Duration interval

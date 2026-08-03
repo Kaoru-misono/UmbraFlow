@@ -1103,4 +1103,106 @@ namespace uf::engine
             .hold       = hold,
         };
     }
+
+    auto EngineSession::movePointer(
+        Observation&& observation,
+        PixelPoint point
+    ) -> Result<PointerMoveReceipt>
+    {
+        // clickPoint's gates, in its order and for its reasons. Spelled out for
+        // longPress's reason: a helper hiding the sequence is how one of the
+        // coordinate verbs comes to be missing a gate.
+        if (m_config.cancellation.stop_requested())
+        {
+            return fail(
+                AutomationErrorKind::Cancelled,
+                "cancelled before pointer move delivery"
+            );
+        }
+        UF_TRY(ensureUsable(observation, "movePointer"));
+
+        auto const identity = observation.m_frameIdentity;
+
+        if (m_config.liveFingerprint != m_config.projectFingerprint)
+        {
+            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
+            event.errorKind = AutomationErrorKind::TargetCompatibilityUnverified;
+            event.message   = std::string{
+                "live size or DPI does not match the page model's fingerprint"
+            };
+            UF_TRY(emit(event));
+            return fail(
+                AutomationErrorKind::TargetCompatibilityUnverified,
+                "live size or DPI does not match the page model's fingerprint"
+            );
+        }
+
+        auto lease = observation.m_lease.validate(
+            identity.sessionId(),
+            identity.targetGeneration(),
+            identity.frameId(),
+            MonotonicInstant::now()
+        );
+        if (!lease)
+        {
+            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
+            event.errorKind = automationErrorKind(lease.error());
+            event.message   = std::string{lease.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(lease).error()};
+        }
+
+        UF_TRY(emit(identityEvent(trace::TraceEventKind::EngineActionAuthorized, identity)));
+
+        UF_TRY_VALUE(framePoint, pixelPointToFramePoint(point));
+        auto const clientPoint = observation.m_frame.transform().frameToClient(framePoint);
+
+        auto revalidation = m_frameSource->validateTargetInstance();
+        if (!revalidation)
+        {
+            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
+            event.errorKind = automationErrorKind(revalidation.error());
+            event.message   = std::string{revalidation.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(revalidation).error()};
+        }
+
+        auto delivered = m_actionSink->movePointer(clientPoint, observation.m_lease);
+        if (!delivered)
+        {
+            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
+            event.errorKind = automationErrorKind(delivered.error());
+            event.message   = std::string{delivered.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(delivered).error()};
+        }
+
+        // The move has landed; the handle dies for clickPoint's reason.
+        observation.m_invalidated = true;
+
+        // Written under the engine spelling on every stream including the
+        // exploration one. There is no annotation.* spelling to prefer: the two
+        // exist because a bare CLICK would otherwise claim a recognition, and a
+        // move claims none on any stream.
+        auto moveEvent        = identityEvent(
+            trace::TraceEventKind::EnginePointerMoveDelivered,
+            identity
+        );
+        moveEvent.clickClient = clientPoint;
+        UF_TRY(emit(moveEvent));
+
+        UF_TRY(
+            emit(
+                identityEvent(
+                    trace::TraceEventKind::EngineObservationInvalidated,
+                    identity
+                )
+            )
+        );
+
+        return PointerMoveReceipt{
+            .frameId   = identity.frameId(),
+            .movePoint = clientPoint,
+        };
+    }
 }

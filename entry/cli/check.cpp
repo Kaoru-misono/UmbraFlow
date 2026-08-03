@@ -185,6 +185,18 @@ return #verdict.findings
                     "a falsification check measures screens and presses nothing"
                 );
             }
+
+            [[nodiscard]]
+            auto movePointer(
+                Point<ClientSpace> /*point*/,
+                ObservationLease const& /*lease*/
+            ) -> Status override
+            {
+                return fail(
+                    AutomationErrorKind::UnsupportedCapability,
+                    "a falsification check measures screens and moves no pointer"
+                );
+            }
         };
 
         // The per-cycle text-read budget one check runs under, taken from the file

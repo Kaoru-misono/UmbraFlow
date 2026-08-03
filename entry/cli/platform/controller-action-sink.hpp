@@ -80,5 +80,16 @@ namespace uf::cli::platform
             MonotonicInstant::Duration hold,
             ObservationLease const& lease
         ) -> Status override;
+
+        // Posts one pointer message through controller::movePointer, the same
+        // deliver -> postInputMessage -> PostMessageW route click() takes, with
+        // the same lease forwarded. It is the one verb here that takes the held
+        // inputs as a const borrow: it changes no button state, so it owes no
+        // compensation drain.
+        [[nodiscard]]
+        auto movePointer(
+            Point<ClientSpace> point,
+            ObservationLease const& lease
+        ) -> Status override;
     };
 }
