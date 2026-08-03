@@ -267,9 +267,16 @@ export type Page = {
 -- The tables this module minted, held by identity: `Page.new` refuses a
 -- look-alike because accepting one fails SILENTLY -- a misspelled `capabilities`
 -- yields an element that exercises nothing.
-local mintedElements: { [any]: boolean } = {}
-local mintedPages: { [any]: boolean } = {}
-local mintedReferences: { [any]: boolean } = {}
+--
+-- The keys are WEAK. A strong key here outlives every use of the object it
+-- names: nothing removes an entry, so one `project.load_project` left its whole
+-- model alive forever and a session that loaded ~150 of them hit the VM's
+-- memory ceiling. Weak keys cost the registry nothing it was doing -- an entry
+-- can only vanish once the object is unreachable, and an object nobody can
+-- reach is one nobody can present to a predicate.
+local mintedElements: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+local mintedPages: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+local mintedReferences: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 
 local model = {}
 

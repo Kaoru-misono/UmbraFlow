@@ -170,9 +170,10 @@ export type Claims = {
     rects_by_subject: { [string]: { Rect } },
 }
 
-local mintedScreens: { [any]: boolean } = {}
-local mintedExpectations: { [any]: boolean } = {}
-local mintedClaims: { [any]: boolean } = {}
+-- Weak keys, for the reason spelled out over `model`'s registries.
+local mintedScreens: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+local mintedExpectations: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+local mintedClaims: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 
 local oracle = {}
 

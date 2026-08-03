@@ -110,9 +110,12 @@ export type PageStack = {
     entries: { any },
 }
 
-local mintedEdges: { [any]: boolean } = {}
-local mintedGraphs: { [any]: boolean } = {}
-local mintedStacks: { [any]: boolean } = {}
+-- Weak keys, for the reason spelled out over `model`'s registries: an entry can
+-- only vanish once the object is unreachable, and a graph nobody can reach is a
+-- graph nobody can present.
+local mintedEdges: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+local mintedGraphs: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+local mintedStacks: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 
 local navigation = {}
 

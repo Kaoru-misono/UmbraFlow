@@ -36,12 +36,19 @@
 local evidence = {}
 
 -- Every hit this framework minted, held against the ticket it was minted on.
-local mintedHits: { [any]: any } = {}
+--
+-- Weak keys, for the reason spelled out over `model`'s registries, and here the
+-- rate is what makes it matter: one menu-to-menu run opened 3992 cycles, and a
+-- strong key would have kept every hit any of them produced. The value is the
+-- ticket rather than `true`, which is safe to hold strongly because a hit
+-- deliberately does not carry its ticket -- so the value cannot reach back to
+-- the key and keep it alive.
+local mintedHits: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
 
 -- Every receipt it minted. `true` rather than a ticket because a receipt carries
 -- its own ticket in a field the holder reads; a hit deliberately does not, so a
 -- caller cannot pass the ticket it finds there instead of the one it holds.
-local mintedReceipts: { [any]: boolean } = {}
+local mintedReceipts: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 
 -- Freezes `hit`, records it against `ticket`, and hands it back. One act, not
 -- two: a hit that was recorded and left writable would be a value

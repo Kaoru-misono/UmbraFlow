@@ -739,6 +739,59 @@ exercised = ["interact"]
         CHECK(lines.back().contains("\"kind\":\"run.finished\""));
     }
 
+    TEST_CASE("what the framework minted is released once nothing can present it")
+    {
+        auto const temp = TemporaryDir{"minting-heap"};
+        publishProject(temp.path(), "daily", k_taskSource);
+
+        auto host             = TaskHost{};
+        auto const generation = host.loadProject(temp.path());
+        REQUIRE(generation.has_value());
+
+        auto const tracePath = temp.path() / "minting-heap.jsonl";
+        auto session = host.startExplorationSession(*generation, runConfig(tracePath));
+        REQUIRE(session.has_value());
+
+        // Every constructor records what it minted so a look-alike can be
+        // refused later. Recording it is not the same as keeping it: a project
+        // model is minted once per load and dropped, and holding those entries
+        // strongly is what let one exploration session walk into the VM's
+        // memory ceiling after roughly 150 loads.
+        constexpr auto k_mintFiveHundred = std::string_view{
+            R"lua(
+                for index = 1, 500 do
+                    model.Element.new({
+                        name          = 'element' .. index,
+                        capabilities  = { 'read' },
+                        rect          = { x = 0, y = 0, width = 10, height = 10 },
+                        expected_text = 'text',
+                    })
+                end
+                return 1
+            )lua"
+        };
+
+        // The first round pays costs that are one-time rather than per-element
+        // -- the allocator's own growth, the strings this chunk interns -- so
+        // the baseline is taken after it and not before.
+        REQUIRE((*session)->evaluate(k_mintFiveHundred, "warm").has_value());
+        auto const baseline = (*session)->heapUsage().usedBytes;
+
+        for (auto round = 0; round < 4; ++round)
+        {
+            REQUIRE((*session)->evaluate(k_mintFiveHundred, "round").has_value());
+        }
+        auto const settled = (*session)->heapUsage().usedBytes;
+
+        // Two thousand further elements. Measured at about a kilobyte each when
+        // the registries held them, which is some two megabytes; released, the
+        // reading moves only by the allocator's page granularity, and moves
+        // DOWN as often as up.
+        CAPTURE(baseline);
+        CAPTURE(settled);
+        CHECK(settled < baseline + (256U * 1024U));
+    }
+
     TEST_CASE("an exploration session runs one chunk at a time under one bracket")
     {
         auto const temp = TemporaryDir{"exploration-bracket"};
