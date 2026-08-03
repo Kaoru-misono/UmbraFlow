@@ -1,8 +1,8 @@
 #pragma once
 
 #include "args.hpp"
-#include "explore-cursor.hpp"
 #include "explore-protocol.hpp"
+#include "queue-cursor.hpp"
 
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
@@ -26,8 +26,8 @@ namespace uf::cli
         std::filesystem::path results{};
         std::filesystem::path cursor{};
 
-        // Where the session begins reading. See resolveExploreQueueStart.
-        ExploreQueuePosition start{};
+        // Where the session begins reading. See resolveQueueStart.
+        QueuePosition start{};
 
         auto operator==(ExploreIpcPaths const&) const -> bool = default;
     };

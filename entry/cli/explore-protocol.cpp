@@ -1,7 +1,5 @@
 #include "explore-protocol.hpp"
 
-#include "json-text.hpp"
-
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/numeric/checked-cast.hpp>
@@ -12,6 +10,9 @@
 
 #include <script/engine.hpp>
 
+#include <trace/json-text.hpp>
+
+#include <cmath>
 #include <cstddef>
 #include <format>
 #include <optional>
@@ -35,7 +36,7 @@ namespace uf::cli
         // mixed type and a builder that decides which combination names a command
         // -- and sharing would mean a reader parameterised by a field table. What
         // IS shared is the half where a difference would silently corrupt a file
-        // rather than fail: escapeJsonString, in json-text.hpp.
+        // rather than fail: escapeJsonString, in trace/json-text.hpp.
         class LineReader final
         {
             std::string_view m_source;
@@ -346,7 +347,7 @@ namespace uf::cli
     auto serializeExploreResult(ExploreResult const& result) -> std::string
     {
         auto line = std::string{"{\"id\":"};
-        line += escapeJsonString(result.id);
+        line += trace::escapeJsonString(result.id);
         line += result.ok ? ",\"ok\":true" : ",\"ok\":false";
 
         if (result.boolean.has_value())
@@ -363,17 +364,17 @@ namespace uf::cli
         if (result.text.has_value())
         {
             line += ",\"value\":";
-            line += escapeJsonString(*result.text);
+            line += trace::escapeJsonString(*result.text);
         }
         if (result.errorKind.has_value())
         {
             line += ",\"error\":";
-            line += escapeJsonString(*result.errorKind);
+            line += trace::escapeJsonString(*result.errorKind);
         }
         if (result.message.has_value())
         {
             line += ",\"message\":";
-            line += escapeJsonString(*result.message);
+            line += trace::escapeJsonString(*result.message);
         }
         if (result.heap.has_value())
         {
@@ -412,6 +413,20 @@ namespace uf::cli
         }
         else if (auto const number = value.number(); number.has_value())
         {
+            // `{:.17g}` renders a non-finite double as the bare token inf, -inf or
+            // nan, none of which JSON can carry, so the line would not parse at
+            // all -- and an agent may feed a numeric answer back as an argument.
+            if (!std::isfinite(*number))
+            {
+                return exploreFailure(
+                    id,
+                    fail(
+                        AutomationErrorKind::InvalidResource,
+                        "a chunk answered with a value JSON cannot carry"
+                    ).error(),
+                    heap
+                );
+            }
             result.number = *number;
         }
         else if (auto const* p_text = value.text(); p_text != nullptr)

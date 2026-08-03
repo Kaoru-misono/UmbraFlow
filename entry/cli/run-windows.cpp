@@ -52,12 +52,7 @@ namespace uf::cli
                 .maximumPixelComparisons = args.budget,
                 .recognitionTimeout      = args.recognitionTimeout,
                 .maxActionFrameAge       = args.maxFrameAge,
-                // Zero means the flag was absent and the default stands.
-                .maxScriptRuntime        = args.maxRuntime.count() > 0
-                    ? std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                          args.maxRuntime
-                      )
-                    : task::k_defaultMaxScriptRuntime,
+                .maxScriptRuntime        = args.maxRuntime,
                 .tracePath               = args.trace,
             }
         );

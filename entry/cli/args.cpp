@@ -155,7 +155,7 @@ namespace uf::cli
         auto budget             = k_defaultPixelComparisonBudget;
         auto recognitionTimeout = k_defaultRunRecognitionTimeout;
         auto maxFrameAge        = k_defaultRunMaxFrameAge;
-        auto maxRuntime         = MonotonicInstant::Duration{};
+        auto maxRuntime         = k_defaultRunMaxRuntime;
         auto trace              = std::filesystem::path{k_defaultTracePath};
         auto ocrModels          = std::optional<std::filesystem::path>{};
 
@@ -211,6 +211,19 @@ namespace uf::cli
             else if (flag == "--max-runtime")
             {
                 UF_TRY_VALUE(count, parseUnsigned(value, flag));
+                // Zero is not a shorter ceiling: the run's deadline would be its
+                // own start instant and the task would be cut at the first
+                // safepoint, so it is refused rather than read as "no limit".
+                if (count == 0U)
+                {
+                    return invalid(
+                        std::format(
+                            "{} expects a positive millisecond count, got \"{}\"",
+                            flag,
+                            value
+                        )
+                    );
+                }
                 UF_TRY_VALUE(
                     parsed,
                     parseDurationCount<std::chrono::milliseconds>(count, flag)

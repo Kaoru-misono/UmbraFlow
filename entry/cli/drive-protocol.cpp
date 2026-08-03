@@ -1,7 +1,5 @@
 #include "drive-protocol.hpp"
 
-#include "json-text.hpp"
-
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/numeric/checked-cast.hpp>
@@ -11,6 +9,8 @@
 
 #include <domain/error.hpp>
 #include <domain/key.hpp>
+
+#include <trace/json-text.hpp>
 
 #include <charconv>
 #include <chrono>
@@ -703,7 +703,7 @@ namespace uf::cli
     ) -> std::string
     {
         auto line = std::string{"{\"op\":"};
-        line += escapeJsonString(operation);
+        line += trace::escapeJsonString(operation);
         line += result.ok ? ",\"ok\":true" : ",\"ok\":false";
 
         if (result.cycle.has_value())
@@ -725,12 +725,12 @@ namespace uf::cli
         if (result.errorKind.has_value())
         {
             line += ",\"error\":";
-            line += escapeJsonString(*result.errorKind);
+            line += trace::escapeJsonString(*result.errorKind);
         }
         if (result.message.has_value())
         {
             line += ",\"message\":";
-            line += escapeJsonString(*result.message);
+            line += trace::escapeJsonString(*result.message);
         }
 
         line += '}';

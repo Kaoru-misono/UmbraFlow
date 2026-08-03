@@ -1,5 +1,7 @@
 #include "event.hpp"
 
+#include "json-text.hpp"
+
 #include <core/error/contracts.hpp>
 #include <core/types/integer.hpp>
 
@@ -20,49 +22,48 @@
 
 namespace uf::trace
 {
-    namespace
+    // Minimal JSON string escaper: quote the value and escape the mandatory
+    // control and structural bytes. This is the single copy the trace stream and
+    // the CLI's line protocols both write through.
+    auto escapeJsonString(std::string_view value) -> std::string
     {
-        // Minimal JSON string escaper: quote the value and escape the mandatory
-        // control and structural bytes. trace is the only module that writes this
-        // schema, so this is the single copy.
-        [[nodiscard]]
-        auto escapeJsonString(std::string_view value) -> std::string
+        auto constexpr hex = std::string_view{"0123456789abcdef"};
+
+        auto output = std::string{"\""};
+        output.reserve(value.size() + 2U);
+        for (auto const character : value)
         {
-            auto constexpr hex = std::string_view{"0123456789abcdef"};
-
-            auto output = std::string{"\""};
-            output.reserve(value.size() + 2U);
-            for (auto const character : value)
+            auto const byte = static_cast<unsigned char>(character);
+            switch (byte)
             {
-                auto const byte = static_cast<unsigned char>(character);
-                switch (byte)
+            case '"': output += "\\\""; break;
+            case '\\': output += "\\\\"; break;
+            case '\b': output += "\\b"; break;
+            case '\f': output += "\\f"; break;
+            case '\n': output += "\\n"; break;
+            case '\r': output += "\\r"; break;
+            case '\t': output += "\\t"; break;
+            default:
+                if (byte < 0x20U)
                 {
-                case '"': output += "\\\""; break;
-                case '\\': output += "\\\\"; break;
-                case '\b': output += "\\b"; break;
-                case '\f': output += "\\f"; break;
-                case '\n': output += "\\n"; break;
-                case '\r': output += "\\r"; break;
-                case '\t': output += "\\t"; break;
-                default:
-                    if (byte < 0x20U)
-                    {
-                        output += "\\u00";
-                        output += hex[byte >> 4U];
-                        output += hex[byte & 0x0FU];
-                    }
-                    else
-                    {
-                        output += static_cast<char>(byte);
-                    }
-                    break;
+                    output += "\\u00";
+                    output += hex[byte >> 4U];
+                    output += hex[byte & 0x0FU];
                 }
+                else
+                {
+                    output += static_cast<char>(byte);
+                }
+                break;
             }
-
-            output += '"';
-            return output;
         }
 
+        output += '"';
+        return output;
+    }
+
+    namespace
+    {
         // Schema-owned names, independent of enum reflection so the wire format
         // cannot follow a rename of the enumerator. The dotted spelling names the
         // layer that authored the event.

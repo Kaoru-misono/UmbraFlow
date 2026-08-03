@@ -1,6 +1,6 @@
 #include <args.hpp>
-#include <explore-cursor.hpp>
 #include <explore-protocol.hpp>
+#include <queue-cursor.hpp>
 
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
@@ -12,10 +12,12 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -180,6 +182,26 @@ namespace uf::cli
             );
         }
 
+        TEST_CASE("a chunk answering with inf or nan is refused, not written raw")
+        {
+            // `{:.17g}` renders these as the bare tokens inf/-inf/nan, which are
+            // not JSON literals, so the agent's reader would throw on a line the
+            // protocol promised was JSON.
+            for (auto const value : std::array<double, 3>{
+                std::numeric_limits<double>::infinity(),
+                -std::numeric_limits<double>::infinity(),
+                std::numeric_limits<double>::quiet_NaN(),
+            })
+            {
+                auto const line =
+                    exploreSuccess("a", script::ScriptValue{value}, k_lineHeap);
+                CAPTURE(line);
+                CHECK(line.contains(R"("ok":false)"));
+                CHECK(!line.contains("inf"));
+                CHECK(!line.contains("nan"));
+            }
+        }
+
         TEST_CASE("every answered chunk carries the heap against its ceiling")
         {
             // The ceiling is measured against garbage as well as live data, so a
@@ -240,17 +262,17 @@ namespace uf::cli
 
         TEST_CASE("a cursor round-trips and refuses a file it did not write whole")
         {
-            auto const record = ExploreQueueCursorRecord{
+            auto const record = QueueCursorRecord{
                 .queue    = std::filesystem::path{"/tmp/queue.jsonl"},
-                .position = ExploreQueuePosition{
-                    .consumedBytes  = 128,
-                    .consumedChunks = 3,
+                .position = QueuePosition{
+                    .consumedBytes = 128,
+                    .consumedLines = 3,
                 },
             };
-            auto const text = serializeExploreQueueCursor(record);
+            auto const text = serializeQueueCursor(record);
 
             auto const parsed =
-                parseExploreQueueCursor(text, std::filesystem::path{"cursor"});
+                parseQueueCursor(text, std::filesystem::path{"cursor"});
             REQUIRE(parsed.has_value());
             CHECK(*parsed == record);
 
@@ -259,7 +281,7 @@ namespace uf::cli
                 auto truncated = text;
                 truncated.resize(text.size() - 3U);
                 CHECK(
-                    !parseExploreQueueCursor(
+                    !parseQueueCursor(
                         truncated,
                         std::filesystem::path{"cursor"}
                     ).has_value()
@@ -269,7 +291,7 @@ namespace uf::cli
             SUBCASE("a missing field is a refusal rather than a default")
             {
                 CHECK(
-                    !parseExploreQueueCursor(
+                    !parseQueueCursor(
                         "queue=/tmp/queue.jsonl\nconsumed-bytes=1\n",
                         std::filesystem::path{"cursor"}
                     ).has_value()
@@ -279,7 +301,7 @@ namespace uf::cli
             SUBCASE("a field this build does not know is a refusal")
             {
                 CHECK(
-                    !parseExploreQueueCursor(
+                    !parseQueueCursor(
                         text + "surprise=1\n",
                         std::filesystem::path{"cursor"}
                     ).has_value()
@@ -292,21 +314,21 @@ namespace uf::cli
             auto const directory = TemporaryDirectory{"uf-explore-cursor-queue"};
             auto const queue     = directory.path() / "queue.jsonl";
             auto const other     = directory.path() / "other.jsonl";
-            auto const cursor    = exploreQueueCursorPath(queue);
+            auto const cursor    = queueCursorPath(queue);
 
             writeText(
                 cursor,
-                serializeExploreQueueCursor(
-                    ExploreQueueCursorRecord{
+                serializeQueueCursor(
+                    QueueCursorRecord{
                         .queue    = other,
-                        .position = ExploreQueuePosition{.consumedBytes = 10},
+                        .position = QueuePosition{.consumedBytes = 10},
                     }
                 )
             );
 
             // Its offset would seek into a file it never described, skipping
             // every chunk before that point unseen.
-            CHECK(!readExploreQueueCursor(cursor, queue).has_value());
+            CHECK(!readQueueCursor(cursor, queue).has_value());
         }
 
         TEST_CASE("a restart resumes where the answers stopped")
@@ -321,27 +343,27 @@ namespace uf::cli
             };
             writeText(queue, std::string{k_first} + std::string{k_second});
 
-            auto const cursorPath = exploreQueueCursorPath(queue);
-            auto cursor = ExploreQueueCursor::open(
+            auto const cursorPath = queueCursorPath(queue);
+            auto cursor = QueueCursor::open(
                 cursorPath,
                 queue,
-                ExploreQueuePosition{}
+                QueuePosition{}
             );
             REQUIRE(cursor.has_value());
             REQUIRE(cursor->advance(k_first.size()).has_value());
 
-            auto const recorded = readExploreQueueCursor(cursorPath, queue);
+            auto const recorded = readQueueCursor(cursorPath, queue);
             REQUIRE(recorded.has_value());
             REQUIRE(recorded->has_value());
             CHECK((*recorded)->consumedBytes == k_first.size());
-            CHECK((*recorded)->consumedChunks == 1U);
+            CHECK((*recorded)->consumedLines == 1U);
 
-            auto const extent = measureExploreQueue(queue);
+            auto const extent = measureQueueExtent(queue);
             REQUIRE(extent.has_value());
-            CHECK(extent->framedChunks == 2U);
+            CHECK(extent->framedLines == 2U);
             CHECK(extent->framedBytes == k_first.size() + k_second.size());
 
-            auto const start = resolveExploreQueueStart(*recorded, *extent, queue);
+            auto const start = resolveQueueStart(*recorded, *extent, queue);
             REQUIRE(start.has_value());
             CHECK(start->consumedBytes == k_first.size());
         }
@@ -352,13 +374,13 @@ namespace uf::cli
             auto const queue     = directory.path() / "queue.jsonl";
             writeText(queue, "{\"id\":\"a\",\"chunk\":\"return 1\"}\n");
 
-            auto const extent = measureExploreQueue(queue);
+            auto const extent = measureQueueExtent(queue);
             REQUIRE(extent.has_value());
 
             // Running them could re-deliver clicks against a live target and
             // skipping them could drop work, so neither reading is taken.
-            auto const start = resolveExploreQueueStart(
-                std::optional<ExploreQueuePosition>{},
+            auto const start = resolveQueueStart(
+                std::optional<QueuePosition>{},
                 *extent,
                 queue
             );
@@ -367,10 +389,10 @@ namespace uf::cli
             SUBCASE("an empty queue with no cursor is the ordinary first session")
             {
                 writeText(queue, "");
-                auto const empty = measureExploreQueue(queue);
+                auto const empty = measureQueueExtent(queue);
                 REQUIRE(empty.has_value());
-                auto const fresh = resolveExploreQueueStart(
-                    std::optional<ExploreQueuePosition>{},
+                auto const fresh = resolveQueueStart(
+                    std::optional<QueuePosition>{},
                     *empty,
                     queue
                 );
@@ -385,14 +407,14 @@ namespace uf::cli
             auto const queue     = directory.path() / "queue.jsonl";
             writeText(queue, "{\"id\":\"a\",\"chunk\":\"return 1\"}\n");
 
-            auto const extent = measureExploreQueue(queue);
+            auto const extent = measureQueueExtent(queue);
             REQUIRE(extent.has_value());
 
             // The queue was truncated or replaced, so the cursor records chunks
             // that are no longer there.
-            auto const start = resolveExploreQueueStart(
-                std::optional<ExploreQueuePosition>{
-                    ExploreQueuePosition{.consumedBytes = 10'000}
+            auto const start = resolveQueueStart(
+                std::optional<QueuePosition>{
+                    QueuePosition{.consumedBytes = 10'000}
                 },
                 *extent,
                 queue

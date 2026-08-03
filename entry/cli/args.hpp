@@ -4,6 +4,8 @@
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
+#include <task/task-host.hpp>
+
 #include <chrono>
 #include <filesystem>
 #include <optional>
@@ -21,6 +23,15 @@ namespace uf::cli
     inline constexpr auto k_defaultRunMaxFrameAge = (
         std::chrono::duration_cast<MonotonicInstant::Duration>(
             std::chrono::milliseconds{750}
+        )
+    );
+
+    // Taken from the host's own ceiling rather than restated, so the value an
+    // operator is told is the default and the one a run is actually held to
+    // cannot drift apart.
+    inline constexpr auto k_defaultRunMaxRuntime = (
+        std::chrono::duration_cast<MonotonicInstant::Duration>(
+            task::k_defaultMaxScriptRuntime
         )
     );
 
@@ -70,9 +81,9 @@ namespace uf::cli
         MonotonicInstant::Duration recognitionTimeout{k_defaultRunRecognitionTimeout};
         MonotonicInstant::Duration maxFrameAge{k_defaultRunMaxFrameAge};
 
-        // The whole task is one unit of script, so this bounds the RUN. Zero
-        // leaves the script layer's own default in place.
-        MonotonicInstant::Duration maxRuntime{};
+        // The whole task is one unit of script, so this bounds the RUN, not a
+        // step of it.
+        MonotonicInstant::Duration maxRuntime{k_defaultRunMaxRuntime};
 
         std::filesystem::path trace{k_defaultTracePath};
 
@@ -188,13 +199,9 @@ namespace uf::cli
     // <project>/assets/screens, which is why this subcommand binds no target,
     // declares no DPI awareness, and runs on every host.
     //
-    // --ocr-models IS here, because confidence is a score to falsify against. An
-    // element with no templates identifies by the text its rectangle reads, so a
-    // text cell is measured exactly as every other one is: against a number, at
-    // or above the read floor the element declares. A project whose claims
-    // include text and a check started without this flag is refused by name at
-    // the top of the routine, before any screen is measured -- degrading those
-    // cells to "unclaimed" would report green over cells nobody measured.
+    // --ocr-models IS here because a project whose claims include text and a
+    // check started without this flag is refused by name at the top of the
+    // routine, before any screen is measured.
     struct CheckArgs final
     {
         std::filesystem::path project{};

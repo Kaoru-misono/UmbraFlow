@@ -94,6 +94,7 @@ namespace uf::cli
             "--budget",              "500",
             "--recognition-timeout", "1500",
             "--max-frame-age",       "600",
+            "--max-runtime",         "900000",
             "--trace",               "out.jsonl",
         };
 
@@ -107,6 +108,7 @@ namespace uf::cli
             result->recognitionTimeout == asDuration(std::chrono::milliseconds{1500})
         );
         CHECK(result->maxFrameAge == asDuration(std::chrono::milliseconds{600}));
+        CHECK(result->maxRuntime == asDuration(std::chrono::milliseconds{900000}));
         CHECK(result->trace == "out.jsonl");
     }
 
@@ -141,6 +143,7 @@ namespace uf::cli
     {
         auto const usage = runUsageText();
         CHECK(usage.find("--task") != std::string_view::npos);
+        CHECK(usage.find("--max-runtime") != std::string_view::npos);
         CHECK(usage.find("--page") == std::string_view::npos);
         CHECK(usage.find("--action") == std::string_view::npos);
     }
@@ -152,6 +155,9 @@ namespace uf::cli
         CHECK(result->budget == k_defaultPixelComparisonBudget);
         CHECK(result->recognitionTimeout == k_defaultRunRecognitionTimeout);
         CHECK(result->maxFrameAge == k_defaultRunMaxFrameAge);
+        // Resolved by the parser rather than by the composition: an omitted flag
+        // leaves the field carrying the ceiling the run is actually held to.
+        CHECK(result->maxRuntime == k_defaultRunMaxRuntime);
         CHECK(result->trace == k_defaultTracePath);
         // Absent by default: a run that never asked for --ocr-models must not
         // pay for an engine, and cycle_read refuses on its own terms instead.
@@ -331,6 +337,27 @@ namespace uf::cli
         auto const result = parse(raw);
         REQUIRE_FALSE(result.has_value());
         CHECK(result.error().message() == "--budget expects an integer, got \"lots\"");
+    }
+
+    TEST_CASE("parseRunArguments refuses a zero run ceiling")
+    {
+        // A zero ceiling puts the run's deadline at its own start instant, so
+        // the task would die at the first safepoint. It is refused by name
+        // rather than read as "absent" and silently replaced by the default.
+        auto raw = minimalArgs();
+        raw.emplace_back("--max-runtime");
+        raw.emplace_back("0");
+
+        auto const result = parse(raw);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(
+            automationErrorKind(result.error())
+            == AutomationErrorKind::InvalidResource
+        );
+        CHECK(
+            result.error().message()
+            == "--max-runtime expects a positive millisecond count, got \"0\""
+        );
     }
 
     TEST_CASE("ExitCode preserves the documented process values")

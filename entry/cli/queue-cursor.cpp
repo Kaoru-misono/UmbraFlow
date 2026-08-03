@@ -1,4 +1,4 @@
-#include "explore-cursor.hpp"
+#include "queue-cursor.hpp"
 
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
@@ -28,6 +28,11 @@ namespace uf::cli
         constexpr auto k_maximumCursorBytes  = uintmax{64} * 1024U;
         constexpr auto k_queueScanChunkBytes = std::size_t{64} * 1024U;
 
+        // `consumed-chunks` is the on-disk spelling of `consumedLines`. Cursors an
+        // operator already holds carry that key, and an unrecognized key is a
+        // refusal rather than a default.
+        constexpr auto k_consumedLinesKey = std::string_view{"consumed-chunks"};
+
         [[nodiscard]]
         auto cursorIoFailure(
             std::string_view operation,
@@ -38,7 +43,7 @@ namespace uf::cli
             return fail(
                 AutomationErrorKind::IoFailure,
                 std::format(
-                    "explore failed to {} {}: {}",
+                    "cannot {} {}: {}",
                     operation,
                     path.string(),
                     error.message()
@@ -55,11 +60,7 @@ namespace uf::cli
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
-                std::format(
-                    "the explore queue cursor {} {}",
-                    path.string(),
-                    detail
-                )
+                std::format("the queue cursor {} {}", path.string(), detail)
             );
         }
 
@@ -85,7 +86,7 @@ namespace uf::cli
         }
     }
 
-    auto exploreQueueCursorPath(
+    auto queueCursorPath(
         std::filesystem::path const& canonicalQueue
     ) -> std::filesystem::path
     {
@@ -94,29 +95,28 @@ namespace uf::cli
         return path;
     }
 
-    auto serializeExploreQueueCursor(
-        ExploreQueueCursorRecord const& record
-    ) -> std::string
+    auto serializeQueueCursor(QueueCursorRecord const& record) -> std::string
     {
         // Generic-form so a cursor written on one host reads identically on
         // another, and so a Windows path in it never carries a backslash a reader
         // has to un-escape.
         return std::format(
-            "queue={}\nconsumed-bytes={}\nconsumed-chunks={}\n",
+            "queue={}\nconsumed-bytes={}\n{}={}\n",
             record.queue.generic_string(),
             record.position.consumedBytes,
-            record.position.consumedChunks
+            k_consumedLinesKey,
+            record.position.consumedLines
         );
     }
 
-    auto parseExploreQueueCursor(
+    auto parseQueueCursor(
         std::string_view text,
         std::filesystem::path const& path
-    ) -> Result<ExploreQueueCursorRecord>
+    ) -> Result<QueueCursorRecord>
     {
-        auto queue          = std::optional<std::string>{};
-        auto consumedBytes  = std::optional<uintmax>{};
-        auto consumedChunks = std::optional<uintmax>{};
+        auto queue         = std::optional<std::string>{};
+        auto consumedBytes = std::optional<uintmax>{};
+        auto consumedLines = std::optional<uintmax>{};
 
         auto position = std::size_t{0};
         while (position < text.size())
@@ -160,10 +160,10 @@ namespace uf::cli
                 UF_TRY_VALUE(parsed, parseCursorNumber(value, key, path));
                 consumedBytes = parsed;
             }
-            else if (key == "consumed-chunks")
+            else if (key == k_consumedLinesKey)
             {
                 UF_TRY_VALUE(parsed, parseCursorNumber(value, key, path));
-                consumedChunks = parsed;
+                consumedLines = parsed;
             }
             else
             {
@@ -177,25 +177,25 @@ namespace uf::cli
         if (
             !queue.has_value()
             || !consumedBytes.has_value()
-            || !consumedChunks.has_value()
+            || !consumedLines.has_value()
         )
         {
             return cursorFailure(path, "is missing a field");
         }
 
-        return ExploreQueueCursorRecord{
+        return QueueCursorRecord{
             .queue    = std::filesystem::path{*queue},
-            .position = ExploreQueuePosition{
-                .consumedBytes  = *consumedBytes,
-                .consumedChunks = *consumedChunks,
+            .position = QueuePosition{
+                .consumedBytes = *consumedBytes,
+                .consumedLines = *consumedLines,
             },
         };
     }
 
-    auto readExploreQueueCursor(
+    auto readQueueCursor(
         std::filesystem::path const& path,
         std::filesystem::path const& canonicalQueue
-    ) -> Result<std::optional<ExploreQueuePosition>>
+    ) -> Result<std::optional<QueuePosition>>
     {
         auto error       = std::error_code{};
         auto const state = std::filesystem::status(path, error);
@@ -205,7 +205,7 @@ namespace uf::cli
         }
         if (!std::filesystem::exists(state))
         {
-            return std::optional<ExploreQueuePosition>{};
+            return std::optional<QueuePosition>{};
         }
         if (!std::filesystem::is_regular_file(state))
         {
@@ -244,7 +244,7 @@ namespace uf::cli
         }
         text.resize(static_cast<std::size_t>(stream.gcount()));
 
-        UF_TRY_VALUE(record, parseExploreQueueCursor(text, path));
+        UF_TRY_VALUE(record, parseQueueCursor(text, path));
         if (record.queue.generic_string() != canonicalQueue.generic_string())
         {
             return cursorFailure(
@@ -256,12 +256,12 @@ namespace uf::cli
                 )
             );
         }
-        return std::optional<ExploreQueuePosition>{record.position};
+        return std::optional<QueuePosition>{record.position};
     }
 
-    auto measureExploreQueue(
+    auto measureQueueExtent(
         std::filesystem::path const& queue
-    ) -> Result<ExploreQueueExtent>
+    ) -> Result<QueueExtent>
     {
         auto error      = std::error_code{};
         auto const size = std::filesystem::file_size(queue, error);
@@ -280,7 +280,7 @@ namespace uf::cli
             );
         }
 
-        auto extent   = ExploreQueueExtent{.totalBytes = size};
+        auto extent  = QueueExtent{.totalBytes = size};
         auto buffer  = std::vector<char>(k_queueScanChunkBytes, '\0');
         auto scanned = uintmax{0};
         while (stream)
@@ -293,7 +293,7 @@ namespace uf::cli
                 if (buffer[index] == '\n')
                 {
                     extent.framedBytes = scanned;
-                    ++extent.framedChunks;
+                    ++extent.framedLines;
                 }
             }
             if (read == 0U)
@@ -312,11 +312,11 @@ namespace uf::cli
         return extent;
     }
 
-    auto resolveExploreQueueStart(
-        std::optional<ExploreQueuePosition> const& recorded,
-        ExploreQueueExtent const& extent,
+    auto resolveQueueStart(
+        std::optional<QueuePosition> const& recorded,
+        QueueExtent const& extent,
         std::filesystem::path const& queue
-    ) -> Result<ExploreQueuePosition>
+    ) -> Result<QueuePosition>
     {
         if (recorded.has_value())
         {
@@ -325,11 +325,11 @@ namespace uf::cli
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     std::format(
-                        "the explore cursor has consumed {} bytes of {}, which "
-                        "holds only {}; the queue was truncated or replaced under "
-                        "the session",
-                        recorded->consumedBytes,
+                        "the cursor beside {} has consumed {} bytes of a file "
+                        "that holds only {}; the queue was truncated or replaced "
+                        "under the session",
                         queue.string(),
+                        recorded->consumedBytes,
                         extent.totalBytes
                     )
                 );
@@ -339,26 +339,26 @@ namespace uf::cli
 
         if (extent.totalBytes == 0U)
         {
-            return ExploreQueuePosition{};
+            return QueuePosition{};
         }
 
         return fail(
             AutomationErrorKind::InvalidResource,
             std::format(
-                "the explore queue {} already holds {} chunk(s) and no cursor "
-                "records what ran; running them could re-deliver clicks against "
+                "the queue {} already holds {} line(s) and no cursor records what "
+                "ran; running them could re-deliver clicks and keystrokes against "
                 "a live target, and skipping them could drop work. Start from an "
                 "empty queue, or restore the cursor this queue was written for",
                 queue.string(),
-                extent.framedChunks
+                extent.framedLines
             )
         );
     }
 
-    ExploreQueueCursor::ExploreQueueCursor(
+    QueueCursor::QueueCursor(
         std::filesystem::path path,
         std::filesystem::path queue,
-        ExploreQueuePosition position
+        QueuePosition position
     ) noexcept
         : m_path{std::move(path)}
         , m_queue{std::move(queue)}
@@ -366,13 +366,13 @@ namespace uf::cli
     {
     }
 
-    auto ExploreQueueCursor::open(
+    auto QueueCursor::open(
         std::filesystem::path path,
         std::filesystem::path canonicalQueue,
-        ExploreQueuePosition start
-    ) -> Result<ExploreQueueCursor>
+        QueuePosition start
+    ) -> Result<QueueCursor>
     {
-        auto cursor = ExploreQueueCursor{
+        auto cursor = QueueCursor{
             std::move(path),
             std::move(canonicalQueue),
             start,
@@ -381,17 +381,17 @@ namespace uf::cli
         return cursor;
     }
 
-    auto ExploreQueueCursor::position() const noexcept -> ExploreQueuePosition
+    auto QueueCursor::position() const noexcept -> QueuePosition
     {
         return m_position;
     }
 
-    auto ExploreQueueCursor::advance(uintmax consumedBytes) -> Status
+    auto QueueCursor::advance(uintmax consumedBytes) -> Status
     {
         if (consumedBytes > m_position.consumedBytes)
         {
             m_position.consumedBytes = consumedBytes;
-            ++m_position.consumedChunks;
+            ++m_position.consumedLines;
         }
 
         auto stream = std::ofstream{m_path, std::ios::binary | std::ios::trunc};
@@ -399,14 +399,11 @@ namespace uf::cli
         {
             return fail(
                 AutomationErrorKind::IoFailure,
-                std::format(
-                    "cannot write the explore queue cursor {}",
-                    m_path.string()
-                )
+                std::format("cannot write the queue cursor {}", m_path.string())
             );
         }
-        stream << serializeExploreQueueCursor(
-            ExploreQueueCursorRecord{
+        stream << serializeQueueCursor(
+            QueueCursorRecord{
                 .queue    = m_queue,
                 .position = m_position,
             }
@@ -416,10 +413,7 @@ namespace uf::cli
         {
             return fail(
                 AutomationErrorKind::IoFailure,
-                std::format(
-                    "cannot write the explore queue cursor {}",
-                    m_path.string()
-                )
+                std::format("cannot write the queue cursor {}", m_path.string())
             );
         }
         return ok();

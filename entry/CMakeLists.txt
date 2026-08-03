@@ -24,20 +24,23 @@ add_library(${CLI_LIBRARY} STATIC
     cli/drive-protocol.hpp
     cli/explore.cpp
     cli/explore.hpp
-    cli/explore-cursor.cpp
-    cli/explore-cursor.hpp
     cli/explore-protocol.cpp
     cli/explore-protocol.hpp
     cli/file-frame-source.cpp
     cli/file-frame-source.hpp
-    cli/json-text.cpp
-    cli/json-text.hpp
     # The OCR binding's DECLARATION is platform-free: `check` composes on every
     # host and needs an engine whenever a project claims what a region reads, so
     # it includes this header everywhere. Only the definition is gated below.
     cli/platform/ocr-engine-binding.hpp
     cli/project-skeleton.cpp
     cli/project-skeleton.hpp
+    # The queue/results wire both `drive` and `explore` run on: one framed
+    # reader, one results writer, and the durable cursor that keeps a restart
+    # from re-delivering a queue against a live target.
+    cli/queue-cursor.cpp
+    cli/queue-cursor.hpp
+    cli/queue-ipc.cpp
+    cli/queue-ipc.hpp
     cli/run.cpp
     cli/run.hpp
 )

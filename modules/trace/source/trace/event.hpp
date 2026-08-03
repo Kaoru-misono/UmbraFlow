@@ -81,11 +81,9 @@ namespace uf::trace
         Annotation,
     };
 
-    // The wire spelling of one front-end, and the only place any of the three is
-    // spelled. Public rather than private to the serializer because a front-end
-    // is named outside a trace line too: task::TaskHost names the one already
-    // holding a generation when it refuses the other. Two spellings of one closed
-    // set is how a third value comes to be reported as the second.
+    // The wire spelling of one front-end, and the only place any of the three
+    // is spelled -- task::TaskHost names one outside a trace line too, when it
+    // refuses a second front-end on a generation.
     [[nodiscard]]
     auto frontEndWireName(FrontEnd frontEnd) noexcept -> std::string_view;
 
@@ -102,26 +100,18 @@ namespace uf::trace
         EngineActionDelivered,
         EngineKeyDelivered,
 
-        // One delivered wheel scroll. Its own kind rather than an
-        // engine.action_delivered carrying a delta: that spelling records a
-        // click, and a reader counting delivered clicks must not have to subtract
-        // the lines that turn out to be something else. Additive.
+        // One delivered wheel scroll, its own kind rather than an
+        // engine.action_delivered carrying a delta; additive.
         EngineScrollDelivered,
 
-        // One delivered long press: pointer down at a point, held, released. Its
-        // own kind for the scroll's reason, sharpened -- a long press and a click
-        // are aimed identically and do different things. Additive.
+        // One delivered long press: pointer down at a point, held, released;
+        // its own kind, additive.
         EngineLongPressDelivered,
 
-        // One delivered pointer move: the cursor message arrives at a point and
-        // no button changes state. Its own kind for the scroll's reason: a reader
-        // counting delivered clicks must not have to subtract the lines that
-        // pressed nothing. Additive, so the schema version is unchanged.
-        //
-        // It carries its point on `clickClient`, the member the long press
-        // already shares with the click. A second coordinate member would be a
-        // second spelling of one thing, and a reader joining a move to the scroll
-        // it primed would have to know which verb used which.
+        // One delivered pointer move: the cursor message arrives at a point
+        // and no button changes state; additive, and it carries its point on
+        // `clickClient`, the member the long press already shares with the
+        // click.
         EnginePointerMoveDelivered,
 
         EngineObservationInvalidated,
@@ -135,12 +125,8 @@ namespace uf::trace
         FrameworkInterruptExhausted,
         FrameworkSettled,
 
-        // The two verbs the exploration front-end has and no other does. Spelled
-        // `annotation.*` rather than folded into `engine.*` because the engine
-        // vocabulary describes an action against something the model recognised
-        // and neither of these is: a bare coordinate names no element and no
-        // page, and a crop establishes nothing about the screen. Either as
-        // engine.action_delivered would record a recognition that never happened
+        // The two verbs the exploration front-end has and no other does,
+        // spelled `annotation.*` because neither names an element or a page
         // (docs/plans/2026-08-01-agent-front-end-and-exploration.md 1).
         AnnotationClickDelivered,
         AnnotationRegionSaved,

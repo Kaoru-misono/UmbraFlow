@@ -1,6 +1,7 @@
 #include <args.hpp>
 #include <drive-protocol.hpp>
 #include <drive.hpp>
+#include <queue-cursor.hpp>
 
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
@@ -292,6 +293,72 @@ namespace uf::cli
 
         auto error = std::error_code{};
         static_cast<void>(std::filesystem::remove(queue, error));
+    }
+
+    TEST_CASE("a drive session refuses a queue whose history no cursor accounts for")
+    {
+        // A front-end that tails its queue from byte zero re-delivers every
+        // command already in it, keystrokes included, against a live target. The
+        // results path is an independent argument, so a fresh one is no evidence
+        // that the queue is fresh too.
+        auto const queue = uniquePath("queue");
+        writeFile(
+            queue,
+            "{\"op\":\"cycle_open\"}\n{\"op\":\"key\",\"cycle\":1,\"key\":\"E\"}\n"
+        );
+
+        auto const refused = validateDriveIpcPaths(
+            driveArgsOver(queue, uniquePath("results"))
+        );
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(
+            automationErrorKind(refused.error())
+            == AutomationErrorKind::InvalidResource
+        );
+        CHECK(refused.error().message().contains("no cursor records what ran"));
+
+        auto error = std::error_code{};
+        static_cast<void>(std::filesystem::remove(queue, error));
+    }
+
+    TEST_CASE("a drive session resumes where its answers stopped")
+    {
+        auto const queue          = uniquePath("queue");
+        auto const results        = uniquePath("results");
+        constexpr auto k_answered = std::string_view{"{\"op\":\"cycle_open\"}\n"};
+
+        writeFile(queue, "");
+        auto const fresh = validateDriveIpcPaths(driveArgsOver(queue, results));
+        REQUIRE(fresh.has_value());
+        CHECK(fresh->start.consumedBytes == 0U);
+
+        // What a session that answered one command and then died leaves behind:
+        // its cursor, the results file it answered into, and a command the
+        // operator appended afterwards.
+        writeFile(queue, std::string{k_answered} + "{\"op\":\"quit\"}\n");
+        writeFile(results, "{\"op\":\"cycle_open\",\"ok\":true,\"cycle\":1}\n");
+        writeFile(
+            fresh->cursor,
+            serializeQueueCursor(
+                QueueCursorRecord{
+                    .queue    = fresh->queue,
+                    .position = QueuePosition{
+                        .consumedBytes = k_answered.size(),
+                        .consumedLines = 1,
+                    },
+                }
+            )
+        );
+
+        auto const resumed = validateDriveIpcPaths(driveArgsOver(queue, results));
+        REQUIRE(resumed.has_value());
+        CHECK(resumed->start.consumedBytes == k_answered.size());
+        CHECK(resumed->start.consumedLines == 1U);
+
+        auto error = std::error_code{};
+        static_cast<void>(std::filesystem::remove(queue, error));
+        static_cast<void>(std::filesystem::remove(results, error));
+        static_cast<void>(std::filesystem::remove(fresh->cursor, error));
     }
 
     TEST_CASE("drive arguments require the four that name a session and share run's bounds")

@@ -1,13 +1,13 @@
 #include "explore.hpp"
 
 #include "args.hpp"
-#include "explore-cursor.hpp"
 #include "explore-protocol.hpp"
+#include "queue-cursor.hpp"
+#include "queue-ipc.hpp"
 
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
-#include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
 
@@ -15,18 +15,14 @@
 #include <task/task-host.hpp>
 
 #include <chrono>
-#include <cstddef>
 #include <filesystem>
 #include <format>
-#include <fstream>
-#include <ios>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <thread>
 #include <utility>
-#include <vector>
 
 namespace uf::cli
 {
@@ -36,207 +32,14 @@ namespace uf::cli
         // and nothing else, and is session plumbing rather than agent policy.
         inline constexpr auto k_queuePollInterval = std::chrono::milliseconds{25};
 
-        [[nodiscard]]
-        auto invalid(std::string message) -> std::unexpected<Error>
-        {
-            return fail(AutomationErrorKind::InvalidResource, std::move(message));
-        }
-
-        [[nodiscard]]
-        auto pathFailure(
-            std::string_view operation,
-            std::filesystem::path const& path,
-            std::error_code error
-        ) -> std::unexpected<Error>
-        {
-            return fail(
-                AutomationErrorKind::IoFailure,
-                std::format(
-                    "cannot {} path {}: {}",
-                    operation,
-                    path.string(),
-                    error.message()
-                )
-            );
-        }
-
-        [[nodiscard]]
-        auto canonicalize(
-            std::filesystem::path const& path,
-            std::string_view role
-        ) -> Result<std::filesystem::path>
-        {
-            if (path.empty())
-            {
-                return invalid(std::format("{} path must not be empty", role));
-            }
-
-            auto error          = std::error_code{};
-            auto const absolute = std::filesystem::absolute(path, error);
-            if (error)
-            {
-                return pathFailure("resolve", path, error);
-            }
-            auto canonical = std::filesystem::weakly_canonical(absolute, error);
-            if (error)
-            {
-                return pathFailure("canonicalize", path, error);
-            }
-            return canonical;
-        }
-
-        // `endOffset` is just past the terminator. It travels with the text because
-        // that is what the cursor advances to; deriving it again in the loop is
-        // where an off-by-one would replay a chunk.
-        struct FramedLine final
-        {
-            std::string line{};
-            uintmax     endOffset{};
+        // What this front-end calls its queue and itself wherever the shared
+        // reader refuses a line.
+        inline constexpr auto k_exploreQueueNaming = QueueNaming{
+            .queue   = "chunk queue",
+            .session = "an exploration session",
         };
 
-        // Reads whole lines appended since the last call, starting from the cursor's
-        // position. The offset is durable, not merely per-session: a partial
-        // trailing line is held back until its terminator arrives, and a line is
-        // handed out exactly once however often the queue is polled or the session
-        // restarted.
-        class QueueReader final
-        {
-            std::filesystem::path m_path;
-
-            uintmax     m_offset;
-            std::string m_pending{};
-
-        public:
-            QueueReader(std::filesystem::path path, uintmax offset) noexcept
-                : m_path{std::move(path)}
-                , m_offset{offset}
-            {
-            }
-
-            [[nodiscard]] auto readAvailable() -> Result<std::vector<FramedLine>>
-            {
-                auto error      = std::error_code{};
-                auto const size = std::filesystem::file_size(m_path, error);
-                if (error)
-                {
-                    return pathFailure("read", m_path, error);
-                }
-                if (size < m_offset)
-                {
-                    // A queue that shrank was replaced or truncated under the
-                    // session, so the offset names a different file's bytes and the
-                    // cursor beside it records chunks that are no longer there.
-                    return invalid(
-                        std::format(
-                            "the chunk queue {} shrank; an exploration session "
-                            "reads one append-only queue",
-                            m_path.string()
-                        )
-                    );
-                }
-                if (size == m_offset)
-                {
-                    return std::vector<FramedLine>{};
-                }
-
-                auto stream = std::ifstream{m_path, std::ios::binary};
-                if (!stream.is_open())
-                {
-                    return invalid(
-                        std::format("cannot open the chunk queue {}", m_path.string())
-                    );
-                }
-                stream.seekg(static_cast<std::streamoff>(m_offset));
-
-                auto appended = std::string{};
-                appended.resize(static_cast<std::size_t>(size - m_offset));
-                stream.read(
-                    appended.data(),
-                    static_cast<std::streamsize>(appended.size())
-                );
-                if (stream.bad())
-                {
-                    return invalid(
-                        std::format("cannot read the chunk queue {}", m_path.string())
-                    );
-                }
-                appended.resize(static_cast<std::size_t>(stream.gcount()));
-
-                auto const base = m_offset - m_pending.size();
-                m_pending += appended;
-                m_offset += appended.size();
-
-                auto lines = std::vector<FramedLine>{};
-                auto start = std::size_t{0};
-                while (true)
-                {
-                    auto const newline = m_pending.find('\n', start);
-                    if (newline == std::string::npos)
-                    {
-                        break;
-                    }
-                    auto line = m_pending.substr(start, newline - start);
-                    if (!line.empty() && line.back() == '\r')
-                    {
-                        line.pop_back();
-                    }
-                    auto const endOffset = base + newline + 1U;
-                    if (!line.empty())
-                    {
-                        lines.emplace_back(
-                            FramedLine{
-                                .line      = std::move(line),
-                                .endOffset = endOffset,
-                            }
-                        );
-                    }
-                    start = newline + 1U;
-                }
-                m_pending.erase(0, start);
-                return lines;
-            }
-        };
-
-        // Appends one result line per chunk and flushes after each, so an agent
-        // reading the file sees a chunk's answer before the next one runs.
-        class ResultWriter final
-        {
-            std::ofstream m_stream;
-
-        public:
-            explicit ResultWriter(std::ofstream stream) noexcept
-                : m_stream{std::move(stream)}
-            {
-            }
-
-            [[nodiscard]]
-            static auto create(std::filesystem::path const& path) -> Result<ResultWriter>
-            {
-                auto stream = std::ofstream{};
-                stream.open(path, std::ios::binary | std::ios::app);
-                if (!stream.is_open())
-                {
-                    return invalid(
-                        std::format("cannot open the results file {}", path.string())
-                    );
-                }
-                return ResultWriter{std::move(stream)};
-            }
-
-            [[nodiscard]] auto write(std::string_view line) -> Status
-            {
-                m_stream << line << '\n';
-                m_stream.flush();
-                if (!m_stream)
-                {
-                    return fail(
-                        AutomationErrorKind::IoFailure,
-                        "cannot append to the explore results file"
-                    );
-                }
-                return ok();
-            }
-        };
+        inline constexpr auto k_exploreResultsLabel = std::string_view{"explore"};
     }
 
     auto validateExploreIpcPaths(ExploreArgs const& args) -> Result<ExploreIpcPaths>
@@ -266,7 +69,7 @@ namespace uf::cli
             return invalid("the explore queue and results paths must be distinct");
         }
 
-        auto const cursorPath = exploreQueueCursorPath(queue);
+        auto const cursorPath = queueCursorPath(queue);
         if (cursorPath == results)
         {
             return invalid(
@@ -277,9 +80,9 @@ namespace uf::cli
             );
         }
 
-        UF_TRY_VALUE(recorded, readExploreQueueCursor(cursorPath, queue));
-        UF_TRY_VALUE(extent, measureExploreQueue(queue));
-        UF_TRY_VALUE(start, resolveExploreQueueStart(recorded, extent, queue));
+        UF_TRY_VALUE(recorded, readQueueCursor(cursorPath, queue));
+        UF_TRY_VALUE(extent, measureQueueExtent(queue));
+        UF_TRY_VALUE(start, resolveQueueStart(recorded, extent, queue));
 
         error                    = std::error_code{};
         auto const resultsStatus = std::filesystem::symlink_status(results, error);
@@ -302,7 +105,7 @@ namespace uf::cli
                         "the results file {} is gone; a resumed session appends "
                         "to the answers it already gave",
                         args.queue.string(),
-                        recorded->consumedChunks,
+                        recorded->consumedLines,
                         args.results.string()
                     )
                 );
@@ -382,11 +185,18 @@ namespace uf::cli
         std::stop_token cancellation
     ) -> Result<task::TaskRunReport>
     {
-        auto reader = QueueReader{paths.queue, paths.start.consumedBytes};
-        UF_TRY_VALUE(writer, ResultWriter::create(paths.results));
+        auto reader = QueueReader{
+            paths.queue,
+            k_exploreQueueNaming,
+            paths.start.consumedBytes,
+        };
+        UF_TRY_VALUE(
+            writer,
+            ResultWriter::create(paths.results, k_exploreResultsLabel)
+        );
         UF_TRY_VALUE(
             cursor,
-            ExploreQueueCursor::open(paths.cursor, paths.queue, paths.start)
+            QueueCursor::open(paths.cursor, paths.queue, paths.start)
         );
 
         auto failure      = std::optional<Error>{};

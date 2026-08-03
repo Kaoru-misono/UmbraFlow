@@ -2,6 +2,7 @@
 
 #include "args.hpp"
 #include "drive-protocol.hpp"
+#include "queue-cursor.hpp"
 
 #include <core/error/result.hpp>
 
@@ -21,15 +22,24 @@ namespace uf::cli
     {
         std::filesystem::path queue{};
         std::filesystem::path results{};
+        std::filesystem::path cursor{};
+
+        // Where the session begins reading. See resolveQueueStart.
+        QueuePosition start{};
 
         auto operator==(DriveIpcPaths const&) const -> bool = default;
     };
 
-    // Three refusals: the queue must already exist, because a session that created
-    // it would race the operator appending to it; the paths must be distinct,
-    // because a session reading its own results would re-execute them; and the
-    // results path must NOT already exist, so an earlier session's file can never be
-    // mistaken for this one's or silently appended to.
+    // Four refusals: the queue must already exist, because a session that created
+    // it would race the operator appending to it; the queue, the results and the
+    // queue's own cursor must be three distinct paths, because a session reading
+    // its own output would re-execute it; a queue that already holds commands
+    // with no cursor recording what ran is refused, because starting from byte
+    // zero re-delivers every keystroke in it against a live target; and the
+    // results file must agree with the cursor -- a fresh session (no cursor,
+    // empty queue) must NOT find one, or a stale file would be read as this
+    // session's answers, while a resumed session MUST find the file its cursor's
+    // commands were answered into.
     [[nodiscard]]
     auto validateDriveIpcPaths(DriveArgs const& args) -> Result<DriveIpcPaths>;
 
