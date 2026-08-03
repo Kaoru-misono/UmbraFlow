@@ -1,16 +1,18 @@
 # 状态层与策略插槽 — l2-v2 形状
 
-> 状态:**方向已定,细节待砍**。2026-08-03 开发者在 `标注过程.md` 写下状态脑暴段并
-> 确认「按这个方向走」,08-04 指示成文。上位文档:
+> 状态:**方向已定,五项裁决已落(见第九节,2026-08-04 直答),按阶段待执行**。
+> 2026-08-03 开发者在 `标注过程.md` 写下状态脑暴段并确认「按这个方向走」,
+> 08-04 指示成文。上位文档:
 > [标注模型重构](2026-07-31-annotation-model-capabilities.md)(能力集合与引用,不重开)、
 > [script-owned](2026-07-31-script-owned-page-model.md)(模型住工程文件,不重开)。
-> 证据基线:chaos-daily 2026-08-03 真机——85 步菜单到菜单的 `daily.luau` 运行
+> 证据基线:uf-chaos 2026-08-03 真机——85 步菜单到菜单的 `daily.luau` 运行
 > (`frames/menu-to-menu5.jsonl`,21154 行 trace)与同日多次失败运行的教训。
 > 本文每一节结尾给证伪方式;没有证伪方式的段落只是措辞,可以随便改。
+> 工程仓库即 `uf-chaos`(2026-08-04 由 chaos-daily 更名,旧文档里的旧名指同一工程)。
 
 ## 一、真跑量出来的形状
 
-普查对象:`chaos-daily/tasks/daily.luau`(1593 行,60 个 handler)与
+普查对象:`uf-chaos/tasks/daily.luau`(1593 行,60 个 handler)与
 `page-model.toml`(60 页、207 元素、240 引用、9 边、38 屏、76 expect 格)。
 
 - **34 个 handler 的函数体就是一行 `act()`**——认出页,按一个按钮。每个都在编码
@@ -89,9 +91,9 @@ observe 里"page signature 不是项目可按调用点放松的地方"的裁决�
 ### 3.4 page.state 与浮层族
 
 - 场景页新增 `state = "<模式名>"`,模式名是工程自定字符串,框架不带枚举
-  (P3 换游戏零改动)。chaos-daily 初版分区:`menu`(局外,含选人——两页的
+  (P3 换游戏零改动)。uf-chaos 初版分区:`menu`(局外,含选人——两页的
   状态不值得单列)、`route`(node_map 枢纽)、`battle`、`event`、`camp`、
-  `settlement`(结算尾)。
+  `settlement`(结算尾)。(分区已裁决,2026-08-04 直答,第九节 3。)
 - 浮层页不属于模式,声明 `over = ["battle", "event", ...]`(能盖在哪些模式上);
   奖励串在战斗后与篝火后都出现(08-03 日志 71-73 步),是族不是模式的直接证据。
 - `interrupt = true` 补声明:network_retry、dismiss_overlay(今天 60 页零声明)。
@@ -136,8 +138,8 @@ screen/expect;残余段落保序往返。schema 串升 `l2-v2`,`project.parse` �
   `*.before-*`(手工备份,入库后由 git 史替代)、`templates-unused/`(裁决后删)。
 - **有条件入库**:被 4.2 引为证据的 trace,精馏成"解析与投递事件"子集后入库
   (21154 行原始 trace ≈ 9 MB,精馏后应在数十 KB);原始件压缩归档在库外。
-- E:\umbraflow-projects\chaos-daily **应当 git init**(待开发者点头,连同
-  `.gitignore` 首版)。
+- E:\umbraflow-projects\uf-chaos **已 git init**(2026-08-04,根提交
+  `775ae2d`,连同 `.gitignore` 与关掉换行改写的 `.gitattributes`)。
 
 ## 五、运行时:模式机与例程层
 
@@ -195,7 +197,9 @@ local policies = {
     event        = strategy.ranked { rules = EVENT_WHITELIST, never = EVENT_NEVER,
                                      fallback = "first_that_ends" },
     equip_assign = strategy.ranked { rules = {},          -- 空槽,空得可见
-                                     fallback = "recommended_or_top_level" },
+                                     -- 已裁决(九·1):围观现有装备,空槽优先,
+                                     -- 都满才提炼;D 之前的行为只是临时的。
+                                     fallback = "empty_slot_else_refine" },
     route        = strategy.ranked { rules = ROUTE, when_hurt = ROUTE_HURT },
     battle       = strategy.turns  { feeds = {...}, knowledge = CARDS, decide = ... },
 }
@@ -207,7 +211,7 @@ return task.run_project(ctx, { policies = policies,
 空槽是诚实的:card_assign 今天的 "skipped (no policy)" 和装备那条只活在注释里的
 "等級最高",都变成表里看得见的一行。两个手写布尔升格为声明的 rules。
 
-## 七、chaos-daily 三个实装样例
+## 七、uf-chaos 三个实装样例
 
 - **battle**:feeds = 手牌 strip + battle_ep(已标注,首次接线)+ HP 元素
   (裸矩形转正);knowledge 按**牌名**为键,多角色表装载时合并,局内招募的牌
@@ -216,7 +220,8 @@ return task.run_project(ctx, { policies = policies,
 - **装备**(流向按开发者 08-04 澄清):两件供选时**先在 equip_pick 选装备,
   选完才看到当前角色的装备**。所以 pick 一步只有 offer 文本 + knowledge 可用;
   gear-aware 的部分全在 equip_assign:装备面板 strip、"槽位为空"状态、
-  roster 行围观边——**三者今天都未标注**,是 D 阶段的新标注面。
+  roster 行围观边——**三者今天都未标注**,是 D 阶段的新标注面。兜底已裁决
+  (九·1):空槽优先,都满才提炼。
   待真机测一件事:equip_pick 上选中一件后能否撤回换看另一件;可撤则 pick 也
   升级为围观式比较,不可撤则维持"文本规则 + 首件兜底"。
 - **选路**:hurt 翻转成条件;小地图行序与分支序的对应仍未量
@@ -232,19 +237,24 @@ return task.run_project(ctx, { policies = policies,
   (加上必绿,拆掉守卫必红)。
 - **C 例程层与模式机**:五·1-5.4;daily.luau 收缩改写;回放 08-03 trace 验证
   改写后行为等价。门:周期账目平(open = close + spent)是回归断言。
-- **D chaos-daily 策略化**:battle 知识表(第二个角色的表由开发者供给或从日志
+- **D uf-chaos 策略化**:battle 知识表(第二个角色的表由开发者供给或从日志
   牌名起草)、装备流新标注与两项真机测量、route 条件化。
   门:一局无人值守菜单到菜单,步日志逐条可对账。
 
 依赖:A 不依赖任何人;B 依赖 A 的证据(边表、共解析报告);C 依赖 B;
 D 依赖 C 加真机。
 
-## 九、待开发者裁决
+## 九、裁决记录(2026-08-04 开发者直答)
 
-1. 装备兜底:无推薦时「提炼」(规范)还是「给等級最高」(现行代码)?
-   本文只给槽位,不替规范拍板。
-2. 页拆并清单签字:draw_pick 拆两页;dice_tap/dice_roll 是否借外观门合一;
-   rest_point 按 COVERAGE 退休入 event。
-3. 模式分区签字(七个模式名,选人并入 menu)。
-4. 工程目录 git init 与 `.gitignore` 首版(四·3)。
-5. 第二个角色的出牌知识表来源:开发者手写,还是先从 08-03 日志的牌名清单起草。
+1. 装备兜底:**先看装备再定**——策略先围观各角色现有装备,空槽优先,都满才
+   提炼。「提炼 vs 等級最高」之争就此关闭;落地依赖围观边(D 阶段),在那之前
+   现行「给等級最高」只是临时行为,不是规范。
+2. 页面手术:**draw_pick 拆两页、rest_point 退休**照做。dice_tap/dice_roll
+   **不动**——追查确认它们不是一屏两态而是两块屏(擲骰页锚 `擲骰`,另一页锚
+   `請點擊畫面查看骰子結果。`,动作集合也不同),判据本身说两页;本文原先把它
+   列为合并候选是误判,就此更正。开发者如在真机见到两句提示同屏,可重开。
+3. 模式分区:**六模式**(menu / route / battle / event / camp / settlement,
+   选人并入 menu)。
+4. 工程目录:**已 init**(uf-chaos `775ae2d`,72 文件;`.gitignore` 排除
+   运行输出,`.gitattributes` 关掉换行改写以保规范字节)。
+5. 牌表来源:**押后到 D 阶段**,到策略化那一步再定手写还是从日志起草。

@@ -314,7 +314,7 @@
 整节按实际在建的东西重写:**一局出擊**——Agent 经探索通道逐页标注,第三层
 dispatcher 一次认一页、做那一页要做的一件事,把这一局走完。
 
-工程在 `E:\umbraflow-projects\chaos-daily`,目标自身的行为记在它自己的 `PITFALLS.md`。
+工程在 `E:\umbraflow-projects\uf-chaos`(2026-08-04 由 chaos-daily 更名),目标自身的行为记在它自己的 `PITFALLS.md`。
 可复用的标注手艺进主仓库:
 [`pitfalls/element-choice-and-thresholds.md`](pitfalls/element-choice-and-thresholds.md)
 (标什么、阈值怎么定)与
@@ -355,7 +355,7 @@ dispatcher 一次认一页、做那一页要做的一件事,把这一局走完�
       所以这两条路一次都没走过——要验得专门造一次失效观察。
 - [x] **Ctrl-C 500ms 内退出:已验(2026-08-03,真机 release)**。5 次测量
       **16 / 32 / 32 / 47 / 31 ms**,均值 32 ms,十倍余量。做法是一个只花抓帧、
-      不投递任何输入的诊断任务 `chaos-daily/tasks/idle-cycles.luau`,配
+      不投递任何输入的诊断任务 `uf-chaos/tasks/idle-cycles.luau`,配
       `scratchpad/interrupt-probe.py` 用 `CTRL_BREAK_EVENT` 打断并计时——目标一个像素
       都没动过。trace 两头完整,332–334 行。
 - [ ] **单轮时长已实测(12 分 10 秒),「稳定」还没有**:目前只有一次成功,

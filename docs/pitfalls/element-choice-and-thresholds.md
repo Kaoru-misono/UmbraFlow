@@ -7,7 +7,7 @@ failure of that session had a single shape, and it is the first entry below.
 
 Instances that stop being true when the target changes — which of *that game's*
 rectangles never hold still, how long *its* UI fades in — live with the project
-that observed them, in `E:\umbraflow-projects\chaos-daily\PITFALLS.md`. What
+that observed them, in `E:\umbraflow-projects\uf-chaos\PITFALLS.md`. What
 belongs here is the rule those instances taught.
 
 Related: [colour-key annotation](colour-key-annotation.md) is the same physics
