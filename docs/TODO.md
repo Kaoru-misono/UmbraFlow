@@ -670,18 +670,35 @@ the exploration session」:`while true do end` 不碰任何宿主动词,所以�
 - 验收:`tests/task/test-task-host.cpp`「what a task returns reaches the report that
   describes its run」三个 SUBCASE(整句、什么都不返回、返回表)。
 
-## 任务无法唤醒待机隐藏 UI 的目标(2026-08-03 量到)
+## 任务唤不醒待机隐藏 UI 的目标(2026-08-03 量到,当天裁决并修好)
 
-- [ ] 主菜单闲置几秒后收起全部控件,只剩背景图,于是没有任何页 resolve 得了。任务的自救
-  路径是断的:**唤醒需要输入,click 需要 receipt,receipt 需要有页 resolve** —— 而那正是
-  被挡住的一环。实测(explore 会话,home 页):`cold=false`、移动指针 `move=false`、
-  点击 `click=true`、按 `SHIFT` `after_SHIFT=false`。`ctx:key` 不要 receipt 却唤不醒,
-  唯一唤得醒的 click 又要 receipt。
-- 今晚是靠**第二个进程**在 run 那 20 帧容忍窗口里补投一次 `explore.click_point` 才起来的。
-  顺带量到:两个 umbra-flow 进程可以同时绑同一个窗口,capture 与后台输入都不冲突。
-- 可能的修法:(a) 框架给一个窄口径的唤醒动词,只在连续 N 帧无页可认之后可用;(b) run 启动
-  时先投一次唤醒输入;(c) CLI 收一个 `--wake-point` 坐标。三者都得先回答同一个问题:在一
-  个认不出任何页的帧上,凭什么允许投递输入——这正是 receipt 规则要拦的事。
+- [x] 症状:主菜单闲置几秒收起全部控件,只剩背景图,于是没有任何页 resolve 得了。任务的
+  自救路径是断的——**唤醒需要输入,click 需要 receipt,receipt 需要有页 resolve**,而那
+  正是被挡住的一环。实测:`cold=false`、移动指针 `move=false`、按 `SHIFT`
+  `after_SHIFT=false`、点击 `click=true`。不要指点的 `ctx:key` 唤不醒,唯一唤得醒的
+  click 又要 receipt。当天是靠第二个进程在 20 帧容忍窗口里补投一次点击才起来的。
+- **裁决(开发者,2026-08-03):工程文件自己声明一个「戳了不会有任何后果」的坐标。**
+  关键不在于要不要放松安全规则,而在于**怎么描述一块安全的空地**——唤醒这一下根本
+  不需要点中任何东西,它只要让目标知道有人在。
+- 落地成三件,缺一不可:
+  - **文件里的声明**:`page-model.toml` 的序言多一个 `wake_point = [x, y]`,走
+    `project.parse` / `build` / `encode` 的一等字段,规范字节照常往返。没有声明的工程
+    **唤不醒**,这是诚实的一对。
+  - **可被证伪的那一半**:`regress.check` 拒绝落在**任何页点击任何元素的矩形**里的
+    唤醒点,发现项叫 `wake_point_presses_something` 并点名是哪一页的哪个元素。这是整个
+    安全论证的支点——普通点击的授权是一张解析出来的页,唤醒没有,顶替它的是「这个坐标
+    在这个模型认识的每一页上都证明什么都不按」。它不花抓帧,所以在走屏之前先跑。
+  - **同帧计算的授权**:`observe.wake(ctx, ticket, built)` 自己把模型里每一页都解析
+    一遍,**只有一页都认不出来**才投递。授权因此和它授权的那一帧是同一帧——和回执一个
+    纪律,只是反过来。任何一页认得出来就拒绝,因为屏幕可读时调用方有正常路径。
+  - 投递走 `native` 而不是 `ctx`(`ctx` 上的转发等于给每个业务任务一个裸点击),并且
+    **包在一个名为 `wake` 的 step 里**,所以日志里它有自己的名字,不会和普通点击混。
+- 证伪:`tests/task/test-annotation-routines.cpp`「A wake point survives the file and is
+  refused where it presses」。两道守卫各验一次:注释掉矩阵那道检查 → 红;拆掉「有页
+  resolve 就拒绝」那道 → 红。夹具的坐标写成**字面量**,从模型里推会让测试跟着夹具动。
+- 没做:**连续 N 帧认不出来才允许唤醒**这道额外闸没有加。同帧「一页都认不出」已经是
+  比它更强的条件(它是这一帧的事实,而不是对过去几帧的记账),所以先不加;真机上如果
+  出现「偶尔一帧全糊」的抖动,再补。
 
 ## 项目任务脚本没有 require(2026-08-03 发现)
 
