@@ -1,0 +1,250 @@
+# 状态层与策略插槽 — l2-v2 形状
+
+> 状态:**方向已定,细节待砍**。2026-08-03 开发者在 `标注过程.md` 写下状态脑暴段并
+> 确认「按这个方向走」,08-04 指示成文。上位文档:
+> [标注模型重构](2026-07-31-annotation-model-capabilities.md)(能力集合与引用,不重开)、
+> [script-owned](2026-07-31-script-owned-page-model.md)(模型住工程文件,不重开)。
+> 证据基线:chaos-daily 2026-08-03 真机——85 步菜单到菜单的 `daily.luau` 运行
+> (`frames/menu-to-menu5.jsonl`,21154 行 trace)与同日多次失败运行的教训。
+> 本文每一节结尾给证伪方式;没有证伪方式的段落只是措辞,可以随便改。
+
+## 一、真跑量出来的形状
+
+普查对象:`chaos-daily/tasks/daily.luau`(1593 行,60 个 handler)与
+`page-model.toml`(60 页、207 元素、240 引用、9 边、38 屏、76 expect 格)。
+
+- **34 个 handler 的函数体就是一行 `act()`**——认出页,按一个按钮。每个都在编码
+  一条出边,其中只有 6 页在模型里声明了边;**差 28 条**。
+- **13 个 handler 是同一个算法**:读一块 → 按有序规则挑一个 → 点 → 可能确认。
+  互相只差四个参数(offers 来源、规则表、兜底、要不要确认)。
+- **真正独有的只有 3 个**:battle(回合循环)、fighter_list(滚动搜索)、
+  node_map(小地图几何)。
+- 派发器 ORDER 手排 60 个名字,自述「携带模型表达不了的锚点特异性」。把 60 页的
+  identify-required 锚点集合两两求包含,**真子集只有 3 对**
+  (deploy_ready⊂deploy、event_node⊂event、node_done⊂rest_done);其余 57 个
+  位置不携带任何约束。而它举的例子 boss_result/battle_result 恰不是子集关系——
+  那是一条关于某张截图上共解析的事实,今天没有任何检查在量它。
+- 按 x 聚类"从帧上数张数"的代码写了三份,阈值 200 / 45 / 180 各自为政。
+- **脚本自己长出了手写状态机**:`PRE_RUN_PAGES` + `runOver`(一局是一次任务)、
+  `bossSettled`(没见结算不许脱逃)。两个都是真机撞了才补的。
+- **投递后没人问"生效了吗"**:card_assign 对被浮层盖住的按钮点了 13 次;
+  唯一做对的是 battle(以"那个牌名的张数掉了"为生效判据)。
+- 08-03 日志挖出 25 页的观察后继;19 页只见过唯一后继,其中 15 页无边;
+  且模型现有的 `sortie -(sortie_enter)-> deploy` 与实跑矛盾
+  (第 1→2 步走的是 sortie → danger_variance)。
+- `battle_ep` 标了 interact+read 从未被读;血量至今是裸矩形
+  `[262,18,160,40]`,两处各抄一份。
+
+**证伪**:以上全部可用仓外工程文件与日志复算;本文引用的每个数字都产自
+2026-08-04 的脚本化普查,复算脚本一次性,不入库。
+
+## 二、教义(与既有裁决对齐,不重开)
+
+1. **模型只回答三问**:认(什么帧算哪页)、许(哪页允许对什么做什么)、
+   变(做了会到哪)。证据两库:**截图库证认与许,轨迹库证变**。
+   回答不了三问之一的是策略,住任务脚本。
+2. **状态是信念,帧是真相**(navigation 原话照搬)。状态只收窄"先问哪些页",
+   永远不禁问。反例现成:闪退回 home、网络浮层随时盖上来。
+3. **页 vs 状态的判据**:动作集合不同就是两页(用 identify 的
+   required/forbidden 区分,机制现成);动作集合相同、只是时机不同,是状态
+   (外观门)。按此 draw_pick 拆两页(网格版/大牌版),rest_speed 档位、
+   確認亮灰是状态。
+4. **策略只选,不点**。每步四拍:读摘要 → 问策略 → 投递 → 验证生效。
+   策略是纯函数,摸不到 ctx/周期/回执;投递与授权纪律在框架例程里写一次。
+5. **不给 page 加 kind 分类字段**。分类会把今天的策略冻进只该放事实的地方;
+   页面该用哪个例程,是任务文件的绑定,不是模型的属性。
+
+## 三、schema:`umbraflow-project/l2-v1` → `l2-v2`
+
+### 3.1 元素三形态
+
+`fixed`(rect + 证据,今天的全部)、`shape`(只有模板,rect 免写)、
+`strip`(容器 rect + 聚类间距,条目数从帧上数)。
+
+- shape 消掉 map_* 五个死 rect(COVERAGE 五·3 已建议删,形态化让"删"变成"不许写")。
+- strip 消掉 fate_card_1/2/3、rest_card_2/3 这类死重;三份聚类代码合一,
+  间距成为模型里可对截图库证伪的测量值。
+- **证伪**:regress 对 strip 增加一格——在声明的屏上按间距聚类,条目数与 expect
+  声明的数目比对;把间距改错该屏必红。
+
+### 3.2 外观门(state gate)
+
+引用行新增 `interact_requires = "<appearance 名>"`:此页此元素的 interact 只在
+该外观命中时授权。fate_confirm 采亮/灰两张模板后,「選擇卡牌之後會亮起才可点」
+(标注过程.md 命运选择节)第一次可执行。Element 单一验证源的裁决不动:
+带门的元素走模板,放弃读字。
+
+- **证伪**:测试给出灰态帧,`observe.click` 拒绝;拆门后同测必绿转红向。
+
+### 3.3 identify 的第三、四种证据
+
+现有两种:模板、整窗文本相等。新增(框架实现,项目只能选,不接受自定义谓词——
+observe 里"page signature 不是项目可按调用点放松的地方"的裁决不动):
+
+- `expected_fragments = [...]`:有序片段依次出现,中间容洞。
+  落地「最大HP…增加」(标注过程.md OCR 规则行)。
+- `expected_presence = true`:读到非空且过 read_floor 即可。
+  落地「范围内有文字即可」(事件节)。COVERAGE 二·1/二·2 两条整体销案。
+
+### 3.4 page.state 与浮层族
+
+- 场景页新增 `state = "<模式名>"`,模式名是工程自定字符串,框架不带枚举
+  (P3 换游戏零改动)。chaos-daily 初版分区:`menu`(局外,含选人——两页的
+  状态不值得单列)、`route`(node_map 枢纽)、`battle`、`event`、`camp`、
+  `settlement`(结算尾)。
+- 浮层页不属于模式,声明 `over = ["battle", "event", ...]`(能盖在哪些模式上);
+  奖励串在战斗后与篝火后都出现(08-03 日志 71-73 步),是族不是模式的直接证据。
+- `interrupt = true` 补声明:network_retry、dismiss_overlay(今天 60 页零声明)。
+- **证伪**:trace 回放(四·2)断言"处于模式 X 的区间内,未解析出属于其他模式的
+  场景页";08-03 那 85 步是第一份底卡。
+
+### 3.5 边补全与围观边
+
+- 从轨迹库把 28 条一键边补进模型;修正 sortie 的 `to`。
+- 新增边旗标 `preview = true`(围观边):执行它**不换页**——点 roster 行只换
+  预览区这类。运行时合同:围观投递后本页必须仍解析,否则例程按假设破裂上报。
+- **证伪**:回放检查里,每个观察到的页转移要么命中一条边要么出 finding;
+  围观边则断言"trace 里它的投递之后,下一次解析仍是本页"。
+
+### 3.6 不动的
+
+wake_point 与其"证明什么都不按"的矩阵检查;能力集合;Holding/exercised;
+screen/expect;残余段落保序往返。schema 串升 `l2-v2`,`project.parse` 拒绝
+未知字段的行为不变。
+
+## 四、证据两库与新检查
+
+### 4.1 共解析矩阵(截图库,regress 新检查)
+
+38 张屏 × 60 页全解析。产出三件:谁与谁在同屏共解析(派发内序的**全部**真依据,
+取代 ORDER 的 60 个手排名字)、锚点子集关系、从未在任何屏上解析成功的页
+(覆盖缺口清单——60 页对 38 屏,缺口本身是发现)。
+
+### 4.2 轨迹回放(新的离线检查,不开真机)
+
+输入一份 run trace,验:每个页转移命中一条边;模式区间纯净(3.4);围观边不换页
+(3.5);投递后的生效期望(五·2)。跑一局就多一份底卡,与 expect 矩阵互为镜像:
+**截图库让"认/许"可证伪,轨迹库让"变"可证伪**。
+
+### 4.3 语料管理(回答"screens 要不要进版本管理")
+
+- **入库**:`page-model.toml`、`tasks/`、`assets/screens`(65 MB)、
+  `assets/templates`(240 KB)、三份 md 台账。screens/templates 是 expect 矩阵的
+  证据基质,不入库的模型是不可证伪的模型;文件名=内容哈希,**一次写入永不改写**,
+  git 史只增不改,不需要 LFS,体积到瓶颈再迁。
+- **不入库**:`frames/`(运行输出)、`run-trace.jsonl`(每局重生成)、
+  `*.before-*`(手工备份,入库后由 git 史替代)、`templates-unused/`(裁决后删)。
+- **有条件入库**:被 4.2 引为证据的 trace,精馏成"解析与投递事件"子集后入库
+  (21154 行原始 trace ≈ 9 MB,精馏后应在数十 KB);原始件压缩归档在库外。
+- E:\umbraflow-projects\chaos-daily **应当 git init**(待开发者点头,连同
+  `.gitignore` 首版)。
+
+## 五、运行时:模式机与例程层
+
+新 runtime 模块(文件名=全局名,进 frameworkProjectGlobals;evidence 不发布的
+裁决不动):
+
+### 5.1 模式机
+
+信念变量一枚。翻转只由观察驱动:**看见下一模式的场景页解析成功才算进入**,
+按下"進入"不算——与回执同帧纪律同源。候选三层:interrupt 页永远在场 → 当前模式
+的场景页 + 声明盖在此模式上的浮层 → 连续 N 帧全不解析时放宽全集,再不行走 wake。
+每步候选从 60 降到十几,周期 32 次读的预算直接宽松。
+
+### 5.2 四拍 step 与生效验证
+
+投递后必须验生效,判据按例程:walk 验"到了 to 页"(walk_edge 的
+consecutive/timeout 现成);choose 验"计数动了或页走了";turns 验"牌名张数掉了"。
+card_assign 那 13 次点在被盖住的按钮上,今后在第 2-3 次就被"没生效"截住,
+而不是靠派发器 REPEAT_LIMIT=12 在错误层级兜底。
+
+### 5.3 例程
+
+- `walk`:**未绑定且恰有一条非围观出边的页,默认走边**——34 个一键 handler
+  连声明都不用写。零条或多条出边则诚实拒绝(与 wake 同款)。
+- `choose_one`:strip 读 offers + 计数闸(n/m 不足不许确认)+ 外观门 + 确认前
+  重解析。13 个"挑一个" handler 变 13 张表。
+- `turns`:battle 骨架——两阶段基本牌最后、成功清 blocked、张数验证、九键上限、
+  取消判据。骨架是"任何牌怎么被安全打出",换角色零改动。
+- `scroll_search`:滚动到规则命中(fighter_list 的形状,通用)。
+- `inspect_then_commit`:围观边逐个看 → 策略一次决定 → 单点提交。
+  同一次到访内缓存围观答案,重复问不重复点。
+- node_map 这类真特异的仍写自定义 handler,用 observe 动词,纪律不破。
+
+### 5.4 摘要合同(策略的输入)
+
+- `feeds`:情境声明要读什么(strip/计数/量表都是模型元素),框架**同周期读齐**
+  ——摘要内所有事实属于同一帧,策略永远不会拿上帧的 EP 配这帧的手牌。
+- `knowledge`:策略表自带的不变知识(牌名 → 费用/标签/优先级),不占读预算。
+- `memory`:跨回合自有状态,决定本身保持纯。
+- **问答协议**:策略返回"决定"或"问题";框架用 feeds 或围观边回答问题,
+  垫进摘要再问。复杂策略(先看各角色现有装备再定覆盖还是提炼)由此成立,
+  而"策略摸不到 ctx"的线一毫米不动。
+
+### 5.5 回测
+
+纯策略 + trace 里的读数 = 离线重放:改一版规则表,对 08-03 那局重放,看哪几步
+选得不一样,不开真机。**新策略问了老运行没问过的问题,回测必须报"此支无数据"**
+——没有阳性对照的阴性结果不算排除(pitfalls 已有此条)。
+
+## 六、任务文件收缩后的样子
+
+```lua
+local policies = {
+    card_reward  = strategy.ranked { rules = REWARD_WANTED, fallback = "skip" },
+    event        = strategy.ranked { rules = EVENT_WHITELIST, never = EVENT_NEVER,
+                                     fallback = "first_that_ends" },
+    equip_assign = strategy.ranked { rules = {},          -- 空槽,空得可见
+                                     fallback = "recommended_or_top_level" },
+    route        = strategy.ranked { rules = ROUTE, when_hurt = ROUTE_HURT },
+    battle       = strategy.turns  { feeds = {...}, knowledge = CARDS, decide = ... },
+}
+return task.run_project(ctx, { policies = policies,
+                               rules = { one_run_per_task = true,
+                                         escape_needs_settlement = true } })
+```
+
+空槽是诚实的:card_assign 今天的 "skipped (no policy)" 和装备那条只活在注释里的
+"等級最高",都变成表里看得见的一行。两个手写布尔升格为声明的 rules。
+
+## 七、chaos-daily 三个实装样例
+
+- **battle**:feeds = 手牌 strip + battle_ep(已标注,首次接线)+ HP 元素
+  (裸矩形转正);knowledge 按**牌名**为键,多角色表装载时合并,局内招募的牌
+  自动生效,表外的牌落骨架"从右往左、基本最后";「受伤打支援」从换整表变成
+  条件(hurt 时某些牌优先级抬升),一张表两种打法。
+- **装备**(流向按开发者 08-04 澄清):两件供选时**先在 equip_pick 选装备,
+  选完才看到当前角色的装备**。所以 pick 一步只有 offer 文本 + knowledge 可用;
+  gear-aware 的部分全在 equip_assign:装备面板 strip、"槽位为空"状态、
+  roster 行围观边——**三者今天都未标注**,是 D 阶段的新标注面。
+  待真机测一件事:equip_pick 上选中一件后能否撤回换看另一件;可撤则 pick 也
+  升级为围观式比较,不可撤则维持"文本规则 + 首件兜底"。
+- **选路**:hurt 翻转成条件;小地图行序与分支序的对应仍未量
+  (COVERAGE 已记,不因本文改变状态)。
+
+## 八、阶段与门
+
+- **A 证据先行(无 schema 改动)**:轨迹回放检查器 + 共解析矩阵;从 08-03 trace
+  挖边、补 28 条、修 sortie;每条边引一行 trace 为据。
+  门:拆掉回放检查器的任一断言,自测必红。
+- **B schema l2-v2**:三形态 / 外观门 / 证据 3、4 / state 与 over / preview 边;
+  parse-build-encode 往返;regress 新格。门:每个新机制一对红绿
+  (加上必绿,拆掉守卫必红)。
+- **C 例程层与模式机**:五·1-5.4;daily.luau 收缩改写;回放 08-03 trace 验证
+  改写后行为等价。门:周期账目平(open = close + spent)是回归断言。
+- **D chaos-daily 策略化**:battle 知识表(第二个角色的表由开发者供给或从日志
+  牌名起草)、装备流新标注与两项真机测量、route 条件化。
+  门:一局无人值守菜单到菜单,步日志逐条可对账。
+
+依赖:A 不依赖任何人;B 依赖 A 的证据(边表、共解析报告);C 依赖 B;
+D 依赖 C 加真机。
+
+## 九、待开发者裁决
+
+1. 装备兜底:无推薦时「提炼」(规范)还是「给等級最高」(现行代码)?
+   本文只给槽位,不替规范拍板。
+2. 页拆并清单签字:draw_pick 拆两页;dice_tap/dice_roll 是否借外观门合一;
+   rest_point 按 COVERAGE 退休入 event。
+3. 模式分区签字(七个模式名,选人并入 menu)。
+4. 工程目录 git init 与 `.gitignore` 首版(四·3)。
+5. 第二个角色的出牌知识表来源:开发者手写,还是先从 08-03 日志的牌名清单起草。
