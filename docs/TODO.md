@@ -135,9 +135,15 @@
   发、`ctx` 直接转发——裸坐标的特权护的是「激活页面没授权的东西」,移动激活不了。
   trace 加 `engine.pointer_move_delivered`(加法,schema 仍 v3),点走 `clickClient`。
   14 突变 14 红。
-  - [ ] **`umbra-flow drive` 的操作者协议既没有 scroll 也没有 move 动词。**两个动词在
-        脚本面都有了,只有操作者这一侧缺——所以人手复现一次脚本的动作序列做不到,
-        而那正是诊断「脚本这一步为什么没落地」的手段。
+  - [x] **`umbra-flow drive` 补上了 scroll 与 move**(2026-08-03)。
+        `{"op":"scroll","cycle":N,"notches":±N}` 与 `{"op":"move","cycle":N,"x":N,"y":N}`,
+        各自落到 `OperatorSession::scroll` / `movePointer`,再到 `cycleScroll` /
+        `cycleMovePointer`——和脚本面同一条路,不新增任何绕过。
+        `notches` 是这个协议里**唯一的有符号字段**(两个方向是一个动词),所以解析器
+        第一次要读符号;符号与数字分开读,好让无符号那个读法继续说「非负」并继续算数。
+        move 是操作者面**唯一指名坐标**的命令,而这里没有 click:它按不下任何东西,
+        所以激活不了任何东西,而它要过的闸门和 click 一样多。
+        证伪:把符号处理拆掉重编,`test-cli` 立刻转红。
 
 - **第一条真边已走通(2026-08-01,真机)**:`walk-first-edge` 任务全程走新栈——
   l2 文件 → 图 → 栈 → 等 home → walk_edge → 回执授权点击 (1438,240) → sortie
