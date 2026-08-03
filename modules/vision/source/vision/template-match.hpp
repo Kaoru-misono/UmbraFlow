@@ -25,15 +25,6 @@
 
 // Searching one frame for one template, and nothing about what the template
 // means.
-//
-// Every declaration here used to live in modules/annotation, where it sat under
-// a page model's vocabulary it never used: a decoded template is two planes and
-// a search is a distance over pixels, and neither knows what an element or a
-// page is. The script-owned page model
-// (docs/plans/2026-07-31-script-owned-page-model.md 3) moved that model into
-// Luau and left these behind with no model to belong to, so they moved to the
-// module whose whole subject is pixels. The module they came from was itself
-// retired shortly afterwards, so this is now their only home.
 namespace uf
 {
     // The single classification of a stopped search. Recognition failures and
@@ -164,10 +155,8 @@ namespace uf
     // Runs one decoded template against one gray frame, picking the masked or
     // the unmasked matcher from whether the template carries a mask.
     //
-    // It is public rather than an implementation detail of matchTemplateOnFrame
-    // because a caller holding an already-decoded template reaches it directly,
-    // and a second copy of this choice is how a script-loaded template would
-    // quietly stop honouring an alpha channel.
+    // It is public because a second copy of this choice is how a script-loaded
+    // template would quietly stop honouring an alpha channel.
     [[nodiscard]]
     auto matchGrayTemplateImage(
         GrayImage const& grayFrame,
@@ -208,11 +197,8 @@ namespace uf
     // Searches `searchRoi` of `frame` for `templateImage` and reports the best
     // position with its score, or the control stop that ended the search.
     //
-    // It knows nothing about elements, pages or appearances, which is the whole
-    // point: it is the primitive the script-owned page model rebuilds those on
-    // top of. The budget and the stop token come from `policy`, exactly as they
-    // do for the catalog-driven paths, so a raw match cannot outrun the bound a
-    // page resolution honours.
+    // The budget and the stop token come from `policy`, so a raw match cannot
+    // outrun the bound a page resolution honours.
     [[nodiscard]]
     auto matchTemplateOnFrame(
         Frame const& frame,
@@ -227,10 +213,7 @@ namespace uf
     //
     // Both halves are here rather than at each caller because skipping either
     // one is invisible -- a search on a frame of the wrong size still returns a
-    // number -- and a second copy of the comparison is a second thing that can
-    // be forgotten. It is a free function rather than a method on the model that
-    // owns a fingerprint, because the engine applies the rule without naming the
-    // script-owned page model the fingerprint came out of.
+    // number.
     [[nodiscard]]
     auto ensureCompatibleFrame(
         Frame const& frame,

@@ -11,9 +11,6 @@
 #include <string>
 #include <string_view>
 
-// `struct lua_State;` and FrameworkModule are reused from the public
-// script/engine.hpp rather than redeclared, so the seam has one definition.
-
 namespace uf::script
 {
     // Builds the framework environment and registers it in the VM registry,

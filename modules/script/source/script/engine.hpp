@@ -109,11 +109,8 @@ namespace uf::script
     };
 
     // The value one chunk returned, restricted to what a text protocol can carry
-    // back. Four shapes and not more: a table would have to be walked and may be
-    // cyclic or hold a handle, a function has no value at all, and a handle
-    // names something that dies with the run, so the runner refuses those by
-    // type rather than serialising an approximation. Absent is a chunk that
-    // returned nothing, which a result line must distinguish from false or "".
+    // back: absent, boolean, number or string, where absent -- a chunk that
+    // returned nothing -- is a different answer from false and "".
     class ScriptValue final
     {
         std::variant<std::monostate, bool, double, std::string> m_value{};
@@ -150,20 +147,15 @@ namespace uf::script
 
         uint64 peakBytes{0};
 
-        // Bytes still available under the ceiling; the widest representable
-        // value when there is no ceiling. A member rather than each caller's
-        // arithmetic because the zero convention above is a trap: the
-        // subtraction wraps on an unlimited VM, and a caller who instead guards
-        // `ceilingBytes != 0` and forgets the else branch reclaims on every
-        // call.
+        // Bytes still available under the ceiling, and the widest representable
+        // value when there is no ceiling, because the subtraction wraps on a VM
+        // whose ceilingBytes is zero.
         [[nodiscard]] auto headroomBytes() const noexcept -> uint64;
     };
 
-    // Reads the ledger behind `state` without allocating or running any Lua. A
+    // Reads the ledger behind `state` without allocating or running any Lua; a
     // VM this module did not create through its accounting allocator reports an
-    // all-zero readout: the figures are the allocator's, and Luau's own
-    // totalbytes could stand in for `usedBytes` but would have to invent a
-    // ceiling, which is the one figure a caller acts on.
+    // all-zero readout.
     [[nodiscard]]
     auto heapUsage(lua_State* state) noexcept -> HeapUsage;
 
@@ -176,11 +168,16 @@ namespace uf::script
     // a host call, or the boundary between two units of script
     // (docs/pitfalls/embedded-vm-memory-ceiling.md).
     //
-    // Full rather than a step, because one step is worth a fixed two kilobytes
-    // of marking (LUAI_GCSTEPSIZE * LUAI_GCSTEPMUL) however large the allocation
-    // that triggered it was -- measured to be outrun by a loop minting
-    // hundred-kilobyte strings.
+    // Full rather than a step: one step marks a fixed two kilobytes
+    // (LUAI_GCSTEPSIZE * LUAI_GCSTEPMUL) however large the allocation that
+    // triggered it was.
     auto collectGarbage(lua_State* state) -> HeapUsage;
+
+    // The default wall-clock ceiling on one unit of script. It is named because a
+    // host restates it in its own run config, and two spellings of thirty minutes
+    // would be free to drift; see EngineConfig::maxRuntime for what one unit is.
+    inline constexpr auto k_defaultMaxRuntime =
+        std::chrono::steady_clock::duration{std::chrono::minutes{30}};
 
     // Tunables for one VM generation. Every field is live, the numeric defaults
     // are conservative placeholders to be calibrated against the first real
@@ -201,9 +198,8 @@ namespace uf::script
 
         // Instruction budget counted by the interrupt callback, cumulatively
         // over the whole VM generation rather than per unit of script. Zero
-        // disables it. Cumulative is deliberate and is NOT the trap maxRuntime
-        // was: this counts interrupts, so it advances only while Luau is
-        // executing and charges an idle VM nothing.
+        // disables it. Cumulative is deliberate: it counts interrupts, so it
+        // advances only while Luau is executing and charges an idle VM nothing.
         uint64 interruptBudgetTicks{uint64{100'000'000}};
 
         // Wall-clock ceiling on ONE unit of script -- one runNumber or runValue
@@ -211,12 +207,10 @@ namespace uf::script
         // framework boot runs under its own window of the same length.
         //
         // Per unit of script and NOT per VM: an exploration session answers an
-        // agent chunk by chunk with the agent's own thinking time in between, so
-        // an anchor taken once at construction would charge the VM for wall
-        // clock during which no Lua ran and spend the generation between two
-        // chunks. A chunk that will not finish is still stopped by this clock,
+        // agent chunk by chunk with the agent's own thinking time in between,
+        // and a chunk that will not finish is still stopped by this clock,
         // whether it is the VM's first or its fortieth.
-        std::chrono::steady_clock::duration maxRuntime{std::chrono::minutes{30}};
+        std::chrono::steady_clock::duration maxRuntime{k_defaultMaxRuntime};
 
         // The trusted Luau framework, loaded in order under the framework
         // environment during create(). Empty boots a VM whose framework
@@ -340,9 +334,8 @@ namespace uf::script
         // A front end that feeds one VM many units of script has to ask: the
         // interrupt's three triggers reach no host call, so a break by the wall
         // clock or the instruction budget latches HERE and nowhere the task
-        // layer can see. An exploration session that only consulted its own
-        // latch went on accepting chunks and refusing every one of them, with
-        // each refusal refreshing the idle clock.
+        // layer can see
+        // (docs/plans/2026-08-01-agent-front-end-and-exploration.md).
         [[nodiscard]]
         auto generationSpent() const noexcept -> bool;
     };

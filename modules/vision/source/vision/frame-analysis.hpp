@@ -26,8 +26,7 @@
 // The scanning primitives share the matcher's budget and cancellation
 // vocabulary -- SadSearchPoll, SadSearchControl, SadSearchStopReason and
 // k_sadSearchPollIntervalComparisons from sad.hpp -- rather than declaring a
-// parallel set. The Sad prefix on those names is historical; one convention per
-// module is worth more than a better prefix.
+// parallel set.
 namespace uf
 {
     // The mask weight one pixel earns from a colour key: full weight out to the
@@ -35,22 +34,9 @@ namespace uf
     // zero staying an exact-colour match. Distance is the sum of the three
     // channel distances, so 765 is the widest tolerance that means anything.
     //
-    // This is the rule's one implementation, and since the annotation module
-    // retired it is also the only one: the authoring-side ColourKey that used to
-    // delegate here went with it, and the key a template was baked under now
-    // lives in the trusted Luau layer as data.
-    //
-    // The ramp is not decoration. A hard cut makes an author's tolerance control
-    // jump in steps, and it cuts through the antialiased skirt of a glyph, where
-    // the pixels just past the cut are still mostly glyph -- on the measured menu
-    // entry a tolerance of 12 around the white text takes 93.9% of the glyph and
-    // leaves a rim of edge pixels at distance 13..24. Those are the pixels the
-    // ramp readmits, at the weight they deserve.
-    //
-    // It lives in vision because probeColour needs it to answer how many pixels a
-    // key selects, which is the question that whole function exists for. Taking
-    // the weights as a caller-supplied plane was the alternative and would have
-    // left this module unable to answer it.
+    // On the measured menu entry a tolerance of 12 around the white text takes
+    // 93.9% of the glyph and leaves a rim of edge pixels at distance 13..24,
+    // which the ramp readmits at the weight they deserve.
     [[nodiscard]]
     auto colourKeyAlpha(
         Bgra8Pixel pixel,
