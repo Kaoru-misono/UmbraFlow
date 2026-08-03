@@ -343,6 +343,26 @@ Element {
 > 只搜一次。需要搜 N 次的只剩「同页内、由运行时状态决定」那一类(加速按钮 1x/2x/3x)。
 > 证伪的压力也集中到同一小类:**同页内互斥的那几个形态必须两两落空**。
 
+> **更正(2026-08-03,实测发现):P1 的非对角格与 P4 只对「有人要分辨」的元素成立。**
+> 上一条把搜索代价收窄到同页内的状态读出,这一条把**判定**收窄到同一处。`owns(v, s)`
+> 这个前提要有消费者才立得住,而模型里能问「现在是哪个形态」的只有页面签名——某个
+> `[[reference]]` 的 `exercised` 含 `identify`。没有任何页面 identify 的元素,它的
+> appearance 只为让 `observe.find` **定位**而存在,折叠只被问位置、从不被问名字,
+> 几个一起命中不损失任何东西。实测:`chaos-daily` 的 `branch_arrow`
+> (`capabilities = ["interact"]`,三张同一个三角形的明/暗/更暗)让 `umbra-flow check`
+> 报出 35 条 `ambiguous_appearances` / `thin_separation`,没有一条描述真实缺陷。
+>
+> 落地形状:`regress.judgeAppearanceSet` 只在「模型中某一页对该元素行使 identify」时
+> 报这两条,**分离度照样测、照样进报告**——收窄的只是判定。读 claim 的两条
+> (`contradictory_claims`、`wrong_appearance`)不收窄,写下归属的作者本身就是消费者。
+>
+> **考虑过并否决了「按落点收窄」**:只在两个 appearance 落在**不同位置**时才报,理由
+> 是点击会落到别处。否决是因为那个不确定性不是 appearance 集合的性质——`observe.find`
+> 在一个矩形里折叠出得分最好的落点,而模型从不声明该矩形只含一个实例,所以「一个
+> appearance、屏上三个实例」有完全相同的危险而矩阵对它一言不发。实测也站不住:
+> `node_map` 上真的有三个不同位置的箭头,脚本任取其一,11 条 `ambiguous_appearances`
+> 会一条不少地留下来。
+
 ### 2.4 三者合起来
 
 ```text

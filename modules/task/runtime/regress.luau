@@ -34,6 +34,17 @@
 --     to be two views of ONE page (`recognition.same_page`); silence is not such
 --     a declaration.
 --
+-- The first two ask whether the appearances can be told APART, so they hold only
+-- where the model has a consumer for that answer: an element some page exercises
+-- `identify` on. Where no page identifies by it, its appearances exist so that
+-- `observe.find` can locate the thing -- the fold is asked for a place, never
+-- for a name -- and several of them answering costs the run nothing. Separations
+-- are measured and reported either way; the scope is on the finding.
+--
+-- The two rules that read a CLAIM -- `contradictory_claims` and
+-- `wrong_appearance` -- are unscoped, because an author who wrote down which
+-- appearance owns a screen is the consumer that sentence needed.
+--
 -- The fourth is what a screen's own declaration buys:
 --
 --   * A screen must be the page it says it is. Every rule above measures ONE
@@ -446,6 +457,11 @@ end
 
 -- The two rules that hold whatever the file claims, plus the fold's own duty to
 -- answer with the appearance the file says owns the screen.
+--
+-- `distinguishes` is whether any page in this model exercises `identify` on the
+-- element. The two rules that need no claim ask whether the appearances can be
+-- told apart, so without it they have nothing to be wrong about; the ones that
+-- read a claim do not consult it, and neither does the separation measurement.
 local function judgeAppearanceSet(
     screen: any,
     element: any,
@@ -453,6 +469,7 @@ local function judgeAppearanceSet(
     measured: { any },
     folded: any,
     owners: { string },
+    distinguishes: boolean,
     separations: { Separation },
     findings: { Finding }
 )
@@ -464,8 +481,9 @@ local function judgeAppearanceSet(
     local elementName = element.name
     local where       = whereIn(element, rect)
 
-    -- Rule one: at most one appearance may hit. It fires on an unclaimed screen
-    -- too, which is where an author's own testing habit leaves the hole.
+    -- Rule one: at most one appearance may hit, on an element some page
+    -- identifies by. It fires on an unclaimed screen too, which is where an
+    -- author's own testing habit leaves the hole.
     local hits: { string } = {}
     for index = 1, #measured do
         local entry = measured[index]
@@ -473,7 +491,7 @@ local function judgeAppearanceSet(
             table.insert(hits, entry.appearance.name or "unnamed")
         end
     end
-    if #hits > 1 then
+    if distinguishes and #hits > 1 then
         pushFinding(
             findings,
             "ambiguous_appearances",
@@ -536,7 +554,9 @@ local function judgeAppearanceSet(
 
     -- Rule three: separation. Measured against every other appearance, whether
     -- or not it cleared its own threshold, because the question is how close the
-    -- runner-up came rather than whether it would have been accepted.
+    -- runner-up came rather than whether it would have been accepted. Every
+    -- element is measured; the finding is the half that asks whether the two
+    -- answers had to be told apart.
     for index = 1, #measured do
         local entry = measured[index]
         if entry ~= folded and entry.match ~= nil then
@@ -566,7 +586,7 @@ local function judgeAppearanceSet(
                 factor         = factor,
                 clears         = clears,
             })
-            if not clears then
+            if distinguishes and not clears then
                 pushFinding(
                     findings,
                     "thin_separation",
@@ -699,6 +719,7 @@ local function walkPixelElement(
     screen: any,
     element: any,
     rect: any,
+    distinguishes: boolean,
     verdict: Verdict
 )
     local where     = whereIn(element, rect)
@@ -805,6 +826,7 @@ local function walkPixelElement(
         measured,
         folded,
         ownersOf(claims, screen, element, rect),
+        distinguishes,
         verdict.separations,
         verdict.findings
     )
@@ -827,6 +849,32 @@ local function searchRects(claims: any, screen: any, element: any): { any }
     return oracle.Claims.rects_for(claims, screen.name, element.name)
 end
 
+-- Every element some page in this model exercises `identify` on, by name. It is
+-- the scope of the two rules that ask whether an appearance set can be told
+-- apart, and it is asked of the whole model rather than of one page: an element
+-- that anchors one page and is only clicked on the next still has the consumer,
+-- so one page exercising identify is enough.
+--
+-- `exercised` on the reference and not `capabilities` on the element. The
+-- element's set says what it MAY do, and an element declaring identify that no
+-- page identifies by has no consumer either; `Page.new` refuses a row
+-- exercising more than the element declares, so the reference side is the
+-- tighter of the two questions.
+--
+-- Names rather than tables, for the reason `Page.reference_for` compares by
+-- name: a layer-three script may derive its own element from the file's.
+local function identifiedElements(built: any): { [string]: boolean }
+    local identified: { [string]: boolean } = {}
+    for _, page in built.pages do
+        for _, reference in page.references do
+            if reference.exercised.identify then
+                identified[reference.element.name] = true
+            end
+        end
+    end
+    return identified
+end
+
 -- Measures one screen: what it says it IS, then every element, then every
 -- appearance of the elements that declare more than one.
 --
@@ -840,6 +888,7 @@ local function walkScreen(
     ticket: any,
     built: any,
     screen: any,
+    identified: { [string]: boolean },
     verdict: Verdict
 )
     local unresolved = recognition.verify(ctx, ticket, built, screen)
@@ -895,6 +944,7 @@ local function walkScreen(
                         screen,
                         element,
                         rect,
+                        identified[element.name] == true,
                         verdict
                     )
                 end
@@ -957,6 +1007,18 @@ function regress.check(ctx: any, built: any): Verdict
             2
         )
     end
+    -- Asked for rather than defaulted to an empty list: the appearance rules are
+    -- scoped by which elements the PAGES identify by, so a model handed over
+    -- without them would report a quiet matrix instead of a missing field.
+    if type(built.pages) ~= "table" then
+        error(
+            "regress.check needs the pages of the model it walks; whether an "
+                .. "appearance set has to be told apart is a question about "
+                .. "which elements a page identifies by, and a model with no "
+                .. "pages would answer 'none' rather than refuse",
+            2
+        )
+    end
 
     local verdict: Verdict = {
         accepted    = true,
@@ -973,6 +1035,10 @@ function regress.check(ctx: any, built: any): Verdict
     local screens = oracle.Claims.screens_in_frame_order(built.claims)
     verdict.screens = #screens
 
+    -- Once for the walk: the answer is a fact about the model and the same on
+    -- every screen.
+    local identified = identifiedElements(built)
+
     for _, screen in screens do
         -- The existence proof, and the trace line that names these bytes. The
         -- blob is not kept: the pixels reach the matcher through the frame the
@@ -980,7 +1046,8 @@ function regress.check(ctx: any, built: any): Verdict
         ctx:project_read(screen.path)
 
         local ticket             = ctx:cycle_open()
-        local ok, walkError      = pcall(walkScreen, ctx, ticket, built, screen, verdict)
+        local ok, walkError      =
+            pcall(walkScreen, ctx, ticket, built, screen, identified, verdict)
         local closed, closeError = pcall(ctx.cycle_close, ctx, ticket)
         if not ok then
             error(walkError, 0)

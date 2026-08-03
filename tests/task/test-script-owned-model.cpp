@@ -5786,9 +5786,14 @@ namespace uf::task
         constexpr std::string_view k_matrixPreludeTail = R"lua("
             local first  = oracle.Screen.new{ name = "battle", hash = hashOne }
             local second = oracle.Screen.new{ name = "battle_log", hash = hashTwo }
+            -- No pages, and the walk is asked for the list rather than left to
+            -- assume one. Every element these cases measure is read rather than
+            -- matched, and the two rules that consult the pages judge a set of
+            -- appearances.
             local function matrix(expectations, elements)
                 return regress.check(ctx, {
                     elements = elements or { title },
+                    pages    = {},
                     claims   = oracle.Claims.new{
                         screens      = { first, second },
                         expectations = expectations,
@@ -6788,6 +6793,303 @@ namespace uf::task
                     if verdict.cells[2].verdict ~= "expected" then return 0 end
                     if not verdict.accepted then return 0 end
                     if #verdict.findings ~= 0 then return 0 end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+        }
+
+        // ------------- the falsification matrix over a set of appearances
+
+        // Two one-by-one templates a frame of grey four puts one unit from an
+        // exact match, so both clear a 9000 threshold and neither is four times
+        // the other: the smallest model that is ambiguous and thinly separated
+        // at once. Every subcase below builds this same element and differs only
+        // in what the pages do with it.
+        constexpr std::string_view k_appearanceHead = R"lua(
+            local function template(name)
+                return ctx:template_load(ctx:project_read(name))
+            end
+            local function twoLooks(capabilities)
+                return model.Element.new{
+                    name = "arrow",
+                    capabilities = capabilities,
+                    rect = { x = 0, y = 0, width = 3, height = 1 },
+                    appearances = {
+                        {
+                            name = "lit",
+                            source = "gray3.png",
+                            template = template("gray3.png"),
+                            threshold = 9000,
+                        },
+                        {
+                            name = "dim",
+                            source = "gray5.png",
+                            template = template("gray5.png"),
+                            threshold = 9000,
+                        },
+                    },
+                }
+            end
+
+            -- Page.new refuses a page with no required identify reference, so a
+            -- page that only clicks the arrow still needs something to be
+            -- anchored by. One appearance, so it never judges a set of its own.
+            local anchor = model.Element.new{
+                name = "anchor",
+                capabilities = { "identify" },
+                rect = { x = 0, y = 0, width = 3, height = 1 },
+                appearances = {
+                    {
+                        name = "corner",
+                        source = "gray2.png",
+                        template = template("gray2.png"),
+                        threshold = 10000,
+                    },
+                },
+            }
+            local function anchoredPage(name, arrowRow)
+                return model.Page.new{
+                    name = name,
+                    references = {
+                        {
+                            element = anchor,
+                            holding = "owned",
+                            exercised = { "identify" },
+                            identify = "required",
+                        },
+                        arrowRow,
+                    },
+                }
+            end
+            local hashOne = ")lua";
+
+        constexpr std::string_view k_appearanceTail = R"lua("
+            local first  = oracle.Screen.new{ name = "one", hash = hashOne }
+            local second = oracle.Screen.new{ name = "two", hash = hashTwo }
+            local function matrix(elements, pages)
+                local byName = {}
+                for _, page in pages do byName[page.name] = page end
+                return regress.check(ctx, {
+                    elements     = elements,
+                    pages        = pages,
+                    page_by_name = byName,
+                    claims       = oracle.Claims.new{
+                        screens      = { first, second },
+                        expectations = {},
+                    },
+                })
+            end
+            local function counted(verdict, kind)
+                local total = 0
+                for _, finding in verdict.findings do
+                    if finding.kind == kind then total += 1 end
+                end
+                return total
+            end
+            -- Both appearances answering on both screens is the premise every
+            -- subcase rests on, asserted rather than assumed: a case that
+            -- measured nothing would be green for the wrong reason.
+            local function bothAnswered(verdict)
+                local hit = 0
+                for _, cell in verdict.cells do
+                    if cell.subject == "appearance" and cell.outcome == "hit" then
+                        hit += 1
+                    end
+                end
+                return hit == 4
+            end
+        )lua";
+
+        [[nodiscard]]
+        auto appearanceScript(
+            std::vector<std::string> const& hashes,
+            std::string_view                body
+        ) -> std::string
+        {
+            REQUIRE(hashes.size() == 2U);
+            auto source = std::string{k_appearanceHead};
+            source += hashes[0];
+            source += k_matrixPreludeMiddle;
+            source += hashes[1];
+            source += k_appearanceTail;
+            source += body;
+            return source;
+        }
+
+        [[nodiscard]]
+        auto runAppearanceMatrix(
+            std::filesystem::path const&    root,
+            std::vector<std::string> const& hashes,
+            std::string_view                body
+        ) -> Result<double>
+        {
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(4, 4, 4), pixels(4, 4, 4)},
+                    .projectRoot = root,
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = root},
+            };
+            return runModel(context, built, appearanceScript(hashes, body));
+        }
+
+        TEST_CASE("An appearance set is judged where a page identifies by it")
+        {
+            // `ambiguous_appearances` and `thin_separation` both ask whether the
+            // appearances of one element can be told apart, and the model's
+            // consumer for that answer is a page reference exercising identify.
+            // An element no page identifies by carries appearances so that
+            // `observe.find` can locate it; the fold is asked for a place and
+            // never for a name, so several of them answering costs the run
+            // nothing and the two sentences describe a distinction no caller
+            // makes. The measurement is unscoped -- every separation is still
+            // recorded -- because a margin is evidence whoever reads it.
+            auto const directory = TemporaryDirectory{"uf-model-appearance-set"};
+            seedTemplates(directory.path());
+            auto const hashes = seedScreens(directory.path());
+
+            SUBCASE("a page identifying by the element gets both rules")
+            {
+                auto const result = runAppearanceMatrix(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    local arrow = twoLooks({ "identify", "interact" })
+                    local verdict = matrix({ arrow, anchor }, {
+                        anchoredPage("node_map", {
+                            element = arrow,
+                            holding = "owned",
+                            exercised = { "identify", "interact" },
+                            identify = "required",
+                        }),
+                    })
+                    if not bothAnswered(verdict) then return 0 end
+                    if verdict.accepted then return 0 end
+                    if #verdict.findings ~= 4 then return 0 end
+                    if counted(verdict, "ambiguous_appearances") ~= 2 then
+                        return 0
+                    end
+                    if counted(verdict, "thin_separation") ~= 2 then return 0 end
+
+                    local finding = verdict.findings[1]
+                    if finding.kind ~= "ambiguous_appearances" then return 0 end
+                    if finding.element ~= "arrow" then return 0 end
+                    if finding.appearance ~= "lit" then return 0 end
+                    if finding.rival ~= "dim" then return 0 end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("an element only ever clicked is measured and not judged")
+            {
+                auto const result = runAppearanceMatrix(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    local arrow = twoLooks({ "interact" })
+                    local verdict = matrix({ arrow, anchor }, {
+                        anchoredPage("node_map", {
+                            element = arrow,
+                            holding = "owned",
+                            exercised = { "interact" },
+                        }),
+                    })
+
+                    -- The same ambiguity as the subcase above, on the same
+                    -- pixels: both appearances answered on both screens and
+                    -- neither cleared the other by the factor.
+                    if not bothAnswered(verdict) then return 0 end
+                    if #verdict.separations ~= 2 then return 0 end
+                    for _, separation in verdict.separations do
+                        if separation.clears then return 0 end
+                    end
+
+                    if not verdict.accepted then return 0 end
+                    if #verdict.findings ~= 0 then return 0 end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("identifying on one page holds on the pages that only click")
+            {
+                auto const result = runAppearanceMatrix(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    -- The question is asked of the MODEL and not of a page. One
+                    -- page anchors itself on the arrow and another only clicks
+                    -- it; the consumer exists, so both rules hold on every
+                    -- screen, and the walk never knows which page a screen is.
+                    local arrow = twoLooks({ "identify", "interact" })
+                    local verdict = matrix({ arrow, anchor }, {
+                        anchoredPage("node_map", {
+                            element = arrow,
+                            holding = "owned",
+                            exercised = { "interact" },
+                        }),
+                        anchoredPage("battle", {
+                            element = arrow,
+                            holding = "referenced",
+                            exercised = { "identify" },
+                            identify = "required",
+                        }),
+                    })
+                    if not bothAnswered(verdict) then return 0 end
+                    if verdict.accepted then return 0 end
+                    if counted(verdict, "ambiguous_appearances") ~= 2 then
+                        return 0
+                    end
+                    if counted(verdict, "thin_separation") ~= 2 then return 0 end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a model handed over without its pages is refused")
+            {
+                auto const result = runAppearanceMatrix(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    -- Defaulting to an empty list here would answer "no page
+                    -- identifies by anything" and report a quiet matrix, which
+                    -- reads as a healthy model rather than as a missing field.
+                    local arrow = twoLooks({ "interact" })
+                    local ok, err = pcall(function()
+                        return regress.check(ctx, {
+                            elements = { arrow },
+                            claims   = oracle.Claims.new{
+                                screens      = { first, second },
+                                expectations = {},
+                            },
+                        })
+                    end)
+                    if ok then return 0 end
+                    if type(err) ~= "string" then return 0 end
+                    if string.find(
+                        err,
+                        "needs the pages of the model it walks",
+                        1,
+                        true
+                    ) == nil then
+                        return 0
+                    end
                     return 1
                 )lua"
                 );
