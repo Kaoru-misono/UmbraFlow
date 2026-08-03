@@ -80,7 +80,9 @@
   会在触发帧重解析出发页——浮层压着时走不了被盖页的边,出路是先 pop 或按 §四之二.6
   拆页(声明处有记)。跨边界成本实测 ~723µs/格,其中 ~650µs 是每调用固定开销
   (trace 两行 + 逐行 flush + 指纹检查),批量原语按 §十.5 只记不做。
-  遗留文档账:CONTEXT.md 还不认识 oracle/regress/回执,工单 4 的文档批一起补。
+  - [ ] **遗留文档账,已复核过一半(2026-08-03)**:CONTEXT.md 现在认识 `oracle` 与
+        `regress`(196 / 230 / 299 行),但**一处都没提回执**(`receipt`,grep 零命中)
+        ——而同帧页面证据正是靠它执法,`observe.click` 与 `walk_edge` 都要。
 - **工单 4a — 旧动词退役。已完成(2026-08-01,`73c7c6f`)。**
   `cycle_page` / `cycle_find` / `wait_for_page` / `CapabilitySurface`(含 `uf.elements`、
   `uf.pages`)/ engine 的 `resolvePage`、`findAction`、`act` 与 catalog 点击路径全部退役;
@@ -88,8 +90,9 @@
   `domain/space`、`FrameIdentity` 迁 `domain/frame`,**`engine -> annotation` 边已切断**
   (engine manifest = core domain ocr trace vision),指纹改由 l2 文件提供。预 VM 校验器
   改看 `page-model.toml`(`task/page-model-file`,C++ 只扁平扫名)。drive 收缩为七个裸动词。
-  九处突变九红。**遗留**:trace 的 `Page::Score` / `elementId` 仍用 annotation 类型,
-  产品已无发射方,随 trace v3 修剪。
+  九处突变九红。~~**遗留**:trace 的 `Page::Score` / `elementId` 仍用 annotation 类型~~
+  ——已随工单 4c 的 trace v3 修剪掉(2026-08-03 复核:`modules/trace/source/` 里两个名字
+  都已不存在)。
 - **工单 4b — Agent 前端与探索环境。实现已落地(2026-08-01,`9b5c8bc`),
   真机验收已通过。** 形状见
   [Agent 前端与探索环境](plans/2026-08-01-agent-front-end-and-exploration.md)。
@@ -122,8 +125,8 @@
   15 突变 15 红,其中两条是**加法式**突变——证明「不做坐标那套围栏」是守住的而非漏写。
   投递瞄准客户区中心,因为随便命名一个锚点等于顺手回答了 2026-08-01 文档 §九-5,
   那条仍开放。已知不对称:controller 自己会查租约年龄,所以旧观察上的滚轮会在
-  投递边被拒(引擎不拒);`umbra-flow drive` 的操作者协议没有 scroll 动词。
-  抓帧唤醒那条经验规则仍未移植进探索通道。
+  投递边被拒(引擎不拒)。
+  - [ ] **抓帧唤醒那条经验规则仍未移植进探索通道。**
   **滚轮的另一半在 2026-08-03 补齐**:`ctx:cycle_move_pointer(ticket, x, y)` 从
   `controller::movePointer` 一路打通到脚本面(`IActionSink::movePointer` /
   `EngineSession::movePointer` / `TaskContext::cycleMovePointer`)。它指名坐标,
@@ -131,7 +134,10 @@
   花掉观察),一条不减;而它按不下任何东西,所以按 `cycle_scroll` 的方式两个面都
   发、`ctx` 直接转发——裸坐标的特权护的是「激活页面没授权的东西」,移动激活不了。
   trace 加 `engine.pointer_move_delivered`(加法,schema 仍 v3),点走 `clickClient`。
-  14 突变 14 红。`umbra-flow drive` 同样没有 move 动词。
+  14 突变 14 红。
+  - [ ] **`umbra-flow drive` 的操作者协议既没有 scroll 也没有 move 动词。**两个动词在
+        脚本面都有了,只有操作者这一侧缺——所以人手复现一次脚本的动作序列做不到,
+        而那正是诊断「脚本这一步为什么没落地」的手段。
 
 - **第一条真边已走通(2026-08-01,真机)**:`walk-first-edge` 任务全程走新栈——
   l2 文件 → 图 → 栈 → 等 home → walk_edge → 回执授权点击 (1438,240) → sortie
@@ -218,9 +224,12 @@
   代价是这条出路和模型裁决**相反**:同一矩形上互斥的状态本该是**一个**元素带命名
   appearance 列表(见[标注模型重构](plans/2026-07-31-annotation-model-capabilities.md)
   §四之二.4(a) 与[三层系统与 Agent 操作者](plans/2026-08-01-three-layers-and-agent-operator.md) §六)。
-  裁决没有错,它只是**只在小矩形上付得起**;大搜索区域上今天没有第二条路,也没有
-  任何东西在标注期把这个代价说给作者听。规则那一半记在
+  裁决没有错,它只是**只在小矩形上付得起**;大搜索区域上今天没有第二条路。规则那一半记在
   [`pitfalls/element-choice-and-thresholds.md`](pitfalls/element-choice-and-thresholds.md)。
+  - [ ] **标注期把这个代价说给作者听。**今天没有任何东西这么做:`appearance 数 × 面积`
+        两个因子都在标注期定死,而付账在运行期,作者看不见自己刚签的字。最便宜的形状是
+        `scribe.add_appearance` / `author_element` 在算得出面积时给一句警告——和色键
+        「太小/太满的蒙版只警告不拒绝」同一条路子,因为真正的判据仍是证伪矩阵。
 
 标注通道的三处缺口已补(2026-08-01):
 
@@ -388,7 +397,38 @@ dispatcher 一次认一页、做那一页要做的一件事,把这一局走完�
 > **2026-08-03 补上一半。** `.luau` 已进 `fix_format.py`(386→401 个文件),而且和 C++
 > 共用「缩进必须是空格」那条,所以制表符也会被拦——扫过一遍,现有 15 个文件本来就干净,
 > 加进去零改动。证伪:往 `docs/` 放一个带制表符的 `.luau`,`--check` 立刻转红。
-> **类型检查仍然没有**,`--!strict` 依旧只是注释,那半还没做。
+
+**2026-08-03 量完了。** 用树里那份 Luau(0.730)的 `CLI/src/Analyze.cpp` 构建出
+`luau-analyze`,对 `modules/task/runtime/*.luau` 跑一遍(`--solver=old`,即 `--!strict`
+今天实际对应的那个求解器;默认的新求解器噪音大得多,171 条):
+
+- **145 条诊断,其中 141 条是同一件事**——`Unknown global 'model' / 'mint' / 'oracle' …`。
+  这不是缺陷,是 bundle 的形状:15 个模块之间靠**全局**互相可见而不是 `require`,
+  名字由 C++ 的 `frameworkProjectGlobals()` 发布。检查器不知道这件事,所以每一处跨模块
+  调用都报一次。
+- **真正的类型错误只有 4 条**,其中 3 条已修(见下),剩 1 条是检查器自己的毛病。
+
+已修的三条(2026-08-03,`project.luau`):`table.insert(document.blocks, rawTarget)` 传的是
+声明为 `{ string }?` 的局部,现在先绑一个必然非空的 `block`;两处
+`for … in appearancesFor[name] or {} do` 迭代的是联合类型 `{any} | {}`,现在先落到一个
+具名的 `{ any }` 局部上。三处都是**读起来也更清楚**的改法,不是为了让检查器闭嘴。
+
+剩下那一条不修:`regress.luau` 的 `local ok, walkError = pcall(walkScreen, …)`。`walkScreen`
+不返回值,而 Luau 的 `pcall` 类型签名里**根本没有错误通道**(`(f: (A…) -> R…) -> (boolean, R…)`),
+所以任何 `pcall(一个无返回值的函数)` 解构成两个值都会被报。能让它变绿的改法只有两类:
+加一个 `:: any` 强转,或者让 `walkScreen` 显式 `return nil` ——后者会让 `walkError` 的类型
+变成 `nil`,而运行期它是错误字符串,**那是让类型说谎**。所以这一条留着。
+
+- [ ] **把它接成门禁**。剩下的是两个决定,都不是「跑起来」那一步:
+      - `modules/script/external/CMakeLists.txt` 现在把 `LUAU_BUILD_CLI` **强制关掉**并写了
+        理由(Luau 只该有 VM + Compiler,不向顶层泄漏)。要构建 `luau-analyze` 就得掀掉这条。
+        另外上游 0.730 有个 CMake bug:`LUAU_BUILD_CLI` 那段里 `set_target_properties` 引用了
+        只在 `LUAU_BUILD_TESTS` 下才定义的 `Luau.UnitTest`,所以 CLI 开着就必须同时开测试,
+        除非本地放一个同名占位目标接住那条属性。
+      - 那 141 条 `Unknown global` 要怎么消。过滤掉它们是可以的——名单的权威在
+        `framework-bundle.cpp`,检查器读同一份就不会漂——但这等于承认「bundle 就是
+        definitions」,而不是真的给框架写一份类型声明。写声明能换来跨模块的类型检查,
+        代价是它得跟着 15 个模块一起维护。**这两条都会长期留在仓库里,先定形状再动手。**
 
 ## P1–P3 后续
 
@@ -425,6 +465,14 @@ dispatcher 一次认一页、做那一页要做的一件事,把这一局走完�
 所以要做的事按这个顺序才划算:先让**取框**这件事不再靠肉眼(当天所有取框错都是在另一屏
 上量的框拿到这一屏用),再谈换模型或调参数。第一条已经有工具了——存档截图加离线量框,
 `camp_rest_*` 那两个元素就是这么标的,全程没碰真机。
+
+- [ ] **把取框变成量出来的,而不是看出来的**。本节整段原本没有格子。四次取框错都是
+      同一个动作:在另一屏上量的框拿到这一屏用。可做的形状:`cycle_read_lines` 已经
+      把每行的文字**和它自己的矩形**一起给出来,所以一个离线动词能对着存档屏反推
+      「这段字实际占哪个框」,作者不再自己估。注意两条已知代价:放宽读取框不是免费的
+      (圆角按钮的弧线会被读成全角右括号),框下沿多一点就会把计数行吃进手牌区。
+- [ ] **换模型或调参数**——排在上一条后面,今天没有证据说识别器是主要瓶颈(当天四次
+      取框错、一次识别器错,而那一次还被置信度地板正确挡住了)。
 
 ## `project.load_project` 每次泄漏约 410 KB(2026-08-03 量到,未修)
 
