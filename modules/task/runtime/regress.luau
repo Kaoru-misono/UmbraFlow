@@ -18,28 +18,9 @@
 -- measured would agree with itself by construction. Recording the measurement is
 -- the trace's job, and every `cycle_match` below already writes one line to it.
 --
--- FOUR RULES FIRE WITHOUT AN `[[expect]]` BEING CONTRADICTED. The first three are
--- aimed at the failure docs/pitfalls/colour-key-annotation.md documents -- a mark
--- that hits every state it was meant to tell apart:
---
---   * No two appearances of one element may hit one screen. Three speed icons
---     differing by one digit, keyed a little too generously, match each other,
---     and an author who claims only the diagonal cell of each sees a green
---     matrix (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.4 and
---     2.3 correction (b)).
---   * The winner must beat every rival by a factor: both answers can be correct
---     while the margin between them is a frame of drift wide.
---   * One region may not be claimed to read one text on two screens. It is
---     `reading.confusions`, and the only pair it spares is one the file declares
---     to be two views of ONE page (`recognition.same_page`); silence is not such
---     a declaration.
---
--- The first two ask whether the appearances can be told APART, so they hold only
--- where the model has a consumer for that answer: an element some page exercises
--- `identify` on. Where no page identifies by it, its appearances exist so that
--- `observe.find` can locate the thing -- the fold is asked for a place, never
--- for a name -- and several of them answering costs the run nothing. Separations
--- are measured and reported either way; the scope is on the finding.
+-- FOUR RULES FIRE WITHOUT AN `[[expect]]` BEING CONTRADICTED; the first three
+-- are aimed at the failure docs/pitfalls/colour-key-annotation.md documents --
+-- a mark that hits every state it was meant to tell apart.
 --
 -- The two rules that read a CLAIM -- `contradictory_claims` and
 -- `wrong_appearance` -- are unscoped, because an author who wrote down which
@@ -57,13 +38,8 @@
 -- text the project file claims and the confidence floor the element declares.
 -- The text half is measured by `reading`, next door.
 --
--- AND A SECOND AXIS. An element that holds a rectangle is measured there on
--- every screen, claimed or not, which is what every unclaimed cell rests on. One
--- that holds none -- a minimap shape, a confirm button drawn once and placed on
--- nine screens -- is measured at the rectangles its CLAIMS name, the only place
--- such a position can be written down and contradicted, so one screen can hold
--- several rows for one element. Which rectangles a screen offers is
--- `searchRects`, and it is the one place that choice is made.
+-- Which rectangles a screen offers is `searchRects`, and it is the one place
+-- that choice is made.
 --
 -- `regress` sorts last of the framework modules, which is what lets it name
 -- `model`, `observe`, `oracle`, `reading` and `recognition`. It holds no state:
@@ -455,9 +431,6 @@ local function ownersOf(
     return owners
 end
 
--- The two rules that hold whatever the file claims, plus the fold's own duty to
--- answer with the appearance the file says owns the screen.
---
 -- `distinguishes` is whether any page in this model exercises `identify` on the
 -- element. The two rules that need no claim ask whether the appearances can be
 -- told apart, so without it they have nothing to be wrong about; the ones that
@@ -635,8 +608,7 @@ local function walkTextElement(
     local expectedText =
         oracle.Claims.text_for(claims, screen.name, element.name, claimRect)
     if expectedText == nil then
-        -- Nothing to search for and nothing claimed to read. The row is emitted
-        -- anyway, so that two runs have the same inventory shape.
+        -- Nothing to search for and nothing claimed to read.
         pushCell(
             verdict.cells,
             screen,
@@ -705,10 +677,6 @@ local function walkTextElement(
     end
 end
 
--- Measures one element that has templates, in one region: the folded answer, a
--- row per appearance when it declares more than one, and the three rules that
--- hold whatever the file claims.
---
 -- It is a function of a RECTANGLE rather than of an element, which is what lets
 -- one screen carry several rows for a shape drawn once and placed many times: the
 -- caller walks the rectangles and this measures each.
@@ -774,13 +742,20 @@ local function walkPixelElement(
         for index = 1, #measured do
             local entry = measured[index]
             local name  = entry.appearance.name
-            local state = oracle.Claims.state_for(
-                claims,
-                screen.name,
-                element.name,
-                name,
-                claimRect
-            )
+            -- An unnamed appearance can own no cell: `Expectation.new` takes
+            -- only a name `Element.appearance_named` resolves, and a nil one
+            -- keys the FOLDED element's own cell, so asking would judge this
+            -- row against the element's claim. `ownersOf` skips it likewise.
+            local state = oracle.state_unclaimed
+            if name ~= nil then
+                state = oracle.Claims.state_for(
+                    claims,
+                    screen.name,
+                    element.name,
+                    name,
+                    claimRect
+                )
+            end
             local cell = pushCell(
                 verdict.cells,
                 screen,

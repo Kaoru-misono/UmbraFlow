@@ -20,14 +20,11 @@
 --
 -- A cell nobody claimed is `unclaimed`, deliberately permissively: the
 -- falsification pressure comes from the rules `regress` applies whatever the file
--- says -- two appearances of one element may never hit one screen, the winner
--- must beat every rival by a factor, and one region may not be claimed to read
--- one text on two screens. The first two hold on unclaimed cells too, which is
--- where an author's habit leaves the holes (the same document, 2.3 correction
--- (b)).
+-- says, most of which hold on unclaimed cells too (the same document, 2.3
+-- correction (b)).
 --
 -- A screen may also say which page it is of. That is not a licence to be measured
--- less: the third rule stops firing between two captures of ONE page, and in
+-- less: one of those rules stops firing between two captures of ONE page, and in
 -- exchange the declaration is itself measured. Both halves are `recognition`'s.
 --
 -- Framework modules load in the sorted order of their file names. `oracle` sorts
@@ -618,8 +615,6 @@ function Claims.new(spec: { [string]: any }): Claims
     local stateByCell: { [string]: string } = {}
     local textByCell: { [string]: string }  = {}
 
-    -- The rectangles this file wants each (screen, element) pairing measured at,
-    -- and the set that keeps one rectangle out of that list twice.
     local rectsBySubject: { [string]: { Rect } } = {}
     local rectSeen: { [string]: boolean }        = {}
 
@@ -750,12 +745,7 @@ end
 -- Every rectangle this file wants `element` measured at on `screen`, in the
 -- order the file names them, and an empty list when it names none.
 --
--- It is the walk's only entry into a shape with no rectangle of its own. An
--- element that draws one is measured there on every screen, claimed or not, which
--- is where the matrix catches a mark answering somewhere nobody thought to look;
--- an element that draws none has cells exactly where its claims put them, so its
--- falsification pressure comes from the author writing both the rectangle it must
--- match and the ones it must not.
+-- It is the walk's only entry into a shape with no rectangle of its own.
 --
 -- A fresh list each call, so nothing outside can reorder what a walk reads.
 function Claims.rects_for(
@@ -782,13 +772,10 @@ end
 
 -- How many text cells the most-claimed single screen holds.
 --
--- It exists for the composition root beside `reads_text`. A walk opens ONE
--- observation per screen and reads once per claimed cell on it, and the host's
--- per-cycle read budget is fixed before the VM starts, so this is exactly what
--- that budget must cover and it is knowable from the file alone. Whoever
--- assembles the run refuses in its own words when the budget is short; the
--- alternative is a RecognitionIncomplete on screen three attributed to a read,
--- which says what stopped and nothing about why.
+-- It exists for the composition root beside `reads_text`: a walk opens ONE
+-- observation per screen and reads once per claimed cell, and the host's
+-- per-cycle read budget is fixed before the VM starts, so this is what that
+-- budget must cover.
 --
 -- It counts cells rather than distinct elements, because a cell IS a read.
 function Claims.most_reads_on_one_screen(claims: Claims): number

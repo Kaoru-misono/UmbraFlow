@@ -59,39 +59,6 @@ namespace uf::task
         }
 
         [[nodiscard]]
-        auto operatorRunFinishedEvent(
-            TaskRunReport const& report
-        ) -> trace::TraceEvent
-        {
-            auto wireOutcome = trace::RunOutcome::Completed;
-            switch (report.outcome())
-            {
-            case TaskRunOutcome::Completed:
-                wireOutcome = trace::RunOutcome::Completed;
-                break;
-            case TaskRunOutcome::Cancelled:
-                wireOutcome = trace::RunOutcome::Cancelled;
-                break;
-            case TaskRunOutcome::Failed:
-                wireOutcome = trace::RunOutcome::Failed;
-                break;
-            }
-
-            auto errorKind = std::optional<AutomationErrorKind>{};
-            if (report.failure)
-            {
-                errorKind = automationErrorKind(*report.failure)
-                    .value_or(AutomationErrorKind::InternalInvariant);
-            }
-
-            return trace::TraceEvent{
-                .kind       = trace::TraceEventKind::RunFinished,
-                .runOutcome = wireOutcome,
-                .errorKind  = errorKind,
-            };
-        }
-
-        [[nodiscard]]
         auto invalid(std::string message) -> std::unexpected<Error>
         {
             return fail(AutomationErrorKind::InvalidResource, std::move(message));
@@ -175,32 +142,16 @@ namespace uf::task
 
     auto OperatorSession::finish(std::optional<Error> failure) -> TaskRunReport
     {
-        auto report = TaskRunReport{
-            .seed      = m_seed,
-            .tracePath = m_tracePath,
-            .failure   = std::move(failure),
-        };
-
-        // A generation the host spent terminally ended there whatever the operator
-        // did afterwards, exactly as for a task run: the latch is read back here so a
-        // cancelled session cannot report itself completed.
-        if (!report.failure)
-        {
-            if (auto const terminal = m_context.terminalKind(); terminal.has_value())
-            {
-                report.failure = fail(
-                    *terminal,
-                    "the operator session's generation was spent before it ended"
-                ).error();
-            }
-        }
-
-        auto finishStatus = m_recorder->emit(operatorRunFinishedEvent(report));
-        if (!report.failure && !finishStatus)
-        {
-            report.failure = std::move(finishStatus).error();
-        }
-        return report;
+        return closeRunBracket(
+            *m_recorder,
+            TaskRunReport{
+                .seed      = m_seed,
+                .tracePath = m_tracePath,
+                .failure   = std::move(failure),
+            },
+            m_context.terminalKind(),
+            "the operator session's generation was spent before it ended"
+        );
     }
 
     auto OperatorSession::ticketFor(uint64 ordinal) const noexcept -> CycleTicket

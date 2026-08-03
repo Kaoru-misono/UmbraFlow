@@ -67,13 +67,9 @@ namespace uf::task
 {
     namespace
     {
-        // Each string is one host object kind's __metatable and __tostring
-        // label -- the only string a script can obtain from such an object,
-        // naming the kind and nothing else (no id, no address). k_cycleType,
-        // k_templateType and k_deadlineType are also the registry keys their
-        // shared metatable is stored under; k_errorType is not, because a Tier B
-        // carrier's metatable holds that one error's fields and so exists per
-        // instance.
+        // k_cycleType, k_templateType and k_deadlineType are also the registry
+        // keys their shared metatable is stored under; k_errorType is not,
+        // because a Tier B carrier's metatable is per instance.
         constexpr auto k_cycleType    = "uf.cycle";
         constexpr auto k_templateType = "uf.template";
         constexpr auto k_deadlineType = "uf.deadline";
@@ -123,10 +119,8 @@ namespace uf::task
         constexpr auto k_probeUserdataTag = 4;
         static_assert(k_probeUserdataTag > 0 && k_probeUserdataTag < LUA_UTAG_LIMIT);
 
-        // A crop's mask is its own kind rather than a second probe: a probe
-        // measures a rectangle of a blob the caller already holds, and this
-        // reports what the key a crop was cut under took out of that crop's own
-        // pixels.
+        // A crop's mask reports what the key the crop was cut under took out of
+        // that crop's own pixels.
         constexpr auto k_maskUserdataTag = 5;
         static_assert(k_maskUserdataTag > 0 && k_maskUserdataTag < LUA_UTAG_LIMIT);
 
@@ -152,15 +146,10 @@ namespace uf::task
             return failureResponse(kind) == FailureResponse::Retry;
         }
 
-        // What a match handle carries into C++: the ordinal of the cycle that
-        // produced it, plus the position a click will be delivered to. No handle
-        // ever stores the move-only Observation -- it lives in the CycleLedger
-        // and only the ticket names it -- so the ordinal is the whole of the
-        // staleness check: with at most one cycle open, an ordinal that is not
-        // the open one names a cycle that no longer exists.
-        //
-        // Trivially destructible, which is what lets it be a tagged userdata and
-        // so recognizable by tag rather than by metatable.
+        // No handle ever stores the move-only Observation -- it lives in the
+        // CycleLedger and only the ticket names it -- so the ordinal is the
+        // whole of the staleness check: with at most one cycle open, an ordinal
+        // that is not the open one names a cycle that no longer exists.
         struct MatchBox final
         {
             uint64             cycleOrdinal{};
@@ -323,16 +312,9 @@ namespace uf::task
 
         // Mints one Tier B error carrier and raises it. Never returns.
         //
-        // The carrier is a tagged userdata, not a table; its kind, message and
-        // retryable live in a frozen table behind a per-instance metatable's
-        // __index. That __index must stay a table and never a function -- a
-        // function there would be an unyieldable hole if this ever moved to a
-        // yield protocol -- and deepFreezeMetatable checks it rather than this
-        // trusting it. Per instance follows from the same rule: with __index a
-        // table, there is nowhere else per-error data could live.
-        //
-        // Identity rests on the tag, not on the metatable: C++ reads the tag and
-        // ctx:try asks whether the value wears this label.
+        // The carrier's kind, message and retryable live in a frozen table
+        // behind a per-instance metatable whose __index deepFreezeMetatable
+        // requires to be a table and never a function.
         [[noreturn]]
         auto raiseTierB(
             lua_State* state,
@@ -722,12 +704,8 @@ namespace uf::task
         // The optional colour key at `first` and the three positions after it:
         // red, green, blue, tolerance.
         //
-        // One reader for both `probe` and `cycle_crop`, because an agent probes
-        // to choose a key and then crops under the same one: a second reader
-        // would be a second place the default tolerance, the channel range and
-        // the absent-key case could come to differ. Presence is decided by the
-        // first position alone, so half a key is told which channel is missing
-        // rather than silently keying on black.
+        // Presence is decided by the first position alone, so half a key is told
+        // which channel is missing rather than silently keying on black.
         [[nodiscard]]
         auto checkColourKey(
             lua_State* state,
@@ -755,6 +733,7 @@ namespace uf::task
         [[nodiscard]]
         auto checkPixelRect(
             lua_State* state,
+            TaskContext* context,
             int first,
             std::string const& what
         ) -> PixelRect
@@ -767,11 +746,18 @@ namespace uf::task
             auto const rect = PixelRect::create(x, y, width, height);
             if (!rect)
             {
-                raiseTierB(
-                    state,
-                    kindOf(rect.error()),
-                    std::string{rect.error().message()}
-                );
+                // PixelRect::create reports an empty rectangle and an extent
+                // overflow alike as InternalInvariant, which must latch the
+                // generation terminal BEFORE it is raised (design section 9 rule
+                // 5): raiseTierB alone would mint a carrier ctx:try swallows,
+                // and the run would drive on to capture and click.
+                auto const kind    = kindOf(rect.error());
+                auto const message = std::string{rect.error().message()};
+                if (kind == AutomationErrorKind::InternalInvariant)
+                {
+                    raiseInvariant(state, context, message);
+                }
+                raiseTierB(state, kind, message);
             }
             return *rect;
         }
@@ -911,7 +897,12 @@ namespace uf::task
             auto* ticket = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
             auto* templateTicket =
                 checkBox<TemplateTicket>(state, 2, k_templateType, "template");
-            auto const searchRoi = checkPixelRect(state, 3, "cycle_match region");
+            auto const searchRoi = checkPixelRect(
+                state,
+                context,
+                3,
+                "cycle_match region"
+            );
 
             auto const call = NativeCallIdentity{
                 .verb         = "cycle_match",
@@ -972,7 +963,7 @@ namespace uf::task
             guardFatal(state, context);
 
             auto* ticket   = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
-            auto const rect = checkPixelRect(state, 2, "cycle_read region");
+            auto const rect = checkPixelRect(state, context, 2, "cycle_read region");
 
             auto const call = NativeCallIdentity{
                 .verb         = "cycle_read",
@@ -1014,10 +1005,8 @@ namespace uf::task
         // line, which is not the claim that the region holds nothing -- see
         // cycle_read.
         //
-        // A verb of its own rather than a flag on cycle_read: what comes back
-        // differs in kind, and the two callers assert opposite things -- one
-        // says the rectangle holds a single line, this one says it does not know
-        // what the region holds.
+        // Why it is a verb of its own rather than a flag on cycle_read:
+        // docs/plans/2026-08-01-three-layers-and-agent-operator.md.
         //
         // It costs one read for the detection pass plus one per line that pass
         // located, out of the pool cycle_read spends; a region holding more lines
@@ -1032,7 +1021,12 @@ namespace uf::task
             guardFatal(state, context);
 
             auto* ticket    = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
-            auto const rect = checkPixelRect(state, 2, "cycle_read_lines region");
+            auto const rect = checkPixelRect(
+                state,
+                context,
+                2,
+                "cycle_read_lines region"
+            );
 
             auto const call = NativeCallIdentity{
                 .verb         = "cycle_read_lines",
@@ -1061,8 +1055,6 @@ namespace uf::task
             {
                 auto const& line = lines[index];
 
-                // A line is a reading, so it gets a reading's carrier shape
-                // rather than a second shape for the same facts.
                 beginFieldHandle<uint8>(state, uint8{0}, k_readingUserdataTag);
                 lua_pushlstring(state, line.text.data(), line.text.size());
                 lua_setfield(state, -2, "text");
@@ -1243,7 +1235,7 @@ namespace uf::task
             guardFatal(state, context);
 
             auto* ticket    = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
-            auto const rect = checkPixelRect(state, 2, "cycle_crop region");
+            auto const rect = checkPixelRect(state, context, 2, "cycle_crop region");
             auto const key  = checkColourKey(state, 6, "cycle_crop key");
 
             auto const call = NativeCallIdentity{
@@ -1345,7 +1337,7 @@ namespace uf::task
             guardFatal(state, context);
 
             auto const blob = checkText(state, 1, "probe blob");
-            auto const rect = checkPixelRect(state, 2, "probe region");
+            auto const rect = checkPixelRect(state, context, 2, "probe region");
 
             auto const key = checkColourKey(state, 6, "probe key");
 
@@ -1513,15 +1505,10 @@ namespace uf::task
         // privileges are pixels and bare coordinates.
         //
         // Anchoring a scroll to an annotated region is open question 5 of
-        // docs/plans/2026-08-01-three-layers-and-agent-operator.md; until it is
-        // settled the raw verb ships with no anchoring rule, and the region will
-        // arrive as an argument rather than as a reinterpretation of this one.
+        // docs/plans/2026-08-01-three-layers-and-agent-operator.md.
         //
-        // The count is checked only for the shape a Luau number can be wrong in.
-        // What a deliverable count IS belongs to the delivery layer, which bounds
-        // it by the word the platform's wheel message encodes and refuses zero;
-        // restating that here would be a second rule with nothing holding it
-        // equal to the first.
+        // The count is checked only for the shape a Luau number can be wrong in;
+        // the delivery layer bounds what a deliverable count is and refuses zero.
         auto cycleScrollFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1574,13 +1561,9 @@ namespace uf::task
         // pointer message changes what the target believes is hovered. See
         // TaskContext::cycleMovePointer and EngineSession::movePointer.
         //
-        // Where it parts company with cycle_click_point is the SURFACE. That verb
-        // is privileged because a bare coordinate lets a script activate something
-        // the recognised page never authorised; a move activates nothing, so the
-        // privilege has nothing to protect and this is published like cycle_scroll
-        // -- on both surfaces and forwarded on `ctx`. It is the input a scroll
-        // needs before it (docs/pitfalls/capture-and-target-selection.md), and a
-        // run-mode task that cannot reach it cannot page through a list.
+        // A move activates nothing, so it is published like cycle_scroll -- on
+        // both surfaces and forwarded on `ctx` -- and it is the input a scroll
+        // needs before it (docs/pitfalls/capture-and-target-selection.md).
         auto cycleMovePointerFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1677,11 +1660,8 @@ namespace uf::task
         // consumes the cycle because a delivered press changes the screen. See
         // TaskContext::cycleLongPress and EngineSession::longPress.
         //
-        // One verb rather than a press and a release, because a long press begins
-        // and ends inside this call and so fits the authorization model
-        // unchanged, leaving no observation that describes a target with a button
-        // stuck down. A bare press would span frames and nothing yet says who
-        // guarantees the release; see engine::IActionSink::longPress.
+        // A bare press would span frames and nothing yet says who guarantees the
+        // release; see engine::IActionSink::longPress.
         //
         // It is privileged exactly as cycle_click_point is, and bound on both
         // surfaces for the same reason: no business environment can name it, and
@@ -1752,12 +1732,9 @@ namespace uf::task
         // raise(kind, message) -> never. Mints a Tier B error carrier of the
         // named kind and raises it.
         //
-        // Admitted under the design's primitive rule as a safety primitive: a
-        // Tier B carrier is tagged userdata only the host can produce, so a
-        // framework policy that fails on its own terms has no other way to fail
-        // as a real automation error -- error() from Luau is a plain string,
-        // which reaches the host as a malformed script and which neither ctx:try
-        // nor ctx:retry treats as an automation failure.
+        // error() from Luau reaches the host as a plain string that neither
+        // ctx:try nor ctx:retry treats as an automation failure, so only a
+        // host-minted Tier B carrier can fail as one.
         //
         // `cancelled` and `internal_invariant` are refused. Both must arrive with
         // the fatal latch already set and this primitive deliberately does not
@@ -2060,10 +2037,8 @@ namespace uf::task
 
         // emit(name, ...) -> (). Requests one framework semantic event.
         //
-        // Admitted as a safety primitive for `raise`'s shape of reason: the
-        // framework's own structure -- which step is open, which attempt this is
-        // -- is observable nowhere else, and a trace recording only what the host
-        // did cannot explain a run the framework shaped.
+        // A safety primitive; the admission argument is in
+        // docs/plans/2026-07-29-three-layer-task-system.md.
         //
         // The design writes it as emit(event) taking a table; it takes a name and
         // scalars because section 5's second invariant admits only host-minted
@@ -2210,9 +2185,8 @@ namespace uf::task
             return 1;
         }
 
-        // A fresh handle metatable on the stack: empty __index method table,
-        // __newindex deny, fixed __tostring/__metatable label. The caller adds
-        // any methods, then finishMetatable freezes and registers it.
+        // The caller adds any methods, then finishMetatable freezes and
+        // registers it.
         auto beginMetatable(lua_State* state, char const* label) -> void
         {
             lua_newtable(state);
@@ -2253,10 +2227,7 @@ namespace uf::task
         //
         // The Tier B carrier and the field-carrying handle kinds are absent on
         // purpose: their metatables are per instance, so there is nothing shared
-        // to register and their identity is the userdata tag. None of the
-        // registered kinds carries a method -- they are pure names the host hands
-        // back to itself, so every operation on a cycle is a primitive taking the
-        // ticket.
+        // to register.
         [[nodiscard]]
         auto installSessionMetatables(lua_State* state) -> Status
         {
@@ -2273,9 +2244,7 @@ namespace uf::task
         // Populates `uf.errors` with one constant per AutomationErrorKind, key
         // and value both that kind's domain wire spelling, so `err.kind ==
         // uf.errors.timeout` compares the exact string the carrier and the trace
-        // line carry. Reading the reflected entries at install time rather than
-        // generating a .luau table leaves one source of truth and makes a new
-        // kind appear here with no edit.
+        // line carry.
         auto installErrorKindTable(lua_State* state, int root) -> void
         {
             lua_newtable(state);

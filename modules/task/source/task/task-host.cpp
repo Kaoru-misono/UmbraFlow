@@ -175,6 +175,32 @@ namespace uf::task
         // under the callback.
         struct ExternalStopBridge final
         {
+    auto closeRunBracket(
+        trace::TraceRecorder& recorder,
+        TaskRunReport report,
+        std::optional<AutomationErrorKind> terminal,
+        std::string_view terminalMessage
+    ) -> TaskRunReport
+    {
+        // A generation the host spent terminally ended there whatever the session
+        // did afterwards, so the latch is folded in before the closing line is
+        // built and a spent session cannot report itself completed.
+        if (!report.failure && terminal.has_value())
+        {
+            report.failure = fail(*terminal, std::string{terminalMessage}).error();
+        }
+
+        auto finishStatus = recorder.emit(runFinishedEvent(report));
+        if (!report.failure && !finishStatus)
+        {
+            // The session itself succeeded but its closing evidence was lost, so
+            // it cannot be reported as completed. The session's own failure always
+            // takes precedence over the sink's.
+            report.failure = std::move(finishStatus).error();
+        }
+        return report;
+    }
+
             std::stop_source* p_target{nullptr};
 
             auto operator()() const noexcept -> void
@@ -545,6 +571,19 @@ namespace uf::task
         m_generations.emplace_back(
             std::make_unique<Generation>(
                 id,
+    auto TaskHost::requireGeneration(GenerationId id) -> Result<Generation*>
+    {
+        auto* const p_generation = findGeneration(id);
+        if (p_generation == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format("no loaded project for generation {}", id.value())
+            );
+        }
+        return p_generation;
+    }
+
                 projectRoot,
                 std::move(projectId),
                 std::move(model),
@@ -560,17 +599,7 @@ namespace uf::task
         TaskRunConfig config
     ) -> Result<TaskRunReport>
     {
-        auto* const p_generation = findGeneration(generation);
-        if (p_generation == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "no loaded project for generation {}",
-                    generation.value()
-                )
-            );
-        }
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
 
         // Claim the generation for the task front-end before anything else. It runs
         // ahead of loading the task so a generation an operator already owns refuses
@@ -612,17 +641,7 @@ namespace uf::task
         GenerationId generation
     ) -> Result<ProjectFingerprint>
     {
-        auto* const p_generation = findGeneration(generation);
-        if (p_generation == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "no loaded project for generation {}",
-                    generation.value()
-                )
-            );
-        }
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
         return p_generation->model().fingerprint;
     }
 
@@ -630,17 +649,7 @@ namespace uf::task
         GenerationId generation
     ) -> Result<std::size_t>
     {
-        auto* const p_generation = findGeneration(generation);
-        if (p_generation == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "no loaded project for generation {}",
-                    generation.value()
-                )
-            );
-        }
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
         return p_generation->model().elementNames.size();
     }
 
@@ -650,17 +659,7 @@ namespace uf::task
         TaskRunConfig config
     ) -> Result<FrameworkRoutineReport>
     {
-        auto* const p_generation = findGeneration(generation);
-        if (p_generation == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "no loaded project for generation {}",
-                    generation.value()
-                )
-            );
-        }
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
 
         UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Task));
 
@@ -704,17 +703,7 @@ namespace uf::task
         TaskRunConfig config
     ) -> Result<std::unique_ptr<OperatorSession>>
     {
-        auto* const p_generation = findGeneration(generation);
-        if (p_generation == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "no loaded project for generation {}",
-                    generation.value()
-                )
-            );
-        }
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
 
         UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Operator));
 
@@ -738,17 +727,7 @@ namespace uf::task
         TaskRunConfig config
     ) -> Result<std::unique_ptr<ExplorationSession>>
     {
-        auto* const p_generation = findGeneration(generation);
-        if (p_generation == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "no loaded project for generation {}",
-                    generation.value()
-                )
-            );
-        }
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
 
         UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Annotation));
 
@@ -774,34 +753,14 @@ namespace uf::task
 
     auto TaskHost::cancel(GenerationId generation) -> Status
     {
-        auto* const p_generation = findGeneration(generation);
-        if (p_generation == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "no loaded project for generation {}",
-                    generation.value()
-                )
-            );
-        }
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
         p_generation->requestCancel();
         return ok();
     }
 
     auto TaskHost::queryTask(GenerationId generation) -> Result<TaskStatus>
     {
-        auto* const p_generation = findGeneration(generation);
-        if (p_generation == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "no loaded project for generation {}",
-                    generation.value()
-                )
-            );
-        }
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
         return p_generation->status();
     }
 

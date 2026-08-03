@@ -6,8 +6,7 @@
 -- rules for the page stack; this file owns everything that COSTS A CAPTURE.
 -- `walk_edge` is here because it delivers a trigger and waits on frames; the
 -- stack it updates and the depth cap it honours are there, because neither looks
--- at a pixel. Both halves used to be the C++ verbs `cycle_page` and `cycle_find`
--- (docs/plans/2026-07-31-script-owned-page-model.md 4).
+-- at a pixel (docs/plans/2026-07-31-script-owned-page-model.md 4).
 --
 -- Every verb takes `ctx` first and reaches the host only through it, so a test
 -- can drive these verbs against any ctx and a signature names every host call a
@@ -160,8 +159,7 @@ end
 --
 -- It raises rather than returning a second value, because a caller holding an
 -- empty list walks its whole choosing loop and prints a sentence shaped like a
--- decision: this framework watched one skip a card reward whose cards had not
--- finished drawing.
+-- decision.
 observe.empty_is_absence = "absence"
 observe.empty_is_unknown = "unknown"
 
@@ -219,8 +217,7 @@ end
 
 -- Level 3, not 2: this is a helper, so the frames are caller -> public verb ->
 -- here, and 2 blames the public verb's own line inside this file rather than the
--- project script that passed the wrong thing. The other helpers here already
--- use 3; this one was the exception.
+-- project script that passed the wrong thing.
 local function requireCtx(ctx: any, verb: string)
     if type(ctx) ~= "table" then
         error(verb .. " needs the ctx it should reach the host through", 3)
@@ -253,9 +250,7 @@ local function searchRect(reference: any, element: any): any
 end
 
 -- What a read verb was pointed at: the page row when the caller passed one, and
--- the element either way. Both read verbs take the same either-shape and refuse
--- on the same two grounds, and two copies of "which of these did I get, and may
--- it be read" is where the two would come to disagree about what `read` means.
+-- the element either way.
 local function readTarget(verb: string, value: any): (any, any)
     local reference: any = nil
     local element: any   = value
@@ -413,13 +408,10 @@ function observe.resolve_page(ctx: any, ticket: any, page: any): (Receipt?, stri
         if reference.exercised.identify then
             local element = reference.element
             if #element.appearances == 0 then
-                -- The text clause. It reads the ELEMENT's rectangle, like the
-                -- fold below: the sweep runs before the page is known, so a
-                -- page's refinement is not available to it. `Page.new` refuses
-                -- an identify row with nothing to check, one that refines the
-                -- search rectangle, and one on an element that draws none, which
-                -- is what makes the expected text and `element.rect` present
-                -- here by construction.
+                -- `Page.new` refuses an identify row with nothing to check, one
+                -- that refines the search rectangle, and one on an element that
+                -- draws none, which is what makes the expected text and
+                -- `element.rect` present here by construction.
                 local expected =
                     model.Reference.expected_text(reference) :: string
                 local matched, actual = readsExpected(
@@ -814,9 +806,6 @@ end
 -- A failed resolution mints nothing at all, which is what makes "resolve_page
 -- said no" and "resolve_page was never called" the same refusal here.
 --
--- One function serves both delivering verbs, so a verb that delivered at a hit
--- without passing through here would be visible as such.
---
 -- `verb` names the caller because that is the only part of each sentence that
 -- differs; the refusals blame level 3, the caller of the verb that called this.
 local function requireAuthorisedHit(
@@ -927,11 +916,8 @@ end
 -- Presses where the hit is, holds the button down for `hold_ms`, releases it,
 -- and spends the observation cycle.
 --
--- Some targets say more when pressed than when looked at. The one this framework
--- was built for fans its battle cards so each name is clipped by the card in
--- front of it, and a press magnifies the card; matching the fragment instead
--- read `萬人的英雄`, then `人的`, then `人的英` across three turns and once
--- nearly matched the wrong card.
+-- The target this framework was built for fans its battle cards so each name is
+-- clipped by the card in front of it, and a press magnifies the card.
 --
 -- It is authorised exactly as `observe.click` is, through the same function, and
 -- goes through `native` rather than `ctx` for the reason stated there.

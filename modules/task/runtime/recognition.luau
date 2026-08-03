@@ -18,20 +18,6 @@
 -- what the region read instead; a second copy is a second thing that can come to
 -- disagree with the model.
 --
--- IT ASKS ONE DIRECTION ONLY, and that is a ruling. "A screen declaring page P
--- must resolve NO OTHER declared page" is false on this model: a page signature
--- names the marks that IDENTIFY a page and is never an inventory of its screen
--- (`oracle`, "three states and not two"), so a card-detail overlay screen
--- resolves the battle page underneath it, correctly. Nothing in the model says
--- which page an overlay sits on -- there are `push` and `pop` edges and no base
--- relation -- so the exception could not be written down. The cost is also
--- real: resolving every declared page on every screen multiplies a check's reads
--- by the page count, and that budget is fixed from the file before the VM exists
--- (entry/cli/check.cpp). What that direction reached for is already measured per
--- element: an appearance hitting a screen it does not own is a misfire cell, two
--- appearances hitting one screen is `ambiguous_appearances`, and one region
--- reading one text on two pages is the first rule above.
---
 -- `recognition` sorts after `model`, `observe`, `oracle`, `project` and
 -- `reading`, and before `regress`. It holds no state: every verb takes the model
 -- it judges and, where pixels are involved, the ctx and ticket.
@@ -53,12 +39,7 @@ end
 -- KNOWN to be two views of one page.
 --
 -- UNDECLARED IS NEVER "THE SAME PAGE": two screens are one page when both say
--- so, and a screen that says nothing has said nothing. Silence has to be bought
--- with a fact because the two mistakes do not cost the same. A false finding is
--- one sentence cleared by writing down something true, which the matrix then
--- measures -- a declared page has to resolve on its screen. A missed finding is
--- a page signature that resolves on whichever screen the run is looking at,
--- discovered at run time, in a project whose report was green.
+-- so, and a screen that says nothing has said nothing.
 function recognition.same_page(
     claims: any,
     screen: string,
@@ -98,6 +79,10 @@ end
 -- not.
 --
 -- A screen that declares no page costs nothing -- no search, no read, no row.
+--
+-- It asks this direction only, and never which OTHER declared pages resolve
+-- here (docs/plans/2026-08-01-three-layers-and-agent-operator.md, "Recognition
+-- asks one direction only").
 --
 -- It resolves on the CALLER'S ticket. The walk opens one observation per screen
 -- and the host serves one file per capture, so a resolution on a second ticket

@@ -82,8 +82,6 @@ function reading.measure(
     return {
         text       = found.text,
         confidence = found.confidence,
-        -- Floor first: a reading under it is a guess, and a guess that happens
-        -- to spell the right word is still a guess.
         matched    = observe.confident(found, model.Element.read_floor(element))
             and observe.exact_text(found.text, expected),
     }

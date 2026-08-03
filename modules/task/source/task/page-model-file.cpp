@@ -1,5 +1,7 @@
 #include <task/page-model-file.hpp>
 
+#include "capped-file.hpp"
+
 #include <core/error/result.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/types/integer.hpp>
@@ -13,8 +15,6 @@
 #include <cstddef>
 #include <filesystem>
 #include <format>
-#include <fstream>
-#include <ios>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -37,6 +37,17 @@ namespace uf::task
         constexpr auto k_elementSection = std::string_view{"element"};
         constexpr auto k_pageSection    = std::string_view{"page"};
         constexpr auto k_nameKey        = std::string_view{"name"};
+
+        // Whose table a line's keys belong to. A `[element.extra]` subtable is
+        // the project's own namespace, so a key it spells -- `name`, and equally
+        // `base_resolution` -- is not this reader's to read; that state is
+        // distinct from the top level rather than an absence of section.
+        enum class Scan : uint8
+        {
+            TopLevel,
+            ArraySection,
+            ForeignSubtable,
+        };
 
         [[nodiscard]]
         auto invalidModel(std::string message) -> std::unexpected<Error>
@@ -195,76 +206,6 @@ namespace uf::task
             names.emplace_back(name);
             return ok();
         }
-
-        // Reads a whole file, rejecting anything larger than a cap so a malformed
-        // or hostile project cannot force an unbounded read. The cap decision
-        // rests on the bytes the stream actually yields rather than on a pre-read
-        // stat, which survives only as a fast-path early rejection.
-        [[nodiscard]]
-        auto readCappedFile(
-            std::filesystem::path const& path,
-            std::size_t maximumBytes
-        ) -> Result<std::string>
-        {
-            auto sizeError       = std::error_code{};
-            auto const fileBytes = std::filesystem::file_size(path, sizeError);
-            if (!sizeError && fileBytes > maximumBytes)
-            {
-                return invalidModel(
-                    std::format(
-                        "'{}' is {} bytes, exceeding the {}-byte cap",
-                        path.string(),
-                        fileBytes,
-                        maximumBytes
-                    )
-                );
-            }
-
-            auto stream = std::ifstream{path, std::ios::binary};
-            if (!stream.is_open())
-            {
-                return fail(
-                    AutomationErrorKind::IoFailure,
-                    std::format("cannot open '{}'", path.string())
-                );
-            }
-
-            constexpr auto chunkBytes = std::size_t{64} * 1024U;
-            auto contents             = std::string{};
-            for (;;)
-            {
-                auto const oldSize = contents.size();
-                contents.resize(oldSize + chunkBytes);
-                stream.read(
-                    contents.data() + oldSize,
-                    static_cast<std::streamsize>(chunkBytes)
-                );
-                contents.resize(oldSize + static_cast<std::size_t>(stream.gcount()));
-
-                if (stream.bad())
-                {
-                    return fail(
-                        AutomationErrorKind::IoFailure,
-                        std::format("cannot read '{}'", path.string())
-                    );
-                }
-                if (contents.size() > maximumBytes)
-                {
-                    return invalidModel(
-                        std::format(
-                            "'{}' exceeds the {}-byte cap",
-                            path.string(),
-                            maximumBytes
-                        )
-                    );
-                }
-                if (stream.eof())
-                {
-                    break;
-                }
-            }
-            return contents;
-        }
     }
 
     auto parsePageModelFacts(std::string_view text) -> Result<PageModelFacts>
@@ -275,11 +216,11 @@ namespace uf::task
         auto elementNames = std::vector<std::string>{};
         auto pageNames    = std::vector<std::string>{};
 
-        // Which `[[kind]]` the scan is inside, empty before the first one and
-        // whenever a single-bracket subtable has taken over. That second case is
-        // what keeps an `[element.extra]` key called `name` from being read as
-        // the element's -- a project's own fields live under `extra` and this
-        // reader owns none of them.
+        // Which table the scan is inside, and the `[[kind]]` it opened. `section`
+        // carries a name only in Scan::ArraySection; which keys a line may set is
+        // decided by `scan` alone, so a foreign subtable cannot be mistaken for
+        // the top level.
+        auto scan    = Scan::TopLevel;
         auto section = std::string_view{};
 
         // Whether the current `[[element]]` or `[[page]]` has already named
@@ -304,6 +245,7 @@ namespace uf::task
 
             if (auto const opened = arraySectionOf(line))
             {
+                scan    = Scan::ArraySection;
                 section = *opened;
                 named   = false;
                 continue;
@@ -312,7 +254,12 @@ namespace uf::task
             {
                 // A single-bracket subtable: `[element.extra]` and anything else
                 // this reader has no business in.
-                section = std::string_view{};
+                scan = Scan::ForeignSubtable;
+                continue;
+            }
+
+            if (scan == Scan::ForeignSubtable)
+            {
                 continue;
             }
 
@@ -322,7 +269,7 @@ namespace uf::task
                 continue;
             }
 
-            if (section.empty())
+            if (scan == Scan::TopLevel)
             {
                 if (assignment->key == k_baseResolutionKey)
                 {
@@ -406,7 +353,10 @@ namespace uf::task
     ) -> Result<PageModelFacts>
     {
         auto const path = projectRoot / k_pageModelFileName;
-        UF_TRY_VALUE(text, readCappedFile(path, k_maximumPageModelBytes));
+        UF_TRY_VALUE(
+            text,
+            readCappedFile(path, k_maximumPageModelBytes, "page model")
+        );
 
         auto facts = parsePageModelFacts(text);
         if (!facts)

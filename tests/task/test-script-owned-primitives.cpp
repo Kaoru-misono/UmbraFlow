@@ -954,6 +954,45 @@ namespace uf::task
             );
         }
 
+        TEST_CASE("A degenerate rectangle latches the generation before it is raised")
+        {
+            // PixelRect::create reports an empty rectangle as InternalInvariant,
+            // and a framework bug has to latch the terminal BEFORE it is raised:
+            // send that arm of checkPixelRect back to raiseTierB alone and the
+            // carrier a script swallows buys it another primitive, so this goes
+            // red. No OCR adapter is needed -- the rect is decoded before any
+            // engine verb is reached.
+            auto built = buildHarness(matchableFrames(), HarnessSpec{});
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            // cycle_close is the follow-up probe rather than a second cycle_open,
+            // which would refuse on its own terms and mask the latch.
+            constexpr std::string_view source = R"lua(
+                local cycle = ctx:cycle_open()
+
+                local swallowed, err = pcall(function()
+                    return ctx:cycle_read(cycle, 0, 0, 0, 1)
+                end)
+                if swallowed then return 0 end
+                if type(err) ~= 'userdata' then return 0 end
+                if err.kind ~= uf.errors.internal_invariant then return 0 end
+
+                -- Caught, and worth nothing: the next primitive stops at the
+                -- guard before it reaches the engine.
+                if pcall(function() ctx:cycle_close(cycle) end) then return 0 end
+                return 1
+            )lua";
+
+            auto engineVm = script::Engine::create(taskVmConfig(context));
+            REQUIRE(engineVm.has_value());
+            auto const result = engineVm->runNumber(source, "degenerate-rect");
+            REQUIRE(result.has_value());
+            CHECK(*result == 1.0);
+            CHECK(context.fatal());
+            CHECK(context.terminalKind() == AutomationErrorKind::InternalInvariant);
+        }
+
         TEST_CASE("A match clicks through the same fence a hit does")
         {
             auto built = buildHarness(matchableFrames(), HarnessSpec{});

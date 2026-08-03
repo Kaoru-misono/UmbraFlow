@@ -23,12 +23,6 @@ namespace uf::task
     // the sink loses one. A second copy of either would let one front-end's
     // evidence drift from the other's, and a trace whose two halves are written to
     // different rules cannot be read as one stream.
-    //
-    // What they each keep is how a failure SURFACES -- the Luau side raises through
-    // the Tier ladder, the operator side returns a Result and writes a result line
-    // -- because that is a property of the front-end rather than of the guarantee.
-    // The guarantee itself is neither side's: it lives in TaskContext's ledger and
-    // below it in the engine's authorization, which both call.
 
     // Which primitive ran and what it was handed. Every task.native_call carries
     // it, so a primitive the host fails before the engine is reached -- a ticket or

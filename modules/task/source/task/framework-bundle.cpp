@@ -18,10 +18,8 @@ namespace uf::task
         // the host installs after the bundle has already loaded.
         constexpr auto k_contextModule     = "ctx";
         constexpr auto k_declarationModule = "task";
-        // The script-owned page model (2026-08-01): nouns, verbs and
-        // persistence live in trusted Luau and project scripts consume them
-        // by name. Environment-level narrowing (exploration vs run) arrives
-        // with the Agent front-end work and subtracts from this list there.
+        // The script-owned page model: nouns, verbs and persistence live in
+        // trusted Luau and project scripts consume them by name.
         constexpr auto k_modelModule   = "model";
         constexpr auto k_observeModule = "observe";
         constexpr auto k_projectModule = "project";
@@ -40,22 +38,14 @@ namespace uf::task
         // claiming interact on an element no page ever authorised and
         // observe.click would accept it.
         constexpr auto k_navigationModule = "navigation";
-        // The falsification matrix: `oracle` is the screens a model is measured
-        // against and what each cell is supposed to show, `reading` is how a cell
-        // no template can answer is measured and where two claims about one
-        // region's text collide, `recognition` is what a screen's own declaration
-        // of which PAGE it is buys and costs, and `regress` is the walk that spends
-        // all three. All four are published for `model`'s reason -- a project that
-        // grows its own screens or reads a verdict names them -- and the routine
-        // `umbra-flow check` runs reaches them through this list rather than
-        // through a private route.
+        // The falsification matrix. All four are published for `model`'s reason --
+        // a project that grows its own screens or reads a verdict names them --
+        // and the routine `umbra-flow check` runs reaches them through this list
+        // rather than through a private route.
         //
-        // `reading` and `recognition` are published where `mint` is not, and the
-        // difference is what publishing would hand over. `mint` is the toolkit the
-        // constructors shape a model with, so a project holding it could shape one
-        // the constructors never saw. The other two mint nothing: their verbs read
-        // a region or resolve a page through the caller's own ctx and compare
-        // claims already in the file.
+        // `reading` and `recognition` mint nothing -- their verbs read a region or
+        // resolve a page through the caller's own ctx and compare claims already
+        // in the file -- which is why they are published where `mint` is not.
         constexpr auto k_oracleModule      = "oracle";
         constexpr auto k_readingModule     = "reading";
         constexpr auto k_recognitionModule = "recognition";

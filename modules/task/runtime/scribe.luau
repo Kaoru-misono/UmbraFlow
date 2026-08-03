@@ -6,22 +6,12 @@
 -- do on a screen, save the file.
 --
 -- There is one author verb per KIND of element, because which kind a line
--- authors has to be legible on that line: `author_element` is placed and
--- verified by pixels, `author_text_element` is placed and verified by a reading,
--- `author_unplaced_element` is verified by pixels and placed by whoever uses it.
--- The claim side splits the same way -- `claim` says what an element's templates
--- should do on a screen, `claim_text` what its rectangle should read there --
--- and `oracle.Expectation.new` refuses the wrong pairing.
+-- authors has to be legible on that line.
 --
 -- No threshold is decided here and none is defaulted; whether a measurement is
 -- good enough is the agent's judgement. The one thing derived is a FILE NAME: a
 -- template asset is named by the hash of its own bytes, so "which pixels" and
 -- "which file" cannot disagree.
---
--- `add_page` and `add_screen` are what let a project be started from nothing.
--- `add_page` takes the page's ROWS and not just its name, because `Page.new`
--- refuses a page with no required identify reference -- a page is born complete
--- or not at all. A screen has no rows to be born complete about.
 --
 -- Pages and elements are frozen, so writing on one REBUILDS it through the
 -- constructor that makes every ruling, and everything holding the old object is
@@ -200,15 +190,8 @@ local function thresholdMissing(verb: string): string
 end
 
 -- The element both measurement-fed verbs build, differing only in the rectangle
--- they hand it. Everything else is one decision: the threshold is the caller's
--- and has no default, the template asset is written before the element that
--- names it can exist, and the appearance records the key the HOST applied rather
--- than one a spec could name.
---
--- `verb` is the name a refusal reaches the agent under, raised at level 3 so it
--- names the line that called the verb rather than this one -- the same reason
--- `requireDeclaredElement` and `pageNamed` below use it. `rect` is passed rather
--- than read off `spec`, because it is exactly what the two verbs disagree about.
+-- they hand it. `verb` is the name a refusal reaches the agent under, raised at
+-- level 3 so it names the line that called the verb rather than this one.
 local function elementFromMeasurement(
     ctx: any,
     measurement: Measurement,
@@ -286,16 +269,9 @@ end
 -- no rectangle of its own -- a minimap shape matched at coordinates the script
 -- works out per frame, a confirm button drawn once and reused on nine screens.
 --
--- It is a third verb rather than a flag, because an element carrying the
--- rectangle it happened to be cropped from loads, searches and matches while
--- stating as a fact about the model something that is only a fact about the crop.
---
 -- The pixels are still a measurement, which is why it takes one; what is absent
 -- is the POSITION. The rectangle in that measurement is where the pixels were
 -- cut from, and it is deliberately not carried across.
---
--- A `rect` in the spec is refused by name: the caller who writes one wanted
--- `author_element`, which would have used it.
 --
 -- Threshold, appearance name and colour key are `elementFromMeasurement`'s. The
 -- rulings that keep "no rectangle" from becoming "nobody said where to look" are
@@ -340,13 +316,7 @@ end
 -- docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4).
 --
 -- `spec` is handed to `Element.new` as written, so every ruling is made in the
--- constructor's own words: an element that identifies with no template of its
--- own has to declare `read`, and a `read_floor` on something nothing may read is
--- refused. A rectangle is optional there and here: a region drawn once and
--- reused on nine screens is placed by each page's own row. Nothing defaults
--- `expected_text` either -- the shared title element states no text at all,
--- because what it reads differs on every page and belongs on each page's
--- reference row (`scribe.add_reference`).
+-- constructor's own words.
 function scribe.author_text_element(spec: { [string]: any }): any
     if type(spec) ~= "table" then
         error("scribe.author_text_element needs a table of fields", 2)
@@ -370,9 +340,7 @@ end
 -- loaded project that is a plain mutable table; the elements IN it are frozen.
 --
 -- A name the project already declares is refused here rather than at save time,
--- while the caller still has the element in hand. That refusal is not where a
--- second crest goes: two crests one node can fly are two ways ONE element looks,
--- which is `scribe.add_appearance`.
+-- while the caller still has the element in hand.
 function scribe.add_element(built: any, element: any)
     if type(built) ~= "table" or type(built.elements) ~= "table" then
         error(
@@ -469,19 +437,6 @@ local function specCopy(spec: { [string]: any }): { [string]: any }
     return copy
 end
 
--- The capability SET a constructor froze, back as the capability LIST a
--- constructor reads. The order comes from `model.capability_order`, which is the
--- one place it is decided.
-local function capabilityList(set: any): { string }
-    local names: { string } = {}
-    for _, capability in model.capability_order() do
-        if set[capability] then
-            table.insert(names, capability)
-        end
-    end
-    return names
-end
-
 -- One of a page's frozen reference rows, turned back into the spec table
 -- `Page.new` accepts: the `page` stamp comes off, because stamping it is the
 -- constructor's job and handing it back would be an unknown key, and the
@@ -496,7 +451,7 @@ local function referenceSpec(reference: any): { [string]: any }
     return {
         element           = reference.element,
         holding           = reference.holding,
-        exercised         = capabilityList(reference.exercised),
+        exercised         = model.capability_list(reference.exercised),
         identify          = reference.identify,
         expected_text     = reference.expected_text,
         pinned_appearance = reference.pinned_appearance,
@@ -532,7 +487,7 @@ local function elementSpec(
 ): { [string]: any }
     return {
         name          = element.name,
-        capabilities  = capabilityList(element.capabilities),
+        capabilities  = model.capability_list(element.capabilities),
         rect          = element.rect,
         appearances   = appearances,
         expected_text = element.expected_text,
@@ -629,8 +584,7 @@ end
 -- number of pages reference and rebuilds all of them in one act.
 --
 -- The graph is built FIRST and assigned LAST, so a page list `Graph.new` refuses
--- leaves the model exactly as it was. No caller reaches that refusal today, and
--- the order is kept anyway.
+-- leaves the model exactly as it was.
 local function installPages(
     built: any,
     pages: { any },
@@ -683,11 +637,8 @@ end
 -- carries, under the same names, because it IS that row.
 --
 -- Two questions are asked here and every other one is the constructor's: a page
--- name the project already declares, while the caller can still choose another,
--- and a row naming an element the file does not carry. The spec otherwise goes
--- to `Page.new` as written, so `overlay`, `interrupt`, `extra` and the raw
--- `residual` lines ride through untouched and a key the constructor does not own
--- is refused by it rather than dropped here.
+-- name the project already declares, and a row naming an element the file does
+-- not carry.
 --
 -- Nothing on the model is touched until `Page.new` and `Graph.new` have both
 -- agreed, so a page this refuses leaves the project exactly as it was.
@@ -732,16 +683,9 @@ end
 --
 -- Writes one row on one page: what THIS page does with this element.
 --
--- `spec` carries the row's own fields under the model's own names, because the
--- spec IS the row. It is handed to `Page.new` as written, so every ruling that
--- constructor makes is made here in its own words: exercised is a subset of what
--- the element declares, identify carries a polarity, a pin belongs to a click,
--- an identify row does not refine the search rectangle, and an identify row on
--- an element with no template says what that region reads HERE. Nothing is
--- defaulted on the way, and nothing is filtered. The last of those is what an
--- agent writes for a page whose only signature is its own printed name: the
--- title element is authored once, and each page adds `expected_text = "..."` to
--- its own row.
+-- `spec` carries the row's own fields under the model's own names and is handed
+-- to `Page.new` as written, so every ruling that constructor makes is made here
+-- in its own words.
 --
 -- The rebuilt page comes back because the old one is gone from every copy the
 -- model keeps, and a page an agent left in a variable is not something this can
@@ -825,9 +769,8 @@ end
 -- measured crop, stored as a template asset, appended to that element's
 -- appearance list, with the threshold the CALLER decided.
 --
--- It is one verb and not an `author_` / `add_` pair, for the reason `model`
--- gives for there being no `Reference.new`: an appearance exists only as part of
--- the element that declares it, so nothing mints one.
+-- An appearance exists only as part of the element that declares it, so nothing
+-- mints one.
 --
 -- The element is NAMED rather than held, where `add_reference` takes the object:
 -- this verb is what makes an element go stale, so taking one by value would take
@@ -837,12 +780,6 @@ end
 -- `Element.new` as written. It may not carry `source`, `template` or `key`,
 -- which are facts about the pixels that were cut; the key is copied across
 -- exactly as `scribe.author_element` copies it.
---
--- It refuses an element that declares no appearances: such an element is
--- verified by what its rectangle READS and positioned by the page that
--- referenced it, and pixels move every page that identifies by it onto the
--- template branch and every click onto a searched rectangle -- a different
--- element rather than this one wearing a second face.
 --
 -- A name is required though `Element.new` leaves it optional, and the two do not
 -- disagree: a lone appearance needs no name, and the moment there are two, a
@@ -996,9 +933,7 @@ end
 -- can land on, and what the run should believe afterwards.
 --
 -- Every end is NAMED rather than held, which is the one place this spec differs
--- from `Edge.new`'s: writing a row rebuilds a page, so a page an agent put in a
--- variable three lines ago may already be superseded, and an edge drawn from
--- that one would leave a page the model no longer holds.
+-- from `Edge.new`'s.
 --
 -- Everything else is `Edge.new`'s and is not repeated here. `Graph.new` then
 -- checks the edge against the model it is joining, which is where two edges
@@ -1049,10 +984,7 @@ function scribe.add_edge(built: any, spec: { [string]: any }): any
 
     local edge = navigation.Edge.new(entry)
 
-    local edges: { any } = {}
-    for index, existing in built.graph.edges do
-        edges[index] = existing
-    end
+    local edges: { any } = table.clone(built.graph.edges)
     table.insert(edges, edge)
 
     built.graph = navigation.Graph.new({ pages = built.pages, edges = edges })
@@ -1160,10 +1092,6 @@ end
 -- `Claims.new` with one more on it. It does not check `built.claims` itself --
 -- both callers do that on their own first line, one frame from the error.
 --
--- The collection is rebuilt rather than mutated, because `Claims.new` is where a
--- duplicate cell and a screen this project does not hold are caught, and
--- appending behind its back would skip both checks.
---
 -- `spec` rides through to `Expectation.new` with the screen OBJECT written over
 -- the name it was addressed by, and nothing else is added or removed on the way,
 -- which is what keeps the rulings a cell is subject to in one place. The table
@@ -1199,9 +1127,8 @@ end
 -- screens the project already holds: the folded element when no appearance is
 -- named, or one appearance searched alone when one is.
 --
--- A claim is not optional work. A template always matches the image it was cut
--- from, at a distance of zero, so authoring one and looking at it on its own
--- screen demonstrates nothing; the claim is the sentence the walk can contradict.
+-- A claim is not optional work: a template always matches the image it was cut
+-- from, so the claim is the sentence the walk can contradict.
 --
 -- `rect` is WHERE, and it belongs to the element that draws no rectangle of its
 -- own: a minimap shape is searched at coordinates the script works out per frame,
@@ -1232,18 +1159,10 @@ end
 -- screens the project already holds. `rect` says WHICH rectangle, for an element
 -- that draws none of its own; see `scribe.claim` for why it rides last.
 --
--- It is a second verb rather than a seventh parameter on `claim`, for the reason
--- `author_text_element` is a second verb: a cell is measured by ONE verification
--- source, and that source is what a reader most needs to see in the line that
--- was written. A `text` beside `appearance` would spell the common text claim
--- `scribe.claim(built, screen, element, "match", nil, nil, "Sortie")`.
---
 -- `text` is required rather than optional, because a text claim with no text is
 -- a `claim` -- and `Expectation.new` says so on the cell it refuses.
 --
--- It rules on nothing else: that this element has no templates of its own, that
--- it declares `read`, that the state is one of the three, and that the text is a
--- non-empty string are all `Expectation.new`'s.
+-- It rules on nothing else; every other ruling is `Expectation.new`'s.
 function scribe.claim_text(
     built: any,
     screenName: string,

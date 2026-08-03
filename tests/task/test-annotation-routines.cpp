@@ -1767,6 +1767,188 @@ namespace uf::task
             CHECK(*verified == doctest::Approx(1.0));
         }
 
+        // An element may carry a nameless appearance -- `Element.new` validates a
+        // name only when there is one -- and a claim that names no appearance is
+        // about the FOLD. The two meet in the matrix: a nameless row has no cell
+        // of its own, so reading the folded element's claim off it judges the row
+        // against a sentence that was never about it.
+        TEST_CASE("An unnamed appearance is judged against no claim of its own")
+        {
+            auto const directory  = TemporaryDirectory{"uf-regress-unnamed-hole"};
+            auto const screenHash = seedScreen(directory.path());
+            seedGraphProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            // The named face is cut from the pixel the element is searched at and
+            // the nameless one from a pixel that is not there, so the fold hits
+            // and the nameless row misses. Ask the nameless row for a state and
+            // it reads the element's own "match", which nothing measured for it.
+            constexpr std::string_view source = R"lua(
+                local built = project.load_project(ctx)
+
+                local seen = ctx:cycle_open()
+                local grey = scribe.measure(
+                    ctx,
+                    seen,
+                    { x = 1, y = 0, width = 1, height = 1 }
+                )
+                ctx:cycle_close(seen)
+
+                local unseen = ctx:cycle_open()
+                local dark = scribe.measure(
+                    ctx,
+                    unseen,
+                    { x = 2, y = 0, width = 1, height = 1 }
+                )
+                ctx:cycle_close(unseen)
+
+                -- Built through the constructor rather than through scribe:
+                -- `scribe.add_appearance` requires a name, and a nameless one is
+                -- exactly the state under test.
+                local twin = model.Element.new{
+                    name         = "twin",
+                    capabilities = { "interact" },
+                    rect         = { x = 1, y = 0, width = 1, height = 1 },
+                    appearances  = {
+                        {
+                            name      = "grey",
+                            source    = scribe.save_template(ctx, grey),
+                            template  = ctx:template_load(grey.png),
+                            threshold = 10000,
+                        },
+                        {
+                            source    = scribe.save_template(ctx, dark),
+                            template  = ctx:template_load(dark.png),
+                            threshold = 10000,
+                        },
+                    },
+                }
+                scribe.add_element(built, twin)
+                scribe.add_reference(built, "home", twin, {
+                    holding   = "owned",
+                    exercised = { "interact" },
+                })
+                -- One claim, on the FOLDED cell: no appearance names it.
+                scribe.claim(built, "home_screen", twin, "match")
+
+                local verdict = regress.check(ctx, built)
+                if not verdict.accepted then return 0 end
+                if #verdict.findings ~= 0 then return 0 end
+
+                local folded = 0
+                local nameless = 0
+                for _, cell in verdict.cells do
+                    if cell.element == "twin" then
+                        if cell.subject == "element" then
+                            folded += 1
+                            if cell.verdict ~= "expected" then return 0 end
+                        elseif cell.appearance == nil then
+                            nameless += 1
+                            if cell.verdict ~= "unclaimed" then return 0 end
+                            if cell.outcome ~= "miss" then return 0 end
+                        else
+                            if cell.appearance ~= "grey" then return 0 end
+                            if cell.verdict ~= "unclaimed" then return 0 end
+                        end
+                    end
+                end
+                if folded ~= 1 then return 0 end
+                if nameless ~= 1 then return 0 end
+                return 1
+            )lua";
+
+            auto const checked = runExploration(context, source);
+            REQUIRE(checked.has_value());
+            CHECK(*checked == doctest::Approx(1.0));
+        }
+
+        // The other half of the same fold: an "absent" claim the element
+        // contradicts is ONE finding, about the element. Reading it off the
+        // nameless row as well reports the same fact twice, under an appearance
+        // name the author cannot look up.
+        TEST_CASE("An unnamed appearance does not repeat the element's own misfire")
+        {
+            auto const directory  = TemporaryDirectory{"uf-regress-unnamed-misfire"};
+            auto const screenHash = seedScreen(directory.path());
+            seedGraphProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view source = R"lua(
+                local built = project.load_project(ctx)
+
+                local seen = ctx:cycle_open()
+                local grey = scribe.measure(
+                    ctx,
+                    seen,
+                    { x = 1, y = 0, width = 1, height = 1 }
+                )
+                ctx:cycle_close(seen)
+
+                local unseen = ctx:cycle_open()
+                local dark = scribe.measure(
+                    ctx,
+                    unseen,
+                    { x = 2, y = 0, width = 1, height = 1 }
+                )
+                ctx:cycle_close(unseen)
+
+                -- The nameless face is the one that hits here, so the fold
+                -- answers with it and the element contradicts its own claim.
+                local twin = model.Element.new{
+                    name         = "twin",
+                    capabilities = { "interact" },
+                    rect         = { x = 1, y = 0, width = 1, height = 1 },
+                    appearances  = {
+                        {
+                            name      = "dark",
+                            source    = scribe.save_template(ctx, dark),
+                            template  = ctx:template_load(dark.png),
+                            threshold = 10000,
+                        },
+                        {
+                            source    = scribe.save_template(ctx, grey),
+                            template  = ctx:template_load(grey.png),
+                            threshold = 10000,
+                        },
+                    },
+                }
+                scribe.add_element(built, twin)
+                scribe.add_reference(built, "home", twin, {
+                    holding   = "owned",
+                    exercised = { "interact" },
+                })
+                scribe.claim(built, "home_screen", twin, "absent")
+
+                local verdict = regress.check(ctx, built)
+                if verdict.accepted then return 0 end
+                if #verdict.findings ~= 1 then return 0 end
+
+                local finding = verdict.findings[1]
+                if finding.kind ~= "misfire" then return 0 end
+                if finding.element ~= "twin" then return 0 end
+                if finding.appearance ~= nil then return 0 end
+                return 1
+            )lua";
+
+            auto const checked = runExploration(context, source);
+            REQUIRE(checked.has_value());
+            CHECK(*checked == doctest::Approx(1.0));
+        }
+
         // Adding an appearance hands the element's own fields back to
         // `Element.new`, so the rebuild is exactly where a project's `extra`, an
         // element's unknown line and an appearance's unknown line would fall out --

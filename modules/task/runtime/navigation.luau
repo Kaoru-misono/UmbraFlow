@@ -576,9 +576,9 @@ end
 -- against a script that pushes in a loop, and a ceiling the caller cannot see is
 -- a decision the caller did not make.
 --
--- The graph is bound once here rather than passed per walk, because the
--- interrupt pages a timed-out walk falls back on are declared ON PAGES; it also
--- lets a walk refuse an edge from some other model.
+-- The graph is bound once here because the interrupt pages a timed-out walk
+-- falls back on are declared ON PAGES; it also lets a walk refuse an edge from
+-- some other model.
 --
 -- A fresh stack is EMPTY, not seeded with a guess: where a run starts is
 -- something the run knows, said out loud with `navigation.stack_reset`.

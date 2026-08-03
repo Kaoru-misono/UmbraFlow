@@ -1,5 +1,7 @@
 #include <task/task-loader.hpp>
 
+#include "capped-file.hpp"
+
 #include <core/error/result.hpp>
 
 #include <domain/content-hash.hpp>
@@ -7,11 +9,8 @@
 #include <domain/error.hpp>
 
 #include <algorithm>
-#include <cstddef>
 #include <filesystem>
 #include <format>
-#include <fstream>
-#include <ios>
 #include <span>
 #include <string>
 #include <string_view>
@@ -27,12 +26,6 @@ namespace uf::task
         auto invalid(std::string message) -> std::unexpected<Error>
         {
             return fail(AutomationErrorKind::InvalidResource, std::move(message));
-        }
-
-        [[nodiscard]]
-        auto ioFailure(std::string message) -> std::unexpected<Error>
-        {
-            return fail(AutomationErrorKind::IoFailure, std::move(message));
         }
 
         // The task-name allowlist. A single path segment drawn only from these
@@ -149,71 +142,6 @@ namespace uf::task
                 )
             );
         }
-
-        // Reads a whole file, refusing anything past `maximumBytes` on the bytes
-        // the stream actually yields rather than a pre-read stat, so a file that
-        // grows after a stat cannot slip past the cap. Mirrors the engine runtime
-        // loader's readCappedFile; the two modules share no file-reading facility,
-        // so the discipline is duplicated deliberately.
-        [[nodiscard]]
-        auto readCappedFile(
-            std::filesystem::path const& path,
-            std::size_t maximumBytes
-        ) -> Result<std::string>
-        {
-            auto sizeError       = std::error_code{};
-            auto const fileBytes = std::filesystem::file_size(path, sizeError);
-            if (!sizeError && fileBytes > maximumBytes)
-            {
-                return invalid(
-                    std::format(
-                        "'{}' is {} bytes, exceeding the {}-byte task cap",
-                        path.string(),
-                        fileBytes,
-                        maximumBytes
-                    )
-                );
-            }
-
-            auto stream = std::ifstream{path, std::ios::binary};
-            if (!stream.is_open())
-            {
-                return ioFailure(std::format("cannot open '{}'", path.string()));
-            }
-
-            constexpr auto chunkBytes = std::size_t{64} * 1024U;
-            auto contents             = std::string{};
-            for (;;)
-            {
-                auto const oldSize = contents.size();
-                contents.resize(oldSize + chunkBytes);
-                stream.read(
-                    contents.data() + oldSize,
-                    static_cast<std::streamsize>(chunkBytes)
-                );
-                contents.resize(oldSize + static_cast<std::size_t>(stream.gcount()));
-
-                if (stream.bad())
-                {
-                    return ioFailure(std::format("cannot read '{}'", path.string()));
-                }
-                if (contents.size() > maximumBytes)
-                {
-                    return invalid(
-                        std::format(
-                            "'{}' exceeds the {}-byte task cap",
-                            path.string(),
-                            maximumBytes
-                        )
-                    );
-                }
-                if (stream.eof())
-                {
-                    break;
-                }
-            }
-            return contents;
-        }
     }
 
     auto loadTask(
@@ -232,7 +160,10 @@ namespace uf::task
             return missingTaskError(taskName, tasksDir);
         }
 
-        UF_TRY_VALUE(source, readCappedFile(path, k_maximumTaskSourceBytes));
+        UF_TRY_VALUE(
+            source,
+            readCappedFile(path, k_maximumTaskSourceBytes, "task")
+        );
         UF_TRY_VALUE(hash, sha256(std::as_bytes(std::span{source})));
 
         return LoadedTask{

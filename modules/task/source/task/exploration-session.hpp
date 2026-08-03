@@ -28,11 +28,8 @@ namespace uf::task
 {
     // The agent front-end: a live target, a project, and one Luau chunk at a time.
     //
-    // A third front-end rather than a mode of the other two because an agent sends
-    // CODE, chunk by chunk, and looks at what came back before writing the next.
-    // Neither of the others can express that loop: a task cannot be written before
-    // the model exists, and an operator protocol cannot compose two verbs without
-    // growing a second copy of the framework
+    // A third front-end rather than a mode of the other two, because an agent
+    // sends CODE chunk by chunk and reads what came back before writing the next
     // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 3).
     //
     // The second environment lives here. The VM this owns is booted with the

@@ -32,15 +32,10 @@ namespace uf::task
         uint64 ordinal{};
     };
 
-    // The host-side ledger of open observation cycles. It holds AT MOST ONE, and
-    // that ceiling is the whole reason the type exists: "the page and the hit came
-    // from the same frame" must stay a comparison the host performs rather than a
-    // discipline the Luau framework keeps. With one entry, mixing two frames is
-    // not rejected, it cannot be expressed. The std::optional below IS that
-    // ceiling, which is why nothing here counts live observations and no
-    // configurable bound exists to be set wrong. Nothing needs two: the wait loop
-    // opens and closes one per poll, an interrupt handler is handed the current
-    // cycle, and a handler that consumes the observation lets the loop reopen.
+    // The host-side ledger of open observation cycles: it holds AT MOST ONE, so
+    // "the page and the hit came from the same frame" stays a comparison the host
+    // performs rather than a discipline the Luau framework keeps -- with one
+    // entry, mixing two frames is not rejected, it cannot be expressed.
     //
     // NOT thread-safe: every method runs on the VM's owning thread. Destroying
     // the ledger releases whatever cycle is still open, which is the host's
@@ -124,11 +119,8 @@ namespace uf::task
             -> engine::Observation const&;
 
         // How many text reads the open cycle has already spent, and the charge for
-        // more. Same precondition as observation(). The count is the ledger's
-        // because the ledger is what a cycle IS: a counter kept beside it would
-        // have to be reset by whoever noticed the cycle changed, and nothing would
-        // check that it was. The charge takes a count because a block read costs
-        // one recognition per line it located.
+        // more; same precondition as observation(), and the charge takes a count
+        // because a block read costs one recognition per line it located.
         [[nodiscard]] auto readsCharged() const noexcept -> uint32;
 
         auto chargeReads(uint32 count) noexcept -> void;
@@ -139,17 +131,10 @@ namespace uf::task
 
         auto chargeCrop() noexcept -> void;
 
-        // Releases whatever cycle is open, reporting whether there was one.
-        //
-        // NOT reachable from any script and must not become so. Every
-        // script-facing release names a ticket, which is what makes closing an act
-        // about a cycle the caller actually holds; this one names none because its
-        // caller holds none. The exploration front-end runs one agent-supplied
-        // chunk per queue line, and a chunk that opened a cycle and raised before
-        // closing it would otherwise leave a frame the NEXT chunk's cycle_open
-        // reports as a framework bug, spending the whole session over one bad
-        // line. Sweeping between lines is the host cleaning up after a bracket it
-        // owns, as the destructor does when the generation is torn down.
+        // Releases whatever cycle is open, reporting whether there was one: NOT
+        // reachable from any script and must not become so, because its one caller
+        // is the exploration session sweeping between two agent-supplied chunks,
+        // which is the host cleaning up after a bracket it owns.
         auto closeOpen() noexcept -> bool;
 
         // Spends the cycle `ticket` names: the frame leaves the ledger and the

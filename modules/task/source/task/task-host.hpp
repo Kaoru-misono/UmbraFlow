@@ -7,17 +7,19 @@
 
 
 #include <domain/detection.hpp>
+#include <domain/error.hpp>
 #include <domain/ids.hpp>
 
 #include <engine/ports.hpp>
 
 #include <ocr/engine.hpp>
 
+#include <script/engine.hpp>
+
 #include <task/task-context.hpp>
 
 #include <trace/event.hpp>
 
-#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -29,10 +31,12 @@
 
 namespace uf::task
 {
-    // The script layer's own ceiling on one unit of script, restated here so a
-    // run config carries it explicitly rather than inheriting it silently.
-    inline constexpr auto k_defaultMaxScriptRuntime =
-        std::chrono::steady_clock::duration{std::chrono::minutes{30}};
+    // The script layer's own ceiling on one unit of script, named here so a run
+    // config carries it explicitly rather than inheriting it silently. It is an
+    // alias and not a second thirty minutes: an exploration session sets no
+    // maxRuntime at all and answers to the script layer's value, so the two must
+    // be the same length by construction.
+    inline constexpr auto k_defaultMaxScriptRuntime = script::k_defaultMaxRuntime;
 
     // Defined in task/operator-session.hpp; forward-declared so this header does
     // not depend on one that depends on it.
@@ -102,7 +106,7 @@ namespace uf::task
         // rather than a step of it. Thirty minutes is the script layer's own
         // default and a real daily exceeds it: a 142-step run was cut off
         // mid-battle. `umbra-flow run --max-runtime` is how a caller raises it.
-        std::chrono::steady_clock::duration maxScriptRuntime{k_defaultMaxScriptRuntime};
+        MonotonicInstant::Duration maxScriptRuntime{k_defaultMaxScriptRuntime};
 
         // The per-cycle text-read budget, a separate dimension from
         // maximumPixelComparisons on purpose; see k_defaultMaximumReadsPerCycle
@@ -160,6 +164,23 @@ namespace uf::task
     // Everything else -- the VM, the private capability surface, the trace
     // bracket, the generation, the cancellation -- is identical to a task's.
     //
+    // Closes one session's run bracket, which is the half of finish() every
+    // front-end shares. `terminal` is the kind a spent generation ended the
+    // session under and is empty when it was not spent; it is folded into
+    // `report` only when the session carries no failure of its own, and a lost
+    // run.finished line is folded in on the same terms. `recorder` is written to
+    // because writing that line is the whole operation.
+    //
+    // A task run does not use it: startTask has two more verdicts to fold, and
+    // their order against the terminal latch is part of the contract.
+    [[nodiscard]]
+    auto closeRunBracket(
+        trace::TraceRecorder& recorder,
+        TaskRunReport report,
+        std::optional<AutomationErrorKind> terminal,
+        std::string_view terminalMessage
+    ) -> TaskRunReport;
+
     // Lifetime contract: both views must outlive the runFrameworkRoutine call.
     // Every caller in this repository satisfies that with a string literal.
     struct FrameworkRoutine final
@@ -232,6 +253,12 @@ namespace uf::task
         TaskHost(TaskHost&&) = delete;
         auto operator=(TaskHost const&) -> TaskHost& = delete;
         auto operator=(TaskHost&&) -> TaskHost& = delete;
+        // findGeneration with the refusal every public verb below opens with, so
+        // an unknown generation is named once rather than once per verb. The
+        // borrow it hands back is findGeneration's, on the same terms.
+        [[nodiscard]]
+        auto requireGeneration(GenerationId id) -> Result<Generation*>;
+
 
         ~TaskHost();
 
@@ -282,9 +309,7 @@ namespace uf::task
         // matrix opens one observation per screen and spends at most one text read
         // per element, so its cycles' reads are bounded by this count and by
         // nothing else (entry/cli/check.cpp). The pre-VM resource pass already
-        // reads the names, so this asks the flat line scan nothing new -- a second
-        // C++ reader of the page model would be a second opinion about what one
-        // means.
+        // reads the names, so this asks the flat line scan nothing new.
         [[nodiscard]]
         auto projectElementCount(GenerationId generation) -> Result<std::size_t>;
 

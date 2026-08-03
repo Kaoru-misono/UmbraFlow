@@ -5733,6 +5733,198 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
         }
 
+        TEST_CASE("A project file whose appearance names no element it declares is refused")
+        {
+            // The bucket nobody owns: neither loop reads it and it is not raw
+            // residual either, so without `requireOwners` the load succeeds with
+            // an element that has no appearances and the next save deletes the
+            // [[appearance]] block without a word.
+            auto const directory =
+                TemporaryDirectory{"uf-model-project-orphan-appearance"};
+            seedTemplates(directory.path());
+            constexpr std::string_view orphan =
+                "schema = \"umbraflow-project/l2-v1\"\n"
+                "\n"
+                "[[element]]\n"
+                "name = \"slot\"\n"
+                "capabilities = [\"identify\", \"interact\"]\n"
+                "rect = [0, 0, 3, 1]\n"
+                "\n"
+                "[[appearance]]\n"
+                "element = \"slot\"\n"
+                "name = \"lit\"\n"
+                "source = \"gray2.png\"\n"
+                "threshold = 10000\n"
+                "\n"
+                "[[appearance]]\n"
+                "element = \"slot_typo\"\n"
+                "name = \"dim\"\n"
+                "source = \"gray5.png\"\n"
+                "threshold = 10000\n"
+                "\n"
+                "[[page]]\n"
+                "name = \"home\"\n"
+                "\n"
+                "[[reference]]\n"
+                "page = \"home\"\n"
+                "element = \"slot\"\n"
+                "holding = \"owned\"\n"
+                "exercised = [\"identify\", \"interact\"]\n"
+                "identify = \"required\"\n";
+            writeFile(
+                directory.path() / "page-model.toml",
+                std::as_bytes(std::span{orphan})
+            );
+
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, R"lua(
+                local ok, err = pcall(function()
+                    return project.load_project(ctx)
+                end)
+                if ok then return 0 end
+                local needle =
+                    "names element 'slot_typo', which this project file does not declare"
+                if string.find(err, needle, 1, true) == nil then return 0 end
+                -- The orphan block's own line rather than the file's first, which
+                -- is what makes it fixable.
+                if string.find(err, "line 14", 1, true) == nil then return 0 end
+                return 1
+            )lua");
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("A project file whose reference names no page it declares is refused")
+        {
+            // The same bucket rule on the other side of the file: a misspelled
+            // page name silently drops the row that authorises a click on it.
+            auto const directory =
+                TemporaryDirectory{"uf-model-project-orphan-reference"};
+            seedTemplates(directory.path());
+            constexpr std::string_view orphan =
+                "schema = \"umbraflow-project/l2-v1\"\n"
+                "\n"
+                "[[element]]\n"
+                "name = \"anchor\"\n"
+                "capabilities = [\"identify\"]\n"
+                "rect = [0, 0, 3, 1]\n"
+                "\n"
+                "[[appearance]]\n"
+                "element = \"anchor\"\n"
+                "name = \"lit\"\n"
+                "source = \"gray2.png\"\n"
+                "threshold = 10000\n"
+                "\n"
+                "[[page]]\n"
+                "name = \"home\"\n"
+                "\n"
+                "[[reference]]\n"
+                "page = \"home\"\n"
+                "element = \"anchor\"\n"
+                "holding = \"owned\"\n"
+                "exercised = [\"identify\"]\n"
+                "identify = \"required\"\n"
+                "\n"
+                "[[reference]]\n"
+                "page = \"hom\"\n"
+                "element = \"anchor\"\n"
+                "holding = \"referenced\"\n"
+                "exercised = [\"identify\"]\n"
+                "identify = \"required\"\n";
+            writeFile(
+                directory.path() / "page-model.toml",
+                std::as_bytes(std::span{orphan})
+            );
+
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, R"lua(
+                local ok, err = pcall(function()
+                    return project.load_project(ctx)
+                end)
+                if ok then return 0 end
+                local needle =
+                    "names page 'hom', which this project file does not declare"
+                if string.find(err, needle, 1, true) == nil then return 0 end
+                if string.find(err, "line 24", 1, true) == nil then return 0 end
+                return 1
+            )lua");
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("A sub-table inside an unknown section stays in that section's block")
+        {
+            // Parse and write, with no host between them: the lines belong to the
+            // block they were written under, and a rewrite that put them in the
+            // preamble instead would hoist them above every header in the file.
+            auto const directory =
+                TemporaryDirectory{"uf-model-unknown-section-subtable"};
+            auto built = refusalHarness(directory.path());
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, R"lua(
+                local text = 'schema = "umbraflow-project/l2-v1"\n'
+                    .. '\n[[gadget]]\nname = "x"\n'
+                    .. '\n[gadget.extra]\ntone = "dark"\n'
+                local document = project.parse(text)
+                if #document.preamble ~= 0 then return 0 end
+                if #document.blocks ~= 1 then return 0 end
+
+                local block = document.blocks[1]
+                if #block ~= 4 then return 0 end
+                if block[1] ~= "[[gadget]]" then return 0 end
+                if block[2] ~= 'name = "x"' then return 0 end
+                if block[3] ~= "[gadget.extra]" then return 0 end
+                if block[4] ~= 'tone = "dark"' then return 0 end
+
+                -- The byte half: the sub-table still follows its own header at
+                -- the end of the file rather than sitting under the schema line.
+                local written = project.encode({
+                    elements = {},
+                    pages    = {},
+                    residual = {
+                        preamble = document.preamble,
+                        sections = document.blocks,
+                    },
+                })
+                local sequence =
+                    '[[gadget]]\nname = "x"\n[gadget.extra]\ntone = "dark"\n'
+                if string.find(written, sequence, 1, true) == nil then return 0 end
+                return 1
+            )lua");
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
         // ------------- the falsification matrix over a cell no template answers
 
         // Two screen files, written under the content hashes the matrix derives

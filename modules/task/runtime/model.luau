@@ -6,11 +6,10 @@
 -- vocabulary that carries an OPINION lives here, where changing it for the next
 -- game is a Luau edit (docs/plans/2026-07-31-script-owned-page-model.md 1).
 --
--- No guarantee rests on this file. The ticket ledger, the observation lease, the
--- fingerprint and the single-consumption rule are in C++ and are checked against
--- the TICKET, never against a table built here (the same document, 5), so a
--- layer-three script that corrupts an element table breaks only its own run.
--- Nothing here may cache a fingerprint, a lease or a ticket identity.
+-- No guarantee rests on this file: the ledger, the lease, the fingerprint and
+-- the single-consumption rule are C++'s and are checked against the TICKET
+-- (docs/plans/2026-07-31-script-owned-page-model.md 5), so nothing here may
+-- cache one.
 --
 -- Layer three extends what is built here with
 -- `setmetatable({ ... }, { __index = base })` (the same document, 3), and both
@@ -265,12 +264,9 @@ export type Page = {
     residual: { string },
 }
 
--- The tables this module minted, held by identity. They make `Page.new` refuse a
--- hand-written table that merely looks like an element -- not because a forged
--- one would confer anything (C++ checks the click against the ticket) but
--- because accepting one fails SILENTLY: a misspelled `capabilities` yields an
--- element that exercises nothing, and a page that never authorises a click looks
--- exactly like a game that never reached that page.
+-- The tables this module minted, held by identity: `Page.new` refuses a
+-- look-alike because accepting one fails SILENTLY -- a misspelled `capabilities`
+-- yields an element that exercises nothing.
 local mintedElements: { [any]: boolean } = {}
 local mintedPages: { [any]: boolean } = {}
 local mintedReferences: { [any]: boolean } = {}
@@ -304,11 +300,20 @@ function model.capability_order(): { string }
     return table.clone(k_capabilityOrder)
 end
 
+-- The capabilities `set` holds, in the file's canonical order.
+function model.capability_list(set: any): { string }
+    local names: { string } = {}
+    for _, capability in k_capabilityOrder do
+        if set[capability] then
+            table.insert(names, capability)
+        end
+    end
+    return names
+end
+
 -- Every validator below returns a SENTENCE or nil rather than raising, so the
--- constructor raises once at level 2 and the author reads their own call site.
--- The sentences name the field in plain language, because a model is authored by
--- an agent reading the message and trying again. The four checks every
--- constructor repeats are in `mint`, which `navigation` shares.
+-- constructor raises once at level 2 and the author reads their own call site;
+-- the four checks every constructor repeats are in `mint`.
 local wholeNumber      = mint.whole_number
 local checkExtra       = mint.check_extra
 local frozenExtra      = mint.frozen_extra
@@ -709,13 +714,9 @@ model.Page = Page
 
 -- Page.new{ ... } -> a frozen page.
 --
--- A page is a set of references plus two flags, and carries no outbound edge and
--- no target page (docs/plans/2026-07-31-script-owned-page-model.md 10). A reader
--- looking for `page.edges` will not find one: an edge is a fact about a PAIR of
--- pages and a trigger, so hanging it off one end would make the other end's model
--- depend on build order, and a `to` set spanning three pages has no single owner.
--- `Graph.new` collects them instead. The two flags are on the page by the same
--- test, being true of every way of reaching it.
+-- A page is a set of references plus two flags and carries no outbound edge: an
+-- edge is a fact about a PAIR of pages, so `Graph.new` collects them
+-- (docs/plans/2026-07-31-script-owned-page-model.md 10).
 function Page.new(spec: { [string]: any }): Page
     if type(spec) ~= "table" then
         error("Page.new needs a table of fields", 2)
@@ -839,13 +840,6 @@ function Page.new(spec: { [string]: any }): Page
 
         -- The per-page refinement of what a shared region says, checked before
         -- the identify clause below because that clause consults it.
-        --
-        -- Unlike the element-level field it is allowed beside appearances. The
-        -- element-level ban enforces one verification source per element
-        -- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4); here
-        -- the text says what the region should READ on this page, useful to a
-        -- click picking between authorised targets, and it becomes identity
-        -- evidence only for an element with nothing else to offer.
         if entry.expected_text ~= nil then
             if
                 type(entry.expected_text) ~= "string"

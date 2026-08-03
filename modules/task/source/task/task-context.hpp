@@ -96,18 +96,8 @@ namespace uf::task
 
     // The two ends a colour-keyed mask has to stay between before its counts mean
     // anything; measurements and reproductions in
-    // docs/pitfalls/colour-key-annotation.md. Under the floor a mask MEASURES
-    // nothing -- a 27-pixel white key scored zero on frames whose content had
-    // visibly changed, because a busy screen always offers some offset where
-    // those 27 land on white. At or above the share it DISTINGUISHES nothing --
-    // the measured 68.0% orange button fill was a solid patch any same-size patch
-    // matches. Every element that survived cross-page falsification selected
-    // between 6.6% and 25.8%.
-    //
-    // They warn and do not refuse: what settles whether an element discriminates
-    // is the falsification matrix, which measures it against a screen it must not
-    // hit. The share is in basis points, the unit every other ratio in this model
-    // is already in.
+    // docs/pitfalls/colour-key-annotation.md. They warn and never refuse, and the
+    // share is in basis points.
     inline constexpr auto k_minimumUsefulMaskPixels  = uint64{50};
     inline constexpr auto k_maximumUsefulMaskShareBp = uint64{5000};
 
@@ -334,12 +324,10 @@ namespace uf::task
         // A `key` makes the crop a masked template: the weights it hands out
         // become the PNG's alpha channel, which decodeTemplateImage reads back as
         // the matcher's mask plane, so the template compares its glyph rather than
-        // its whole rectangle -- the difference between a minimap node icon that
-        // scores 8885/8549/8582 against three different cells and one that tells
-        // them apart. A key that takes NO pixel is refused here rather than
-        // persisted, because its fully transparent PNG fails InternalInvariant
-        // deep in a later match that no longer knows which key was chosen or over
-        // what rectangle.
+        // its whole rectangle (docs/pitfalls/element-choice-and-thresholds.md). A
+        // key that takes NO pixel is refused here rather than persisted, because
+        // its fully transparent PNG fails InternalInvariant deep in a later match
+        // that no longer knows which key was chosen or over what rectangle.
         [[nodiscard]]
         auto cycleCrop(
             CycleTicket ticket,
@@ -422,9 +410,8 @@ namespace uf::task
         // no coordinate for a geometry to invalidate, and it CONSUMES the cycle
         // because a delivered scroll moves what is on the screen.
         //
-        // Both environments may reach it. A business task legitimately scrolls a
-        // list it cannot see all of, and nothing about it hands a script pixels
-        // or a bare coordinate
+        // Both environments may reach it: it hands a script neither pixels nor a
+        // bare coordinate
         // (docs/plans/2026-08-01-three-layers-and-agent-operator.md section 7).
         [[nodiscard]] auto cycleScroll(CycleTicket ticket, int32 notches) -> Status;
 
@@ -465,13 +452,9 @@ namespace uf::task
         // still takes every gate a click takes.
         //
         // Both environments may reach it, and unlike cycleClickPoint a business
-        // task may name the coordinate directly. The privilege those two carry is
-        // over ACTIVATING something the recognised page did not authorise, and a
-        // move activates nothing: it cannot press, select, or submit, and no verb
-        // on this surface leaves a button held for it to drag with. What is left
-        // is cycleScroll's category, an input that needs no hit -- and it is the
-        // input a scroll needs before it, because a target scrolls whatever it
-        // believes is hovered (docs/pitfalls/capture-and-target-selection.md).
+        // task may name the coordinate directly: a move activates nothing, and a
+        // scroll needs it first because a target scrolls whatever it believes is
+        // hovered (docs/pitfalls/capture-and-target-selection.md).
         [[nodiscard]]
         auto cycleMovePointer(
             CycleTicket ticket,
@@ -500,11 +483,9 @@ namespace uf::task
         // and re-checks cancellationRequested() afterwards.
         auto settle(MonotonicInstant::Duration duration) const -> void;
 
-        // Whether the run's single cancel source has requested a stop. The
-        // observation and action primitives never need it: they reach the engine,
-        // which already fails closed on the same token. The time primitives do,
-        // because they reach nothing -- a sleep that ignored the token would be
-        // the one place a cancelled generation could still burn its whole wait.
+        // Whether the run's single cancel source has requested a stop; only the
+        // time primitives need it, for the reason at requireNotCancelled in
+        // task/native-call-trace.hpp.
         [[nodiscard]]
         auto cancellationRequested() const noexcept -> bool;
 
@@ -520,9 +501,6 @@ namespace uf::task
         // a script swallowed what was raised. ctx:try is pure Luau and consults
         // nothing, so this latch is the whole terminal guarantee on the Luau side.
         //
-        // Cancelled (the host's own verdict) and InternalInvariant (a framework
-        // bug the trace state machine caught) both need the before-raising order,
-        // so a project pcall cannot swallow one and drive one more primitive.
         // Latching is idempotent and keeps the FIRST kind: a later refusal is a
         // consequence rather than a cause.
         void markTerminal(AutomationErrorKind kind) noexcept;

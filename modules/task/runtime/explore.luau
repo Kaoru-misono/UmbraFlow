@@ -56,6 +56,22 @@ local function requirePrimitive(name: string, verb: string)
     end
 end
 
+-- The three channels and the tolerance as the scalars the private surface
+-- takes, or nothing at all when there is no key.
+local function keyScalars(verb: string, key: any, tolerance: number?)
+    if key == nil then
+        return
+    end
+    if type(key) ~= "table" then
+        error(
+            verb .. " takes key = { red = r, green = g, blue = b } or no key "
+                .. "at all",
+            3
+        )
+    end
+    return key.red, key.green, key.blue, tolerance
+end
+
 -- explore.click_point(ticket, x, y) -> ()
 --
 -- Clicks a bare coordinate and spends the cycle. A business script clicks an
@@ -82,9 +98,8 @@ end
 -- press is how a target volunteers what it will not show otherwise, which is a
 -- thing to be measured.
 --
--- The host fences it as it fences click_point. The hold is bounded by the host
--- and has NO DEFAULT here: how long this target wants a press held is the fact
--- being measured, so a number supplied here would be a measurement nobody took.
+-- The host fences it as it fences click_point, and the hold has NO DEFAULT
+-- here.
 function explore.long_press(ticket: any, x: number, y: number, holdMillis: number)
     requirePrimitive("cycle_long_press", "explore.long_press")
     if type(holdMillis) ~= "number" then
@@ -126,26 +141,13 @@ function explore.crop(
     tolerance: number?
 ): (string, string, any)
     requirePrimitive("cycle_crop", "explore.crop")
-    if key == nil then
-        return (native :: any).cycle_crop(ticket, x, y, width, height)
-    end
-    if type(key) ~= "table" then
-        error(
-            "explore.crop takes key = { red = r, green = g, blue = b } or no "
-                .. "key at all",
-            2
-        )
-    end
     return (native :: any).cycle_crop(
         ticket,
         x,
         y,
         width,
         height,
-        key.red,
-        key.green,
-        key.blue,
-        tolerance
+        keyScalars("explore.crop", key, tolerance)
     )
 end
 
@@ -166,26 +168,13 @@ function explore.probe(
     tolerance: number?
 ): any
     requirePrimitive("probe", "explore.probe")
-    if key == nil then
-        return (native :: any).probe(blob, x, y, width, height)
-    end
-    if type(key) ~= "table" then
-        error(
-            "explore.probe takes key = { red = r, green = g, blue = b } or no "
-                .. "key at all",
-            2
-        )
-    end
     return (native :: any).probe(
         blob,
         x,
         y,
         width,
         height,
-        key.red,
-        key.green,
-        key.blue,
-        tolerance
+        keyScalars("explore.probe", key, tolerance)
     )
 end
 

@@ -43,12 +43,8 @@ end
 -- framework-only. The environment-isolation tests need one value that is.
 frameworkSentinel = "uf-framework-sentinel-6b21f0"
 
--- CALIBRATION: conservative placeholders awaiting the first real daily. They are
--- policy, so they live here rather than in the host's config.
-local k_defaultTimeoutMillis = 600000
-local k_defaultPollMillis    = 500
-
--- How many attempts a retry policy takes when it names none.
+-- CALIBRATION: how many attempts a retry policy takes when it names none. It is
+-- policy, which is why it is here and not in the host's config.
 local k_defaultRetryAttempts = 3
 
 -- The two messages this file owns rather than letting C++ answer for. The

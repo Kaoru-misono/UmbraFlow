@@ -155,9 +155,7 @@ export type Model = {
     page_by_name: { [string]: any },
     graph: any,
     -- The screens this model is measured against and what it states about each
-    -- cell, as one `oracle.Claims`. It shares this file rather than sitting in a
-    -- second one because an expectation names an element and a screen, and two
-    -- files that have to stay in step will not
+    -- cell, as one `oracle.Claims`, kept in this file rather than a second one
     -- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.1).
     claims: any,
     residual: {
@@ -290,16 +288,6 @@ local function pushResidual(lines: { string }, residual: { string })
     end
 end
 
-local function capabilityList(set: any): { string }
-    local names: { string } = {}
-    for _, capability in model.capability_order() do
-        if set[capability] then
-            table.insert(names, capability)
-        end
-    end
-    return names
-end
-
 local function rectList(rect: any): { number }
     return { rect.x, rect.y, rect.width, rect.height }
 end
@@ -332,7 +320,10 @@ function project.encode(built: any): string
         table.insert(
             lines,
             "capabilities = "
-                .. renderValue(capabilityList(element.capabilities), "capabilities")
+                .. renderValue(
+                    model.capability_list(element.capabilities),
+                    "capabilities"
+                )
         )
         -- Written only when the element drew one. An element that leaves it out
         -- is placed by whoever uses it -- one confirm button reused on nine
@@ -410,7 +401,10 @@ function project.encode(built: any): string
             table.insert(
                 lines,
                 "exercised = "
-                    .. renderValue(capabilityList(reference.exercised), "exercised")
+                    .. renderValue(
+                        model.capability_list(reference.exercised),
+                        "exercised"
+                    )
             )
             if reference.identify ~= nil then
                 table.insert(lines, "identify = " .. renderString(reference.identify))
@@ -762,8 +756,13 @@ function project.parse(text: string): any
                     inExtra   = true
                     rawTarget = nil
                 else
-                    rawTarget = residualTarget()
-                    table.insert(rawTarget :: { string }, line)
+                    -- An open raw block wins over the residual: a sub-table
+                    -- inside a section kind this build does not know belongs to
+                    -- that section's block, and appending it to the preamble
+                    -- instead would hoist it above every header on rewrite.
+                    local target = rawTarget or residualTarget()
+                    table.insert(target, line)
+                    rawTarget = target
                 end
             elseif body == "" then
                 -- Blank lines are structure, and the writer regenerates them.
@@ -934,6 +933,42 @@ function project.build(ctx: any, document: any): any
         end
     end
 
+    -- Every bucket key above has to name a section this file declares. A bucket
+    -- nobody owns is read by neither loop below and is not raw residual either,
+    -- so the next save would delete those lines silently. Refused with the line
+    -- the section starts on, like every other cross-reference here; the lowest
+    -- line wins, so two runs over one file name one section.
+    local function requireOwners(
+        buckets: { [string]: { any } },
+        declared: { [string]: any },
+        field: string
+    )
+        local orphan: any = nil
+        for owner, sections in buckets do
+            if declared[owner] == nil then
+                for _, section in sections do
+                    if orphan == nil or section.line < orphan.line then
+                        orphan = section
+                    end
+                end
+            end
+        end
+        if orphan ~= nil then
+            error(
+                "the [["
+                    .. orphan.kind
+                    .. "]] starting at line "
+                    .. tostring(orphan.line)
+                    .. " names "
+                    .. field
+                    .. " '"
+                    .. tostring(orphan.fields[field])
+                    .. "', which this project file does not declare",
+                0
+            )
+        end
+    end
+
     local templates: { [string]: any } = {}
     local function templateOf(source: string): any
         local handle = templates[source]
@@ -986,6 +1021,8 @@ function project.build(ctx: any, document: any): any
         elementByName[name] = element
         table.insert(elements, element)
     end
+
+    requireOwners(appearancesFor, elementByName, "element")
 
     -- One element has AT MOST ONE owning page. Holding is not exclusivity --
     -- other pages may reference it freely -- it answers where the element lives,
@@ -1059,6 +1096,8 @@ function project.build(ctx: any, document: any): any
         pageByName[name] = page
         table.insert(pages, page)
     end
+
+    requireOwners(referencesFor, pageByName, "page")
 
     -- A page an edge names has to be one this file declares. Saying so here
     -- rather than inside Edge.new is what gives the message a LINE NUMBER.

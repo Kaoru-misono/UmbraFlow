@@ -45,12 +45,10 @@ namespace uf::task
     // emphatically NOT a way to run Luau: there is no chunk, no source and no
     // string that becomes code, only C++ methods taking scalars and names.
     //
-    // An operator can no longer name elements and pages, because the model is a
-    // Luau object built out of the project file and this session runs no Luau
-    // (docs/plans/2026-07-31-script-owned-page-model.md 9). What is left is what
-    // needs no model: observing, keying, and the time verbs. Model-grade access
-    // comes back through the exploration environment -- do not invent a second,
-    // weaker page model in C++ here in the meantime.
+    // This session runs no Luau, so it cannot name elements or pages; model-grade
+    // access comes back through the exploration environment, and a second, weaker
+    // page model must not be invented in C++ here
+    // (docs/plans/2026-07-31-script-owned-page-model.md 9).
     //
     // There is deliberately no `raise`, `emit` or `random`. `emit` would put a
     // second author on the framework.* events, which the trace stream validator
@@ -71,10 +69,7 @@ namespace uf::task
     // NOT thread-safe: every verb runs on the owning thread.
     class OperatorSession final
     {
-        // Makes the constructor reachable from create() and from nowhere else: a
-        // public constructor taking a private type, so the session is still built
-        // through the factory that opened its trace while std::make_unique
-        // remains the only allocation.
+        // Makes the constructor reachable from create() and from nowhere else.
         struct CreateTag final
         {
         };

@@ -13,8 +13,8 @@ namespace uf::task
 
     // Which of the two Luau environments a VM is being booted for, and therefore
     // which primitives its private capability surface carries. This is the
-    // enforcement, not a label: the privileged verbs must not EXIST in the
-    // business environment rather than be refused there call by call
+    // enforcement, not a label: a mode-gated verb must not EXIST on the surface
+    // rather than be refused there call by call
     // (docs/plans/2026-08-01-three-layers-and-agent-operator.md section 2 rule 2),
     // so a Run surface is built without those keys and there is nothing for a
     // refusal to guard. The difference is observable in buildPrivateSurface and
@@ -28,7 +28,7 @@ namespace uf::task
         Run,
 
         // An agent measuring a target it has no model of yet: the Run surface
-        // plus the bare-coordinate click, the crop and the probe.
+        // plus `cycle_crop` and `probe`, the only two keys this enum gates.
         Exploration,
     };
 
@@ -89,8 +89,15 @@ namespace uf::task
     // address stays stable.
     //
     // `mode` decides which primitives are on the surface at all: an Exploration
-    // surface carries three keys a Run surface does not have, and a Run surface
-    // has no way to reach them.
+    // surface carries `cycle_crop` and `probe`, which a Run surface has no way
+    // to reach.
+    //
+    // The bare-coordinate verbs -- `cycle_click_point` and `cycle_long_press` --
+    // are privileged but are bound on BOTH surfaces, so do not read this mode as
+    // their fence. Their confinement is that no business environment can NAME
+    // them: frameworkProjectGlobals() publishes only `ctx` and `task`, and
+    // ctx.luau forwards neither verb. See their install sites in
+    // task/ffi/uf-tables.cpp.
     [[nodiscard]]
     auto scriptPrivateCapabilities(TaskContext& context, ScriptTrustMode mode)
         -> script::PrivateCapabilityInstaller;
