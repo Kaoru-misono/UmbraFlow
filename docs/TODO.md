@@ -538,6 +538,10 @@ dispatcher 一次认一页、做那一页要做的一件事,把这一局走完�
 - [x] 证伪测试:`tests/task/test-task-host.cpp`「what the framework minted is released once
   nothing can present it」——铸 500 个元素做基线,再铸 2000 个,断言堆读数增长小于 256 KB。
   强引用时这一段约涨 2 MB。
+- 两条可复用的教训已提进
+  [`pitfalls/embedded-vm-memory-ceiling.md`](pitfalls/embedded-vm-memory-ceiling.md):
+  「记录身份的注册表会让它记录的东西活下去」与「空结果在证明实验能产出非空结果之前
+  排除不了任何假设」。这里只留执行状态。
 - 注意 `heap.used` 是 Luau 账本,C++ 侧的模板库和截图缓存不计入,所以泄漏一定在 Luau 侧。
 
 ## 两个 latch,explore 只看得见一个(2026-08-03 发现并修复)

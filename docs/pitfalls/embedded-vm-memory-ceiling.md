@@ -125,3 +125,80 @@ that is what the test does.
 Any test asserting that a memory guard fires must be shown to fail without the
 guard. If it does not, the loop is doing the collector's work for it and the
 guard is untested whatever the assertions say.
+
+## A registry that records identity outlives everything it names
+
+Added 2026-08-03, after the ceiling above was reached a second time by a
+different route.
+
+### Symptom
+
+`project.load_project` left roughly 700 KB behind on every call, monotonic, and
+an exploration session walked into the ceiling after some 150 loads. Reading and
+parsing the file cost nothing lasting; only the phase that built objects did.
+
+### Root cause
+
+Eleven module-level tables recorded every object a constructor minted, keyed by
+the object, so a look-alike could be refused later. Nothing ever removed an
+entry. The entries are not the cost — a boolean against a key is nothing — but
+the key is a strong reference, so one page kept its references, which kept their
+elements, and a model that no caller could still name stayed whole.
+
+This is the shape to recognise: **a table whose purpose is to remember that
+something exists will, by default, also make it exist.** Provenance registries,
+interning caches, "have I seen this" sets and debug ledgers are all of this
+kind.
+
+### Fix
+
+Weak keys, `setmetatable({}, { __mode = "k" })`. It costs the registry nothing
+it was doing: an entry can only vanish once the object is unreachable, and an
+object nobody can reach is one nobody can present to the predicate. Where the
+value is not a boolean, check the value cannot reach the key — a value that can
+is an ephemeron the collector must still keep.
+
+Fix all of them at once, or measure after each. Weakening only the element
+registry changed nothing measurable, because the pages were still held strongly
+and the pages held the elements.
+
+### Regression check
+
+Assert on the heap reading, not on the registry: mint a fixed number of objects
+per chunk for several chunks and require the reading not to climb. Restore one
+`__mode` to strong and watch that one test go red -- measured at +1.87 MB over
+2000 elements, against a bound of 256 KB.
+
+## An empty result rules nothing out until the experiment can produce one
+
+### Symptom
+
+The registries above had already been investigated and excluded. The recorded
+evidence was that weakening all ten (there are eleven) and re-measuring gave
+"ten readings byte-identical to the ten before". That was read as *the change
+had no effect* and the hypothesis was dropped, with the change reverted so as
+not to leave an ineffective patch. It was the correct hypothesis.
+
+### Root cause
+
+Byte-identical readings across a real change are not a weak result, they are an
+implausible one. A live system re-measured after a rebuild moves by at least
+allocator granularity. The reading was evidence about the *experiment* -- that
+the binary under test was not the binary that was changed, or the path was never
+exercised -- and it was spent on the hypothesis instead.
+
+### Fix
+
+Before a negative result is allowed to exclude anything, show the experiment can
+produce a positive one. Here that meant a control the leak could not hide in: 500
+minted elements per chunk against 500 plain frozen tables per chunk. The plain
+tables moved the reading zero; the minted ones moved it half a megabyte every
+chunk. Only then is "weakening the keys removes the growth" a result about the
+keys.
+
+### Regression check
+
+Not a test -- a reading habit. When an experiment returns exactly what "no
+effect" would return, ask what a *detected* effect would have looked like and
+whether this run could have shown it. If nothing distinguishes the two, the run
+measured nothing.
