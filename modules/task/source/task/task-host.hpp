@@ -102,7 +102,7 @@ namespace uf::task
         MonotonicInstant::Duration maxActionFrameAge{k_defaultMaxActionFrameAge};
 
         // Wall-clock ceiling on the task script. A run is ONE unit of script --
-        // the whole task is one runNumber call -- so this bounds the entire run
+        // the whole task is one runValue call -- so this bounds the entire run
         // rather than a step of it. Thirty minutes is the script layer's own
         // default and a real daily exceeds it: a 142-step run was cut off
         // mid-battle. `umbra-flow run --max-runtime` is how a caller raises it.
@@ -152,18 +152,18 @@ namespace uf::task
 
         std::filesystem::path tracePath{};
 
+        // What the task's chunk returned, rendered as one line, empty when it
+        // returned nothing. A task's return is its only voice: the four facts
+        // above are the host's, and the trace records every native call rather
+        // than the task's own account of them, so a run that stopped at step 176
+        // for a reason only the script knows had nowhere to say so.
+        std::string returned{};
+
         std::optional<Error> failure{};
 
         [[nodiscard]] auto outcome() const noexcept -> TaskRunOutcome;
     };
 
-    // One trusted routine the host itself supplies, run through the same bracket
-    // a project task runs through. Trusted precisely because its source is a
-    // string literal in this binary: it is not addressed as (project, name),
-    // never read from disk, and no project can supply, replace or shadow it.
-    // Everything else -- the VM, the private capability surface, the trace
-    // bracket, the generation, the cancellation -- is identical to a task's.
-    //
     // Closes one session's run bracket, which is the half of finish() every
     // front-end shares. `terminal` is the kind a spent generation ended the
     // session under and is empty when it was not spent; it is folded into
@@ -181,6 +181,13 @@ namespace uf::task
         std::string_view terminalMessage
     ) -> TaskRunReport;
 
+    // One trusted routine the host itself supplies, run through the same bracket
+    // a project task runs through. Trusted precisely because its source is a
+    // string literal in this binary: it is not addressed as (project, name),
+    // never read from disk, and no project can supply, replace or shadow it.
+    // Everything else -- the VM, the private capability surface, the trace
+    // bracket, the generation, the cancellation -- is identical to a task's.
+    //
     // Lifetime contract: both views must outlive the runFrameworkRoutine call.
     // Every caller in this repository satisfies that with a string literal.
     struct FrameworkRoutine final
@@ -246,6 +253,12 @@ namespace uf::task
         [[nodiscard]]
         auto findGeneration(GenerationId id) noexcept -> Generation*;
 
+        // findGeneration with the refusal every public verb below opens with, so
+        // an unknown generation is named once rather than once per verb. The
+        // borrow it hands back is findGeneration's, on the same terms.
+        [[nodiscard]]
+        auto requireGeneration(GenerationId id) -> Result<Generation*>;
+
     public:
         TaskHost();
 
@@ -253,12 +266,6 @@ namespace uf::task
         TaskHost(TaskHost&&) = delete;
         auto operator=(TaskHost const&) -> TaskHost& = delete;
         auto operator=(TaskHost&&) -> TaskHost& = delete;
-        // findGeneration with the refusal every public verb below opens with, so
-        // an unknown generation is named once rather than once per verb. The
-        // borrow it hands back is findGeneration's, on the same terms.
-        [[nodiscard]]
-        auto requireGeneration(GenerationId id) -> Result<Generation*>;
-
 
         ~TaskHost();
 

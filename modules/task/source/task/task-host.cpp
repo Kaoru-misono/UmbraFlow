@@ -58,6 +58,27 @@ namespace uf::task
             uint64      seed{};
         };
 
+        // One line for what a chunk returned. A task that returned nothing and a
+        // task that returned the empty string both said nothing, so both render
+        // empty and the report carries no third state for them.
+        [[nodiscard]]
+        auto renderReturnedValue(script::ScriptValue const& value) -> std::string
+        {
+            if (auto const* p_text = value.text(); p_text != nullptr)
+            {
+                return *p_text;
+            }
+            if (auto const boolean = value.boolean(); boolean.has_value())
+            {
+                return *boolean ? "true" : "false";
+            }
+            if (auto const number = value.number(); number.has_value())
+            {
+                return std::format("{}", *number);
+            }
+            return {};
+        }
+
         [[nodiscard]]
         auto runStartedEvent(RunStartSpec const& spec) -> trace::TraceEvent
         {
@@ -154,27 +175,6 @@ namespace uf::task
         return TaskRunOutcome::Failed;
     }
 
-    // One loaded project instance. It owns everything a run of that project
-    // needs and nothing a single run owns: the facts read out of the page model
-    // survive every run, while the trace recorder, the engine session, the task
-    // context and the VM are built and destroyed inside one startTask call.
-    //
-    // Non-movable, and therefore held through a unique_ptr by the host: it
-    // contains an std::stop_callback bound to its own stop source, so its
-    // address must not change.
-    class TaskHost::Generation final
-    {
-        // Requests the generation's own stop source when the host-supplied
-        // external token stops, so cancel() and an outside stop feed one source
-        // and neither can shadow the other.
-        //
-        // It observes an std::stop_source owned by the same Generation. That
-        // source is declared before the callback holding the pointer; members are
-        // destroyed in reverse declaration order and ~stop_callback blocks until
-        // an in-flight invocation returns, so the observed source can never die
-        // under the callback.
-        struct ExternalStopBridge final
-        {
     auto closeRunBracket(
         trace::TraceRecorder& recorder,
         TaskRunReport report,
@@ -201,6 +201,27 @@ namespace uf::task
         return report;
     }
 
+    // One loaded project instance. It owns everything a run of that project
+    // needs and nothing a single run owns: the facts read out of the page model
+    // survive every run, while the trace recorder, the engine session, the task
+    // context and the VM are built and destroyed inside one startTask call.
+    //
+    // Non-movable, and therefore held through a unique_ptr by the host: it
+    // contains an std::stop_callback bound to its own stop source, so its
+    // address must not change.
+    class TaskHost::Generation final
+    {
+        // Requests the generation's own stop source when the host-supplied
+        // external token stops, so cancel() and an outside stop feed one source
+        // and neither can shadow the other.
+        //
+        // It observes an std::stop_source owned by the same Generation. That
+        // source is declared before the callback holding the pointer; members are
+        // destroyed in reverse declaration order and ~stop_callback blocks until
+        // an in-flight invocation returns, so the observed source can never die
+        // under the callback.
+        struct ExternalStopBridge final
+        {
             std::stop_source* p_target{nullptr};
 
             auto operator()() const noexcept -> void
@@ -470,18 +491,20 @@ namespace uf::task
             }
             else
             {
-                // A project task's numeric return carries no success meaning of its
-                // own -- a failure surfaces as an error here, and a clean return
-                // means the task ran to completion -- so startTask discards it. A
-                // framework routine is written to answer with one.
-                auto runResult = vm->runNumber(chunk.source, chunk.name);
+                // The value is carried both ways rather than coerced once: a
+                // framework routine answers with a number, and a project task's
+                // return is the one sentence it can address to the operator. A
+                // return no line can carry fails the run, which is the same
+                // refusal an exploration chunk meets.
+                auto runResult = vm->runValue(chunk.source, chunk.name);
                 if (!runResult)
                 {
                     outcome.run.failure = std::move(runResult).error();
                 }
                 else
                 {
-                    outcome.answer = *runResult;
+                    outcome.run.returned = renderReturnedValue(*runResult);
+                    outcome.answer       = runResult->number().value_or(0.0);
                 }
             }
 
@@ -548,6 +571,19 @@ namespace uf::task
         return nullptr;
     }
 
+    auto TaskHost::requireGeneration(GenerationId id) -> Result<Generation*>
+    {
+        auto* const p_generation = findGeneration(id);
+        if (p_generation == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format("no loaded project for generation {}", id.value())
+            );
+        }
+        return p_generation;
+    }
+
     auto TaskHost::loadProject(
         std::filesystem::path const& projectRoot,
         TaskHostConfig const& config
@@ -571,19 +607,6 @@ namespace uf::task
         m_generations.emplace_back(
             std::make_unique<Generation>(
                 id,
-    auto TaskHost::requireGeneration(GenerationId id) -> Result<Generation*>
-    {
-        auto* const p_generation = findGeneration(id);
-        if (p_generation == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format("no loaded project for generation {}", id.value())
-            );
-        }
-        return p_generation;
-    }
-
                 projectRoot,
                 std::move(projectId),
                 std::move(model),

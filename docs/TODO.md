@@ -494,13 +494,29 @@ the exploration session」:`while true do end` 不碰任何宿主动词,所以�
   但没有横幅的停帧(重动画期间)仍然会直接终结运行,脚本无从自愈。
 - 要裁决的是宿主策略:停帧究竟是「这一帧没拿到」还是「这一代作废」。现在按后者处理。
 
-## `run` 把任务的返回值丢掉(2026-08-03 发现)
+## `run` 把任务的返回值丢掉(2026-08-03 发现,2026-08-03 修复)
 
-- [ ] `TaskHost::startTask` 走 `runNumber`,所以任务返回的字符串被强制成数字;
-  `entry/cli/main.cpp` 的 run 分支也只打印 `task/hash/seed/trace` 四项。任务想说一句
-  「我做到哪了、为什么停」没有任何出口,trace 记的是每一次原生调用而不是任务自己的账。
-  现在靠 `daily.luau` 每步 `ctx:project_write` 自己写日志兜住,那是绕过去不是修好。
-- 修法:`runValue` + `TaskRunReport` 带上返回值,CLI 打印它。
+- [x] `TaskHost::startTask` 改走 `runValue`,`TaskRunReport::returned` 带上渲染后的一行,
+  `entry/cli/main.cpp` 在 `run:` 那行下面打印 `said: ...`。框架例程的 `answer` 仍是数字,
+  从同一个值取 `number().value_or(0.0)`,`umbra-flow check` 的返回不变。
+- 连带的语义变化:返回表或函数的任务现在**失败**(`InvalidResource`),而 `runNumber`
+  时代它静默变成 0。这是 `runValue` 本来的立场——「一个结果行装不下的返回是失败,不是
+  静默的空」——现在任务路径和 explore 路径一致了。
+- 验收:`tests/task/test-task-host.cpp`「what a task returns reaches the report that
+  describes its run」三个 SUBCASE(整句、什么都不返回、返回表)。
+
+## 任务无法唤醒待机隐藏 UI 的目标(2026-08-03 量到)
+
+- [ ] 主菜单闲置几秒后收起全部控件,只剩背景图,于是没有任何页 resolve 得了。任务的自救
+  路径是断的:**唤醒需要输入,click 需要 receipt,receipt 需要有页 resolve** —— 而那正是
+  被挡住的一环。实测(explore 会话,home 页):`cold=false`、移动指针 `move=false`、
+  点击 `click=true`、按 `SHIFT` `after_SHIFT=false`。`ctx:key` 不要 receipt 却唤不醒,
+  唯一唤得醒的 click 又要 receipt。
+- 今晚是靠**第二个进程**在 run 那 20 帧容忍窗口里补投一次 `explore.click_point` 才起来的。
+  顺带量到:两个 umbra-flow 进程可以同时绑同一个窗口,capture 与后台输入都不冲突。
+- 可能的修法:(a) 框架给一个窄口径的唤醒动词,只在连续 N 帧无页可认之后可用;(b) run 启动
+  时先投一次唤醒输入;(c) CLI 收一个 `--wake-point` 坐标。三者都得先回答同一个问题:在一
+  个认不出任何页的帧上,凭什么允许投递输入——这正是 receipt 规则要拦的事。
 
 ## 项目任务脚本没有 require(2026-08-03 发现)
 

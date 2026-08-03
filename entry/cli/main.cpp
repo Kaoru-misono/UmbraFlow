@@ -56,6 +56,14 @@ namespace uf::cli
                 report->seed,
                 report->tracePath.string()
             );
+
+            // The task's own account of the run, printed under the host's four
+            // facts because it is the only one that can say where the run got to.
+            // A task that returned nothing prints nothing.
+            if (!report->returned.empty())
+            {
+                std::cout << std::format("said: {}\n", report->returned);
+            }
             return exitCodeForReport(*report, runCancellationRequested());
         }
 

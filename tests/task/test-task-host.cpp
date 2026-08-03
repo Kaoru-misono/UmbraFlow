@@ -427,19 +427,128 @@ exercised = ["interact"]
         REQUIRE(generation.has_value());
         CHECK(*generation == GenerationId{1});
 
+        // Every verb that takes a generation asks the same question first and
+        // refuses in the same sentence, so a ninth verb that forgets the guard is
+        // a missing line here rather than nothing at all.
         auto const unknown = GenerationId{99};
-        CHECK_FALSE(host.cancel(unknown).has_value());
-        CHECK_FALSE(host.queryTask(unknown).has_value());
-        CHECK_FALSE(
-            host.startTask(
-                unknown,
-                "daily",
-                runConfig(temp.path() / "unreachable.jsonl")
-            )
-            .has_value()
+        auto const refuses = [](auto const& result, std::string_view verb)
+        {
+            INFO("verb ", verb);
+            REQUIRE_FALSE(result.has_value());
+            CHECK(
+                automationErrorKind(result.error())
+                == AutomationErrorKind::InvalidResource
+            );
+            CHECK(
+                result.error().message() == "no loaded project for generation 99"
+            );
+        };
+
+        constexpr auto routine = FrameworkRoutine{
+            .name   = "unreachable",
+            .source = "return 0\n",
+        };
+        auto const tracePath = temp.path() / "unreachable.jsonl";
+
+        refuses(host.cancel(unknown), "cancel");
+        refuses(host.queryTask(unknown), "queryTask");
+        refuses(host.projectFingerprint(unknown), "projectFingerprint");
+        refuses(host.projectElementCount(unknown), "projectElementCount");
+        refuses(
+            host.startTask(unknown, "daily", runConfig(tracePath)),
+            "startTask"
         );
+        refuses(
+            host.runFrameworkRoutine(unknown, routine, runConfig(tracePath)),
+            "runFrameworkRoutine"
+        );
+        refuses(
+            host.startOperatorSession(unknown, runConfig(tracePath)),
+            "startOperatorSession"
+        );
+        refuses(
+            host.startExplorationSession(unknown, runConfig(tracePath)),
+            "startExplorationSession"
+        );
+
         // A rejected run opens no trace file, so nothing was written for it.
-        CHECK_FALSE(std::filesystem::exists(temp.path() / "unreachable.jsonl"));
+        CHECK_FALSE(std::filesystem::exists(tracePath));
+    }
+
+    TEST_CASE("what a task returns reaches the report that describes its run")
+    {
+        // The four facts in a report are the host's, and the trace records native
+        // calls rather than the task's account of them. Coercing the return to a
+        // number left a task with no way to say where it got to, which is why the
+        // first real daily writes its own log file every step.
+        SUBCASE("a sentence is carried whole")
+        {
+            auto const temp = TemporaryDir{"return-sentence"};
+            publishProject(
+                temp.path(),
+                "daily",
+                "return \"stopped at step 176: node_map went away before the click\"\n"
+            );
+
+            auto host             = TaskHost{};
+            auto const generation = host.loadProject(temp.path());
+            REQUIRE(generation.has_value());
+
+            auto const report = host.startTask(
+                *generation,
+                "daily",
+                runConfig(temp.path() / "task.jsonl")
+            );
+            REQUIRE(report.has_value());
+            CHECK_FALSE(report->failure.has_value());
+            CHECK(
+                report->returned
+                == "stopped at step 176: node_map went away before the click"
+            );
+        }
+
+        SUBCASE("a task that returns nothing says nothing")
+        {
+            auto const temp = TemporaryDir{"return-nothing"};
+            publishProject(temp.path(), "daily", "local quiet = 1\n");
+
+            auto host             = TaskHost{};
+            auto const generation = host.loadProject(temp.path());
+            REQUIRE(generation.has_value());
+
+            auto const report = host.startTask(
+                *generation,
+                "daily",
+                runConfig(temp.path() / "task.jsonl")
+            );
+            REQUIRE(report.has_value());
+            CHECK_FALSE(report->failure.has_value());
+            CHECK(report->returned.empty());
+        }
+
+        SUBCASE("a return no line can carry fails the run rather than vanishing")
+        {
+            // Under the coercion this replaces, a returned table was silently 0.
+            auto const temp = TemporaryDir{"return-table"};
+            publishProject(temp.path(), "daily", "return { done = true }\n");
+
+            auto host             = TaskHost{};
+            auto const generation = host.loadProject(temp.path());
+            REQUIRE(generation.has_value());
+
+            auto const report = host.startTask(
+                *generation,
+                "daily",
+                runConfig(temp.path() / "task.jsonl")
+            );
+            REQUIRE(report.has_value());
+            REQUIRE(report->failure.has_value());
+            CHECK(
+                automationErrorKind(*report->failure)
+                == AutomationErrorKind::InvalidResource
+            );
+            CHECK(report->outcome() == TaskRunOutcome::Failed);
+        }
     }
 
     TEST_CASE("a generation drives one front-end, whichever arrives first")
