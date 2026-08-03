@@ -15,35 +15,48 @@
 > §四之二.1 (GUI retirement) and §2.2 (the model). Nothing is deleted here; the
 > entries stay because the general rules they distilled outlive the panels.
 >
+> **Amended 2026-08-01 (`a80ea07`).** The live pointers this banner first gave
+> were themselves retired within the week: `modules/annotation` and every
+> authoring binary went with the C++ page model, so `authoring-edit.*`,
+> `edit-page.*`, `umbra-authoring`, `EditPage`, `AuthoringDraft`,
+> `AuthoringEditHistory`, `applyCommittedPage`, `ElementCapabilities`,
+> `ExercisedCapabilities` and `RecognitionCatalog::create` no longer exist
+> (`docs/ARCHITECTURE.md`). Each rule below is re-aimed at the Luau model that
+> holds it now.
+>
 > **What still transfers, and to what:**
 >
-> - *Do not commit while holding a borrow into the document.* The rule is about
+> - *Do not commit while holding a borrow into the document.* The C++ form was
 >   `AuthoringEditHistory::apply` swapping the whole document out from under every
->   live borrow, and the editing layer that does this (`authoring-edit.*`,
->   `edit-page.*`) is still linked, now by `umbra-authoring`. The CLI's shape
->   makes the bug hard to hit — one command, one edit, no frame that draws while
->   holding spans — but the rule is a property of the edit layer, not of ImGui.
+>   live borrow. The Luau model answers the same rule by construction: writing a
+>   row or an appearance REBUILDS the page rather than mutating it
+>   (`scribe.add_reference`, `scribe.add_appearance`,
+>   `modules/task/runtime/scribe.luau`), so a page an agent is holding can already
+>   be one the model no longer has. That is why an edge names its ends and a write
+>   names its target instead of holding either: a name always resolves to the page
+>   the model does have.
 >
->   > **Mechanism updated 2026-07-31 (`f768e6c`).** The *Fix* section below
->   > prescribes parking a `PendingEdit` on `PanelUiState` and letting
->   > `drawWorkbench` apply it. Both are deleted. The surviving layer answers the
->   > same rule by construction rather than by ordering: `EditPage` now owns an
->   > `AuthoringDraft` **by value** — it borrows no history for the length of an
->   > edit — and `commit() &&` moves out a `Committed{draft, baseRevision}` that
->   > `applyCommittedPage(AuthoringEditHistory&, EditPage::Committed const&)`
->   > refuses if the base revision has moved. Read the *Fix* as history and this
->   > as the current shape; the rule it distils is unchanged.
+>   > **Mechanism history.** The *Fix* section below prescribes parking a
+>   > `PendingEdit` on `PanelUiState` and letting `drawWorkbench` apply it;
+>   > `f768e6c` then replaced that with an `EditPage` owning its draft by value.
+>   > Both shapes are deleted. Read them as history — the rule they distil is
+>   > unchanged.
 > - *Cross-field domain invariants can deadlock per-field editing.* The specific
 >   deadlock is gone with `allowed_page_ids`, but the shape recurs anywhere a
->   single-field editor meets a multi-field invariant. `ElementCapabilities` and
->   `ExercisedCapabilities` both reject the empty set, which is exactly a lower
->   bound of the kind that produced the original deadlock.
-> - *A fixed default name collides on the second create*, and *names are unique
->   across elements and pages together*, not within a kind. Still true of
->   `RecognitionCatalog::create`; the CLI takes an explicit name and so cannot hit
->   the default-name form.
-> - *An entity with no list panel is unreachable after creation* has no CLI
->   analogue — `project show` enumerates everything — and is kept as history only.
+>   single-field editor meets a multi-field invariant. The surviving lower bound
+>   of that kind is `model.CapabilitySet`: a capability list that names nothing is
+>   refused, because an element nothing can identify, click or read is an entry
+>   nobody can explain (`modules/task/runtime/model.luau`).
+> - *A fixed default name collides on the second create* has no analogue left:
+>   `Element.new` and `Page.new` both refuse an empty name, so there is no default
+>   to collide. The uniqueness rule NARROWED with them — elements and pages are
+>   two registries (`element_by_name` / `page_by_name`, checked by
+>   `scribe.add_element` and `scribe.add_page`), so a name is unique within its
+>   kind and an element may now share one with a page. Anything that reads a bare
+>   name as unambiguous across both kinds is relying on a convention nothing
+>   enforces.
+> - *An entity with no list panel is unreachable after creation* has no analogue —
+>   a loaded model enumerates everything it holds — and is kept as history only.
 
 Failure knowledge for the `umbra-workbench` panels — the immediate-mode layer
 between the author and the authoring document. Recorded on 2026-07-25 during the

@@ -1715,3 +1715,15 @@ doc-vs-code 矛盾的范例,而今天矛盾的方向反过来了(代码没有循
   —— **已作废(2026-08-01)**:生成器随知识库一并删除。理由与当时相反地成立:
   script-owned 迁移把架构整个换了一遍,地图集在框架重建期只是维护负担。
 - `.claude/skills/correct-doc-drift/SKILL.md` 的反向范例,同上一批,仍未处理(技能文件)。
+
+## 2026-08-03 — Why `emit` is admitted as a safety primitive
+
+Moved out of the `emitFn` header in
+`modules/task/source/task/ffi/uf-tables.cpp`, which now cites this document. It
+is the admission argument under this design's primitive rule, not a constraint
+on the implementation.
+
+`emit` is admitted for `raise`'s shape of reason: the framework's own structure
+-- which step is open, which attempt this is -- is observable nowhere else, and
+a trace recording only what the host did cannot explain a run the framework
+shaped.

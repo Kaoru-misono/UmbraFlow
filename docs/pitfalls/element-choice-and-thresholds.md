@@ -205,6 +205,13 @@ rectangle, whatever it scores.
 
 ## Two buttons that print the same word are two elements
 
+> **Narrowed 2026-08-03 (`cef4886`).** A rectangle may now come from the element,
+> the row that references it, or the claim, so one element can legitimately carry
+> many rectangles (`CONTEXT.md`). The rule below is therefore about an element
+> that draws its OWN rectangle; the multi-placement case is expressed by a
+> per-claim `rect` instead. The confusion net narrowed with it — see the
+> Regression check.
+
 ### Symptom
 
 An element authored for one button starts matching, or clicking, a different
@@ -222,16 +229,29 @@ or a read region is made of differs, and only the text agrees.
 
 ### Fix
 
-One element per rectangle, named for where it is rather than for what it says.
+One element per rectangle, named for where it is rather than for what it says,
+**for an element that draws its own rectangle**. Where one shape appears in
+several places, the element stays one and each placement supplies the rectangle —
+on the row or on the claim. That is the same ruling seen from the other side:
+nine confirm buttons are one element and nine rectangles, not nine elements.
+
 Text is what a page's rows check *after* the page is known, not what makes two
 rectangles one element.
 
 ### Regression check
 
-The matrix catches the general case: an element claimed to read the same text on
-two screens is reported as a confusion, unless both screens declare the same
-page. A confusion here means two rectangles were folded into one element that
-should have stayed two.
+The matrix catches two screens claiming the same text at the **same** rectangle:
+`reading.confusions` keys by (element, rectangle, text)
+(`modules/task/runtime/reading.luau`) and `regress` reports it as
+`ambiguous_text`, unless both screens declare the same page. A finding here means
+one region is claimed to read one text on two screens the file does not declare
+to be one page, so nothing resting on that region can tell them apart.
+
+Two claims at two **different** rectangles are two keys and are never reported —
+that is the rule declining to fire on one element placed twice, and it is also
+its blind spot. An element that draws no rectangle of its own and is claimed at a
+different rectangle on each screen gets no confusion report at all, so score it
+against both screens and read the separation yourself.
 
 ## A rectangle drawn around variable-count content is wrong for some count
 

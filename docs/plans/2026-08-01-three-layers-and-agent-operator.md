@@ -303,3 +303,37 @@ end
 3. 迁移按[页面模型上移到脚本层](2026-07-31-script-owned-page-model.md)执行:模型上移
    框架层,项目文件格式由框架层定,标注模型文档里那份「两个 schema 一起升版」的迁移
    计划**作废**。动词清单以本文 §七 为准。
+
+## 2026-08-03 — Recognition asks one direction only
+
+Moved out of the `recognition.luau` header, which now cites this section from
+`recognition.verify`. It records a ruling and the alternative it rejects, not a
+constraint the code has to be reminded of.
+
+`recognition.verify` resolves the page a screen DECLARES, on that screen, and
+asks nothing in the other direction. "A screen declaring page P must resolve NO
+OTHER declared page" is false on this model: a page signature names the marks
+that IDENTIFY a page and is never an inventory of its screen (`oracle`, "three
+states and not two"), so a card-detail overlay screen resolves the battle page
+underneath it, correctly. Nothing in the model says which page an overlay sits
+on — there are `push` and `pop` edges and no base relation — so the exception
+could not be written down.
+
+The cost is also real: resolving every declared page on every screen multiplies
+a check's reads by the page count, and that budget is fixed from the file before
+the VM exists (`entry/cli/check.cpp`).
+
+What that direction reached for is already measured per element: an appearance
+hitting a screen it does not own is a misfire cell, two appearances hitting one
+screen is `ambiguous_appearances`, and one region reading one text on two pages
+is the repeated-text confusion the `recognition` header states first.
+
+## 2026-08-03 — `cycle_read_lines` is a verb, not a flag on `cycle_read`
+
+Moved out of the `cycleReadLinesFn` header in
+`modules/task/source/task/ffi/uf-tables.cpp`, which now cites this document. It
+records a rejected alternative, not a constraint on the primitive.
+
+A flag on `cycle_read` was rejected because what comes back differs in kind, and
+the two callers assert opposite things: `cycle_read` says the rectangle holds a
+single line, `cycle_read_lines` says it does not know what the region holds.

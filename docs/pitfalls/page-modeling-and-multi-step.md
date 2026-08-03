@@ -1,65 +1,83 @@
 # Page modeling and multi-step flows
 
-Reusable knowledge for shaping page signatures in the workbench and for running
-more than one action against a live target. First recorded on 2026-07-25 while
-annotating two 卡厄思梦境 screens (main screen → character detail → character
-close-up) and chaining the two clicks that navigate between them.
+Reusable knowledge for shaping page signatures and for running more than one
+action against a live target. First recorded on 2026-07-25 while annotating two
+卡厄思梦境 screens (main screen → character detail → character close-up) and
+chaining the two clicks that navigate between them.
 
 ## A page signature requires every anchor to hit in the *same* frame
 
+> **Historical since 2026-08-01 (`a80ea07`)** in every tool it named. The
+> workbench Preview went with the GUI, and `modules/annotation` — including
+> `annotation/recognition.cpp` and `SimilarityThreshold::maximumSad` — was
+> deleted with the C++ page model. Deciding artifact:
+> [the script-owned page model plan](../plans/2026-07-31-script-owned-page-model.md).
+>
+> **What still transfers:** the conjunction itself, unchanged. The entry below is
+> restated against what holds it now — `observe.resolve_page`
+> (`modules/task/runtime/observe.luau`) over a page built by `Page.new`
+> (`modules/task/runtime/model.luau`), and `umbra-flow check`
+> (`entry/cli/check.cpp`) offline.
+
 ### Symptom
 
-A page never resolves. The trace is `PageUnknown` on every frame until the task's
-page wait times out, and no click is delivered — even though each anchor is
-known-good and matches its own captured source exactly. The workbench Preview
-reports `page: Unknown` for both sources.
+A page never resolves. `observe.resolve_page` answers with a sentence instead of
+a receipt on every frame until the wait around it expires, and no click is
+delivered — even though each anchor is known-good and matches its own captured
+screen exactly. Offline, `umbra-flow check` reports an `unresolved_page` finding
+against every screen that declares the page.
 
 ### Root cause
 
-A page signature's `required` set is conjunctive: a page becomes a candidate only
-if **every** required anchor hits and **no** forbidden anchor hits, evaluated
-against one frame (`modules/annotation/source/annotation/recognition.cpp`, the
-`candidate = candidate && p_evidence->hit()` loop).
+A page signature is strictly conjunctive: it resolves only if **every** required
+identify row matches and **no** forbidden one does, all evaluated against one
+frame (`observe.resolve_page`, which stops at the first clause that fails, so
+rejecting a page costs one search rather than all of them). Only references
+exercising `identify` are consulted; the rest of the page describes what a script
+may do once it is here.
 
 The natural authoring mistake is to treat a page as a folder of related markers.
 After capturing a second screen and adding its anchor, it is easy to give that
-anchor a `Required` role on the page that already exists instead of creating a
-new page — the properties panel offers the role next to every page. The result is
-one page requiring two anchors that live on two different screens, so no frame
-can ever satisfy it.
+anchor an `identify = "required"` row on the page that already exists instead of
+declaring a new page. The result is one page requiring two anchors that live on
+two different screens, so no frame can ever satisfy it.
 
-The workbench cannot reject this: a page requiring two anchors is perfectly legal
-and is exactly how a screen identified by two simultaneous markers is expressed.
-Only the author knows the two markers never co-occur.
+The model cannot reject this: a page requiring two anchors is perfectly legal and
+is exactly how a screen identified by two simultaneous markers is expressed. Only
+the author knows the two markers never co-occur.
 
 ### Fix
 
-One page per screen. Each page's `required` set holds the anchors that are
-visible **together** on that screen. Moving an anchor out is a role change to
-`None` on the old page, followed by New Page with that anchor selected.
+One page per screen. Each page's required identify rows hold the anchors that are
+visible **together** on that screen. Moving an anchor out is dropping its row from
+the old page and declaring a new page that names it.
 
-`forbidden` is for exclusivity between pages whose anchors could co-occur, not
-for grouping. It is only needed when two pages could both be candidates on one
-frame — measure before adding it (below), because a page that forbids an anchor
-it never sees costs a search per observation for nothing.
+`identify = "forbidden"` is for exclusivity between pages whose anchors could
+co-occur, not for grouping. It is only needed when two pages could both be
+candidates on one frame — measure before adding it (below), because a page that
+forbids an anchor it never sees costs a search per observation for nothing.
 
 ### Regression check
 
-In the workbench, Preview each source: every source must resolve to exactly the
-page it belongs to. Offline, the matcher can be replicated in a few lines to
-check a whole model without the GUI — both formulas are small and fixed:
+`umbra-flow check`: every screen that declares a page must have that page resolve
+on it, which is the matrix's `unresolved_page` rule. Offline, the matcher can be
+replicated in a few lines to check a whole model without running anything — the
+formulas are small and fixed:
 
 - grayscale: `gray = (77*R + 150*G + 29*B) >> 8`
-  (`modules/vision/source/vision/sad.cpp`)
-- threshold: `maxSad = (10000 - bp) * 255 * w * h / 10000`
-  (`SimilarityThreshold::maximumSad`, `modules/annotation/.../catalog.cpp`)
+  (`BgraImage::grayAt`, `modules/vision/source/vision/bgra-image.cpp`)
+- ceiling: `maximum = width * height * 255`
+  (`matchTemplateOnFrame`, `modules/vision/source/vision/template-match.cpp`)
+- threshold: an appearance is matched when
+  `score * 10000 <= maximum * (10000 - threshold)`, the basis-point test written
+  multiplied out so no division rounds it (`observe.matched`)
 
-Slide each element's template over every captured source within its
-`search_roi` and compare the minimum SAD against `maxSad`. An anchor must hit its
-own source and miss all the others. In the recorded run the cross-screen misses
-sat at 2.85x–4.15x the threshold, which settled the "do these two top-left
-anchors need `forbidden` to stay unambiguous?" question with a measurement
-instead of a guess — they did not.
+Slide each appearance's template over every captured screen within the element's
+`rect` (or the row's `rect_override`) and compare the minimum SAD against that
+threshold. An anchor must hit its own screen and miss all the others. In the
+recorded run the cross-screen misses sat at 2.85x–4.15x the threshold, which
+settled the "do these two top-left anchors need a forbidden row to stay
+unambiguous?" question with a measurement instead of a guess — they did not.
 
 ## Every step must re-resolve the page it expects to be standing on
 

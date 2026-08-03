@@ -303,38 +303,49 @@ posted messages — none of which a hand-rolled `PostMessageW` does.
 
 ### Fix
 
-Drive input through `umbra-input-agent`, which is the same delivery path the
-product uses:
+Deliver through a session the product owns. Two surfaces do it, both binding one
+target and answering every queue line on a results file: `umbra-flow drive` for
+an operator issuing single commands, `umbra-flow explore` for the annotation
+loop.
 
-```
-umbra-input-agent --hwnd 0xHWND --queue q.jsonl --results r.jsonl --output-dir DIR
-```
+> Retired 2026-08-01 with `entry/input-agent` (`a80ea07`). The
+> `umbra-input-agent` binary this entry used to prescribe — and the
+> `m0-demo input-agent` spelling before it — no longer exist, and no redirect
+> stub survives them, so a stale script fails as an unknown program rather than
+> at its first queue line.
 
-> Renamed 2026-07-31. This was `m0-demo input-agent` until the annotation
-> front-end moved out of the frozen demo into `entry/input-agent` and got its
-> own binary. The old spelling now prints where the program went and exits with
-> failure, so a stale script fails loudly rather than parsing as demo arguments.
-
-then append one JSON line per request. Coordinates are client pixels:
+`drive` carries scalars only, one JSON object per line, and its verb set is
+`cycle_open`, `cycle_close`, `key`, `settle`, `deadline`, `wait`, `quit`
+(`entry/cli/drive-protocol.cpp`). There is no `click` and no `capture`: a
+keystroke names no position, and the composing verbs that named a page retired
+with the C++ page model.
 
 ```json
-{"op":"click","x":1447,"y":247,"out_before":"b.png","out_after":"a.png","settle_ms":1500}
-{"op":"capture","out":"frame.png"}
+{"op":"cycle_open"}
+{"op":"key","cycle":1,"key":"E"}
+{"op":"settle","ms":1500}
 {"op":"quit"}
 ```
 
-The agent captures before and after each click, so the outcome is verifiable from
-the frames rather than inferred. Two operational notes: the queue and results
-files must live **outside** `--output-dir`, and the agent is long-running, so
-launch it detached (`Start-Process`) — a PowerShell `Start-Job` dies with the
-session that created it.
+A click needs a coordinate or a hit, so it lives on the exploration surface,
+whose queue line carries a Luau chunk instead
+(`{"id":"...","chunk":"..."}`, `entry/cli/explore-protocol.cpp`). Coordinates are
+client pixels:
+
+```json
+{"id":"tap-menu","chunk":"local c = ctx:cycle_open() explore.click_point(c, 1447, 247)"}
+```
+
+Two operational notes: both sessions are long-running, so launch them detached
+(`Start-Process`) — a PowerShell `Start-Job` dies with the session that created
+it — and `--results` must not already exist.
 
 ### Regression check
 
-Real-machine: queue a click on a menu entry, then match that page's anchor
-against `out_before` and `out_after`. The anchor hits before and misses after,
-which is the page having changed. A bare hand-rolled sequence with a hold
-between DOWN and UP leaves the anchor hitting both.
+Real-machine: resolve the page a menu entry belongs to, click it through the
+session, then resolve that page again on a fresh cycle. It resolves before and
+stops resolving after, which is the page having changed. A hand-rolled sequence
+with a hold between DOWN and UP leaves it resolving both times.
 
 ## A posted wheel scrolls nothing until a pointer message has been where it points
 

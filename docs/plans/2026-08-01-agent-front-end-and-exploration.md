@@ -59,3 +59,13 @@ crop 有自己的事件形状(`annotation.click_delivered` / `annotation.region_
 - probe 的统计面(沿用 v4 probe 的字段起步,fully_selected_pixels 等)
 - 探索队列的错误行格式(沿用 drive 的 JSON 行惯例)
 - input-agent 退役前,把 capture-flanked 唤醒的经验规则移植进探索通道并复验
+
+## 2026-08-03 — Why a session asks two latches
+
+The VM interrupt's three triggers reach no host call, so a break by the wall
+clock or the instruction budget latches inside `script::Engine` and nowhere the
+task layer can see. An exploration session that consulted only its own latch
+went on accepting chunks and refusing every one of them, and each refusal
+refreshed the idle clock, so the abandoned session never ended on its own.
+`ExplorationSession::terminalKind` therefore asks the context latch and
+`script::Engine::generationSpent()` in turn.
