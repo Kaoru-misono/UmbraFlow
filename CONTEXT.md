@@ -154,6 +154,24 @@ Defined in `docs/plans/2026-07-29-three-layer-task-system.md` §4 (2026-07-29);
 implemented in `modules/task/source/task/cycle-ledger.hpp`.
 _Avoid_: frame handle, cycle object, token (reserved for `std::stop_token`)
 
+**Receipt**:
+What `observe.resolve_page` hands back when a page resolved, and the thing
+`observe.click`, `observe.long_press` and `observe.walk_edge` refuse to act
+without. It is not a boolean dressed up: it names the page that resolved AND
+the ticket it resolved on, and both halves are re-checked at the acting verb,
+so a receipt earned on one frame cannot authorise a click on the next. A hit on
+a page-positioned element is worth exactly this receipt and nothing without
+one. The framework mints receipts through `evidence.mint_receipt` and keeps the
+ledger of every one it minted, which is why `evidence` is the one framework
+module NOT published to project scripts: a script that could name it could mint
+a receipt for a page nothing resolved.
+Defined in `docs/plans/2026-07-31-script-owned-page-model.md`; implemented in
+`modules/task/runtime/evidence.luau` and enforced in
+`modules/task/runtime/observe.luau`.
+_Avoid_: page token (token is reserved for `std::stop_token`), page proof,
+resolve result (all three lose the fact that it names a ticket as well as a
+page, which is the half that makes it same-frame)
+
 **Trace stream validator (`trace::TraceStreamValidator`)**:
 The state machine one run's evidence stream must pass. It exists because the
 `framework.*` events are the only ones the trusted Luau framework *requests*
