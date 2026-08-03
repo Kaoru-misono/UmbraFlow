@@ -50,6 +50,23 @@ class SafetyRuleTests(unittest.TestCase):
         )
         self.assertIn("new", check_safety.mask_non_code(source))
 
+    def test_a_spanning_delimiter_in_a_comment_does_not_hide_a_raw_allocation(
+        self,
+    ) -> None:
+        # The apostrophe above no longer falsifies the line-comment branch by
+        # itself: a character literal cannot cross a newline, so a comment
+        # apostrophe now costs its own line at most. The branch stays for the
+        # delimiters that DO span lines -- a raw-string opener named in prose
+        # pairs with the real closer under it. Remove `//[^\n]*` from
+        # NON_CODE_PATTERN and this goes red.
+        source = (
+            '    // Mirrors the R"lua( block below.\n'
+            "    return new int{7};\n"
+            '    auto script = R"lua(print(1))lua";\n'
+        )
+
+        self.assertIn("new", check_safety.mask_non_code(source))
+
     def test_digit_separators_do_not_hide_a_raw_allocation(self) -> None:
         # The same failure as the case above from the other side, and it hid
         # real violations: `1'000` is a digit separator, the character-literal
@@ -60,20 +77,34 @@ class SafetyRuleTests(unittest.TestCase):
         # the whole test. A lone separator opens a character literal that never
         # closes, so the branch does not match and nothing is hidden; a
         # violation AFTER the second separator is outside the swallowed span.
-        # The allocation has to sit BETWEEN them, which is where the thousands
-        # of swallowed lines in the real test file were. Remove the separator
-        # branch from NON_CODE_PATTERN and this goes red -- verified by hand.
-        source = (
-            "namespace uf::probe\n"
-            "{\n"
-            "    auto low = uint64{1'000};\n"
-            "    auto leak() -> int*\n"
-            "    {\n"
-            "        return new int{7};\n"
-            "    }\n"
-            "    auto high = uint64{2'000};\n"
-            "}\n"
-        )
+        # The allocation has to sit BETWEEN them, and on their line: the
+        # character-literal class excludes a raw newline, so a span reaching the
+        # second separator from another line no longer swallows anything.
+        # Remove the separator branch from NON_CODE_PATTERN and this goes red.
+        source = "auto low = uint64{1'000}; return new int{7}; auto high = 2'000;\n"
+
+        self.assertIn("new", check_safety.mask_non_code(source))
+
+    def test_u8_character_literals_do_not_hide_a_raw_allocation(self) -> None:
+        # The separator branch guards `1'000`, but the `8` of a `u8` prefix is
+        # also a hex digit, so an unguarded lookbehind eats the OPENING quote of
+        # `u8'a'`. The orphaned closing quote then opens a character literal that
+        # runs to the next apostrophe -- the same swallow as the cases above.
+        #
+        # Both literals sit on the allocation's own line because the sibling
+        # case below caps the swallow at one line. Remove `(?<![uU]8)` from
+        # NON_CODE_PATTERN and this goes red.
+        source = "constexpr auto k = u8'a'; return new int{7}; auto j = u8'b';\n"
+
+        self.assertIn("new", check_safety.mask_non_code(source))
+
+    def test_an_unpaired_apostrophe_blanks_no_more_than_its_own_line(self) -> None:
+        # A character literal cannot span a line, so the class excludes a raw
+        # newline: whatever apostrophe still escapes the branches above costs one
+        # line, not every line up to the next apostrophe. Drop the `\n` from the
+        # character-literal class and this goes red.
+        source = "auto n = count';\nreturn new int{7};\nauto m = other';\n"
+
         self.assertIn("new", check_safety.mask_non_code(source))
 
     def test_masking_still_blinds_the_rules_to_non_code(self) -> None:

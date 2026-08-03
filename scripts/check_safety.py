@@ -143,13 +143,18 @@ def mask_deleted_special_members(line: str) -> str:
 # strings' own openers. It is matched first, before the branch that would
 # misread it, and blanked like every other non-code byte because a separator
 # carries no meaning any rule below asks about.
+#
+# Its lookbehind must keep excluding the `u8` encoding prefix, whose `8` is a
+# hex digit: unguarded, the branch eats the opening quote of `u8'a'`. Excluding
+# a raw newline from the character-literal class caps any apostrophe that still
+# escapes at one line instead of the rest of the file.
 NON_CODE_PATTERN = re.compile(
     r'R"([^\s()\\]{0,16})\(.*?\)\1"'  # raw string, may contain anything
     r"|/\*.*?\*/"  # block comment
     r"|//[^\n]*"  # line comment
     r'|"(?:\\.|[^"\\])*"'  # string literal
-    r"|(?<=[0-9a-fA-F])'(?=[0-9a-fA-F])"  # digit separator, not a literal
-    r"|'(?:\\.|[^'\\])*'",  # character literal
+    r"|(?<![uU]8)(?<=[0-9a-fA-F])'(?=[0-9a-fA-F])"  # digit separator, not a literal
+    r"|'(?:\\.|[^'\\\n])*'",  # character literal, never spans a line
     re.DOTALL,
 )
 
