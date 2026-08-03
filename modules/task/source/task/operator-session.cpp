@@ -225,6 +225,42 @@ namespace uf::task
         return recordNativeCall(m_context, call, trace::NativeCallOutcome::Succeeded);
     }
 
+    auto OperatorSession::scroll(uint64 cycleOrdinal, int32 notches) -> Status
+    {
+        UF_TRY(requireLiveGeneration(m_context));
+
+        auto const call = NativeCallIdentity{
+            .verb         = "cycle_scroll",
+            .cycleOrdinal = cycleOrdinal,
+        };
+
+        auto result = m_context.cycleScroll(ticketFor(cycleOrdinal), notches);
+        if (!result)
+        {
+            recordNativeCallFailure(m_context, call, result.error());
+            return std::unexpected{std::move(result).error()};
+        }
+        return recordNativeCall(m_context, call, trace::NativeCallOutcome::Succeeded);
+    }
+
+    auto OperatorSession::movePointer(uint64 cycleOrdinal, PixelPoint point) -> Status
+    {
+        UF_TRY(requireLiveGeneration(m_context));
+
+        auto const call = NativeCallIdentity{
+            .verb         = "cycle_move_pointer",
+            .cycleOrdinal = cycleOrdinal,
+        };
+
+        auto result = m_context.cycleMovePointer(ticketFor(cycleOrdinal), point);
+        if (!result)
+        {
+            recordNativeCallFailure(m_context, call, result.error());
+            return std::unexpected{std::move(result).error()};
+        }
+        return recordNativeCall(m_context, call, trace::NativeCallOutcome::Succeeded);
+    }
+
     auto OperatorSession::settle(MonotonicInstant::Duration duration) -> Status
     {
         UF_TRY(requireLiveGeneration(m_context));

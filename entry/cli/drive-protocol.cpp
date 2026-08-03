@@ -71,6 +71,9 @@ namespace uf::cli
             std::optional<uint64>      deadline{};
             std::optional<uint64>      millis{};
             std::optional<uint64>      pollMillis{};
+            std::optional<int32>       notches{};
+            std::optional<uint32>      x{};
+            std::optional<uint32>      y{};
         };
 
         // A strict reader for the one JSON shape this protocol uses: a flat object of
@@ -326,6 +329,57 @@ namespace uf::cli
                 return value;
             }
 
+            // The only signed reader here. The sign is consumed separately from
+            // the digits so the unsigned reader above keeps saying
+            // "non-negative" and keeps meaning it.
+            [[nodiscard]]
+            auto parseSignedWholeNumber(std::string_view field) -> Result<int32>
+            {
+                auto const negative = consume('-');
+                if (auto const first = peek(); !first || !isDigit(*first))
+                {
+                    return invalidCommand(
+                        std::format(
+                            "command field {} must be a whole number, negative "
+                            "or not",
+                            field
+                        )
+                    );
+                }
+                UF_TRY_VALUE(magnitude, parseWholeNumber(field));
+
+                // Built through int64 because the most negative int32 has a
+                // magnitude no int32 can hold, so negating after the narrowing
+                // is the one order that cannot represent its own input.
+                auto const signedValue = negative
+                    ? -static_cast<int64>(magnitude)
+                    : static_cast<int64>(magnitude);
+                auto const narrowed = checkedCast<int32>(signedValue);
+                if (!narrowed)
+                {
+                    return invalidCommand(
+                        std::format("command field {} is out of range", field)
+                    );
+                }
+                return *narrowed;
+            }
+
+            // A coordinate, refused rather than wrapped when it names a pixel no
+            // target could have: PixelPoint is built from two uint32.
+            [[nodiscard]]
+            auto parsePixelExtent(std::string_view field) -> Result<uint32>
+            {
+                UF_TRY_VALUE(value, parseWholeNumber(field));
+                auto const narrowed = checkedCast<uint32>(value);
+                if (!narrowed)
+                {
+                    return invalidCommand(
+                        std::format("command field {} is out of range", field)
+                    );
+                }
+                return *narrowed;
+            }
+
             template <typename Value>
             [[nodiscard]]
             auto setOnce(
@@ -376,6 +430,21 @@ namespace uf::cli
                 {
                     UF_TRY_VALUE(value, parseWholeNumber(field));
                     return setOnce(fields.pollMillis, value, field);
+                }
+                if (field == "notches")
+                {
+                    UF_TRY_VALUE(value, parseSignedWholeNumber(field));
+                    return setOnce(fields.notches, value, field);
+                }
+                if (field == "x")
+                {
+                    UF_TRY_VALUE(value, parsePixelExtent(field));
+                    return setOnce(fields.x, value, field);
+                }
+                if (field == "y")
+                {
+                    UF_TRY_VALUE(value, parsePixelExtent(field));
+                    return setOnce(fields.y, value, field);
                 }
                 return invalidCommand(
                     std::format("command has unrecognized field \"{}\"", field)
@@ -507,6 +576,30 @@ namespace uf::cli
             return *value;
         }
 
+        // requireId for the fields whose type is not uint64. Templated rather
+        // than written twice because "the command requires this field" is one
+        // sentence, and two copies of it are two sentences that can diverge.
+        template <typename Value>
+        [[nodiscard]]
+        auto requireValue(
+            std::optional<Value> const& value,
+            std::string_view field,
+            std::string_view operation
+        ) -> Result<Value>
+        {
+            if (!value)
+            {
+                return invalidCommand(
+                    std::format(
+                        "the {} command requires field {}",
+                        operation,
+                        field
+                    )
+                );
+            }
+            return *value;
+        }
+
         // Which fields each op may carry. A field that belongs to another command is
         // refused rather than ignored: silently dropping "poll_ms" from a `key`
         // command would let an operator believe a pause it asked for happened.
@@ -517,6 +610,8 @@ namespace uf::cli
             bool deadline{false};
             bool millis{false};
             bool pollMillis{false};
+            bool notches{false};
+            bool point{false};
         };
 
         [[nodiscard]]
@@ -542,6 +637,9 @@ namespace uf::cli
             if (fields.deadline && !allowed.deadline) { return refuse("deadline"); }
             if (fields.millis && !allowed.millis) { return refuse("ms"); }
             if (fields.pollMillis && !allowed.pollMillis) { return refuse("poll_ms"); }
+            if (fields.notches && !allowed.notches) { return refuse("notches"); }
+            if (fields.x && !allowed.point) { return refuse("x"); }
+            if (fields.y && !allowed.point) { return refuse("y"); }
             return ok();
         }
 
@@ -585,6 +683,36 @@ namespace uf::cli
                 UF_TRY_VALUE(name, requireName(fields.key, "key", operation));
                 UF_TRY_VALUE(keyName, KeyName::create(name));
                 return DriveKeyCommand{.cycle = cycle, .key = keyName};
+            }
+            if (operation == "scroll")
+            {
+                UF_TRY(
+                    rejectUnusedFields(
+                        fields,
+                        FieldUse{.cycle = true, .notches = true},
+                        operation
+                    )
+                );
+                UF_TRY_VALUE(cycle, requireId(fields.cycle, "cycle", operation));
+                UF_TRY_VALUE(
+                    notches,
+                    requireValue(fields.notches, "notches", operation)
+                );
+                return DriveScrollCommand{.cycle = cycle, .notches = notches};
+            }
+            if (operation == "move")
+            {
+                UF_TRY(
+                    rejectUnusedFields(
+                        fields,
+                        FieldUse{.cycle = true, .point = true},
+                        operation
+                    )
+                );
+                UF_TRY_VALUE(cycle, requireId(fields.cycle, "cycle", operation));
+                UF_TRY_VALUE(x, requireValue(fields.x, "x", operation));
+                UF_TRY_VALUE(y, requireValue(fields.y, "y", operation));
+                return DriveMovePointerCommand{.cycle = cycle, .x = x, .y = y};
             }
             if (operation == "settle")
             {
@@ -674,6 +802,14 @@ namespace uf::cli
                 else if constexpr (std::same_as<Command, DriveKeyCommand>)
                 {
                     return "key";
+                }
+                else if constexpr (std::same_as<Command, DriveScrollCommand>)
+                {
+                    return "scroll";
+                }
+                else if constexpr (std::same_as<Command, DriveMovePointerCommand>)
+                {
+                    return "move";
                 }
                 else if constexpr (std::same_as<Command, DriveSettleCommand>)
                 {

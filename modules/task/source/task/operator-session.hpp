@@ -161,6 +161,18 @@ namespace uf::task
 
         [[nodiscard]] auto key(uint64 cycleOrdinal, KeyName keyName) -> Status;
 
+        // The wheel, which names no position for key's reason: a target scrolls
+        // whatever it believes is hovered, so where it lands is decided by the
+        // move below and not by this call.
+        [[nodiscard]] auto scroll(uint64 cycleOrdinal, int32 notches) -> Status;
+
+        // The one verb here that names a position. An operator has no click --
+        // that would need a page this front-end never resolves -- and this is
+        // not a way to get one: it presses nothing, so it activates nothing,
+        // and every gate a click takes it takes too.
+        [[nodiscard]]
+        auto movePointer(uint64 cycleOrdinal, PixelPoint point) -> Status;
+
         [[nodiscard]] auto settle(MonotonicInstant::Duration duration) -> Status;
 
         [[nodiscard]]

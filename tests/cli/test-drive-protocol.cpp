@@ -157,6 +157,86 @@ namespace uf::cli
         }
     }
 
+    TEST_CASE("the wheel and the pointer move reach an operator too")
+    {
+        // Both verbs existed on the script surface with no operator spelling, so
+        // a step a task took by hand could not be reproduced by hand -- which is
+        // the way to tell a refused delivery from one that landed and did
+        // nothing.
+        auto const scrolled = parseDriveCommand(R"({"op":"scroll","cycle":2,"notches":3})");
+        REQUIRE(scrolled.has_value());
+        CHECK(
+            std::get<DriveScrollCommand>(*scrolled)
+            == DriveScrollCommand{.cycle = 2, .notches = 3}
+        );
+
+        // The two directions are one verb, so this is the only signed field in
+        // the protocol and the reader has to take a sign at all.
+        auto const back = parseDriveCommand(R"({"op":"scroll","cycle":2,"notches":-4})");
+        REQUIRE(back.has_value());
+        CHECK(std::get<DriveScrollCommand>(*back).notches == -4);
+
+        auto const moved =
+            parseDriveCommand(R"({"op":"move","cycle":7,"x":801,"y":817})");
+        REQUIRE(moved.has_value());
+        CHECK(
+            std::get<DriveMovePointerCommand>(*moved)
+            == DriveMovePointerCommand{.cycle = 7, .x = 801, .y = 817}
+        );
+
+        CHECK(driveCommandOperation(*scrolled) == "scroll");
+        CHECK(driveCommandOperation(*moved) == "move");
+    }
+
+    TEST_CASE("the two new commands refuse what they cannot mean")
+    {
+        // A cycle orders the delivery against the observations around it, so
+        // neither verb can be spelled without one.
+        CHECK_FALSE(parseDriveCommand(R"({"op":"scroll","notches":1})").has_value());
+        CHECK_FALSE(parseDriveCommand(R"({"op":"move","x":1,"y":2})").has_value());
+
+        // A move with one coordinate is a move to nowhere, not a move along an
+        // axis.
+        CHECK_FALSE(parseDriveCommand(R"({"op":"move","cycle":1,"x":5})").has_value());
+        CHECK_FALSE(parseDriveCommand(R"({"op":"move","cycle":1,"y":5})").has_value());
+
+        // Sign is the scroll's alone: a coordinate behind the target's left edge
+        // is a mistake, and PixelPoint could not carry it anyway.
+        CHECK_FALSE(
+            parseDriveCommand(R"({"op":"move","cycle":1,"x":-5,"y":2})").has_value()
+        );
+        CHECK_FALSE(parseDriveCommand(R"({"op":"scroll","cycle":1,"notches":-})")
+                        .has_value());
+
+        // Fields belonging to another command are refused rather than dropped.
+        CHECK_FALSE(
+            parseDriveCommand(R"({"op":"scroll","cycle":1,"notches":1,"x":2})")
+                .has_value()
+        );
+        CHECK_FALSE(
+            parseDriveCommand(R"({"op":"move","cycle":1,"x":1,"y":2,"notches":1})")
+                .has_value()
+        );
+        CHECK_FALSE(parseDriveCommand(R"({"op":"key","cycle":1,"key":"A","notches":1})")
+                        .has_value());
+
+        // Out of range on both sides of the one signed field.
+        CHECK(parseDriveCommand(R"({"op":"scroll","cycle":1,"notches":-2147483648})")
+                  .has_value());
+        CHECK_FALSE(
+            parseDriveCommand(R"({"op":"scroll","cycle":1,"notches":-2147483649})")
+                .has_value()
+        );
+        CHECK_FALSE(
+            parseDriveCommand(R"({"op":"scroll","cycle":1,"notches":2147483648})")
+                .has_value()
+        );
+        CHECK_FALSE(
+            parseDriveCommand(R"({"op":"move","cycle":1,"x":4294967296,"y":0})")
+                .has_value()
+        );
+    }
+
     TEST_CASE("the retired model verbs are refused rather than silently accepted")
     {
         // Retired with the C++ page model (docs/plans/2026-07-31-script-owned-page-model.md

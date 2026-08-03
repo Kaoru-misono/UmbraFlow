@@ -210,6 +210,27 @@ namespace uf::cli
             return succeeded(operation, DriveResult{});
         }
 
+        if (auto const* p_scroll = std::get_if<DriveScrollCommand>(&command))
+        {
+            auto scrolled = session.scroll(p_scroll->cycle, p_scroll->notches);
+            if (!scrolled)
+            {
+                return refused(operation, std::move(scrolled).error());
+            }
+            return succeeded(operation, DriveResult{});
+        }
+
+        if (auto const* p_move = std::get_if<DriveMovePointerCommand>(&command))
+        {
+            auto moved =
+                session.movePointer(p_move->cycle, PixelPoint{p_move->x, p_move->y});
+            if (!moved)
+            {
+                return refused(operation, std::move(moved).error());
+            }
+            return succeeded(operation, DriveResult{});
+        }
+
         if (auto const* p_settle = std::get_if<DriveSettleCommand>(&command))
         {
             auto settled = session.settle(p_settle->duration);

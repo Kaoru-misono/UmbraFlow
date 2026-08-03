@@ -58,6 +58,32 @@ namespace uf::cli
         auto operator==(DriveKeyCommand const&) const -> bool = default;
     };
 
+    // A wheel scroll names no position either, for the same reason a keystroke
+    // does not: the target scrolls whatever it believes is hovered. `notches`
+    // is signed because the two directions are one verb, and it is the only
+    // signed field in this protocol.
+    struct DriveScrollCommand final
+    {
+        uint64 cycle{};
+        int32  notches{};
+
+        auto operator==(DriveScrollCommand const&) const -> bool = default;
+    };
+
+    // The one command here that names a screen position. It presses nothing, so
+    // it activates nothing, which is why an operator may name the coordinate
+    // directly where no click command exists to do so. It is what makes the
+    // scroll above land where it was aimed
+    // (docs/pitfalls/capture-and-target-selection.md).
+    struct DriveMovePointerCommand final
+    {
+        uint64 cycle{};
+        uint32 x{};
+        uint32 y{};
+
+        auto operator==(DriveMovePointerCommand const&) const -> bool = default;
+    };
+
     struct DriveSettleCommand final
     {
         MonotonicInstant::Duration duration{};
@@ -89,6 +115,8 @@ namespace uf::cli
         DriveCycleOpenCommand,
         DriveCycleCloseCommand,
         DriveKeyCommand,
+        DriveScrollCommand,
+        DriveMovePointerCommand,
         DriveSettleCommand,
         DriveDeadlineCommand,
         DriveWaitCommand,
