@@ -124,6 +124,14 @@
   那条仍开放。已知不对称:controller 自己会查租约年龄,所以旧观察上的滚轮会在
   投递边被拒(引擎不拒);`umbra-flow drive` 的操作者协议没有 scroll 动词。
   抓帧唤醒那条经验规则仍未移植进探索通道。
+  **滚轮的另一半在 2026-08-03 补齐**:`ctx:cycle_move_pointer(ticket, x, y)` 从
+  `controller::movePointer` 一路打通到脚本面(`IActionSink::movePointer` /
+  `EngineSession::movePointer` / `TaskContext::cycleMovePointer`)。它指名坐标,
+  所以引擎侧拿的是 clickPoint 的**整套**围栏(取消、句柄、指纹、租约、实例复验、
+  花掉观察),一条不减;而它按不下任何东西,所以按 `cycle_scroll` 的方式两个面都
+  发、`ctx` 直接转发——裸坐标的特权护的是「激活页面没授权的东西」,移动激活不了。
+  trace 加 `engine.pointer_move_delivered`(加法,schema 仍 v3),点走 `clickClient`。
+  14 突变 14 红。`umbra-flow drive` 同样没有 move 动词。
 
 - **第一条真边已走通(2026-08-01,真机)**:`walk-first-edge` 任务全程走新栈——
   l2 文件 → 图 → 栈 → 等 home → walk_edge → 回执授权点击 (1438,240) → sortie
