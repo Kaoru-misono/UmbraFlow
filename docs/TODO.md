@@ -355,8 +355,13 @@ dispatcher 一次认一页、做那一页要做的一件事,把这一局走完�
       离线活,不必等机器解锁。
 - [ ] **Unknown / StaleObservation 的 fail-closed 没有被验到**:那一局零拒绝,
       所以这两条路一次都没走过——要验得专门造一次失效观察。
-- [ ] **单轮时长已实测(12 分 10 秒),另外两条没有**:Ctrl-C 500ms 内退出未验;
-      「稳定」目前只有一次成功,连跑多局的重复性没量过。
+- [x] **Ctrl-C 500ms 内退出:已验(2026-08-03,真机 release)**。5 次测量
+      **16 / 32 / 32 / 47 / 31 ms**,均值 32 ms,十倍余量。做法是一个只花抓帧、
+      不投递任何输入的诊断任务 `chaos-daily/tasks/idle-cycles.luau`,配
+      `scratchpad/interrupt-probe.py` 用 `CTRL_BREAK_EVENT` 打断并计时——目标一个像素
+      都没动过。trace 两头完整,332–334 行。
+- [ ] **单轮时长已实测(12 分 10 秒),「稳定」还没有**:目前只有一次成功,
+      连跑多局的重复性没量过。
 
 ## Luau 代码规范(2026-08-02 测量完,一行未改)
 
@@ -584,6 +589,26 @@ the exploration session」:`while true do end` 不碰任何宿主动词,所以�
   `event_node` 只要加速控件,因为 `event_battle` 那一行正是让 `event` 成为更窄那一页的
   东西。`node_badge` 已退役,工程文件里只剩注释提到它,没有任何引用。
   证据:`umbra-flow check --project chaos-daily` **findings=0**(2026-08-03 复跑)。
+
+## 操作者的 Ctrl-C 大多被记成 `Failed` 而不是 `Cancelled`(2026-08-03 量到)
+
+- [ ] 同一个 Ctrl-C,5 次真机测量里 **4 次 `runOutcome=Failed`、1 次 `Cancelled`**,
+      差别只在哪条路先跑到。退出都很快(见上),所以这不是停机问题,是**记账问题**:
+      一个数运行结果的消费者会把操作者的中断算成任务失败。
+- 机制已查明,三段都在:
+  1. `raiseCancelled`(`ffi/uf-tables.cpp:425`)**先**置 terminal latch 为 `Cancelled`,
+     **再** `lua_pushstring(state, "uf: task cancelled")` + `lua_error`。抛出去的是一个
+     普通 Luau 字符串,不带类型。
+  2. `environment.cpp:314` 的分类器不认这个字符串,于是走兜底分支,`kind` 落成
+     `InvalidResource`,报出来是 `InvalidResource: script error: uf: task cancelled`。
+  3. latch 里那个 `Cancelled` 只在**运行自身没有失败**时才折进报告(`closeRunBracket`
+     的注释写明了这条),而此刻它正好有一个——就是上面那条脚本错误。于是
+     `TaskRunReport::outcome()` 看到的类型是 `InvalidResource`,判 `Failed`。
+     走到「放弃任务线程」那条路的那一次没有脚本错误,latch 才折得进去,于是判 `Cancelled`。
+- 要裁决的是**优先级**:宿主已经请求过取消,那么脚本展开时产生的句子还应不应该盖过它?
+  「会话自身的失败盖过 sink 的失败」这条现有规则说的是 sink,没说取消。改法有两个方向——
+  让取消的 raise 带上自己的类型(动 1),或者让 latch 里的 `Cancelled` 无条件优先(动 3)
+  ——**这是一条会长期留在仓库里的规则,和 `capture_stalled` 那条同类,等你定。**
 
 ## 一次瞬时停帧就终结一整局 task run(2026-08-03 真机遇到)
 
