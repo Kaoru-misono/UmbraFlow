@@ -741,8 +741,9 @@ function project.parse(text: string): any
                 -- A section kind this build does not know: kept as raw lines and
                 -- written back at the end of the file.
                 current   = nil
-                rawTarget = { line }
-                table.insert(document.blocks, rawTarget)
+                local block: { string } = { line }
+                rawTarget               = block
+                table.insert(document.blocks, block)
             end
         else
             local subName = string.match(body, "^%[([%w_%-%.]+)%]$")
@@ -984,7 +985,8 @@ function project.build(ctx: any, document: any): any
     for _, section in elementSections do
         local name        = requireField(section, "name")
         local appearances = {}
-        for index, appearanceSection in appearancesFor[name] or {} do
+        local ownAppearances: { any } = appearancesFor[name] or {}
+        for index, appearanceSection in ownAppearances do
             local source = requireField(appearanceSection, "source")
             appearances[index] = {
                 name      = appearanceSection.fields.name,
@@ -1035,7 +1037,8 @@ function project.build(ctx: any, document: any): any
     for _, section in pageSections do
         local name       = requireField(section, "name")
         local references = {}
-        for index, referenceSection in referencesFor[name] or {} do
+        local ownReferences: { any } = referencesFor[name] or {}
+        for index, referenceSection in ownReferences do
             local elementName = requireField(referenceSection, "element")
             local element     = elementByName[elementName]
             if element == nil then
