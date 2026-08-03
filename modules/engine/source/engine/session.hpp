@@ -28,6 +28,7 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace uf::engine
@@ -151,12 +152,9 @@ namespace uf::engine
     };
 
     // One rectangle of one frame's pixels, copied out of the observation that
-    // held them. Every other verb here hands back an answer about the frame; this
-    // one hands back the evidence, because its caller is the exploration
-    // front-end, where an agent with no model yet must be able to look at the
-    // screen (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2). The
-    // primitive above it is loaded in that environment only, never for a business
-    // script.
+    // held them; the primitive above it is loaded in the exploration
+    // environment only, never for a business script
+    // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
     //
     // The pixels are BGRA8, packed, no row padding: stride is width * 4. A Gray8
     // frame is widened rather than refused -- a capture format the caller did not
@@ -271,6 +269,69 @@ namespace uf::engine
             std::string_view verb
         ) const -> Status;
 
+        // The refusals every delivering verb opens with, in the order they
+        // outrank one another: a requested stop before the sink is touched, then
+        // the two handle gates. `verb` and `cancelMessage` name the caller so
+        // each refusal reads as that verb's own.
+        [[nodiscard]]
+        auto beginDelivery(
+            Observation const& observation,
+            std::string_view verb,
+            std::string_view cancelMessage
+        ) const -> Status;
+
+        // The input one verb that names no screen position delivers: a keystroke
+        // or a wheel count. A closed pair, so the trace field naming the verb and
+        // the sink call performing it follow from the alternative rather than
+        // from anything a caller passes alongside it.
+        using UnaimedInput = std::variant<KeyName, int32>;
+
+        [[nodiscard]]
+        static auto stampInput(
+            trace::TraceEvent event,
+            UnaimedInput input
+        ) -> trace::TraceEvent;
+
+        // The terminal line a refused delivery writes, so no verb can return a
+        // failure that leaves its frame's stream ending at
+        // engine.action_authorized. `input` is present exactly for the verbs
+        // that carry one; a coordinate verb's point is already on the
+        // authorization line above.
+        [[nodiscard]]
+        auto rejectAction(
+            FrameIdentity identity,
+            Error const& error,
+            std::optional<UnaimedInput> input
+        ) -> Status;
+
+        // Everything a coordinate-bearing verb does between its opening refusals
+        // and its own sink call: the live geometry must still be what the page
+        // model was authored against, the observation's lease must still be
+        // valid, the authorization is written, the point is carried into client
+        // space, and the bound target instance is revalidated immediately before
+        // the post. One place, because a coordinate verb short one of these
+        // gates is a second and laxer path to the same window.
+        [[nodiscard]]
+        auto authorizeCoordinate(
+            Observation const& observation,
+            PixelPoint point
+        ) -> Result<Point<ClientSpace>>;
+
+        // The delivery sequence pressKey and scroll share, which is one
+        // sequence: the opening refusals, the target-instance revalidation, the
+        // sink post, the spent handle, `deliveredKind` and the invalidation
+        // line, with every fallible step writing engine.action_rejected before
+        // it returns. It holds no fingerprint check, lease-age refusal or point
+        // transform, because neither verb names a coordinate.
+        [[nodiscard]]
+        auto deliverUnaimed(
+            Observation&& observation,
+            std::string_view verb,
+            std::string_view cancelMessage,
+            trace::TraceEventKind deliveredKind,
+            UnaimedInput input
+        ) -> Result<FrameIdentity>;
+
         // What one OCR call produced, before readText decides whether it is a
         // reading or only a trace line. The trace line carries the engine
         // identity and the duration even when no text was found, so neither can
@@ -293,6 +354,30 @@ namespace uf::engine
             std::string engineId{};
             uint64      durationMicros{};
         };
+
+        // What one timed OCR call produced, before either read maps it into its
+        // own attempt. The engine identity and the duration belong to the call
+        // rather than to the text, which is why they survive a read that found
+        // nothing.
+        struct TimedReadout final
+        {
+            ocr::Readout readout{};
+
+            std::string engineId{};
+            uint64      durationMicros{};
+        };
+
+        // The refusals and the timing both reads share. `spec` must name a
+        // rectangle, `ceilingPixels` bounds its area, and `ceilingName` is what
+        // the refusal calls that bound so the two ceilings stay distinguishable
+        // in a message.
+        [[nodiscard]]
+        auto runRead(
+            Frame const& frame,
+            ocr::ReadSpec const& spec,
+            uint64 ceilingPixels,
+            std::string_view ceilingName
+        ) const -> Result<TimedReadout>;
 
         [[nodiscard]]
         auto readTextOnFrame(
@@ -497,9 +582,7 @@ namespace uf::engine
         // the spent observation -- and NOTHING is dropped. What the relaxations in
         // pressKey and scroll rest on is that those verbs name no screen position;
         // a move names one, so every gate that asks whether a coordinate still
-        // means what it meant applies here unchanged. That the verb presses
-        // nothing shortens the list of what a mis-aimed one can do, not the list
-        // of what makes it mis-aimed.
+        // means what it meant applies here unchanged.
         //
         // It spends the observation for the reason every delivering verb does: a
         // pointer message changes what the target believes is hovered, so the

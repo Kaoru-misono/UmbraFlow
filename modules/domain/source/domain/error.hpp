@@ -26,19 +26,12 @@ namespace uf
         // comparison budget rather than deciding. It is deliberately not named
         // for a failed recognition, because a recognition that completes and
         // matches nothing is not a failure at all -- it is UnknownPage, or a
-        // nil hit, and it carries no error. Conflating the two lets a task act
-        // on a screen it never inspected, so the kind a caller reads has to say
-        // which of the two it got.
+        // nil hit, and it carries no error.
         RecognitionIncomplete,
         StaleObservation,
         // A page-scoped operation ran on an observation cycle that has resolved
         // no page. It is deliberately NOT ActionRejected, because nothing was
-        // attempted and nothing was judged: locating an element only looks, and
-        // a click refused here never reached the authorization it would have
-        // been refused by. Under one kind a script could not tell "I skipped a
-        // step" -- fix the script's ordering -- from "this page really does not
-        // authorise this element" -- fix the annotation -- and those two want
-        // opposite responses from whoever reads the failure.
+        // attempted and nothing was judged.
         PageUnresolved,
         ActionRejected,
         ControllerDisconnected,
@@ -89,8 +82,7 @@ namespace uf
     // of a trace line, the `kind` field of a Tier B error a script catches, and
     // the `uf.errors.<kind>` constant that script compares it against. It lives
     // in domain because domain owns AutomationErrorKind and is the only module
-    // both trace and task already depend on; it was two identical private copies
-    // whose comments required them to stay equal, with nothing checking that.
+    // both trace and task already depend on.
     //
     // Deliberately independent of enum reflection, so renaming the C++ enumerator
     // cannot silently change a wire format and a script's comparisons. The switch
@@ -100,13 +92,10 @@ namespace uf
     [[nodiscard]]
     auto automationErrorWireName(AutomationErrorKind kind) noexcept -> std::string_view;
 
-    // The snake_case spelling of an unwind scope outside C++. A caller reading a
-    // failure off a non-C++ surface has to make the same decision failureResponse
-    // exists for -- retry the observation, take another branch, or stop -- and
-    // naming the response directly saves it from carrying its own list of which
-    // kinds mean which. Independent of enum reflection for the same reason
-    // automationErrorWireName is, and total with no default. The returned view
-    // names a string literal, so it outlives every caller.
+    // The snake_case spelling of an unwind scope outside C++. Independent of
+    // enum reflection for the same reason automationErrorWireName is, and
+    // total with no default. The returned view names a string literal, so it
+    // outlives every caller.
     [[nodiscard]]
     auto failureResponseWireName(FailureResponse response) noexcept -> std::string_view;
 

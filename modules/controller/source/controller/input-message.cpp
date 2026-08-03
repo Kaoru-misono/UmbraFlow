@@ -54,9 +54,10 @@ namespace uf
 {
     namespace
     {
-        // VK_F1..VK_F12 are consecutive, so the printed number indexes them.
+        // VK_F1..VK_F12 are consecutive, so the number domain::functionKeyNumber
+        // returns indexes them. Which names that family holds is domain's to
+        // decide; only the code this base names is Windows knowledge.
         constexpr auto k_virtualKeyF1 = uint16{0x0070U};
-        constexpr auto k_functionKeyCount = uint32{12U};
 
         struct NamedKeyCode final
         {
@@ -120,37 +121,6 @@ namespace uf
                 return std::nullopt;
             }
             return found->virtualKey;
-        }
-
-        [[nodiscard]]
-        constexpr auto functionKeyNumber(
-            std::string_view name
-        ) noexcept -> std::optional<uint32>
-        {
-            if (!name.starts_with('F'))
-            {
-                return std::nullopt;
-            }
-            auto const digits = name.substr(1U);
-            if (digits.empty() || digits.size() > 2U || digits.front() == '0')
-            {
-                return std::nullopt;
-            }
-
-            auto number = uint32{};
-            for (auto const digit : digits)
-            {
-                if (digit < '0' || digit > '9')
-                {
-                    return std::nullopt;
-                }
-                number = (number * 10U) + static_cast<uint32>(digit - '0');
-            }
-            if (number > k_functionKeyCount)
-            {
-                return std::nullopt;
-            }
-            return number;
         }
     }
 

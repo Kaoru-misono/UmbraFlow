@@ -288,6 +288,7 @@ namespace uf::engine
             uint32                            m_clickCount{0};
             std::optional<Point<ClientSpace>> m_lastClick{};
             std::optional<ObservationLease>   m_lastLease{};
+            bool                              m_refuseClick{false};
 
             uint32                          m_keyCount{0};
             std::optional<KeyName>          m_lastKey{};
@@ -307,12 +308,28 @@ namespace uf::engine
             std::optional<ObservationLease>   m_lastMoveLease{};
 
         public:
+            // Models the window the engine's own gates cannot close: the sink
+            // accepts the post as authorized and the injection layer refuses it
+            // at delivery, where the lease is revalidated a second time.
+            void refuseClicks() noexcept
+            {
+                m_refuseClick = true;
+            }
+
             [[nodiscard]]
             auto click(
                 Point<ClientSpace> point,
                 ObservationLease const& lease
             ) -> Status override
             {
+                if (m_refuseClick)
+                {
+                    return fail(
+                        AutomationErrorKind::StaleObservation,
+                        "the observation aged out at the injection layer"
+                    );
+                }
+
                 ++m_clickCount;
                 m_lastClick = point;
                 m_lastLease = lease;
@@ -1085,6 +1102,55 @@ namespace uf::engine
         );
     }
 
+    TEST_CASE("engine session records a click the sink refused")
+    {
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+        auto under = matchingSession(fingerprint, baseConfig(fingerprint));
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+
+        // Everything the engine can check passes, and the post is refused
+        // anyway. Remove the rejection emit from clickPoint and the frame's
+        // stream ends at engine.action_authorized with no terminal line, so a
+        // reader cannot tell a refused click from a lost one.
+        under.clicks->refuseClicks();
+
+        auto const receipt = session.clickPoint(
+            std::move(*observation),
+            PixelPoint{1, 0}
+        );
+        REQUIRE_FALSE(receipt.has_value());
+        requireErrorKind(receipt.error(), AutomationErrorKind::StaleObservation);
+
+        auto const kinds = kindsOf(under.traces->events());
+        CHECK(
+            std::ranges::count(
+                kinds,
+                trace::TraceEventKind::EngineActionAuthorized
+            )
+            == 1
+        );
+        CHECK(
+            std::ranges::count(
+                kinds,
+                trace::TraceEventKind::EngineActionDelivered
+            )
+            == 0
+        );
+
+        auto const* p_rejected = findEvent(
+            under.traces->events(),
+            trace::TraceEventKind::EngineActionRejected
+        );
+        REQUIRE(p_rejected != nullptr);
+        REQUIRE(p_rejected->errorKind.has_value());
+        CHECK(*p_rejected->errorKind == AutomationErrorKind::StaleObservation);
+        CHECK(p_rejected->message.has_value());
+    }
+
     TEST_CASE("engine session revalidates the target instance before a keystroke")
     {
         auto const fingerprint = fingerprintOf(3, 1, 96);
@@ -1102,6 +1168,16 @@ namespace uf::engine
         REQUIRE_FALSE(receipt.has_value());
         requireErrorKind(receipt.error(), AutomationErrorKind::TargetUnavailable);
         CHECK(under.clicks->keyCount() == 0);
+
+        // The refusal names the key it refused: a rejected line without it says
+        // only that something was refused on this frame.
+        auto const* p_rejected = findEvent(
+            under.traces->events(),
+            trace::TraceEventKind::EngineActionRejected
+        );
+        REQUIRE(p_rejected != nullptr);
+        REQUIRE(p_rejected->key.has_value());
+        CHECK(*p_rejected->key == *key);
     }
 
     TEST_CASE("engine session delivers a keystroke and spends the observation")

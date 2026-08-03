@@ -7,6 +7,7 @@
 #include <core/safety/checked-access.hpp>
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
+#include <core/utility/variant-match.hpp>
 
 #include <domain/detection.hpp>
 #include <domain/error.hpp>
@@ -223,10 +224,12 @@ namespace uf::engine
         return ok();
     }
 
-    auto EngineSession::readTextOnFrame(
+    auto EngineSession::runRead(
         Frame const& frame,
-        PixelRect rect
-    ) const -> Result<ReadAttempt>
+        ocr::ReadSpec const& spec,
+        uint64 ceilingPixels,
+        std::string_view ceilingName
+    ) const -> Result<TimedReadout>
     {
         if (m_ocrEngine == nullptr)
         {
@@ -237,20 +240,24 @@ namespace uf::engine
             );
         }
 
+        // Both reads name the region they charge against a ceiling; a
+        // whole-image spec has no area for one to bound.
+        UF_CHECK(spec.rect.has_value());
         auto const area = checkedMultiply(
-            static_cast<uint64>(rect.width()),
-            static_cast<uint64>(rect.height())
+            static_cast<uint64>(spec.rect->width()),
+            static_cast<uint64>(spec.rect->height())
         );
-        if (!area || *area == 0U || *area > k_maximumReadPixels)
+        if (!area || *area == 0U || *area > ceilingPixels)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
-                    "a read region of {}x{} is empty or beyond the host's "
-                    "single-line read ceiling of {} pixels",
-                    rect.width(),
-                    rect.height(),
-                    k_maximumReadPixels
+                    "a read region of {}x{} is empty or beyond the host's {} "
+                    "ceiling of {} pixels",
+                    spec.rect->width(),
+                    spec.rect->height(),
+                    ceilingName,
+                    ceilingPixels
                 )
             );
         }
@@ -258,18 +265,9 @@ namespace uf::engine
         auto const started = MonotonicInstant::now();
         auto       readout = withBgraFrame(
             frame,
-            [this, rect](BgraImage const& image) -> Result<ocr::Readout>
+            [this, &spec](BgraImage const& image) -> Result<ocr::Readout>
             {
-                // SingleLine and never Block: the caller asserted the region
-                // holds one line, so running detection here would work around
-                // that contract rather than honour it.
-                return m_ocrEngine->read(
-                    image,
-                    ocr::ReadSpec{
-                        .rect   = rect,
-                        .layout = ocr::TextLayout::SingleLine,
-                    }
-                );
+                return m_ocrEngine->read(image, spec);
             }
         );
         auto const elapsed = MonotonicInstant::now().saturatingDurationSince(started);
@@ -281,15 +279,43 @@ namespace uf::engine
             return std::unexpected{std::move(readout).error()};
         }
 
-        auto attempt = ReadAttempt{
+        return TimedReadout{
+            .readout        = *std::move(readout),
             .engineId       = std::string{m_ocrEngine->identity()},
             .durationMicros = static_cast<uint64>(std::max(micros, int64{0})),
         };
-        if (!readout->lines.empty())
+    }
+
+    auto EngineSession::readTextOnFrame(
+        Frame const& frame,
+        PixelRect rect
+    ) const -> Result<ReadAttempt>
+    {
+        // SingleLine and never Block: the caller asserted the region holds one
+        // line, so running detection here would work around that contract
+        // rather than honour it.
+        UF_TRY_VALUE(
+            timed,
+            runRead(
+                frame,
+                ocr::ReadSpec{
+                    .rect   = rect,
+                    .layout = ocr::TextLayout::SingleLine,
+                },
+                k_maximumReadPixels,
+                "single-line read"
+            )
+        );
+
+        auto attempt = ReadAttempt{
+            .engineId       = std::move(timed.engineId),
+            .durationMicros = timed.durationMicros,
+        };
+        if (!timed.readout.lines.empty())
         {
             // Under SingleLine there is at most one line, and ocr's ordering is
             // a contract, so "the first" is the same line on every run.
-            auto& line   = readout->lines.front();
+            auto& line   = timed.readout.lines.front();
             attempt.line = TextReading{
                 .text         = std::move(line.text),
                 .rect         = rect,
@@ -305,63 +331,26 @@ namespace uf::engine
         uint32 maximumLines
     ) const -> Result<BlockReadAttempt>
     {
-        if (m_ocrEngine == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::UnsupportedCapability,
-                "this engine session was built without an OCR adapter, so it "
-                "cannot read text"
-            );
-        }
-
-        auto const area = checkedMultiply(
-            static_cast<uint64>(rect.width()),
-            static_cast<uint64>(rect.height())
+        UF_TRY_VALUE(
+            timed,
+            runRead(
+                frame,
+                ocr::ReadSpec{
+                    .rect         = rect,
+                    .layout       = ocr::TextLayout::Block,
+                    .maximumLines = maximumLines,
+                },
+                k_maximumBlockReadPixels,
+                "block read"
+            )
         );
-        if (!area || *area == 0U || *area > k_maximumBlockReadPixels)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "a read region of {}x{} is empty or beyond the host's "
-                    "block read ceiling of {} pixels",
-                    rect.width(),
-                    rect.height(),
-                    k_maximumBlockReadPixels
-                )
-            );
-        }
-
-        auto const started = MonotonicInstant::now();
-        auto       readout = withBgraFrame(
-            frame,
-            [this, rect, maximumLines](BgraImage const& image) -> Result<ocr::Readout>
-            {
-                return m_ocrEngine->read(
-                    image,
-                    ocr::ReadSpec{
-                        .rect         = rect,
-                        .layout       = ocr::TextLayout::Block,
-                        .maximumLines = maximumLines,
-                    }
-                );
-            }
-        );
-        auto const elapsed = MonotonicInstant::now().saturatingDurationSince(started);
-        auto const micros  = std::chrono::duration_cast<std::chrono::microseconds>(
-            elapsed
-        ).count();
-        if (!readout)
-        {
-            return std::unexpected{std::move(readout).error()};
-        }
 
         auto attempt = BlockReadAttempt{
-            .engineId       = std::string{m_ocrEngine->identity()},
-            .durationMicros = static_cast<uint64>(std::max(micros, int64{0})),
+            .engineId       = std::move(timed.engineId),
+            .durationMicros = timed.durationMicros,
         };
-        attempt.lines.reserve(readout->lines.size());
-        for (auto& line : readout->lines)
+        attempt.lines.reserve(timed.readout.lines.size());
+        for (auto& line : timed.readout.lines)
         {
             // The line's OWN rectangle -- where the frame held the text, not
             // where the caller looked -- in frame pixels per ocr::TextLine.
@@ -737,22 +726,58 @@ namespace uf::engine
         );
     }
 
-    auto EngineSession::clickPoint(
-        Observation&& observation,
-        PixelPoint point
-    ) -> Result<ActReceipt>
+    auto EngineSession::beginDelivery(
+        Observation const& observation,
+        std::string_view verb,
+        std::string_view cancelMessage
+    ) const -> Status
     {
         // Fail closed before the sink is touched: a requested stop outranks every
         // other outcome, and the handle must be this session's and unspent.
         if (m_config.cancellation.stop_requested())
         {
-            return fail(
-                AutomationErrorKind::Cancelled,
-                "cancelled before delivery"
-            );
+            return fail(AutomationErrorKind::Cancelled, std::string{cancelMessage});
         }
-        UF_TRY(ensureUsable(observation, "clickPoint"));
+        return ensureUsable(observation, verb);
+    }
 
+    auto EngineSession::stampInput(
+        trace::TraceEvent event,
+        UnaimedInput input
+    ) -> trace::TraceEvent
+    {
+        matchVariant(
+            input,
+            [&event](KeyName key) { event.key = key; },
+            [&event](int32 notches) { event.wheelNotches = notches; }
+        );
+        return event;
+    }
+
+    auto EngineSession::rejectAction(
+        FrameIdentity identity,
+        Error const& error,
+        std::optional<UnaimedInput> input
+    ) -> Status
+    {
+        auto event = identityEvent(
+            trace::TraceEventKind::EngineActionRejected,
+            identity
+        );
+        if (input)
+        {
+            event = stampInput(std::move(event), *input);
+        }
+        event.errorKind = automationErrorKind(error);
+        event.message   = std::string{error.message()};
+        return emit(event);
+    }
+
+    auto EngineSession::authorizeCoordinate(
+        Observation const& observation,
+        PixelPoint point
+    ) -> Result<Point<ClientSpace>>
+    {
         auto const identity = observation.m_frameIdentity;
 
         // What survives of the coordinate authorization now the element and page
@@ -761,16 +786,12 @@ namespace uf::engine
         // before any sink call.
         if (m_config.liveFingerprint != m_config.projectFingerprint)
         {
-            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.errorKind = AutomationErrorKind::TargetCompatibilityUnverified;
-            event.message   = std::string{
-                "live size or DPI does not match the page model's fingerprint"
-            };
-            UF_TRY(emit(event));
-            return fail(
+            auto mismatch = fail(
                 AutomationErrorKind::TargetCompatibilityUnverified,
                 "live size or DPI does not match the page model's fingerprint"
             );
+            UF_TRY(rejectAction(identity, mismatch.error(), std::nullopt));
+            return std::move(mismatch);
         }
 
         auto lease = observation.m_lease.validate(
@@ -781,10 +802,7 @@ namespace uf::engine
         );
         if (!lease)
         {
-            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.errorKind = automationErrorKind(lease.error());
-            event.message   = std::string{lease.error().message()};
-            UF_TRY(emit(event));
+            UF_TRY(rejectAction(identity, lease.error(), std::nullopt));
             return std::unexpected{std::move(lease).error()};
         }
 
@@ -796,14 +814,89 @@ namespace uf::engine
         auto revalidation = m_frameSource->validateTargetInstance();
         if (!revalidation)
         {
-            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.errorKind = automationErrorKind(revalidation.error());
-            event.message   = std::string{revalidation.error().message()};
-            UF_TRY(emit(event));
+            UF_TRY(rejectAction(identity, revalidation.error(), std::nullopt));
             return std::unexpected{std::move(revalidation).error()};
         }
 
-        UF_TRY(m_actionSink->click(clientPoint, observation.m_lease));
+        return clientPoint;
+    }
+
+    auto EngineSession::deliverUnaimed(
+        Observation&& observation,
+        std::string_view verb,
+        std::string_view cancelMessage,
+        trace::TraceEventKind deliveredKind,
+        UnaimedInput input
+    ) -> Result<FrameIdentity>
+    {
+        UF_TRY(beginDelivery(observation, verb, cancelMessage));
+
+        auto const identity = observation.m_frameIdentity;
+
+        // The whole of what replaces the coordinate authorization: the input must
+        // reach the target instance the observation came from, so a window
+        // replaced since is refused here, before any sink call.
+        auto revalidation = m_frameSource->validateTargetInstance();
+        if (!revalidation)
+        {
+            UF_TRY(rejectAction(identity, revalidation.error(), input));
+            return std::unexpected{std::move(revalidation).error()};
+        }
+
+        auto delivered = matchVariant(
+            input,
+            [this, identity](KeyName key) -> Status
+            {
+                return m_actionSink->pressKey(key, identity.targetGeneration());
+            },
+            [this, &observation](int32 notches) -> Status
+            {
+                return m_actionSink->scroll(notches, observation.m_lease);
+            }
+        );
+        if (!delivered)
+        {
+            UF_TRY(rejectAction(identity, delivered.error(), input));
+            return std::unexpected{std::move(delivered).error()};
+        }
+
+        // The input has landed, so the handle dies before any fallible emit: a
+        // retry over a surviving alias must find it dead rather than deliver
+        // twice.
+        observation.m_invalidated = true;
+
+        UF_TRY(emit(stampInput(identityEvent(deliveredKind, identity), input)));
+
+        UF_TRY(
+            emit(
+                identityEvent(
+                    trace::TraceEventKind::EngineObservationInvalidated,
+                    identity
+                )
+            )
+        );
+
+        return identity;
+    }
+
+    auto EngineSession::clickPoint(
+        Observation&& observation,
+        PixelPoint point
+    ) -> Result<ActReceipt>
+    {
+        UF_TRY(
+            beginDelivery(observation, "clickPoint", "cancelled before delivery")
+        );
+        UF_TRY_VALUE(clientPoint, authorizeCoordinate(observation, point));
+
+        auto const identity = observation.m_frameIdentity;
+
+        auto delivered = m_actionSink->click(clientPoint, observation.m_lease);
+        if (!delivered)
+        {
+            UF_TRY(rejectAction(identity, delivered.error(), std::nullopt));
+            return std::unexpected{std::move(delivered).error()};
+        }
 
         // The click has landed, so the handle dies before any fallible emit: a
         // retry over a surviving alias must find it dead rather than deliver
@@ -848,65 +941,14 @@ namespace uf::engine
         KeyName key
     ) -> Result<KeyReceipt>
     {
-        // clickPoint's fail-closed gates, in its order and for its reasons.
-        if (m_config.cancellation.stop_requested())
-        {
-            return fail(
-                AutomationErrorKind::Cancelled,
-                "cancelled before key delivery"
-            );
-        }
-        UF_TRY(ensureUsable(observation, "pressKey"));
-
-        auto const identity = observation.m_frameIdentity;
-
-        // The whole of what replaces the coordinate authorization: the keystroke
-        // must reach the target instance the observation came from, so a window
-        // replaced since is refused here, before any sink call.
-        auto revalidation = m_frameSource->validateTargetInstance();
-        if (!revalidation)
-        {
-            auto event      = identityEvent(
-                trace::TraceEventKind::EngineActionRejected,
-                identity
-            );
-            event.key       = key;
-            event.errorKind = automationErrorKind(revalidation.error());
-            event.message   = std::string{revalidation.error().message()};
-            UF_TRY(emit(event));
-            return std::unexpected{std::move(revalidation).error()};
-        }
-
-        auto delivered = m_actionSink->pressKey(key, identity.targetGeneration());
-        if (!delivered)
-        {
-            auto event      = identityEvent(
-                trace::TraceEventKind::EngineActionRejected,
-                identity
-            );
-            event.key       = key;
-            event.errorKind = automationErrorKind(delivered.error());
-            event.message   = std::string{delivered.error().message()};
-            UF_TRY(emit(event));
-            return std::unexpected{std::move(delivered).error()};
-        }
-
-        // The keystroke has landed; the handle dies for clickPoint's reason.
-        observation.m_invalidated = true;
-
-        auto keyEvent = identityEvent(
-            trace::TraceEventKind::EngineKeyDelivered,
-            identity
-        );
-        keyEvent.key = key;
-        UF_TRY(emit(keyEvent));
-
-        UF_TRY(
-            emit(
-                identityEvent(
-                    trace::TraceEventKind::EngineObservationInvalidated,
-                    identity
-                )
+        UF_TRY_VALUE(
+            identity,
+            deliverUnaimed(
+                std::move(observation),
+                "pressKey",
+                "cancelled before key delivery",
+                trace::TraceEventKind::EngineKeyDelivered,
+                UnaimedInput{key}
             )
         );
 
@@ -921,64 +963,14 @@ namespace uf::engine
         int32 notches
     ) -> Result<ScrollReceipt>
     {
-        // clickPoint's fail-closed gates, in its order and for its reasons.
-        if (m_config.cancellation.stop_requested())
-        {
-            return fail(
-                AutomationErrorKind::Cancelled,
-                "cancelled before scroll delivery"
-            );
-        }
-        UF_TRY(ensureUsable(observation, "scroll"));
-
-        auto const identity = observation.m_frameIdentity;
-
-        // pressKey's revalidation, for pressKey's reason: the wheel must reach
-        // the target instance the observation came from.
-        auto revalidation = m_frameSource->validateTargetInstance();
-        if (!revalidation)
-        {
-            auto event          = identityEvent(
-                trace::TraceEventKind::EngineActionRejected,
-                identity
-            );
-            event.wheelNotches = notches;
-            event.errorKind    = automationErrorKind(revalidation.error());
-            event.message      = std::string{revalidation.error().message()};
-            UF_TRY(emit(event));
-            return std::unexpected{std::move(revalidation).error()};
-        }
-
-        auto delivered = m_actionSink->scroll(notches, observation.m_lease);
-        if (!delivered)
-        {
-            auto event          = identityEvent(
-                trace::TraceEventKind::EngineActionRejected,
-                identity
-            );
-            event.wheelNotches = notches;
-            event.errorKind    = automationErrorKind(delivered.error());
-            event.message      = std::string{delivered.error().message()};
-            UF_TRY(emit(event));
-            return std::unexpected{std::move(delivered).error()};
-        }
-
-        // The scroll has landed; the handle dies for clickPoint's reason.
-        observation.m_invalidated = true;
-
-        auto scrollEvent         = identityEvent(
-            trace::TraceEventKind::EngineScrollDelivered,
-            identity
-        );
-        scrollEvent.wheelNotches = notches;
-        UF_TRY(emit(scrollEvent));
-
-        UF_TRY(
-            emit(
-                identityEvent(
-                    trace::TraceEventKind::EngineObservationInvalidated,
-                    identity
-                )
+        UF_TRY_VALUE(
+            identity,
+            deliverUnaimed(
+                std::move(observation),
+                "scroll",
+                "cancelled before scroll delivery",
+                trace::TraceEventKind::EngineScrollDelivered,
+                UnaimedInput{notches}
             )
         );
 
@@ -994,17 +986,13 @@ namespace uf::engine
         MonotonicInstant::Duration hold
     ) -> Result<LongPressReceipt>
     {
-        // Everything down to the delivery is clickPoint's, in its order and for
-        // its reasons. Spelled out rather than shared: a helper hiding the gate
-        // sequence is how one of the two verbs comes to be missing a gate.
-        if (m_config.cancellation.stop_requested())
-        {
-            return fail(
-                AutomationErrorKind::Cancelled,
+        UF_TRY(
+            beginDelivery(
+                observation,
+                "longPress",
                 "cancelled before long press delivery"
-            );
-        }
-        UF_TRY(ensureUsable(observation, "longPress"));
+            )
+        );
 
         // Not the ceiling -- that is the host surface's -- but the one thing about
         // a hold this layer cannot pass on: a negative duration is a receipt and a
@@ -1018,59 +1006,18 @@ namespace uf::engine
             );
         }
 
+        UF_TRY_VALUE(clientPoint, authorizeCoordinate(observation, point));
+
         auto const identity = observation.m_frameIdentity;
 
-        if (m_config.liveFingerprint != m_config.projectFingerprint)
-        {
-            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.errorKind = AutomationErrorKind::TargetCompatibilityUnverified;
-            event.message   = std::string{
-                "live size or DPI does not match the page model's fingerprint"
-            };
-            UF_TRY(emit(event));
-            return fail(
-                AutomationErrorKind::TargetCompatibilityUnverified,
-                "live size or DPI does not match the page model's fingerprint"
-            );
-        }
-
-        auto lease = observation.m_lease.validate(
-            identity.sessionId(),
-            identity.targetGeneration(),
-            identity.frameId(),
-            MonotonicInstant::now()
+        auto delivered = m_actionSink->longPress(
+            clientPoint,
+            hold,
+            observation.m_lease
         );
-        if (!lease)
-        {
-            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.errorKind = automationErrorKind(lease.error());
-            event.message   = std::string{lease.error().message()};
-            UF_TRY(emit(event));
-            return std::unexpected{std::move(lease).error()};
-        }
-
-        UF_TRY(emit(identityEvent(trace::TraceEventKind::EngineActionAuthorized, identity)));
-
-        UF_TRY_VALUE(framePoint, pixelPointToFramePoint(point));
-        auto const clientPoint = observation.m_frame.transform().frameToClient(framePoint);
-
-        auto revalidation = m_frameSource->validateTargetInstance();
-        if (!revalidation)
-        {
-            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.errorKind = automationErrorKind(revalidation.error());
-            event.message   = std::string{revalidation.error().message()};
-            UF_TRY(emit(event));
-            return std::unexpected{std::move(revalidation).error()};
-        }
-
-        auto delivered = m_actionSink->longPress(clientPoint, hold, observation.m_lease);
         if (!delivered)
         {
-            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.errorKind = automationErrorKind(delivered.error());
-            event.message   = std::string{delivered.error().message()};
-            UF_TRY(emit(event));
+            UF_TRY(rejectAction(identity, delivered.error(), std::nullopt));
             return std::unexpected{std::move(delivered).error()};
         }
 
@@ -1109,71 +1056,21 @@ namespace uf::engine
         PixelPoint point
     ) -> Result<PointerMoveReceipt>
     {
-        // clickPoint's gates, in its order and for its reasons. Spelled out for
-        // longPress's reason: a helper hiding the sequence is how one of the
-        // coordinate verbs comes to be missing a gate.
-        if (m_config.cancellation.stop_requested())
-        {
-            return fail(
-                AutomationErrorKind::Cancelled,
+        UF_TRY(
+            beginDelivery(
+                observation,
+                "movePointer",
                 "cancelled before pointer move delivery"
-            );
-        }
-        UF_TRY(ensureUsable(observation, "movePointer"));
+            )
+        );
+        UF_TRY_VALUE(clientPoint, authorizeCoordinate(observation, point));
 
         auto const identity = observation.m_frameIdentity;
-
-        if (m_config.liveFingerprint != m_config.projectFingerprint)
-        {
-            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.errorKind = AutomationErrorKind::TargetCompatibilityUnverified;
-            event.message   = std::string{
-                "live size or DPI does not match the page model's fingerprint"
-            };
-            UF_TRY(emit(event));
-            return fail(
-                AutomationErrorKind::TargetCompatibilityUnverified,
-                "live size or DPI does not match the page model's fingerprint"
-            );
-        }
-
-        auto lease = observation.m_lease.validate(
-            identity.sessionId(),
-            identity.targetGeneration(),
-            identity.frameId(),
-            MonotonicInstant::now()
-        );
-        if (!lease)
-        {
-            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.errorKind = automationErrorKind(lease.error());
-            event.message   = std::string{lease.error().message()};
-            UF_TRY(emit(event));
-            return std::unexpected{std::move(lease).error()};
-        }
-
-        UF_TRY(emit(identityEvent(trace::TraceEventKind::EngineActionAuthorized, identity)));
-
-        UF_TRY_VALUE(framePoint, pixelPointToFramePoint(point));
-        auto const clientPoint = observation.m_frame.transform().frameToClient(framePoint);
-
-        auto revalidation = m_frameSource->validateTargetInstance();
-        if (!revalidation)
-        {
-            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.errorKind = automationErrorKind(revalidation.error());
-            event.message   = std::string{revalidation.error().message()};
-            UF_TRY(emit(event));
-            return std::unexpected{std::move(revalidation).error()};
-        }
 
         auto delivered = m_actionSink->movePointer(clientPoint, observation.m_lease);
         if (!delivered)
         {
-            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.errorKind = automationErrorKind(delivered.error());
-            event.message   = std::string{delivered.error().message()};
-            UF_TRY(emit(event));
+            UF_TRY(rejectAction(identity, delivered.error(), std::nullopt));
             return std::unexpected{std::move(delivered).error()};
         }
 

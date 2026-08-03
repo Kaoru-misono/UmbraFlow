@@ -132,14 +132,9 @@ namespace uf::engine
         // Delivers one long press at `point`: the button goes down, stays down
         // for `hold`, and comes back up before this returns.
         //
-        // The port exposes this and not pointerDown/pointerUp, though the
-        // controller has had all three since D0, because a click's authorization
-        // is a statement about ONE instant and a long press is still that: press,
-        // hold and release begin and end inside this call, so nothing above ever
-        // holds a half-pressed target. A bare pointerDown would hand a caller a
-        // hold spanning many frames, and the model has no answer yet to who
-        // guarantees the matching release, what a cancel mid-hold does, or what a
-        // frame captured during one means.
+        // The port exposes this and not pointerDown/pointerUp: press, hold and
+        // release begin and end inside this call, so nothing above ever holds a
+        // half-pressed target.
         //
         // The hold is the CALLER'S with no default here or above: how long a
         // target needs a button held is a fact about that target, and a duration

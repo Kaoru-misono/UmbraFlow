@@ -6,6 +6,7 @@
 
 #include <array>
 #include <compare>
+#include <optional>
 #include <string_view>
 
 namespace uf
@@ -38,6 +39,19 @@ namespace uf
     // therefore the whole storage one name needs. key.cpp asserts that every
     // named key still fits.
     inline constexpr auto k_maxKeyNameBytes = uint8{5};
+
+    // The function-key number `name` prints, or nullopt when it is not a
+    // function key at all. A leading zero and a number outside 1..12 are both
+    // refused rather than clamped, so "F0" and "F13" name nothing and "F" stays
+    // the letter key.
+    //
+    // Exported because KeyName::create and controller::KeyInput::fromKeyName
+    // must classify this family identically. fromKeyName is total, so a name
+    // create() admits and the adapter fails to classify trips a release-active
+    // check on a keystroke the author was entitled to write; one definition
+    // leaves the two nothing to disagree about.
+    [[nodiscard]]
+    auto functionKeyNumber(std::string_view name) noexcept -> std::optional<uint32>;
 
     // One key named exactly as the target's own UI prints it: "E", "3", "F1",
     // "ENTER".

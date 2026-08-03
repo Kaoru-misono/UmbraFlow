@@ -3,11 +3,15 @@
 
 #include <core/types/integer.hpp>
 #include <domain/error.hpp>
+#include <domain/key.hpp>
 
 #include <doctest/doctest.h>
 
 #include <array>
+#include <format>
 #include <limits>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace uf
@@ -151,6 +155,52 @@ namespace uf
         );
         CHECK(down.lParam == intptr{0x011C'0001});
         CHECK(up.lParam == intptr{0xC11C'0001});
+    }
+
+    TEST_CASE("function-key names are classified once, by domain")
+    {
+        // fromKeyName is total only while it admits exactly the family
+        // KeyName::create admits. A second copy of the rule here would show up
+        // as a disagreement on one of these names long before it showed up as a
+        // UF_CHECK on an author's keystroke.
+        auto candidates = std::vector<std::string>{};
+        for (auto number = uint32{0}; number <= 20U; ++number)
+        {
+            candidates.emplace_back(std::format("F{}", number));
+            candidates.emplace_back(std::format("F0{}", number));
+        }
+        for (auto const malformed : std::array<std::string_view, 4>{
+            "F",
+            "FF",
+            "F1 ",
+            "F+",
+        })
+        {
+            candidates.emplace_back(malformed);
+        }
+
+        for (auto const& name : candidates)
+        {
+            CAPTURE(name);
+            auto const number  = functionKeyNumber(name);
+            auto const created = KeyName::create(name);
+
+            // "F" is the letter key, not a truncated function key; every other
+            // accepted candidate here is a function key.
+            CHECK(number.has_value() == (created.has_value() && name.size() > 1U));
+            if (!number.has_value())
+            {
+                continue;
+            }
+
+            // Anchored to VK_F1, so a shifted base cannot pass on internal
+            // agreement alone.
+            REQUIRE(created.has_value());
+            CHECK(
+                KeyInput::fromKeyName(*created).virtualKey()
+                == static_cast<uint16>(0x0070U + (*number - 1U))
+            );
+        }
     }
 
     TEST_CASE("pointer specs set the button mask only while down")
