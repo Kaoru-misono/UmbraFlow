@@ -229,6 +229,48 @@ namespace uf::engine
             }
         };
 
+        // Stalls its first `stalls` captures and serves a frame after that, so a
+        // test can put the retry ceiling on either side of the number of stalls
+        // and read a different answer.
+        class StallingFrameSource final : public IFrameSource
+        {
+            Frame       m_frame;
+            std::size_t m_stallsLeft;
+            std::size_t m_attempts{0};
+
+        public:
+            StallingFrameSource(Frame frame, std::size_t stalls) noexcept
+                : m_frame{std::move(frame)}
+                , m_stallsLeft{stalls}
+            {
+            }
+
+            [[nodiscard]] auto attempts() const noexcept -> std::size_t
+            {
+                return m_attempts;
+            }
+
+            [[nodiscard]]
+            auto capture(CaptureBudget const& /*budget*/) -> Result<Frame> override
+            {
+                ++m_attempts;
+                if (m_stallsLeft > 0U)
+                {
+                    --m_stallsLeft;
+                    return fail(
+                        AutomationErrorKind::CaptureStalled,
+                        "no frame composed before the stall fuse"
+                    );
+                }
+                return m_frame;
+            }
+
+            [[nodiscard]] auto validateTargetInstance() -> Status override
+            {
+                return ok();
+            }
+        };
+
         // Blocks until the deadline its budget carries, then reports the expiry
         // and keeps what it was handed. The one frame source here that HONOURS
         // its budget: every other fake returns at once, which would say nothing
@@ -1772,6 +1814,114 @@ namespace uf::engine
         REQUIRE_FALSE(observation.has_value());
         requireErrorKind(observation.error(), AutomationErrorKind::Cancelled);
         CHECK(under.clicks->clickCount() == 0);
+    }
+
+    TEST_CASE("engine session rides out a stalled capture and stops at the ceiling")
+    {
+        // A stall reads as "no frame composed this cycle", and in practice it is
+        // transient: the same stall that ended a task run mid-way came back on
+        // the next attempt in an exploration session. Riding it out is the
+        // developer's ruling of 2026-08-03; the ceiling is theirs too, because
+        // the other reading -- a window that composites nothing and never will --
+        // is equally real and must still end the session.
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+
+        auto const observeThrough = [&](std::size_t stalls)
+        {
+            struct Outcome final
+            {
+                bool        observed{};
+                std::size_t attempts{};
+                std::size_t retryLines{};
+                std::size_t lastAttemptNumber{};
+            };
+
+            auto frameSource = std::make_unique<StallingFrameSource>(
+                grayFrame(
+                    fingerprint,
+                    missingPixels(),
+                    FrameId{17},
+                    MonotonicInstant::now()
+                ),
+                stalls
+            );
+            auto* const p_source = frameSource.get();
+
+            auto traces          = std::make_unique<CollectingTraceSink>();
+            auto* const p_traces = traces.get();
+            auto recorder        = trace::TraceRecorder{
+                std::move(traces),
+                k_runId,
+                k_generationId,
+                trace::FrontEnd::Task
+            };
+
+            auto config = baseConfig(fingerprint);
+            auto under  = EngineSession::create(
+                std::move(frameSource),
+                std::make_unique<CountingActionSink>(),
+                recorder,
+                std::move(config)
+            );
+            REQUIRE(under.has_value());
+
+            auto const observation = under->observe();
+            auto result            = Outcome{
+                .observed  = observation.has_value(),
+                .attempts  = p_source->attempts(),
+            };
+            if (!observation)
+            {
+                requireErrorKind(
+                    observation.error(),
+                    AutomationErrorKind::CaptureStalled
+                );
+            }
+            for (auto const& event : p_traces->events())
+            {
+                if (event.kind == trace::TraceEventKind::EngineCaptureRetried)
+                {
+                    ++result.retryLines;
+                    REQUIRE(event.captureAttempt.has_value());
+                    result.lastAttemptNumber = *event.captureAttempt;
+                }
+            }
+            return result;
+        };
+
+        // Written with LITERALS, not with k_maximumCaptureStallRetries. Feeding
+        // the constant in as both the stall count and the expectation would move
+        // the test with any change to it and assert nothing about the value the
+        // ruling named.
+        static_assert(
+            k_maximumCaptureStallRetries == 5U,
+            "the developer's ruling of 2026-08-03 named five; changing it is a "
+            "decision, so it should be made here and not drift"
+        );
+
+        // Five stalls: the caller never learns any of them happened.
+        auto const survived = observeThrough(5U);
+        CHECK(survived.observed);
+        CHECK(survived.attempts == 6U);
+
+        // Every retry left a line, so a run that rode one out is not
+        // indistinguishable from a run that never stalled, and the last line
+        // names the attempt that was one away from ending it.
+        CHECK(survived.retryLines == 5U);
+        CHECK(survived.lastAttemptNumber == 5U);
+
+        // Six: the stall is the answer, and the attempts stop rather than
+        // continuing forever against a window that composites nothing.
+        auto const exhausted = observeThrough(6U);
+        CHECK_FALSE(exhausted.observed);
+        CHECK(exhausted.attempts == 6U);
+        CHECK(exhausted.retryLines == 5U);
+
+        // The control: with no stall at all there is one attempt and no line.
+        auto const clean = observeThrough(0U);
+        CHECK(clean.observed);
+        CHECK(clean.attempts == 1U);
+        CHECK(clean.retryLines == 0U);
     }
 
     TEST_CASE("engine session bounds a blocking capture with the configured deadline")

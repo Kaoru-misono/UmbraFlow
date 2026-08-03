@@ -408,6 +408,67 @@ namespace uf::engine
         };
     }
 
+    auto EngineSession::captureRidingOutStalls() -> Result<Frame>
+    {
+        for (auto attempt = 0U; ; ++attempt)
+        {
+            // The deadline is minted per attempt so no adapter decides for
+            // itself how long an observation may block, and the cancel source
+            // travels with it so an empty frame pool cannot swallow a stop for a
+            // whole capture. A fresh one each time because a retry sharing the
+            // deadline the last attempt exhausted is not an attempt at all. An
+            // overflowing timeout is a configuration error, not a licence to
+            // wait.
+            auto const deadline = MonotonicInstant::now().checkedAdd(
+                m_config.captureTimeout
+            );
+            if (!deadline)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "capture timeout overflows the monotonic clock"
+                );
+            }
+
+            auto captured = m_frameSource->capture(
+                IFrameSource::CaptureBudget{
+                    .deadline     = *deadline,
+                    .cancellation = m_config.cancellation,
+                }
+            );
+            if (captured)
+            {
+                return *std::move(captured);
+            }
+
+            auto error = std::move(captured).error();
+            auto const stalled =
+                automationErrorKind(error) == AutomationErrorKind::CaptureStalled;
+            if (!stalled || attempt >= k_maximumCaptureStallRetries)
+            {
+                return std::unexpected{std::move(error)};
+            }
+
+            // Asked between attempts rather than only at the top of observe(): a
+            // Ctrl-C during the retries would otherwise wait out every remaining
+            // capture timeout before anyone looked.
+            if (m_config.cancellation.stop_requested())
+            {
+                return fail(
+                    AutomationErrorKind::Cancelled,
+                    "cancelled while retrying a stalled capture"
+                );
+            }
+
+            auto event           = trace::TraceEvent{};
+            event.kind           = trace::TraceEventKind::EngineCaptureRetried;
+            event.captureAttempt = attempt + 1U;
+            event.errorKind      = AutomationErrorKind::CaptureStalled;
+            event.message        = std::string{error.message()};
+            UF_TRY(emit(event));
+        }
+    }
+
     auto EngineSession::observe() -> Result<Observation>
     {
         // Refusing here stops a cancelled run at the loop head, before a capture.
@@ -421,29 +482,7 @@ namespace uf::engine
 
         UF_TRY(m_frameSource->validateTargetInstance());
 
-        // The deadline is minted here so no adapter decides for itself how long
-        // an observation may block, and the cancel source travels with it so an
-        // empty frame pool cannot swallow a stop for a whole capture. An
-        // overflowing timeout is a configuration error, not a licence to wait.
-        auto const captureDeadline = MonotonicInstant::now().checkedAdd(
-            m_config.captureTimeout
-        );
-        if (!captureDeadline)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "capture timeout overflows the monotonic clock"
-            );
-        }
-        UF_TRY_VALUE(
-            frame,
-            m_frameSource->capture(
-                IFrameSource::CaptureBudget{
-                    .deadline     = *captureDeadline,
-                    .cancellation = m_config.cancellation,
-                }
-            )
-        );
+        UF_TRY_VALUE(frame, captureRidingOutStalls());
 
         UF_TRY_VALUE(
             lease,

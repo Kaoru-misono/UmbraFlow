@@ -87,6 +87,8 @@ namespace uf::trace
                 return "engine.long_press_delivered";
             case TraceEventKind::EnginePointerMoveDelivered:
                 return "engine.pointer_move_delivered";
+            case TraceEventKind::EngineCaptureRetried:
+                return "engine.capture_retried";
             case TraceEventKind::EngineObservationInvalidated:
                 return "engine.observation_invalidated";
             case TraceEventKind::TaskNativeCall: return "task.native_call";
@@ -733,6 +735,14 @@ namespace uf::trace
         if (event.wheelNotches.has_value())
         {
             builder.addLiteral("wheelNotches", std::format("{}", *event.wheelNotches));
+        }
+
+        if (event.captureAttempt.has_value())
+        {
+            builder.addLiteral(
+                "captureAttempt",
+                std::format("{}", *event.captureAttempt)
+            );
         }
 
         // A literal for wheelNotches' reason: a hold is a duration a reader

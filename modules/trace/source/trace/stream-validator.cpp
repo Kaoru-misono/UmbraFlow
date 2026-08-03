@@ -177,6 +177,21 @@ namespace uf::trace
         return ok();
     }
 
+    auto TraceStreamValidator::requireCaptureRetryPayload(
+        TraceEvent const& event
+    ) -> Status
+    {
+        if (!event.captureAttempt.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "engine.capture_retried carries no attempt number, which is the "
+                "whole of what it records"
+            );
+        }
+        return ok();
+    }
+
     auto TraceStreamValidator::requireLongPressPayload(
         TraceEvent const& event
     ) -> Status
@@ -299,6 +314,9 @@ namespace uf::trace
             // Host-authored, so the run bracket is the only structural rule that
             // binds it -- but the delta is the whole of what it records.
             return requireScrollPayload(event);
+
+        case TraceEventKind::EngineCaptureRetried:
+            return requireCaptureRetryPayload(event);
 
         case TraceEventKind::EngineLongPressDelivered:
             // Host-authored, and admitted on EVERY stream including the exploration

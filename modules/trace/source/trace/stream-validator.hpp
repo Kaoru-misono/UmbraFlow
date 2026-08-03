@@ -96,6 +96,12 @@ namespace uf::trace
         [[nodiscard]]
         static auto requireScrollPayload(TraceEvent const& event) -> Status;
 
+        // And for engine.capture_retried, whose whole content is which attempt
+        // it is: a line without it says a stall happened and not how near the
+        // run came to ending on it.
+        [[nodiscard]]
+        static auto requireCaptureRetryPayload(TraceEvent const& event) -> Status;
+
         // Both halves are required for engine.long_press_delivered: the point says
         // where the button went down, and the hold is what makes it a long press
         // rather than the click at the same coordinate.

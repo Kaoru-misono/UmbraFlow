@@ -111,6 +111,13 @@ namespace uf::trace
         EnginePointerMoveDelivered,
 
         EngineObservationInvalidated,
+
+        // One capture that stalled and is being attempted again. Additive, and
+        // its own kind rather than a rejection line: a stall the engine rode out
+        // did not fail the run, and a reader counting failures must not have to
+        // subtract the ones that were survived. A run with no such line stalled
+        // never; a run with five of them was one attempt from ending.
+        EngineCaptureRetried,
         TaskNativeCall,
         FrameworkStepStarted,
         FrameworkStepFinished,
@@ -377,6 +384,13 @@ namespace uf::trace
         // the operator and negative toward them. That event's whole content for
         // `key`'s reason: a scroll names no coordinate the verb chose.
         std::optional<int32> wheelNotches{};
+
+        // Which attempt one engine.capture_retried is retrying, counted from the
+        // first that stalled. That event's whole content: the frame it wanted
+        // does not exist, so there is no FrameIdentity to join it on, and the
+        // number against the ceiling is what says how close the run came to
+        // ending.
+        std::optional<uint64> captureAttempt{};
 
         // How long one engine.long_press_delivered held the button down, in whole
         // milliseconds -- half of what that event records, the point being the

@@ -65,6 +65,21 @@ namespace uf::engine
         std::chrono::seconds{2}
     };
 
+    // How many times observe() attempts a capture again after one stalled. A
+    // stall is transient in practice -- the same frame that stalled a task run
+    // came back on the next attempt in an exploration session -- so treating the
+    // first one as the end of the generation ended a run that had already
+    // delivered 57 actions (docs/TODO.md, 2026-08-03). Riding it out is the
+    // developer's ruling of the same date.
+    //
+    // Bounded because the other reading of a stall is real: a window that was
+    // minimized or destroyed composites nothing and never will, and a session
+    // that retried forever would sit on a capture device saying nothing. Five is
+    // the ceiling the ruling named. Every attempt carries its own capture
+    // deadline, so the worst case is six times k_defaultCaptureTimeout spent
+    // before the stall is reported -- which is why the count is small.
+    inline constexpr auto k_maximumCaptureStallRetries = 5U;
+
     // The read-only configuration a session captures once at construction. A
     // transport aggregate: build it with designated initializers. The live
     // fingerprint has no default state and must be supplied at every site.
@@ -331,6 +346,15 @@ namespace uf::engine
             trace::TraceEventKind deliveredKind,
             UnaimedInput input
         ) -> Result<FrameIdentity>;
+
+        // One frame, with a stall ridden out up to k_maximumCaptureStallRetries
+        // times. It lives here rather than in observe() because a caller of
+        // observe() must not be able to see a stall it did not survive: either a
+        // frame comes back, or the stall is the answer and the retries are spent.
+        // Every retry writes an engine.capture_retried line, so a run that rode
+        // one out is not indistinguishable from a run that never stalled.
+        [[nodiscard]]
+        auto captureRidingOutStalls() -> Result<Frame>;
 
         // What one OCR call produced, before readText decides whether it is a
         // reading or only a trace line. The trace line carries the engine
