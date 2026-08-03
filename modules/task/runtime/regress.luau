@@ -389,6 +389,72 @@ end
 -- The one finding that is not about a cell: the screen said which page it is,
 -- and that page did not resolve on its own pixels. It names a page and carries no
 -- collision, so it shares only `kind` and `detail` with `pushFinding`.
+-- Every rectangle any page can be clicked at: a reference's own override where
+-- it has one, otherwise the element's. Read for the wake point's sake, so the
+-- question "does a click here press anything" is answered against the model
+-- rather than against an author's promise.
+local function clickableRects(built: any): { { rect: any, page: string, element: string } }
+    local found: { { rect: any, page: string, element: string } } = {}
+    for _, page in built.pages do
+        for _, reference in page.references do
+            if reference.exercised.interact then
+                local rect = reference.rect_override or reference.element.rect
+                if rect ~= nil then
+                    table.insert(found, {
+                        rect    = rect,
+                        page    = page.name,
+                        element = reference.element.name,
+                    })
+                end
+            end
+        end
+    end
+    return found
+end
+
+-- The wake point must land where a click presses nothing. Checked here because
+-- this is the only place that reads the whole model at once, and because the
+-- claim is about the FILE rather than about any one screen -- which is why the
+-- finding names no screen.
+--
+-- It is the entire safety argument for waking a target no page can be
+-- recognised on: the authorisation a click normally carries is a resolved page,
+-- and a wake has none, so what stands in for it is that the coordinate provably
+-- does nothing on every page this model knows. A project that declares no wake
+-- point is not checked and cannot wake -- which is the honest pair.
+local function checkWakePoint(built: any, verdict: Verdict)
+    local point = built.wake_point
+    if point == nil then
+        return
+    end
+    for _, entry in clickableRects(built) do
+        local rect = entry.rect
+        if
+            point.x >= rect.x
+            and point.x < rect.x + rect.width
+            and point.y >= rect.y
+            and point.y < rect.y + rect.height
+        then
+            verdict.accepted = false
+            table.insert(verdict.findings, {
+                kind    = "wake_point_presses_something",
+                screen  = "",
+                page    = entry.page,
+                element = entry.element,
+                detail  = "the wake point ("
+                    .. tostring(point.x)
+                    .. ", "
+                    .. tostring(point.y)
+                    .. ") is inside the rectangle page '"
+                    .. entry.page
+                    .. "' clicks element '"
+                    .. entry.element
+                    .. "' at, so waking the target would press it",
+            })
+        end
+    end
+end
+
 local function pushPageFinding(
     findings: { Finding },
     screen: string,
@@ -1006,6 +1072,10 @@ function regress.check(ctx: any, built: any): Verdict
         unclaimed   = 0,
         matches     = 0,
     }
+
+    -- Before any screen is opened: it costs no capture, and a project whose
+    -- wake point presses a button is wrong whatever its pixels say.
+    checkWakePoint(built, verdict)
 
     local screens = oracle.Claims.screens_in_frame_order(built.claims)
     verdict.screens = #screens

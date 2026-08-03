@@ -1317,4 +1317,72 @@ function observe.walk_edge(
     return table.freeze({ outcome = "interrupted", page = nil })
 end
 
+-- observe.wake(ctx, ticket, built) -> boolean
+--
+-- Pokes the project's declared wake point, and only when NOTHING this model
+-- knows is on screen. Answers whether it delivered.
+--
+-- The target this was written for hides every control after a few idle seconds
+-- and draws only its wallpaper. Nothing resolves, so a task cannot click; and
+-- waking it needs a click, because a pointer move and a keystroke were both
+-- measured doing nothing (docs/TODO.md, 2026-08-03). That is a closed loop a
+-- run cannot leave on its own.
+--
+-- What stands in for the receipt a click normally carries is TWO facts, both on
+-- the frame the poke is delivered to:
+--
+--   * No page in this model resolved on `ticket`. Asked here rather than taken
+--     from the caller, so the authorisation is computed on the same frame it
+--     authorises -- the same discipline as a receipt, inverted. If any page
+--     resolves, this refuses and names it: the screen is legible, so the caller
+--     has an ordinary path and does not need this one.
+--   * The coordinate presses nothing. That is the file's claim and `regress`
+--     is what checks it, by refusing a wake point inside any rectangle any
+--     page clicks an element at. A project with no wake point cannot wake.
+--
+-- The delivery goes through `native` rather than `ctx` for observe.click's
+-- reason: a forward on `ctx` would be a bare click every business task could
+-- call, skipping both facts above.
+--
+-- Wrapped in a step so the poke is labelled in the trace. A bare coordinate
+-- click is otherwise indistinguishable from any other, and "the automation
+-- clicked somewhere no page authorised" is exactly the line a reader must be
+-- able to find.
+function observe.wake(ctx: any, ticket: any, built: any): boolean
+    requireCtx(ctx, "observe.wake")
+    if type(built) ~= "table" or type(built.pages) ~= "table" then
+        error("observe.wake needs the model project.load_project returned", 2)
+    end
+    local point = built.wake_point
+    if point == nil then
+        error(
+            "this project declares no wake_point, so there is no coordinate "
+                .. "known to press nothing; add one and let the falsification "
+                .. "matrix check it",
+            2
+        )
+    end
+
+    for index = 1, #built.pages do
+        local page = built.pages[index]
+        local receipt = observe.resolve_page(ctx, ticket, page)
+        if receipt ~= nil then
+            return false
+        end
+    end
+
+    if native == nil then
+        error(
+            "observe.wake needs the host's private surface to deliver a poke; "
+                .. "this VM has no bound session",
+            2
+        )
+    end
+
+    ctx:step("wake", function()
+        native.cycle_click_point(ticket, point.x, point.y)
+    end)
+    return true
+end
+
 return observe

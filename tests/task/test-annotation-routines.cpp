@@ -135,9 +135,14 @@ namespace uf::task
         // A project holding one screen, one element and one claim, so a case has
         // something to ADD to rather than something to invent whole. The existing
         // element is the anchor grey; the agent authors a second one.
+        // `clickable` gives the anchor the interact capability and a page row
+        // that exercises it, which is what makes the project have a rectangle a
+        // click can press at all. Off by default because every other test here
+        // is about identify.
         auto seedProject(
             std::filesystem::path const& root,
-            std::string const& screenHash
+            std::string const& screenHash,
+            bool clickable = false
         ) -> void
         {
             auto const anchor = encodedTemplate(k_targetAnchorGray);
@@ -151,7 +156,9 @@ namespace uf::task
                 + "\n"
                 + "[[element]]\n"
                 + "name = \"anchor\"\n"
-                + "capabilities = [\"identify\"]\n"
+                + (clickable
+                       ? "capabilities = [\"identify\", \"interact\"]\n"
+                       : "capabilities = [\"identify\"]\n")
                 + "rect = [0, 0, 1, 1]\n"
                 + "\n"
                 + "[[appearance]]\n"
@@ -166,7 +173,9 @@ namespace uf::task
                 + "page = \"home\"\n"
                 + "element = \"anchor\"\n"
                 + "holding = \"owned\"\n"
-                + "exercised = [\"identify\"]\n"
+                + (clickable
+                       ? "exercised = [\"identify\", \"interact\"]\n"
+                       : "exercised = [\"identify\"]\n")
                 + "identify = \"required\"\n"
                 + "\n"
                 + "[[screen]]\n"
@@ -471,6 +480,101 @@ namespace uf::task
             auto const verified = runExploration(reloaded, verify);
             REQUIRE(verified.has_value());
             CHECK(*verified == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("A wake point survives the file and is refused where it presses")
+        {
+            // Waking a target no page can be recognised on is the one delivery
+            // with no receipt behind it, so what stands in for the receipt is
+            // that the coordinate provably does nothing. This is where "provably"
+            // is made good: the claim is data in the file, and the matrix is what
+            // contradicts it.
+            auto const directory  = TemporaryDirectory{"uf-wake-point"};
+            auto const screenHash = seedScreen(directory.path());
+            seedProject(directory.path(), screenHash, true);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            // The seeded project's one clickable rectangle is the anchor at
+            // [0, 0, 1, 1], so (0, 0) presses it and (40, 40) does not. Written
+            // as literals: deriving them from the model would move the test with
+            // any change to the fixture and assert nothing about either verdict.
+            constexpr std::string_view exercise = R"lua(
+                local built = project.load_project(ctx)
+
+                -- A project that declares none is not checked, and cannot wake.
+                if built.wake_point ~= nil then return -1 end
+                -- Opened outside the pcall and closed after it: a raise between
+                -- the open and the close would strand the cycle, and a
+                -- generation holds at most one.
+                local ticket = ctx:cycle_open()
+                local ok = pcall(observe.wake, ctx, ticket, built)
+                ctx:cycle_close(ticket)
+                if ok then return -2 end
+
+                -- Authored onto the model and written back out. The file is the
+                -- only place it can live: a wake point supplied per invocation
+                -- would be neither reviewable nor checkable.
+                local safe = table.clone(built)
+                safe.wake_point = { x = 40, y = 40 }
+                ctx:project_write(project.file_name, project.encode(safe))
+
+                local reloaded = project.load_project(ctx)
+                if reloaded.wake_point == nil then return -3 end
+                if reloaded.wake_point.x ~= 40 then return -4 end
+                if reloaded.wake_point.y ~= 40 then return -5 end
+
+                -- Canonical bytes round-trip, so the new key does not make every
+                -- later save a diff.
+                if project.encode(reloaded) ~= ctx:project_read(project.file_name) then
+                    return -6
+                end
+
+                -- The other half of the safety argument, and the one a project
+                -- file cannot state: a wake is refused whenever the screen is
+                -- legible, because then the caller has an ordinary path and a
+                -- poke would be a click nothing authorised. The seeded frame
+                -- carries the anchor, so `home` resolves.
+                local live = ctx:cycle_open()
+                local delivered = observe.wake(ctx, live, reloaded)
+                ctx:cycle_close(live)
+                if delivered then return -12 end
+
+                -- Off every clickable rectangle: the matrix has nothing to say.
+                local clean = regress.check(ctx, reloaded)
+                for _, finding in clean.findings do
+                    if finding.kind == "wake_point_presses_something" then
+                        return -7
+                    end
+                end
+
+                -- On top of the one element a page clicks: refused, by name.
+                local pressing = table.clone(reloaded)
+                pressing.wake_point = { x = 0, y = 0 }
+                local verdict = regress.check(ctx, pressing)
+                if verdict.accepted then return -8 end
+
+                local named = false
+                for _, finding in verdict.findings do
+                    if finding.kind == "wake_point_presses_something" then
+                        named = true
+                        if finding.element ~= "anchor" then return -9 end
+                        if finding.page ~= "home" then return -10 end
+                    end
+                end
+                if not named then return -11 end
+                return 1
+            )lua";
+
+            auto const result = runExploration(context, exercise);
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
         }
 
         TEST_CASE("An authoring routine states no threshold of its own")

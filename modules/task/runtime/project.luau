@@ -149,6 +149,16 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
 -- chunk's exported types.
 export type Model = {
     schema: string,
+
+    -- Where to poke a target that has stopped drawing anything this model can
+    -- recognise, in target pixels, or nil when the project declares none. It is
+    -- NOT a control: the whole point is a spot where a click does nothing even
+    -- when the interface is fully drawn, so that waking a target and pressing
+    -- one of its buttons cannot be the same act. `regress` refuses a project
+    -- whose wake point lands inside any rectangle any page references, which is
+    -- what makes "does nothing" a checked claim rather than an author's promise.
+    wake_point: { x: number, y: number }?,
+
     elements: { any },
     element_by_name: { [string]: any },
     pages: { any },
@@ -304,6 +314,16 @@ function project.encode(built: any): string
 
     local lines: { string } = {}
     table.insert(lines, "schema = " .. renderString(k_schema))
+    if built.wake_point ~= nil then
+        table.insert(
+            lines,
+            "wake_point = "
+                .. renderValue(
+                    { built.wake_point.x, built.wake_point.y },
+                    "wake_point"
+                )
+        )
+    end
     if built.residual ~= nil then
         pushResidual(lines, built.residual.preamble or {})
     end
@@ -702,10 +722,11 @@ function project.parse(text: string): any
     end
 
     local document = {
-        schema   = nil :: string?,
-        sections = {} :: { any },
-        preamble = {} :: { string },
-        blocks   = {} :: { { string } },
+        schema     = nil :: string?,
+        wake_point = nil :: any,
+        sections   = {} :: { any },
+        preamble   = {} :: { string },
+        blocks     = {} :: { { string } },
     }
 
     local current: any        = nil
@@ -784,6 +805,8 @@ function project.parse(text: string): any
                 elseif current == nil then
                     if key == "schema" then
                         document.schema = value
+                    elseif key == "wake_point" then
+                        document.wake_point = value
                     else
                         table.insert(document.preamble, line)
                     end
@@ -857,6 +880,25 @@ local function rectOf(section: any, key: string, value: any): any
         width  = value[3],
         height = value[4],
     }
+end
+
+-- The wake point the preamble declared, or nil when it declared none. The shape
+-- is checked here rather than at the point of use, because by the time a run is
+-- lost enough to need it, the file is not what anyone is looking at.
+local function wakePointOf(value: any): any
+    if value == nil then
+        return nil
+    end
+    if type(value) ~= "table" or #value ~= 2 then
+        error("this project's wake_point must be [x, y]", 0)
+    end
+    if not mint.whole_number(value[1]) or not mint.whole_number(value[2]) then
+        error("this project's wake_point must be two whole numbers of pixels", 0)
+    end
+    if value[1] < 0 or value[2] < 0 then
+        error("this project's wake_point must be inside the target", 0)
+    end
+    return table.freeze({ x = value[1], y = value[2] })
 end
 
 -- The colour key an appearance section wrote, or nil when it wrote none. Only
@@ -1250,6 +1292,7 @@ function project.build(ctx: any, document: any): any
 
     return {
         schema          = document.schema,
+        wake_point      = wakePointOf(document.wake_point),
         elements        = elements,
         element_by_name = elementByName,
         pages           = pages,
