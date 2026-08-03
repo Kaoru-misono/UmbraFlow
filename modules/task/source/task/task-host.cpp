@@ -530,6 +530,26 @@ namespace uf::task
                     ).error();
                 }
             }
+            else if (context.terminalKind() == AutomationErrorKind::Cancelled)
+            {
+                // A cancellation OUTRANKS the sentence its own unwinding
+                // produced. Cancelling raises a plain Tier C sentinel rather
+                // than a kinded carrier, deliberately, so that ctx:try re-raises
+                // it unchanged -- which means the failure sitting here is
+                // whatever the script layer made of that sentinel, and it
+                // arrives as InvalidResource. Measured on the real machine: five
+                // interrupts, four reported Failed and one Cancelled, the
+                // difference being only whether the script unwound before the
+                // host abandoned its thread (docs/TODO.md, 2026-08-03).
+                //
+                // The kind is corrected and the message is kept: the operator
+                // asked for this ending, so it is not a failure, but what
+                // actually unwound is still the useful detail.
+                outcome.run.failure = fail(
+                    AutomationErrorKind::Cancelled,
+                    std::string{outcome.run.failure->message()}
+                ).error();
+            }
             if (!outcome.run.failure)
             {
                 auto scopes = recorder->requireScopesClosed();

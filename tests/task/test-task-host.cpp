@@ -1050,6 +1050,47 @@ exercised = ["interact"]
         CHECK(lines.back().contains(R"("runOutcome":"Cancelled")"));
     }
 
+    TEST_CASE("a cancellation outranks the sentence its own unwinding produced")
+    {
+        // The sibling of the case above, and the one that was wrong. There the
+        // script SWALLOWED the cancel and the latch was the only verdict; here it
+        // does not, so the raise unwinds the chunk and the run arrives carrying a
+        // failure of its own. That failure is not a kinded carrier -- cancelling
+        // raises a plain Tier C sentinel on purpose, so ctx:try re-raises it
+        // unchanged -- so it reached the report as InvalidResource and the run was
+        // called Failed. Measured on the real machine: five interrupts, four
+        // Failed and one Cancelled, the difference being only whether the script
+        // unwound before the host abandoned its thread.
+        auto const temp = TemporaryDir{"unswallowed-terminal"};
+        publishProject(temp.path(), "unswallowed", "ctx:cycle_open()\nreturn 1\n");
+
+        auto host             = TaskHost{};
+        auto const generation = host.loadProject(temp.path());
+        REQUIRE(generation.has_value());
+
+        auto config        = runConfig(temp.path() / "unswallowed.jsonl");
+        config.frameSource =
+            std::make_unique<CancelOnceFrameSource>(sourceFrame(FrameId{93}));
+
+        auto const report =
+            host.startTask(*generation, "unswallowed", std::move(config));
+        REQUIRE(report.has_value());
+        CHECK(report->outcome() == TaskRunOutcome::Cancelled);
+        REQUIRE(report->failure.has_value());
+        CHECK(
+            automationErrorKind(*report->failure) == AutomationErrorKind::Cancelled
+        );
+
+        // The kind is corrected and the sentence is kept: an operator asked for
+        // this ending, so it is not a failure, but what actually unwound is still
+        // the useful half.
+        CHECK(std::string{report->failure->message()}.contains("cancelled"));
+
+        auto const lines = traceLines(temp.path() / "unswallowed.jsonl");
+        REQUIRE_FALSE(lines.empty());
+        CHECK(lines.back().contains(R"("runOutcome":"Cancelled")"));
+    }
+
     TEST_CASE("TaskHost rejects a missing task before opening a trace file")
     {
         auto const temp = TemporaryDir{"missing-task"};
