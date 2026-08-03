@@ -336,10 +336,15 @@ dispatcher 一次认一页、做那一页要做的一件事,把这一局走完�
 都在 [`plans/2026-08-02-luau-coding-standard.md`](plans/2026-08-02-luau-coding-standard.md)。
 下面三条是量出来的**缺陷**,不是风格问题,单独列出来等批准:
 
-- [ ] **`observe.luau:285` 的错误层级是错的(活 bug)**——`requireCtx` 抛 level 2,却被
+- [x] **`observe.luau` 的错误层级**(2026-08-03 修复)。`requireCtx` 原本抛 level 2,却被
   这个文件里 7 个公开 verb 调用,于是报错指向 framework 自己的源码而不是工程脚本里
-  真正传错的那行。同文件四十余行之后的 `readTarget`(330)用的是 3,注释写的正是前者
-  违反的规则。全仓库没有任何测试断言过 error level。
+  真正传错的那行;同文件的 `readTarget` 用的是 3,注释写的正是前者违反的规则。现在
+  `requireCtx` 抛 3(一个助手的栈是 调用者 → 公开 verb → 这里)。
+- [x] **error level 现在有测试**(2026-08-03)。`tests/task/test-framework-surface.cpp`
+  「a misused verb names the script's line, not the framework's」:四个公开 verb 各用坏
+  ctx 调一次,断言报错位置指向 chunk 自己而不是做检查的 framework 模块。证伪:把
+  `requireCtx` 改回 level 2、重编、立刻红(返回 -1,即第一个 verb 的位置已经不指向
+  调用方),改回 3 立刻绿,`observe.luau` 按字节还原(md5 复核)。
 - [x] **整套不可变约定从未被证伪**(2026-08-03 补上)。
   `tests/task/test-script-owned-model.cpp` 新增用例 "Every value the framework hands
   a script refuses a write":28 行数据,每行取 framework 交给工程脚本的一个值,先写一个

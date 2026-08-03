@@ -298,6 +298,46 @@ namespace uf::task
             CHECK(built.clicks->clickCount() == 0);
         }
 
+        TEST_CASE("a misused verb names the script's line, not the framework's")
+        {
+            auto built = buildUnbound();
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            // What a raise POINTS AT is part of the framework's contract: an
+            // author reading "observe.luau:223" goes looking in code they cannot
+            // edit, while their own mistake is the line that called the verb. A
+            // helper is two frames down -- caller, public verb, check -- so its
+            // level is 3, and nothing but this asserts that. Every public verb in
+            // observe.luau routes its ctx check through the one helper, so the
+            // four here stand for all of them.
+            constexpr std::string_view source = R"lua(
+                local verbs = {
+                    function() observe.find(nil, nil, nil, nil) end,
+                    function() observe.read_element(nil, nil, nil, nil) end,
+                    function() observe.read_lines(nil, nil, nil, nil) end,
+                    function() observe.resolve_page(nil, nil, nil) end,
+                }
+                for index, call in verbs do
+                    local ok, err = pcall(call)
+                    if ok then return 0 end
+                    if type(err) ~= 'string' then return 0 end
+                    if string.find(err, 'needs the ctx', 1, true) == nil then
+                        return 0
+                    end
+                    -- The position Luau prefixes names the chunk this test runs
+                    -- as. At level 2 it names the framework module that did the
+                    -- checking, and the verb's index says which one lost it.
+                    if string.find(err, 'framework-surface', 1, true) == nil then
+                        return -index
+                    end
+                end
+                return 1
+            )lua";
+
+            CHECK(runOnFakeSurface(context, built, source) == doctest::Approx(1.0));
+        }
+
         TEST_CASE("a delivered input consumes the cycle and the framework does not close it")
         {
             auto built = buildUnbound();
