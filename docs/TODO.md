@@ -80,9 +80,10 @@
   会在触发帧重解析出发页——浮层压着时走不了被盖页的边,出路是先 pop 或按 §四之二.6
   拆页(声明处有记)。跨边界成本实测 ~723µs/格,其中 ~650µs 是每调用固定开销
   (trace 两行 + 逐行 flush + 指纹检查),批量原语按 §十.5 只记不做。
-  - [ ] **遗留文档账,已复核过一半(2026-08-03)**:CONTEXT.md 现在认识 `oracle` 与
-        `regress`(196 / 230 / 299 行),但**一处都没提回执**(`receipt`,grep 零命中)
-        ——而同帧页面证据正是靠它执法,`observe.click` 与 `walk_edge` 都要。
+  - [x] **遗留文档账已还清(2026-08-03)**:CONTEXT.md 认识 `oracle` 与 `regress`,
+        当天补上了缺的那一条——**回执**,它名的是一张页 AND 一张票据,后半截才是让
+        同帧成立的那一半;`evidence` 是唯一不发布给工程脚本的框架模块,正是因为它是
+        铸造回执的账本。
 - **工单 4a — 旧动词退役。已完成(2026-08-01,`73c7c6f`)。**
   `cycle_page` / `cycle_find` / `wait_for_page` / `CapabilitySurface`(含 `uf.elements`、
   `uf.pages`)/ engine 的 `resolvePage`、`findAction`、`act` 与 catalog 点击路径全部退役;
