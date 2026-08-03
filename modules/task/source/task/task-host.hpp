@@ -38,11 +38,8 @@ namespace uf::task
     // be the same length by construction.
     inline constexpr auto k_defaultMaxScriptRuntime = script::k_defaultMaxRuntime;
 
-    // Defined in task/operator-session.hpp; forward-declared so this header does
-    // not depend on one that depends on it.
-    class OperatorSession;
-
-    // Defined in task/exploration-session.hpp, for OperatorSession's reason.
+    // Defined in task/exploration-session.hpp; forward-declared so this header
+    // does not depend on one that depends on it.
     class ExplorationSession;
 
     // The event stream a resident host subscribes to. Deliberately declared and
@@ -121,7 +118,7 @@ namespace uf::task
         // There is no page-wait budget here: how long a task waits for a page and
         // how often it re-observes are decided in Luau, where the wait loop lives.
 
-        // Where this run's umbraflow-trace/v3 stream is written. One run writes
+        // Where this run's umbraflow-trace/v4 stream is written. One run writes
         // one file; it is opened only after the task has loaded and validated, so
         // a misspelled task name leaves no evidence file behind.
         std::filesystem::path tracePath{};
@@ -341,44 +338,24 @@ namespace uf::task
             TaskRunConfig config
         ) -> Result<FrameworkRoutineReport>;
 
-        // Binds `generation`'s project to an operator front-end and hands back the
-        // session it drives. The operator is a SIBLING consumer of the same
-        // private capability surface a task's Luau framework consumes, never a
-        // route into Luau; see task/operator-session.hpp.
+        // Binds `generation`'s project to the agent front-end and hands back the
+        // session it drives. It owns a Luau VM, booted with the wider private
+        // surface and the two extra published modules, and runs one
+        // agent-supplied chunk per call (task/exploration-session.hpp).
         //
         // This is where the front-end mutual exclusion is enforced rather than
-        // documented. A generation holds the single-open-cycle ledger, so a task's
-        // wait loop and an operator's commands driving one generation would each
-        // believe they owned the one open cycle. The first of startTask and
-        // startOperatorSession to reach a generation LATCHES that generation's
-        // front-end, and the other is refused for the life of the generation --
-        // whichever order they arrive in, and however many times either is called.
-        // The latched value is also what the generation hands the trace recorder,
-        // so a stream's attribution and the exclusion that produced it are one
-        // fact.
+        // documented. A generation holds the single-open-cycle ledger, so a
+        // task's wait loop and an agent's chunks driving one generation would
+        // each believe they owned the one open cycle. The first of startTask and
+        // this to reach a generation LATCHES that generation's front-end, and the
+        // other is refused for the life of the generation -- whichever order they
+        // arrive in, and however many times either is called. The latched value
+        // is also what the generation hands the trace recorder, so a stream's
+        // attribution and the exclusion that produced it are one fact.
         //
         // A second call under the SAME front-end is allowed: a generation
         // legitimately runs several tasks in sequence and would legitimately host
-        // several operator sessions. What it must never do is mix them.
-        //
-        // Unlike startTask this does not block: the session is returned live and
-        // the caller drives it verb by verb, then calls OperatorSession::finish to
-        // close the run bracket.
-        [[nodiscard]]
-        auto startOperatorSession(
-            GenerationId generation,
-            TaskRunConfig config
-        ) -> Result<std::unique_ptr<OperatorSession>>;
-
-        // Binds `generation`'s project to the agent front-end and hands back the
-        // session it drives. startOperatorSession's sibling in everything except
-        // what the session then does: this one owns a Luau VM, booted with the
-        // wider private surface and the two extra published modules, and runs one
-        // agent-supplied chunk per call (task/exploration-session.hpp).
-        //
-        // It claims the ANNOTATION front-end, the third value of the exclusion the
-        // other two already obey: a generation a task run or an operator already
-        // drives refuses this, and this refuses them.
+        // several exploration sessions. What it must never do is mix them.
         //
         // Unlike startTask this does not block: the session is returned live and
         // the caller feeds it chunks, then calls ExplorationSession::finish to

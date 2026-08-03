@@ -176,7 +176,7 @@ namespace uf::cli
         CHECK(*result->ocrModels == std::filesystem::path{"models"});
     }
 
-    TEST_CASE("parseDriveArguments accepts the same optional --ocr-models flag as run")
+    TEST_CASE("parseExploreArguments accepts the same optional --ocr-models flag as run")
     {
         auto const withoutFlag = std::vector<std::string>{
             "--project",  "proj",
@@ -184,7 +184,7 @@ namespace uf::cli
             "--queue",    "queue.jsonl",
             "--results",  "results.jsonl",
         };
-        auto const withoutResult = parseDriveArguments(withoutFlag);
+        auto const withoutResult = parseExploreArguments(withoutFlag);
         REQUIRE(withoutResult.has_value());
         CHECK_FALSE(withoutResult->ocrModels.has_value());
 
@@ -192,7 +192,7 @@ namespace uf::cli
         withFlag.emplace_back("--ocr-models");
         withFlag.emplace_back("models");
 
-        auto const withResult = parseDriveArguments(withFlag);
+        auto const withResult = parseExploreArguments(withFlag);
         REQUIRE(withResult.has_value());
         REQUIRE(withResult->ocrModels.has_value());
         CHECK(*withResult->ocrModels == std::filesystem::path{"models"});

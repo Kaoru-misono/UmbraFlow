@@ -91,7 +91,6 @@ endif()
 set(CLI_TEST_SOURCES
     cli/test-args.cpp
     cli/test-check.cpp
-    cli/test-drive-protocol.cpp
     cli/test-explore-protocol.cpp
     cli/test-project-skeleton.cpp
 )
@@ -144,7 +143,6 @@ if(TARGET ${PROJECT_NAME}_task)
             task/test-framework-bundle.cpp
             task/test-framework-context.cpp
             task/test-framework-surface.cpp
-            task/test-operator-front-end.cpp
             task/test-script-owned-primitives.cpp
             task/test-script-owned-model.cpp
             task/test-semantic-events.cpp

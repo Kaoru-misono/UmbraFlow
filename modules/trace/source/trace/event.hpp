@@ -28,7 +28,7 @@ namespace uf::trace
     // the verb before the engine sees it. The version is emitted first on every
     // line so a consumer can reject a line it does not understand; removing a
     // member is a wire change and bumps it.
-    inline constexpr auto k_traceSchema = std::string_view{"umbraflow-trace/v3"};
+    inline constexpr auto k_traceSchema = std::string_view{"umbraflow-trace/v4"};
 
     // The single JSON member holding every field that may legitimately differ
     // between two runs of the same task at the same seed. A golden comparison
@@ -59,18 +59,14 @@ namespace uf::trace
     // Which front-end drove the run this line belongs to. Part of the STAMP
     // rather than of the event: TraceRecorder carries one value for the whole run
     // and writes it onto every line, so no emitter can forget it or claim another
-    // front-end's work. For the two that reach the capability surface it is also
-    // the exclusion -- TaskHost latches one per generation, refuses the other, and
-    // hands the latched value to the recorder.
+    // front-end's work. It is also the exclusion -- TaskHost latches one per
+    // generation, refuses the other, and hands the latched value to the
+    // recorder.
     enum class FrontEnd : uint8
     {
         // A project task running on the trusted Luau framework, driven by
         // `umbra-flow run`.
         Task = 1,
-
-        // An operator sending commands from outside the process, driven by
-        // `umbra-flow drive`.
-        Operator,
 
         // An agent driving a target in order to measure it, and to write down
         // what it measured: `umbra-flow explore` running one Luau chunk per
@@ -81,9 +77,9 @@ namespace uf::trace
         Annotation,
     };
 
-    // The wire spelling of one front-end, and the only place any of the three
-    // is spelled -- task::TaskHost names one outside a trace line too, when it
-    // refuses a second front-end on a generation.
+    // The wire spelling of one front-end, and the only place either is spelled
+    // -- task::TaskHost names one outside a trace line too, when it refuses a
+    // second front-end on a generation.
     [[nodiscard]]
     auto frontEndWireName(FrontEnd frontEnd) noexcept -> std::string_view;
 

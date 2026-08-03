@@ -4,7 +4,6 @@
 
 #include <task/exploration-session.hpp>
 #include <task/framework-bundle.hpp>
-#include <task/operator-session.hpp>
 #include <task/task-host.hpp>
 #include <task/task-loader.hpp>
 
@@ -337,7 +336,7 @@ exercised = ["interact"]
         auto stampedPrefix(std::string_view kind, std::size_t sequence) -> std::string
         {
             return std::format(
-                R"({{"schema":"umbraflow-trace/v3","kind":"{}")"
+                R"({{"schema":"umbraflow-trace/v4","kind":"{}")"
                 R"(,"seq":{},"runId":1,"generationId":1,"frontEnd":"task")",
                 kind,
                 sequence
@@ -463,10 +462,6 @@ exercised = ["interact"]
             "runFrameworkRoutine"
         );
         refuses(
-            host.startOperatorSession(unknown, runConfig(tracePath)),
-            "startOperatorSession"
-        );
-        refuses(
             host.startExplorationSession(unknown, runConfig(tracePath)),
             "startExplorationSession"
         );
@@ -557,64 +552,6 @@ exercised = ["interact"]
         // driving one would contend for it. Both orders are checked, because
         // "the first one wins" is only a rule if it holds symmetrically, and
         // both on the SAME host so no process-level dispatch is doing the work.
-        SUBCASE("a task run refuses an operator session afterwards")
-        {
-            auto const temp = TemporaryDir{"exclusion-task-first"};
-            publishProject(temp.path(), "daily", k_taskSource);
-
-            auto host             = TaskHost{};
-            auto const generation = host.loadProject(temp.path());
-            REQUIRE(generation.has_value());
-
-            auto const report = host.startTask(
-                *generation,
-                "daily",
-                runConfig(temp.path() / "task.jsonl")
-            );
-            REQUIRE(report.has_value());
-
-            auto refused = host.startOperatorSession(
-                *generation,
-                runConfig(temp.path() / "operator.jsonl")
-            );
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(
-                automationErrorKind(refused.error())
-                == AutomationErrorKind::UnsupportedCapability
-            );
-            // A refused claim opens no trace file, so the operator session left no
-            // evidence of a run that never happened.
-            CHECK_FALSE(std::filesystem::exists(temp.path() / "operator.jsonl"));
-        }
-
-        SUBCASE("an operator session refuses a task run afterwards")
-        {
-            auto const temp = TemporaryDir{"exclusion-operator-first"};
-            publishProject(temp.path(), "daily", k_taskSource);
-
-            auto host             = TaskHost{};
-            auto const generation = host.loadProject(temp.path());
-            REQUIRE(generation.has_value());
-
-            auto session = host.startOperatorSession(
-                *generation,
-                runConfig(temp.path() / "operator.jsonl")
-            );
-            REQUIRE(session.has_value());
-
-            auto const refused = host.startTask(
-                *generation,
-                "daily",
-                runConfig(temp.path() / "task.jsonl")
-            );
-            REQUIRE_FALSE(refused.has_value());
-            CHECK(
-                automationErrorKind(refused.error())
-                == AutomationErrorKind::UnsupportedCapability
-            );
-            CHECK_FALSE(std::filesystem::exists(temp.path() / "task.jsonl"));
-        }
-
         SUBCASE("a task run refuses an exploration session afterwards")
         {
             // The third front-end is checked on its own rather than inferred: an
@@ -668,13 +605,6 @@ exercised = ["interact"]
             );
             REQUIRE_FALSE(refusedTask.has_value());
             CHECK_FALSE(std::filesystem::exists(temp.path() / "task.jsonl"));
-
-            auto refusedOperator = host.startOperatorSession(
-                *generation,
-                runConfig(temp.path() / "operator.jsonl")
-            );
-            REQUIRE_FALSE(refusedOperator.has_value());
-            CHECK_FALSE(std::filesystem::exists(temp.path() / "operator.jsonl"));
         }
 
         SUBCASE("the same front-end twice is allowed")
@@ -701,42 +631,6 @@ exercised = ["interact"]
             );
             CHECK(second.has_value());
         }
-    }
-
-    TEST_CASE("an operator session's run bracket names the operator front-end")
-    {
-        auto const temp = TemporaryDir{"operator-bracket"};
-        publishProject(temp.path(), "daily", k_taskSource);
-
-        auto host             = TaskHost{};
-        auto const generation = host.loadProject(temp.path());
-        REQUIRE(generation.has_value());
-
-        auto const tracePath = temp.path() / "operator.jsonl";
-        auto session = host.startOperatorSession(*generation, runConfig(tracePath));
-        REQUIRE(session.has_value());
-
-        auto cycle = (*session)->cycleOpen();
-        REQUIRE(cycle.has_value());
-        auto const closed = (*session)->cycleClose(*cycle);
-        REQUIRE(closed.has_value());
-        CHECK(*closed);
-
-        auto const report = (*session)->finish(std::nullopt);
-        CHECK(report.outcome() == TaskRunOutcome::Completed);
-        // An operator session names no task, so the report carries no task name: the
-        // frontEnd member on every line is what explains the absence.
-        CHECK(report.taskName.empty());
-
-        auto const lines = traceLines(tracePath);
-        REQUIRE_FALSE(lines.empty());
-        for (auto const& line : lines)
-        {
-            CAPTURE(line);
-            CHECK(line.contains("\"frontEnd\":\"operator\""));
-        }
-        CHECK(lines.front().contains("\"kind\":\"run.started\""));
-        CHECK(lines.back().contains("\"kind\":\"run.finished\""));
     }
 
     TEST_CASE("what the framework minted is released once nothing can present it")
@@ -1219,7 +1113,7 @@ exercised = ["interact"]
         );
     }
 
-    TEST_CASE("a TaskHost run writes one ordered umbraflow-trace/v3 run bracket")
+    TEST_CASE("a TaskHost run writes one ordered umbraflow-trace/v4 run bracket")
     {
         // One call drives the host events, the engine's recognition and delivery
         // events and the script layer's native calls into a single file, in
@@ -1280,7 +1174,7 @@ exercised = ["interact"]
         CHECK(
             lines.front()
             == std::format(
-                R"({{"schema":"umbraflow-trace/v3","kind":"run.started")"
+                R"({{"schema":"umbraflow-trace/v4","kind":"run.started")"
                 R"(,"seq":1,"runId":1,"generationId":1,"frontEnd":"task")"
                 R"(,"projectId":"{}","taskName":"daily")"
                 R"(,"sourceHash":"{}","frameworkVersion":"{}")"
@@ -1298,13 +1192,13 @@ exercised = ["interact"]
         );
         CHECK(
             lines[1]
-            == R"({"schema":"umbraflow-trace/v3","kind":"run.resources_validated")"
+            == R"({"schema":"umbraflow-trace/v4","kind":"run.resources_validated")"
                R"(,"seq":2,"runId":1,"generationId":1,"frontEnd":"task")"
                R"(,"elements":["daily_button"],"pages":["home"]})"
         );
         CHECK(
             lines.back()
-            == R"({"schema":"umbraflow-trace/v3","kind":"run.finished")"
+            == R"({"schema":"umbraflow-trace/v4","kind":"run.finished")"
                R"(,"seq":13,"runId":1,"generationId":1,"frontEnd":"task","runOutcome":"Completed"})"
         );
 

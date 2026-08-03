@@ -1,7 +1,6 @@
 #include "args.hpp"
 #include "application-info.hpp"
 #include "check.hpp"
-#include "drive.hpp"
 #include "explore.hpp"
 #include "run.hpp"
 
@@ -64,37 +63,6 @@ namespace uf::cli
             {
                 std::cout << std::format("said: {}\n", report->returned);
             }
-            return exitCodeForReport(*report, runCancellationRequested());
-        }
-
-        [[nodiscard]]
-        auto dispatchDrive(std::span<std::string const> raw) -> ExitCode
-        {
-            auto const args = parseDriveArguments(raw);
-            if (!args)
-            {
-                std::cerr << formatRunError(args.error()) << '\n';
-                std::cerr << driveUsageText();
-                return exitCodeForError(args.error(), false);
-            }
-
-            auto const report = driveProduct(*args);
-            if (!report)
-            {
-                std::cerr << formatRunError(report.error()) << '\n';
-                return exitCodeForError(report.error(), runCancellationRequested());
-            }
-
-            if (report->failure)
-            {
-                std::cerr << formatRunError(*report->failure) << '\n';
-            }
-            std::cout << std::format(
-                "drive: queue=\"{}\" results=\"{}\" trace=\"{}\"\n",
-                args->queue.string(),
-                args->results.string(),
-                report->tracePath.string()
-            );
             return exitCodeForReport(*report, runCancellationRequested());
         }
 
@@ -183,10 +151,6 @@ namespace uf::cli
             if (raw.front() == "run")
             {
                 return dispatchRun(raw.subspan(1));
-            }
-            if (raw.front() == "drive")
-            {
-                return dispatchDrive(raw.subspan(1));
             }
             if (raw.front() == "explore")
             {

@@ -47,10 +47,10 @@
 - **workbench GUI 归档**(`b57b67b`):ImGui + D3D11 外壳、面板、文件对话框、一次性抓帧源、
   imgui submodule 与 ASan smoke fixture 一并移除;`entry/workbench` 只剩 `umbra-authoring`
   链接的标注后端。
-- **`umbra-flow drive` 与 `key` 原语**(`ed38124`):第二个前端,是同一张私有能力面的**同级
-  消费者**而不是通往 Luau 的口子;一个 generation 只上闩一个前端。`pressKey` 收
-  `TargetGeneration`(按键不指名坐标),键名集合 52 个——2026-07-31 按真机界面加入 `ENTER` /
-  `ESC` / `CAPS` / `SHIFT`。
+- ~~**`umbra-flow drive` 与 `key` 原语**(`ed38124`)~~——**drive 已于 2026-08-03 退役**,
+  理由与去向见下面「操作者前端退役」一节。`key` 原语活着,它当初就是为这个键盘驱动的目标
+  加的;`pressKey` 收 `TargetGeneration`(按键不指名坐标),键名集合 52 个——2026-07-31
+  按真机界面加入 `ENTER` / `ESC` / `CAPS` / `SHIFT`。
 - **OCR 接入**(`35c3447`):`IOcrEngine` 端口与 `TextLine` 词汇是平台无关的,PP-OCRv6_small +
   ONNX Runtime 适配器藏在 FFI 边界后;组合根现在是 `umbra-flow` 的 `--ocr-models`
   绑定(`entry/cli/platform/ocr-engine-binding.*`)。
@@ -66,7 +66,7 @@
   `project_read` / `project_write`(路径 confinement);`cycle_click` 接受本票据的 match 当
   受祝福证据;OCR 独立预算(耗尽是 `RecognitionIncomplete` 不是 miss;上限 2026-08-01 随
   `cycle_read_lines` 从 8 提到 32,理由写在 `k_defaultMaximumReadsPerCycle` 上);trace 走
-  加法(`engine.text_read` + 可缺席字段)。CLI 经 `--ocr-models` 接入 OCR(run 与 drive 都有)。
+  加法(`engine.text_read` + 可缺席字段)。CLI 经 `--ocr-models` 接入 OCR(run 与 explore 都有)。
   `cycle_page` / `cycle_find` 的退役归工单 4,原样活着。
 - **工单 2 — 第二层 Luau 的 element / page / appearance 模型。已完成
   (2026-08-01,`bf471f3` + `88863cf`)**:`model` / `observe` / `project` 加页面图
@@ -89,7 +89,7 @@
   `cycle_click` 只吃 match。模板胶水迁 `vision/template-match`、`ProjectFingerprint` 迁
   `domain/space`、`FrameIdentity` 迁 `domain/frame`,**`engine -> annotation` 边已切断**
   (engine manifest = core domain ocr trace vision),指纹改由 l2 文件提供。预 VM 校验器
-  改看 `page-model.toml`(`task/page-model-file`,C++ 只扁平扫名)。drive 收缩为七个裸动词。
+  改看 `page-model.toml`(`task/page-model-file`,C++ 只扁平扫名)。drive 收缩为七个裸动词(该前端已于 2026-08-03 退役)。
   九处突变九红。~~**遗留**:trace 的 `Page::Score` / `elementId` 仍用 annotation 类型~~
   ——已随工单 4c 的 trace v3 修剪掉(2026-08-03 复核:`modules/trace/source/` 里两个名字
   都已不存在)。
@@ -119,7 +119,7 @@
   词汇);`ElementId` / `PageId` 直接死掉——trace v3 删掉了它们唯一的消费者。
   OCR 模型 staging 跟着 `umbra-flow` 走,`--ocr-models` 在构建树里照常可用。
   **依赖图已定格成 script-owned §三 的形状**,10 个模块无环,只剩一个二进制
-  `umbra-flow`(run / drive / explore / check),CI 目标 18 → 13。
+  `umbra-flow`(run / drive / explore / check;drive 已于 2026-08-03 退役,见下),CI 目标 18 → 13。
   **删除波暴露的滚轮缺口已补**(`c62d730`):`cycle_scroll` 在 run 与探索两个面上都有,
   不收坐标、不查指纹、引擎侧不查租约,要开着的周期并花掉它,投递边复验目标实例;
   15 突变 15 红,其中两条是**加法式**突变——证明「不做坐标那套围栏」是守住的而非漏写。
@@ -133,17 +133,11 @@
   所以引擎侧拿的是 clickPoint 的**整套**围栏(取消、句柄、指纹、租约、实例复验、
   花掉观察),一条不减;而它按不下任何东西,所以按 `cycle_scroll` 的方式两个面都
   发、`ctx` 直接转发——裸坐标的特权护的是「激活页面没授权的东西」,移动激活不了。
-  trace 加 `engine.pointer_move_delivered`(加法,schema 仍 v3),点走 `clickClient`。
+  trace 加 `engine.pointer_move_delivered`(加法,当时 schema 仍 v3),点走 `clickClient`。
   14 突变 14 红。
-  - [x] **`umbra-flow drive` 补上了 scroll 与 move**(2026-08-03)。
-        `{"op":"scroll","cycle":N,"notches":±N}` 与 `{"op":"move","cycle":N,"x":N,"y":N}`,
-        各自落到 `OperatorSession::scroll` / `movePointer`,再到 `cycleScroll` /
-        `cycleMovePointer`——和脚本面同一条路,不新增任何绕过。
-        `notches` 是这个协议里**唯一的有符号字段**(两个方向是一个动词),所以解析器
-        第一次要读符号;符号与数字分开读,好让无符号那个读法继续说「非负」并继续算数。
-        move 是操作者面**唯一指名坐标**的命令,而这里没有 click:它按不下任何东西,
-        所以激活不了任何东西,而它要过的闸门和 click 一样多。
-        证伪:把符号处理拆掉重编,`test-cli` 立刻转红。
+  - [x] **scroll 与 move 曾补进 `umbra-flow drive`**(2026-08-03),同日随该前端一起退役;
+        `OperatorSession::scroll` / `movePointer` 与它一并删除。脚本面的
+        `ctx:cycle_scroll` / `ctx:cycle_move_pointer` 不受影响。
 
 - **第一条真边已走通(2026-08-01,真机)**:`walk-first-edge` 任务全程走新栈——
   l2 文件 → 图 → 栈 → 等 home → walk_edge → 回执授权点击 (1438,240) → sortie
@@ -599,6 +593,37 @@ the exploration session」:`while true do end` 不碰任何宿主动词,所以�
   `event_node` 只要加速控件,因为 `event_battle` 那一行正是让 `event` 成为更窄那一页的
   东西。`node_badge` 已退役,工程文件里只剩注释提到它,没有任何引用。
   证据:`umbra-flow check --project chaos-daily` **findings=0**(2026-08-03 复跑)。
+
+## 操作者前端 `umbra-flow drive` 已退役(2026-08-03,开发者裁决)
+
+它当初(`ed38124`)是为了让外部驱动方打这个**键盘驱动**的目标——同一笔提交把按键提成原语,
+理由写得很清楚:鼠标路径根本表达不了出牌,点一张牌不会选中它。那个目标后来由工单 4b 的
+`umbra-flow explore` 整个接走了。
+
+退役的判据不是「没人用」,是**留着要付的代价**。查下来两条:
+
+- **能力上 explore 是严格超集。** drive 的九个命令里八个的原语 `ctx` 上都有
+  (`cycle_open` / `cycle_close` / `key` / `cycle_scroll` / `cycle_move_pointer` /
+  `settle` / `deadline` / `wait`),第九个 `quit` 是会话控制。explore 在这之上还有
+  `explore.*` 的裸点击、长按、裁剪、探针,和整个框架。
+- **drive 没有任何形式的点击**,所以它打得完一场仗,却走不到那场仗跟前:出击、部署、分支、
+  结算、领奖全靠点按钮。补上它要开**第三个裸坐标入口**,而那正是工单 4b 花力气关掉的东西
+  (裸点击不再对任何项目环境可命名)。
+
+**吸收进 explore 的只有一件**,因为其余的它都已经有了:队列行多一个可选的 `end`
+(`ExploreChunk::endsSession`),结果行相应多一个 `"ended":true`。它是**最后一个 chunk 上的
+修饰**而不是一条新命令,所以「每一行都跑一个 chunk」这条既有契约不破;`{"id":"a","end":true}`
+被拒。真机实测:带 `end` 的那行让会话在 **0.1 秒**内退出,而当时空闲超时设的是 90 秒。
+
+**一并失去、且无法吸收的一件**:drive 整条路上没有 Luau(`OperatorSession` → `TaskContext`,
+不开 VM、不加载 bundle)。它是当时唯一能把「框架层的问题」和「框架以下的问题」分开的手段。
+今天没有替代品,如果以后需要这种诊断,得重新造一个,而**不要**再造成一个能驱动目标的前端。
+
+删除范围:`entry/cli/drive*`(6 文件)、`modules/task/source/task/operator-session.*`、
+两个测试文件;`TaskHost::startOperatorSession` 与 `trace::FrontEnd::Operator` 一并剪掉,
+**trace schema 升到 `umbraflow-trace/v4`**(按工单 4c 的先例:没有发射方的词汇随版本剪除)。
+`parseDriveArguments` 本来就是 explore 的参数读法,改名留下。`queue-cursor` / `queue-ipc`
+留着——那个形状比它被抽出来时的第二个前端活得更久。全仓库文件 403 → 393,C++ 源 269 → 259。
 
 ## 操作者的 Ctrl-C 大多被记成 `Failed` 而不是 `Cancelled`(2026-08-03 量到)
 

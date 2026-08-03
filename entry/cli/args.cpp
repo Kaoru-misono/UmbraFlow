@@ -41,9 +41,10 @@ namespace uf::cli
         }
 
         // --task is absent and --queue/--results are present, which is the
-        // argument shape refusing a session that is both at once. See DriveArgs.
+        // argument shape refusing a session that is both at once. See
+        // ExploreArgs.
         [[nodiscard]]
-        auto isDriveValueFlag(std::string_view flag) noexcept -> bool
+        auto isExploreValueFlag(std::string_view flag) noexcept -> bool
         {
             auto constexpr flags = std::array<std::string_view, 10>{
                 "--project",
@@ -258,7 +259,7 @@ namespace uf::cli
         };
     }
 
-    auto parseDriveArguments(std::span<std::string const> raw) -> Result<DriveArgs>
+    auto parseExploreArguments(std::span<std::string const> raw) -> Result<ExploreArgs>
     {
         auto project  = std::optional<std::filesystem::path>{};
         auto selector = std::optional<std::string>{};
@@ -268,7 +269,7 @@ namespace uf::cli
         auto budget             = k_defaultPixelComparisonBudget;
         auto recognitionTimeout = k_defaultRunRecognitionTimeout;
         auto maxFrameAge        = k_defaultRunMaxFrameAge;
-        auto idleTimeout        = k_defaultDriveIdleTimeout;
+        auto idleTimeout        = k_defaultExploreIdleTimeout;
         auto trace              = std::filesystem::path{k_defaultTracePath};
         auto ocrModels          = std::optional<std::filesystem::path>{};
 
@@ -276,7 +277,7 @@ namespace uf::cli
         while (index < raw.size())
         {
             auto const& flag = raw[index];
-            if (!isDriveValueFlag(flag))
+            if (!isExploreValueFlag(flag))
             {
                 return invalid(std::format("unknown argument \"{}\"", flag));
             }
@@ -350,7 +351,7 @@ namespace uf::cli
         UF_TRY_VALUE(requiredQueue, require(std::move(queue), "--queue"));
         UF_TRY_VALUE(requiredResults, require(std::move(results), "--results"));
 
-        return DriveArgs{
+        return ExploreArgs{
             .project            = std::move(requiredProject),
             .selector           = std::move(requiredSelector),
             .queue              = std::move(requiredQueue),
@@ -361,27 +362,6 @@ namespace uf::cli
             .idleTimeout        = idleTimeout,
             .trace              = std::move(trace),
             .ocrModels          = std::move(ocrModels),
-        };
-    }
-
-    auto parseExploreArguments(std::span<std::string const> raw) -> Result<ExploreArgs>
-    {
-        // Parsed through the drive reader, because the flag set IS the drive flag
-        // set; only what a queue LINE means differs, which is the protocol's
-        // business. A second copy of ten flags is a second place a default drifts.
-        UF_TRY_VALUE(shared, parseDriveArguments(raw));
-
-        return ExploreArgs{
-            .project            = std::move(shared.project),
-            .selector           = std::move(shared.selector),
-            .queue              = std::move(shared.queue),
-            .results            = std::move(shared.results),
-            .budget             = shared.budget,
-            .recognitionTimeout = shared.recognitionTimeout,
-            .maxFrameAge        = shared.maxFrameAge,
-            .idleTimeout        = shared.idleTimeout,
-            .trace              = std::move(shared.trace),
-            .ocrModels          = std::move(shared.ocrModels),
         };
     }
 
@@ -473,35 +453,6 @@ namespace uf::cli
             "                                refuse\n";
     }
 
-    auto driveUsageText() noexcept -> std::string_view
-    {
-        return
-            "Usage:\n"
-            "  umbra-flow drive --project DIR --selector TITLE-SUBSTRING "
-            "--queue PATH --results PATH [options]\n"
-            "\n"
-            "Executes operator commands arriving as JSON lines appended to --queue,\n"
-            "writing one JSON result line per command to --results. Never runs a\n"
-            "task: `run` and `drive` cannot share one session.\n"
-            "\n"
-            "Required:\n"
-            "  --project DIR                Published annotation project directory\n"
-            "  --selector TITLE-SUBSTRING   Substring of the target window title\n"
-            "  --queue PATH                 Command queue this session tails\n"
-            "  --results PATH               Result lines; must not already exist\n"
-            "\n"
-            "Options:\n"
-            "  --budget N                   Pixel comparison ceiling per recognition\n"
-            "  --recognition-timeout MS     Per-recognition deadline; default: 2000\n"
-            "  --max-frame-age MS           Action frame age ceiling; default: 750\n"
-            "  --idle-timeout S             End after an idle queue; default: 120\n"
-            "  --trace PATH                 Trace JSONL path; default: "
-            "umbra-flow-trace.jsonl\n"
-            "  --ocr-models DIR             \"models\" directory enabling the text\n"
-            "                                reads; default: no engine, both read verbs\n"
-            "                                refuse\n";
-    }
-
     auto exploreUsageText() noexcept -> std::string_view
     {
         return
@@ -563,8 +514,6 @@ namespace uf::cli
     auto usageText() -> std::string
     {
         auto text = std::string{runUsageText()};
-        text += '\n';
-        text += driveUsageText();
         text += '\n';
         text += exploreUsageText();
         text += '\n';

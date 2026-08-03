@@ -85,6 +85,29 @@ namespace uf::cli
                 return ok();
             }
 
+            // The one member whose value is not a string. Only the two JSON
+            // literals are taken: accepting `"true"` as well would make the
+            // line's meaning depend on which spelling an agent happened to
+            // pick, and one of the two would eventually be read as a string
+            // that is merely non-empty.
+            [[nodiscard]] auto readBoolean(std::string_view what) -> Result<bool>
+            {
+                skipWhitespace();
+                if (m_source.compare(m_position, 4U, "true") == 0)
+                {
+                    m_position += 4U;
+                    return true;
+                }
+                if (m_source.compare(m_position, 5U, "false") == 0)
+                {
+                    m_position += 5U;
+                    return false;
+                }
+                return invalidLine(
+                    std::format("{} must be true or false", what)
+                );
+            }
+
             // Reads one JSON string. Only the six named escapes and \uXXXX for the
             // ASCII control range are accepted: a chunk arrives as text, and an
             // escape this reader guessed at would change the program that runs.
@@ -227,6 +250,7 @@ namespace uf::cli
 
                 auto id    = std::optional<std::string>{};
                 auto chunk = std::optional<std::string>{};
+                auto ends  = std::optional<bool>{};
 
                 skipWhitespace();
                 if (peek() != '}')
@@ -235,10 +259,6 @@ namespace uf::cli
                     {
                         UF_TRY_VALUE(name, readString("a member name"));
                         UF_TRY(expect(':', "a member"));
-                        UF_TRY_VALUE(
-                            value,
-                            readString(std::format("the '{}' member", name))
-                        );
 
                         if (name == "id")
                         {
@@ -248,6 +268,10 @@ namespace uf::cli
                                     "the queue line repeats the 'id' member"
                                 );
                             }
+                            UF_TRY_VALUE(
+                                value,
+                                readString("the 'id' member")
+                            );
                             id = std::move(value);
                         }
                         else if (name == "chunk")
@@ -258,14 +282,32 @@ namespace uf::cli
                                     "the queue line repeats the 'chunk' member"
                                 );
                             }
+                            UF_TRY_VALUE(
+                                value,
+                                readString("the 'chunk' member")
+                            );
                             chunk = std::move(value);
+                        }
+                        else if (name == "end")
+                        {
+                            if (ends.has_value())
+                            {
+                                return invalidLine(
+                                    "the queue line repeats the 'end' member"
+                                );
+                            }
+                            UF_TRY_VALUE(
+                                value,
+                                readBoolean("the 'end' member")
+                            );
+                            ends = value;
                         }
                         else
                         {
                             return invalidLine(
                                 std::format(
                                     "the queue line has an unrecognized member "
-                                    "\"{}\"; it takes 'id' and 'chunk'",
+                                    "\"{}\"; it takes 'id', 'chunk' and 'end'",
                                     name
                                 )
                             );
@@ -317,8 +359,9 @@ namespace uf::cli
                 }
 
                 return ExploreChunk{
-                    .id    = *std::move(id),
-                    .chunk = *std::move(chunk),
+                    .id          = *std::move(id),
+                    .chunk       = *std::move(chunk),
+                    .endsSession = ends.value_or(false),
                 };
             }
         };
@@ -387,6 +430,10 @@ namespace uf::cli
                 result.heap->ceilingBytes
             );
         }
+        if (result.ended)
+        {
+            line += ",\"ended\":true";
+        }
 
         line += '}';
         return line;
@@ -395,13 +442,15 @@ namespace uf::cli
     auto exploreSuccess(
         std::string_view id,
         script::ScriptValue const& value,
-        script::HeapUsage heap
+        script::HeapUsage heap,
+        bool ended
     ) -> std::string
     {
         auto result = ExploreResult{
-            .id   = std::string{id},
-            .ok   = true,
-            .heap = heap,
+            .id    = std::string{id},
+            .ok    = true,
+            .heap  = heap,
+            .ended = ended,
         };
 
         // A chunk that returned nothing sets none of the three, so its line carries
@@ -424,7 +473,8 @@ namespace uf::cli
                         AutomationErrorKind::InvalidResource,
                         "a chunk answered with a value JSON cannot carry"
                     ).error(),
-                    heap
+                    heap,
+                    ended
                 );
             }
             result.number = *number;
@@ -440,7 +490,8 @@ namespace uf::cli
     auto exploreFailure(
         std::string_view id,
         Error const& error,
-        script::HeapUsage heap
+        script::HeapUsage heap,
+        bool ended
     ) -> std::string
     {
         return serializeExploreResult(
@@ -455,6 +506,7 @@ namespace uf::cli
                 },
                 .message = std::string{error.message()},
                 .heap    = heap,
+                .ended   = ended,
             }
         );
     }

@@ -18,10 +18,6 @@ add_library(${CLI_LIBRARY} STATIC
     cli/args.hpp
     cli/check.cpp
     cli/check.hpp
-    cli/drive.cpp
-    cli/drive.hpp
-    cli/drive-protocol.cpp
-    cli/drive-protocol.hpp
     cli/explore.cpp
     cli/explore.hpp
     cli/explore-protocol.cpp
@@ -34,9 +30,10 @@ add_library(${CLI_LIBRARY} STATIC
     cli/platform/ocr-engine-binding.hpp
     cli/project-skeleton.cpp
     cli/project-skeleton.hpp
-    # The queue/results wire both `drive` and `explore` run on: one framed
-    # reader, one results writer, and the durable cursor that keeps a restart
-    # from re-delivering a queue against a live target.
+    # The queue/results wire `explore` runs on: one framed reader, one results
+    # writer, and the durable cursor that keeps a restart from re-delivering a
+    # queue against a live target. It stays a pair of files of its own because
+    # the shape outlived the second front-end it was factored out for.
     cli/queue-cursor.cpp
     cli/queue-cursor.hpp
     cli/queue-ipc.cpp
@@ -68,7 +65,6 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
         PRIVATE
             cli/candidate-selection.cpp
             cli/candidate-selection.hpp
-            cli/drive-windows.cpp
             cli/explore-windows.cpp
             cli/run-windows.cpp
             cli/platform/controller-action-sink.cpp
@@ -91,7 +87,6 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
 else()
     target_sources(${CLI_LIBRARY}
         PRIVATE
-            cli/drive-unsupported.cpp
             cli/explore-unsupported.cpp
             cli/run-unsupported.cpp
             cli/platform/ocr-engine-binding-unsupported.cpp

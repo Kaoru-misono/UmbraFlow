@@ -224,7 +224,7 @@ namespace uf::trace
         };
 
         auto constexpr expected = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"engine.action_found\""
+            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"engine.action_found\""
             ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
             ",\"frameId\":42,\"sessionId\":7,\"targetGeneration\":3"
             ",\"actionOutcome\":\"Found\",\"sadScore\":1234,\"maximumSad\":5000"
@@ -249,7 +249,7 @@ namespace uf::trace
         auto const event = TraceEvent{.kind = TraceEventKind::EngineActionAuthorized};
 
         auto constexpr expected = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"engine.action_authorized\""
+            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"engine.action_authorized\""
             ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\"}"
         };
 
@@ -262,10 +262,9 @@ namespace uf::trace
         // front-ends sharing a spelling would merge two streams a reader has to
         // tell apart. The table is exhaustive by construction: frontEndWireName
         // switches with no default, so an unspelled value fails to compile.
-        auto const spellings = std::array<std::pair<FrontEnd, std::string_view>, 3>{
+        auto const spellings = std::array<std::pair<FrontEnd, std::string_view>, 2>{
             {
                 {FrontEnd::Task, "task"},
-                {FrontEnd::Operator, "operator"},
                 {FrontEnd::Annotation, "annotation"},
             }
         };
@@ -307,7 +306,7 @@ namespace uf::trace
         };
 
         auto constexpr expected = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"engine.action_rejected\""
+            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"engine.action_rejected\""
             ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
             ",\"message\":\"a\\\"b\\\\c\\n\\u0001\"}"
         };
@@ -331,7 +330,7 @@ namespace uf::trace
         };
 
         auto constexpr expected = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"run.started\""
+            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.started\""
             ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
             ",\"projectId\":\"personal.game\",\"taskName\":\"daily\""
             ",\"sourceHash\":\"abc123\",\"frameworkVersion\":\"0.1.0\""
@@ -380,7 +379,7 @@ namespace uf::trace
         };
 
         auto constexpr expected = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"run.resources_validated\""
+            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.resources_validated\""
             ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
             ",\"elements\":[\"accept\",\"battle\",\"daily\"]"
             ",\"pages\":[\"home\",\"main\"]}"
@@ -397,7 +396,7 @@ namespace uf::trace
         };
 
         auto constexpr expected = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"run.resources_validated\""
+            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.resources_validated\""
             ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
             ",\"elements\":[],\"pages\":[]}"
         };
@@ -422,7 +421,7 @@ namespace uf::trace
 
             CHECK(
                 goldenLine(event)
-                == "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"task.native_call\""
+                == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"task.native_call\""
                    ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
                    ",\"verb\":\"capture\",\"outcome\":\"Succeeded\"}"
             );
@@ -442,7 +441,7 @@ namespace uf::trace
 
             CHECK(
                 goldenLine(event)
-                == "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"task.native_call\""
+                == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"task.native_call\""
                    ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
                    ",\"verb\":\"cycle_match\",\"cycleOrdinal\":2"
                    ",\"outcome\":\"Empty\",\"templateHash\":\"sha256:abcdef\"}"
@@ -467,7 +466,7 @@ namespace uf::trace
 
             CHECK(
                 goldenLine(event)
-                == "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"task.native_call\""
+                == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"task.native_call\""
                    ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
                    ",\"verb\":\"click\",\"cycleOrdinal\":3,\"hitCycleOrdinal\":4"
                    ",\"outcome\":\"Failed\",\"errorKind\":\"stale_observation\"}"
@@ -486,7 +485,7 @@ namespace uf::trace
 
             CHECK(
                 goldenLine(event)
-                == "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"run.finished\""
+                == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.finished\""
                    ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
                    ",\"runOutcome\":\"Completed\"}"
             );
@@ -502,7 +501,7 @@ namespace uf::trace
 
             CHECK(
                 goldenLine(event)
-                == "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"run.finished\""
+                == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.finished\""
                    ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
                    ",\"runOutcome\":\"Failed\",\"errorKind\":\"timeout\"}"
             );
@@ -517,7 +516,7 @@ namespace uf::trace
 
             CHECK(
                 goldenLine(event)
-                == "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"run.finished\""
+                == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.finished\""
                    ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
                    ",\"runOutcome\":\"Cancelled\"}"
             );
@@ -526,7 +525,7 @@ namespace uf::trace
 
     TEST_CASE("engine.observed pins its wire kind name and the frame join key")
     {
-        // umbraflow-trace/v3 is a wire contract, so every kind name is pinned by a
+        // umbraflow-trace/v4 is a wire contract, so every kind name is pinned by a
         // full line somewhere; otherwise a typo in one ships in silence.
         auto const event = TraceEvent{
             .kind  = TraceEventKind::EngineObserved,
@@ -539,7 +538,7 @@ namespace uf::trace
 
         CHECK(
             goldenLine(event)
-            == "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"engine.observed\""
+            == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"engine.observed\""
                ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
                ",\"frameId\":17,\"sessionId\":7,\"targetGeneration\":3}"
         );
@@ -558,7 +557,7 @@ namespace uf::trace
 
         CHECK(
             goldenLine(event)
-            == "{\"schema\":\"umbraflow-trace/v3\""
+            == "{\"schema\":\"umbraflow-trace/v4\""
                ",\"kind\":\"engine.observation_invalidated\""
                ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
                ",\"frameId\":17,\"sessionId\":7,\"targetGeneration\":3}"
@@ -582,7 +581,7 @@ namespace uf::trace
 
         CHECK(
             goldenLine(event)
-            == "{\"schema\":\"umbraflow-trace/v3\""
+            == "{\"schema\":\"umbraflow-trace/v4\""
                ",\"kind\":\"engine.scroll_delivered\""
                ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
                ",\"frameId\":17,\"sessionId\":7,\"targetGeneration\":3"
@@ -612,7 +611,7 @@ namespace uf::trace
 
         CHECK(
             goldenLine(event)
-            == "{\"schema\":\"umbraflow-trace/v3\""
+            == "{\"schema\":\"umbraflow-trace/v4\""
                ",\"kind\":\"engine.pointer_move_delivered\""
                ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
                ",\"frameId\":17,\"sessionId\":7,\"targetGeneration\":3"
@@ -628,7 +627,7 @@ namespace uf::trace
             FrameId{uint64{17}},
         };
         auto constexpr prefix = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"engine.action_found\""
+            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"engine.action_found\""
             ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
             ",\"frameId\":17,\"sessionId\":7,\"targetGeneration\":3"
         };
@@ -679,15 +678,15 @@ namespace uf::trace
     TEST_CASE("stripNonGoldenFields removes only the meta member")
     {
         auto constexpr withEarlyClock = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"run.started\""
+            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.started\""
             ",\"seq\":1,\"meta\":{\"wallClock\":1000}}"
         };
         auto constexpr withLateClock = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"run.started\""
+            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.started\""
             ",\"seq\":1,\"meta\":{\"wallClock\":999999}}"
         };
         auto constexpr withOtherSeq = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"run.started\""
+            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.started\""
             ",\"seq\":2,\"meta\":{\"wallClock\":1000}}"
         };
 
@@ -695,7 +694,7 @@ namespace uf::trace
         CHECK(stripNonGoldenFields(withEarlyClock) == stripNonGoldenFields(withLateClock));
         CHECK(
             stripNonGoldenFields(withEarlyClock)
-            == "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"run.started\",\"seq\":1}"
+            == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.started\",\"seq\":1}"
         );
 
         // A difference anywhere else survives, so the helper cannot mask one.
@@ -774,7 +773,7 @@ namespace uf::trace
         REQUIRE(lines.size() == 1U);
         CHECK(
             stripNonGoldenFields(lines.front())
-            == "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"run.finished\""
+            == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.finished\""
                ",\"seq\":2,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
                ",\"runOutcome\":\"Completed\"}"
         );
@@ -828,7 +827,7 @@ namespace uf::trace
         REQUIRE(lines.size() == 2U);
         CHECK(
             stripNonGoldenFields(lines[0])
-            == "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"run.started\""
+            == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.started\""
                ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
                ",\"projectId\":\"personal.game\",\"taskName\":\"daily\""
                ",\"sourceHash\":\"abc123\",\"frameworkVersion\":\"0.1.0\""
@@ -836,7 +835,7 @@ namespace uf::trace
         );
         CHECK(
             stripNonGoldenFields(lines[1])
-            == "{\"schema\":\"umbraflow-trace/v3\",\"kind\":\"run.finished\""
+            == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.finished\""
                ",\"seq\":2,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
                ",\"runOutcome\":\"Completed\"}"
         );

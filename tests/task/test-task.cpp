@@ -216,7 +216,7 @@ namespace uf::task
 
             // A trace line names a failure with exactly the string the script
             // layer sees. Both sides are read from the real artifacts --
-            // serialized umbraflow-trace/v3 lines and the table installed on a
+            // serialized umbraflow-trace/v4 lines and the table installed on a
             // live VM -- so a divergence shows up as wrong output rather than as
             // two calls to the same function.
             auto const traced = tracedErrorKindSpellings();

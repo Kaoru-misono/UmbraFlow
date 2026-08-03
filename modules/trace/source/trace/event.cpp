@@ -486,7 +486,6 @@ namespace uf::trace
         switch (frontEnd)
         {
         case FrontEnd::Task: return "task";
-        case FrontEnd::Operator: return "operator";
         case FrontEnd::Annotation: return "annotation";
         }
 

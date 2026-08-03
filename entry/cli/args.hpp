@@ -103,64 +103,31 @@ namespace uf::cli
 
     [[nodiscard]] auto runUsageText() noexcept -> std::string_view;
 
-    // How long `drive` waits with an empty command queue before it ends the
-    // session on its own, so a driving process that died does not leave a session
-    // holding a capture device and a bound target indefinitely. Two minutes
-    // matches the m0-demo input agent's own idle timeout, the protocol this
-    // follows.
-    inline constexpr auto k_defaultDriveIdleTimeout = (
+    // How long `explore` waits with an empty queue before it ends the session on
+    // its own, so an agent process that died does not leave a session holding a
+    // capture device and a bound target indefinitely. An agent that knows it is
+    // done says so on its last line instead of spending this
+    // (`ExploreChunk::endsSession`); the timeout is the fallback for the case
+    // where nobody is left to say it.
+    inline constexpr auto k_defaultExploreIdleTimeout = (
         std::chrono::duration_cast<MonotonicInstant::Duration>(
             std::chrono::seconds{120}
         )
     );
 
-    // Parsed inputs for the `drive` subcommand: the operator front-end. Every
-    // recognition and delivery bound below is the same field with the same
-    // default RunArgs carries, because the front-ends must not be able to run
-    // under different guarantees. What replaces --task is the pair of IPC files:
-    // commands arrive as JSON lines appended to `queue`, one JSON result line per
-    // command is appended to `results`.
+    // Parsed inputs for the `explore` subcommand: the agent front-end. What
+    // replaces --task is the pair of IPC files -- Luau CHUNKS arrive as JSON
+    // lines appended to `queue`, one JSON result line per chunk is appended to
+    // `results` -- because an agent's smallest useful act is already a
+    // composition, and the composition is the thing being tested
+    // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 3).
     //
     // There is deliberately no --task here and no --queue on RunArgs: the modes
-    // are exclusive, and the argument shapes say so where an operator meets it
-    // first. TaskHost's front-end claim is the structural refusal.
-    //
-    // No timeout, poll-interval or retry defaults either. Those are policy, every
-    // convenience command requires them as fields, and a flag would be a second
-    // place task-side policy could live.
-    struct DriveArgs final
-    {
-        std::filesystem::path project{};
-        std::string           selector{};
-
-        std::filesystem::path queue{};
-        std::filesystem::path results{};
-
-        uint64                     budget{k_defaultPixelComparisonBudget};
-        MonotonicInstant::Duration recognitionTimeout{k_defaultRunRecognitionTimeout};
-        MonotonicInstant::Duration maxFrameAge{k_defaultRunMaxFrameAge};
-        MonotonicInstant::Duration idleTimeout{k_defaultDriveIdleTimeout};
-
-        std::filesystem::path trace{k_defaultTracePath};
-
-        // Same field, same default, same reason as RunArgs::ocrModels.
-        std::optional<std::filesystem::path> ocrModels{};
-
-        auto operator==(DriveArgs const&) const -> bool = default;
-    };
-
-    [[nodiscard]]
-    auto parseDriveArguments(std::span<std::string const> raw) -> Result<DriveArgs>;
-
-    [[nodiscard]] auto driveUsageText() noexcept -> std::string_view;
-
-    // Parsed inputs for the `explore` subcommand: the agent front-end. It is
-    // `drive` with one thing changed -- a drive queue holds commands, one
-    // primitive each with scalar arguments, and an explore queue holds Luau
-    // CHUNKS, because an agent composes verbs and the composition is the thing
-    // being tested (docs/plans/2026-08-01-three-layers-and-agent-operator.md 3).
-    // Every bound below is the same field with the same default `run` and `drive`
-    // pass.
+    // are exclusive, and the argument shapes say so where a caller meets them
+    // first. TaskHost's front-end claim is the structural refusal. Every
+    // recognition and delivery bound below is the same field with the same
+    // default RunArgs carries, because the front-ends must not be able to run
+    // under different guarantees.
     //
     // There is no --task and no --chunk. A session is a queue or it is nothing: a
     // one-shot chunk flag would be a second way in with no cursor behind it, and
@@ -176,7 +143,7 @@ namespace uf::cli
         uint64                     budget{k_defaultPixelComparisonBudget};
         MonotonicInstant::Duration recognitionTimeout{k_defaultRunRecognitionTimeout};
         MonotonicInstant::Duration maxFrameAge{k_defaultRunMaxFrameAge};
-        MonotonicInstant::Duration idleTimeout{k_defaultDriveIdleTimeout};
+        MonotonicInstant::Duration idleTimeout{k_defaultExploreIdleTimeout};
 
         std::filesystem::path trace{k_defaultTracePath};
 

@@ -135,8 +135,8 @@ namespace uf::cli
             REQUIRE(!parsed.has_value());
             CHECK(parsed.error().message().contains("op"));
 
-            // `op` is the drive protocol's member: an agent that pasted a drive
-            // command into an explore queue is told so rather than ignored.
+            // The refusal names what this protocol DOES take, so a line written
+            // to some other command shape is corrected rather than ignored.
             CHECK(parsed.error().message().contains("id"));
         }
 
@@ -150,14 +150,79 @@ namespace uf::cli
         constexpr auto k_lineHeapText =
             std::string_view{R"("heap":{"used":1024,"ceiling":67108864})"};
 
+        TEST_CASE("an agent can say which line is its last")
+        {
+            // Absorbed from the retired operator front-end, whose `quit` was the
+            // one thing it could do that this channel could not. Without it a
+            // session ends only by falling silent, which spends the idle timeout
+            // every time and dates run.finished a default later than the work.
+            auto const ending = parseExploreChunk(
+                R"({"id":"last","chunk":"return 1","end":true})"
+            );
+            REQUIRE(ending.has_value());
+            CHECK(
+                *ending
+                == ExploreChunk{
+                    .id          = "last",
+                    .chunk       = "return 1",
+                    .endsSession = true,
+                }
+            );
+
+            // It is a modifier, not a command: a line without it still runs, and
+            // spelling it false is the same as leaving it out.
+            auto const ordinary =
+                parseExploreChunk(R"({"id":"a","chunk":"return 1"})");
+            REQUIRE(ordinary.has_value());
+            CHECK_FALSE(ordinary->endsSession);
+
+            auto const explicitFalse = parseExploreChunk(
+                R"({"id":"a","chunk":"return 1","end":false})"
+            );
+            REQUIRE(explicitFalse.has_value());
+            CHECK_FALSE(explicitFalse->endsSession);
+
+            // A boolean, and only the JSON spelling of one. Taking "true" as
+            // well would make a line's meaning depend on which spelling an agent
+            // happened to pick.
+            CHECK_FALSE(
+                parseExploreChunk(R"({"id":"a","chunk":"return 1","end":"true"})")
+                    .has_value()
+            );
+            CHECK_FALSE(
+                parseExploreChunk(R"({"id":"a","chunk":"return 1","end":1})")
+                    .has_value()
+            );
+            CHECK_FALSE(
+                parseExploreChunk(
+                    R"({"id":"a","chunk":"return 1","end":true,"end":true})"
+                )
+                    .has_value()
+            );
+
+            // Ending is not a way to send no chunk: every line still runs one.
+            CHECK_FALSE(parseExploreChunk(R"({"id":"a","end":true})").has_value());
+
+            // A results file is read without the queue beside it, so the ending
+            // has to be legible in the answers themselves.
+            CHECK(
+                exploreSuccess("last", script::ScriptValue{1.0}, k_lineHeap, true)
+                    .contains(R"("ended":true)")
+            );
+            CHECK_FALSE(
+                exploreSuccess("a", script::ScriptValue{1.0}, k_lineHeap, false)
+                    .contains("ended")
+            );
+        }
+
         TEST_CASE("a result line distinguishes the four things a chunk can return")
         {
             CHECK(
-                exploreSuccess("a", script::ScriptValue{}, k_lineHeap)
+                exploreSuccess("a", script::ScriptValue{}, k_lineHeap, false)
                 == R"({"id":"a","ok":true,"heap":{"used":1024,"ceiling":67108864}})"
             );
             CHECK(
-                exploreSuccess("a", script::ScriptValue{false}, k_lineHeap)
+                exploreSuccess("a", script::ScriptValue{false}, k_lineHeap, false)
                 == R"({"id":"a","ok":true,"value":false,)"
                     R"("heap":{"used":1024,"ceiling":67108864}})"
             );
@@ -165,20 +230,21 @@ namespace uf::cli
                 exploreSuccess(
                     "a",
                     script::ScriptValue{std::string{"home"}},
-                    k_lineHeap
+                    k_lineHeap,
+                    false
                 )
                 == R"({"id":"a","ok":true,"value":"home",)"
                     R"("heap":{"used":1024,"ceiling":67108864}})"
             );
 
             auto const number =
-                exploreSuccess("a", script::ScriptValue{3.0}, k_lineHeap);
+                exploreSuccess("a", script::ScriptValue{3.0}, k_lineHeap, false);
             CHECK(number.starts_with(R"({"id":"a","ok":true,"value":3)"));
 
             // Returning nothing and returning false are different answers.
             CHECK(
-                exploreSuccess("a", script::ScriptValue{}, k_lineHeap)
-                != exploreSuccess("a", script::ScriptValue{false}, k_lineHeap)
+                exploreSuccess("a", script::ScriptValue{}, k_lineHeap, false)
+                != exploreSuccess("a", script::ScriptValue{false}, k_lineHeap, false)
             );
         }
 
@@ -194,7 +260,7 @@ namespace uf::cli
             })
             {
                 auto const line =
-                    exploreSuccess("a", script::ScriptValue{value}, k_lineHeap);
+                    exploreSuccess("a", script::ScriptValue{value}, k_lineHeap, false);
                 CAPTURE(line);
                 CHECK(line.contains(R"("ok":false)"));
                 CHECK(!line.contains("inf"));
@@ -207,13 +273,13 @@ namespace uf::cli
             // The ceiling is measured against garbage as well as live data, so a
             // figure carried only by the failing line would arrive a chunk late.
             CHECK(
-                exploreSuccess("a", script::ScriptValue{}, k_lineHeap)
+                exploreSuccess("a", script::ScriptValue{}, k_lineHeap, false)
                     .contains(k_lineHeapText)
             );
 
             auto const error =
                 fail(AutomationErrorKind::InvalidResource, "boom").error();
-            CHECK(exploreFailure("a", error, k_lineHeap).contains(k_lineHeapText));
+            CHECK(exploreFailure("a", error, k_lineHeap, false).contains(k_lineHeapText));
 
             // A line that answered no chunk never reached a VM, so it has none.
             auto const refused =
@@ -228,7 +294,7 @@ namespace uf::cli
                 "this observation cycle is no longer open"
             ).error();
 
-            auto const line = exploreFailure("step-7", error, k_lineHeap);
+            auto const line = exploreFailure("step-7", error, k_lineHeap, false);
             CHECK(line.contains(R"("id":"step-7")"));
             CHECK(line.contains(R"("ok":false)"));
             CHECK(line.contains(R"("error":"stale_observation")"));
@@ -253,7 +319,7 @@ namespace uf::cli
                 AutomationErrorKind::InvalidResource,
                 "a \"quoted\" thing\nand a newline"
             ).error();
-            auto const line = exploreFailure("a", error, k_lineHeap);
+            auto const line = exploreFailure("a", error, k_lineHeap, false);
 
             CHECK(line.contains(R"(\"quoted\")"));
             CHECK(line.contains(R"(\n)"));
@@ -422,7 +488,7 @@ namespace uf::cli
             CHECK(!start.has_value());
         }
 
-        TEST_CASE("explore takes the same flags drive does")
+        TEST_CASE("explore takes the four flags that name a session")
         {
             auto const raw = std::vector<std::string>{
                 "--project",  "proj",

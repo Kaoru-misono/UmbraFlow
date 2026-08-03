@@ -21,10 +21,11 @@ namespace uf::cli
     // paragraph would drown the message it was meant to locate.
     inline constexpr auto k_maxExploreIdBytes = std::size_t{128};
 
-    // The exploration queue protocol: one JSON object per line, exactly two
-    // members.
+    // The exploration queue protocol: one JSON object per line, two required
+    // members and one optional.
     //
     //   {"id":"step-3","chunk":"local t = ctx:cycle_open() ... return 'home'"}
+    //   {"id":"step-4","chunk":"return 'done'","end":true}
     //
     // A line carries a chunk rather than one command because an agent's smallest
     // useful act is already a composition, and splitting it across lines would put
@@ -36,12 +37,20 @@ namespace uf::cli
         std::string id{};
         std::string chunk{};
 
+        // Whether this is the last line the agent means to send. A session
+        // otherwise ends by falling silent for the idle timeout, which spends
+        // that timeout every time and puts run.finished a default later than
+        // the work actually stopped. It is a MODIFIER on a chunk and not a
+        // command of its own, so the rule above holds: every line runs a chunk,
+        // and an agent with nothing left to run sends one that returns nothing.
+        bool endsSession{false};
+
         auto operator==(ExploreChunk const&) const -> bool = default;
     };
 
-    // An unknown, repeated or missing member, a non-string value, an unescaped
-    // control byte and trailing content are all REFUSED: a line that is nearly
-    // right runs code against a live target.
+    // An unknown, repeated or missing required member, a value of the wrong
+    // type, an unescaped control byte and trailing content are all REFUSED: a
+    // line that is nearly right runs code against a live target.
     [[nodiscard]]
     auto parseExploreChunk(std::string_view line) -> Result<ExploreChunk>;
 
@@ -69,6 +78,12 @@ namespace uf::cli
         // chunk too late. Ceiling zero means the VM was built without one; absent
         // only on a line that answered no chunk.
         std::optional<script::HeapUsage> heap{};
+
+        // Rendered as `"ended":true`, and only then. A results file is read
+        // without the queue beside it, so "the agent said this was the last
+        // one" and "the session stopped hearing from anyone" have to be
+        // distinguishable in the answers themselves.
+        bool ended{false};
     };
 
     [[nodiscard]]
@@ -81,14 +96,16 @@ namespace uf::cli
     auto exploreSuccess(
         std::string_view id,
         script::ScriptValue const& value,
-        script::HeapUsage heap
+        script::HeapUsage heap,
+        bool ended
     ) -> std::string;
 
     [[nodiscard]]
     auto exploreFailure(
         std::string_view id,
         Error const& error,
-        script::HeapUsage heap
+        script::HeapUsage heap,
+        bool ended
     ) -> std::string;
 
     // For a queue line that could not be parsed at all. It names no id: inventing

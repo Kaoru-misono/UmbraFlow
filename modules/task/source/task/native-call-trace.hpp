@@ -16,13 +16,16 @@
 
 namespace uf::task
 {
-    // The private capability surface has TWO consumers at the same level: the
-    // trusted Luau framework (through the primitives in ffi/uf-tables.cpp) and an
-    // operator sending commands from outside (through OperatorSession). What they
-    // share is here: the shape of a task.native_call line, and what happens when
-    // the sink loses one. A second copy of either would let one front-end's
-    // evidence drift from the other's, and a trace whose two halves are written to
-    // different rules cannot be read as one stream.
+    // What every consumer of the private capability surface writes when it uses
+    // one: the shape of a task.native_call line, and what happens when the sink
+    // loses one. It lives apart from the primitives themselves because a second
+    // copy would let one caller's evidence drift from another's, and a trace
+    // whose halves are written to different rules cannot be read as one stream.
+    //
+    // There was a second consumer at this level -- an operator sending commands
+    // from outside, through the retired `OperatorSession` -- which is why this
+    // is a file rather than a section of ffi/uf-tables.cpp. It stays that way:
+    // the rule is about the line, not about who happens to write it today.
 
     // Which primitive ran and what it was handed. Every task.native_call carries
     // it, so a primitive the host fails before the engine is reached -- a ticket or

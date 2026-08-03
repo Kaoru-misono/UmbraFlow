@@ -2,7 +2,6 @@
 
 #include "exploration-session.hpp"
 #include "framework-bundle.hpp"
-#include "operator-session.hpp"
 #include "page-model-file.hpp"
 #include "script-bindings.hpp"
 #include "script-validator.hpp"
@@ -244,7 +243,7 @@ namespace uf::task
         TaskStatus m_status{};
 
         // The front-end that owns this generation, empty until one drives it. See
-        // TaskHost::startOperatorSession for why the latch lives here.
+        // TaskHost::startExplorationSession for why the latch lives here.
         std::optional<trace::FrontEnd> m_frontEnd{};
 
     public:
@@ -718,30 +717,6 @@ namespace uf::task
             chunk,
             resourceReport,
             std::move(config)
-        );
-    }
-
-    auto TaskHost::startOperatorSession(
-        GenerationId generation,
-        TaskRunConfig config
-    ) -> Result<std::unique_ptr<OperatorSession>>
-    {
-        UF_TRY_VALUE(p_generation, requireGeneration(generation));
-
-        UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Operator));
-
-        auto const runId = TaskRunId{m_nextRunValue};
-        ++m_nextRunValue;
-
-        return OperatorSession::create(
-            std::move(config),
-            OperatorSession::Spec{
-                .projectId          = p_generation->projectId(),
-                .projectFingerprint = p_generation->model().fingerprint,
-                .cancellation       = p_generation->cancellation(),
-            },
-            runId,
-            generation
         );
     }
 

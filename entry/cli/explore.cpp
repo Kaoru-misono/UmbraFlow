@@ -145,7 +145,7 @@ namespace uf::cli
         {
             auto error     = std::move(value).error();
             auto execution = ExploreExecution{
-                .resultLine = exploreFailure(chunk.id, error, heap),
+                .resultLine = exploreFailure(chunk.id, error, heap, chunk.endsSession),
             };
 
             // A chunk that raised is an ordinary outcome and the session goes on. A
@@ -159,11 +159,18 @@ namespace uf::cli
                 execution.stopSession = true;
                 execution.failure     = std::move(error);
             }
+
+            // A last line is a last line whether or not it raised: the agent is
+            // done sending either way, and the raise is already in its answer.
+            if (chunk.endsSession)
+            {
+                execution.stopSession = true;
+            }
             return execution;
         }
 
         auto execution = ExploreExecution{
-            .resultLine = exploreSuccess(chunk.id, *value, heap),
+            .resultLine = exploreSuccess(chunk.id, *value, heap, chunk.endsSession),
         };
         if (auto const terminal = session.terminalKind(); terminal.has_value())
         {
@@ -174,6 +181,14 @@ namespace uf::cli
                 *terminal,
                 "the exploration generation was spent while a chunk was running"
             ).error();
+        }
+
+        // The agent said this was its last line. Answered first and stopped
+        // after, so the deliberate ending is itself in the results file rather
+        // than inferred from the file simply stopping.
+        if (chunk.endsSession)
+        {
+            execution.stopSession = true;
         }
         return execution;
     }
