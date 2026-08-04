@@ -3,6 +3,9 @@
 ## Start here
 
 - [Architecture](ARCHITECTURE.md)
+- [Work queue — pick up here](WORKLIST.md) — ordered, says which items need the
+  real machine, and carries the todos no other document had a home for. TODO.md
+  stays the ledger of record; this is the queue derived from it.
 - [Current execution checklist](TODO.md)
 
 ## Current plans
