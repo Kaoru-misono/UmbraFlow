@@ -74,9 +74,11 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
   id, generation id, wall clock and open framework-step scope onto every event
   before a sink sees it; `TraceStreamValidator` enforces the stream protocol,
   including which stages may request a `framework.*` event; `FrontEnd` records
-  which front-end -- a project task, an operator, or the agent behind
-  `umbra-flow explore` (`trace::FrontEnd::Annotation`) -- drove the run; and
-  `FileTraceSink` appends one line per event and flushes after each write.
+  which front-end -- a project task, the agent behind `umbra-flow explore`
+  (`trace::FrontEnd::Annotation`), or a run that measures and delivers no input,
+  which is what `umbra-flow check` is (`trace::FrontEnd::Check`) -- drove the
+  run; and `FileTraceSink` appends one line per event and flushes after each
+  write.
 - `modules/engine/`: platform-free automation engine — the `IFrameSource` and
   `IActionSink` ports over one bound capture target, the runtime manifest
   loader, and the Observation-handle session API (observe once, query the same

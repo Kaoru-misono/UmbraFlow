@@ -238,13 +238,15 @@
   和 `scribe.claim` 并列,分法与 `author_text_element`/`author_element` 同一条:
   一格只由一种证据量,选了哪种要写在那一行里。判定仍全在 `oracle.Expectation.new`,
   scribe 只过字段。纯探索通道现在能把一个工程从零标到底。
-- **`check` 的每周期读预算改成从被检的文件里读**——`k_defaultMaximumReadsPerCycle`
+- **~~`check` 的每周期读预算改成从被检的文件里读~~**(已于 2026-08-04 整条删除,
+  见本文件末尾「`check` 不再有每周期读预算」)。原文:`k_defaultMaximumReadsPerCycle`
   的 8 是给「读一次轮询一次」的 wait 循环设的上限;矩阵不是循环,它每屏开一个观察、
-  每个元素最多读一次,所以需要多少是文件的属性。`check` 现在按工程声明的元素数取
-  上限(`TaskHost::projectElementCount`),并把这个数一起格式化进例程——例程用
+  每个元素最多读一次,所以需要多少是文件的属性。`check` 按工程声明的元素数取上限
+  (`TaskHost::projectElementCount`),并把这个数一起格式化进例程——例程用
   `oracle.Claims.most_reads_on_one_screen` 在开第一屏之前比一次,不够就点名两个数字
-  拒绝。超限依旧是响亮的控制错误,永远不会变成静默的 miss。
-  换屏重开周期这条路走不通:帧来自按文件名顺序一次一张的目录,重开就是下一屏的像素。
+  拒绝。
+  换屏重开周期这条路走不通这一条仍然成立:帧来自按文件名顺序一次一张的目录,
+  重开就是下一屏的像素。
 - **空工程的骨架和那句读不懂的报错**——`umbra-flow explore` 开工前铺
   `assets/templates/`、`assets/screens/`、`frames/`
   (`entry/cli/project-skeleton.*`;模型层不建目录,`ProjectFileStore` 也不能建——
@@ -303,10 +305,35 @@
 文件的上限守的是一条不存在的限制,真正的守卫一直是 `MAXIMUM_CHUNK_BYTES`;上限已删除,
 测量写进了注释。
 
-一处诚实的降级:`check.cpp` 的 `readBudgetForCheck = 2 × 元素数` 从**精确上界**变成启发
-式,因为无矩形元素能在一屏上被声明多次。主要那一半仍在开跑前被 `Claims.most_reads_on_one_screen`
-大声拦住;剩下的会在遍历中途变成 `RecognitionIncomplete` 这个响亮的控制错误,不会变成一
-格被静默报成 miss。公式没动——改它属于 CLI 的设计决定。
+~~一处诚实的降级:`check.cpp` 的 `readBudgetForCheck = 2 × 元素数` 从**精确上界**变成启发
+式~~——这条已作废,`readBudgetForCheck` 连同整个每周期读预算于 2026-08-04 从 `check`
+删除,见下一条。
+
+`check` 不再有每周期读预算,而共振扫描成了可选项(2026-08-04):
+
+- **一屏一格只读一次**——`task::CycleAnswers` 按「周期 + 问题」记住引擎答过的话:
+  同一帧上同一矩形的第二次 `cycle_read`、同一模板同一区域的第二次 `cycle_match`,
+  都由宿主直接答。前提是引擎的识别是「帧 + 区域」的纯函数,一个周期的帧不会变;
+  哪天读或匹配多出一个键里没有的入参(阈值、语种、模型选择),这个缓存就得跟着改
+  或者删掉。参考工程实测:读 6903 → 5843,搜 3495 → 2295,125.6 s → 108 s,
+  两万九千行报告逐字节不变。
+  - 命中**不计预算**:那个上限是按 OCR 毫秒对着观察租约标定的,命中不跑推理。
+  - 命中**照写 `task.native_call`、不写 `engine.*`**:一半记「脚本问了什么、被告知
+    什么」,另一半记「引擎真做了什么」。两个数不再相等,那个差就是缓存本身,直接
+    从流里读得出来。
+- **预算整条删掉**——`readBudgetForCheck`、例程里的预检、`TaskHost::projectPageCount`
+  全部删除,`maximumReadsPerCycle` 传 `uint32` 上限。离线工具的判据是墙钟
+  (`maxScriptRuntime`),不是读次数;而且扫描按模型顺序解析页面,屏幕自己声明的那一页
+  可能排在最后——中途耗尽预算会从 `observe.resolve_page` 抛出去,把本该是
+  `unresolved_page` 的 finding 变成整跑失败。所以这里要的是**够不到**,不是「够大」。
+- **`--sweep-pages` 默认关**——把每一页丢给每一屏,在参考工程上是 87 × 85、约 40 s,
+  而它一行都不进 exit code。关掉时仍用 `recognition.verify` 解析每屏自己声明的那一页,
+  findings 一个不少;少的是 `resolution` / `page_coverage` 行,而且 summary 是**省略**
+  `resolutions` 和 `pages_unresolved` 两个字段而不是报 0——「没测」和「测了、没有」
+  是两回事。`recognition.needs_engine` 也跟着收这个开关:不扫描时,没有屏幕声明的页面
+  根本不会被解析,不该为它点名要 `--ocr-models`。
+  - 默认 69 s、开扫描 110 s(release,参考工程)。**注意剩下那 69 s 的主项不是扫描**,
+    是元素 × 屏幕那张矩阵的 2295 次模板搜索;要把 `check` 做成秒级,下一刀在匹配器上。
 
 ## P0-C — 卡厄思梦境一局出擊
 
@@ -345,6 +372,11 @@ dispatcher 一次认一页、做那一页要做的一件事,把这一局走完�
 - [ ] **小地图那条路还没重标**:节点图标分不开(亮/暗/空 8885 / 8549 / 8582)。
       挡路的机制已于 2026-08-02 解除——`explore.crop` 收色键、把蒙版烘进模板 alpha,
       见上面那条已划掉的阻塞;剩下的是拿一个真机会话按节点自己的亮色重标一遍。
+      **(2026-08-05 补)** 全图规划立项后这条**更**要做,不是可以省。新方案里小地图
+      从"选路依据"降级成"每步校验",而一个亮/暗/空分不开的信号做出来的校验是**永远
+      通过**的校验——不可能变红的检查不是检查。计划见
+      [全图规划要的框架能力](plans/2026-08-05-map-verbs-and-connectivity.md)与工程目录
+      `uf-chaos/MAP.md` 第三节;重标时顺手删掉五个 `map_*` 元素身上那些死 `rect`。
 - [x] **不抢焦点:开发者确认(2026-08-03)。** 记的是**开发者的判断**,不是实测数据——
       我量过一次(投递 `cycle_move_pointer` 与一次空白处点击,每 10ms 采一次
       `GetForegroundWindow`,146 次采样零命中),但当时机器锁着屏,那个读数分不清

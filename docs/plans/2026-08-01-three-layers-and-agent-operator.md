@@ -187,6 +187,15 @@ end
 - 同类枚举:区域内某类元素的全部命中,返回 (类型, 位置) 清单。这是底层唯一
   全新的匹配机制——从找一个到找全部（都需要给定查询范围）——近期最大的一块新增工作量,小地图近期方案
   整个压在它上面
+  > **更正(2026-08-05)。**「小地图近期方案整个压在它上面」被实测推翻:同类枚举一行
+  > 没写,小地图近期方案已经在 `uf-chaos/tasks/daily.luau` 里跑起来了。因为那一片的
+  > 几何是已知的——锚点定位、加一个列距 95、五行固定 y——于是五行四类打 20 次单点
+  > `cycle_match` 就够,不需要「找全部」。
+  >
+  > 它现在是一个**有条件的**工作项:只有真机量出展开地图页的节点**不**落在规则格点上
+  > 才做。真做的话要连带解决三件——非极大值抑制、自己的预算、超限响亮报错(照
+  > `read_lines` 那条,绝不返回截断的前几个)。见
+  > [全图规划要的框架能力](2026-08-05-map-verbs-and-connectivity.md)第四节。
 - 读区域:文字与结构化信息。**已落地(2026-08-01)**:两种布局,由调用方选。
   单行是「我画了这个矩形,读它」(`cycle_read` / `observe.read_element`);整块是
   「我不知道里面有什么,把行找出来」(`cycle_read_lines` / `observe.read_lines`),
@@ -213,7 +222,20 @@ end
   铸过的 hit 派生,并继承它的周期
 - 按键
 - 滚轮:倾向锚定标注区域,待实例检验(见 §九)
-- 拖拽:运行模式暂不提供,随远期小地图立项再定
+- 拖拽:~~运行模式暂不提供,随远期小地图立项再定~~
+  > **已立项(2026-08-05)。** 远期小地图就是那个立项,见
+  > [全图规划要的框架能力](2026-08-05-map-verbs-and-connectivity.md)第二节。形态定为
+  > `drag(start, offset)`,**一次调用完成整个手势**——因为每个动作动词都消费周期,拆成
+  > 按下/移动/抬起就是三个周期三帧租约,中途必然撞 `StaleObservation`,失败时还会留下
+  > 一个按住不放的鼠标键。端口沿用 `cycle_long_press` 那条「每条退出路径都释放」的保证。
+  >
+  > 起点锚在哪还要裁决,倾向锚在一个标注的画布区域上:那和上面点击那条「命运选择三张
+  > 卡:锚定容器区域、偏移由运行时算」同构,现有授权规则一行不改,而且画布元素有现成
+  > 先例(`menu_burger` 就是只有矩形、没有模板、页面上 exercise `interact`)。
+  >
+  > 顺带记一笔实现现状:投递层的 `controller::movePointer` 本来就会读按住的键来决定发
+  > 普通移动还是拖拽,今天发不出去只是因为端口层不让任何键跨调用保持按下。这是补一个
+  > 动词,不是补一套机制。
 
 探索特权(仅 Agent):
 
@@ -243,6 +265,18 @@ end
 评估。届时边界不变:C++ 只提供「这一屏看见哪些节点」与拖拽动词,路线选择仍在
 策略层。
 
+> **已立项(2026-08-05),边界原样成立。** 框架侧见
+> [全图规划要的框架能力](2026-08-05-map-verbs-and-connectivity.md);这个游戏要量什么、
+> 标什么、脚本怎么写在工程目录 `E:\umbraflow-projects\uf-chaos\MAP.md`。
+>
+> 「C++ 只提供这一屏看见哪些节点、路线选择在策略层」这条边界不但成立,还比预想的更值钱:
+> 因为规划的输出是**语义**(「第 3 层走第 2 个节点,那是篝火」)而不是坐标,拼接完全不
+> 需要跨周期的坐标身份,§七点击那条新加的第六道检查一行不用动。选路那一帧重新观察、
+> 重新找、点一个新铸的 hit 就是了。
+>
+> 上面「近期」那段里「在分支选择区做同类枚举」也已被实际实现改写:实现走的是「按锚点
+> 算出格子 + 逐格单点匹配」,一次都没用到枚举。见 §七 同一日期的更正。
+
 ## 九、开放问题
 
 1. **命中判断的场景。**Agent 自检刚标的元素,还是重放分析?接口不同,待定。
@@ -256,7 +290,12 @@ end
    `engine.*`:裸坐标既没有元素也没有页面,写成 `engine.action_delivered` 等于在记录
    里放进一次从未发生的识别。
 5. **滚轮的授权语义。**倾向锚定标注区域,与点击同构,待实例检验。
-6. **远期小地图立项。**
+6. ~~**远期小地图立项。**~~ —— **已立项(2026-08-05)。** 见
+   [全图规划要的框架能力](2026-08-05-map-verbs-and-connectivity.md)与工程目录的
+   `uf-chaos/MAP.md`。要建的是两个动词(拖拽、读连通)加一套拼接图评估;同时定下三条
+   **不做**:帧差异原语(改真机标定一次拖拽走多少像素)、通用线段检测(收窄成「给定
+   两点问有没有连线」,因为列表型结果的证伪矩阵仍是本节问题 3)、跨周期的坐标身份
+   (语义输出让它不必要)。
 7. **教学文档要不要收紧格式。**本文建议保持粗糙散文、只规范 Agent 侧;开发者
    曾表示后面可以再规范,待定。
 8. ~~**文字当页面签名证据。**~~ —— **已裁定(2026-08-01,开发者):门开。** 出击页的
@@ -327,6 +366,63 @@ What that direction reached for is already measured per element: an appearance
 hitting a screen it does not own is a misfire cell, two appearances hitting one
 screen is `ambiguous_appearances`, and one region reading one text on two pages
 is the repeated-text confusion the `recognition` header states first.
+
+## 2026-08-04 — The other direction is measured, and still not judged
+
+The ruling above stands unchanged: "a screen declaring page P must resolve NO
+OTHER declared page" is false, and nothing in the model can yet write down the
+exception. `regress` now sweeps every declared page against every screen anyway
+and reports what resolved (`recognition.sweep`, and the `resolution` rows of the
+verdict), because the ruling rejected the *finding* and the cost, not the
+question. Neither objection survives as stated:
+
+- **Not a finding.** The rows sit beside `separations` -- measured, reported,
+  and never counted into `accepted`. The exit code is findings alone.
+- **The cost is now a number.** It is measured rather than budgeted for; see
+  below.
+
+What the sweep buys is the thing "already measured per element" could not
+supply. On the reference project it reported one page resolving on 59 of 85
+screens, and no per-element rule can say that. Its anchor is a required
+`seasonevent_crest` and a forbidden `battle_draw`: the first matches on 60
+screens, the second on the one screen that subtracts, and the page resolves on
+the 59 that remain. Every one of those cells is UNCLAIMED -- the file declares
+nothing about either element on any screen -- so there is no per-element rule
+there to fire or to stay silent. Only the conjunction, asked of a whole frame,
+has the number.
+
+**What the number turned out to be, and what it bought.** Measured on the
+reference project (85 screens, 331 elements, 87 pages), release build: the sweep
+costs 6903 of the check's 7082 text reads and about 40 s of its wall clock,
+nearly all of it OCR. Two things followed.
+
+`task::CycleAnswers` answers one rectangle once per frame, because pages share
+elements -- five of this project's pages identify by one `page_title`. It removes
+1060 of those 6903 reads and 1200 of 3495 template searches, 125.6 s to 108 s,
+and it is transparent: the whole 29,400-row report is byte for byte what it was.
+
+The read budget the bullet above described is GONE from `check`. It was sized
+from the file (`readBudgetForCheck`, `recognition.reads_per_sweep`), and sizing
+it at all was the mistake: a check's cycle is the whole of one screen's work, the
+frames arrive one file per capture so the walk cannot re-open one, and the sweep
+resolves pages in model order -- so a budget exhausted part-way through raises
+out of `observe.resolve_page` and turns an ordinary `unresolved_page` finding
+into a failed run. The run is bounded by wall clock (`maxScriptRuntime`) and the
+per-cycle ceiling is unreachable by construction.
+
+And the sweep is now OPT-IN at the CLI (`umbra-flow check --sweep-pages`),
+because 40 s of a 110 s check is a measurement that moves no exit code. Off, the
+walk still resolves the page each screen DECLARES through `recognition.verify`,
+so every finding is unchanged; what is missing is the `resolution` and
+`page_coverage` rows, and the summary OMITS `resolutions` and `pages_unresolved`
+rather than reporting zero -- "not measured" and "measured, none" are different
+facts. `recognition.needs_engine` takes the switch for the same reason: without
+the sweep, a page no screen names is never resolved and cannot want an engine.
+
+The exception the ruling could not write down is the `over = [...]` field of
+[状态层与策略插槽](2026-08-04-state-layer-and-policy-slots.md) §3.4. When a page
+can declare what it covers, a co-resolution that `over` does not explain becomes
+a finding. Until then it is a fact about the corpus.
 
 ## 2026-08-03 — `cycle_read_lines` is a verb, not a flag on `cycle_read`
 

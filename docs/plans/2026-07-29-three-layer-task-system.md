@@ -196,6 +196,12 @@ C++ 兜底释放账本里的一切。
 > 拖拽与自由坐标点击这类**探索特权只存在于 Agent 的探索环境**,业务环境根本不装载。
 > 本节这条原语纪律不变:私有表只有 framework 拿得到,以闭包 upvalue 持有,project
 > 环境里没有名字。
+>
+> **补(2026-08-05):拖拽不再只属于探索环境。** 全图规划立项后它进运行模式,形态是
+> `drag(start, offset)`,起点锚在标注元素上——所以它是「锚定标注」那一类,不是「自由
+> 坐标」那一类,原语纪律照旧。自由坐标点击仍然只在探索环境。见
+> [`2026-08-05-map-verbs-and-connectivity.md`](2026-08-05-map-verbs-and-connectivity.md)
+> 第二节。
 
 只有 framework 能拿到,以闭包 upvalue 形式持有,**永不作为任何 project 脚本能命名的
 表的键**。
@@ -562,6 +568,12 @@ steady clock 在 C++。project 看不到墙钟。
 > 业务环境根本不装载,而不是装载后逐次拒绝——正是本节「隔离按闭包」的那条机制。见
 > [`2026-08-01-three-layers-and-agent-operator.md`](2026-08-01-three-layers-and-agent-operator.md)
 > §一、§二。
+>
+> **补(2026-08-05)**,这份名单要改两处:**拖拽**分成两个——自由拖拽仍是探索特权,而
+> 锚在标注元素上的 `drag(start, offset)` 进运行模式(全图规划立项);**帧差异**决定
+> **不做**,拖一次走多少像素改成在真机上标定成常数。区域像素不变。见
+> [`2026-08-05-map-verbs-and-connectivity.md`](2026-08-05-map-verbs-and-connectivity.md)
+> 第一、二节。
 
 **环境隔离按闭包,不按线程。** `luau_load` 收 env 索引(`lvmload.cpp:787`);新线程的
 `gt` 是从父线程复制的(`lstate.cpp:121`),所以 `luaL_sandboxthread` 那套代理形状
@@ -991,8 +1003,17 @@ framework.step_started / step_finished
 framework.retry_attempt / retry_backoff
 framework.interrupt_matched / interrupt_handled / interrupt_exhausted
 framework.settled
+framework.page_resolved                           -- 2026-08-05 补
 framework.subtask_entered / subtask_exited        -- P1
 ```
+
+> **补(2026-08-05):`framework.page_resolved`。** 页面模型落到可信 Luau 之后,
+> 「这一帧是哪个页」成了 framework 的判断,而这份判断没有任何原语能替它写下来——
+> 流里只剩下若干次搜索与读取,读的人无从知道它们被当成了什么。它由
+> `observe.resolve_page` 在铸出回执的那一刻发一条,只在**成功**时发:一个调用方会拿
+> 若干个页去试同一帧,把拒绝也记下来只会得到「试过几个页」而不是「这次 run 认为自己
+> 走过的页序列」。它不开作用域,所以下面那份结构规则一条都不管它;唯一约束是它的
+> 名字要过 `checkLabel`,和 step 名同一条尺子。
 
 C++ 在每条事件上盖:`seq`(单调)、`runId`、`generationId`,以及 `wallClock`。
 **`wallClock` 属于一个文档化的非 golden 字段集**,确定性断言比较前剥掉——这解决了
@@ -1075,9 +1096,10 @@ C++ 在每条事件上盖:`seq`(单调)、`runId`、`generationId`,以及 `wallC
 > 报不出 `Completed`**。两者都让位于 run 已经有的失败——一次被取消的 run 里未闭的 step
 > 是取消的后果,不是第二个原因。
 >
-> **5. `framework.*` 今天落地八条**:`step_started` / `step_finished` /
+> **5. `framework.*` 今天落地九条**:`step_started` / `step_finished` /
 > `retry_attempt` / `retry_backoff` / `interrupt_matched` / `interrupt_handled` /
-> `interrupt_exhausted` / `settled`,全部由 `modules/task/runtime/ctx.luau` 发出。
+> `interrupt_exhausted` / `settled`,加上 2026-08-05 补的 `page_resolved`,
+> 全部由 `modules/task/runtime/ctx.luau` 发出。
 > `subtask_entered` / `subtask_exited` 照原计划留给 P1,`TraceEventKind` 里还没有它们,
 > 所以上面那条「与 step 的交错一致」的规则今天没有对应实现。
 >

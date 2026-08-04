@@ -169,6 +169,72 @@ per chunk for several chunks and require the reading not to climb. Restore one
 `__mode` to strong and watch that one test go red -- measured at +1.87 MB over
 2000 elements, against a bound of 256 KB.
 
+## A report accumulated in the VM outgrows the ceiling before the walk does
+
+Added 2026-08-04, the first time `umbra-flow check` ran on a corpus of 85 screens.
+
+### Symptom
+
+`InvalidResource: script error: not enough memory`, from a routine whose measuring
+phase demonstrably finished: the trace held all 85 `cycle_open`/`cycle_close`
+pairs, all 6,903 reads and all 3,495 matches. Every screen was walked. The failure
+was after the last one.
+
+### Root cause
+
+Two costs, and the smaller one is the walk. `regress.check` accumulated 28,985
+cell rows, and `regress.render` then built one JSON string per row and
+`table.concat`ed the lot into a single six-megabyte string, while every row and
+every table it came from was still live.
+
+That 28,985 is measured, not derived, and the difference matters to anyone
+sizing a budget from the file. `walkScreen` emits one row per element per SEARCH
+RECTANGLE -- an element that draws no rectangle of its own is measured wherever
+the claims place it, which can be several regions on one screen -- plus one row
+per appearance for every element declaring more than one. So "one row per
+element per screen" is a lower bound, not the formula. On this corpus the bound
+happened to be reached exactly and the surplus is separable: 331 elements over
+85 screens gave 28,135 element rows, because here every element draws its own
+rectangle and so has exactly one search rectangle, and four elements declaring
+ten appearances between them added the other 850. `entry/cli/check.cpp` sizes
+the quota from the lower bound, which is why the base term has to carry the
+difference.
+
+Neither number is a defect on its own. The product is: a report whose size is
+`screens x elements` was being held twice, inside a ceiling sized for a business
+task. Printing row by row instead of joining got 13,298 lines out before dying,
+which locates the rest of the cost in the churn -- roughly twenty-five short-lived
+strings per row -- outrunning the incremental collector, exactly as the third
+entry above describes.
+
+The trap in diagnosis: the corpus had grown past this ceiling long before anyone
+saw it, because the check refused to start at all for an unrelated reason (a
+screen inventory that disagreed with the directory). A tool that has never run at
+full size has never measured its own ceiling.
+
+### Fix
+
+Both halves, because either alone still fails:
+
+- **Do not hold the report.** `regress.groups` hands out blocks of rows and the
+  function that renders one, so a caller prints each line as it is minted and
+  every line is garbage before the next exists. `regress.render` stays for
+  verdicts small enough to hold twice, and is defined in terms of `groups` so the
+  report order has one definition.
+- **Size the ceiling from the file, like every other budget this verb takes.**
+  `TaskRunConfig::memoryQuotaBytes`, set by `entry/cli/check.cpp` to a base plus
+  four kibibytes per `elements x screens` cell -- the row's live table plus the
+  strings rendering it mints, times the same hysteresis factor `cycle_crop` uses.
+  A ceiling set at what is live leaves the collector no room to stay ahead.
+
+### Regression check
+
+Run the check over a corpus of some tens of thousands of cells. Restore the
+`table.concat` of the whole report, or drop the quota to the script layer's
+default, and it must fail -- both were watched failing on the reference
+project's 85 screens and 331 elements, 28,985 rows, before the fix, and the
+second failed again at 64 MiB with the streaming half already in place.
+
 ## An empty result rules nothing out until the experiment can produce one
 
 ### Symptom

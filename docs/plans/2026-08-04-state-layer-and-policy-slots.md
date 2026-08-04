@@ -15,6 +15,15 @@
 普查对象:`uf-chaos/tasks/daily.luau`(1593 行,60 个 handler)与
 `page-model.toml`(60 页、207 元素、240 引用、9 边、38 屏、76 expect 格)。
 
+> **数字更正(2026-08-04 A 阶段实测)。** 上面那串是 08-03 那次普查的存量,写下时就已经
+> 落后于文件。今天是 **87 页、331 元素、369 引用、9 边、85 屏、76 expect 格、27 模板**。
+> 「60」不是过期的总数,而是**派发器覆盖的子集**:ORDER 恰好 60 个名字,与 60 个
+> `HANDLERS.*` 逐名相等,87 − 60 就是那 27 个没有 handler 的 `season_*` 页。
+> 于是矩阵是 85 × 87 = 7395 次解析、28985 格,不是本文原先算的 38 × 60 = 2280。
+> 屏数从 71 变 85,是因为 A 阶段把 14 张只躺在 `assets/screens` 里、从未声明成
+> `[[screen]]` 的帧注册了进来——在那之前**两边数目不等,`umbra-flow check` 直接拒跑**,
+> 所以这份模型的证伪矩阵此前一次也没有跑起来过。
+
 - **34 个 handler 的函数体就是一行 `act()`**——认出页,按一个按钮。每个都在编码
   一条出边,其中只有 6 页在模型里声明了边;**差 28 条**。
 - **13 个 handler 是同一个算法**:读一块 → 按有序规则挑一个 → 点 → 可能确认。
@@ -96,13 +105,88 @@ observe 里"page signature 不是项目可按调用点放松的地方"的裁决�
   `settlement`(结算尾)。(分区已裁决,2026-08-04 直答,第九节 3。)
 - 浮层页不属于模式,声明 `over = ["battle", "event", ...]`(能盖在哪些模式上);
   奖励串在战斗后与篝火后都出现(08-03 日志 71-73 步),是族不是模式的直接证据。
-- `interrupt = true` 补声明:network_retry、dismiss_overlay(今天 60 页零声明)。
+- `interrupt = true` 补声明:network_retry(今天全模型零声明)。
+- `catch_all = true` 补声明:dismiss_overlay。
+
+  > **`interrupt` 与「兜底」是两件事,已拆开(2026-08-04 开发者裁决)。** 本条原先把
+  > network_retry 和 dismiss_overlay 写在同一个旗标下。四·1 的矩阵量出它们的次序要求
+  > 正好相反。
+  >
+  > `dismiss_overlay` 的 identify 锚点只有 `dismiss_hint` 一个(rect
+  > `[655, 815, 300, 50]`,`expected_text = "點擊畫面可關閉視窗。"`)。它说的是「有个浮层,
+  > 而且它说自己点一下就关」——是哪个浮层,它不知道。两张赛季页在这句之上各自还多一句:
+  > `season_flash_cards` = `seasonflash_title` + `dismiss_hint`,`season_mental_intro` =
+  > `season_mental_intro_anchor` + `dismiss_hint`。于是 `dismiss_overlay` 的子句集是两者的
+  > 真子集,矩阵报的三对子集里正是这两对。再叠上五·1「interrupt 页永远在场、排在最前」,
+  > 失效就是结构性的:凡解析出 `season_flash_cards` 的帧必然也解析出 `dismiss_overlay`,
+  > 而后者先被问,这两页从此永远到不了。今天没坏,只因为 `tasks/daily.luau` 的 ORDER 把
+  > `dismiss_overlay` 手排在最后一名——而那正是模式机要拿掉的东西。
+  >
+  > 裁决:**两个旗标,不合成一个。** `interrupt = true` 保持原义——随时可能盖满屏、
+  > 必须先处理掉才谈得上继续的页,`network_retry` 是一个,先问它是对的。新增
+  > `catch_all = true` 表示相反的次序——签名描述的是一**类**画面而不是某一屏的页,
+  > 它同样永远在场,但要**最后**问,等每一张具体页都问过之后。`dismiss_overlay`
+  > 从 `interrupt` 移到 `catch_all`。这不是新道理:[WORKLIST](../WORKLIST.md) 一·2
+  > 记的六条派发器护栏里就有「事件页做**兜底**而不是候选 —— 结构上杜绝假阳性」,
+  > 本条只是把那一条从手排纪律提升成模型里的声明。
+  >
+  > **字段名取 `catch_all`,弃 `fallback`**:`fallback` 是「兜底」的直译,但六节的策略表
+  > 已经用它表示「没有规则命中时做什么」,同名不同义会读岔;`catch_all` 直说签名捕的是
+  > 一类而不是一屏。
+  >
+  > 两条后果一并记:
+  >
+  > 1. **候选次序从此是推导出来的,不是手排的。** interrupt 先、具体页居中、catch_all
+  >    最后,这三档写进模型之后,五·1 那份候选层次不再是一张要维护的名单,而是每页各自
+  >    声明的结果——这正是四·1 承诺过的「取代 ORDER 的 60 个手排名字」。
+  > 2. **B 阶段该加一条检查,而且很便宜。** 锚点子集格是纯文件算的(四·1,零抓帧),
+  >    所以 regress 当场就能判:一页声明了 `interrupt`,又站在子集表的**被包含**一侧,
+  >    就报一条 **finding**——包含它的那一页从此永远解析不到。不必再附加「没有 `forbidden`
+  >    子句把两者分开」这个条件:四·1 已经论证过,极性是子句键的一部分,真能仲裁的那种
+  >    配置根本进不了这张表,凡进表的都已经满足。是 finding 不是行:普通共解析只是事实,
+  >    只报不判;这一条是模型自己就能断定的缺陷。**尚未实现。**
+  >
+  > 顺带一记:矩阵报的第三对 `event_node ⊆ event` 形状相同(`event_node` 只必需
+  > `rest_speed`,`event` 还要 `event_battle`),今天也靠 ORDER 排开。它是 `catch_all`
+  > 的下一个候选,但本次未裁决。
+
 - **证伪**:trace 回放(四·2)断言"处于模式 X 的区间内,未解析出属于其他模式的
   场景页";08-03 那 85 步是第一份底卡。
 
 ### 3.5 边补全与围观边
 
 - 从轨迹库把 28 条一键边补进模型;修正 sortie 的 `to`。
+
+  > **已补,9 条 → 31 条(2026-08-05)。** 来源不是 trace 而是
+  > `frames/daily-log.txt`——08-03 那次运行读的模型已经不存在,回放喂不进去(见第八节
+  > A 阶段的注)。口径按最严的取:`<no page resolved>` 断链、自环丢弃、只有投递过的步
+  > 才能作为起点。46 条原始转移过滤后并成 27 条,其中 3 条确认了既有边、1 条与既有边
+  > 矛盾、23 条是新的。
+  >
+  > 挖的办法值得记一笔:日志每一行都是 `daily.luau` 里的一个字符串字面量,所以不是去
+  > 解析散文,而是把每条注解反查回发出它的 handler。由此"这一步点了哪个元素"才是可答的
+  > ——`actThenConfirm` 那类的触发元素是**确认键**不是卡片,而 `battle` 根本不是点击,
+  > 回合结束在 `ctx:key(ending, "E")`,所以它是本模型第一条 `via = "key"` 的边,
+  > 一条边带三个 `to`。
+  >
+  > **「离开浮层 = pop」不成立,这是补边最值钱的产出。** `card_taken`、`skip_confirm`、
+  > `camp_confirm` 三个浮层确认掉之后**不露出它们盖住的那一页**,而是把流程往前推:
+  > 前两个盖着 `card_reward` 却落到 `node_reward`,第三个盖着 `campfire` 却落到
+  > `node_reward_done`。而 `walk_edge` 把 pop 的目的地算成栈顶下面那一个然后等它——
+  > 按 pop 写,这三条边会在真机上等一个永远不来的页面然后超时。三条都改写成 `navigate`
+  > 加显式 `to`:`Edge.new` 只查目的地的 overlay 旗标、从不查来源页的,所以从浮层
+  > navigate 出去本来就合法;而 `believe_arrival` 在任何非浮层到达时把栈重置为底座页,
+  > 栈的语义也不因此打折。
+  >
+  > **`extreme_intro -(overlay_confirm)-> rest_point` 只删不换。** 那条确定是错的
+  > (`rest_point` 在 85 步里零解析,且九·2 已裁决它退休),但观察到的后继紧跟在一个
+  > `<no page resolved>` 之后,`event_node` / `event` / 两者皆有三种读法都站得住。模型里
+  > 少一条边只是"未知",留一条猜的是"错误"。等回放检查器加真机跑一局,它会自己补上——
+  > 这一条正好是那个检查器存在的理由。
+  >
+  > 两条证据薄的仍然进了模型,理由各自不同:`event -(event_offers)-> [dice_roll]` 是
+  > 2:1,而那 1 次的帧自己 raise 了 `recognition_incomplete`(读不到任何文字);
+  > `dice_roll -(dice_surface)->` 是 pop,pop 不声明 `to`,所以证据的瑕疵影响不到记录内容。
 - 新增边旗标 `preview = true`(围观边):执行它**不换页**——点 roster 行只换
   预览区这类。运行时合同:围观投递后本页必须仍解析,否则例程按假设破裂上报。
 - **证伪**:回放检查里,每个观察到的页转移要么命中一条边要么出 finding;
@@ -111,8 +195,17 @@ observe 里"page signature 不是项目可按调用点放松的地方"的裁决�
 ### 3.6 不动的
 
 wake_point 与其"证明什么都不按"的矩阵检查;能力集合;Holding/exercised;
-screen/expect;残余段落保序往返。schema 串升 `l2-v2`,`project.parse` 拒绝
-未知字段的行为不变。
+screen/expect;残余段落保序往返。schema 串升 `l2-v2`。
+
+> **更正(2026-08-04):`project.parse` 从不拒绝未知字段。** 未知顶层键进
+> `document.preamble`,已知段落里的未知键进该段的 `residual`,未知 `[[段落]]` 进
+> `document.blocks`,三者都原样往返写回。拒绝未知键的是 `mint.unknown_key`,作用在
+> **构造器的 spec 表**(`Element.new` / `Page.new` / `Edge.new` / `Screen.new` …),
+> 是另一张面。B 阶段若照原话去"保持"一个从不存在的拒绝,就会砸掉 residual 往返——
+> 而那正是这套文件格式存在的理由。
+>
+> 这条反过来是 B 阶段可以用的:今天就能往 `[[edge]]` 里写 `preview = true`,它会
+> 逐字节往返,只是没有人解释它。先写数据、后接语义是可行的。
 
 ## 四、证据两库与新检查
 
@@ -124,9 +217,35 @@ screen/expect;残余段落保序往返。schema 串升 `l2-v2`,`project.parse` �
 > 日常 `node_map` 在赛季**三分支**路线页上解析、在**单分支**布局上不解析,
 > 说明它的锚点不是那一页的常量。两者都该由本节这张矩阵自动说出来。
 
-38 张屏 × 60 页全解析。产出三件:谁与谁在同屏共解析(派发内序的**全部**真依据,
+85 张屏 × 87 页全解析。产出三件:谁与谁在同屏共解析(派发内序的**全部**真依据,
 取代 ORDER 的 60 个手排名字)、锚点子集关系、从未在任何屏上解析成功的页
-(覆盖缺口清单——60 页对 38 屏,缺口本身是发现)。
+(覆盖缺口清单——87 页对 85 屏,缺口本身是发现)。
+
+> **已落地并跑出第一份报告(2026-08-04)。** `regress.check` 里加了
+> `recognition.sweep`(骑在每屏那唯一一次观察上,不多开一帧)与
+> `recognition.anchor_subsets`(纯文件、零抓帧),verdict 多出 `resolution` /
+> `anchor_subset` / `page_coverage` 三种行,**全部只报不判**——`accepted` 仍然只数
+> findings(裁决见[三层文档](2026-08-01-three-layers-and-agent-operator.md)
+> 2026-08-04 一节)。量出来的:
+>
+> - **`season_event` 在 85 张屏里的 59 张上解析成功。** 它的签名是必需
+>   `seasonevent_crest` 加禁止 `battle_draw`,而 `seasonevent_crest` 正是
+>   [WORKLIST](../WORKLIST.md) 一·1 点名的无掩膜模板之一。那一条原本是论证,现在是
+>   一个数字:**这不是页面签名,是常量**。同族还有 `event_node` 命中 10 屏、
+>   `fighter_list` 8 屏、`dismiss_overlay` 5 屏。
+> - 85 屏里 **62 屏有不止一页解析**;3 条锚点子集(`dismiss_overlay` ⊆
+>   `season_flash_cards` / `season_mental_intro`,`event_node` ⊆ `event`),今天只靠
+>   ORDER 排开。**加一条 forbidden 守卫也解除不了这个顺序依赖**:包含关系一旦成立,
+>   能解析出 specific 的帧必然也解析出 general,先问 general 就永远到不了 specific,
+>   多出来的那条子句是必需还是禁止都一样。真能仲裁一对页的配置是 general **禁止**、
+>   specific **必需**同一个标记——而那种配置一行都不会出现在这张表里:极性是子句键的
+>   一部分,包含判定当场不成立(`recognition.identifyClauses`)。
+> - **两半都不可省。** 子集是纯符号的,`event`/`event_node`/`rest_point` 在
+>   `rest_point` 那张屏上三页齐鸣,而它们的锚点名两两不交——子集分析看不见它;
+>   反过来像素扫也说不出"谁包含谁"。本节原先只写了像素那一半。
+> - 18 页在任何屏上都不解析,**其中 0 页是"有屏但签名不成立"**——18 页全都是从未
+>   存过屏。`page_coverage` 行同时报 `resolved_on` 与 `declared_screens`,就是为了
+>   让这两件事不混:一页没被拍过和一页认不出,是两个结论。
 
 ### 4.2 轨迹回放(新的离线检查,不开真机)
 
@@ -134,18 +253,38 @@ screen/expect;残余段落保序往返。schema 串升 `l2-v2`,`project.parse` �
 (3.5);投递后的生效期望(五·2)。跑一局就多一份底卡,与 expect 矩阵互为镜像:
 **截图库让"认/许"可证伪,轨迹库让"变"可证伪**。
 
+> **输入有了,检查器还没有(2026-08-04)。** 新增了一个 additive 事件
+> `framework.page_resolved`:`observe.resolve_page` 铸出票据时由框架发出,只带页名,
+> 成功才发、失败不发。所以从今天起每一次运行都自动留下"它认为自己依次站在哪几页"
+> 这条序列,本节第一件要验的事不再没有料。**回放检查器本身仍然不存在**——这里改的
+> 只是"没有输入",不是"做完了"。它必须遵守的一条约束见八·A 的进度注:按
+> `run.started.frontEnd` 排除 check 自己的轨迹,而不是按任务名。
+
 ### 4.3 语料管理(回答"screens 要不要进版本管理")
 
-- **入库**:`page-model.toml`、`tasks/`、`assets/screens`(65 MB)、
-  `assets/templates`(240 KB)、三份 md 台账。screens/templates 是 expect 矩阵的
-  证据基质,不入库的模型是不可证伪的模型;文件名=内容哈希,**一次写入永不改写**,
-  git 史只增不改,不需要 LFS,体积到瓶颈再迁。
+- **入库**:`page-model.toml`、`tasks/`、`assets/templates`(**200 KB / 27 张**,
+  2026-08-04 实测 199889 字节;本文原先写的 240 KB 没有测量作依据)、三份 md 台账。
+
+  > **`assets/screens` 已于 2026-08-04 出库,本条原先的裁决就此更正。**
+  > 原话是「不入库的模型是不可证伪的模型」——这一步是错的。可证伪性挂在
+  > **模型里那 85 条 `[[screen]] hash`** 上,不挂在文件躺在哪里:文件名就是内容哈希,
+  > 那份清单本身就是 lock,`umbra-flow check` 在目录与模型不一致时已经会拒跑
+  > (今天亲见:「declares 71 screens and its directory holds 85」)。
+  > 出库后重跑矩阵,summary 与出库前**逐字节相同**。
+  >
+  > 反过来,git 为这批数据买到的东西几乎为零:它内容寻址、一次写入永不改写,
+  > 所以「防误改」是它自己的命名规则already提供的;而工程仓库**没有 remote**,
+  > `.git` 与工作区同盘,「入库」连一份备份都不是。代价则是同样的字节存两遍——
+  > 出库并重写历史后 `.git` 从 **148 MB 降到 413 KB**,23 个提交一个没少。
+  >
+  > **备份另行安排,且开发者 2026-08-04 裁决暂不做**:语料只有本地一份,可接受。
 - **不入库**:`frames/`(运行输出)、`run-trace.jsonl`(每局重生成)、
   `*.before-*`(手工备份,入库后由 git 史替代)、`templates-unused/`(裁决后删)。
 - **有条件入库**:被 4.2 引为证据的 trace,精馏成"解析与投递事件"子集后入库
   (21154 行原始 trace ≈ 9 MB,精馏后应在数十 KB);原始件压缩归档在库外。
-- E:\umbraflow-projects\uf-chaos **已 git init**(2026-08-04,根提交
-  `775ae2d`,连同 `.gitignore` 与关掉换行改写的 `.gitattributes`)。
+- E:\umbraflow-projects\uf-chaos **已 git init**(2026-08-04,连同 `.gitignore`
+  与关掉换行改写的 `.gitattributes`)。根提交原为 `775ae2d`;同日把 screens 清出
+  历史后全部提交哈希重写,现在的根是 `f073944`,头是 `3759cb9`。
 
 ## 五、运行时:模式机与例程层
 
@@ -155,9 +294,15 @@ screen/expect;残余段落保序往返。schema 串升 `l2-v2`,`project.parse` �
 ### 5.1 模式机
 
 信念变量一枚。翻转只由观察驱动:**看见下一模式的场景页解析成功才算进入**,
-按下"進入"不算——与回执同帧纪律同源。候选三层:interrupt 页永远在场 → 当前模式
-的场景页 + 声明盖在此模式上的浮层 → 连续 N 帧全不解析时放宽全集,再不行走 wake。
-每步候选从 60 降到十几,周期 32 次读的预算直接宽松。
+按下"進入"不算——与回执同帧纪律同源。候选次序三档:`interrupt` 页永远在场且最先问
+→ 当前模式的场景页 + 声明盖在此模式上的浮层 → `catch_all` 页最后问;连续 N 帧全不
+解析时放宽到全集,再不行走 wake。每步候选从 60 降到十几,周期 32 次读的预算直接宽松。
+
+> **这三档是推导出来的,不是排出来的(2026-08-04,裁决见三·4)。** 本节原先写「候选
+> 三层」,把 `dismiss_overlay` 这类只描述一类画面的页归在 interrupt 里一起先问——那会
+> 让比它更具体的页永远解析不到。`catch_all` 拆出来之后,这里不再是一张要维护的名单:
+> 每页自己声明属于哪一档,次序是声明的结果。这就是四·1 说的「取代 ORDER 的 60 个
+> 手排名字」。
 
 ### 5.2 四拍 step 与生效验证
 
@@ -242,6 +387,56 @@ return task.run_project(ctx, { policies = policies,
 - **A 证据先行(无 schema 改动)**:轨迹回放检查器 + 共解析矩阵;从 08-03 trace
   挖边、补 28 条、修 sortie;每条边引一行 trace 为据。
   门:拆掉回放检查器的任一断言,自测必红。
+
+  > **进度(2026-08-04)。** 共解析矩阵**已完成**:14 张未注册的屏进了模型、
+  > `recognition.sweep` 与 `anchor_subsets` 落地、第一份报告跑了出来(见四·1)。
+  > 门已验:拆掉 sweep 或拆掉 anchor_subsets,`tests/task/test-script-owned-model.cpp`
+  > 的「The matrix reports which pages resolve on a screen besides its own」分别转红。
+  >
+  > **轨迹那半改了做法,理由是量出来的**:trace 里**一个页名都没有**——35889 行
+  > `run-trace.jsonl` 零命中,`run.resources_validated` 发的是
+  > `"elements":[],"pages":[]`,verb 表里没有任何页解析动词。而且 08-03 那次运行读的是
+  > 一份 86046 字节的 `page-model.toml`(`sha256:f4ae1b3e…`),今天的文件是 124530
+  > 字节,两份 `.before-*` 备份都不是它,工程仓库 08-04 才 git init——**那次运行的模型
+  > 已经不存在了**,精确回放无从谈起。
+  >
+  > 因此改为:先加一个 additive 的 `framework.page_resolved` 事件(trace 版本不动,
+  > `framework.*` 本就是可信框架自述的通道),让**每一次运行自动成为底卡**;回放检查器
+  > 建在这个事件上并以合成 trace 自测。08-03 那 85 步只能作为一次性的人工补边来源
+  > (页转移只存在于 `frames/daily-log.txt` 这份任务自己写的散文日志里)。
+  >
+  > **事件已落地,检查器没写。** 说准这条边界:`framework.page_resolved` 已经在
+  > `observe.resolve_page` 铸票据处发出、也已进 trace 校验器;回放检查器一行都还没有。
+  > A 阶段这半的状态是"不再缺输入",不是"做完"。
+  >
+  > **检查器必须先排除 `umbra-flow check` 自己的轨迹。** 矩阵扫描走的是同一个
+  > `observe.resolve_page`,所以它照发这个事件:实测一次 check 跑出 **193 条**(85 屏 ×
+  > 87 页里解析成功的那些,涉及 69 个不同页名,单屏最多 6 条);不带 `--sweep-pages`
+  > 也有 70 条。不排除的检查器会把一次矩阵扫描读成"一局运行没有任何投递,却连着解析出
+  > 193 次页面、62 张屏上各站不止一页",于是每一条页转移都变成伪 finding。
+  >
+  > **判据已从任务名改成前端(2026-08-05,`Check` 前端落地)。** 本文原先的排除条件是
+  > `run.started.taskName` 等于 `falsification-matrix`,并把专属前端记为"打算中的正解、
+  > 尚未实施"。现在 `trace::FrontEnd` 有第三个值 `Check`,`runFrameworkRoutine` claim
+  > 的是它,整条流每一行都盖 `"frontEnd":"check"`(uf-chaos 实跑:5437 行全是这个值,
+  > summary 与改动前逐字段相同)。**检查器按 `frontEnd` 排除,不再看任务名。** 任务名
+  > 只是一条命名约定,项目自己就能写出一个同名任务;前端是一个闭合枚举,由 host 盖在
+  > 每一行上,脚本层没有任何原语够得着。
+  >
+  > 这个名字的判据是"这次运行不投递任何输入":check 的 action sink 每个动词都拒绝,
+  > 将来的轨迹回放检查器同样什么都不投递,所以它也归 `Check`,不必再起第四个名字。
+  > 代价是一个 generation 不能先跑 task 再跑 check(反之亦然),前端互斥会拒;仓库里
+  > 没有这样的调用者,`umbra-flow check` 每次都新开 host 与 generation。
+  >
+  > **「~28 条边」是一个计数口径而不是一次测量**:随四个二元选择(`<no page resolved>`
+  > 断不断链、自环算不算边、raise 步算不算占位、没投递的步能不能作为起点)在 27–42 之间
+  > 变动,27 只在最严口径下复现。取最严口径——它对上本文的数字,而且自环在 schema 里
+  > 根本没有拼法(`kind` 没有"停留")。
+  >
+  > 另:本文说错的那条边是 `sortie -(sortie_enter)-> deploy`,实跑确实走
+  > `sortie → danger_variance`;但更坏的一条是
+  > `extreme_intro -(overlay_confirm)-> rest_point`——`rest_point` 在那 85 步里
+  > **一次都没解析过**,而九·2 已裁决它退休。两条都要改。
 - **B schema l2-v2**:三形态 / 外观门 / 证据 3、4 / state 与 over / preview 边;
   parse-build-encode 往返;regress 新格。门:每个新机制一对红绿
   (加上必绿,拆掉守卫必红)。
