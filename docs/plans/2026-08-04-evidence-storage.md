@@ -7,7 +7,7 @@
 
 ## 一、量出来的现状
 
-`uf-chaos`(物理路径仍是 `chaos-daily`),2026-08-04:
+`E:\umbraflow-projects\uf-chaos`,2026-08-04:
 
 | 项 | 值 |
 |---|---|
