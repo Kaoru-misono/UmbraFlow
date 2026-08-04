@@ -140,12 +140,13 @@ namespace uf::trace
             return *kind;
         }
 
-        TEST_CASE("only the task stream may hold a framework event")
+        TEST_CASE("only the task stream may hold a structural framework event")
         {
             // The rule is stated against FrontEnd::Task, so a front-end added
-            // later inherits the refusal instead of being listed. An annotation
-            // session runs no Luau framework, so a framework.* line on its stream
-            // could only be a host bug.
+            // later inherits the refusal instead of being listed. Step nesting,
+            // retry counting and interrupt matching describe a task run's
+            // orchestration; neither of the other two front-ends has one, so
+            // such a line on their streams could only be a host bug.
             auto annotation = Stream{FrontEnd::Annotation};
             CHECK(
                 refusedKind(
@@ -162,6 +163,24 @@ namespace uf::trace
             REQUIRE(annotation.emit(nativeCall()).has_value());
             REQUIRE(annotation.events().size() == 2U);
             CHECK(annotation.events().front().sequence() == 1U);
+
+            // A check runs the same Luau bundle a task does, so what separates
+            // the two here is the orchestration and not the language: the matrix
+            // opens no step, and the pages it resolves are the whole reason the
+            // one non-structural kind stays admitted.
+            auto check = Stream{FrontEnd::Check};
+            CHECK(
+                refusedKind(
+                    check.emit(scoped(TraceEventKind::FrameworkStepStarted, "sweep"))
+                )
+                == AutomationErrorKind::InternalInvariant
+            );
+            CHECK(check.events().empty());
+            REQUIRE(
+                check.emit(scoped(TraceEventKind::FrameworkPageResolved, "battle"))
+                    .has_value()
+            );
+            CHECK(check.events().size() == 1U);
 
             auto task = Stream{FrontEnd::Task};
             CHECK(
@@ -561,6 +580,60 @@ namespace uf::trace
             auto const& steps = stream.events().back().openSteps();
             REQUIRE(steps.size() == 1U);
             CHECK(steps.front() == "\xE6\x97\xA5\xE5\xB8\xB8");
+        }
+
+        TEST_CASE("a resolved page must say which page resolved")
+        {
+            // The label is this kind's ENTIRE content. An unnamed one would sit
+            // in the sequence a replay check walks, indistinguishable from a
+            // transition to a page nobody can name, and no other member of the
+            // event says what it was about.
+            auto stream = Stream{};
+            CHECK(
+                refusedKind(
+                    stream.emit(scoped(TraceEventKind::FrameworkPageResolved, ""))
+                )
+                == AutomationErrorKind::InvalidResource
+            );
+            CHECK(stream.events().empty());
+
+            // No payload at all is the host's own bug rather than a request the
+            // stream declines, so it is refused under the other kind.
+            CHECK(
+                refusedKind(stream.emit(plain(TraceEventKind::FrameworkPageResolved)))
+                == AutomationErrorKind::InternalInvariant
+            );
+            CHECK(stream.events().empty());
+
+            // The control: the same kind carrying a name is admitted, and it
+            // opens no scope -- the run bracket still closes over it.
+            REQUIRE(
+                stream.emit(scoped(TraceEventKind::FrameworkPageResolved, "battle"))
+                    .has_value()
+            );
+            REQUIRE(stream.events().size() == 1U);
+            CHECK(stream.events().front().openSteps().empty());
+            CHECK(stream.requireScopesClosed().has_value());
+
+            // The one framework.* kind the front-end rule does not bind: an
+            // exploration session resolves against the same page model a task
+            // does, so refusing it there would fail that sweep rather than catch
+            // a bug. The label rule still holds on that stream.
+            auto annotation = Stream{FrontEnd::Annotation};
+            REQUIRE(
+                annotation
+                    .emit(scoped(TraceEventKind::FrameworkPageResolved, "battle"))
+                    .has_value()
+            );
+            CHECK(
+                refusedKind(
+                    annotation.emit(
+                        scoped(TraceEventKind::FrameworkPageResolved, "")
+                    )
+                )
+                == AutomationErrorKind::InvalidResource
+            );
+            CHECK(annotation.events().size() == 1U);
         }
 
         TEST_CASE("the open step path has a total budget of its own")

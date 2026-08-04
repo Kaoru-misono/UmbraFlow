@@ -162,6 +162,26 @@ namespace uf::task
             return labels;
         }
 
+        // The serialized line the run's first event of `kind` produced, or an
+        // empty string when it recorded none. A replay checker reads the wire
+        // rather than the struct behind it, so a case about what reaches a
+        // consumer asserts on the JSON.
+        [[nodiscard]]
+        auto serializedLineOfKind(
+            std::vector<trace::StampedTraceEvent> const& events,
+            trace::TraceEventKind kind
+        ) -> std::string
+        {
+            for (auto const& event : events)
+            {
+                if (event.event().kind == kind)
+                {
+                    return trace::serializeTraceEvent(event);
+                }
+            }
+            return std::string{};
+        }
+
         // The first line the run recorded for `verb`, so a test can read the step
         // scope stamped onto it. The returned pointer observes the recording
         // sink's own storage, which the annotation on the parameter states.
@@ -273,6 +293,97 @@ namespace uf::task
             CHECK(p_settle->openSteps().empty());
 
             CHECK(semantic.frames->captureCount() == 3U);
+            CHECK_FALSE(context.fatal());
+        }
+
+        // Two pages over one frame that carries the action grey at x = 1 and
+        // nothing at x = 2: the first page's anchor is there and the second
+        // page's is not, so one resolution succeeds and one fails on the same
+        // ticket. Both are asked, because "only a success is recorded" is not
+        // observable from a script that only ever resolves.
+        constexpr std::string_view k_twoPageSource = R"lua(
+            local function anchorAt(name, x)
+                return model.Element.new{
+                    name = name,
+                    capabilities = { "identify" },
+                    rect = { x = x, y = 0, width = 1, height = 1 },
+                    appearances = {
+                        {
+                            name = "lit",
+                            source = "lit.png",
+                            template = ctx:template_load(TEMPLATE),
+                            threshold = 10000,
+                        },
+                    },
+                }
+            end
+
+            local function pageOver(name, element)
+                return model.Page.new{
+                    name = name,
+                    references = {
+                        {
+                            element = element,
+                            holding = "owned",
+                            exercised = { "identify" },
+                            identify = "required",
+                        },
+                    },
+                }
+            end
+
+            local battle = pageOver("battle", anchorAt("here", 1))
+            local menu   = pageOver("menu", anchorAt("elsewhere", 2))
+
+            local ticket = ctx:cycle_open()
+            local missed = observe.resolve_page(ctx, ticket, menu)
+            local receipt = observe.resolve_page(ctx, ticket, battle)
+            ctx:cycle_close(ticket)
+
+            if missed ~= nil then return 0 end
+            if receipt == nil then return 0 end
+            if receipt.page ~= battle then return 0 end
+            return 1
+        )lua";
+
+        TEST_CASE("a resolved page is recorded under its own name, and only then")
+        {
+            auto semantic = buildRecording(resolvingFrames(FrameId{304}));
+            REQUIRE(semantic.built.session.has_value());
+            TaskContext context{
+                *std::move(semantic.built.session),
+                *semantic.built.recorder,
+            };
+
+            CHECK(
+                runBound(context, semantic.built, withTemplate(k_twoPageSource))
+                == doctest::Approx(1.0)
+            );
+
+            // One line for two resolutions attempted: the page that answered.
+            // Without it the run's page identities survive nowhere in the
+            // stream, which is what this event exists to fix.
+            CHECK(
+                semanticKinds(semantic.traces->events())
+                == std::vector<trace::TraceEventKind>{
+                    trace::TraceEventKind::FrameworkPageResolved,
+                }
+            );
+            CHECK(
+                semanticLabels(semantic.traces->events())
+                == std::vector<std::string>{"battle"}
+            );
+
+            auto const line = serializedLineOfKind(
+                semantic.traces->events(),
+                trace::TraceEventKind::FrameworkPageResolved
+            );
+            CHECK(line.find(R"("kind":"framework.page_resolved")") != std::string::npos);
+            CHECK(line.find(R"("label":"battle")") != std::string::npos);
+
+            // One capture: both resolutions read the same ticket, so the count
+            // says the failed one really did run against the same frame.
+            CHECK(semantic.frames->captureCount() == 1U);
             CHECK_FALSE(context.fatal());
         }
 

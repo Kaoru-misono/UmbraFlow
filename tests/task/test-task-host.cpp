@@ -607,6 +607,55 @@ exercised = ["interact"]
             CHECK_FALSE(std::filesystem::exists(temp.path() / "task.jsonl"));
         }
 
+        SUBCASE("a framework routine drives the check front-end, not the task one")
+        {
+            // A run that only measures resolves every page it cares about
+            // against one frame, so a reader rebuilding the pages a run walked
+            // has to tell it from a task by something no script can reach or
+            // spell. The stamp is that thing; the routine's NAME is not, which
+            // is why the routine below is named like a task.
+            auto const temp = TemporaryDir{"exclusion-check"};
+            publishProject(temp.path(), "daily", k_taskSource);
+
+            auto host             = TaskHost{};
+            auto const generation = host.loadProject(temp.path());
+            REQUIRE(generation.has_value());
+
+            constexpr auto routine = FrameworkRoutine{
+                .name   = "daily",
+                .source = "return 0\n",
+            };
+            auto const tracePath = temp.path() / "check.jsonl";
+            auto const report    = host.runFrameworkRoutine(
+                *generation,
+                routine,
+                runConfig(tracePath)
+            );
+            REQUIRE(report.has_value());
+
+            auto const lines = traceLines(tracePath);
+            REQUIRE_FALSE(lines.empty());
+            for (auto const& line : lines)
+            {
+                CAPTURE(line);
+                CHECK(line.contains(R"("frontEnd":"check")"));
+            }
+
+            // The exclusion follows the stamp rather than being a second rule:
+            // the generation is spent on a front-end that delivers nothing.
+            auto const refusedTask = host.startTask(
+                *generation,
+                "daily",
+                runConfig(temp.path() / "task.jsonl")
+            );
+            REQUIRE_FALSE(refusedTask.has_value());
+            CHECK(
+                automationErrorKind(refusedTask.error())
+                == AutomationErrorKind::UnsupportedCapability
+            );
+            CHECK_FALSE(std::filesystem::exists(temp.path() / "task.jsonl"));
+        }
+
         SUBCASE("the same front-end twice is allowed")
         {
             // A generation legitimately runs several tasks in sequence; without
@@ -630,6 +679,71 @@ exercised = ["interact"]
                 runConfig(temp.path() / "second.jsonl")
             );
             CHECK(second.has_value());
+        }
+    }
+
+    TEST_CASE("a run's memory ceiling is the config's and not the script layer's")
+    {
+        // The field exists because one caller's need is a property of the FILE:
+        // the falsification matrix holds a row per measured cell and renders
+        // every one, so the reference project's 28,985 rows died mid-report
+        // under the script layer's 64 MiB default
+        // (docs/pitfalls/embedded-vm-memory-ceiling.md). Drop
+        // `.memoryQuotaBytes` from the EngineConfig TaskHost assembles and the
+        // raised half goes red; leave zero meaning zero to the script layer,
+        // where it DISABLES the ceiling, and the default half does.
+        auto const temp = TemporaryDir{"memory-quota"};
+        publishProject(temp.path(), "daily", k_taskSource);
+
+        auto host             = TaskHost{};
+        auto const generation = host.loadProject(temp.path());
+        REQUIRE(generation.has_value());
+
+        // 1200 live strings of 64 KiB: 75 MiB, past the script layer's own
+        // default and far inside the ceiling the raised half asks for. The index
+        // is concatenated on because Luau interns strings, so 1200 bare copies
+        // of one repetition would be one 64 KiB object and this would measure
+        // nothing.
+        constexpr auto routine = FrameworkRoutine{
+            .name   = "memory-quota",
+            .source = "local held = {}\n"
+                      "for index = 1, 1200 do\n"
+                      "    held[index] = string.rep('x', 65536) .. tostring(index)\n"
+                      "end\n"
+                      "return #held\n",
+        };
+
+        SUBCASE("zero is the script layer's default, which this routine exceeds")
+        {
+            auto config = runConfig(temp.path() / "default-quota.jsonl");
+            REQUIRE(config.memoryQuotaBytes == 0U);
+
+            auto const report = host.runFrameworkRoutine(
+                *generation,
+                routine,
+                std::move(config)
+            );
+            REQUIRE(report.has_value());
+            REQUIRE(report->run.failure.has_value());
+            CHECK(
+                automationErrorKind(*report->run.failure)
+                == AutomationErrorKind::InvalidResource
+            );
+        }
+
+        SUBCASE("a ceiling sized for the work lets the same routine finish")
+        {
+            auto config             = runConfig(temp.path() / "raised-quota.jsonl");
+            config.memoryQuotaBytes = uint64{256} * 1024 * 1024;
+
+            auto const report = host.runFrameworkRoutine(
+                *generation,
+                routine,
+                std::move(config)
+            );
+            REQUIRE(report.has_value());
+            CHECK_FALSE(report->run.failure.has_value());
+            CHECK(report->answer == doctest::Approx(1200.0));
         }
     }
 

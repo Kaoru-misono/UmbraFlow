@@ -397,6 +397,10 @@ observe.is_receipt_for = evidence.is_receipt_for
 --
 -- It resolves ONE page. Asking "which page am I on" is a layer-three loop over
 -- the pages it cares about, and that is the intended shape.
+--
+-- A success writes `framework.page_resolved`; a refusal writes nothing. That is
+-- what makes the trace hold the sequence of pages a run believed it was on
+-- rather than one line per page the loop above tried.
 function observe.resolve_page(ctx: any, ticket: any, page: any): (Receipt?, string?)
     requireCtx(ctx, "observe.resolve_page")
     if not model.is_page(page) then
@@ -472,6 +476,11 @@ function observe.resolve_page(ctx: any, ticket: any, page: any): (Receipt?, stri
         end
     end
 
+    -- Recorded here rather than by each caller, so the line exists whichever
+    -- verb asked; this is the one place a page is concluded. Emitted before the
+    -- receipt is minted, as `ctx:step` emits before the stack grows: a name the
+    -- host refuses then authorises nothing either.
+    ctx:page_resolved(page.name)
     return evidence.mint_receipt(page, ticket), nil
 end
 

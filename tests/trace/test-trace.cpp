@@ -262,10 +262,11 @@ namespace uf::trace
         // front-ends sharing a spelling would merge two streams a reader has to
         // tell apart. The table is exhaustive by construction: frontEndWireName
         // switches with no default, so an unspelled value fails to compile.
-        auto const spellings = std::array<std::pair<FrontEnd, std::string_view>, 2>{
+        auto const spellings = std::array<std::pair<FrontEnd, std::string_view>, 3>{
             {
                 {FrontEnd::Task, "task"},
                 {FrontEnd::Annotation, "annotation"},
+                {FrontEnd::Check, "check"},
             }
         };
 

@@ -313,8 +313,8 @@ namespace uf::task
             return snapshot;
         }
 
-        // Latches `frontEnd` as this generation's owner, or refuses because the
-        // other one already owns it. Idempotent under the same front-end and
+        // Latches `frontEnd` as this generation's owner, or refuses because
+        // another one already owns it. Idempotent under the same front-end and
         // permanent under a different one: the ledger below this generation holds
         // one open cycle, and two policy sources sharing it is the failure this
         // exists to make unrepresentable. It is UnsupportedCapability rather than
@@ -358,11 +358,14 @@ namespace uf::task
 
         // The whole of one run, from the opening trace line to the closing one. It
         // takes a loaded chunk rather than a task name because its two callers
-        // differ in exactly one thing: where the bytes came from. Everything from
-        // here down -- the trace bracket, the seed, the engine session, the
-        // context, the VM's two environments, the two verdicts the script's return
-        // cannot express -- is identical, and one copy of it is what keeps a
-        // routine from quietly running under different guarantees.
+        // differ in exactly two things: where the bytes came from, and which
+        // front-end they claimed -- and the second is read off the latch here
+        // rather than passed in, so a stream's attribution cannot disagree with
+        // the exclusion that produced it. Everything else from here down -- the
+        // trace bracket, the seed, the engine session, the context, the VM's two
+        // environments, the two verdicts the script's return cannot express --
+        // is identical, and one copy of it is what keeps a routine from quietly
+        // running under different guarantees.
         [[nodiscard]]
         auto run(
             TaskRunId runId,
@@ -372,6 +375,19 @@ namespace uf::task
             TaskRunConfig config
         ) -> Result<FrameworkRoutineReport>
         {
+            // Both public verbs reaching here claim first, so an unlatched
+            // generation is this host contradicting itself rather than a caller
+            // asking for something odd. Refused before the trace file exists, so
+            // it opens no run bracket it could not attribute.
+            if (!m_frontEnd.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "a run reached the trace before any front-end claimed its "
+                    "generation"
+                );
+            }
+
             noteRunStarted(chunk.name);
 
             // The recorder owns this run's single evidence stream and every layer
@@ -385,7 +401,7 @@ namespace uf::task
                 std::move(traceSink),
                 runId,
                 generationId,
-                trace::FrontEnd::Task
+                *m_frontEnd
             );
 
             auto const seed = drawRunSeed();
@@ -466,9 +482,18 @@ namespace uf::task
             // run.started is already in the trace, so the run happened and has to
             // be described, and a bare Result failure here would leave a run
             // bracket that never closed.
+            // Zero on the run config means "the script layer's own default",
+            // which is NOT what zero means to the script layer: there it
+            // disables the ceiling outright. Resolved here so no caller can
+            // reach that state by leaving a field alone.
+            auto const memoryQuota = config.memoryQuotaBytes != 0U
+                ? config.memoryQuotaBytes
+                : script::EngineConfig{}.memoryQuotaBytes;
+
             auto vm = script::Engine::create(
                 script::EngineConfig{
                     .cancellation      = cancellation(),
+                    .memoryQuotaBytes  = memoryQuota,
                     .maxRuntime        = config.maxScriptRuntime,
                     .frameworkModules  = frameworkScriptModules(),
                     .installHostTables = scriptHostTableInstaller(),
@@ -644,8 +669,9 @@ namespace uf::task
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
 
         // Claim the generation for the task front-end before anything else. It runs
-        // ahead of loading the task so a generation an operator already owns refuses
-        // here rather than after reading and validating a script it will never run.
+        // ahead of loading the task so a generation another front-end already owns
+        // refuses here rather than after reading and validating a script it will
+        // never run.
         UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Task));
 
         // Source the task from its owning project and validate every uf reference
@@ -703,7 +729,7 @@ namespace uf::task
     {
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
 
-        UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Task));
+        UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Check));
 
         // The chunk is assembled here rather than loaded, and that is the only
         // difference from startTask. The hash is taken over the same bytes the VM

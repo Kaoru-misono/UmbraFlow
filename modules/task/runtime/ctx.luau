@@ -195,6 +195,24 @@ function ctx:step_path()
     return table.clone(stepStack)
 end
 
+-- ctx:page_resolved(name) -> ()
+--
+-- Records that a page resolved on the observation just examined.
+--
+-- It is the one conclusion no primitive can write for itself: a resolution is
+-- this framework's judgement over matches and readings, so without this line the
+-- stream holds the searches and nothing about what they were taken to mean.
+--
+-- Only `observe.resolve_page` calls it, and only where it mints a receipt. A
+-- refusal is deliberately not recorded: a caller tries every page it cares about
+-- against one frame, so recording those would give one line per page tried
+-- rather than the sequence of pages the run believed it walked.
+--
+-- The host owns the name's length and character set, as it does a step's.
+function ctx:page_resolved(name)
+    native.emit("page_resolved", name)
+end
+
 -- ctx:cycle(fn) -> whatever fn returned.
 --
 -- Opens one observation cycle, hands its view to fn, and closes it on every exit

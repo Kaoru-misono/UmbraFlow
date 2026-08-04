@@ -25,6 +25,7 @@
 #include <script/engine.hpp>
 
 #include <trace/event.hpp>
+#include <trace/stream-validator.hpp>
 
 #include <algorithm>
 #include <array>
@@ -94,6 +95,14 @@ namespace uf::task
         // so ctx:try never spells the label in Luau and the constant above stays
         // its single source.
         constexpr auto k_errorTagField = "error_tag";
+
+        // Carries trace::k_maxScopeLabelBytes over the same surface. A page name
+        // becomes the label of the framework.page_resolved line the moment a
+        // signature holds, and the stream REFUSES a label past that ceiling --
+        // out of observe.resolve_page, whose contract is (Receipt?, string?) and
+        // whose callers do not pcall. model.Page.new refuses the name instead,
+        // and reads the number from here so the two cannot drift apart.
+        constexpr auto k_labelCeilingField = "max_label_bytes";
 
         // The tag every Tier B error carrier is minted under, and the whole of
         // how C++ recognizes one: the VM stores a tag on the object itself, and
@@ -1954,6 +1963,10 @@ namespace uf::task
                 .verb = "settled",
                 .kind = trace::TraceEventKind::FrameworkSettled,
             },
+            SemanticEventName{
+                .verb = "page_resolved",
+                .kind = trace::TraceEventKind::FrameworkPageResolved,
+            },
         };
 
         // The scope label at `index`. A non-string is a framework bug rather than
@@ -2504,10 +2517,15 @@ namespace uf::task
                 context
             );
 
-            // The one non-primitive entry: the Tier B label, so ctx:try can ask
-            // whether a caught value wears it. See k_errorTagField.
+            // The two non-primitive entries. The Tier B label, so ctx:try can
+            // ask whether a caught value wears it; and the trace's own scope
+            // label ceiling, so a page name too long to emit is refused where it
+            // is authored. See k_errorTagField and k_labelCeilingField.
             lua_pushstring(state, k_errorType);
             lua_setfield(state, surface, k_errorTagField);
+
+            lua_pushnumber(state, static_cast<double>(trace::k_maxScopeLabelBytes));
+            lua_setfield(state, surface, k_labelCeilingField);
 
             return script::deepFreeze(state, surface);
         }

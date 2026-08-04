@@ -38,10 +38,15 @@ namespace uf::trace
     // a framework whose step nesting, retry counting or interrupt matching has
     // drifted would otherwise write a plausible-looking audit log of a run that did
     // not happen that way. The front-end is part of that protocol and not only of
-    // the stamp: framework.* describes structure a stream running no script cannot
-    // have, and the annotation.* verbs exist on one front-end only. Each such rule
-    // is stated against the front-end that HAS the vocabulary, so one added later
-    // is refused by construction rather than by someone remembering to list it.
+    // the stamp: the framework.* events describing STRUCTURE -- step nesting,
+    // retry counting, interrupt matching -- report an orchestration only a task
+    // run has, which is why an exploration session and a check are refused it
+    // although both run the same Luau bundle; and the annotation.* verbs exist
+    // on one front-end only. Each
+    // such rule is stated against the front-end that HAS the vocabulary, so one
+    // added later is refused by construction rather than by someone remembering to
+    // list it. framework.page_resolved carries no structure and is admitted on
+    // every stream; its own case says why.
     //
     // The two failure kinds split by who can cause one. InvalidResource is a
     // request the stream refuses -- an over-budget or unprintable step name, a
@@ -75,7 +80,8 @@ namespace uf::trace
 
         [[nodiscard]] auto apply(TraceEvent const& event) -> Status;
 
-        // Refuses a framework.* event on any stream but the task one.
+        // Refuses a STRUCTURAL framework.* event on any stream but the task one.
+        // framework.page_resolved does not come through here; its case says why.
         [[nodiscard]] auto requireFramework() const -> Status;
 
         // The same rule for the two annotation.* kinds.

@@ -115,6 +115,19 @@ namespace uf::task
         // run config is where every recognition and delivery bound is stated.
         uint32 maximumCropsPerCycle{k_defaultMaximumCropsPerCycle};
 
+        // The VM's hard memory ceiling, or zero for the script layer's own
+        // default. Here rather than left to that default because one caller's
+        // need is a property of the FILE and not of a policy: the falsification
+        // matrix accumulates one row per element per screen and renders every
+        // one, so a corpus that grows walks into a ceiling sized for a business
+        // task. Luau throws the instant the accounting allocator refuses and
+        // never collects and retries, so the ceiling is measured against live
+        // bytes plus whatever the incremental collector has not reached
+        // (docs/pitfalls/embedded-vm-memory-ceiling.md) -- which is why a caller
+        // sizing this from a row count leaves the collector room rather than
+        // budgeting the rows alone.
+        uint64 memoryQuotaBytes{};
+
         // There is no page-wait budget here: how long a task waits for a page and
         // how often it re-observes are decided in Luau, where the wait loop lives.
 
@@ -308,12 +321,13 @@ namespace uf::task
         ) -> Result<ProjectFingerprint>;
 
         // How many elements `generation`'s project declares, as its page model
-        // lists them. Here for the one caller that must size a per-cycle budget
-        // from the FILE rather than from a policy constant: the falsification
-        // matrix opens one observation per screen and spends at most one text read
-        // per element, so its cycles' reads are bounded by this count and by
-        // nothing else (entry/cli/check.cpp). The pre-VM resource pass already
-        // reads the names, so this asks the flat line scan nothing new.
+        // lists them. Here for the one caller that must size a run bound from the
+        // FILE rather than from a policy constant: the falsification matrix holds
+        // a row per measured cell, and this count times the screen count is the
+        // lower bound it sizes the VM's memory from (entry/cli/check.cpp, where
+        // the gap between that bound and the true row count is stated). The
+        // pre-VM resource pass already reads the names, so this asks the flat
+        // line scan nothing new.
         [[nodiscard]]
         auto projectElementCount(GenerationId generation) -> Result<std::size_t>;
 
@@ -328,9 +342,13 @@ namespace uf::task
         // the VM's two environments -- so a routine cannot quietly enjoy a wider
         // surface than a task.
         //
-        // It claims the TASK front-end, so a generation an operator already drives
-        // refuses this exactly as it refuses startTask, and a routine and a task
-        // may share one generation in sequence.
+        // It claims the CHECK front-end, so its stream is attributed to a run
+        // that measures and delivers nothing, and a generation is never shared
+        // with a task run: a check tries every page against one frame, and a
+        // reader taking that for the sequence of pages a run walked would report
+        // transitions no page graph covers (trace::FrontEnd, and
+        // docs/plans/2026-08-04-state-layer-and-policy-slots.md 4.2). Two
+        // routines may still share one generation in sequence.
         [[nodiscard]]
         auto runFrameworkRoutine(
             GenerationId generation,
@@ -346,12 +364,13 @@ namespace uf::task
         // This is where the front-end mutual exclusion is enforced rather than
         // documented. A generation holds the single-open-cycle ledger, so a
         // task's wait loop and an agent's chunks driving one generation would
-        // each believe they owned the one open cycle. The first of startTask and
-        // this to reach a generation LATCHES that generation's front-end, and the
-        // other is refused for the life of the generation -- whichever order they
-        // arrive in, and however many times either is called. The latched value
-        // is also what the generation hands the trace recorder, so a stream's
-        // attribution and the exclusion that produced it are one fact.
+        // each believe they owned the one open cycle. The first of startTask,
+        // runFrameworkRoutine and this to reach a generation LATCHES that
+        // generation's front-end, and the others are refused for the life of the
+        // generation -- whichever order they arrive in, and however many times
+        // any is called. The latched value is also what the generation hands the
+        // trace recorder, so a stream's attribution and the exclusion that
+        // produced it are one fact.
         //
         // A second call under the SAME front-end is allowed: a generation
         // legitimately runs several tasks in sequence and would legitimately host

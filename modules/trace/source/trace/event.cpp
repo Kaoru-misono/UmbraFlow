@@ -103,6 +103,8 @@ namespace uf::trace
             case TraceEventKind::FrameworkInterruptExhausted:
                 return "framework.interrupt_exhausted";
             case TraceEventKind::FrameworkSettled: return "framework.settled";
+            case TraceEventKind::FrameworkPageResolved:
+                return "framework.page_resolved";
             case TraceEventKind::AnnotationClickDelivered:
                 return "annotation.click_delivered";
             case TraceEventKind::AnnotationRegionSaved:
@@ -489,6 +491,7 @@ namespace uf::trace
         {
         case FrontEnd::Task: return "task";
         case FrontEnd::Annotation: return "annotation";
+        case FrontEnd::Check: return "check";
         }
 
         UF_UNREACHABLE_MSG("Unknown FrontEnd value");

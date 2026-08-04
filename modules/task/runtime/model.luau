@@ -25,6 +25,20 @@
 -- name. `model` sorts after `ctx` and `mint` and before `navigation`, `observe`
 -- and `project`. The only module it names is `mint`.
 
+-- The private capability surface, for the one number this file cannot decide;
+-- see `k_maxPageNameBytes`. No primitive is called here: a page is authored
+-- data, so nothing in this file observes or acts.
+local native = ...
+
+-- How long a page name may be, in bytes, taken from the host rather than
+-- spelled here so it cannot drift from the ceiling that forces it
+-- (`k_maxScopeLabelBytes`, modules/trace/source/trace/stream-validator.hpp).
+-- Nil on a VM booted with no bound task session, which has no trace stream and
+-- so no label to bound.
+local k_maxPageNameBytes: number? = if native ~= nil
+    then native.max_label_bytes
+    else nil
+
 -- Every capability an element can declare, in the one canonical order the
 -- project file writes them in. Serialising a set needs an order, and a constant
 -- rather than a table walk is what makes two runs produce the same bytes.
@@ -738,6 +752,26 @@ function Page.new(spec: { [string]: any }): Page
         error("a page needs a non-empty name", 2)
     end
     local name = spec.name :: string
+
+    -- The name is the label of the `framework.page_resolved` line
+    -- `observe.resolve_page` writes the instant a signature holds, and the host
+    -- refuses a label over its ceiling. Refused HERE so the cost is an authoring
+    -- error: refused there, the first frame a page is actually on ends the run,
+    -- inside a wait loop or a check walk where nothing catches it.
+    if k_maxPageNameBytes ~= nil and #name > k_maxPageNameBytes then
+        error(
+            "page name '"
+                .. name
+                .. "' is "
+                .. tostring(#name)
+                .. " bytes, over the host's "
+                .. tostring(k_maxPageNameBytes)
+                .. "-byte ceiling for a name written to the evidence stream; "
+                .. "this name is written there every time the page resolves, so "
+                .. "the run would end on the first frame that is this page",
+            2
+        )
+    end
 
     if spec.overlay ~= nil and type(spec.overlay) ~= "boolean" then
         error(

@@ -60,7 +60,7 @@ namespace uf::trace
     // rather than of the event: TraceRecorder carries one value for the whole run
     // and writes it onto every line, so no emitter can forget it or claim another
     // front-end's work. It is also the exclusion -- TaskHost latches one per
-    // generation, refuses the other, and hands the latched value to the
+    // generation, refuses every other, and hands the latched value to the
     // recorder.
     enum class FrontEnd : uint8
     {
@@ -75,6 +75,19 @@ namespace uf::trace
         // the same capability surface plus the privileged verbs
         // (docs/plans/2026-08-01-agent-front-end-and-exploration.md).
         Annotation,
+
+        // A run that measures screens and delivers no input at all: the
+        // falsification matrix `umbra-flow check` walks, and the offline
+        // trace-replay checker planned beside it. Delivering nothing is the
+        // whole boundary against the other two, which both act on a target, and
+        // it is why one name covers both of those runs.
+        //
+        // A measuring run tries every page it cares about against one frame, so
+        // it stands on no page in the sense a task does. A reader rebuilding the
+        // pages a run walked out of framework.page_resolved therefore excludes
+        // this front-end
+        // (docs/plans/2026-08-04-state-layer-and-policy-slots.md 4.2).
+        Check,
     };
 
     // The wire spelling of one front-end, and the only place either is spelled
@@ -127,6 +140,19 @@ namespace uf::trace
         FrameworkInterruptHandled,
         FrameworkInterruptExhausted,
         FrameworkSettled,
+
+        // Which page one resolution concluded the frame was on, carried in
+        // Framework::label. Additive, and written only where a resolution
+        // SUCCEEDS: a caller tries every page it cares about against one frame,
+        // so recording the refusals would give one line per page tried rather
+        // than the sequence of pages the run believed it walked. That sequence
+        // is what an offline trace-replay check reads
+        // (docs/plans/2026-08-04-state-layer-and-policy-slots.md 4.2).
+        //
+        // The one framework.* kind admitted on every stream, because it claims
+        // no framework structure and the exploration front-end resolves against
+        // the same page model; see stream-validator.hpp.
+        FrameworkPageResolved,
 
         // The two verbs the exploration front-end has and no other does,
         // spelled `annotation.*` because neither names an element or a page
@@ -311,10 +337,11 @@ namespace uf::trace
         // silently empty line.
         struct Framework final
         {
-            // A step's name or an interrupt's id. Length, character set and the
-            // total open-step budget are enforced before the event is admitted;
-            // an over-budget label is rejected, never truncated, because a
-            // truncated name silently addresses a different step.
+            // A step's name, an interrupt's id, or the page a resolution
+            // concluded on. Length, character set and the total open-step budget
+            // are enforced before the event is admitted; an over-budget label is
+            // rejected, never truncated, because a truncated name silently
+            // addresses a different step.
             std::string label{};
 
             // The retry attempt this pass is, and the total the policy declared.

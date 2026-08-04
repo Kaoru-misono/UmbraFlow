@@ -94,7 +94,9 @@ namespace uf::trace
         {
             return fail(
                 AutomationErrorKind::InternalInvariant,
-                "a framework event reached a stream no Luau framework drove"
+                "a framework event describing task orchestration -- step "
+                "nesting, retry counting, interrupt matching -- reached a "
+                "stream that runs none"
             );
         }
         return ok();
@@ -303,6 +305,22 @@ namespace uf::trace
             // A declared pause opens no scope: its whole content is the duration.
             UF_TRY(requireFramework());
             return requirePayload(event);
+
+        case TraceEventKind::FrameworkPageResolved:
+            // Opens no scope, and admitted on EVERY stream -- the long press's
+            // precedent rather than step_started's. The front-end rule guards
+            // framework STRUCTURE, which a stream running no task cannot have;
+            // this claims none, and a run that only measures resolves against
+            // the same page model a task does -- regress.check is that sweep,
+            // and it runs on the check stream and on the exploration one -- so
+            // refusing it there would fail the sweep rather than catch a bug.
+            //
+            // Its whole content is a NAME, so the label carries the requirement
+            // a step name does: a line saying a page resolved without saying
+            // which one names no page at all, and a reader cannot subtract it
+            // from the sequence later.
+            UF_TRY(requirePayload(event));
+            return checkLabel(event.framework->label, "a resolved page name");
 
         case TraceEventKind::EngineActionDelivered:
             // On the exploration stream a delivered click is written under the
