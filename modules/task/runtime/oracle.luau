@@ -771,31 +771,6 @@ function Claims.reads_text(claims: Claims): boolean
     return next(claims.text_by_cell) ~= nil
 end
 
--- How many text cells the most-claimed single screen holds.
---
--- It exists for the composition root beside `reads_text`: a walk opens ONE
--- observation per screen and reads once per claimed cell, and the host's
--- per-cycle read budget is fixed before the VM starts, so this is what that
--- budget must cover.
---
--- It counts cells rather than distinct elements, because a cell IS a read.
-function Claims.most_reads_on_one_screen(claims: Claims): number
-    local perScreen: { [string]: number } = {}
-    local most = 0
-    for index = 1, #claims.expectations do
-        local expectation = claims.expectations[index]
-        if expectation.text ~= nil then
-            local screen      = expectation.screen
-            local counted     = (perScreen[screen] or 0) + 1
-            perScreen[screen] = counted
-            if counted > most then
-                most = counted
-            end
-        end
-    end
-    return most
-end
-
 -- The screens in the order the host serves their pixels: by content hash.
 --
 -- This order is a CONTRACT with the frame source. A screen's file is

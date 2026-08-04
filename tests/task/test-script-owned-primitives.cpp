@@ -33,6 +33,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -529,6 +530,10 @@ namespace uf::task
             // Exhausting the per-cycle read budget must not read as "there was no
             // text here". Remove the charge in TaskContext::cycleRead and the
             // second read succeeds, so this case goes red.
+            //
+            // The two regions differ because the budget bounds ENGINE reads: a
+            // second read of the FIRST rectangle is answered off this frame and
+            // charges nothing, which is the case below.
             auto built = buildHarness(
                 matchableFrames(),
                 HarnessSpec{
@@ -552,7 +557,7 @@ namespace uf::task
             REQUIRE(first.has_value());
             CHECK(first->has_value());
 
-            auto const second = context.cycleRead(*ticket, rect);
+            auto const second = context.cycleRead(*ticket, test::pixelRect(1, 0, 2, 1));
             REQUIRE_FALSE(second.has_value());
             CHECK(
                 kindOfError(second.error())
@@ -566,6 +571,214 @@ namespace uf::task
             auto const third = context.cycleRead(*next, rect);
             REQUIRE(third.has_value());
             CHECK(third->has_value());
+        }
+
+        TEST_CASE("One rectangle is read off one frame once, however often it is asked")
+        {
+            // The memoisation, asserted where it is observable: what reaches the
+            // OCR adapter. Remove the CycleAnswers lookup in TaskContext::cycleRead
+            // and the fake records two reads, so this goes red.
+            //
+            // The budget is one, so the second call also proves a served answer
+            // charges nothing -- charge it and the second call fails instead.
+            auto ocrEngine = std::make_unique<FakeOcrEngine>(
+                oneLineReadout("battle", 9'000)
+            );
+            auto* const p_ocr = ocrEngine.get();
+            auto built = buildHarness(
+                matchableFrames(),
+                HarnessSpec{.ocrEngine = std::move(ocrEngine)}
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.maximumReadsPerCycle = 1},
+            };
+
+            auto const rect   = test::pixelRect(0, 0, 3, 1);
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+
+            auto const first = context.cycleRead(*ticket, rect);
+            REQUIRE(first.has_value());
+            REQUIRE(first->has_value());
+
+            auto const second = context.cycleRead(*ticket, rect);
+            REQUIRE(second.has_value());
+            REQUIRE(second->has_value());
+
+            // Transparent: the served answer is the engine's own, not a summary
+            // of it.
+            CHECK((*second)->text == (*first)->text);
+            CHECK((*second)->confidenceBp == (*first)->confidenceBp);
+            CHECK((*second)->rect == (*first)->rect);
+            CHECK(p_ocr->rects().size() == 1U);
+
+            // A NEW FRAME IS A NEW QUESTION. The next cycle holds the next frame,
+            // so the same rectangle reaches the adapter again -- drop the cycle
+            // ordinal from the key and this half goes red while the half above
+            // stays green.
+            CHECK(context.closeCycle(*ticket));
+            auto const next = context.openCycle();
+            REQUIRE(next.has_value());
+            REQUIRE(context.cycleRead(*next, rect).has_value());
+            CHECK(p_ocr->rects().size() == 2U);
+        }
+
+        // How many events of `kind` a run wrote.
+        [[nodiscard]]
+        auto countKind(
+            std::vector<trace::StampedTraceEvent> const& events,
+            trace::TraceEventKind kind
+        ) -> std::size_t
+        {
+            return static_cast<std::size_t>(
+                std::ranges::count_if(
+                    events,
+                    [kind](trace::StampedTraceEvent const& stamped)
+                    {
+                        return stamped.event().kind == kind;
+                    }
+                )
+            );
+        }
+
+        TEST_CASE("One template searched twice in one region reaches the matcher once")
+        {
+            // cycle_match's half of the same rule, asserted on the evidence the
+            // engine itself writes: one engine.action_found per search it ran.
+            // Remove the CycleAnswers lookup in TaskContext::cycleMatch and the
+            // second search writes a second line, so this goes red.
+            auto built = buildHarness(
+                matchableFrames(),
+                HarnessSpec{.recordsTrace = true}
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_traces = built.traces;
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            auto const loaded = context.loadTemplate(templateBlob(k_targetActionGray));
+            REQUIRE(loaded.has_value());
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+            auto const roi = test::pixelRect(0, 0, 3, 1);
+
+            auto const first = context.cycleMatch(*ticket, loaded->ticket, roi);
+            REQUIRE(first.has_value());
+            REQUIRE(first->has_value());
+
+            auto const second = context.cycleMatch(*ticket, loaded->ticket, roi);
+            REQUIRE(second.has_value());
+            REQUIRE(second->has_value());
+            CHECK((*second)->matchedRect == (*first)->matchedRect);
+            CHECK((*second)->sadScore == (*first)->sadScore);
+            CHECK(
+                countKind(p_traces->events(), trace::TraceEventKind::EngineActionFound)
+                == 1U
+            );
+
+            // The region is part of the question, not only the template: move it
+            // and the search runs again.
+            auto const elsewhere = context.cycleMatch(
+                *ticket,
+                loaded->ticket,
+                test::pixelRect(1, 0, 2, 1)
+            );
+            REQUIRE(elsewhere.has_value());
+            CHECK(
+                countKind(p_traces->events(), trace::TraceEventKind::EngineActionFound)
+                == 2U
+            );
+        }
+
+        TEST_CASE("Two templates over one region are two searches, not one served twice")
+        {
+            // The other half of the match key, and the half nothing else here
+            // moves: every case above searches ONE template. Drop the template
+            // from CycleAnswers::findMatch's comparison and this goes red, while
+            // `regress.measureElement` -- which searches every appearance of one
+            // element over one rectangle inside one cycle -- would serve
+            // appearance 1's score and rect for appearances 2..n, which is what
+            // the ambiguity and separation findings are computed from.
+            auto built = buildHarness(
+                matchableFrames(),
+                HarnessSpec{.recordsTrace = true}
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_traces = built.traces;
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            // The fixture frame is grey 2 at x = 0 and grey 5 at x = 1, so the
+            // two templates have their best position at two different pixels of
+            // one region and a served answer is recognisable as the wrong one.
+            auto const anchor = context.loadTemplate(templateBlob(k_targetAnchorGray));
+            REQUIRE(anchor.has_value());
+            auto const action = context.loadTemplate(templateBlob(k_targetActionGray));
+            REQUIRE(action.has_value());
+
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+            auto const roi = test::pixelRect(0, 0, 3, 1);
+
+            auto const first = context.cycleMatch(*ticket, anchor->ticket, roi);
+            REQUIRE(first.has_value());
+            REQUIRE(first->has_value());
+            auto const second = context.cycleMatch(*ticket, action->ticket, roi);
+            REQUIRE(second.has_value());
+            REQUIRE(second->has_value());
+
+            CHECK((*first)->matchedRect.x() == 0U);
+            CHECK((*second)->matchedRect.x() == 1U);
+            CHECK(
+                countKind(p_traces->events(), trace::TraceEventKind::EngineActionFound)
+                == 2U
+            );
+        }
+
+        TEST_CASE("A served read writes its native call and no engine line")
+        {
+            // The trace decision, and the only place both halves are visible at
+            // once: task.native_call records what the script asked and was told,
+            // which happened twice; engine.text_read records inference, which
+            // happened once. Emit an engine line for a served answer and the
+            // second count goes to two; suppress the native call for one and the
+            // first goes to one. Either way this case goes red.
+            constexpr std::string_view source = R"lua(
+                local cycle = ctx:cycle_open()
+                local first  = ctx:cycle_read(cycle, 0, 0, 3, 1)
+                local second = ctx:cycle_read(cycle, 0, 0, 3, 1)
+                ctx:cycle_close(cycle)
+                if first.text ~= second.text then return 0 end
+                if first.confidence ~= second.confidence then return 0 end
+                return 1
+            )lua";
+
+            auto built = buildHarness(
+                matchableFrames(),
+                HarnessSpec{
+                    .ocrEngine = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("battle", 9'000)
+                    ),
+                    .recordsTrace = true,
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_traces = built.traces;
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            auto engineVm = script::Engine::create(taskVmConfig(context));
+            REQUIRE(engineVm.has_value());
+            auto const result = engineVm->runNumber(source, "served-read-trace");
+            REQUIRE(result.has_value());
+            CHECK(*result == 1.0);
+
+            auto const verbs = nativeCallVerbs(p_traces->events());
+            CHECK(std::ranges::count(verbs, "cycle_read") == 2);
+            CHECK(
+                countKind(p_traces->events(), trace::TraceEventKind::EngineTextRead)
+                == 1U
+            );
         }
 
         // Three lines at three different places inside a 3x1 frame's only row. The
@@ -669,7 +882,12 @@ namespace uf::task
 
             // The fifth pays for the next detection pass, leaving nothing for
             // the lines it would find -- so it refuses rather than reading some.
-            auto const second = context.cycleReadLines(*ticket, rect);
+            // A DIFFERENT region, because repeating the first one is answered off
+            // this frame and never reaches a budget at all.
+            auto const second = context.cycleReadLines(
+                *ticket,
+                test::pixelRect(1, 0, 2, 1)
+            );
             REQUIRE_FALSE(second.has_value());
             CHECK(
                 kindOfError(second.error())
@@ -677,7 +895,9 @@ namespace uf::task
             );
 
             // And the pool is shared with the single-line verb, not a second
-            // dimension beside it.
+            // dimension beside it. Over the SAME region the block read answered,
+            // which also pins that the two verbs keep separate answers: share one
+            // table and this reads the block read's lines instead of refusing.
             auto const line = context.cycleRead(*ticket, rect);
             REQUIRE_FALSE(line.has_value());
             CHECK(

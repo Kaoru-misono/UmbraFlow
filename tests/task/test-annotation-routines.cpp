@@ -1362,11 +1362,6 @@ namespace uf::task
                     return 0
                 end
 
-                -- And it is the widest thing one screen asks a cycle to read,
-                -- which is what a host sizes its read budget from.
-                if oracle.Claims.most_reads_on_one_screen(built.claims) ~= 1 then
-                    return 0
-                end
                 return 1
             )lua";
 

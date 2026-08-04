@@ -1,5 +1,6 @@
 #pragma once
 
+#include <task/cycle-answers.hpp>
 #include <task/cycle-ledger.hpp>
 #include <task/deterministic.hpp>
 #include <task/pixel-probe.hpp>
@@ -221,6 +222,7 @@ namespace uf::task
         trace::TraceRecorder& m_recorder;
 
         CycleLedger      m_cycles{};
+        CycleAnswers     m_answers{};
         TemplateStore    m_templates{};
         ProjectFileStore m_projectFiles;
 
@@ -265,6 +267,11 @@ namespace uf::task
         // It requires no resolved page: the refined region, the pinned appearance
         // and the interact edge a page's reference row used to supply are the
         // caller's now, because the script-owned model puts those facts there.
+        //
+        // The same template searched in the same region of the same cycle reaches
+        // the engine ONCE and is answered from CycleAnswers afterwards. The
+        // comparison ceiling is per search rather than per cycle, so a served
+        // answer takes nothing away from any other search.
         [[nodiscard]]
         auto cycleMatch(
             CycleTicket ticket,
@@ -280,6 +287,28 @@ namespace uf::task
         // the host stopped looking, so nothing has been established about the
         // screen, and "no text" would be a fail-open answer on the one capability
         // that has no score to contradict it.
+        //
+        // ONE RECTANGLE IS READ ONCE PER CYCLE. A repeat is answered from
+        // CycleAnswers, which decides nothing and only hands back what the engine
+        // already said about this same frame. Two consequences, each a decision:
+        //
+        //   - A SERVED ANSWER CHARGES NO BUDGET, and is served even once the
+        //     budget is spent. That budget is calibrated in inference
+        //     milliseconds against the observation lease
+        //     (k_defaultMaximumReadsPerCycle), and a repeat runs no inference; a
+        //     refusal here would also claim nothing had been established about a
+        //     region this frame was already read at, which is false. So the
+        //     budget bounds ENGINE reads per cycle, which is the cost it was
+        //     always standing in for.
+        //   - A SERVED ANSWER WRITES NO engine.text_read AND STILL WRITES ITS
+        //     task.native_call. The two halves of the stream answer two
+        //     questions: the native call is what the script asked and was told,
+        //     which happened, and the engine line is inference that did not. An
+        //     engine line here would carry a duration and an engine id no call
+        //     produced. That the two counts now differ IS the memoisation, and it
+        //     is readable straight off the stream. The FFI layer writes the
+        //     native call and knows nothing of this cache, so neither half can
+        //     drift from the other by anyone forgetting.
         [[nodiscard]]
         auto cycleRead(
             CycleTicket ticket,
@@ -299,6 +328,11 @@ namespace uf::task
         // lines than the cycle can still pay for fails RecognitionIncomplete and
         // reads NONE of them. It does NOT consume the cycle, so the same cycle
         // goes on to click one of the lines it found.
+        //
+        // It is memoised per cycle on cycleRead's terms, in a table of its own:
+        // this verb and that one over the same rectangle are two questions with
+        // two answer shapes, so a block read never serves a single-line read or
+        // the reverse.
         [[nodiscard]]
         auto cycleReadLines(
             CycleTicket ticket,

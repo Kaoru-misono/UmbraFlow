@@ -37,6 +37,10 @@ namespace uf::task
     {
         uint64 generation{};
         uint64 ordinal{};
+
+        // A ticket IS its two numbers, so equality is what "names the same
+        // template" means; CycleAnswers keys a remembered search on it.
+        auto operator==(TemplateTicket const&) const -> bool = default;
     };
 
     // The generation's decoded templates, addressed by ticket.

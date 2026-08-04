@@ -1,5 +1,6 @@
 #include <task/task-context.hpp>
 
+#include <task/cycle-answers.hpp>
 #include <task/cycle-ledger.hpp>
 #include <task/pixel-probe.hpp>
 #include <task/project-files.hpp>
@@ -268,6 +269,8 @@ namespace uf::task
     {
         UF_TRY(m_cycles.requireOpen(ticket));
 
+        // Refused before the cache is consulted: a handle naming no template of
+        // this generation is wrong whatever this frame was asked before.
         auto const* p_template = m_templates.find(templateTicket);
         if (p_template == nullptr)
         {
@@ -277,11 +280,23 @@ namespace uf::task
                 "load it with template_load first"
             );
         }
-        return m_session.matchTemplate(
-            m_cycles.observation(),
-            *p_template,
+
+        auto const* p_remembered = m_answers.findMatch(
+            ticket.ordinal,
+            templateTicket,
             searchRoi
         );
+        if (p_remembered != nullptr)
+        {
+            return *p_remembered;
+        }
+
+        UF_TRY_VALUE(
+            found,
+            m_session.matchTemplate(m_cycles.observation(), *p_template, searchRoi)
+        );
+        m_answers.rememberMatch(ticket.ordinal, templateTicket, searchRoi, found);
+        return found;
     }
 
     auto TaskContext::cycleRead(
@@ -290,6 +305,15 @@ namespace uf::task
     ) -> Result<std::optional<engine::TextReading>>
     {
         UF_TRY(m_cycles.requireOpen(ticket));
+
+        // Consulted BEFORE the budget, because an answer this frame already gave
+        // costs no inference and refusing it would deny a region this cycle has
+        // already read. See the header for both halves of that decision.
+        auto const* p_remembered = m_answers.findText(ticket.ordinal, rect);
+        if (p_remembered != nullptr)
+        {
+            return *p_remembered;
+        }
 
         // Charged before the engine is reached, so an exhausted budget costs no
         // inference. RecognitionIncomplete rather than an empty optional: the
@@ -306,7 +330,10 @@ namespace uf::task
             );
         }
         m_cycles.chargeReads(1);
-        return m_session.readText(m_cycles.observation(), rect);
+
+        UF_TRY_VALUE(reading, m_session.readText(m_cycles.observation(), rect));
+        m_answers.rememberText(ticket.ordinal, rect, reading);
+        return reading;
     }
 
     auto TaskContext::cycleReadLines(
@@ -315,6 +342,13 @@ namespace uf::task
     ) -> Result<std::vector<engine::TextReading>>
     {
         UF_TRY(m_cycles.requireOpen(ticket));
+
+        // cycleRead's rule and cycleRead's reasoning, over this verb's own table.
+        auto const* p_remembered = m_answers.findLines(ticket.ordinal, rect);
+        if (p_remembered != nullptr)
+        {
+            return *p_remembered;
+        }
 
         auto const spent = m_cycles.readsCharged();
         if (spent >= m_config.maximumReadsPerCycle)
@@ -349,6 +383,7 @@ namespace uf::task
             m_session.readTextLines(m_cycles.observation(), rect, remaining)
         );
         m_cycles.chargeReads(static_cast<uint32>(lines.size()));
+        m_answers.rememberLines(ticket.ordinal, rect, lines);
         return lines;
     }
 
