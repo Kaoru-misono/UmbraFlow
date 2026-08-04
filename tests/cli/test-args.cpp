@@ -221,6 +221,37 @@ namespace uf::cli
         CHECK(checkUsageText().find("--ocr-models") != std::string_view::npos);
     }
 
+    TEST_CASE("--sweep-pages is a switch, off unless it is named")
+    {
+        // The one flag here that takes no value, so the parser must not consume
+        // the argument after it: read it as a value flag and the --trace below is
+        // swallowed as this one's value and the path never arrives.
+        auto const bare = std::vector<std::string>{"--project", "proj"};
+
+        auto const without = parseCheckArguments(bare);
+        REQUIRE(without.has_value());
+        CHECK_FALSE(without->sweepPages);
+
+        auto named = bare;
+        named.emplace_back("--sweep-pages");
+        named.emplace_back("--trace");
+        named.emplace_back("out.jsonl");
+
+        auto const with = parseCheckArguments(named);
+        REQUIRE(with.has_value());
+        CHECK(with->sweepPages);
+        CHECK(with->trace == std::filesystem::path{"out.jsonl"});
+
+        // A value handed to it is an argument nothing takes, and saying so is the
+        // whole reason the switch is refused rather than quietly tolerated.
+        auto valued = bare;
+        valued.emplace_back("--sweep-pages");
+        valued.emplace_back("true");
+        CHECK_FALSE(parseCheckArguments(valued).has_value());
+
+        CHECK(checkUsageText().find("--sweep-pages") != std::string_view::npos);
+    }
+
     TEST_CASE("the default comparison budget covers a page evaluation but not a full frame")
     {
         // A candidate position costs the template's pixels; a search walks one

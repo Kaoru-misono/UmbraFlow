@@ -33,9 +33,19 @@ namespace uf::cli
     // project task, because a project must not be able to supply, replace or
     // shadow the thing that judges it.
     //
-    // The routine writes the verdict to standard output as JSON lines: one
-    // summary object, one per finding, one per separation measurement, one per
-    // cell. A failure here is a check that could not be performed.
+    // The routine writes the verdict to standard output as JSON lines, in
+    // `regress.groups` order: one summary object, then one line per finding, per
+    // separation measurement, per anchor subset, per page resolved on a screen,
+    // per declared page, and per cell.
+    //
+    // Two of those seven blocks depend on the run rather than on the file. The
+    // subset rows are decided by the file alone and are written whether or not
+    // this run swept; the two co-resolution blocks -- `resolution` and
+    // `page_coverage` -- exist only when it did (CheckArgs::sweepPages), because
+    // a run that offered no page to any screen would otherwise report zero
+    // resolutions for every page.
+    //
+    // A failure here is a check that could not be performed.
     [[nodiscard]]
     auto checkProduct(CheckArgs const& args) -> Result<CheckReport>;
 

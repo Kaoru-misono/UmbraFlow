@@ -30,8 +30,19 @@
 --
 --   * A screen must be the page it says it is. Every rule above measures ONE
 --     element, while a page signature is a conjunction over several rows that
---     nothing walked end to end until a screen could name its page. It is
---     `recognition.verify` and costs the screen's own observation.
+--     nothing walked end to end until a screen could name its page. It is read
+--     out of the sweep below and costs the screen's own observation.
+--
+-- IT ALSO REPORTS THREE THINGS IT DOES NOT JUDGE, and a reader who takes them for
+-- findings will break a correct model to make them go away:
+--
+--   * which OTHER declared pages resolve on each screen. Not a defect: an overlay
+--     screen resolves the page underneath it and the model cannot yet say which
+--     page that is (`recognition`).
+--   * which pages' identify clauses contain another's. A statement about the
+--     order a dispatcher must ask in, decided from the file alone.
+--   * how many screens each page resolves on, zero included. A page nothing
+--     resolves is as likely to be a page nobody captured.
 --
 -- TWO KINDS OF CELL. An element with appearances is measured by what its
 -- templates score; an element with none by what its rectangle READS, against the
@@ -162,16 +173,76 @@ export type Finding = {
     detail: string,
 }
 
+-- One page that resolved on one screen. `declared` marks the row the screen
+-- itself asked for; every other row is a page resolving somewhere it never
+-- claimed to be, which is a fact about the corpus and NOT a defect -- an overlay
+-- screen resolves the page underneath it, correctly
+-- (`recognition`, "two directions, one of which is never judged").
+--
+-- Two of these rows on one screen are what a dispatcher's order has to arbitrate,
+-- and they are the only measured evidence that it has to.
+export type CoResolution = {
+    screen: string,
+    page: string,
+    declared: boolean,
+}
+
+-- What the archived corpus proves about one page. `resolved_on` of zero is the
+-- coverage gap the matrix exists to name; `declared_screens` is what separates
+-- its two causes -- a page no screen was ever captured for cannot have been
+-- measured, while a page several screens name and none resolves is a signature
+-- that does not hold.
+export type PageCoverage = {
+    page: string,
+    resolved_on: number,
+    declared_screens: number,
+}
+
+-- `recognition.AnchorSubset`, respelled because this VM has no module resolver
+-- and one chunk cannot name another chunk's exported type
+-- (docs/plans/2026-08-02-luau-coding-standard.md). The producer owns the meaning;
+-- this is only the shape a verdict carries it in.
+export type AnchorSubset = {
+    general: string,
+    specific: string,
+    extra: number,
+    extra_forbidden: number,
+}
+
+-- `swept` says whether the co-resolution half was measured at all, and every
+-- reader of `resolutions` and `coverage` has to consult it first: those two lists
+-- are empty both when every page was offered to every screen and none resolved,
+-- and when nothing was offered. "Measured, and the answer is none" and "not
+-- measured" are different facts, and a report that spelled them the same way
+-- would be green over the half nobody looked at.
 export type Verdict = {
     accepted: boolean,
     screens: number,
     elements: number,
+    pages: number,
     cells: { Cell },
     separations: { Separation },
     findings: { Finding },
+    swept: boolean,
+    resolutions: { CoResolution },
+    subsets: { AnchorSubset },
+    coverage: { PageCoverage },
     claimed: number,
     unclaimed: number,
     matches: number,
+}
+
+-- What one check measures beyond the cells. One field so far, and a table rather
+-- than a bare boolean because the question "how much of the model does this run
+-- measure" is one a second option would join.
+export type CheckOptions = {
+    -- Whether to offer EVERY declared page to every screen. The rows it produces
+    -- are a measurement and never a finding (`recognition`), and they cost a
+    -- resolution per page per screen -- 87 by 85 on the reference project, which
+    -- is most of that check's wall clock. Off, the walk still resolves the page
+    -- each screen DECLARES, so every finding this verdict can carry is unchanged
+    -- and only the co-resolution report is missing.
+    sweep_pages: boolean,
 }
 
 -- ------------------------------------------------------------- measurement
@@ -916,14 +987,19 @@ local function identifiedElements(built: any): { [string]: boolean }
     return identified
 end
 
--- Measures one screen: what it says it IS, then every element, then every
+-- Measures one screen: which pages resolve on it, then every element, then every
 -- appearance of the elements that declare more than one.
 --
--- The screen's own claim goes FIRST because it is about the whole frame the cells
--- are then read off, and a page that does not resolve on the screen that says it
--- is that page explains most of the cells underneath it. Its reason is
+-- The sweep goes FIRST because it is about the whole frame the cells are then
+-- read off, and a page that does not resolve on the screen that says it is that
+-- page explains most of the cells underneath it. Its reason is
 -- `observe.resolve_page`'s own sentence, spent on THIS ticket, so the finding
 -- names the same clause a run would have failed on.
+--
+-- Only the pages that DID resolve are kept. Every declared page was asked on
+-- every screen, so a pair the report does not hold is a pair that was measured
+-- and refused -- and keeping the other 6,000 rows of the reference project would
+-- bury the few hundred that say something.
 local function walkScreen(
     ctx: any,
     ticket: any,
@@ -932,7 +1008,28 @@ local function walkScreen(
     identified: { [string]: boolean },
     verdict: Verdict
 )
-    local unresolved = recognition.verify(ctx, ticket, built, screen)
+    -- Two ways to the same sentence about the page this screen DECLARES, and the
+    -- verdict's findings do not depend on which was taken: a sweep reports every
+    -- page and this screen's own is one of them, while `verify` resolves that one
+    -- page and nothing else. What the cheaper way cannot produce is the
+    -- co-resolution rows, which is why `swept` travels with them.
+    local unresolved: string?
+    if verdict.swept then
+        local resolutions = recognition.sweep(ctx, ticket, built)
+        for _, row in resolutions do
+            if row.resolved then
+                table.insert(verdict.resolutions, {
+                    screen   = screen.name,
+                    page     = row.page,
+                    declared = row.page == screen.page,
+                })
+            end
+        end
+        unresolved = recognition.declared_refusal(built, screen, resolutions)
+    else
+        unresolved = recognition.verify(ctx, ticket, built, screen)
+    end
+
     if unresolved ~= nil then
         pushPageFinding(
             verdict.findings,
@@ -994,7 +1091,7 @@ local function walkScreen(
     end
 end
 
--- regress.check(ctx, built) -> Verdict
+-- regress.check(ctx, built, options) -> Verdict
 --
 -- Walks every declared screen against every declared element and reports what
 -- the model got wrong.
@@ -1008,36 +1105,32 @@ end
 -- that ran out of frames three screens later, and puts each screen's content hash
 -- into the trace.
 --
--- A text cell spends that same observation's READ BUDGET, one read per claimed
--- cell, and the host's refusal once it is out travels out of here as a raise: a
--- matrix that reported the cells it could not afford as misses would be a green
--- report with a hole whose size is a configuration number.
---
--- So does the page a screen declares, one read per identify row of that page
--- whose element has no template. One screen therefore costs twice the element
--- count ONLY WHILE EVERY ELEMENT DRAWS ITS OWN RECTANGLE: each half walks the
--- same list once, and each walk searches every rectangle the claims place the
--- element at. An element that draws none is placed by its claims and can be
--- claimed several times on one screen, so it costs one read per claim.
---
--- WHICH IS WHY THE CEILING IS NOT THIS WALK'S TO WORK AROUND. The exact number is
--- `oracle.Claims.most_reads_on_one_screen`, a fact about the FILE, and the caller
--- sizes the budget from that file before the run starts and refuses in its own
--- words when the budget is short of it (entry/cli/check.cpp). Splitting a screen
--- across two observations is not available and would be wrong: the frames are
--- served one file per capture, so a re-opened cycle is the NEXT screen's pixels
--- and half the cells of screen three would be judged against screen four.
+-- ONE SCREEN'S WORK IS ONE CYCLE, WHOLE. A text cell reads once, and so does
+-- every identify row of the SWEEP, which resolves every declared page on every
+-- screen -- the larger half on a project with more pages than claimed cells, and
+-- spent whether or not a screen declares anything. Splitting a screen across two
+-- observations is not available and would be wrong: the frames are served one
+-- file per capture, so a re-opened cycle is the NEXT screen's pixels and half the
+-- cells of screen three would be judged against screen four. So the caller runs
+-- this with no per-cycle read ceiling at all and bounds the run by wall-clock
+-- instead (entry/cli/check.cpp); a ceiling could only ever turn cells into ones
+-- nobody measured.
 --
 -- A check over a project claiming text also needs an OCR engine bound. Whoever
 -- assembles the run asks `oracle.Claims.reads_text` and
 -- `recognition.needs_engine` first -- two questions, because a page identified by
--- what its title box reads is read on every screen that declares it whether or
--- not that screen claims a text of its own -- and refuses naming the missing flag
--- rather than letting a read fail on screen three.
+-- what its title box reads is read on EVERY screen the sweep opens, whether or
+-- not that screen claims a text of its own and whether or not any screen names
+-- that page -- and refuses naming the missing flag rather than letting a read
+-- fail on screen three. It asks that whether or not this run sweeps, because a
+-- screen's own declared page is resolved either way.
+--
+-- `options` defaults to the whole measurement, so a caller that names nothing
+-- gets everything this can say; see CheckOptions for what a caller gives up.
 --
 -- The observation is closed on every path, including a raise from the walk, and
 -- the walk's own failure outranks a failure from the close.
-function regress.check(ctx: any, built: any): Verdict
+function regress.check(ctx: any, built: any, options: CheckOptions?): Verdict
     if type(ctx) ~= "table" then
         error("regress.check needs the ctx it should observe through", 2)
     end
@@ -1061,13 +1154,35 @@ function regress.check(ctx: any, built: any): Verdict
         )
     end
 
+    -- A malformed option is a RAISE and never a quiet false: nil is falsy, so a
+    -- caller that misspelled the field would silently get the cheap measurement
+    -- and a report whose empty co-resolution rows it had not asked for.
+    local swept = true
+    if options ~= nil then
+        if type(options.sweep_pages) ~= "boolean" then
+            error(
+                "regress.check was handed options carrying no sweep_pages "
+                    .. "boolean; whether every declared page is offered to every "
+                    .. "screen decides most of what this run measures and most of "
+                    .. "what it costs, so it is stated or left out entirely",
+                2
+            )
+        end
+        swept = options.sweep_pages
+    end
+
     local verdict: Verdict = {
         accepted    = true,
         screens     = 0,
         elements    = #built.elements,
+        pages       = #built.pages,
         cells       = {},
         separations = {},
         findings    = {},
+        swept       = swept,
+        resolutions = {},
+        subsets     = {},
+        coverage    = {},
         claimed     = #built.claims.expectations,
         unclaimed   = 0,
         matches     = 0,
@@ -1076,6 +1191,13 @@ function regress.check(ctx: any, built: any): Verdict
     -- Before any screen is opened: it costs no capture, and a project whose
     -- wake point presses a button is wrong whatever its pixels say.
     checkWakePoint(built, verdict)
+
+    -- Also capture-free, and the half of the co-resolution report the pixels
+    -- cannot supply: containment between two conjunctions of clauses is decided
+    -- by the file, while two pages whose clause names are disjoint and whose
+    -- marks land on the same frames are visible only in the sweep below. Neither
+    -- half subsumes the other.
+    verdict.subsets = recognition.anchor_subsets(built)
 
     local screens = oracle.Claims.screens_in_frame_order(built.claims)
     verdict.screens = #screens
@@ -1156,6 +1278,35 @@ function regress.check(ctx: any, built: any): Verdict
             verdict.matches += 1
         end
     end
+
+    -- One row per declared page whether or not the corpus says anything about
+    -- it: a page missing from an inventory reads as a page nobody asked about,
+    -- and the rows saying zero are the ones this exists to produce.
+    --
+    -- Only for a run that swept. `resolved_on` counts the screens a page was
+    -- FOUND on out of every screen it was offered to, and a run that offered it
+    -- to none would report zero for every page -- the loudest row this report
+    -- has, over a question nobody asked.
+    if verdict.swept then
+        local resolvedOn: { [string]: number }  = {}
+        local declaredFor: { [string]: number } = {}
+        for _, resolution in verdict.resolutions do
+            resolvedOn[resolution.page] = (resolvedOn[resolution.page] or 0) + 1
+        end
+        for _, screen in built.claims.screens do
+            if screen.page ~= nil then
+                declaredFor[screen.page] = (declaredFor[screen.page] or 0) + 1
+            end
+        end
+        for _, page in built.pages do
+            table.insert(verdict.coverage, {
+                page             = page.name,
+                resolved_on      = resolvedOn[page.name] or 0,
+                declared_screens = declaredFor[page.name] or 0,
+            })
+        end
+    end
+
     verdict.accepted = #verdict.findings == 0
     return verdict
 end
@@ -1216,85 +1367,172 @@ local function jsonObject(fields: { { any } }): string
     return "{" .. table.concat(parts, ",") .. "}"
 end
 
--- regress.render(verdict) -> the verdict as JSON lines, newline separated and
--- with no trailing newline.
---
--- The summary comes FIRST so a reader piping this into a pager sees the answer
--- before the evidence, and the findings before the cells that explain them.
-function regress.render(verdict: Verdict): string
-    local lines: { string } = {}
+-- The two co-resolution counts are ABSENT rather than zero on a run that did not
+-- sweep, because `jsonObject` drops a nil field: a reader sees no number at all
+-- where a zero would have said every page was offered to every screen and none
+-- resolved.
+local function summaryLine(verdict: Verdict): string
+    local unresolvedPages: number? = nil
+    local resolutions: number?     = nil
+    if verdict.swept then
+        unresolvedPages = 0
+        resolutions     = #verdict.resolutions
+        for _, page in verdict.coverage do
+            if page.resolved_on == 0 then
+                unresolvedPages += 1
+            end
+        end
+    end
 
-    table.insert(lines, jsonObject({
+    return jsonObject({
         { "check", "summary" },
         { "accepted", verdict.accepted },
         { "screens", verdict.screens },
         { "elements", verdict.elements },
+        { "pages", verdict.pages },
         { "cells", #verdict.cells },
         { "claimed", verdict.claimed },
         { "unclaimed", verdict.unclaimed },
         { "matches", verdict.matches },
         { "findings", #verdict.findings },
+        -- The three measured-but-never-judged counts. They move the exit code
+        -- nowhere: `accepted` is findings alone.
+        { "resolutions", resolutions },
+        { "subsets", #verdict.subsets },
+        { "pages_unresolved", unresolvedPages },
         { "separation_factor", k_separationFactor },
-    }))
+    })
+end
 
-    for _, finding in verdict.findings do
-        table.insert(lines, jsonObject({
-            { "check", "finding" },
-            { "kind", finding.kind },
-            { "screen", finding.screen },
-            { "element", finding.element },
-            { "page", finding.page },
-            { "appearance", finding.appearance },
-            { "rival", finding.rival },
-            { "detail", finding.detail },
-        }))
+local function findingLine(finding: Finding): string
+    return jsonObject({
+        { "check", "finding" },
+        { "kind", finding.kind },
+        { "screen", finding.screen },
+        { "element", finding.element },
+        { "page", finding.page },
+        { "appearance", finding.appearance },
+        { "rival", finding.rival },
+        { "detail", finding.detail },
+    })
+end
+
+local function separationLine(separation: Separation): string
+    return jsonObject({
+        { "check", "separation" },
+        { "screen", separation.screen },
+        { "element", separation.element },
+        { "winner", separation.winner },
+        { "rival", separation.rival },
+        { "winner_score", separation.winner_score },
+        { "winner_maximum", separation.winner_maximum },
+        { "rival_score", separation.rival_score },
+        { "rival_maximum", separation.rival_maximum },
+        { "factor", separation.factor },
+        { "clears", separation.clears },
+    })
+end
+
+local function subsetLine(subset: AnchorSubset): string
+    return jsonObject({
+        { "check", "anchor_subset" },
+        { "general", subset.general },
+        { "specific", subset.specific },
+        { "extra", subset.extra },
+        { "extra_forbidden", subset.extra_forbidden },
+    })
+end
+
+local function resolutionLine(resolution: CoResolution): string
+    return jsonObject({
+        { "check", "resolution" },
+        { "screen", resolution.screen },
+        { "page", resolution.page },
+        { "declared", resolution.declared },
+    })
+end
+
+local function coverageLine(page: PageCoverage): string
+    return jsonObject({
+        { "check", "page_coverage" },
+        { "page", page.page },
+        { "resolved_on", page.resolved_on },
+        { "declared_screens", page.declared_screens },
+    })
+end
+
+local function cellLine(cell: Cell): string
+    return jsonObject({
+        { "check", "cell" },
+        { "screen", cell.screen },
+        { "element", cell.element },
+        { "appearance", cell.appearance },
+        { "subject", cell.subject },
+        { "outcome", cell.outcome },
+        { "expected", cell.expected },
+        { "verdict", cell.verdict },
+        { "score", cell.score },
+        { "maximum", cell.maximum },
+        { "expected_text", cell.expected_text },
+        { "text", cell.text },
+        { "confidence", cell.confidence },
+        { "x", cell.x },
+        { "y", cell.y },
+        { "width", cell.width },
+        { "height", cell.height },
+        -- Last: every field above answers "what happened here", and these four
+        -- answer "which here" -- looked up when two rows share a name rather
+        -- than scanned for.
+        { "search_x", cell.search_x },
+        { "search_y", cell.search_y },
+        { "search_width", cell.search_width },
+        { "search_height", cell.search_height },
+    })
+end
+
+-- One block of the report: the rows and the function that renders one of them.
+export type Group = {
+    rows: { any },
+    line: (any) -> string,
+}
+
+-- regress.groups(verdict) -> the report in blocks, in report order.
+--
+-- THE ORDER LIVES HERE AND NOWHERE ELSE, which is the whole reason a caller is
+-- handed blocks rather than lines: a matrix over 85 screens and 331 elements is
+-- 29,000 rows, and holding them all -- as a list of strings, let alone joined
+-- into one six megabyte string -- exceeds the VM's ceiling on top of the rows
+-- they were rendered from. Luau throws the moment the accounting allocator
+-- refuses and never collects and retries
+-- (docs/pitfalls/embedded-vm-memory-ceiling.md). A caller with a real corpus
+-- walks these blocks and prints each line as it is minted, so each one is
+-- garbage before the next exists; `render` is for the verdicts small enough to
+-- hold twice.
+--
+-- The summary comes FIRST so a reader piping this into a pager sees the answer
+-- before the evidence, and the findings before the cells that explain them.
+function regress.groups(verdict: Verdict): { Group }
+    return {
+        { rows = { verdict }, line = summaryLine :: any },
+        { rows = verdict.findings, line = findingLine :: any },
+        { rows = verdict.separations, line = separationLine :: any },
+        { rows = verdict.subsets, line = subsetLine :: any },
+        { rows = verdict.resolutions, line = resolutionLine :: any },
+        { rows = verdict.coverage, line = coverageLine :: any },
+        { rows = verdict.cells, line = cellLine :: any },
+    }
+end
+
+-- regress.render(verdict) -> the report as one string, newline separated and with
+-- no trailing newline. For a verdict small enough to hold twice; see
+-- `regress.groups` for the one that is not.
+function regress.render(verdict: Verdict): string
+    local lines: { string } = {}
+    for _, group in regress.groups(verdict) do
+        for _, row in group.rows do
+            table.insert(lines, group.line(row))
+        end
     end
-
-    for _, separation in verdict.separations do
-        table.insert(lines, jsonObject({
-            { "check", "separation" },
-            { "screen", separation.screen },
-            { "element", separation.element },
-            { "winner", separation.winner },
-            { "rival", separation.rival },
-            { "winner_score", separation.winner_score },
-            { "winner_maximum", separation.winner_maximum },
-            { "rival_score", separation.rival_score },
-            { "rival_maximum", separation.rival_maximum },
-            { "factor", separation.factor },
-            { "clears", separation.clears },
-        }))
-    end
-
-    for _, cell in verdict.cells do
-        table.insert(lines, jsonObject({
-            { "check", "cell" },
-            { "screen", cell.screen },
-            { "element", cell.element },
-            { "appearance", cell.appearance },
-            { "subject", cell.subject },
-            { "outcome", cell.outcome },
-            { "expected", cell.expected },
-            { "verdict", cell.verdict },
-            { "score", cell.score },
-            { "maximum", cell.maximum },
-            { "expected_text", cell.expected_text },
-            { "text", cell.text },
-            { "confidence", cell.confidence },
-            { "x", cell.x },
-            { "y", cell.y },
-            { "width", cell.width },
-            { "height", cell.height },
-            -- Last: every field above answers "what happened here", and these
-            -- four answer "which here" -- looked up when two rows share a name
-            -- rather than scanned for.
-            { "search_x", cell.search_x },
-            { "search_y", cell.search_y },
-            { "search_width", cell.search_width },
-            { "search_height", cell.search_height },
-        }))
-    end
-
     return table.concat(lines, "\n")
 end
 

@@ -675,6 +675,23 @@ namespace uf::task
                     .fragment = "has no references",
                 },
                 Refusal{
+                    // The name is emitted as a trace scope label the instant
+                    // this page resolves, and the host refuses a label over 64
+                    // bytes -- from inside observe.resolve_page, which nothing
+                    // pcalls. Twenty-two CJK characters are 66 bytes, so a name
+                    // no author would call long is already over it. Drop the
+                    // check in Page.new and this page is built, then kills the
+                    // run on the first frame it is actually on.
+                    .label = "a page name too long to write to the trace",
+                    .body  = R"lua(
+                        return model.Page.new{
+                            name = "限時活動戰鬥員配置確認畫面標題列的長名稱測試",
+                            references = { anchorRow({}) },
+                        }
+                    )lua",
+                    .fragment = "is 66 bytes, over the host's 64-byte ceiling",
+                },
+                Refusal{
                     .label = "a page with no required identify reference",
                     .body  = R"lua(
                         return model.Page.new{
@@ -6645,17 +6662,15 @@ namespace uf::task
             }
         }
 
-        TEST_CASE("A declared page spends the same observation's read budget")
+        TEST_CASE("A declared page and a claim over one region cost that region one read")
         {
-            // The arithmetic entry/cli/check.cpp sizes a run from. One screen costs
-            // at most two reads per element the project declares: once for the
-            // element's own cell, and once more for the page the screen says it is,
-            // whose identify rows are elements of the same file. Both halves are
-            // spent on ONE observation, because the frames come from a directory
-            // served one file per capture and a re-opened cycle would be the next
-            // screen's pixels. A budget covering only the cells would end the run
-            // part-way through with a RecognitionIncomplete, which says truly what
-            // stopped and nothing about why.
+            // Both halves are spent on ONE observation -- the frames come from a
+            // directory served one file per capture, so a re-opened cycle would be
+            // the next screen's pixels -- and both ask the same rectangle of the
+            // same frame: once for the element's own cell, once for the page the
+            // screen says it is, whose identify row is that same element. The host
+            // answers such a question once per frame (task::CycleAnswers), so a
+            // screen costs its DISTINCT regions and not its rows.
             auto const directory = TemporaryDirectory{"uf-model-page-budget"};
             seedTemplates(directory.path());
             auto const hashes = seedScreens(directory.path());
@@ -6676,8 +6691,11 @@ namespace uf::task
                 end
             )lua";
 
-            SUBCASE("one read per element is one read short")
+            SUBCASE("a cycle that may read nothing measures nothing")
             {
+                // The positive control for the subcase below: with no read
+                // allowed at all the walk stops on the budget, so a budget of one
+                // passing there means one read really happened rather than none.
                 auto built = buildHarness(
                     HarnessSpec{
                         .framePixels = {pixels(2, 5, 0), pixels(2, 5, 0)},
@@ -6693,7 +6711,7 @@ namespace uf::task
                     *built.recorder,
                     TaskContextConfig{
                         .projectRoot          = directory.path(),
-                        .maximumReadsPerCycle = 1,
+                        .maximumReadsPerCycle = 0,
                     },
                 };
 
@@ -6717,7 +6735,7 @@ namespace uf::task
                 CHECK(*result == doctest::Approx(1.0));
             }
 
-            SUBCASE("two reads per element is exactly enough")
+            SUBCASE("one read per screen covers the cell and the page alike")
             {
                 auto built = buildHarness(
                     HarnessSpec{
@@ -6734,10 +6752,14 @@ namespace uf::task
                     *built.recorder,
                     TaskContextConfig{
                         .projectRoot          = directory.path(),
-                        .maximumReadsPerCycle = 2,
+                        .maximumReadsPerCycle = 1,
                     },
                 };
 
+                // One rectangle, asked for by the cell, by the screen's own page
+                // declaration and by the sweep that offers every page to every
+                // screen. Remove the memoisation in TaskContext::cycleRead and the
+                // second of those raises on the budget, so this goes red.
                 auto const result = runModel(
                     context,
                     built,
@@ -7131,6 +7153,527 @@ namespace uf::task
                 TaskContextConfig{.projectRoot = root},
             };
             return runModel(context, built, appearanceScript(hashes, body));
+        }
+
+        // ------------- the co-resolution sweep and the anchor subset lattice
+
+        // Two marks a frame either carries or does not, and pages built from
+        // them. The sweep's whole question is which OTHER pages resolve on a
+        // screen, so the smallest model that can answer it is two pages over one
+        // shared mark.
+        //
+        // Frame one carries both marks, frame two only the first, and the greys
+        // are exact matches against 10000 so nothing here depends on how close a
+        // near miss is.
+        constexpr std::string_view k_sweepHead = R"lua(
+            local function template(name)
+                return ctx:template_load(ctx:project_read(name))
+            end
+            local function mark(name, x, source)
+                return model.Element.new{
+                    name = name,
+                    capabilities = { "identify" },
+                    rect = { x = x, y = 0, width = 1, height = 1 },
+                    appearances = {
+                        {
+                            name = "lit",
+                            source = source,
+                            template = template(source),
+                            threshold = 10000,
+                        },
+                    },
+                }
+            end
+            local markA = mark("mark_a", 0, "gray2.png")
+            local markB = mark("mark_b", 1, "gray5.png")
+            local function page(name, rows)
+                return model.Page.new{ name = name, references = rows }
+            end
+            local function row(element, polarity)
+                return {
+                    element = element,
+                    holding = "owned",
+                    exercised = { "identify" },
+                    identify = polarity,
+                }
+            end
+            local hashOne = ")lua";
+
+        constexpr std::string_view k_sweepTail = R"lua("
+            local first  = oracle.Screen.new{ name = "both", hash = hashOne }
+            local second = oracle.Screen.new{ name = "one_only", hash = hashTwo }
+            local function screenNaming(name, hash, page)
+                if page == nil then
+                    return oracle.Screen.new{ name = name, hash = hash }
+                end
+                return oracle.Screen.new{ name = name, hash = hash, page = page }
+            end
+            -- The elements are a parameter because a clause is keyed on WHAT it
+            -- checks as well as on which element: the two marks above are
+            -- checked by their pixels, and only an element with none carries a
+            -- per-page text for that key to differ on.
+            local function sweepModel(
+                elements,
+                pages,
+                declaredFirst,
+                declaredSecond,
+                options
+            )
+                local byName = {}
+                for _, entry in pages do byName[entry.name] = entry end
+                return regress.check(ctx, {
+                    elements     = elements,
+                    pages        = pages,
+                    page_by_name = byName,
+                    claims       = oracle.Claims.new{
+                        screens      = {
+                            screenNaming("both", hashOne, declaredFirst),
+                            screenNaming("one_only", hashTwo, declaredSecond),
+                        },
+                        expectations = {},
+                    },
+                }, options)
+            end
+            local function sweep(pages, declaredFirst, declaredSecond, options)
+                return sweepModel(
+                    { markA, markB },
+                    pages,
+                    declaredFirst,
+                    declaredSecond,
+                    options
+                )
+            end
+            local function resolvedOn(verdict, screen)
+                local names = {}
+                for _, resolution in verdict.resolutions do
+                    if resolution.screen == screen then
+                        table.insert(names, resolution.page)
+                    end
+                end
+                table.sort(names)
+                return table.concat(names, ",")
+            end
+            local function coverageOf(verdict, name)
+                for _, entry in verdict.coverage do
+                    if entry.page == name then return entry end
+                end
+                return nil
+            end
+        )lua";
+
+        // `walks` is how many times the body calls `sweep`: each one opens an
+        // observation per screen, and the source repeats its LAST frame once
+        // exhausted -- so a body that walks twice on two frames would measure the
+        // second screen's pixels twice and be green for the wrong reason.
+        [[nodiscard]]
+        auto runSweep(
+            std::filesystem::path const&    root,
+            std::vector<std::string> const& hashes,
+            std::string_view                body,
+            std::size_t                     walks = 1U
+        ) -> Result<double>
+        {
+            REQUIRE(hashes.size() == 2U);
+            auto source = std::string{k_sweepHead};
+            source += hashes[0];
+            source += k_matrixPreludeMiddle;
+            source += hashes[1];
+            source += k_sweepTail;
+            source += body;
+
+            auto framePixels = std::vector<std::vector<std::byte>>{};
+            for (auto walk = std::size_t{0}; walk < walks; ++walk)
+            {
+                framePixels.emplace_back(pixels(2, 5, 9));
+                framePixels.emplace_back(pixels(2, 9, 9));
+            }
+
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = std::move(framePixels),
+                    .projectRoot = root,
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = root},
+            };
+            return runModel(context, built, source);
+        }
+
+        TEST_CASE("The matrix reports which pages resolve on a screen besides its own")
+        {
+            // The measurement the dispatcher's order rests on, and which nothing
+            // measured before: a page whose clauses another page also satisfies
+            // resolves on that page's screens too, so a loop offering the looser
+            // one first can never reach the tighter one. It is REPORTED and never
+            // judged -- an overlay screen resolves the page underneath it and the
+            // model holds no relation saying which page that is
+            // (docs/plans/2026-08-01-three-layers-and-agent-operator.md,
+            // "Recognition asks one direction only").
+            auto const directory = TemporaryDirectory{"uf-model-sweep"};
+            seedTemplates(directory.path());
+            auto const hashes = seedScreens(directory.path());
+
+            SUBCASE("a looser page resolves wherever the tighter one does")
+            {
+                auto const result = runSweep(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    local verdict = sweep({
+                        page("loose", { row(markA, "required") }),
+                        page("tight", {
+                            row(markA, "required"),
+                            row(markB, "required"),
+                        }),
+                    })
+
+                    -- The premise, asserted rather than assumed: frame one carries
+                    -- both marks and frame two only the first. A case measuring
+                    -- nothing would be green for the wrong reason.
+                    if resolvedOn(verdict, "both") ~= "loose,tight" then return 0 end
+                    if resolvedOn(verdict, "one_only") ~= "loose" then return 0 end
+                    if #verdict.resolutions ~= 3 then return 0 end
+
+                    -- No screen said which page it is, so nothing here is a
+                    -- finding: co-resolution moves the exit code nowhere.
+                    if not verdict.accepted then return 0 end
+                    if #verdict.findings ~= 0 then return 0 end
+                    for _, resolution in verdict.resolutions do
+                        if resolution.declared then return 0 end
+                    end
+
+                    -- The lattice half, decided from the clauses alone: `loose` is
+                    -- contained in `tight` and never the other way about.
+                    if #verdict.subsets ~= 1 then return 0 end
+                    local subset = verdict.subsets[1]
+                    if subset.general ~= "loose" then return 0 end
+                    if subset.specific ~= "tight" then return 0 end
+                    if subset.extra ~= 1 then return 0 end
+                    if subset.extra_forbidden ~= 0 then return 0 end
+
+                    -- And the inventory, which counts the screens a page resolved
+                    -- on against the screens that name it.
+                    if coverageOf(verdict, "loose").resolved_on ~= 2 then return 0 end
+                    if coverageOf(verdict, "tight").resolved_on ~= 1 then return 0 end
+                    if coverageOf(verdict, "loose").declared_screens ~= 0 then
+                        return 0
+                    end
+
+                    -- All three products reach the REPORT, under the line kinds
+                    -- a reader filters by. `umbra-flow check` prints exactly
+                    -- what `regress.groups` hands it and nothing else, so a
+                    -- block missing from there is measured and unreadable --
+                    -- which every assertion above this one would still allow.
+                    local rendered = regress.render(verdict)
+                    local resolutionLine = '{"check":"resolution","screen":'
+                        .. '"both","page":"tight","declared":false}'
+                    local subsetLine = '{"check":"anchor_subset","general":'
+                        .. '"loose","specific":"tight","extra":1,'
+                        .. '"extra_forbidden":0}'
+                    local coverageLine = '{"check":"page_coverage","page":'
+                        .. '"tight","resolved_on":1,"declared_screens":0}'
+                    if string.find(rendered, resolutionLine, 1, true) == nil then
+                        return 0
+                    end
+                    if string.find(rendered, subsetLine, 1, true) == nil then
+                        return 0
+                    end
+                    if string.find(rendered, coverageLine, 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a forbidden clause keeps the tighter page off the looser one's screens")
+            {
+                auto const result = runSweep(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    local verdict = sweep({
+                        page("loose", { row(markA, "required") }),
+                        page("guarded", {
+                            row(markA, "required"),
+                            row(markB, "forbidden"),
+                        }),
+                    })
+
+                    -- The polarity is the whole difference: `guarded` stays away
+                    -- from the frame carrying mark_b and resolves on the one that
+                    -- does not, which is the opposite screen from the subcase
+                    -- above.
+                    if resolvedOn(verdict, "both") ~= "loose" then return 0 end
+                    if resolvedOn(verdict, "one_only") ~= "guarded,loose" then
+                        return 0
+                    end
+
+                    -- Containment still holds and still says the order: `loose`
+                    -- resolves wherever `guarded` does. What the forbidden clause
+                    -- buys is the OTHER direction, and the row says so separately
+                    -- rather than calling the pair arbitrated.
+                    if #verdict.subsets ~= 1 then return 0 end
+                    local subset = verdict.subsets[1]
+                    if subset.general ~= "loose" then return 0 end
+                    if subset.specific ~= "guarded" then return 0 end
+                    if subset.extra_forbidden ~= 1 then return 0 end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("the page a screen declares is read out of the sweep")
+            {
+                auto const result = runSweep(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    -- The finding a screen's own declaration buys comes out of the
+                    -- sweep when there is one, so a sweep that stopped covering
+                    -- every declared page would take this finding with it rather
+                    -- than fail on its own terms. The subcase below is the other
+                    -- route to the same finding.
+                    local function pages()
+                        return {
+                            page("loose", { row(markA, "required") }),
+                            page("tight", {
+                                row(markA, "required"),
+                                row(markB, "required"),
+                            }),
+                        }
+                    end
+
+                    -- Declared on the screen that carries both marks: it resolves,
+                    -- there is no finding, and exactly the declared row is marked.
+                    local held = sweep(pages(), "tight", nil)
+                    if #held.findings ~= 0 then return 0 end
+                    local declared = 0
+                    for _, resolution in held.resolutions do
+                        if resolution.declared then
+                            if resolution.page ~= "tight" then return 0 end
+                            if resolution.screen ~= "both" then return 0 end
+                            declared += 1
+                        end
+                    end
+                    if declared ~= 1 then return 0 end
+
+                    -- What `declared_screens` is FOR: `loose` and `tight` both
+                    -- resolve somewhere, and only one of them was ever asked
+                    -- for by name. The field separates a signature that does
+                    -- not hold from a page nobody captured, so a count that
+                    -- ignored the declarations would answer the same on every
+                    -- page of every project.
+                    if coverageOf(held, "tight").declared_screens ~= 1 then
+                        return 0
+                    end
+                    if coverageOf(held, "loose").declared_screens ~= 0 then
+                        return 0
+                    end
+
+                    -- The same declaration on the screen that lacks mark_b: the
+                    -- page cannot resolve there, the finding names the clause that
+                    -- failed, and no row claims it resolved.
+                    local broken = sweep(pages(), nil, "tight")
+                    if broken.accepted then return 0 end
+                    if #broken.findings ~= 1 then return 0 end
+                    local finding = broken.findings[1]
+                    if finding.kind ~= "unresolved_page" then return 0 end
+                    if finding.screen ~= "one_only" then return 0 end
+                    if finding.page ~= "tight" then return 0 end
+                    if string.find(finding.detail, "mark_b", 1, true) == nil then
+                        return 0
+                    end
+                    for _, resolution in broken.resolutions do
+                        if resolution.declared then return 0 end
+                    end
+                    return 1
+                )lua",
+                    2U
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a run that does not sweep keeps every finding and reports no rows")
+            {
+                auto const result = runSweep(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    -- What `sweep_pages = false` gives up and what it must not.
+                    -- The co-resolution rows go, because nothing offered a page to
+                    -- a screen that does not name it; the FINDINGS stay, because
+                    -- the page a screen declares is still resolved -- through
+                    -- `recognition.verify` rather than out of a sweep.
+                    local function pages()
+                        return {
+                            page("loose", { row(markA, "required") }),
+                            page("tight", {
+                                row(markA, "required"),
+                                row(markB, "required"),
+                            }),
+                        }
+                    end
+                    local quiet = { sweep_pages = false }
+
+                    local held = sweep(pages(), "tight", nil, quiet)
+                    if held.swept then return 0 end
+                    if #held.findings ~= 0 then return 0 end
+
+                    -- Empty and DECLARED empty. A reader that could not tell this
+                    -- from "every page was offered and none resolved" would read a
+                    -- green report over a question nobody asked.
+                    if #held.resolutions ~= 0 then return 0 end
+                    if #held.coverage ~= 0 then return 0 end
+
+                    -- The file-only half costs no capture, so it is measured
+                    -- either way.
+                    if #held.subsets ~= 1 then return 0 end
+
+                    -- The same declaration on the screen that lacks mark_b: same
+                    -- finding, same clause named, with no sweep behind it.
+                    local broken = sweep(pages(), nil, "tight", quiet)
+                    if broken.accepted then return 0 end
+                    if #broken.findings ~= 1 then return 0 end
+                    local finding = broken.findings[1]
+                    if finding.kind ~= "unresolved_page" then return 0 end
+                    if finding.screen ~= "one_only" then return 0 end
+                    if finding.page ~= "tight" then return 0 end
+                    if string.find(finding.detail, "mark_b", 1, true) == nil then
+                        return 0
+                    end
+
+                    -- And the control: the same model swept DOES report rows, so
+                    -- the empties above are the option's doing and not an inert
+                    -- fixture.
+                    local full = sweep(pages(), "tight", nil)
+                    if not full.swept then return 0 end
+                    if #full.resolutions ~= 3 then return 0 end
+                    if #full.coverage ~= 2 then return 0 end
+                    return 1
+                )lua",
+                    3U
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("two pages with one clause set are one row under the first name")
+            {
+                auto const result = runSweep(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    -- The degenerate end of the lattice: two pages no frame can
+                    -- tell apart, which is a subset of each other both ways.
+                    -- Every other pair differs by a clause, so nothing else
+                    -- reaches the rule that keeps such a pair from being
+                    -- reported twice. Declaration order is the reverse of the
+                    -- answer, so a row that merely echoed the file would name
+                    -- `zulu` as the general one.
+                    local verdict = sweep({
+                        page("zulu", { row(markA, "required") }),
+                        page("alpha", { row(markA, "required") }),
+                    })
+
+                    -- The premise: one clause set means one answer on every
+                    -- frame, which is what leaves the pair unarbitrable.
+                    if resolvedOn(verdict, "both") ~= "alpha,zulu" then
+                        return 0
+                    end
+                    if resolvedOn(verdict, "one_only") ~= "alpha,zulu" then
+                        return 0
+                    end
+
+                    if #verdict.subsets ~= 1 then return 0 end
+                    local pair = verdict.subsets[1]
+                    if pair.general ~= "alpha" then return 0 end
+                    if pair.specific ~= "zulu" then return 0 end
+                    if pair.extra ~= 0 then return 0 end
+                    if pair.extra_forbidden ~= 0 then return 0 end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("two pages reading one box for different words are no pair")
+            {
+                auto const result = runSweep(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    -- Five pages of the reference project share one page_title
+                    -- element and are told apart by nothing else. A clause keyed
+                    -- on the element and the polarity alone would call those one
+                    -- signature and report every pair of them as a containment
+                    -- nothing can arbitrate.
+                    local title = model.Element.new{
+                        name = "title",
+                        capabilities = { "identify", "read" },
+                        rect = { x = 0, y = 0, width = 1, height = 1 },
+                    }
+                    local function reads(name, text)
+                        return model.Page.new{
+                            name = name,
+                            references = {
+                                {
+                                    element = title,
+                                    holding = "referenced",
+                                    exercised = { "identify" },
+                                    identify = "required",
+                                    expected_text = text,
+                                },
+                            },
+                        }
+                    end
+                    -- No page is offered to any screen: the lattice is decided
+                    -- from the file, and resolving one of these would read a
+                    -- region through an engine this harness binds none of.
+                    local quiet = { sweep_pages = false }
+
+                    local apart = sweepModel(
+                        { title },
+                        { reads("battle", "battle"), reads("menu", "menu") },
+                        nil,
+                        nil,
+                        quiet
+                    )
+                    if #apart.subsets ~= 0 then return 0 end
+
+                    -- The control: the same two pages expecting the same words
+                    -- ARE one signature twice over and the report says so, so
+                    -- the empty list above is the text's doing rather than a
+                    -- fixture that can produce no row at all.
+                    local alike = sweepModel(
+                        { title },
+                        { reads("battle", "battle"), reads("menu", "battle") },
+                        nil,
+                        nil,
+                        quiet
+                    )
+                    if #alike.subsets ~= 1 then return 0 end
+                    local pair = alike.subsets[1]
+                    if pair.general ~= "battle" then return 0 end
+                    if pair.specific ~= "menu" then return 0 end
+                    if pair.extra ~= 0 then return 0 end
+                    return 1
+                )lua",
+                    2U
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
         }
 
         TEST_CASE("An appearance set is judged where a page identifies by it")
@@ -7736,8 +8279,10 @@ namespace uf::task
 
                 -- And the declaration is what the composition root asks about
                 -- before it refuses a check for a missing engine: page `battle`
-                -- is identified by what the title box reads.
-                if not recognition.needs_engine(built) then return 0 end
+                -- is identified by what the title box reads. A screen NAMES that
+                -- page, so the answer holds whether or not the walk sweeps.
+                if not recognition.needs_engine(built, true) then return 0 end
+                if not recognition.needs_engine(built, false) then return 0 end
 
                 -- A project's own field lives under extra and an unknown key of
                 -- this layer's own section is carried verbatim, on a claim as on

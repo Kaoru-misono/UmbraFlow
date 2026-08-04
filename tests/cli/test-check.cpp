@@ -7,6 +7,7 @@
 
 #include <core/error/error.hpp>
 #include <core/types/integer.hpp>
+#include <core/utility/scope-exit.hpp>
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
@@ -19,10 +20,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <ios>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -30,6 +33,17 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+
+// The descriptor calls, under the names each host exports: MSVC deprecates the
+// unprefixed spellings and this build compiles warnings as errors. They are here
+// because a check REPORTS through Luau's `print`, which writes to the C standard
+// output this binary shares with the VM -- so nothing a std::cout buffer swap
+// can reach observes it, and the descriptor is what has to move.
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 // The falsification matrix, end to end through cli::checkProduct over a project
 // written to disk: the claim is the crossing of three boundaries -- matrix as
@@ -491,6 +505,81 @@ namespace uf::cli
             }
             return formatRunError(*report.run.failure);
         }
+
+        [[nodiscard]]
+        auto duplicatedStdout() -> int
+        {
+#if defined(_WIN32)
+            return _dup(_fileno(stdout));
+#else
+            return dup(fileno(stdout));
+#endif
+        }
+
+        [[nodiscard]]
+        auto redirectStdoutTo(std::filesystem::path const& path) -> bool
+        {
+#if defined(_WIN32)
+            std::FILE* p_reopened = nullptr;
+            return freopen_s(&p_reopened, path.string().c_str(), "w", stdout) == 0;
+#else
+            return std::freopen(path.string().c_str(), "w", stdout) != nullptr;
+#endif
+        }
+
+        auto restoreStdout(int saved) noexcept -> void
+        {
+            std::fflush(stdout);
+#if defined(_WIN32)
+            _dup2(saved, _fileno(stdout));
+            _close(saved);
+#else
+            dup2(saved, fileno(stdout));
+            close(saved);
+#endif
+        }
+
+        // What one check produced, and what it PRINTED while producing it.
+        struct CapturedCheck final
+        {
+            Result<CheckReport> report;
+            std::string         printed{};
+        };
+
+        // Runs a check with the standard output redirected into `sink`. It is put
+        // back on every exit path, because doctest reports through the same
+        // descriptor once the case returns.
+        [[nodiscard]]
+        auto checkCapturingOutput(
+            CheckArgs const& args,
+            std::filesystem::path const& sink
+        ) -> CapturedCheck
+        {
+            std::fflush(stdout);
+            auto const saved = duplicatedStdout();
+            REQUIRE(saved >= 0);
+            auto restore = scopeExit(
+                [saved]() noexcept
+                {
+                    restoreStdout(saved);
+                }
+            );
+            REQUIRE(redirectStdoutTo(sink));
+
+            auto report = checkProduct(args);
+            restoreStdout(saved);
+            restore.release();
+
+            auto stream = std::ifstream{sink, std::ios::binary};
+            REQUIRE(stream.is_open());
+            return CapturedCheck{
+                .report  = std::move(report),
+                .printed = std::string{
+                    std::istreambuf_iterator<char>{stream},
+                    std::istreambuf_iterator<char>{},
+                },
+            };
+        }
     }
 
     TEST_CASE("a model whose marks each own one screen is accepted")
@@ -505,6 +594,42 @@ namespace uf::cli
         CHECK_MESSAGE(!report->run.failure.has_value(), failureText(*report));
         CHECK(report->findings == 0U);
         CHECK(exitCodeForCheck(*report) == ExitCode::Success);
+    }
+
+    TEST_CASE("a check writes its report to standard output")
+    {
+        // The product is the report, and nothing else here reads a line of it:
+        // every other case judges `findings` and the exit code, which a routine
+        // that printed nothing still answers. Delete the print loop from
+        // k_checkRoutineBody and only this case goes red.
+        //
+        // The swept half pins the FLAG as well as the loop. Hard-code
+        // `{ sweep_pages = false }` into the routine and the two co-resolution
+        // blocks disappear while the clause that reads the flag stays satisfied,
+        // so the sweep never runs and every other case still passes.
+        auto const directory = TemporaryDirectory{"uf-check-report-lines"};
+        layOutProject(directory.path(), twentyElementProject());
+
+        auto sweeping       = checkArgs(directory.path(), directory.path() / "trace.jsonl");
+        sweeping.sweepPages = true;
+
+        auto const captured = checkCapturingOutput(
+            sweeping,
+            directory.path() / "report.jsonl"
+        );
+        REQUIRE(captured.report.has_value());
+        CHECK_MESSAGE(
+            !captured.report->run.failure.has_value(),
+            failureText(*captured.report)
+        );
+
+        CHECK(captured.printed.find(R"({"check":"summary")") != std::string::npos);
+        // Page `only` is identified by mark_00, which owns screen0, so a sweep
+        // resolves it there and reports one row per declared page besides.
+        CHECK(captured.printed.find(R"({"check":"resolution")") != std::string::npos);
+        CHECK(
+            captured.printed.find(R"({"check":"page_coverage")") != std::string::npos
+        );
     }
 
     TEST_CASE("a screen that says which page it is has that page resolved on it")
@@ -863,6 +988,42 @@ namespace uf::cli
             CHECK(exitCodeForCheck(*report) != ExitCode::Success);
         }
 
+        SUBCASE("a page NO screen names needs the engine only when the sweep runs")
+        {
+            // The clause that has to move with the sweep. Page `only` is
+            // identified by what a title box reads and nothing declares it, so a
+            // sweeping walk offers it to all four screens and reads there, while a
+            // walk that does not sweep never resolves it at all. Ask about every
+            // declared page unconditionally and the default run below is refused
+            // over a flag that would change nothing about it, so this goes red.
+            auto const nested = TemporaryDirectory{"uf-check-page-text-undeclared"};
+            auto const baseText = layOutProject(nested.path(), twentyElementProject());
+            writeText(
+                nested.path() / "page-model.toml",
+                baseText
+                    + "\n[[element]]\nname = \"title\"\n"
+                      "capabilities = [\"identify\", \"read\"]\n"
+                      "rect = [0, 0, 4, 4]\n"
+                      "\n[[reference]]\npage = \"only\"\nelement = \"title\"\n"
+                      "holding = \"referenced\"\nexercised = [\"identify\"]\n"
+                      "identify = \"required\"\nexpected_text = \"battle\"\n"
+            );
+
+            auto const quiet = checkProduct(
+                checkArgs(nested.path(), nested.path() / "trace.jsonl")
+            );
+            REQUIRE(quiet.has_value());
+            CHECK_MESSAGE(!quiet->run.failure.has_value(), failureText(*quiet));
+
+            auto sweeping       = checkArgs(nested.path(), nested.path() / "swept.jsonl");
+            sweeping.sweepPages = true;
+
+            auto const swept = checkProduct(sweeping);
+            REQUIRE(swept.has_value());
+            REQUIRE(swept->run.failure.has_value());
+            CHECK(failureText(*swept).find("--ocr-models") != std::string::npos);
+        }
+
         SUBCASE("a --ocr-models directory that will not build an engine fails first")
         {
             // The one case that fails if `checkProduct` accepted the flag and
@@ -880,21 +1041,20 @@ namespace uf::cli
         }
     }
 
-    TEST_CASE("a screen claiming more text cells than the default budget is still checkable")
+    TEST_CASE("a screen claiming more text cells than any per-cycle default is checkable")
     {
         // One title box, drawn once and reused, reads a different name on every
-        // page, so a project of fifteen pages claims it fifteen times -- normal
-        // rather than a runaway. The per-cycle read budget a wait loop is bounded
-        // by (eight) has nothing to do with it: the matrix opens one observation
-        // per screen and spends one read per claimed cell, so the check sizes the
-        // budget from the project's own element count and compares it against the
-        // widest screen BEFORE the first capture. Put the default back and this
-        // goes red -- the nine cells below exceed eight and the run ends on the
-        // budget refusal instead of the clause it should reach.
+        // page, so a project of fifty pages claims it fifty times -- normal rather
+        // than a runaway. k_defaultMaximumReadsPerCycle (thirty-two) bounds a wait
+        // loop's cycle against its observation lease and has nothing to do with a
+        // matrix, which opens one observation per screen and measures the whole of
+        // it; so a check runs with no per-cycle read ceiling at all. Size one from
+        // any policy constant and the forty cells below end the run on a budget
+        // refusal instead of the clause it should reach, so this goes red.
         auto const directory = TemporaryDirectory{"uf-check-wide-text-screen"};
         auto const baseline  = layOutProject(directory.path(), twentyElementProject());
 
-        constexpr auto k_claimedCells = 9U;
+        constexpr auto k_claimedCells = 40U;
         auto claims = std::string{};
         for (auto index = 0U; index < k_claimedCells; ++index)
         {
@@ -916,11 +1076,11 @@ namespace uf::cli
         REQUIRE(report.has_value());
         REQUIRE(report->run.failure.has_value());
 
-        // It stops on the engine it was not given, which is the clause AFTER the
-        // budget one -- so the budget covered nine cells on one screen.
+        // It stops on the engine it was not given, which is the only clause
+        // between this project and its first capture.
         auto const text = failureText(*report);
         CHECK(text.find("--ocr-models") != std::string::npos);
-        CHECK(text.find("read budget of") == std::string::npos);
+        CHECK(text.find("read budget") == std::string::npos);
     }
 
     TEST_CASE("a declared screen with no pixels and a pixel file nothing declares both fail")

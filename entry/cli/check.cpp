@@ -16,7 +16,7 @@
 #include <task/task-host.hpp>
 
 #include <cstddef>
-#include <format>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -37,8 +37,8 @@ namespace uf::cli
         // pass any model -- so this text is compiled into the binary and reaches
         // the VM through runFrameworkRoutine, which never touches <project>/tasks.
         //
-        // Three host-side facts are formatted in, each because only the routine
-        // can compare it against what the project file declares:
+        // Three host-side facts are formatted in. Two because only the routine can
+        // compare them against what the project file declares:
         //   - the screen count, which holds both sides to one set of screens. A
         //     declared screen with no file already fails on its own project_read;
         //     a file no screen declares would silently shift the content-hash
@@ -49,9 +49,10 @@ namespace uf::cli
         //     whose green cells and unmeasured cells look alike is worse than a
         //     refusal. Two questions decide it: what the claims need, and what the
         //     screens' own page declarations need.
-        //   - the per-cycle read budget. Checked BEFORE the engine clause, because
-        //     a binary that cannot budget the file it was handed should say so
-        //     before telling an operator to pass a flag that would not have helped.
+        // And one because it is the operator's, not the file's: whether to sweep
+        // every declared page over every screen (see CheckArgs::sweepPages). It is
+        // stated on every run rather than left to the framework's own default, so
+        // reading this source says which measurement the CLI asked for.
         //
         // It reports through `print` rather than by returning the text; the one
         // thing the host needs back is the number below.
@@ -61,8 +62,8 @@ local screens_on_disk = )lua";
         constexpr auto k_checkRoutineInfix = R"lua(
 local ocr_models_given = )lua";
 
-        constexpr auto k_checkRoutineReadBudget = R"lua(
-local read_budget = )lua";
+        constexpr auto k_checkRoutineSweep = R"lua(
+local sweep_pages = )lua";
 
         constexpr auto k_checkRoutineBody = R"lua(
 
@@ -80,22 +81,8 @@ if declared ~= screens_on_disk then
     )
 end
 
-local widest = oracle.Claims.most_reads_on_one_screen(built.claims)
-if widest > read_budget then
-    error(
-        "one screen of this project claims "
-            .. tostring(widest)
-            .. " text cells and this check was started with a read budget of "
-            .. tostring(read_budget)
-            .. " per observation; the matrix opens one observation per screen, "
-            .. "so it would run out part-way through and report the rest as "
-            .. "cells nobody measured",
-        0
-    )
-end
-
 local reads_claims = oracle.Claims.reads_text(built.claims)
-local reads_pages  = recognition.needs_engine(built)
+local reads_pages  = recognition.needs_engine(built, sweep_pages)
 if (reads_claims or reads_pages) and not ocr_models_given then
     error(
         "this project measures what a region READS -- a claim about what an "
@@ -108,8 +95,16 @@ if (reads_claims or reads_pages) and not ocr_models_given then
     )
 end
 
-local verdict = regress.check(ctx, built)
-print(regress.render(verdict))
+local verdict = regress.check(ctx, built, { sweep_pages = sweep_pages })
+-- One print per row rather than one print of the whole report, so each line is
+-- garbage before the next exists. A matrix over a real corpus is tens of
+-- thousands of rows, and holding them all exceeds the VM ceiling on top of the
+-- rows they were rendered from (docs/pitfalls/embedded-vm-memory-ceiling.md).
+for _, group in regress.groups(verdict) do
+    for _, row in group.rows do
+        print(group.line(row))
+    end
+end
 return #verdict.findings
 )lua";
 
@@ -117,15 +112,15 @@ return #verdict.findings
         auto checkRoutineSource(
             std::size_t screensOnDisk,
             bool ocrModelsGiven,
-            uint32 readBudget
+            bool sweepPages
         ) -> std::string
         {
             auto source = std::string{k_checkRoutinePrefix};
             source += std::to_string(screensOnDisk);
             source += k_checkRoutineInfix;
             source += ocrModelsGiven ? "true" : "false";
-            source += k_checkRoutineReadBudget;
-            source += std::to_string(readBudget);
+            source += k_checkRoutineSweep;
+            source += sweepPages ? "true" : "false";
             source += k_checkRoutineBody;
             return source;
         }
@@ -199,50 +194,70 @@ return #verdict.findings
             }
         };
 
-        // The per-cycle text-read budget one check runs under, taken from the file
-        // it is about rather than from k_defaultMaximumReadsPerCycle. That
-        // constant bounds a wait loop and a block read, neither of which the
-        // matrix does: it opens one observation per screen and spends one
-        // single-line read per claimed cell, so its need is a property of the
-        // project file and is known before the run.
+        // The per-cycle text-read budget one check runs under: none.
         //
-        // The ceiling is that property: the declared element count TWICE, each
-        // factor one walk of the same list. Once for the cells -- regress walks
-        // each element per screen, searches every rectangle a claim places it at,
-        // and reads only the ones with no templates. Once more for the page a
-        // screen declares itself to be, whose identify rows are elements of this
-        // same file and can be no more numerous.
+        // k_defaultMaximumReadsPerCycle bounds a WAIT LOOP's cycle against the
+        // observation lease it holds -- one poll of a live target, where reading
+        // more than a fraction of a second's worth means the frame has gone stale
+        // underneath the answer. A check's cycle is the whole of one screen's
+        // measurement and is meant to run to completion: every read it refused
+        // would be a cell the report then has to call unmeasured, and the frames
+        // arrive one file per capture, so the walk cannot re-open a cycle to buy
+        // more. Nothing about an offline run over files makes the count of reads
+        // the right ceiling; wall-clock is, and TaskRunConfig::maxScriptRuntime
+        // already is that ceiling.
         //
-        // The first factor is a heuristic and not a bound, since an element may
-        // draw no rectangle of its own and be claimed several times on one screen.
-        // The routine below asks the model for the exact count
-        // (`oracle.Claims.most_reads_on_one_screen`) and refuses in its own words
-        // when this number is short of it. Uncovered: a screen whose cell reads
-        // fit while its cells plus its declared page's reads do not, which runs
-        // out mid-walk as a loud RecognitionIncomplete rather than a quiet miss.
+        // Spelled as the widest value the field holds rather than as zero: zero is
+        // a budget of no reads at all and refuses the first one
+        // (task::TaskContext::cycleRead).
         //
-        // A project declaring no elements gets a budget of zero, which is honest:
-        // no element for a claim to be about is no read to spend.
-        constexpr auto k_readsPerElementPerScreen = uint64{2};
+        // IT HAS TO BE UNREACHABLE AND NOT MERELY GENEROUS. A sweep resolves the
+        // pages in the model's own order and the page a screen DECLARES may be
+        // last in it, so a budget exhausted part-way through raises out of
+        // `observe.resolve_page` -- turning what would have been an ordinary
+        // unresolved_page finding into a failed run. Nothing sized from the file
+        // can be argued safe here, and this is: a cycle charges once per DISTINCT
+        // region of one screen for a single-line read, and once plus one per line
+        // located for a block read, so reaching 2^32 needs a page model whose
+        // rectangles and the lines inside them sum to four billion on one screen.
+        constexpr auto k_uncappedReadsPerCycle = std::numeric_limits<uint32>::max();
+
+        // What one matrix cell is allowed to cost the VM, and the floor under a
+        // project too small for the product to matter.
+        //
+        // The matrix is the one routine whose memory need is a property of the
+        // FILE: it holds a row per measured cell and renders every one, so a
+        // corpus that doubles doubles the heap. The script layer's default
+        // ceiling is sized for a business task and a real corpus walks into it --
+        // the reference project's 85 screens and 331 elements produced 28,985
+        // rows, which died mid-report under 64 MiB.
+        //
+        // Elements times screens is a LOWER BOUND and not the row count: the walk
+        // emits one row per element per search rectangle, and one more per
+        // appearance for the elements declaring several. On that project the
+        // bound was met exactly for the first term (28,135) and four
+        // multi-appearance elements added 850. Sizing from the bound therefore
+        // under-budgets by whatever the surplus is, which the hysteresis below
+        // absorbs -- it is not a reason to believe the product IS the count.
+        //
+        // Four kibibytes per cell is the row's live table (a few hundred bytes)
+        // plus the two dozen short-lived strings rendering it mints, times the
+        // same hysteresis factor `cycle_crop` uses: Luau throws the instant the
+        // allocator refuses and never collects and retries, so a ceiling set at
+        // what is live leaves the incremental collector no room to stay ahead of
+        // the garbage (docs/pitfalls/embedded-vm-memory-ceiling.md).
+        constexpr auto k_memoryPerMatrixCellBytes = uint64{4} * 1024;
+        constexpr auto k_baseCheckMemoryBytes     = uint64{64} * 1024 * 1024;
 
         [[nodiscard]]
-        auto readBudgetForCheck(std::size_t declaredElements) -> Result<uint32>
+        auto memoryQuotaForCheck(
+            std::size_t declaredElements,
+            std::size_t screensOnDisk
+        ) noexcept -> uint64
         {
-            auto const budget = checkedCast<uint32>(
-                uint64{declaredElements} * k_readsPerElementPerScreen
-            );
-            if (!budget)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "this project declares {} elements, which is more than a "
-                        "run can hold a per-cycle read budget for",
-                        declaredElements
-                    )
-                );
-            }
-            return *budget;
+            return k_baseCheckMemoryBytes
+                + uint64{declaredElements} * uint64{screensOnDisk}
+                * k_memoryPerMatrixCellBytes;
         }
     }
 
@@ -252,7 +267,6 @@ return #verdict.findings
         UF_TRY_VALUE(generation, host.loadProject(args.project));
         UF_TRY_VALUE(fingerprint, host.projectFingerprint(generation));
         UF_TRY_VALUE(declaredElements, host.projectElementCount(generation));
-        UF_TRY_VALUE(readBudget, readBudgetForCheck(declaredElements));
 
         // The same binding `run`, `drive` and `explore` use, so a cell the matrix
         // reads is read by the engine a run would have used. Built before the
@@ -265,12 +279,10 @@ return #verdict.findings
             FileFrameSource::create(args.project / k_screensDirectory, fingerprint)
         );
         auto const screensOnDisk = frameSource->fileCount();
-        // One local feeds both the routine's clause and the run's config, so the
-        // number the routine compares against cannot drift from the one enforced.
-        auto const source = checkRoutineSource(
+        auto const source        = checkRoutineSource(
             screensOnDisk,
             args.ocrModels.has_value(),
-            readBudget
+            args.sweepPages
         );
 
         UF_TRY_VALUE(
@@ -290,9 +302,14 @@ return #verdict.findings
                     .liveFingerprint         = fingerprint,
                     .maximumPixelComparisons = args.budget,
                     .recognitionTimeout      = args.recognitionTimeout,
-                    // See readBudgetForCheck.
-                    .maximumReadsPerCycle = readBudget,
-                    .tracePath            = args.trace,
+                    // See k_uncappedReadsPerCycle.
+                    .maximumReadsPerCycle = k_uncappedReadsPerCycle,
+                    // See memoryQuotaForCheck.
+                    .memoryQuotaBytes = memoryQuotaForCheck(
+                        declaredElements,
+                        screensOnDisk
+                    ),
+                    .tracePath = args.trace,
                 }
             )
         );

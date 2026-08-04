@@ -183,6 +183,15 @@ namespace uf::cli
         // do.
         std::optional<std::filesystem::path> ocrModels{};
 
+        // Whether to offer every declared page to every screen. OFF by default,
+        // and the only default in this struct chosen by a stopwatch: the sweep
+        // resolves pages times screens and measured as most of a check's wall
+        // clock over the reference corpus (87 pages by 85 screens, about 100 s of
+        // 110 s). Nothing it produces is a finding and the exit code never moves
+        // on it, so the default answers the question an author asks after every
+        // edit and the flag answers the one asked of a corpus.
+        bool sweepPages{false};
+
         auto operator==(CheckArgs const&) const -> bool = default;
     };
 

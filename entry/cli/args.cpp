@@ -77,6 +77,17 @@ namespace uf::cli
             return std::ranges::find(flags, flag) != flags.end();
         }
 
+        // The one flag in this CLI that takes no value: it turns a measurement on
+        // and there is nothing to say about it beyond that. Kept a separate
+        // predicate rather than a value flag reading "true"/"false", because
+        // `--sweep-pages false` would be a spelling that reads like it disables
+        // something and one typo away from enabling it.
+        [[nodiscard]]
+        auto isCheckSwitch(std::string_view flag) noexcept -> bool
+        {
+            return flag == "--sweep-pages";
+        }
+
         [[nodiscard]]
         auto invalid(std::string message) -> std::unexpected<Error>
         {
@@ -373,11 +384,18 @@ namespace uf::cli
         auto recognitionTimeout = k_defaultRunRecognitionTimeout;
         auto trace              = std::filesystem::path{k_defaultCheckTracePath};
         auto ocrModels          = std::optional<std::filesystem::path>{};
+        auto sweepPages         = false;
 
         auto index = std::size_t{0};
         while (index < raw.size())
         {
             auto const& flag = raw[index];
+            if (isCheckSwitch(flag))
+            {
+                sweepPages = true;
+                index += 1U;
+                continue;
+            }
             if (!isCheckValueFlag(flag))
             {
                 return invalid(std::format("unknown argument \"{}\"", flag));
@@ -425,6 +443,7 @@ namespace uf::cli
             .recognitionTimeout = recognitionTimeout,
             .trace              = std::move(trace),
             .ocrModels          = std::move(ocrModels),
+            .sweepPages         = sweepPages,
         };
     }
 
@@ -508,7 +527,11 @@ namespace uf::cli
             "umbra-flow-check-trace.jsonl\n"
             "  --ocr-models DIR             \"models\" directory enabling the text\n"
             "                                reads; required when the project claims\n"
-            "                                what a region reads, refused without it\n";
+            "                                what a region reads, refused without it\n"
+            "  --sweep-pages                Also resolve EVERY declared page on\n"
+            "                                every screen and report what co-resolved;\n"
+            "                                a measurement, never a finding, and the\n"
+            "                                bulk of the wall clock on a real corpus\n";
     }
 
     auto usageText() -> std::string
