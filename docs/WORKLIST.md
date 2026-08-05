@@ -256,6 +256,38 @@ WGC 在锁屏下仍能取到画面(这条 07-25 量过),但**点击到不了被�
 
 ---
 
+## 五之二、重新标注的基线(2026-08-05)
+
+**标完对着这一行比,不要凭印象说"好像准了"。**
+
+```
+{"check":"summary","accepted":false,"screens":85,"elements":331,"appearances":27,
+ "pages":87,"cells":28985,"claimed":76,"unclaimed":28909,"matches":281,"findings":1,
+ "resolutions":193,"subsets":3,"pages_unresolved":18,"pages_unlinked":59,
+ "appearances_unkeyed":26,"separation_factor":4}
+```
+
+复现:工程仓库 `63c43f5` + 主仓库 `4b23146` 的 **release** 二进制,跑
+`umbra-flow check --project <uf-chaos> --ocr-models modules/ocr/external/models --sweep-pages`。
+debug 跑不完——一次识别约 1030 ms 超过 750 ms 租约,中途 `Timeout` 且报告在矩阵之后才渲染,
+所以超时等于零行输出,不会留下一份看起来完整的残报告。
+
+一轮标注该让哪几个数动:
+
+- **`appearances_unkeyed` 从 26 往下走**,这是这一轮的主指标。按 `appearance_key` 行的
+  `threshold` 从松到紧排就是工单:最松的是 `seasonevent_crest`(8500),而它正是在 85 屏里
+  命中 59 屏的那一个——**成因侧的排序和后果侧的矩阵指向同一个模板**。唯一带键的是
+  `event_battle` 的 `idle`。
+- **`resolutions` 从 193 往下走**,`pages_unresolved` 从 18 往下走。前者是浮层与常量误认的
+  总量,后者是从来没被任何屏证实过的页。
+- **`pages_unlinked` 59 与本轮无关**,它是边的事不是像素的事。
+
+唯一那条 finding 是 `season_flash_pick_named` 说自己是 `season_flash_pick`,而
+`seasonflashpick_pill` 一个外观都没匹配上——**赛季批,在搁置范围内**,所以 `accepted:false`
+在重标赛季之前不会变绿,不要把它当作本轮的失败。
+
+---
+
 ## 六、这一天反复出现的三个错误(给下一个 session 省时间)
 
 1. **锚点采完不证伪。** 只验"在这一页上命中",不验"在别的页上不命中"。四轮派发器
