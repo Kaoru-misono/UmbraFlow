@@ -5610,6 +5610,108 @@ namespace uf::task
             "exercised = [\"identify\"]\n"
             "identify = \"required\"\n";
 
+        TEST_CASE("A preview edge stays where it is and says so")
+        {
+            // Phase B 3.5. Clicking a roster row swaps what the panel beside it
+            // shows and leaves the run where it was. It is an edge and not a bare
+            // click because the model still owes an answer about what the input
+            // does, and "nothing moves" is an answer a run can be held to.
+            auto const directory = TemporaryDirectory{"uf-model-preview-edge"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, graphScript(R"lua(
+                local function refused(fragment, fn)
+                    local ok, err = pcall(fn)
+                    if ok then return false end
+                    return string.find(tostring(err), fragment, 1, true) ~= nil
+                end
+
+                -- The shape it exists for: a click that stays put, declaring no
+                -- destination because the destination is this page.
+                local look = navigation.Edge.new{
+                    from = base,
+                    via = "click",
+                    via_element = mark_base,
+                    kind = "navigate",
+                    preview = true,
+                }
+                if look.preview ~= true then return 0 end
+                if look.to ~= nil then return 0 end
+
+                -- An ordinary edge is not one, and the flag is a boolean rather
+                -- than an absence with a second meaning.
+                if navigation.Edge.new{
+                    from = base,
+                    to = { detail },
+                    via = "click",
+                    via_element = mark_base,
+                    kind = "push",
+                }.preview ~= false then return 0 end
+
+                -- Opposite claims about one input: the page stays, and the page
+                -- becomes something else.
+                if not refused("opposite claims", function()
+                    return navigation.Edge.new{
+                        from = base,
+                        to = { detail },
+                        via = "key",
+                        via_key = "P",
+                        kind = "navigate",
+                        preview = true,
+                    }
+                end) then return 0 end
+
+                -- A preview moves no page, so it is neither a push nor a pop --
+                -- the two kinds whose whole content is what the page stack does.
+                if not refused("changes no page at all", function()
+                    return navigation.Edge.new{
+                        from = base,
+                        to = { detail },
+                        via = "key",
+                        via_key = "Q",
+                        kind = "push",
+                        preview = true,
+                    }
+                end) then return 0 end
+                if not refused("changes no page at all", function()
+                    return navigation.Edge.new{
+                        from = detail,
+                        via = "key",
+                        via_key = "R",
+                        kind = "pop",
+                        preview = true,
+                    }
+                end) then return 0 end
+
+                -- And a navigate that is NOT a preview still owes a destination,
+                -- so the exemption above is the flag's and not a hole the flag
+                -- opened for every navigate.
+                if not refused("needs to = { page", function()
+                    return navigation.Edge.new{
+                        from = base,
+                        via = "key",
+                        via_key = "S",
+                        kind = "navigate",
+                    }
+                end) then return 0 end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
         TEST_CASE("A row can require the appearance an element is wearing")
         {
             // The appearance GATE

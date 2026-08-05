@@ -133,6 +133,9 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         via_element = true,
         via_key     = true,
         kind        = true,
+        -- A `preview` edge stays on its page, so it declares no `to`; see
+        -- `navigation.Edge`.
+        preview     = true,
     },
     -- A screen carries a name and the content hash of its PNG, and no path: the
     -- path is `assets/screens/<hash>.png` by construction, so a project cannot
@@ -565,6 +568,9 @@ function project.encode(built: any): string
             table.insert(lines, "via_key = " .. renderString(edge.via_key))
         end
         table.insert(lines, "kind = " .. renderString(edge.kind))
+        if edge.preview then
+            table.insert(lines, "preview = true")
+        end
         pushResidual(lines, edge.residual)
         pushExtra(lines, "[edge.extra]", edge.extra)
     end
@@ -1320,6 +1326,7 @@ function project.build(ctx: any, document: any): any
                 via_element = viaElement,
                 via_key     = section.fields.via_key,
                 kind        = requireField(section, "kind"),
+                preview     = section.fields.preview,
                 extra       = section.extra,
                 residual    = section.residual,
             })

@@ -44,6 +44,7 @@ local k_edgeKeys: { [string]: boolean } = {
     via_element = true,
     via_key     = true,
     kind        = true,
+    preview     = true,
     extra       = true,
     residual    = true,
 }
@@ -73,6 +74,16 @@ local k_stackKeys: { [string]: boolean } = {
 -- `via_reference` is the from page's own row for `via_element`, resolved once at
 -- construction, so an edge naming an element its page never authorised fails
 -- before any run.
+-- `preview` says walking this edge does NOT change the page: clicking a roster
+-- row swaps what the panel beside it shows and leaves the run where it was. It
+-- is an edge rather than a bare click because the model still owes an answer
+-- about what the input does, and "nothing moves" is an answer a run can be held
+-- to -- the routine that delivers one re-resolves and reports a broken
+-- assumption when the page changed after all
+-- (docs/plans/2026-08-04-state-layer-and-policy-slots.md 3.5).
+--
+-- It is only spellable on an edge that stays: a preview declaring a destination
+-- would be saying the page both does and does not change.
 export type Edge = {
     from: any,
     to: { any }?,
@@ -81,6 +92,7 @@ export type Edge = {
     via_reference: any,
     via_key: string?,
     kind: string,
+    preview: boolean,
     extra: { [string]: any },
     residual: { string },
 }
@@ -275,6 +287,37 @@ function Edge.new(spec: { [string]: any }): Edge
         end
     end
 
+    if spec.preview ~= nil and type(spec.preview) ~= "boolean" then
+        error(
+            what
+                .. " preview must be true or false; it says walking this edge "
+                .. "leaves the run on the same page, which a routine verifies by "
+                .. "resolving again rather than by waiting for an arrival",
+            2
+        )
+    end
+    if spec.preview == true then
+        if kind ~= "navigate" then
+            error(
+                what
+                    .. " previews and is a "
+                    .. kind
+                    .. "; a preview changes no page at all, so it neither pushes "
+                    .. "an overlay onto the stack nor closes one",
+                2
+            )
+        end
+        if spec.to ~= nil then
+            error(
+                what
+                    .. " previews and names a destination; those are opposite "
+                    .. "claims about the same input -- the page stays and the "
+                    .. "page becomes something else",
+                2
+            )
+        end
+    end
+
     local destinations: { any }? = nil
     if kind == "pop" then
         if spec.to ~= nil then
@@ -286,6 +329,9 @@ function Edge.new(spec: { [string]: any }): Edge
                 2
             )
         end
+    elseif spec.preview == true then
+        -- Nothing to check: the destination is this page, and the file says so
+        -- by declaring no other.
     else
         if type(spec.to) ~= "table" then
             error(
@@ -372,6 +418,7 @@ function Edge.new(spec: { [string]: any }): Edge
     end
 
     local edge = table.freeze({
+        preview       = spec.preview == true,
         from          = from,
         to            = destinations,
         via           = via,
