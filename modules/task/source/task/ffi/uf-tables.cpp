@@ -2005,6 +2005,10 @@ namespace uf::task
                 .verb = "page_resolved",
                 .kind = trace::TraceEventKind::FrameworkPageResolved,
             },
+            SemanticEventName{
+                .verb = "element_clicked",
+                .kind = trace::TraceEventKind::FrameworkElementClicked,
+            },
         };
 
         // The scope label at `index`. A non-string is a framework bug rather than

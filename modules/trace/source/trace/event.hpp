@@ -154,6 +154,22 @@ namespace uf::trace
         // the same page model; see stream-validator.hpp.
         FrameworkPageResolved,
 
+        // Which element a click was authorised against, written by the framework
+        // where it authorises one and never by the engine, which does not know:
+        // the page model is the script's and `engine.action_delivered` carries
+        // the frame identity and the client point alone. Without it a replay can
+        // attribute a keystroke to an edge -- `engine.key_delivered` names the
+        // key -- and cannot attribute a click to any
+        // (docs/plans/2026-08-04-state-layer-and-policy-slots.md 4.2).
+        //
+        // It names the element and NOT the page. The page that authorises a
+        // click is the page whose receipt was passed, and `requireAuthorisedHit`
+        // already refuses a receipt minted on another cycle or belonging to
+        // another page -- so the authorising page is the last one resolved on
+        // this observation, and writing it again would be one more thing that
+        // can disagree rather than one more fact.
+        FrameworkElementClicked,
+
         // The two verbs the exploration front-end has and no other does,
         // spelled `annotation.*` because neither names an element or a page
         // (docs/plans/2026-08-01-agent-front-end-and-exploration.md 1).

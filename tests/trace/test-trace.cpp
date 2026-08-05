@@ -860,13 +860,15 @@ namespace uf::trace
         // One stream written by this module's own recorder, so what the reader is
         // tested against is what the writer produces rather than a hand-typed
         // line that could drift from it.
-        [[nodiscard]]
+        // A task run. The click pair below is admitted on this front end alone,
+        // so a check stream is recorded by `recordCheckRun` rather than by
+        // passing a different front end here.
         auto recordRun(
             std::filesystem::path const& path,
-            FrontEnd                     frontEnd,
             std::string_view             modelHash
         ) -> void
         {
+            auto constexpr frontEnd = FrontEnd::Task;
             auto sink = FileTraceSink::create(path);
             REQUIRE(sink.has_value());
             auto recorder = TraceRecorder{
@@ -932,6 +934,18 @@ namespace uf::trace
             );
             REQUIRE(
                 recorder
+                    .emit(
+                        TraceEvent{
+                            .kind      = TraceEventKind::FrameworkElementClicked,
+                            .framework = TraceEvent::Framework{
+                                .label = "battle_end_turn",
+                            },
+                        }
+                    )
+                    .has_value()
+            );
+            REQUIRE(
+                recorder
                     .emit(TraceEvent{.kind = TraceEventKind::EngineActionDelivered})
                     .has_value()
             );
@@ -966,7 +980,7 @@ namespace uf::trace
         auto const path =
             std::filesystem::temp_directory_path() / "uf-replay-source.jsonl";
         std::filesystem::remove(path);
-        recordRun(path, FrontEnd::Task, "m0d3l");
+        recordRun(path, "m0d3l");
 
         auto const run = readReplayedRun(path);
         REQUIRE(run.has_value());
@@ -977,23 +991,26 @@ namespace uf::trace
         CHECK(run->taskName == "daily");
         CHECK(run->modelHash == "m0d3l");
 
-        // Five steps out of nine lines: the run bracket and the observation are
+        // Six steps out of ten lines: the run bracket and the observation are
         // kinds this does not project, and skipping them is the projection doing
         // its job rather than losing a step.
-        REQUIRE(run->steps.size() == 5U);
+        REQUIRE(run->steps.size() == 6U);
         CHECK(run->steps[0].kind == ReplayStepKind::PageResolved);
         CHECK(run->steps[0].label == "home");
         CHECK(run->steps[1].kind == ReplayStepKind::KeyDelivered);
         CHECK(run->steps[1].label == "E");
         CHECK(run->steps[2].kind == ReplayStepKind::PageResolved);
         CHECK(run->steps[2].label == "battle");
-        CHECK(run->steps[3].kind == ReplayStepKind::ActionDelivered);
-        CHECK(run->steps[4].label == "node_reward");
+        CHECK(run->steps[5].label == "node_reward");
 
-        // A click names nothing, and that is the stream's doing: no event
-        // records the element a click was authorised against, which is why a
-        // checker can attribute a keystroke to an edge and not a click.
-        CHECK(run->steps[3].label.empty());
+        // The two halves of one click, in the order the framework writes them:
+        // which element the page authorised, then whether it reached the target.
+        // The authorisation is what a replay attributes an edge to; a delivery
+        // names nothing of its own.
+        CHECK(run->steps[3].kind == ReplayStepKind::ElementClicked);
+        CHECK(run->steps[3].label == "battle_end_turn");
+        CHECK(run->steps[4].kind == ReplayStepKind::ActionDelivered);
+        CHECK(run->steps[4].label.empty());
 
         // In stream order, and pointing at lines rather than at list positions.
         for (auto index = std::size_t{1}; index < run->steps.size(); ++index)
@@ -1058,7 +1075,7 @@ namespace uf::trace
         auto const path =
             std::filesystem::temp_directory_path() / "uf-replay-refuse.jsonl";
         std::filesystem::remove(path);
-        recordRun(path, FrontEnd::Task, "m0d3l");
+        recordRun(path, "m0d3l");
         auto const good = readBack(path);
         std::filesystem::remove(path);
 
@@ -1103,15 +1120,65 @@ namespace uf::trace
         auto const path =
             std::filesystem::temp_directory_path() / "uf-replay-check.jsonl";
         std::filesystem::remove(path);
-        recordRun(path, FrontEnd::Check, "m0d3l");
+
+        auto sink = FileTraceSink::create(path);
+        REQUIRE(sink.has_value());
+        {
+            auto recorder = TraceRecorder{
+                std::move(*sink),
+                k_runId,
+                k_generationId,
+                FrontEnd::Check,
+            };
+            REQUIRE(
+                recorder
+                    .emit(
+                        TraceEvent{
+                            .kind = TraceEventKind::RunStarted,
+                            .run  = TraceEvent::Run{
+                                .projectId = "uf-chaos",
+                                .taskName  = "falsification-matrix",
+                                .modelHash = "m0d3l",
+                            },
+                        }
+                    )
+                    .has_value()
+            );
+            REQUIRE(
+                recorder
+                    .emit(
+                        TraceEvent{
+                            .kind      = TraceEventKind::FrameworkPageResolved,
+                            .framework = TraceEvent::Framework{.label = "home"},
+                        }
+                    )
+                    .has_value()
+            );
+
+            // And the boundary that makes the exclusion structural rather than a
+            // convention: a check delivers no input, so the line naming the
+            // element a click was authorised against cannot reach this stream at
+            // all. The page resolution above can, because a run that only
+            // measures resolves against the same page model a task does.
+            CHECK_FALSE(
+                recorder
+                    .emit(
+                        TraceEvent{
+                            .kind      = TraceEventKind::FrameworkElementClicked,
+                            .framework = TraceEvent::Framework{.label = "confirm"},
+                        }
+                    )
+                    .has_value()
+            );
+        }
 
         auto const run = readReplayedRun(path);
         REQUIRE(run.has_value());
         CHECK(run->frontEnd == FrontEnd::Check);
 
-        // And it is NOT refused here. Which front ends may be replayed is the
-        // checker's ruling; this reader reports and judges nothing.
-        CHECK(run->steps.size() == 5U);
+        // The reader does NOT refuse it. Which front ends may be replayed is the
+        // checker's ruling; this reports and judges nothing.
+        CHECK(run->steps.size() == 1U);
 
         std::filesystem::remove(path);
     }
@@ -1126,7 +1193,7 @@ namespace uf::trace
         auto const path =
             std::filesystem::temp_directory_path() / "uf-replay-nomodel.jsonl";
         std::filesystem::remove(path);
-        recordRun(path, FrontEnd::Task, "m0d3l");
+        recordRun(path, "m0d3l");
 
         auto text = readBack(path);
         std::filesystem::remove(path);

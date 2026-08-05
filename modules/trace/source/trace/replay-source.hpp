@@ -34,8 +34,15 @@ namespace uf::trace
         // The framework resolved a page: what the run believed it was standing on.
         PageResolved,
 
-        // A click reached the target. It names NOTHING the model can attribute it
-        // to -- see `ReplayStep::label`.
+        // The framework authorised a click against an element it names. This is
+        // the trigger side of a click edge; the delivery below is whether it then
+        // landed, and the two are separate lines because a click that was
+        // authorised and did not reach the target is a fact worth keeping.
+        ElementClicked,
+
+        // A click reached the target. It names nothing itself -- the engine
+        // records a frame and a client point -- so it is read together with the
+        // authorisation above.
         ActionDelivered,
 
         // A keystroke reached the target, and the wire records which key.
@@ -50,14 +57,9 @@ namespace uf::trace
         // line rather than at an index into this list.
         uint64 seq{};
 
-        // The page a resolution concluded on, or the key a delivery pressed.
-        //
-        // EMPTY ON EVERY CLICK, and that is a fact about the stream rather than
-        // about this reader: `engine.action_delivered` carries the frame identity
-        // and the client point, and no event names the element a click was
-        // authorised against. So a checker can attribute a keystroke to an edge
-        // and cannot attribute a click, which is what the `unattributable` class
-        // in the replay plan is for.
+        // The page a resolution concluded on, the element a click was authorised
+        // against, or the key a delivery pressed. Empty on a delivered click,
+        // which carries no name of its own.
         std::string label{};
     };
 

@@ -69,6 +69,11 @@ namespace uf::trace
                 .labelMember = "label",
             },
             ProjectedKind{
+                .wireName    = "framework.element_clicked",
+                .step        = ReplayStepKind::ElementClicked,
+                .labelMember = "label",
+            },
+            ProjectedKind{
                 .wireName    = "engine.action_delivered",
                 .step        = ReplayStepKind::ActionDelivered,
                 .labelMember = {},

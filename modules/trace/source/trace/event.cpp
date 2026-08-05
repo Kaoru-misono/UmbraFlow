@@ -106,6 +106,8 @@ namespace uf::trace
             case TraceEventKind::FrameworkSettled: return "framework.settled";
             case TraceEventKind::FrameworkPageResolved:
                 return "framework.page_resolved";
+            case TraceEventKind::FrameworkElementClicked:
+                return "framework.element_clicked";
             case TraceEventKind::AnnotationClickDelivered:
                 return "annotation.click_delivered";
             case TraceEventKind::AnnotationRegionSaved:

@@ -893,9 +893,20 @@ end
 --
 -- Delivers the click the hit describes and spends the observation cycle.
 -- Authorisation is `requireAuthorisedHit`'s, above.
+--
+-- It writes `framework.element_clicked` past that check and BEFORE the delivery,
+-- which is the honest order: the line says which element this click was
+-- authorised against, and whether it then reached the target is the engine's own
+-- next line to write. A line written afterwards would be missing from exactly
+-- the runs where a delivery failed -- the ones a reader most needs it in.
+--
+-- `long_press` writes none. An edge is triggered by a click or a keystroke and
+-- the schema can spell no third thing, so a line naming an element for a press
+-- no edge can reference would be evidence about nothing.
 function observe.click(ctx: any, ticket: any, receipt: any, hit: any)
     requireCtx(ctx, "observe.click")
     requireAuthorisedHit("observe.click", ticket, receipt, hit)
+    ctx:element_clicked(hit.element.name)
 
     if hit.match ~= nil then
         ctx:cycle_click(ticket, hit.match)

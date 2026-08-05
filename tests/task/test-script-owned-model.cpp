@@ -223,6 +223,12 @@ namespace uf::task
             Result<engine::EngineSession>         session;
             CountingActionSink*                   clicks;
             FakeFrameSource*                      frames;
+
+            // Every case records rather than discards: the framework's semantic
+            // events pass the host's validation state machine on the way here,
+            // so a run that reaches this sink is a run whose sequence the host
+            // accepted, and a case that wants to read the sequence can.
+            RecordingTraceSink*                   traces;
         };
 
         [[nodiscard]]
@@ -243,8 +249,10 @@ namespace uf::task
             auto* const p_frames   = frameSource.get();
             auto actionSink        = std::make_unique<CountingActionSink>();
             auto* const p_clicks   = actionSink.get();
+            auto traceSink         = std::make_unique<RecordingTraceSink>();
+            auto* const p_traces   = traceSink.get();
             auto recorder          = std::make_unique<trace::TraceRecorder>(
-                std::make_unique<DiscardingTraceSink>(),
+                std::move(traceSink),
                 k_fixtureRunId,
                 k_fixtureGenerationId,
                 trace::FrontEnd::Task
@@ -268,6 +276,7 @@ namespace uf::task
                 .session  = std::move(session),
                 .clicks   = p_clicks,
                 .frames   = p_frames,
+                .traces   = p_traces,
             };
         }
 
@@ -1232,6 +1241,33 @@ namespace uf::task
             REQUIRE(result.has_value());
             CHECK(*result == doctest::Approx(1.0));
             CHECK(p_clicks->clickCount() == 1U);
+
+            // The click named the element it was authorised against, and named it
+            // BEFORE the engine reported the delivery. Nothing else in the stream
+            // can: the page model is this layer's, so engine.action_delivered
+            // carries a frame and a client point and nothing that ties either to
+            // a model -- which is what leaves a replay able to attribute a
+            // keystroke to an edge and not a click.
+            auto const& events = built.traces->events();
+            auto clicked   = std::optional<std::size_t>{};
+            auto delivered = std::optional<std::size_t>{};
+            for (auto index = std::size_t{0}; index < events.size(); ++index)
+            {
+                auto const& event = events[index].event();
+                if (event.kind == trace::TraceEventKind::FrameworkElementClicked)
+                {
+                    REQUIRE(event.framework.has_value());
+                    CHECK(event.framework->label == "confirm");
+                    clicked = index;
+                }
+                if (event.kind == trace::TraceEventKind::EngineActionDelivered)
+                {
+                    delivered = index;
+                }
+            }
+            REQUIRE(clicked.has_value());
+            REQUIRE(delivered.has_value());
+            CHECK(*clicked < *delivered);
         }
 
         TEST_CASE("Reading an unplaced element needs the row that places it")

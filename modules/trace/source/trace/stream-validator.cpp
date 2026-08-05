@@ -322,6 +322,17 @@ namespace uf::trace
             UF_TRY(requirePayload(event));
             return checkLabel(event.framework->label, "a resolved page name");
 
+        case TraceEventKind::FrameworkElementClicked:
+            // Opens no scope either, but unlike a resolution it is refused off
+            // the task stream: it says an element a PAGE authorised was clicked,
+            // and the only front-end that clicks through a page model is the one
+            // running a task. An exploration session clicks bare coordinates and
+            // writes them as `annotation.click_delivered`; a check delivers
+            // nothing at all.
+            UF_TRY(requireFramework());
+            UF_TRY(requirePayload(event));
+            return checkLabel(event.framework->label, "a clicked element name");
+
         case TraceEventKind::EngineActionDelivered:
             // On the exploration stream a delivered click is written under the
             // annotation vocabulary, so this spelling reaching that stream means
