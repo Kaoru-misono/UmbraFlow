@@ -89,10 +89,17 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         key         = true,
         key_removes = true,
     },
+    -- `interrupt` and `catch_all` are the two ends of the order pages are asked
+    -- in, and `state` / `over` say where a page belongs -- a mode for a scene, the
+    -- modes it can cover for an overlay. All four are the page's own, so a build
+    -- that does not know one keeps it as residual rather than dropping it.
     page = {
         name      = true,
         overlay   = true,
         interrupt = true,
+        catch_all = true,
+        state     = true,
+        over      = true,
     },
     -- `expected_text` on a row is the per-page half of the element field of the
     -- same name: what the shared region reads on THIS page. An identify row on
@@ -426,6 +433,18 @@ function project.encode(built: any): string
         end
         if page.interrupt then
             table.insert(lines, "interrupt = true")
+        end
+        if page.catch_all then
+            table.insert(lines, "catch_all = true")
+        end
+        -- After the flags and before the residual, in the order Page.new reads
+        -- them: `state` and `over` are the two halves of one question -- where
+        -- this page belongs -- and no page carries both.
+        if page.state ~= nil then
+            table.insert(lines, "state = " .. renderString(page.state))
+        end
+        if page.over ~= nil then
+            table.insert(lines, "over = " .. renderValue(page.over, "over"))
         end
         pushResidual(lines, page.residual)
         pushExtra(lines, "[page.extra]", page.extra)
@@ -1174,6 +1193,9 @@ function project.build(ctx: any, document: any): any
             name       = name,
             overlay    = section.fields.overlay,
             interrupt  = section.fields.interrupt,
+            catch_all  = section.fields.catch_all,
+            state      = section.fields.state,
+            over       = section.fields.over,
             references = references,
             extra      = section.extra,
             residual   = section.residual,

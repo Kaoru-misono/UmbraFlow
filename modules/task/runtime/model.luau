@@ -17,7 +17,7 @@
 -- nobody minted.
 --
 -- The page graph is next door in `navigation`: an edge is a fact about a PAIR of
--- pages, so it has no single owner here. See `Page.new` for why the two page
+-- pages, so it has no single owner here. See `Page.new` for why a page's own
 -- flags are here while the edges are not.
 --
 -- Framework modules load in the sorted order of their file names, and each
@@ -109,6 +109,9 @@ local k_pageKeys: { [string]: boolean } = {
     name       = true,
     overlay    = true,
     interrupt  = true,
+    state      = true,
+    over       = true,
+    catch_all  = true,
     references = true,
     extra      = true,
     residual   = true,
@@ -278,11 +281,36 @@ export type Reference = {
 -- edge from every page it can interrupt. `observe.walk_edge` consults it when a
 -- walk runs out of budget; what to do about the page found is the caller's.
 --
--- Both default to false: an ordinary page states neither.
+-- `catch_all` is `interrupt`'s opposite ORDER and never its synonym. It says the
+-- signature describes a CLASS of screens rather than one screen -- "there is an
+-- overlay, and it says a tap closes it" -- so it must be asked LAST, after every
+-- specific page has had its turn. Asked first it swallows every page whose
+-- clauses contain its own, which is the failure the co-resolution matrix
+-- measured (docs/plans/2026-08-04-state-layer-and-policy-slots.md 3.4). A page
+-- may declare one of the two and not both.
+--
+-- `state` is the mode a scene page belongs to. The name is the project's own
+-- string and this framework carries no enumeration of modes: which modes a
+-- target has is a fact about that target, and a list here would be a fact about
+-- one game frozen into the framework. A run narrows what it asks to the current
+-- mode's pages; it never REFUSES to ask, because a crash to the home screen is
+-- a real thing that happens (`navigation`, "state is belief, the frame is
+-- truth").
+--
+-- `over` is the same question for an overlay: which modes it can be drawn on top
+-- of. An overlay carries no `state`, because it covers whatever the run was
+-- already in rather than being somewhere itself -- the reward strip appears
+-- after a battle and after a campfire, which is what makes it a family and not
+-- a mode.
+--
+-- The three flags default to false, nil and nil: an ordinary page states none.
 export type Page = {
     name: string,
     overlay: boolean,
     interrupt: boolean,
+    catch_all: boolean,
+    state: string?,
+    over: { string }?,
     references: { Reference },
     extra: { [string]: any },
     residual: { string },
@@ -812,6 +840,108 @@ function Page.new(spec: { [string]: any }): Page
         )
     end
 
+    if spec.catch_all ~= nil and type(spec.catch_all) ~= "boolean" then
+        error(
+            "page '"
+                .. name
+                .. "' catch_all must be true or false; it says this signature "
+                .. "describes a CLASS of screens rather than one screen, so it "
+                .. "is asked last, after every specific page has been tried",
+            2
+        )
+    end
+
+    -- The two flags are opposite ORDERS and a page cannot want both. `interrupt`
+    -- says ask this first because it can be covering anything; `catch_all` says
+    -- ask this last because anything specific would answer better. A page
+    -- claiming both would be asked first under a rule that exists to have it
+    -- asked last, and the specific pages it describes would never resolve
+    -- (docs/plans/2026-08-04-state-layer-and-policy-slots.md 3.4).
+    if spec.interrupt == true and spec.catch_all == true then
+        error(
+            "page '"
+                .. name
+                .. "' declares both interrupt and catch_all, which are opposite "
+                .. "positions in the order pages are asked in: interrupt is "
+                .. "asked first because it may be covering anything, catch_all "
+                .. "last because anything more specific answers better",
+            2
+        )
+    end
+
+    if spec.state ~= nil and (type(spec.state) ~= "string" or spec.state == "") then
+        error(
+            "page '"
+                .. name
+                .. "' state must be a non-empty mode name; the framework carries "
+                .. "no enumeration of modes, because which modes a target has is "
+                .. "a fact about that target",
+            2
+        )
+    end
+
+    -- A mode is where a run IS, and an overlay is something drawn over wherever
+    -- it is. A page cannot be both, so the two fields are exclusive rather than
+    -- an overlay carrying the mode it happens to sit on.
+    if spec.state ~= nil and spec.overlay == true then
+        error(
+            "page '"
+                .. name
+                .. "' is an overlay and states a mode; an overlay covers "
+                .. "whatever the run was already in, so what it may cover is "
+                .. "`over` and never `state`",
+            2
+        )
+    end
+
+    if spec.over ~= nil then
+        if spec.overlay ~= true then
+            error(
+                "page '"
+                    .. name
+                    .. "' states `over` and is not an overlay; `over` names the "
+                    .. "modes this page can be drawn ON TOP OF, which only a "
+                    .. "page that covers another has",
+                2
+            )
+        end
+        if type(spec.over) ~= "table" or #(spec.over :: { any }) == 0 then
+            error(
+                "page '"
+                    .. name
+                    .. "' needs over = { \"mode\", ... }, the modes it can cover; "
+                    .. "an empty list says it covers none, which is a page no "
+                    .. "run can ever be shown",
+                2
+            )
+        end
+        local seen: { [string]: boolean } = {}
+        for index, mode in spec.over :: { any } do
+            if type(mode) ~= "string" or mode == "" then
+                error(
+                    "page '"
+                        .. name
+                        .. "' over entry "
+                        .. tostring(index)
+                        .. " must be a non-empty mode name",
+                    2
+                )
+            end
+            if seen[mode] then
+                error(
+                    "page '"
+                        .. name
+                        .. "' names mode '"
+                        .. mode
+                        .. "' twice in `over`; it is a set, and naming one mode "
+                        .. "again says nothing a second time",
+                    2
+                )
+            end
+            seen[mode] = true
+        end
+    end
+
     if type(spec.references) ~= "table" then
         error("page '" .. name .. "' needs references = { ... }", 2)
     end
@@ -1102,6 +1232,11 @@ function Page.new(spec: { [string]: any }): Page
         name       = name,
         overlay    = spec.overlay == true,
         interrupt  = spec.interrupt == true,
+        state      = spec.state,
+        over       = if spec.over ~= nil
+            then table.freeze(table.clone(spec.over))
+            else nil,
+        catch_all  = spec.catch_all == true,
         references = table.freeze(references),
         extra      = frozenExtra(spec.extra),
         residual   = frozenResidual(spec.residual),

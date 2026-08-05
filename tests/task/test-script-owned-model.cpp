@@ -5441,6 +5441,158 @@ namespace uf::task
             "source = \"gray2.png\"\n"
             "threshold = 10000\n";
 
+        // A model stating where its pages belong. Written in canonical form, so
+        // a load and a save reproduce it byte for byte and the assertion is on
+        // the BYTES rather than on the built tables -- a field the encoder
+        // dropped would still be on the model this test could read.
+        constexpr std::string_view k_modeProject =
+            "schema = \"umbraflow-project/l2-v1\"\n"
+            "base_resolution = [3, 2]\n"
+            "base_dpi = [96, 96]\n"
+            "\n"
+            "[[element]]\n"
+            "name = \"mark_base\"\n"
+            "capabilities = [\"identify\"]\n"
+            "rect = [0, 0, 3, 1]\n"
+            "\n"
+            "[[appearance]]\n"
+            "element = \"mark_base\"\n"
+            "name = \"lit\"\n"
+            "source = \"gray2.png\"\n"
+            "threshold = 10000\n"
+            "\n"
+            "[[page]]\n"
+            "name = \"dismiss_overlay\"\n"
+            "overlay = true\n"
+            "catch_all = true\n"
+            "over = [\"battle\", \"route\"]\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"dismiss_overlay\"\n"
+            "element = \"mark_base\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"identify\"]\n"
+            "identify = \"required\"\n"
+            "\n"
+            "[[page]]\n"
+            "name = \"node_map\"\n"
+            "state = \"route\"\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"node_map\"\n"
+            "element = \"mark_base\"\n"
+            "holding = \"referenced\"\n"
+            "exercised = [\"identify\"]\n"
+            "identify = \"required\"\n";
+
+        TEST_CASE("A page says which mode it belongs to and when it is asked")
+        {
+            // Phase B's first schema field set
+            // (docs/plans/2026-08-04-state-layer-and-policy-slots.md 3.4).
+            // `state` and `over` are the two halves of where a page belongs -- a
+            // mode for a scene, the modes it can cover for an overlay -- and
+            // `catch_all` is `interrupt`'s opposite end of the order pages are
+            // asked in.
+            auto const directory = TemporaryDirectory{"uf-model-page-modes"};
+            seedTemplates(directory.path());
+            writeFile(
+                directory.path() / "page-model.toml",
+                std::as_bytes(std::span{k_modeProject})
+            );
+
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, R"lua(
+                local model_file = project.load_project(ctx)
+
+                local cover = model_file.page_by_name.dismiss_overlay
+                if cover.catch_all ~= true then return 0 end
+                if cover.interrupt ~= false then return 0 end
+                if cover.state ~= nil then return 0 end
+                if #cover.over ~= 2 then return 0 end
+                if cover.over[1] ~= "battle" then return 0 end
+                if cover.over[2] ~= "route" then return 0 end
+
+                local scene = model_file.page_by_name.node_map
+                if scene.state ~= "route" then return 0 end
+                if scene.over ~= nil then return 0 end
+                if scene.catch_all ~= false then return 0 end
+
+                -- On the BYTES, because a field the encoder dropped would still
+                -- be on the tables above.
+                local rewritten = project.encode(model_file)
+                if rewritten ~= ctx:project_read("page-model.toml") then
+                    return 0
+                end
+
+                local function refused(fragment, fn)
+                    local ok, err = pcall(fn)
+                    if ok then return false end
+                    if type(err) ~= "string" then return false end
+                    return string.find(err, fragment, 1, true) ~= nil
+                end
+                local rows = {
+                    {
+                        element = model_file.element_by_name.mark_base,
+                        holding = "owned",
+                        exercised = { "identify" },
+                        identify = "required",
+                    },
+                }
+                local function page(fields)
+                    local spec = { name = "p", references = rows }
+                    for key, value in fields do spec[key] = value end
+                    return function() return model.Page.new(spec) end
+                end
+
+                -- The two ends of one order cannot both be claimed: a page asked
+                -- first under a rule that exists to have it asked last would
+                -- swallow every page it describes.
+                if not refused(
+                    "opposite positions",
+                    page({ interrupt = true, catch_all = true })
+                ) then return 0 end
+
+                -- A mode is where a run IS and an overlay is drawn over wherever
+                -- it is, so the two fields are exclusive.
+                if not refused(
+                    "and never `state`",
+                    page({ overlay = true, state = "battle" })
+                ) then return 0 end
+                if not refused(
+                    "is not an overlay",
+                    page({ over = { "battle" } })
+                ) then return 0 end
+                if not refused(
+                    "covers none",
+                    page({ overlay = true, over = {} })
+                ) then return 0 end
+                if not refused(
+                    "twice in `over`",
+                    page({ overlay = true, over = { "battle", "battle" } })
+                ) then return 0 end
+                if not refused(
+                    "non-empty mode name",
+                    page({ state = "" })
+                ) then return 0 end
+
+                return 1
+            )lua");
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
         TEST_CASE("A project file carries the page graph and round trips it too")
         {
             // The persistence half of the graph ruling. Edges are DATA, so they have
