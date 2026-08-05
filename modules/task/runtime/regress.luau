@@ -55,10 +55,9 @@
 -- Which rectangles a screen offers is `searchRects`, and it is the one place
 -- that choice is made.
 --
--- `regress` sorts last of the framework modules, which is what lets it name
--- `model`, `navigation`, `observe`, `oracle`, `reading` and `recognition`. It
--- holds no state: every verb takes the ctx it observes through and the model it
--- walks.
+-- `regress` sorts after every module it names -- `jsonl`, `model`, `navigation`,
+-- `observe`, `oracle`, `reading` and `recognition`. It holds no state: every verb
+-- takes the ctx it observes through and the model it walks.
 
 -- How far ahead the appearance that owns a screen must be of every other
 -- appearance of the same element there.
@@ -1383,62 +1382,8 @@ end
 
 -- ----------------------------------------------------------------- report
 
-local k_jsonEscapes: { [string]: string } = {
-    ['"']    = '\\"',
-    ["\\"]   = "\\\\",
-    ["\n"]   = "\\n",
-    ["\r"]   = "\\r",
-    ["\t"]   = "\\t",
-    ["\b"]   = "\\b",
-    ["\f"]   = "\\f",
-}
-
-local function jsonString(value: string): string
-    local escaped = string.gsub(value, '[%c"\\]', function(character: string): string
-        local known = k_jsonEscapes[character]
-        if known ~= nil then
-            return known
-        end
-        return string.format("\\u%04x", string.byte(character))
-    end)
-    return '"' .. escaped .. '"'
-end
-
-local function jsonNumber(value: number): string
-    if value % 1 == 0 then
-        return string.format("%d", value)
-    end
-    -- Enough digits to reproduce a double, and the same text on every host.
-    return string.format("%.6g", value)
-end
-
--- One JSON object from an ordered list of key/value pairs. The order is the
--- caller's, so the same field is in the same place on every line of a report read
--- in a terminal; sorting would put `element` after `cells`.
-local function jsonObject(fields: { { any } }): string
-    local parts: { string } = {}
-    for _, field in fields do
-        local key   = field[1] :: string
-        local value = field[2]
-        if value ~= nil then
-            local rendered: string
-            if type(value) == "string" then
-                rendered = jsonString(value)
-            elseif type(value) == "number" then
-                rendered = jsonNumber(value)
-            elseif type(value) == "boolean" then
-                rendered = if value then "true" else "false"
-            else
-                rendered = jsonString(tostring(value))
-            end
-            table.insert(parts, jsonString(key) .. ":" .. rendered)
-        end
-    end
-    return "{" .. table.concat(parts, ",") .. "}"
-end
-
 -- The two co-resolution counts are ABSENT rather than zero on a run that did not
--- sweep, because `jsonObject` drops a nil field: a reader sees no number at all
+-- sweep, because `jsonl.object` drops a nil field: a reader sees no number at all
 -- where a zero would have said every page was offered to every screen and none
 -- resolved.
 local function summaryLine(verdict: Verdict): string
@@ -1468,7 +1413,7 @@ local function summaryLine(verdict: Verdict): string
         end
     end
 
-    return jsonObject({
+    return jsonl.object({
         { "check", "summary" },
         { "accepted", verdict.accepted },
         { "screens", verdict.screens },
@@ -1490,7 +1435,7 @@ local function summaryLine(verdict: Verdict): string
 end
 
 local function findingLine(finding: Finding): string
-    return jsonObject({
+    return jsonl.object({
         { "check", "finding" },
         { "kind", finding.kind },
         { "screen", finding.screen },
@@ -1503,7 +1448,7 @@ local function findingLine(finding: Finding): string
 end
 
 local function separationLine(separation: Separation): string
-    return jsonObject({
+    return jsonl.object({
         { "check", "separation" },
         { "screen", separation.screen },
         { "element", separation.element },
@@ -1519,7 +1464,7 @@ local function separationLine(separation: Separation): string
 end
 
 local function subsetLine(subset: AnchorSubset): string
-    return jsonObject({
+    return jsonl.object({
         { "check", "anchor_subset" },
         { "general", subset.general },
         { "specific", subset.specific },
@@ -1529,7 +1474,7 @@ local function subsetLine(subset: AnchorSubset): string
 end
 
 local function resolutionLine(resolution: CoResolution): string
-    return jsonObject({
+    return jsonl.object({
         { "check", "resolution" },
         { "screen", resolution.screen },
         { "page", resolution.page },
@@ -1538,7 +1483,7 @@ local function resolutionLine(resolution: CoResolution): string
 end
 
 local function coverageLine(page: PageCoverage): string
-    return jsonObject({
+    return jsonl.object({
         { "check", "page_coverage" },
         { "page", page.page },
         { "resolved_on", page.resolved_on },
@@ -1547,7 +1492,7 @@ local function coverageLine(page: PageCoverage): string
 end
 
 local function linkageLine(page: PageLinkage): string
-    return jsonObject({
+    return jsonl.object({
         { "check", "page_linkage" },
         { "page", page.page },
         { "inbound", page.inbound },
@@ -1557,7 +1502,7 @@ local function linkageLine(page: PageLinkage): string
 end
 
 local function cellLine(cell: Cell): string
-    return jsonObject({
+    return jsonl.object({
         { "check", "cell" },
         { "screen", cell.screen },
         { "element", cell.element },

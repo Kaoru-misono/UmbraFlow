@@ -8135,6 +8135,26 @@ namespace uf::task
                 if only(nameless).verdict ~= "unattributable" then return 0 end
                 if only(nameless).element ~= nil then return 0 end
 
+                -- Every block a caller prints reaches the report, under the line
+                -- kinds a reader filters by. A verdict measured and unreadable
+                -- would satisfy every assertion above this one.
+                local rendered = replay.render(elsewhere)
+                local finding = '{"replay":"finding","kind":"no_edge"'
+                    .. ',"from":"base","to":"result","seq":4,"trigger":"click"'
+                    .. ',"element":"mark_base"'
+                if string.find(rendered, finding, 1, true) == nil then return 0 end
+                if string.find(rendered, '"unattributable":0', 1, true) == nil then
+                    return 0
+                end
+                local shown = replay.render(nameless)
+                if string.find(shown, '"unattributable":1', 1, true) == nil then
+                    return 0
+                end
+                if string.find(shown, '"verdict":"unattributable"', 1, true) == nil
+                then
+                    return 0
+                end
+
                 return 1
             )lua"));
             REQUIRE(result.has_value());

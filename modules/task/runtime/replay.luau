@@ -19,7 +19,8 @@
 -- `replay.check` states what it assumes about them.
 --
 -- `replay` sorts after `regress` and before `scribe`, so every module this
--- framework has is already bound when it loads. It names `navigation` alone.
+-- framework has is already bound when it loads. It names `jsonl` and
+-- `navigation`, and nothing that costs a capture.
 
 local replay = {}
 
@@ -317,6 +318,98 @@ function replay.check(built: any, steps: { Step }): Verdict
 
     verdict.accepted = #verdict.findings == 0
     return verdict
+end
+
+-- ----------------------------------------------------------------- report
+
+local function summaryLine(verdict: Verdict): string
+    local matched        = 0
+    local unattributable = 0
+    for _, transition in verdict.transitions do
+        if transition.verdict == "unattributable" then
+            unattributable += 1
+        else
+            matched += 1
+        end
+    end
+
+    return jsonl.object({
+        { "replay", "summary" },
+        { "accepted", verdict.accepted },
+        { "steps", verdict.steps },
+        { "resolutions", verdict.resolutions },
+        { "transitions", #verdict.transitions },
+        { "matched", matched },
+        -- Counted apart from the matched ones and never among the findings: a
+        -- move nobody can spell is not a move the model got wrong, and a reader
+        -- watching this number fall is watching evidence arrive rather than
+        -- defects being fixed.
+        { "unattributable", unattributable },
+        { "findings", #verdict.findings },
+    })
+end
+
+local function transitionLine(transition: Transition): string
+    return jsonl.object({
+        { "replay", "transition" },
+        { "from", transition.from },
+        { "to", transition.to },
+        { "seq", transition.seq },
+        { "trigger", transition.trigger },
+        { "element", transition.element },
+        { "key", transition.key },
+        { "verdict", transition.verdict },
+    })
+end
+
+local function findingLine(finding: Finding): string
+    return jsonl.object({
+        { "replay", "finding" },
+        { "kind", finding.kind },
+        { "from", finding.from },
+        { "to", finding.to },
+        { "seq", finding.seq },
+        { "trigger", finding.trigger },
+        { "element", finding.element },
+        { "key", finding.key },
+        { "detail", finding.detail },
+    })
+end
+
+export type Group = {
+    rows: { any },
+    line: (any) -> string,
+}
+
+-- replay.groups(verdict) -> the report in blocks, in report order.
+--
+-- Blocks rather than lines for `regress.groups`'s reason: a caller prints each
+-- line as it is minted so the whole report never exists twice inside the VM
+-- (docs/pitfalls/embedded-vm-memory-ceiling.md). A replay's report is far
+-- smaller than a matrix's -- one row per page change rather than one per cell --
+-- but the shape is shared so a caller does not have to know which is which.
+--
+-- The summary comes first so a reader piping this into a pager sees the answer
+-- before the evidence, and the findings before the transitions that surround
+-- them.
+function replay.groups(verdict: Verdict): { Group }
+    return {
+        { rows = { verdict }, line = summaryLine :: any },
+        { rows = verdict.findings, line = findingLine :: any },
+        { rows = verdict.transitions, line = transitionLine :: any },
+    }
+end
+
+-- replay.render(verdict) -> the report as one string, newline separated and with
+-- no trailing newline.
+function replay.render(verdict: Verdict): string
+    local lines: { string } = {}
+    for _, group in replay.groups(verdict) do
+        for _, row in group.rows do
+            table.insert(lines, group.line(row))
+        end
+    end
+    return table.concat(lines, "\n")
 end
 
 return replay
