@@ -852,13 +852,14 @@ function observe.read_strip(
 ): { { Hit } }
     requireCtx(ctx, "observe.read_strip")
     local _, element = readTarget("observe.read_strip", elementOrReference)
-    if element.item_spacing == nil then
+    if element.form ~= "strip" then
         error(
-            "observe.read_strip needs a strip -- an element declaring "
-                .. "item_spacing -- and element '"
+            "observe.read_strip needs a strip and element '"
                 .. element.name
-                .. "' declares none; without a spacing there is nothing to say "
-                .. "where one item ends and the next begins",
+                .. "' is a "
+                .. tostring(element.form)
+                .. "; only a strip carries the spacing that says where one item "
+                .. "ends and the next begins",
             2
         )
     end

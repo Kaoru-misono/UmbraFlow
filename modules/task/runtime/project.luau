@@ -66,6 +66,10 @@ local k_extraOwners: { [string]: boolean } = {
 local k_sectionFields: { [string]: { [string]: boolean } } = {
     element = {
         name          = true,
+        -- Which of the three shapes this element is; see `model.Element`. It is
+        -- written second because the two fields under it -- the rectangle and
+        -- the item spacing -- are required or refused by it.
+        form          = true,
         capabilities  = true,
         rect          = true,
         expected_text = true,
@@ -366,6 +370,7 @@ function project.encode(built: any): string
         table.insert(lines, "")
         table.insert(lines, "[[element]]")
         table.insert(lines, "name = " .. renderString(element.name))
+        table.insert(lines, "form = " .. renderString(element.form))
         table.insert(
             lines,
             "capabilities = "
@@ -1168,6 +1173,7 @@ function project.build(ctx: any, document: any): any
                 then rectOf(section, "rect", rectValue)
                 else nil,
             appearances   = appearances,
+            form          = requireField(section, "form"),
             expected_text = section.fields.expected_text,
             expected_fragments = section.fields.expected_fragments,
             expected_presence  = section.fields.expected_presence,

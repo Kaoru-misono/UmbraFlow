@@ -305,6 +305,7 @@ namespace uf::task
             local function anchorAt(name, x)
                 return model.Element.new{
                     name = name,
+                    form = "fixed",
                     capabilities = { "identify" },
                     rect = { x = x, y = 0, width = 1, height = 1 },
                     appearances = {

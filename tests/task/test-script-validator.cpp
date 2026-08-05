@@ -29,11 +29,13 @@ base_dpi = [96, 96]
 
 [[element]]
 name = "home_marker"
+form = "fixed"
 capabilities = ["identify"]
 rect = [0, 0, 4, 4]
 
 [[element]]
 name = "daily_button"
+form = "fixed"
 capabilities = ["interact"]
 rect = [0, 0, 4, 4]
 
@@ -42,6 +44,7 @@ name = "extra_alias"
 
 [[element]]
 name = "battle"
+form = "fixed"
 capabilities = ["interact"]
 rect = [0, 0, 4, 4]
 
@@ -98,7 +101,7 @@ exercised = ["interact"]
             // a model with no single answer about its own pixels. The refusal
             // names the offender, because the file is hand-edited.
             auto const duplicated = std::string{k_pageModel}
-                + "\n[[element]]\nname = \"battle\"\n"
+                + "\n[[element]]\nname = \"battle\"\nform = \"fixed\"\n"
                   "capabilities = [\"interact\"]\nrect = [0, 0, 4, 4]\n";
             auto const refused = parsePageModelFacts(duplicated);
             REQUIRE_FALSE(refused.has_value());

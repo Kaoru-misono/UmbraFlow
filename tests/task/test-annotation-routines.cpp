@@ -156,6 +156,7 @@ namespace uf::task
                 + "\n"
                 + "[[element]]\n"
                 + "name = \"anchor\"\n"
+                + "form = \"fixed\"\n"
                 + (clickable
                        ? "capabilities = [\"identify\", \"interact\"]\n"
                        : "capabilities = [\"identify\"]\n")
@@ -222,6 +223,7 @@ namespace uf::task
                 + "\n"
                 + "[[element]]\n"
                 + "name = \"action\"\n"
+                + "form = \"fixed\"\n"
                 + "capabilities = [\"identify\", \"interact\"]\n"
                 + "rect = [1, 0, 1, 1]\n"
                 + "\n"
@@ -232,6 +234,7 @@ namespace uf::task
                 + "\n"
                 + "[[element]]\n"
                 + "name = \"anchor\"\n"
+                + "form = \"fixed\"\n"
                 + "capabilities = [\"identify\"]\n"
                 + "rect = [0, 0, 1, 1]\n"
                 + "\n"
@@ -516,6 +519,7 @@ namespace uf::task
                 local seeded = built.element_by_name["anchor"]
                 local mark = model.Element.new{
                     name         = "mark",
+                    form         = "fixed",
                     capabilities = { "identify", "interact" },
                     rect         = { x = 0, y = 0, width = 2, height = 1 },
                     appearances  = {
@@ -529,6 +533,7 @@ namespace uf::task
                 }
                 local caption = model.Element.new{
                     name               = "caption",
+                    form               = "fixed",
                     capabilities       = { "identify", "read" },
                     rect               = { x = 0, y = 1, width = 2, height = 1 },
                     expected_fragments = { "max HP", "up" },
@@ -2042,6 +2047,7 @@ namespace uf::task
                 -- exactly the state under test.
                 local twin = model.Element.new{
                     name         = "twin",
+                    form         = "fixed",
                     capabilities = { "interact" },
                     rect         = { x = 1, y = 0, width = 1, height = 1 },
                     appearances  = {
@@ -2138,6 +2144,7 @@ namespace uf::task
                 -- answers with it and the element contradicts its own claim.
                 local twin = model.Element.new{
                     name         = "twin",
+                    form         = "fixed",
                     capabilities = { "interact" },
                     rect         = { x = 1, y = 0, width = 1, height = 1 },
                     appearances  = {
@@ -2200,6 +2207,7 @@ namespace uf::task
                 + "\n"
                 + "[[element]]\n"
                 + "name = \"crest\"\n"
+                + "form = \"fixed\"\n"
                 + "capabilities = [\"identify\"]\n"
                 + "rect = [1, 0, 1, 1]\n"
                 + "hue = \"grey\"\n"
@@ -2513,6 +2521,7 @@ namespace uf::task
                 -- would save a file that cannot be opened again.
                 local stranger = model.Element.new({
                     name         = "stranger",
+                    form         = "fixed",
                     capabilities = { "interact" },
                     rect         = { x = 0, y = 0, width = 1, height = 1 },
                 })
@@ -2941,6 +2950,7 @@ namespace uf::task
                 -- that saving this would write a file nothing can open again.
                 local stranger = model.Element.new({
                     name         = "stranger",
+                    form         = "fixed",
                     capabilities = { "interact" },
                     rect         = { x = 0, y = 0, width = 1, height = 1 },
                 })

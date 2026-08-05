@@ -50,6 +50,29 @@ local k_capabilityKnown: { [string]: boolean } = {
     read     = true,
 }
 
+-- The three shapes an element can be. It is stated and never inferred: an
+-- element with no rectangle could be one a project meant to place from the row,
+-- or one whose rectangle somebody forgot, and nothing downstream can tell those
+-- apart from the absence alone.
+local k_formKnown: { [string]: boolean } = {
+    -- A rectangle and evidence: everything the model held before the forms
+    -- existed, and what almost every element still is.
+    fixed = true,
+
+    -- NO rectangle of its own: where to look comes from the row that uses it or
+    -- from the claim that measures it. What a minimap cell is -- the map pans,
+    -- so where the cell is depends on the frame -- and equally what a confirm
+    -- button drawn once and reused on nine screens is. Under this form writing a
+    -- rectangle is refused rather than merely pointless, which is the whole
+    -- reason to name the form: an absent rectangle could be this or a mistake,
+    -- and only the form can say which.
+    shape = true,
+
+    -- A container rectangle and the spacing that divides what is inside it into
+    -- items. See `Element.item_spacing`.
+    strip = true,
+}
+
 local k_holdingKnown: { [string]: boolean } = {
     owned      = true,
     referenced = true,
@@ -87,6 +110,7 @@ local k_maximumColourTolerance = 765
 -- `mint.unknown_key` for why the refusal is what makes `extra` work.
 local k_elementKeys: { [string]: boolean } = {
     name          = true,
+    form          = true,
     capabilities  = true,
     rect          = true,
     appearances   = true,
@@ -237,6 +261,7 @@ export type ColourKey = {
 -- would be asserting where its items are, which is the thing being counted.
 export type Element = {
     name: string,
+    form: string,
     capabilities: CapabilitySet,
     rect: Rect?,
     item_spacing: number?,
@@ -770,7 +795,46 @@ function Element.new(spec: { [string]: any }): Element
         end
     end
 
-    if spec.item_spacing ~= nil then
+    if type(spec.form) ~= "string" or not k_formKnown[spec.form] then
+        error(
+            "element '"
+                .. name
+                .. '\' needs form = "fixed", "shape" or "strip": whether it '
+                .. "draws its own rectangle, is found by its pixels wherever "
+                .. "they are, or is a container whose items are counted off the "
+                .. "frame. It is stated because an element with no rectangle "
+                .. "could be either of the last two or a mistake, and the "
+                .. "absence cannot say which",
+            2
+        )
+    end
+    local form = spec.form :: string
+
+    if form == "shape" then
+        if spec.rect ~= nil then
+            error(
+                "element '"
+                    .. name
+                    .. "' is a shape and states a rect; a shape is found by its "
+                    .. "pixels wherever they are, so a rectangle here is a claim "
+                    .. "about a position nothing keeps -- delete it or make the "
+                    .. 'element form = "fixed"',
+                2
+            )
+        end
+    elseif spec.rect == nil then
+        error(
+            "element '"
+                .. name
+                .. "' is a "
+                .. form
+                .. " and states no rect; only a shape goes without one, and it "
+                .. "says so by naming that form",
+            2
+        )
+    end
+
+    if form == "strip" then
         if
             not wholeNumber(spec.item_spacing)
             or (spec.item_spacing :: number) < 1
@@ -778,21 +842,9 @@ function Element.new(spec: { [string]: any }): Element
             error(
                 "element '"
                     .. name
-                    .. "' item_spacing must be a whole number of pixels, at "
-                    .. "least one: it is the widest gap that still belongs to "
-                    .. "one item, and a gap of zero divides nothing",
-                2
-            )
-        end
-        if spec.rect == nil then
-            error(
-                "element '"
-                    .. name
-                    .. "' states item_spacing and no rect; a strip counts what "
-                    .. "is inside a CONTAINER, and without one there is nothing "
-                    .. "to count inside -- a row's rect_override cannot supply "
-                    .. "it either, because the spacing is a fact about this "
-                    .. "container and not about one page's use of it",
+                    .. "' is a strip and needs item_spacing = a whole number of "
+                    .. "pixels, at least one: it is the widest gap that still "
+                    .. "belongs to one item, and a gap of zero divides nothing",
                 2
             )
         end
@@ -816,6 +868,16 @@ function Element.new(spec: { [string]: any }): Element
                 2
             )
         end
+    elseif spec.item_spacing ~= nil then
+        error(
+            "element '"
+                .. name
+                .. "' states item_spacing and is a "
+                .. form
+                .. "; a spacing divides a container into items, which is what a "
+                .. 'strip is -- say form = "strip" or drop the spacing',
+            2
+        )
     end
 
     if spec.read_floor ~= nil then
@@ -881,6 +943,7 @@ function Element.new(spec: { [string]: any }): Element
             then frozenRect(spec.rect :: Rect)
             else nil,
         appearances   = table.freeze(appearances),
+        form          = form,
         item_spacing  = spec.item_spacing,
         expected_text = spec.expected_text,
         expected_fragments = if spec.expected_fragments ~= nil

@@ -219,6 +219,11 @@ local function elementFromMeasurement(
 
     return model.Element.new({
         name          = spec.name,
+        -- The verb decides it, because the verb is the choice: one authors an
+        -- element that draws its own rectangle and the other authors one found
+        -- by its pixels wherever they are. A caller restating it could disagree
+        -- with the call it just made.
+        form          = if rect == nil then "shape" else "fixed",
         capabilities  = spec.capabilities,
         rect          = rect,
         appearances   = {
@@ -342,7 +347,24 @@ function scribe.author_text_element(spec: { [string]: any }): any
         )
     end
 
-    return model.Element.new(spec)
+    -- A region verified by what it READS is verified at a rectangle, so this
+    -- verb authors a fixed element and says so rather than making a caller
+    -- restate what the verb already chose. A spec naming a form is refused for
+    -- that reason: it could disagree with the call it is part of.
+    if spec.form ~= nil then
+        error(
+            "scribe.author_text_element builds a fixed element -- a region "
+                .. "verified by what it reads is read at a rectangle -- so the "
+                .. "spec states no form",
+            2
+        )
+    end
+    -- The form follows the rectangle, as it does for the measured verbs: a
+    -- region read at its own rectangle is fixed, and one placed by whatever row
+    -- or claim uses it is a shape.
+    local shaped = table.clone(spec)
+    shaped.form = if spec.rect == nil then "shape" else "fixed"
+    return model.Element.new(shaped)
 end
 
 -- scribe.add_element(built, element) -> ()
@@ -507,6 +529,7 @@ local function elementSpec(
 ): { [string]: any }
     return {
         name          = element.name,
+        form          = element.form,
         capabilities  = model.capability_list(element.capabilities),
         rect          = element.rect,
         appearances   = appearances,

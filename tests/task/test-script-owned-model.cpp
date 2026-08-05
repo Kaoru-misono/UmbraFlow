@@ -382,6 +382,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "",
+                            form = "fixed",
                             capabilities = { "interact" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                         }
@@ -393,6 +394,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "back",
+                            form = "fixed",
                             capabilities = { "interact" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                             my_grid_stride = 5,
@@ -405,6 +407,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "back",
+                            form = "fixed",
                             capabilities = {},
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                         }
@@ -416,6 +419,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "back",
+                            form = "fixed",
                             capabilities = { "interact", "scroll" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                         }
@@ -427,6 +431,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "back",
+                            form = "fixed",
                             capabilities = { "interact", "interact" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                         }
@@ -438,6 +443,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "back",
+                            form = "fixed",
                             capabilities = { "interact" },
                             rect = { x = 0, y = 0, width = 3, height = 0 },
                         }
@@ -449,6 +455,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "slot",
+                            form = "fixed",
                             capabilities = { "identify", "interact" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                             appearances = {},
@@ -461,6 +468,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "title",
+                            form = "fixed",
                             capabilities = { "read" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                             read_floor = 10001,
@@ -473,6 +481,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "title",
+                            form = "fixed",
                             capabilities = { "interact" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                             read_floor = 9000,
@@ -485,6 +494,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "sortie",
+                            form = "fixed",
                             capabilities = { "interact", "read" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                             expected_text = "battle",
@@ -505,6 +515,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "sortie",
+                            form = "fixed",
                             capabilities = { "interact" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                             expected_text = "battle",
@@ -517,6 +528,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "back",
+                            form = "fixed",
                             capabilities = { "interact" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                             appearances = {
@@ -531,6 +543,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "back",
+                            form = "fixed",
                             capabilities = { "interact" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                             appearances = {
@@ -550,6 +563,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "back",
+                            form = "fixed",
                             capabilities = { "interact" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                             appearances = {
@@ -569,6 +583,7 @@ namespace uf::task
                     .body  = R"lua(
                         return model.Element.new{
                             name = "back",
+                            form = "fixed",
                             capabilities = { "interact" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                             appearances = {
@@ -596,6 +611,7 @@ namespace uf::task
                         mine.mine = mine
                         return model.Element.new{
                             name = "back",
+                            form = "fixed",
                             capabilities = { "interact" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                             extra = mine,
@@ -611,6 +627,7 @@ namespace uf::task
         constexpr std::string_view k_pagePrelude = R"lua(
             local anchor = model.Element.new{
                 name = "anchor",
+                form = "fixed",
                 capabilities = { "identify", "interact" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
                 appearances = {
@@ -624,6 +641,7 @@ namespace uf::task
             }
             local slot = model.Element.new{
                 name = "slot",
+                form = "fixed",
                 capabilities = { "interact", "read" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
                 expected_text = "battle",
@@ -632,6 +650,7 @@ namespace uf::task
             -- own either, because what it reads is the page's business.
             local title = model.Element.new{
                 name = "title",
+                form = "fixed",
                 capabilities = { "identify", "read" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
             }
@@ -640,6 +659,7 @@ namespace uf::task
             -- it sits on that page.
             local confirm = model.Element.new{
                 name = "confirm",
+                form = "shape",
                 capabilities = { "interact" },
                 appearances = {
                     {
@@ -655,6 +675,7 @@ namespace uf::task
             -- having nothing to read.
             local floating = model.Element.new{
                 name = "floating",
+                form = "shape",
                 capabilities = { "identify", "read" },
                 expected_text = "confirm",
             }
@@ -1041,6 +1062,7 @@ namespace uf::task
                 local mine = { tags = { "boss" }, limits = { retries = 2 } }
                 local element = model.Element.new{
                     name = "back",
+                    form = "fixed",
                     capabilities = { "interact" },
                     rect = { x = 0, y = 0, width = 3, height = 1 },
                     extra = mine,
@@ -1093,6 +1115,7 @@ namespace uf::task
             auto const source = script(R"lua(
                 local base = model.Element.new{
                     name = "anchor",
+                    form = "fixed",
                     capabilities = { "identify" },
                     rect = { x = 0, y = 0, width = 3, height = 1 },
                     appearances = {
@@ -1162,6 +1185,7 @@ namespace uf::task
             auto const result = runModel(context, built, script(R"lua(
                 local anchor = model.Element.new{
                     name = "anchor",
+                    form = "fixed",
                     capabilities = { "identify" },
                     rect = { x = 0, y = 0, width = 3, height = 1 },
                     appearances = {
@@ -1175,6 +1199,7 @@ namespace uf::task
                 }
                 local confirm = model.Element.new{
                     name = "confirm",
+                    form = "shape",
                     capabilities = { "interact" },
                     appearances = {
                         {
@@ -1297,10 +1322,12 @@ namespace uf::task
             auto const result = runModel(context, built, script(R"lua(
                 local confirm = model.Element.new{
                     name = "confirm",
+                    form = "shape",
                     capabilities = { "interact", "read" },
                 }
                 local anchor = model.Element.new{
                     name = "anchor",
+                    form = "fixed",
                     capabilities = { "identify" },
                     rect = { x = 0, y = 0, width = 3, height = 1 },
                     appearances = {
@@ -1363,6 +1390,7 @@ namespace uf::task
         constexpr std::string_view k_battleModel = R"lua(
             local anchor = model.Element.new{
                 name = "anchor",
+                form = "fixed",
                 capabilities = { "identify", "interact" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
                 appearances = {
@@ -1382,6 +1410,7 @@ namespace uf::task
             }
             local slot = model.Element.new{
                 name = "slot",
+                form = "fixed",
                 capabilities = { "interact", "read" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
                 expected_text = "battle",
@@ -1494,6 +1523,7 @@ namespace uf::task
                 auto const result = runModel(context, built, script(R"lua(
                     local anchor = model.Element.new{
                         name = "anchor",
+                        form = "fixed",
                         capabilities = { "identify" },
                         rect = { x = 0, y = 0, width = 3, height = 1 },
                         appearances = {
@@ -1507,6 +1537,7 @@ namespace uf::task
                     }
                     local overlay = model.Element.new{
                         name = "overlay",
+                        form = "fixed",
                         capabilities = { "identify" },
                         rect = { x = 0, y = 0, width = 3, height = 1 },
                         appearances = {
@@ -1653,6 +1684,7 @@ namespace uf::task
                 auto const result = runModel(context, built, script(R"lua(
                     local speed = model.Element.new{
                         name = "speed",
+                        form = "fixed",
                         capabilities = { "identify", "interact" },
                         rect = { x = 0, y = 0, width = 3, height = 1 },
                         appearances = {
@@ -1713,6 +1745,7 @@ namespace uf::task
                 auto const result = runModel(context, built, script(R"lua(
                     local twin = model.Element.new{
                         name = "twin",
+                        form = "fixed",
                         capabilities = { "identify", "interact" },
                         rect = { x = 0, y = 0, width = 3, height = 1 },
                         appearances = {
@@ -2008,6 +2041,7 @@ namespace uf::task
             auto const result = runModel(context, built, script(R"lua(
                 local state = model.Element.new{
                     name = "auto_button",
+                    form = "fixed",
                     capabilities = { "identify" },
                     rect = { x = 0, y = 0, width = 3, height = 1 },
                     appearances = {
@@ -2408,11 +2442,13 @@ namespace uf::task
         constexpr std::string_view k_titleModel = R"lua(
             local title = model.Element.new{
                 name = "title",
+                form = "fixed",
                 capabilities = { "identify", "read" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
             }
             local anchor = model.Element.new{
                 name = "anchor",
+                form = "fixed",
                 capabilities = { "identify" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
                 appearances = {
@@ -2624,6 +2660,7 @@ namespace uf::task
                 auto const result = runModel(context, built, titleScript(R"lua(
                     local strict = model.Element.new{
                         name = "strict_title",
+                        form = "fixed",
                         capabilities = { "identify", "read" },
                         rect = { x = 0, y = 0, width = 3, height = 1 },
                         read_floor = 9500,
@@ -2869,6 +2906,7 @@ namespace uf::task
             auto const result = runModel(context, built, script(R"lua(
                 local heading = model.Element.new{
                     name = "heading",
+                    form = "fixed",
                     capabilities = { "identify", "read" },
                     rect = { x = 0, y = 0, width = 3, height = 1 },
                     expected_text = "menu",
@@ -2945,6 +2983,7 @@ namespace uf::task
             auto const result = runModel(context, built, script(R"lua(
                 local anchor = model.Element.new{
                     name = "anchor",
+                    form = "fixed",
                     capabilities = { "identify", "read" },
                     rect = { x = 0, y = 0, width = 3, height = 1 },
                     appearances = {
@@ -3016,6 +3055,7 @@ namespace uf::task
             auto const result = runModel(context, built, script(R"lua(
                 local anchor = model.Element.new{
                     name = "anchor",
+                    form = "fixed",
                     capabilities = { "identify" },
                     rect = { x = 0, y = 0, width = 3, height = 1 },
                     appearances = {
@@ -3029,6 +3069,7 @@ namespace uf::task
                 }
                 local slot = model.Element.new{
                     name = "slot",
+                    form = "fixed",
                     capabilities = { "interact", "read" },
                     rect = { x = 0, y = 0, width = 3, height = 1 },
                     expected_text = "menu",
@@ -3249,6 +3290,7 @@ namespace uf::task
             auto const result = runModel(context, built, battleScript(R"lua(
                 local list = model.Element.new{
                     name = "list",
+                    form = "fixed",
                     capabilities = { "read" },
                     rect = { x = 0, y = 0, width = 3, height = 1 },
                 }
@@ -3861,6 +3903,7 @@ namespace uf::task
             local function marker(name, source)
                 return model.Element.new{
                     name = name,
+                    form = "fixed",
                     capabilities = { "identify", "interact" },
                     rect = { x = 0, y = 0, width = 3, height = 1 },
                     appearances = {
@@ -3969,6 +4012,7 @@ namespace uf::task
         constexpr std::string_view k_edgePrelude = R"lua(
             local mark_base = model.Element.new{
                 name = "mark_base",
+                form = "fixed",
                 capabilities = { "identify", "interact" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
                 appearances = {
@@ -3982,6 +4026,7 @@ namespace uf::task
             }
             local mark_over = model.Element.new{
                 name = "mark_over",
+                form = "fixed",
                 capabilities = { "identify", "interact" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
                 appearances = {
@@ -4689,6 +4734,7 @@ namespace uf::task
                     local function marker(name, source)
                         return model.Element.new{
                             name = name,
+                            form = "fixed",
                             capabilities = { "identify", "interact" },
                             rect = { x = 0, y = 0, width = 3, height = 1 },
                             appearances = {
@@ -5129,6 +5175,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"anchor\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"identify\", \"interact\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "\n"
@@ -5148,6 +5195,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"slot\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"interact\", \"read\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "expected_text = \"battle\"\n"
@@ -5189,6 +5237,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"slot\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"read\", \"interact\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "read_floor = 9500\n"
@@ -5204,6 +5253,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"anchor\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"interact\", \"identify\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "\n"
@@ -5357,6 +5407,7 @@ namespace uf::task
                         elements = {
                             model.Element.new{
                                 name = "slot",
+                                form = "fixed",
                                 capabilities = { "interact" },
                                 rect = { x = 0, y = 0, width = 3, height = 1 },
                                 extra = extra,
@@ -5403,6 +5454,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"mark_base\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"identify\", \"interact\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "\n"
@@ -5414,6 +5466,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"mark_over\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"identify\", \"interact\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "\n"
@@ -5546,6 +5599,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"mark_over\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"identify\", \"interact\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "\n"
@@ -5557,6 +5611,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"mark_base\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"identify\", \"interact\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "\n"
@@ -5577,6 +5632,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"mark_base\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"identify\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "\n"
@@ -5609,6 +5665,105 @@ namespace uf::task
             "holding = \"referenced\"\n"
             "exercised = [\"identify\"]\n"
             "identify = \"required\"\n";
+
+        TEST_CASE("An element states which of the three shapes it is")
+        {
+            // Phase B 3.1's other half. An absent rectangle could be an element
+            // placed by whatever row uses it or one whose rectangle somebody
+            // forgot, and the absence cannot say which -- so the form is stated
+            // and the two fields under it are required or refused by it.
+            auto const directory = TemporaryDirectory{"uf-model-element-form"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, script(R"lua(
+                local function refused(fragment, fn)
+                    local ok, err = pcall(fn)
+                    if ok then return false end
+                    return string.find(tostring(err), fragment, 1, true) ~= nil
+                end
+                local lit = {
+                    name = "lit",
+                    source = "gray2.png",
+                    template = template("gray2.png"),
+                    threshold = 10000,
+                }
+
+                -- Stated, never inferred.
+                if not refused("needs form =", function()
+                    return model.Element.new{
+                        name = "nameless_form",
+                        capabilities = { "identify" },
+                        rect = { x = 0, y = 0, width = 1, height = 1 },
+                        appearances = { lit },
+                    }
+                end) then return 0 end
+
+                -- A shape is the one that goes without a rectangle, and saying
+                -- so is what tells it from a mistake.
+                local shape = model.Element.new{
+                    name = "shape",
+                    form = "shape",
+                    capabilities = { "identify" },
+                    appearances = { lit },
+                }
+                if shape.form ~= "shape" then return 0 end
+                if shape.rect ~= nil then return 0 end
+
+                if not refused("is a shape and states a rect", function()
+                    return model.Element.new{
+                        name = "both",
+                        form = "shape",
+                        capabilities = { "identify" },
+                        rect = { x = 0, y = 0, width = 1, height = 1 },
+                        appearances = { lit },
+                    }
+                end) then return 0 end
+
+                if not refused("states no rect", function()
+                    return model.Element.new{
+                        name = "placeless",
+                        form = "fixed",
+                        capabilities = { "identify" },
+                        appearances = { lit },
+                    }
+                end) then return 0 end
+
+                -- The spacing belongs to the strip and to nothing else, so the
+                -- form and the field cannot disagree in either direction.
+                if not refused("say form = ", function()
+                    return model.Element.new{
+                        name = "spaced_fixed",
+                        form = "fixed",
+                        capabilities = { "read" },
+                        rect = { x = 0, y = 0, width = 8, height = 1 },
+                        item_spacing = 3,
+                    }
+                end) then return 0 end
+                if not refused("needs item_spacing", function()
+                    return model.Element.new{
+                        name = "loose_strip",
+                        form = "strip",
+                        capabilities = { "read" },
+                        rect = { x = 0, y = 0, width = 8, height = 1 },
+                    }
+                end) then return 0 end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
 
         TEST_CASE("A strip counts its items off the frame, not out of the file")
         {
@@ -5670,6 +5825,7 @@ namespace uf::task
                 local function strip(spacing)
                     return model.Element.new{
                         name         = "hand",
+                        form         = "strip",
                         capabilities = { "read" },
                         rect         = { x = 0, y = 0, width = 40, height = 3 },
                         item_spacing = spacing,
@@ -5704,9 +5860,10 @@ namespace uf::task
                 end
 
                 -- A strip counts what is inside a CONTAINER, so it states one.
-                if not refused("nothing to count inside", function()
+                if not refused("states no rect", function()
                     return model.Element.new{
                         name         = "loose",
+                        form         = "fixed",
                         capabilities = { "read" },
                         item_spacing = 6,
                     }
@@ -5717,6 +5874,7 @@ namespace uf::task
                 if not refused("thing being counted", function()
                     return model.Element.new{
                         name         = "pictured",
+                        form         = "strip",
                         capabilities = { "read", "identify" },
                         rect         = { x = 0, y = 0, width = 4, height = 1 },
                         item_spacing = 6,
@@ -5737,10 +5895,11 @@ namespace uf::task
 
                 -- And the verb refuses an element that is not a strip, rather
                 -- than counting a container nobody said was one.
-                if not refused("declares none", function()
+                if not refused("is a fixed", function()
                     local ticket2 = ctx:cycle_open()
                     local plain = model.Element.new{
                         name         = "title",
+                        form         = "fixed",
                         capabilities = { "read" },
                         rect         = { x = 0, y = 0, width = 40, height = 3 },
                     }
@@ -5878,6 +6037,7 @@ namespace uf::task
             constexpr std::string_view k_gateModel = R"lua(
                 local confirm = model.Element.new{
                     name = "confirm",
+                    form = "fixed",
                     capabilities = { "identify", "interact" },
                     rect = { x = 0, y = 0, width = 3, height = 1 },
                     appearances = {
@@ -6303,6 +6463,7 @@ namespace uf::task
                 "\n"
                 "[[element]]\n"
                 "name = \"mark_base\"\n"
+                "form = \"fixed\"\n"
                 "capabilities = [\"identify\", \"interact\"]\n"
                 "rect = [0, 0, 3, 1]\n"
                 "\n"
@@ -6356,7 +6517,7 @@ namespace uf::task
                 end
                 -- The line number is what makes it fixable, and it is the [[edge]]
                 -- section's own rather than the file's first.
-                if string.find(err, "line 24", 1, true) == nil then return 0 end
+                if string.find(err, "line 25", 1, true) == nil then return 0 end
                 return 1
             )lua");
             REQUIRE(result.has_value());
@@ -6379,6 +6540,7 @@ namespace uf::task
                 "\n"
                 "[[element]]\n"
                 "name = \"mark_base\"\n"
+                "form = \"fixed\"\n"
                 "capabilities = [\"identify\"]\n"
                 "rect = [0, 0, 3, 1]\n"
                 "\n"
@@ -6431,7 +6593,7 @@ namespace uf::task
                 end
                 -- The [[screen]] section's own line, which is what makes it
                 -- fixable without reading the whole file.
-                if string.find(err, "line 24", 1, true) == nil then return 0 end
+                if string.find(err, "line 25", 1, true) == nil then return 0 end
                 return 1
             )lua");
             REQUIRE(result.has_value());
@@ -6485,6 +6647,7 @@ namespace uf::task
                 "\n"
                 "[[element]]\n"
                 "name = \"anchor\"\n"
+                "form = \"fixed\"\n"
                 "capabilities = [\"identify\"]\n"
                 "rect = [0, 0, 3, 1]\n"
                 "\n"
@@ -6559,6 +6722,7 @@ namespace uf::task
                 "\n"
                 "[[element]]\n"
                 "name = \"slot\"\n"
+                "form = \"fixed\"\n"
                 "capabilities = [\"identify\", \"interact\"]\n"
                 "rect = [0, 0, 3, 1]\n"
                 "\n"
@@ -6611,7 +6775,7 @@ namespace uf::task
                 if string.find(err, needle, 1, true) == nil then return 0 end
                 -- The orphan block's own line rather than the file's first, which
                 -- is what makes it fixable.
-                if string.find(err, "line 14", 1, true) == nil then return 0 end
+                if string.find(err, "line 15", 1, true) == nil then return 0 end
                 return 1
             )lua");
             REQUIRE(result.has_value());
@@ -6630,6 +6794,7 @@ namespace uf::task
                 "\n"
                 "[[element]]\n"
                 "name = \"anchor\"\n"
+                "form = \"fixed\"\n"
                 "capabilities = [\"identify\"]\n"
                 "rect = [0, 0, 3, 1]\n"
                 "\n"
@@ -6681,7 +6846,7 @@ namespace uf::task
                 local needle =
                     "names page 'hom', which this project file does not declare"
                 if string.find(err, needle, 1, true) == nil then return 0 end
-                if string.find(err, "line 24", 1, true) == nil then return 0 end
+                if string.find(err, "line 25", 1, true) == nil then return 0 end
                 return 1
             )lua");
             REQUIRE(result.has_value());
@@ -6779,6 +6944,7 @@ namespace uf::task
         constexpr std::string_view k_matrixPreludeHead = R"lua(
             local title = model.Element.new{
                 name = "title",
+                form = "fixed",
                 capabilities = { "identify", "read" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
             }
@@ -7649,6 +7815,7 @@ namespace uf::task
             auto const result = runModel(context, built, matrixScript(hashes, R"lua(
                 local drifting = model.Element.new{
                     name = "drifting",
+                    form = "shape",
                     capabilities = { "identify" },
                     appearances = {
                         {
@@ -7740,6 +7907,7 @@ namespace uf::task
             constexpr std::string_view k_stamp = R"lua(
                 local stamp = model.Element.new{
                     name = "stamp",
+                    form = "shape",
                     capabilities = { "read" },
                 }
                 local function reads(screen, x, text, state)
@@ -7824,6 +7992,7 @@ namespace uf::task
             local function twoLooks(capabilities)
                 return model.Element.new{
                     name = "arrow",
+                    form = "fixed",
                     capabilities = capabilities,
                     rect = { x = 0, y = 0, width = 3, height = 1 },
                     appearances = {
@@ -7848,6 +8017,7 @@ namespace uf::task
             -- anchored by. One appearance, so it never judges a set of its own.
             local anchor = model.Element.new{
                 name = "anchor",
+                form = "fixed",
                 capabilities = { "identify" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
                 appearances = {
@@ -7967,6 +8137,7 @@ namespace uf::task
             local function mark(name, x, source)
                 return model.Element.new{
                     name = name,
+                    form = "fixed",
                     capabilities = { "identify" },
                     rect = { x = x, y = 0, width = 1, height = 1 },
                     appearances = {
@@ -8517,6 +8688,7 @@ namespace uf::task
                     -- nothing can arbitrate.
                     local title = model.Element.new{
                         name = "title",
+                        form = "fixed",
                         capabilities = { "identify", "read" },
                         rect = { x = 0, y = 0, width = 1, height = 1 },
                     }
@@ -9307,6 +9479,7 @@ namespace uf::task
             }
             local marked = model.Element.new{
                 name = "marked",
+                form = "fixed",
                 capabilities = { "identify" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
                 appearances = {
@@ -9320,11 +9493,13 @@ namespace uf::task
             }
             local title = model.Element.new{
                 name = "title",
+                form = "fixed",
                 capabilities = { "identify", "read" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
             }
             local mute = model.Element.new{
                 name = "mute",
+                form = "fixed",
                 capabilities = { "interact" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
             }
@@ -9332,6 +9507,7 @@ namespace uf::task
             -- the map pans and where a cell sits is a fact about the frame.
             local drifting = model.Element.new{
                 name = "drifting",
+                form = "shape",
                 capabilities = { "identify" },
                 appearances = {
                     {
@@ -9547,6 +9723,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"mark\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"identify\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "\n"
@@ -9558,6 +9735,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"title\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"identify\", \"read\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "\n"
@@ -9620,6 +9798,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"mark\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"identify\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "\n"
@@ -9631,6 +9810,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"title\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"identify\", \"read\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "\n"
@@ -9781,6 +9961,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"anchor\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"identify\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "\n"
@@ -9792,6 +9973,7 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"drifting\"\n"
+            "form = \"shape\"\n"
             "capabilities = [\"interact\"]\n"
             "\n"
             "[[appearance]]\n"
@@ -9842,11 +10024,13 @@ namespace uf::task
             "\n"
             "[[element]]\n"
             "name = \"drifting\"\n"
+            "form = \"shape\"\n"
             "capabilities = [\"interact\"]\n"
             "\n"
             "[[element]]\n"
             "rect = [0, 0, 3, 1]\n"
             "name = \"anchor\"\n"
+            "form = \"fixed\"\n"
             "capabilities = [\"identify\"]\n"
             "\n"
             "[[appearance]]\n"
@@ -10001,6 +10185,7 @@ namespace uf::task
             -- graph model has no use for and the claims below are measured at.
             local keyed = model.Element.new{
                 name = "keyed",
+                form = "fixed",
                 capabilities = { "identify" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
                 appearances = {
@@ -10021,11 +10206,13 @@ namespace uf::task
             }
             local caption = model.Element.new{
                 name = "caption",
+                form = "fixed",
                 capabilities = { "identify", "read" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
             }
             local floating = model.Element.new{
                 name = "floating",
+                form = "shape",
                 capabilities = { "identify", "read" },
             }
 

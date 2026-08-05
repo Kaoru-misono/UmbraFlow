@@ -92,11 +92,13 @@ base_dpi = [96, 96]
 
 [[element]]
 name = "home_marker"
+form = "fixed"
 capabilities = ["identify"]
 rect = [0, 0, 3, 2]
 
 [[element]]
 name = "daily_button"
+form = "fixed"
 capabilities = ["interact"]
 rect = [0, 0, 3, 2]
 
@@ -771,6 +773,7 @@ exercised = ["interact"]
                 for index = 1, 500 do
                     model.Element.new({
                         name          = 'element' .. index,
+                        form          = "fixed",
                         capabilities  = { 'read' },
                         rect          = { x = 0, y = 0, width = 10, height = 10 },
                         expected_text = 'text',

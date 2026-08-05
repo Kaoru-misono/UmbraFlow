@@ -339,7 +339,8 @@ namespace uf::cli
             {
                 auto const rect = elementRect(project, element);
                 text += std::format(
-                    "\n[[element]]\nname = \"{}\"\ncapabilities = [\"identify\"]\n"
+                    "\n[[element]]\nname = \"{}\"\nform = \"fixed\"\n"
+                    "capabilities = [\"identify\"]\n"
                     "rect = [{}, {}, {}, {}]\n",
                     element.name,
                     rect.x(),
@@ -875,7 +876,7 @@ namespace uf::cli
             },
             Refusal{
                 .label    = "a claim about an element with no pixels of its own",
-                .appended = "\n[[element]]\nname = \"slot\"\n"
+                .appended = "\n[[element]]\nname = \"slot\"\nform = \"fixed\"\n"
                             "capabilities = [\"read\"]\nrect = [0, 0, 4, 4]\n"
                             "\n[[expect]]\nscreen = \"screen0\"\nelement = \"slot\"\n"
                             "state = \"match\"\n",
@@ -923,7 +924,7 @@ namespace uf::cli
         auto const baseline  = layOutProject(directory.path(), twentyElementProject());
 
         constexpr auto k_textClaim = std::string_view{
-            "\n[[element]]\nname = \"title\"\n"
+            "\n[[element]]\nname = \"title\"\nform = \"fixed\"\n"
             "capabilities = [\"read\"]\nrect = [0, 0, 4, 4]\n"
             "\n[[expect]]\nscreen = \"screen0\"\nelement = \"title\"\n"
             "text = \"battle\"\nstate = \"match\"\n"
@@ -972,7 +973,7 @@ namespace uf::cli
             writeText(
                 nested.path() / "page-model.toml",
                 baseText
-                    + "\n[[element]]\nname = \"title\"\n"
+                    + "\n[[element]]\nname = \"title\"\nform = \"fixed\"\n"
                       "capabilities = [\"identify\", \"read\"]\n"
                       "rect = [0, 0, 4, 4]\n"
                       "\n[[reference]]\npage = \"only\"\nelement = \"title\"\n"
@@ -1002,7 +1003,7 @@ namespace uf::cli
             writeText(
                 nested.path() / "page-model.toml",
                 baseText
-                    + "\n[[element]]\nname = \"title\"\n"
+                    + "\n[[element]]\nname = \"title\"\nform = \"fixed\"\n"
                       "capabilities = [\"identify\", \"read\"]\n"
                       "rect = [0, 0, 4, 4]\n"
                       "\n[[reference]]\npage = \"only\"\nelement = \"title\"\n"
@@ -1062,7 +1063,8 @@ namespace uf::cli
             // Elements with no appearances of their own -- what a region verified
             // by what it reads is. Each is claimed once, on one screen.
             claims += std::format(
-                "\n[[element]]\nname = \"slot_{0}\"\ncapabilities = [\"read\"]\n"
+                "\n[[element]]\nname = \"slot_{0}\"\nform = \"fixed\"\n"
+                "capabilities = [\"read\"]\n"
                 "rect = [0, 0, 4, 4]\n"
                 "\n[[expect]]\nscreen = \"screen0\"\nelement = \"slot_{0}\"\n"
                 "text = \"line {0}\"\nstate = \"match\"\n",
