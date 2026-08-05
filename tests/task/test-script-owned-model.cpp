@@ -9120,6 +9120,126 @@ namespace uf::task
             }
         }
 
+        TEST_CASE("The matrix reports which templates were cut under a key")
+        {
+            // The CAUSE reported beside its effect. A resolution row says a page
+            // was told apart on a frame it does not belong to; this row says
+            // whether the template that did it was compared whole, which is the
+            // mechanism behind every mask-shaped false positive this project has
+            // recorded. Capture-free like the linkage above, and never judged: a
+            // mark that fills its own rectangle needs no key, so an unkeyed
+            // template is a reading for whoever decides what to cut again.
+            auto const directory = TemporaryDirectory{"uf-model-keys"};
+            seedTemplates(directory.path());
+            auto const hashes = seedScreens(directory.path());
+
+            auto const run = [&](std::string_view body) {
+                return runSweep(
+                    directory.path(),
+                    hashes,
+                    std::string{R"lua(
+                    local keyed = model.Element.new{
+                        name = "keyed",
+                        form = "fixed",
+                        capabilities = { "identify" },
+                        rect = { x = 2, y = 0, width = 1, height = 1 },
+                        appearances = {
+                            {
+                                name = "lit",
+                                source = "gray5.png",
+                                template = template("gray5.png"),
+                                threshold = 9000,
+                                key = {
+                                    red = 1, green = 2, blue = 3,
+                                    tolerance = 10, removes = true,
+                                },
+                            },
+                        },
+                    }
+                    local verdict = sweepModel(
+                        { markA, keyed },
+                        { page("start", { row(markA, "required") }) },
+                        nil,
+                        nil,
+                        { sweep_pages = false }
+                    )
+                    local function keyOf(name)
+                        for _, entry in verdict.keys do
+                            if entry.element == name then return entry end
+                        end
+                        return nil
+                    end
+                    )lua"}
+                        + std::string{body}
+                );
+            };
+
+            SUBCASE("a key's direction rides with the template it cut")
+            {
+                auto const result = run(R"lua(
+                    if #verdict.keys ~= 2 then return 0 end
+                    local cut = keyOf("keyed")
+                    if cut == nil then return 0 end
+                    if not cut.keyed then return 0 end
+                    -- The direction is the half a bare "has a key" would lose:
+                    -- a key that names the backdrop and one that names the mark
+                    -- cut complementary templates from the same colour.
+                    if cut.removes ~= true then return 0 end
+                    if cut.threshold ~= 9000 then return 0 end
+
+                    local rendered = regress.render(verdict)
+                    local line = '{"check":"appearance_key","element":"keyed",'
+                        .. '"appearance":"lit","keyed":true,"removes":true,'
+                        .. '"threshold":9000}'
+                    if string.find(rendered, line, 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua");
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("an unkeyed template is counted and states no direction")
+            {
+                auto const result = run(R"lua(
+                    local plain = keyOf("mark_a")
+                    if plain == nil then return 0 end
+                    if plain.keyed then return 0 end
+                    -- Absent, not false: a direction is a property of a key, and
+                    -- writing one here would put a reading in the row that no
+                    -- author ever made.
+                    if plain.removes ~= nil then return 0 end
+
+                    local rendered = regress.render(verdict)
+                    local line = '{"check":"appearance_key","element":"mark_a",'
+                        .. '"appearance":"lit","keyed":false,"threshold":10000}'
+                    if string.find(rendered, line, 1, true) == nil then
+                        return 0
+                    end
+                    if string.find(rendered, '"appearances":2', 1, true) == nil
+                    then
+                        return 0
+                    end
+                    if
+                        string.find(rendered, '"appearances_unkeyed":1', 1, true)
+                            == nil
+                    then
+                        return 0
+                    end
+
+                    -- Never judged: one of the two templates here is the exact
+                    -- shape that has burned this project four times, and the
+                    -- verdict is still accepted.
+                    if not verdict.accepted then return 0 end
+                    if #verdict.findings ~= 0 then return 0 end
+                    return 1
+                )lua");
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+        }
+
         TEST_CASE("A replayed run is judged against the edges the model draws")
         {
             // The trace library's half of falsifiability: the screen library

@@ -231,6 +231,18 @@ export type PageLinkage = {
     interrupt: boolean,
 }
 
+-- What one appearance's template was cut under. `removes` is absent rather than
+-- false on an unkeyed one, for `PageLinkage.interrupt`'s reason: a direction is
+-- a property of a key, and spelling "no key" as "a key that keeps" would put a
+-- reading in the row that no author ever made.
+export type AppearanceKey = {
+    element: string,
+    appearance: string?,
+    keyed: boolean,
+    removes: boolean?,
+    threshold: number,
+}
+
 -- `recognition.AnchorSubset`, respelled because this VM has no module resolver
 -- and one chunk cannot name another chunk's exported type
 -- (docs/plans/2026-08-02-luau-coding-standard.md). The producer owns the meaning;
@@ -266,6 +278,7 @@ export type Verdict = {
     coverage: { PageCoverage },
     linked: boolean,
     linkage: { PageLinkage },
+    keys: { AppearanceKey },
     claimed: number,
     unclaimed: number,
     matches: number,
@@ -1204,6 +1217,36 @@ local function linkPages(built: any, verdict: Verdict)
     end
 end
 
+-- What every appearance's template was cut under, in declaration order, for
+-- `linkPages`'s reason. A model-only walk like that one: it opens no frame, so a
+-- check that offers no page to any screen still reports every template.
+--
+-- A TEMPLATE WITH NO KEY IS COMPARED WHOLE, so whatever the author's rectangle
+-- caught around the mark is in the denominator, and the threshold spends its
+-- per-pixel budget on pixels nobody meant to match. That is the mechanism behind
+-- the mask-shaped false positives in docs/pitfalls/colour-key-annotation.md, and
+-- it is invisible in the cells below: a template that matches half the corpus
+-- reports hits, which is what a working template also reports.
+--
+-- Reported and never judged. An unkeyed template is not wrong -- a mark that
+-- fills its own rectangle needs no key -- so this row says what was cut and
+-- leaves the reading to whoever is deciding which templates to cut again.
+local function walkAppearanceKeys(built: any, verdict: Verdict)
+    for _, element in built.elements do
+        for _, appearance in element.appearances do
+            table.insert(verdict.keys, {
+                element    = element.name,
+                appearance = appearance.name,
+                keyed      = appearance.key ~= nil,
+                removes    = if appearance.key ~= nil
+                    then appearance.key.removes
+                    else nil,
+                threshold  = appearance.threshold,
+            })
+        end
+    end
+end
+
 -- Measures one screen: which pages resolve on it, then every element, then every
 -- appearance of the elements that declare more than one.
 --
@@ -1415,6 +1458,7 @@ function regress.check(ctx: any, built: any, options: CheckOptions?): Verdict
         -- did not happen.
         linked      = navigation.is_graph(built.graph),
         linkage     = {},
+        keys        = {},
         claimed     = #built.claims.expectations,
         unclaimed   = 0,
         matches     = 0,
@@ -1437,6 +1481,10 @@ function regress.check(ctx: any, built: any, options: CheckOptions?): Verdict
     if verdict.linked then
         linkPages(built, verdict)
     end
+
+    -- Capture-free too, and unconditional: elements always arrive with the
+    -- model, so there is no shape of this walk that measured nothing.
+    walkAppearanceKeys(built, verdict)
 
     local screens = oracle.Claims.screens_in_frame_order(built.claims)
     verdict.screens = #screens
@@ -1583,23 +1631,35 @@ local function summaryLine(verdict: Verdict): string
         end
     end
 
+    -- Never optional, unlike the three above: elements always arrive with the
+    -- model, so a zero here is a corpus in which every template was cut under a
+    -- key, not a walk that did not happen.
+    local unkeyedAppearances = 0
+    for _, key in verdict.keys do
+        if not key.keyed then
+            unkeyedAppearances += 1
+        end
+    end
+
     return jsonl.object({
         { "check", "summary" },
         { "accepted", verdict.accepted },
         { "screens", verdict.screens },
         { "elements", verdict.elements },
+        { "appearances", #verdict.keys },
         { "pages", verdict.pages },
         { "cells", #verdict.cells },
         { "claimed", verdict.claimed },
         { "unclaimed", verdict.unclaimed },
         { "matches", verdict.matches },
         { "findings", #verdict.findings },
-        -- The four measured-but-never-judged counts. They move the exit code
+        -- The five measured-but-never-judged counts. They move the exit code
         -- nowhere: `accepted` is findings alone.
         { "resolutions", resolutions },
         { "subsets", #verdict.subsets },
         { "pages_unresolved", unresolvedPages },
         { "pages_unlinked", unlinkedPages },
+        { "appearances_unkeyed", unkeyedAppearances },
         { "separation_factor", k_separationFactor },
     })
 end
@@ -1671,6 +1731,20 @@ local function linkageLine(page: PageLinkage): string
     })
 end
 
+local function appearanceKeyLine(key: AppearanceKey): string
+    return jsonl.object({
+        { "check", "appearance_key" },
+        { "element", key.element },
+        { "appearance", key.appearance },
+        { "keyed", key.keyed },
+        { "removes", key.removes },
+        -- Last of the four, and the one a reader ranks by: an unkeyed template
+        -- is dangerous in proportion to how loose its threshold is, since that
+        -- is the per-pixel budget the background gets to spend.
+        { "threshold", key.threshold },
+    })
+end
+
 local function cellLine(cell: Cell): string
     return jsonl.object({
         { "check", "cell" },
@@ -1732,6 +1806,7 @@ function regress.groups(verdict: Verdict): { Group }
         { rows = verdict.resolutions, line = resolutionLine :: any },
         { rows = verdict.coverage, line = coverageLine :: any },
         { rows = verdict.linkage, line = linkageLine :: any },
+        { rows = verdict.keys, line = appearanceKeyLine :: any },
         { rows = verdict.cells, line = cellLine :: any },
     }
 end
