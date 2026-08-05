@@ -402,6 +402,111 @@ namespace uf
         CHECK(dead.empty());
     }
 
+    TEST_CASE("drag rejects a far end outside the client area before pressing")
+    {
+        // THE CASE THIS VERB EXISTS TO FAIL. The far end is start plus an offset
+        // the caller computed, so it is the coordinate a script gets wrong, and
+        // getting it wrong after the button is already down would strand a held
+        // button aimed at a place the drag can never finish.
+        //
+        // Delete the `end` line from controller::drag's precondition pair and
+        // this goes red: the press would land, the first held move would fail on
+        // the bound instead, and `held` would come back non-empty.
+        auto const deliveryTarget = target(0);
+        auto held          = HeldInputs{};
+        auto audit         = AuditLog{};
+        auto refreshCalled = false;
+
+        auto const result = drag(
+            deliveryTarget,
+            observationLease(),
+            Point<ClientSpace>{10.0F, 10.0F},
+            Point<ClientSpace>{5'000.0F, 10.0F},
+            MonotonicInstant::Duration::zero(),
+            held,
+            audit,
+            [&refreshCalled, deliveryTarget]() -> Result<DeliveryTarget>
+            {
+                refreshCalled = true;
+                return deliveryTarget;
+            }
+        );
+
+        REQUIRE_FALSE(result.has_value());
+        CHECK(automationKind(result.error()) == AutomationErrorKind::ActionRejected);
+        CHECK_FALSE(refreshCalled);
+
+        // THE ASSERTION THAT MAKES THIS CASE MEAN ANYTHING. This fixture's window
+        // handle is not a live window, so deliverPointerDown would refuse anyway
+        // -- with "no longer a valid window" -- and `held.empty()` alone would
+        // stay green against a build that never checked the end at all. Naming
+        // the bound is what tells the two refusals apart.
+        CHECK(result.error().message().contains("outside client area"));
+
+        // Nothing pressed and nothing posted: the refusal is ahead of the whole
+        // gesture rather than partway through it.
+        CHECK(held.empty());
+        CHECK_FALSE(held.holdsPointer(PointerButton::Left));
+        CHECK(audit.empty());
+    }
+
+    TEST_CASE("drag rejects a negative travel before delivery")
+    {
+        auto const deliveryTarget = target(0);
+        auto held          = HeldInputs{};
+        auto audit         = AuditLog{};
+        auto refreshCalled = false;
+
+        auto const result = drag(
+            deliveryTarget,
+            observationLease(),
+            Point<ClientSpace>{0.0F, 0.0F},
+            Point<ClientSpace>{20.0F, 0.0F},
+            MonotonicInstant::Duration{-1},
+            held,
+            audit,
+            [&refreshCalled, deliveryTarget]() -> Result<DeliveryTarget>
+            {
+                refreshCalled = true;
+                return deliveryTarget;
+            }
+        );
+
+        REQUIRE_FALSE(result.has_value());
+        CHECK(automationKind(result.error()) == AutomationErrorKind::ActionRejected);
+        CHECK(result.error().message().contains("travel"));
+        CHECK_FALSE(refreshCalled);
+        CHECK(held.empty());
+        CHECK(audit.empty());
+    }
+
+    TEST_CASE("drag rejects an empty refresh callback before delivery")
+    {
+        auto const deliveryTarget = target(0);
+        auto held  = HeldInputs{};
+        auto audit = AuditLog{};
+
+        auto const result = drag(
+            deliveryTarget,
+            observationLease(),
+            Point<ClientSpace>{0.0F, 0.0F},
+            Point<ClientSpace>{20.0F, 0.0F},
+            MonotonicInstant::Duration::zero(),
+            held,
+            audit,
+            std::move_only_function<Result<DeliveryTarget>()>{}
+        );
+
+        REQUIRE_FALSE(result.has_value());
+        CHECK(
+            automationKind(result.error())
+            == AutomationErrorKind::InternalInvariant
+        );
+        CHECK(held.empty());
+        CHECK_FALSE(held.holdsPointer(PointerButton::Left));
+        CHECK(audit.empty());
+    }
+
     TEST_CASE("long press rejects a negative hold before delivery")
     {
         auto const deliveryTarget = target(0);

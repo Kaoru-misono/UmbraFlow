@@ -357,6 +357,34 @@ namespace uf
         std::move_only_function<Result<DeliveryTarget>()> refreshTarget
     ) -> Status;
 
+    // Presses at `start`, travels to `end` over `travel` with the button held,
+    // and releases there.
+    //
+    // The intermediate moves are the point of the verb and not decoration: a
+    // target that pans a map reads the gesture from the moves that arrive WHILE
+    // the button is down, so a press and a release at two coordinates with
+    // nothing between them is two clicks as far as it is concerned. How many
+    // moves is mechanism and lives here as k_dragMoves; where to drag is the
+    // caller's.
+    //
+    // Both endpoints are checked before the button goes down, so a caller whose
+    // offset leaves the client area is refused with nothing pressed. Once the
+    // press has landed the guarantee changes hands: every later failure returns
+    // with the button still down, and releasing it is the caller's -- see
+    // engine::IActionSink::drag, whose implementation owes the compensating
+    // drain longPress already owes.
+    [[nodiscard]]
+    auto drag(
+        DeliveryTarget const& target,
+        ObservationLease lease,
+        Point<ClientSpace> start,
+        Point<ClientSpace> end,
+        MonotonicInstant::Duration travel,
+        HeldInputs& held,
+        AuditLog& audit,
+        std::move_only_function<Result<DeliveryTarget>()> refreshTarget
+    ) -> Status;
+
     // Posts one WM_MOUSEWHEEL at a point the target hit-tests to decide which
     // control scrolls. That position is why the same pointer preconditions a
     // click carries apply here: a wheel aimed from an expired or foreign

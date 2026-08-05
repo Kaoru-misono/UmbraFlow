@@ -23,6 +23,27 @@ namespace uf::controller_detail
                 target.generation().value()
             );
         }
+
+        // Written once and called from both entry points, so the session clause
+        // reads identically whether or not freshness is being fenced. The
+        // fenced entry point reports it BEFORE expiry: a lease from another
+        // capture session is the more specific complaint of the two.
+        [[nodiscard]]
+        auto checkLeaseSession(ObservationLease lease, CaptureSessionId currentSession) -> Status
+        {
+            if (lease.sessionId() != currentSession)
+            {
+                return fail(
+                    AutomationErrorKind::StaleObservation,
+                    std::format(
+                        "lease session CaptureSessionId({}) != current CaptureSessionId({})",
+                        lease.sessionId().value(),
+                        currentSession.value()
+                    )
+                );
+            }
+            return ok();
+        }
     }
 }
 
@@ -38,17 +59,7 @@ namespace uf::controller_detail
         uint32 clientHeight
     ) -> Result<ClientPixel>
     {
-        if (lease.sessionId() != currentSession)
-        {
-            return fail(
-                AutomationErrorKind::StaleObservation,
-                std::format(
-                    "lease session CaptureSessionId({}) != current CaptureSessionId({})",
-                    lease.sessionId().value(),
-                    currentSession.value()
-                )
-            );
-        }
+        UF_TRY(checkLeaseSession(lease, currentSession));
         if (lease.isExpired(now))
         {
             return fail(
@@ -56,6 +67,26 @@ namespace uf::controller_detail
                 "lease expired: observation older than max action frame age"
             );
         }
+        return checkPointerTarget(
+            lease,
+            currentSession,
+            currentGeneration,
+            point,
+            clientWidth,
+            clientHeight
+        );
+    }
+
+    auto checkPointerTarget(
+        ObservationLease lease,
+        CaptureSessionId currentSession,
+        TargetGeneration currentGeneration,
+        Point<ClientSpace> point,
+        uint32 clientWidth,
+        uint32 clientHeight
+    ) -> Result<ClientPixel>
+    {
+        UF_TRY(checkLeaseSession(lease, currentSession));
         if (lease.targetGeneration() != currentGeneration)
         {
             return fail(

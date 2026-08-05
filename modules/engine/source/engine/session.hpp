@@ -235,6 +235,20 @@ namespace uf::engine
         Point<ClientSpace> movePoint;
     };
 
+    // The record of one delivered drag: the frame it was authorized against, the
+    // two client-space points the button went down and came up at, and how long
+    // the travel between them took. Both points are here because the far one is
+    // the caller's arithmetic rather than anything it measured, so a trace that
+    // carries only the start cannot answer where the drag actually ended.
+    struct DragReceipt final
+    {
+        FrameId            frameId;
+        Point<ClientSpace> startPoint;
+        Point<ClientSpace> endPoint;
+
+        MonotonicInstant::Duration travel{};
+    };
+
     // The recognition and action pipeline over one bound capture target.
     //
     // Trace lifetime contract: the session stores a non-owning borrow of the
@@ -618,5 +632,36 @@ namespace uf::engine
             Observation&& observation,
             PixelPoint point
         ) -> Result<PointerMoveReceipt>;
+
+        // Delivers one drag from `start` to `end` over `travel`, spending
+        // `observation`.
+        //
+        // Its authorization contract is longPress's clause for clause: requested
+        // stop, foreign handle, consumed handle, live fingerprint, lease validity
+        // at delivery, target-instance revalidation before the post, and the
+        // spent observation. Every one of those is a fact about the FRAME, so it
+        // is asked once for the drag rather than once per endpoint -- see the
+        // definition for why asking twice would write two authorizations for one
+        // delivered act.
+        //
+        // What `end` gets is the per-point half: it is converted like `start`,
+        // and refused before any authorization is written if that conversion
+        // fails. Its client-area bound is checked at the layer that knows the
+        // live client size, before the button goes down; see IActionSink::drag.
+        //
+        // It spends the observation for longPress's reason, and more plainly: a
+        // drag is what moves the thing being looked at, so the frame that
+        // authorized it describes a screen that no longer exists.
+        //
+        // `travel` is the caller's with no default at this layer or above; see
+        // IActionSink::drag. Bounding it belongs to the host surface a script
+        // reaches, where a refusal can name what the author wrote.
+        [[nodiscard]]
+        auto drag(
+            Observation&& observation,
+            PixelPoint start,
+            PixelPoint end,
+            MonotonicInstant::Duration travel
+        ) -> Result<DragReceipt>;
     };
 }

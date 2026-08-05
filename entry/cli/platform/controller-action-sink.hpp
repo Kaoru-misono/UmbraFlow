@@ -12,6 +12,7 @@
 #include <domain/space.hpp>
 #include <engine/ports.hpp>
 
+#include <functional>
 #include <string_view>
 
 namespace uf::cli::platform
@@ -32,6 +33,15 @@ namespace uf::cli::platform
         // verb, and nothing else differs.
         [[nodiscard]]
         auto drainAfterFailure(Error error, std::string_view what) -> Status;
+
+        // The refresh-target callback the controller verbs that span time require:
+        // it re-reads the live desktop and reports the bound window as gone if it
+        // no longer enumerates. `what` names the verb so the refusal says which
+        // one was mid-flight. Shared by longPress and drag because the question
+        // they ask across their pause is the same question.
+        [[nodiscard]]
+        auto refreshTargetCallback(std::string_view what)
+            -> std::move_only_function<Result<DeliveryTarget>()>;
 
     public:
         explicit ControllerActionSink(DeliveryTarget target) noexcept
@@ -89,6 +99,19 @@ namespace uf::cli::platform
         [[nodiscard]]
         auto movePointer(
             Point<ClientSpace> point,
+            ObservationLease const& lease
+        ) -> Status override;
+
+        // Posts the press, the held moves and the release through
+        // controller::drag -- the same route click() takes, with the same lease
+        // forwarded and the same refresh-target callback longPress supplies. It
+        // owes the compensating drain for longPress's reason and more often: a
+        // drag has more ways to fail between the press and the release.
+        [[nodiscard]]
+        auto drag(
+            Point<ClientSpace> start,
+            Point<ClientSpace> end,
+            MonotonicInstant::Duration travel,
             ObservationLease const& lease
         ) -> Status override;
     };

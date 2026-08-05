@@ -345,6 +345,11 @@ namespace uf::engine
             std::optional<MonotonicInstant::Duration> m_lastHold{};
             std::optional<ObservationLease>           m_lastLongPressLease{};
 
+            uint32                                    m_dragCount{0};
+            std::optional<Point<ClientSpace>>         m_lastDragStart{};
+            std::optional<Point<ClientSpace>>         m_lastDragEnd{};
+            std::optional<MonotonicInstant::Duration> m_lastTravel{};
+
             uint32                            m_moveCount{0};
             std::optional<Point<ClientSpace>> m_lastMove{};
             std::optional<ObservationLease>   m_lastMoveLease{};
@@ -423,6 +428,24 @@ namespace uf::engine
                 return ok();
             }
 
+            // Both ends and the travel, because a case proving the far end
+            // reached the sink is the only one that can fail when the session
+            // forwards the start twice.
+            [[nodiscard]]
+            auto drag(
+                Point<ClientSpace> start,
+                Point<ClientSpace> end,
+                MonotonicInstant::Duration travel,
+                ObservationLease const& /*lease*/
+            ) -> Status override
+            {
+                ++m_dragCount;
+                m_lastDragStart = start;
+                m_lastDragEnd   = end;
+                m_lastTravel    = travel;
+                return ok();
+            }
+
             // Counted separately from the click, which is the whole point of the
             // verb: a case proving a move pressed nothing reads both counters,
             // and a sink that folded them together could not say so.
@@ -490,6 +513,31 @@ namespace uf::engine
             [[nodiscard]] auto longPressCount() const noexcept -> uint32
             {
                 return m_longPressCount;
+            }
+
+            [[nodiscard]] auto dragCount() const noexcept -> uint32
+            {
+                return m_dragCount;
+            }
+
+            [[nodiscard]]
+            auto lastDragStart() const noexcept
+                -> std::optional<Point<ClientSpace>>
+            {
+                return m_lastDragStart;
+            }
+
+            [[nodiscard]]
+            auto lastDragEnd() const noexcept -> std::optional<Point<ClientSpace>>
+            {
+                return m_lastDragEnd;
+            }
+
+            [[nodiscard]]
+            auto lastTravel() const noexcept
+                -> std::optional<MonotonicInstant::Duration>
+            {
+                return m_lastTravel;
             }
 
             [[nodiscard]]
@@ -1473,6 +1521,129 @@ namespace uf::engine
         REQUIRE(p_press->holdMillis.has_value());
         CHECK(*p_press->holdMillis == uint64{350});
         CHECK(p_press->clickClient.has_value());
+    }
+
+    TEST_CASE("engine session delivers a drag and spends the observation")
+    {
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+        auto under = matchingSession(fingerprint, baseConfig(fingerprint));
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+
+        auto const travel =
+            MonotonicInstant::Duration{std::chrono::milliseconds{240}};
+        auto handle        = *std::move(observation);
+        auto const receipt = session.drag(
+            std::move(handle),
+            PixelPoint{0, 0},
+            PixelPoint{2, 0},
+            travel
+        );
+        REQUIRE(receipt.has_value());
+        CHECK(under.clicks->dragCount() == 1);
+        CHECK(receipt->frameId == FrameId{17});
+        CHECK(receipt->travel == travel);
+
+        // BOTH ends reached the port, and as different points. Every other
+        // assertion here would still hold if the session forwarded the start
+        // twice and dragged nowhere, which is precisely the bug a drag can have
+        // and a click cannot -- so this pair is the case's reason to exist.
+        REQUIRE(under.clicks->lastDragStart().has_value());
+        REQUIRE(under.clicks->lastDragEnd().has_value());
+        CHECK(under.clicks->lastDragStart()->x() == doctest::Approx(0.0));
+        CHECK(under.clicks->lastDragEnd()->x() == doctest::Approx(2.0));
+        CHECK(
+            under.clicks->lastDragStart()->x() != under.clicks->lastDragEnd()->x()
+        );
+
+        // The travel the caller named reached the port: replace it with a
+        // constant in the sink call and only this goes red.
+        REQUIRE(under.clicks->lastTravel().has_value());
+        CHECK(*under.clicks->lastTravel() == travel);
+
+        // The drag moved what the frame was a picture of, so the observation is
+        // spent. Remove the invalidation in EngineSession::drag and one frame
+        // delivers two drags, so this goes red.
+        auto const retry = session.drag(
+            std::move(handle),
+            PixelPoint{0, 0},
+            PixelPoint{2, 0},
+            travel
+        );
+        REQUIRE_FALSE(retry.has_value());
+        requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
+        CHECK(under.clicks->dragCount() == 1);
+
+        auto const kinds = kindsOf(under.traces->events());
+        CHECK(
+            std::ranges::count(kinds, trace::TraceEventKind::EngineDragDelivered)
+            == 1
+        );
+
+        // ONE authorization for one delivered drag. The verb names two points and
+        // authorizeCoordinate both emits this event and revalidates the target,
+        // so calling it once per endpoint would write 2:1 here and quietly teach
+        // a reader that drags are authorized twice. Call it for `end` as well and
+        // this goes red while nothing else does.
+        CHECK(
+            std::ranges::count(kinds, trace::TraceEventKind::EngineActionAuthorized)
+            == 1
+        );
+
+        // And NOT as a click, for the long press's reason.
+        CHECK(
+            std::ranges::count(kinds, trace::TraceEventKind::EngineActionDelivered)
+            == 0
+        );
+
+        auto const* p_drag = findEvent(
+            under.traces->events(),
+            trace::TraceEventKind::EngineDragDelivered
+        );
+        REQUIRE(p_drag != nullptr);
+        REQUIRE(p_drag->travelMillis.has_value());
+        CHECK(*p_drag->travelMillis == uint64{240});
+        REQUIRE(p_drag->clickClient.has_value());
+
+        // The far end is on the line too. A record carrying only the start says
+        // a drag happened and refuses to say how far, which is the one thing a
+        // reader joining drags to what moved on screen needs.
+        REQUIRE(p_drag->dragEndClient.has_value());
+        CHECK(p_drag->dragEndClient->x() == doctest::Approx(2.0));
+    }
+
+    TEST_CASE("engine session refuses a drag that travels backwards in time")
+    {
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+        auto under = matchingSession(fingerprint, baseConfig(fingerprint));
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+
+        auto handle          = *std::move(observation);
+        auto const backwards = session.drag(
+            std::move(handle),
+            PixelPoint{0, 0},
+            PixelPoint{2, 0},
+            MonotonicInstant::Duration{std::chrono::milliseconds{-1}}
+        );
+        REQUIRE_FALSE(backwards.has_value());
+        requireErrorKind(backwards.error(), AutomationErrorKind::ActionRejected);
+
+        // Nothing was delivered and nothing was authorized: the refusal is ahead
+        // of both, so a sign error costs neither a frame nor a trace line
+        // claiming an act nobody performed.
+        CHECK(under.clicks->dragCount() == 0);
+        auto const kinds = kindsOf(under.traces->events());
+        CHECK(
+            std::ranges::count(kinds, trace::TraceEventKind::EngineActionAuthorized)
+            == 0
+        );
     }
 
     TEST_CASE("engine session fences a long press exactly as it fences a click")

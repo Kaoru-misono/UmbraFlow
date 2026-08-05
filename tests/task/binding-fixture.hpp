@@ -236,6 +236,16 @@ namespace uf::task
             MonotonicInstant::Duration hold{};
         };
 
+        // One drag this sink was asked for. All three parts are recorded for the
+        // long press's reason, one part stronger: a case that checked only the
+        // start would pass against a sink that dragged nowhere.
+        struct DragDelivery final
+        {
+            Point<ClientSpace>         start;
+            Point<ClientSpace>         end;
+            MonotonicInstant::Duration travel{};
+        };
+
     private:
         uint32               m_clickCount{0};
         std::vector<KeyName> m_keys{};
@@ -243,6 +253,7 @@ namespace uf::task
 
         std::vector<LongPressDelivery>  m_longPresses{};
         std::vector<Point<ClientSpace>> m_moves{};
+        std::vector<DragDelivery>       m_drags{};
 
     public:
         [[nodiscard]]
@@ -286,6 +297,24 @@ namespace uf::task
                 LongPressDelivery{
                     .point = point,
                     .hold  = hold,
+                }
+            );
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto drag(
+            Point<ClientSpace> start,
+            Point<ClientSpace> end,
+            MonotonicInstant::Duration travel,
+            ObservationLease const& /*lease*/
+        ) -> Status override
+        {
+            m_drags.emplace_back(
+                DragDelivery{
+                    .start  = start,
+                    .end    = end,
+                    .travel = travel,
                 }
             );
             return ok();
@@ -337,6 +366,13 @@ namespace uf::task
         {
             return m_moves;
         }
+
+        // The drags this sink was asked for, in order.
+        [[nodiscard]] auto drags() const noexcept UF_LIFETIME_BOUND
+            -> std::vector<DragDelivery> const&
+        {
+            return m_drags;
+        }
     };
 
     // Records every delivered click point in order, so a determinism run can
@@ -385,6 +421,22 @@ namespace uf::task
         ) -> Status override
         {
             m_points.emplace_back(point);
+            return ok();
+        }
+
+        // A drag aims at two coordinates and both join the list, in the order the
+        // gesture visits them: a case asking "what was this sink aimed at" wants
+        // to see the far end as much as the near one.
+        [[nodiscard]]
+        auto drag(
+            Point<ClientSpace> start,
+            Point<ClientSpace> end,
+            MonotonicInstant::Duration /*travel*/,
+            ObservationLease const& /*lease*/
+        ) -> Status override
+        {
+            m_points.emplace_back(start);
+            m_points.emplace_back(end);
             return ok();
         }
 

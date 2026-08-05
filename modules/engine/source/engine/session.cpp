@@ -1141,4 +1141,98 @@ namespace uf::engine
             .movePoint = clientPoint,
         };
     }
+
+    auto EngineSession::drag(
+        Observation&& observation,
+        PixelPoint start,
+        PixelPoint end,
+        MonotonicInstant::Duration travel
+    ) -> Result<DragReceipt>
+    {
+        UF_TRY(
+            beginDelivery(observation, "drag", "cancelled before drag delivery")
+        );
+
+        // longPress's clause, for its reason: a negative travel is a receipt and
+        // a trace line describing an act nobody performed. Refused before the
+        // observation is spent, so a caller with a sign error keeps its frame.
+        if (travel < MonotonicInstant::Duration::zero())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "a drag cannot travel backwards in time"
+            );
+        }
+
+        // The far end converts FIRST and authorizes NOT AT ALL, and both halves
+        // of that are deliberate.
+        //
+        // Converting first means a malformed end is refused before any
+        // authorization is written, so the stream never carries an authorization
+        // for a drag that could not be attempted.
+        //
+        // Not authorizing it is what keeps the ledger honest: authorizeCoordinate
+        // emits engine.action_authorized and revalidates the target instance, and
+        // both of those are facts about THIS FRAME rather than about a point on
+        // it. Running it twice would write two authorizations for one delivered
+        // drag, and a reader counting authorizations against deliveries would
+        // find 2:1 for the one verb that names two points. What is genuinely
+        // per-point is the conversion, and that runs for both.
+        //
+        // The client-area bound is neither of those and lives where it always
+        // has: controller::drag checks BOTH endpoints against the live client
+        // size before the button goes down.
+        UF_TRY_VALUE(endFrame, pixelPointToFramePoint(end));
+
+        UF_TRY_VALUE(startClient, authorizeCoordinate(observation, start));
+        auto const endClient = (
+            observation.m_frame.transform().frameToClient(endFrame)
+        );
+
+        auto const identity = observation.m_frameIdentity;
+
+        auto delivered = m_actionSink->drag(
+            startClient,
+            endClient,
+            travel,
+            observation.m_lease
+        );
+        if (!delivered)
+        {
+            UF_TRY(rejectAction(identity, delivered.error(), std::nullopt));
+            return std::unexpected{std::move(delivered).error()};
+        }
+
+        // The press has landed, travelled and been released; the handle dies for
+        // clickPoint's reason, and here the frame is stale in the strongest sense
+        // the engine has -- a drag exists to move what the frame was a picture of.
+        observation.m_invalidated = true;
+
+        auto dragEvent           = identityEvent(
+            trace::TraceEventKind::EngineDragDelivered,
+            identity
+        );
+        dragEvent.clickClient   = startClient;
+        dragEvent.dragEndClient = endClient;
+        dragEvent.travelMillis   = static_cast<uint64>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(travel).count()
+        );
+        UF_TRY(emit(dragEvent));
+
+        UF_TRY(
+            emit(
+                identityEvent(
+                    trace::TraceEventKind::EngineObservationInvalidated,
+                    identity
+                )
+            )
+        );
+
+        return DragReceipt{
+            .frameId    = identity.frameId(),
+            .startPoint = startClient,
+            .endPoint   = endClient,
+            .travel     = travel,
+        };
+    }
 }

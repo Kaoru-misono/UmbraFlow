@@ -1758,6 +1758,72 @@ namespace uf::task
             return 0;
         }
 
+        // cycle_drag(ticket, x, y, end_x, end_y, travel_ms) -> (). Consumes the
+        // cycle and delivers one drag: the button goes down at the first point,
+        // travels to the second with the button held, and comes back up there
+        // before this returns.
+        //
+        // Its authorization contract is cycle_long_press's, applied to both
+        // points. The END is taken as a coordinate and not as an offset on
+        // purpose: an offset would have to be signed and range-checked here
+        // against a client size this layer does not know, while a coordinate
+        // meets the same checkPixelExtent every other point on this surface
+        // meets. Turning "start plus offset" into a second point is the
+        // framework's arithmetic, in observe.drag, where the hit that anchors it
+        // is also what proves the start belongs to this frame.
+        //
+        // It is privileged exactly as cycle_long_press is, and bound on both
+        // surfaces for the same reason: no business environment can name it, and
+        // only `observe.drag` and `explore.drag` reach it.
+        //
+        // The travel has no default, for the hold's reason.
+        auto cycleDragFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto* ticket    = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
+            auto const x    = checkPixelExtent(state, 2, "cycle_drag x");
+            auto const y    = checkPixelExtent(state, 3, "cycle_drag y");
+            auto const endX = checkPixelExtent(state, 4, "cycle_drag end_x");
+            auto const endY = checkPixelExtent(state, 5, "cycle_drag end_y");
+            auto const travel =
+                checkMillisDuration(state, 6, "cycle_drag travel_ms");
+            if (travel > k_maxDragTravel)
+            {
+                // Refused before the cycle is spent, so a mistyped travel costs
+                // no frame and leaves no button down.
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "cycle_drag exceeds the host's drag-travel ceiling; a drag "
+                    "that long leaves the target mid-gesture"
+                );
+            }
+
+            auto const call = NativeCallIdentity{
+                .verb           = "cycle_drag",
+                .cycleOrdinal   = ticket->ordinal,
+                .durationMillis = static_cast<uint64>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(travel)
+                        .count()
+                ),
+            };
+
+            auto result = context->cycleDrag(
+                *ticket,
+                PixelPoint{x, y},
+                PixelPoint{endX, endY},
+                travel
+            );
+            if (!result)
+            {
+                traceHostCallFailure(state, context, call, result.error());
+            }
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+            return 0;
+        }
+
         // The automation kind whose domain wire spelling is `wireName`. It
         // compares against the same domain function that produces uf.errors, a
         // carrier's `kind` field and the trace, so there is no second copy of the
@@ -2510,6 +2576,20 @@ namespace uf::task
                 "cycle_long_press",
                 &cycleLongPressFn,
                 "uf_cycle_long_press",
+                context
+            );
+            // Bound on both surfaces for the long press's reason. A drag names
+            // two bare coordinates rather than one, which makes it the same
+            // privilege twice over and not a different one: what a bare
+            // coordinate buys a script is activating something the page did not
+            // authorise, and observe.drag is where that authorisation is
+            // checked for both ends.
+            installPrimitive(
+                state,
+                surface,
+                "cycle_drag",
+                &cycleDragFn,
+                "uf_cycle_drag",
                 context
             );
             if (mode == ScriptTrustMode::Exploration)

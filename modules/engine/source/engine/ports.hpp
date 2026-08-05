@@ -153,6 +153,55 @@ namespace uf::engine
             ObservationLease const& lease
         ) -> Status = 0;
 
+        // Presses at `start`, travels to `end` over `travel` with the button
+        // held, and releases there. Press, travel and release all begin and end
+        // inside this call, for the reason longPress does: nothing above ever
+        // holds a half-pressed target.
+        //
+        // The held moves in between are the verb. A target that pans reads the
+        // gesture from the moves that arrive WHILE the button is down; a press
+        // and a release with nothing between them is two clicks to it. How the
+        // travel is cut into moves is the implementation's, because it is a fact
+        // about posting messages and not about what the caller wants moved.
+        //
+        // One clause of that cutting IS promised here, because callers depend on
+        // it: the gesture ENDS AT REST. A target computes fling velocity from the
+        // last pointer deltas before the release, so a drag that lets go at speed
+        // makes the target keep travelling past where it was asked to stop --
+        // measured on the real machine 2026-08-05. An implementation is free to
+        // choose the curve and the move count; it is not free to release at
+        // speed, because then `end` stops meaning where the content lands.
+        //
+        // `travel` is the CALLER'S with no default here or above, for the hold's
+        // reason: how slowly a target must be dragged before it follows is a fact
+        // about that target, and a duration the caller cannot see is one it never
+        // chose.
+        //
+        // It takes a lease for click()'s reason, and both endpoints are in the
+        // frame the lease authorizes: `end` is `start` plus an offset the caller
+        // computed, so it is exactly as much a coordinate measured off this frame
+        // as `start` is, and it is bounds-checked before the press lands.
+        //
+        // The lease is spent ONCE, on those two endpoints, before the button goes
+        // down. `travel` may exceed what is left of the observation's freshness
+        // and usually does -- the ceiling is 750 ms and a gesture slow enough not
+        // to fling the target runs 600 ms and up -- so an implementation that
+        // re-fenced freshness while the button was down would refuse the drags
+        // this verb exists for. What it must keep checking is that the moves are
+        // still landing in the window that was authorized.
+        //
+        // The implementation MUST leave the button released on every exit path
+        // including a failed one. This is the same clause longPress carries and
+        // it is harder to keep here, because a drag has more ways to fail after
+        // the press than a hold does.
+        [[nodiscard]]
+        virtual auto drag(
+            Point<ClientSpace> start,
+            Point<ClientSpace> end,
+            MonotonicInstant::Duration travel,
+            ObservationLease const& lease
+        ) -> Status = 0;
+
         // Moves the pointer to `point` on the bound target, pressing nothing.
         //
         // It exists because a posted wheel does not scroll what the message

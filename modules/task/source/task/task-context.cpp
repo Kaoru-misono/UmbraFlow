@@ -613,6 +613,25 @@ namespace uf::task
         return m_session.movePointer(std::move(observation), point);
     }
 
+    auto TaskContext::cycleDrag(
+        CycleTicket ticket,
+        PixelPoint start,
+        PixelPoint end,
+        MonotonicInstant::Duration travel
+    ) -> Result<engine::DragReceipt>
+    {
+        // The ledger's half of the fence, cycleLongPress's exactly.
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+
+        // drag consumes the frame by rvalue, so the cycle is spent whatever the
+        // outcome; spend already dropped the ledger entry, which is what makes
+        // every later use of this ticket fail StaleObservation. That matters more
+        // for a drag than for anything else on this surface: the gesture is what
+        // moved the screen, so reusing the frame would aim at a picture the drag
+        // itself invalidated.
+        return m_session.drag(std::move(observation), start, end, travel);
+    }
+
     auto TaskContext::waitUntil(
         MonotonicInstant deadline,
         MonotonicInstant::Duration interval

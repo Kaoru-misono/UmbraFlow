@@ -263,6 +263,20 @@ namespace uf::task
                 return ok();
             }
 
+            // A blocked drag, for the long press's reason: it spans time on the
+            // delivery thread, so a veto arriving mid-gesture has to be seen.
+            [[nodiscard]]
+            auto drag(
+                Point<ClientSpace> /*start*/,
+                Point<ClientSpace> /*end*/,
+                MonotonicInstant::Duration /*travel*/,
+                ObservationLease const& /*lease*/
+            ) -> Status override
+            {
+                m_gate->blockOn(m_gate->token());
+                return ok();
+            }
+
             // And a blocked pointer move, the last verb the port carries.
             [[nodiscard]]
             auto movePointer(

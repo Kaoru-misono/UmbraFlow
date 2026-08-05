@@ -9,10 +9,10 @@
 --
 -- The isolation is structural rather than checked. A project environment is a
 -- whitelist with no metatable, and a run VM's private surface never binds
--- `cycle_crop` or `probe` at all. `click_point` and `long_press` do have their
--- primitives on both surfaces, because the trusted framework needs both to act
--- on an element the page model placed; what confines those is that only this
--- module forwards them.
+-- `cycle_crop` or `probe` at all. `click_point`, `long_press` and `drag` do have
+-- their primitives on both surfaces, because the trusted framework needs all
+-- three to act on an element the page model placed; what confines those is that
+-- only this module forwards them.
 --
 -- Frame differencing is deliberately absent
 -- (docs/plans/2026-08-01-agent-front-end-and-exploration.md 1). Nothing here
@@ -125,6 +125,42 @@ function explore.long_press(ticket: any, x: number, y: number, holdMillis: numbe
         )
     end
     return (native :: any).cycle_long_press(ticket, x, y, holdMillis)
+end
+
+-- explore.drag(ticket, x, y, end_x, end_y, travel_ms) -> ()
+--
+-- `click_point` with a second coordinate and a duration: presses one bare point,
+-- travels to another with the button held, releases there, and spends the cycle.
+-- An agent needs it to measure the thing a business script cannot ask about
+-- until it is known -- how far a map actually pans for a given drag, whether it
+-- has inertia, whether it clamps at the edges.
+--
+-- BOTH points are bare here, which is the whole difference from `observe.drag`:
+-- that one anchors the start on a hit the page authorised and derives the far
+-- end from an offset. An agent is measuring the geometry that annotation would
+-- later rest on, so it cannot be made to name an element that does not exist
+-- yet.
+--
+-- The host fences it as it fences click_point, at both ends, and the travel has
+-- NO DEFAULT here.
+function explore.drag(
+    ticket: any,
+    x: number,
+    y: number,
+    endX: number,
+    endY: number,
+    travelMillis: number
+)
+    requirePrimitive("cycle_drag", "explore.drag")
+    if type(travelMillis) ~= "number" then
+        error(
+            "explore.drag needs travel_ms = how long to spend travelling, in "
+                .. "milliseconds; it has no default, because how slowly a target "
+                .. "must be dragged before it follows is a fact about that target",
+            2
+        )
+    end
+    return (native :: any).cycle_drag(ticket, x, y, endX, endY, travelMillis)
 end
 
 -- explore.crop(ticket, x, y, width, height, key?, tolerance?)

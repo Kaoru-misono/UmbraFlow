@@ -272,6 +272,72 @@ namespace uf
         CHECK(automationKind(result.error()) == AutomationErrorKind::ActionRejected);
     }
 
+    TEST_CASE("pointer target check outlives the lease but not the target")
+    {
+        // WHY THIS SPLIT EXISTS. A drag holds the button down for as long as the
+        // caller asked, and 600 ms of it is normal because a faster gesture flings
+        // the target. The lease starts running at frame capture and is capped at
+        // 750 ms, so a drag that re-fenced freshness per waypoint refused itself
+        // partway through -- with the button already down. Freshness is checked
+        // once, on both endpoints, before anything is pressed.
+        auto const captured = instantAt(MonotonicInstant::Duration{10});
+        auto const generation = TargetGeneration{};
+        auto const lease = leaseAt(generation, captured);
+        auto const inside = Point<ClientSpace>{12.5F, 7.25F};
+
+        // The lease is long expired at this point, and that is not a reason to
+        // refuse a waypoint. Add `isExpired` back to checkPointerTarget and this
+        // goes red.
+        auto const accepted = controller_detail::checkPointerTarget(
+            lease,
+            CaptureSessionId{k_sessionValue},
+            generation,
+            inside,
+            800,
+            450
+        );
+        REQUIRE(accepted.has_value());
+        CHECK(accepted->x() == 12);
+        CHECK(accepted->y() == 7);
+
+        // What the waypoint check is still for: the moves must keep landing in
+        // the window they were authorised against. Drop either clause and the
+        // matching assertion goes red.
+        auto const retargeted = controller_detail::checkPointerTarget(
+            lease,
+            CaptureSessionId{k_sessionValue},
+            nextGeneration(generation),
+            inside,
+            800,
+            450
+        );
+        REQUIRE_FALSE(retargeted.has_value());
+        CHECK(automationKind(retargeted.error()) == AutomationErrorKind::StaleObservation);
+        CHECK(retargeted.error().message().contains("lease generation"));
+
+        auto const resessioned = controller_detail::checkPointerTarget(
+            lease,
+            CaptureSessionId{k_sessionValue + 1U},
+            generation,
+            inside,
+            800,
+            450
+        );
+        REQUIRE_FALSE(resessioned.has_value());
+        CHECK(resessioned.error().message().contains("lease session"));
+
+        auto const outside = controller_detail::checkPointerTarget(
+            lease,
+            CaptureSessionId{k_sessionValue},
+            generation,
+            Point<ClientSpace>{-1.0F, 7.0F},
+            800,
+            450
+        );
+        REQUIRE_FALSE(outside.has_value());
+        CHECK(outside.error().message().contains("outside client area"));
+    }
+
     TEST_CASE("pointer preconditions preserve lease generation bounds order")
     {
         auto const captured = instantAt(MonotonicInstant::Duration{10});

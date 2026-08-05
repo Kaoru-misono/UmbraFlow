@@ -232,6 +232,41 @@ namespace uf::trace
         return ok();
     }
 
+    auto TraceStreamValidator::requireDragPayload(
+        TraceEvent const& event
+    ) -> Status
+    {
+        if (!event.clickClient.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "engine.drag_delivered carries no point, so nothing says where "
+                "the button went down"
+            );
+        }
+
+        // Both points or the record is a click that lied about its kind: a reader
+        // joining drags to what moved on screen has no other way to know how far
+        // the target was asked to travel.
+        if (!event.dragEndClient.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "engine.drag_delivered carries no end point, so the record is "
+                "half a drag"
+            );
+        }
+        if (!event.travelMillis.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "engine.drag_delivered carries no travel time, and the same two "
+                "points crossed instantly are a different act to the target"
+            );
+        }
+        return ok();
+    }
+
     auto TraceStreamValidator::admit(
         TraceEvent const& event
     ) -> Result<std::vector<std::string>>
@@ -358,6 +393,13 @@ namespace uf::trace
             // no recognition, and the exploration vocabulary has no spelling of
             // its own for it to have chosen instead.
             return requireMovePayload(event);
+
+        case TraceEventKind::EngineDragDelivered:
+            // Admitted on every stream for the long press's reason: it claims no
+            // recognition, only what happened. A drag anchored on an annotated
+            // element is authorised above this layer, so the line records the act
+            // and the authorisation is somebody else's record.
+            return requireDragPayload(event);
 
         case TraceEventKind::AnnotationClickDelivered:
         case TraceEventKind::AnnotationRegionSaved:

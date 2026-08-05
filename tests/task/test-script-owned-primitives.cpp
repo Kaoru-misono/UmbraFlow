@@ -1956,6 +1956,77 @@ namespace uf::task
             }
         }
 
+        TEST_CASE("cycle_drag is bound on both surfaces and forwarded on one")
+        {
+            // The long press's capability split, for the same reason and one step
+            // further: a drag names TWO bare coordinates, so a business task
+            // holding it could press anywhere and release anywhere else. The
+            // primitive is on both private surfaces because the trusted framework
+            // needs it in run mode for a canvas element the page model placed, and
+            // no project environment may name it.
+            //
+            // Add a forward to ctx.luau --
+            //
+            //     function ctx:cycle_drag(ticket, x, y, ex, ey, travel)
+            //         return native.cycle_drag(ticket, x, y, ex, ey, travel)
+            //     end
+            //
+            // -- and both subcases go red, which is the fence being HELD rather
+            // than merely absent. That the RUN surface really binds it is proved
+            // by delivering one in test-script-owned-model.cpp, where a run VM
+            // publishes no `explore` to ask the question with.
+            SUBCASE("no project environment can name it on ctx")
+            {
+                auto built = buildHarness(matchableFrames(), HarnessSpec{});
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                constexpr std::string_view source = R"lua(
+                    if rawget(ctx, "cycle_drag") ~= nil then return 0 end
+                    if not explore.has("cycle_drag") then return 0 end
+                    local cycle = ctx:cycle_open()
+                    explore.drag(cycle, 1, 0, 2, 0, 120)
+                    return 1
+                )lua";
+
+                auto engineVm = script::Engine::create(explorationVmConfig(context));
+                REQUIRE(engineVm.has_value());
+                auto const result = engineVm->runNumber(source, "drag-ctx");
+                REQUIRE(result.has_value());
+                CHECK(*result == 1.0);
+                CHECK(p_clicks->drags().size() == 1U);
+
+                // The far end reached the port as its own coordinate. Forward the
+                // start twice from any layer below and only this goes red.
+                REQUIRE_FALSE(p_clicks->drags().empty());
+                CHECK(p_clicks->drags().front().start.x() != doctest::Approx(
+                    p_clicks->drags().front().end.x()
+                ));
+            }
+
+            SUBCASE("a run VM has neither the ctx forward nor the explore module")
+            {
+                auto built = buildHarness(matchableFrames(), HarnessSpec{});
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                constexpr std::string_view source = R"lua(
+                    if rawget(ctx, "cycle_drag") ~= nil then return 0 end
+                    if explore ~= nil then return 0 end
+                    return 1
+                )lua";
+
+                auto engineVm = script::Engine::create(taskVmConfig(context));
+                REQUIRE(engineVm.has_value());
+                auto const result = engineVm->runNumber(source, "drag-run");
+                REQUIRE(result.has_value());
+                CHECK(*result == 1.0);
+                CHECK(p_clicks->drags().empty());
+            }
+        }
+
         TEST_CASE("Project file I/O round trips inside the project directory")
         {
             auto const directory = TemporaryDirectory{"uf-project-files-roundtrip"};

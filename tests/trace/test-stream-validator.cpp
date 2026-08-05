@@ -213,6 +213,53 @@ namespace uf::trace
             CHECK(stream.emit(delivered).has_value());
         }
 
+        TEST_CASE("a delivered drag must say where from, where to, and how long")
+        {
+            // Three clauses, and the middle one is the reason this kind exists
+            // apart from a click: a record with a start and a travel but no end
+            // says a drag happened and refuses to say how far. Drop any clause
+            // from requireDragPayload and the matching refusal below goes red.
+            auto stream = Stream{};
+
+            auto noEnd         = plain(TraceEventKind::EngineDragDelivered);
+            noEnd.clickClient  = Point<ClientSpace>{4.0F, 2.0F};
+            noEnd.travelMillis = uint64{240};
+            CHECK(
+                refusedKind(stream.emit(noEnd))
+                == AutomationErrorKind::InternalInvariant
+            );
+
+            auto noStart          = plain(TraceEventKind::EngineDragDelivered);
+            noStart.dragEndClient = Point<ClientSpace>{40.0F, 2.0F};
+            noStart.travelMillis  = uint64{240};
+            CHECK(
+                refusedKind(stream.emit(noStart))
+                == AutomationErrorKind::InternalInvariant
+            );
+
+            auto noTravel          = plain(TraceEventKind::EngineDragDelivered);
+            noTravel.clickClient   = Point<ClientSpace>{4.0F, 2.0F};
+            noTravel.dragEndClient = Point<ClientSpace>{40.0F, 2.0F};
+            CHECK(
+                refusedKind(stream.emit(noTravel))
+                == AutomationErrorKind::InternalInvariant
+            );
+            CHECK(stream.events().empty());
+
+            // The control: all three together are admitted.
+            auto delivered          = plain(TraceEventKind::EngineDragDelivered);
+            delivered.clickClient   = Point<ClientSpace>{4.0F, 2.0F};
+            delivered.dragEndClient = Point<ClientSpace>{40.0F, 2.0F};
+            delivered.travelMillis  = uint64{240};
+            REQUIRE(stream.emit(delivered).has_value());
+            REQUIRE(stream.events().size() == 1U);
+
+            // Admitted on the exploration stream too, the long press's precedent:
+            // it claims no recognition, so no annotation spelling corrects it.
+            auto annotation = Stream{FrontEnd::Annotation};
+            CHECK(annotation.emit(delivered).has_value());
+        }
+
         TEST_CASE("a delivered long press must say where and for how long")
         {
             // It needs BOTH halves: the point alone is a click, the hold alone a

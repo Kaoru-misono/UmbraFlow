@@ -88,6 +88,8 @@ namespace uf::trace
                 return "engine.long_press_delivered";
             case TraceEventKind::EnginePointerMoveDelivered:
                 return "engine.pointer_move_delivered";
+            case TraceEventKind::EngineDragDelivered:
+                return "engine.drag_delivered";
             case TraceEventKind::EngineCaptureRetried:
                 return "engine.capture_retried";
             case TraceEventKind::EngineObservationInvalidated:
@@ -627,6 +629,30 @@ namespace uf::trace
         if (event.holdMillis.has_value())
         {
             builder.addLiteral("holdMillis", std::format("{}", *event.holdMillis));
+        }
+
+        // Written beside clickClient rather than instead of it: the pair is the
+        // record, and a reader that finds only one of them has half a drag.
+        if (event.dragEndClient.has_value())
+        {
+            builder.addLiteral(
+                "dragEndClientX",
+                std::format("{}", event.dragEndClient->x())
+            );
+            builder.addLiteral(
+                "dragEndClientY",
+                std::format("{}", event.dragEndClient->y())
+            );
+        }
+
+        // A literal for holdMillis' reason: it is a duration a reader compares
+        // against how slowly the target needs to be dragged before it follows.
+        if (event.travelMillis.has_value())
+        {
+            builder.addLiteral(
+                "travelMillis",
+                std::format("{}", *event.travelMillis)
+            );
         }
 
         // The non-golden member goes last, so a reader scanning a line meets the

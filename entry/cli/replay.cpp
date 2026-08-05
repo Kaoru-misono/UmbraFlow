@@ -139,6 +139,17 @@ return #verdict.findings
             }
 
             [[nodiscard]]
+            auto drag(
+                Point<ClientSpace> /*start*/,
+                Point<ClientSpace> /*end*/,
+                MonotonicInstant::Duration /*travel*/,
+                ObservationLease const& /*lease*/
+            ) -> Status override
+            {
+                return refuse("drags");
+            }
+
+            [[nodiscard]]
             auto movePointer(
                 Point<ClientSpace> /*point*/,
                 ObservationLease const& /*lease*/

@@ -120,6 +120,14 @@ namespace uf::trace
         [[nodiscard]]
         static auto requireMovePayload(TraceEvent const& event) -> Status;
 
+        // Three halves for engine.drag_delivered: where the button went down,
+        // where it came up, and how long the travel took. It is the one delivering
+        // line whose start alone says nothing useful -- a drag is defined by the
+        // distance, and a record missing the far end cannot be joined to what
+        // moved on the screen.
+        [[nodiscard]]
+        static auto requireDragPayload(TraceEvent const& event) -> Status;
+
         [[nodiscard]] auto startStep(TraceEvent::Framework const& payload) -> Status;
         [[nodiscard]] auto finishStep(TraceEvent::Framework const& payload) -> Status;
         [[nodiscard]] auto retryAttempt(TraceEvent::Framework const& payload) -> Status;

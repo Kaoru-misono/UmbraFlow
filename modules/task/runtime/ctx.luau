@@ -387,15 +387,17 @@ function ctx:cycle_read_lines(ticket, x, y, width, height)
     return native.cycle_read_lines(ticket, x, y, width, height)
 end
 
--- There is no ctx:cycle_click_point and no ctx:cycle_long_press, and do not add
--- one. Both ACTIVATE at a bare coordinate, so both are privileged; `ctx` is
--- published into every project environment, and section 2 rule 2 of
+-- There is no ctx:cycle_click_point, no ctx:cycle_long_press and no
+-- ctx:cycle_drag, and do not add one. All three ACTIVATE at a bare coordinate,
+-- so all three are privileged; `ctx` is published into every project
+-- environment, and section 2 rule 2 of
 -- docs/plans/2026-08-01-three-layers-and-agent-operator.md requires the
 -- privileged verbs to be unreachable from a business task rather than refused in
--- it. `observe.click` / `observe.long_press` reach the primitives through the
--- closure upvalue after checking the receipt, the hit and the interact edge, and
--- `explore.click_point` / `explore.long_press` forward them in a module only the
--- exploration environment publishes.
+-- it. `observe.click` / `observe.long_press` / `observe.drag` /
+-- `observe.drag_offset` reach the primitives through the closure upvalue after
+-- checking the receipt, the hit and the interact edge, and
+-- `explore.click_point` / `explore.long_press` / `explore.drag` forward them in a
+-- module only the exploration environment publishes.
 --
 -- Activating is the operative word, and ctx:cycle_move_pointer below is the case
 -- that shows it: it names a bare coordinate too and is forwarded here anyway,

@@ -123,6 +123,14 @@ namespace uf::trace
         // click.
         EnginePointerMoveDelivered,
 
+        // One delivered drag: pointer down at a point, moved to a second point
+        // with the button held, released there. Its own kind and additive. It is
+        // the only delivering event carrying TWO points -- `clickClient` is where
+        // the button went down and `dragEndClient` where it came up -- because a
+        // record holding only the start cannot say where the drag ended, and
+        // where it ended is the whole of what the caller asked for.
+        EngineDragDelivered,
+
         EngineObservationInvalidated,
 
         // One capture that stalled and is being attempted again. Additive, and
@@ -446,6 +454,17 @@ namespace uf::trace
         // other half, because the hold is the entire difference between a long
         // press and the click at the same coordinate.
         std::optional<uint64> holdMillis{};
+
+        // Where one engine.drag_delivered released the button. `clickClient`
+        // carries where it pressed, so this member is what makes the pair a
+        // drag rather than a click reported twice.
+        std::optional<Point<ClientSpace>> dragEndClient{};
+
+        // How long one engine.drag_delivered spent travelling between those two
+        // points, in whole milliseconds. It is to a drag what holdMillis is to a
+        // long press: the same two coordinates crossed instantly and crossed
+        // slowly are different acts to the target.
+        std::optional<uint64> travelMillis{};
     };
 
     // A TraceEvent with the run identity stamped onto it. Only TraceRecorder can

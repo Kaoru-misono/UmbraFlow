@@ -61,6 +61,17 @@ namespace uf::task
         std::chrono::seconds{5}
     };
 
+    // The longest a single drag may spend travelling. The long-press ceiling's
+    // reason exactly -- the button is down for all of it and every other input in
+    // the run is queued behind it -- and the same number, because what is being
+    // bounded is the same thing: how long this host may leave a pointer button
+    // physically down in the target.
+    // CALIBRATION: five seconds is a placeholder. A map pan that needs more than
+    // a second of travel is more likely a script bug than a slow target.
+    inline constexpr auto k_maxDragTravel = MonotonicInstant::Duration{
+        std::chrono::seconds{5}
+    };
+
     // The floor a ctx:wait poll interval is clamped up to; without it a zero
     // interval spins the observation cycle as fast as captures complete.
     // CALIBRATION: ten milliseconds is a placeholder -- invisible next to a
@@ -532,6 +543,27 @@ namespace uf::task
             CycleTicket ticket,
             PixelPoint point
         ) -> Result<engine::PointerMoveReceipt>;
+
+        // Spends the cycle `ticket` names and drags from `start` to `end` over
+        // `travel`.
+        //
+        // The ledger's half is cycleLongPress's, and it takes no hit ordinal for
+        // the same reason: the start reaches the host as a bare coordinate, and
+        // observe.luau is what proves it was located on this frame.
+        //
+        // `end` is the caller's arithmetic rather than anything it measured, and
+        // it gets the engine's whole coordinate gate anyway -- see
+        // engine::EngineSession::drag. `travel` has no default for the hold's
+        // reason and is bounded by k_maxDragTravel for the hold's reason too.
+        //
+        // Whoever may reach cycleLongPress may reach this, by the same mechanism.
+        [[nodiscard]]
+        auto cycleDrag(
+            CycleTicket ticket,
+            PixelPoint start,
+            PixelPoint end,
+            MonotonicInstant::Duration travel
+        ) -> Result<engine::DragReceipt>;
 
         // Sleeps until `deadline`, or for `interval`, whichever comes first, and
         // reports whether budget remains afterwards -- false means the deadline

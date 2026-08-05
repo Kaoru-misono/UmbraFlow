@@ -345,6 +345,146 @@ namespace uf
         return deliverPointerUp(refreshed, pixel, held, audit);
     }
 
+    auto drag(
+        DeliveryTarget const& target,
+        ObservationLease lease,
+        Point<ClientSpace> start,
+        Point<ClientSpace> end,
+        MonotonicInstant::Duration travel,
+        HeldInputs& held,
+        AuditLog& audit,
+        std::move_only_function<Result<DeliveryTarget>()> refreshTarget
+    ) -> Status
+    {
+        // How many held moves the travel is cut into. It is a mechanism number,
+        // not a tuning knob: one move would be a jump the target reads as a
+        // teleport, and a very large count spends the lease posting messages. The
+        // travel time is the caller's because how slowly a target must be dragged
+        // is a fact about that target.
+        constexpr auto k_dragMoves = uint32{32};
+
+        // The gesture DECELERATES INTO THE RELEASE, and that is the whole reason
+        // the moves are not evenly spaced. A target computes fling velocity from
+        // the last few pointer deltas before the button comes up, so a drag laid
+        // out evenly releases at full speed and the target keeps going -- measured
+        // 2026-08-05 on the real machine, where an evenly spaced drag sent the
+        // roster gliding well past where it was asked to stop, and the glide was
+        // still running when the next chunk tried to measure.
+        //
+        // Positions follow 1 - (1 - t)^2 while the time steps stay uniform, so the
+        // pointer covers most of the distance early and creeps the last few
+        // pixels. What arrives at the target is a gesture that ends at rest.
+        constexpr auto k_dragEase = [](float fraction) noexcept -> float
+        {
+            auto const remaining = 1.0F - fraction;
+            return 1.0F - (remaining * remaining);
+        };
+
+        // How long the pointer sits still at the far end before the button comes
+        // up. Deceleration alone leaves a small last delta, and a target sampling
+        // velocity over a window rather than over the final delta still sees
+        // motion; standing still for longer than that window drives what it
+        // samples to zero. It is charged to the caller's travel rather than added
+        // to it, so `travel` stays the whole duration of the gesture.
+        constexpr auto k_dragSettleFraction = uint32{4};
+
+        if (!refreshTarget)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "drag requires a refresh-target callback"
+            );
+        }
+        if (travel < MonotonicInstant::Duration::zero())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "drag travel time must be non-negative"
+            );
+        }
+
+        // BOTH ends before anything is pressed. The far end is the one a caller
+        // gets wrong -- it is start plus an offset the caller computed -- and
+        // checking it here is what keeps a bad offset from becoming a button
+        // pressed at a place the drag can never finish.
+        UF_TRY_VALUE(startPixel, pointerPixel(target, lease, start));
+        UF_TRY_VALUE(endPixel, pointerPixel(target, lease, end));
+
+        UF_TRY(deliverPointerDown(target, startPixel, held, audit));
+
+        // From here on the button is DOWN, so every early return below leaves it
+        // down on purpose: this function cannot know whether releasing at a place
+        // it could not reach is better than reporting. The caller owes the drain.
+        auto const dwell  = travel / k_dragSettleFraction;
+        auto const moving = travel - dwell;
+        auto const pause  = moving / k_dragMoves;
+        for (auto move = uint32{1}; move <= k_dragMoves; ++move)
+        {
+            auto const fraction = k_dragEase(
+                static_cast<float>(move) / static_cast<float>(k_dragMoves)
+            );
+            auto const waypoint = Point<ClientSpace>{
+                start.x() + ((end.x() - start.x()) * fraction),
+                start.y() + ((end.y() - start.y()) * fraction),
+            };
+
+            // Re-checked per move rather than interpolated between two validated
+            // pixels, so a window that dies or is re-targeted under a held button
+            // stops the gesture instead of finishing it into whatever took its
+            // place.
+            //
+            // FRESHNESS IS DELIBERATELY NOT RE-FENCED HERE. The lease starts
+            // running at frame capture and its ceiling is 750 ms
+            // (`k_defaultMaxActionFrameAge`; `--max-frame-age` only shortens it),
+            // while a drag slow enough not to fling the target runs 600 ms and up
+            // out of whatever is left of that budget once the script has done its
+            // reading. Fencing per waypoint made every such drag fail partway
+            // through with `stale_observation` and the button still down --
+            // measured 2026-08-05 against the game's map screen. The observation
+            // is stale by then BECAUSE THE DRAG IS WORKING; both endpoints were
+            // authorised against a fresh one before the button went down, which is
+            // the moment freshness actually means something.
+            UF_TRY_VALUE(
+                pixel,
+                controller_detail::checkPointerTarget(
+                    lease,
+                    target.sessionId(),
+                    target.generation(),
+                    waypoint,
+                    target.clientWidth(),
+                    target.clientHeight()
+                )
+            );
+            UF_TRY(
+                controller_detail::deliver(
+                    target.windowHandle(),
+                    controller_detail::pointerSpec(
+                        controller_detail::PointerMessage::MoveWithLeftButton,
+                        pixel
+                    ),
+                    audit
+                )
+            );
+            if (pause > MonotonicInstant::Duration::zero())
+            {
+                std::this_thread::sleep_for(pause);
+            }
+        }
+
+        // Stand still at the far end before letting go; see k_dragSettleFraction.
+        // It runs before the refresh rather than after, so the dwell is time the
+        // target spends seeing a motionless pointer rather than time this host
+        // spends enumerating windows.
+        if (dwell > MonotonicInstant::Duration::zero())
+        {
+            std::this_thread::sleep_for(dwell);
+        }
+
+        UF_TRY_VALUE(refreshed, refreshTarget());
+        UF_TRY(controller_detail::ensureSameDeliveryIdentity(target, refreshed));
+        return deliverPointerUp(refreshed, endPixel, held, audit);
+    }
+
     auto scroll(
         DeliveryTarget const& target,
         ObservationLease lease,

@@ -1229,6 +1229,183 @@ function observe.long_press(
     native.cycle_long_press(ticket, hit.click_x, hit.click_y, holdMillis)
 end
 
+-- observe.drag_offset(ctx, ticket, receipt, hit, dx, dy, travel_ms) -> ()
+--
+-- Presses where the hit is, travels `dx, dy` from there with the button held,
+-- releases, and spends the observation cycle.
+--
+-- THIS IS THE FORM FOR WHEN THE DESTINATION IS A DISTANCE AND NOT A THING, and
+-- `observe.drag` is the form for when it is a thing. Prefer that one: it
+-- authorises both ends. This one authorises the start and takes the far end on
+-- the caller's word, so it is the weaker verb and carries the longer name.
+--
+-- It cannot be replaced by the other, which is why it stays. A map that pans has
+-- nothing to recognise at the place you are dragging TO -- finding out what is
+-- there is the reason for the drag -- so there is no second hit to hand over,
+-- and the destination can only be stated as a distance.
+--
+-- THE OFFSET IS THE TASK'S NUMBER AND THE ANCHOR IS THE FRAMEWORK'S, which is
+-- `hits.offset`'s division seen from the other side. The grab is authorised by
+-- the region the page DOES declare -- a canvas element that draws a rectangle
+-- and carries no template, the shape `menu_burger` already has -- and the
+-- distance is the task's alone. Nothing here can drag FROM a coordinate the page
+-- never authorised, because `hit` is the only way in.
+--
+-- It is authorised exactly as `observe.click` is, through the same function, and
+-- goes through `native` rather than `ctx` for the reason stated there. Every hit
+-- is delivered at its POINT for `observe.long_press`'s reason: there is no
+-- match-handle spelling of a drag either.
+--
+-- The far end is computed HERE and passed as a coordinate, because that is the
+-- only layer that knows both the anchor and the offset. The host re-checks it
+-- against the client area regardless; this is not the place that makes it safe.
+--
+-- It spends the cycle, and more meaningfully than the other verbs do: a drag
+-- exists to move what the frame was a picture of, so the frame it was authorised
+-- by describes a screen that no longer exists the moment it succeeds.
+--
+-- `travel_ms` has no default, for `hold_ms`'s reason: how slowly a target must
+-- be dragged before it follows is a fact the author measured.
+function observe.drag_offset(
+    ctx: any,
+    ticket: any,
+    receipt: any,
+    hit: any,
+    dx: number,
+    dy: number,
+    travelMillis: number
+)
+    requireCtx(ctx, "observe.drag_offset")
+    requireAuthorisedHit("observe.drag_offset", ticket, receipt, hit)
+    if type(dx) ~= "number" or dx % 1 ~= 0 then
+        error("observe.drag_offset needs dx = a whole number of pixels", 2)
+    end
+    if type(dy) ~= "number" or dy % 1 ~= 0 then
+        error("observe.drag_offset needs dy = a whole number of pixels", 2)
+    end
+    if
+        type(travelMillis) ~= "number"
+        or travelMillis % 1 ~= 0
+        or travelMillis < 0
+    then
+        error(
+            "observe.drag_offset needs travel_ms = a whole number of milliseconds to "
+                .. "spend travelling; it has no default, because how slowly a "
+                .. "target must be dragged before it follows is a fact about "
+                .. "that target and not something this framework can know",
+            2
+        )
+    end
+
+    -- Refused here rather than let through as a drag that goes nowhere: a zero
+    -- offset delivers a press and a release at one point, which is a click, and
+    -- a click is a verb this caller could have asked for by name.
+    if dx == 0 and dy == 0 then
+        error(
+            "observe.drag_offset was asked to travel nowhere; a press and a release at "
+                .. "one point is observe.click, and asking for it by that name "
+                .. "is what makes the trace say what happened",
+            2
+        )
+    end
+
+    if native == nil then
+        error(
+            "observe.drag_offset needs the host's private surface to deliver a drag; "
+                .. "this VM has no bound session",
+            2
+        )
+    end
+    native.cycle_drag(
+        ticket,
+        hit.click_x,
+        hit.click_y,
+        hit.click_x + dx,
+        hit.click_y + dy,
+        travelMillis
+    )
+end
+
+-- observe.drag(ctx, ticket, receipt, from_hit, to_hit, travel_ms) -> ()
+--
+-- Presses on one recognised thing, travels to another with the button held,
+-- releases there, and spends the observation cycle.
+--
+-- BOTH ENDS GO THROUGH THE SAME DOOR, and that is the whole reason this verb
+-- exists beside `observe.drag_offset`. That one authorises where the gesture
+-- STARTS and then takes a distance on the caller's word: the host bounds the far
+-- end to the client area, but the page model says nothing about what is there.
+-- Here the destination is a hit, so it meets the identical six requisites --
+-- this cycle's receipt, this frame's location, this page, and an `interact` edge
+-- the page declares.
+--
+-- The destination needs that `interact` edge and is not merely aimed at: a drag
+-- ENDS IN A RELEASE over the destination, and a button coming up over a thing is
+-- exactly how a target learns something was dropped on it. A model that will not
+-- say the destination may be acted on has not authorised this gesture.
+--
+-- Both hits must come from THIS cycle, which `requireAuthorisedHit` already
+-- enforces once per hit. That is a real limit and worth naming: a destination
+-- that only becomes visible partway through the drag cannot be expressed here,
+-- because there is no frame on which both ends were seen. Use
+-- `observe.drag_offset` and a measured distance for those.
+--
+-- `travel_ms` has no default, for `observe.drag_offset`'s reason.
+function observe.drag(
+    ctx: any,
+    ticket: any,
+    receipt: any,
+    fromHit: any,
+    toHit: any,
+    travelMillis: number
+)
+    requireCtx(ctx, "observe.drag")
+    requireAuthorisedHit("observe.drag start", ticket, receipt, fromHit)
+    requireAuthorisedHit("observe.drag destination", ticket, receipt, toHit)
+    if
+        type(travelMillis) ~= "number"
+        or travelMillis % 1 ~= 0
+        or travelMillis < 0
+    then
+        error(
+            "observe.drag needs travel_ms = a whole number of milliseconds to "
+                .. "spend travelling; it has no default, because how slowly a "
+                .. "target must be dragged before it follows is a fact about "
+                .. "that target and not something this framework can know",
+            2
+        )
+    end
+
+    -- Two hits that landed on one point are one point, and a press and a release
+    -- at one point is a click. Refused for `observe.drag_offset`'s reason: the
+    -- trace would name an act that did not happen.
+    if fromHit.click_x == toHit.click_x and fromHit.click_y == toHit.click_y then
+        error(
+            "observe.drag was given a start and a destination at the same "
+                .. "point; a press and a release at one point is observe.click, "
+                .. "and asking for it by that name is what makes the trace say "
+                .. "what happened",
+            2
+        )
+    end
+
+    if native == nil then
+        error(
+            "observe.drag needs the host's private surface to deliver a drag; "
+                .. "this VM has no bound session",
+            2
+        )
+    end
+    native.cycle_drag(
+        ticket,
+        fromHit.click_x,
+        fromHit.click_y,
+        toHit.click_x,
+        toHit.click_y,
+        travelMillis
+    )
+end
+
 local function requireWholeAtLeast(
     verb: string,
     options: any,

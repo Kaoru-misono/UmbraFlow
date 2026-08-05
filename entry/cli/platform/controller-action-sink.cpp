@@ -40,6 +40,46 @@ namespace uf::cli::platform
         return std::unexpected{std::move(error)};
     }
 
+    auto ControllerActionSink::refreshTargetCallback(std::string_view what)
+        -> std::move_only_function<Result<DeliveryTarget>()>
+    {
+        // The verb name is COPIED rather than borrowed: the callback outlives this
+        // call by design -- it is handed to a controller verb that invokes it after
+        // a pause -- and a stored string_view would be a borrow with no stated
+        // owner.
+        return [this, what = std::string{what}]() -> Result<DeliveryTarget>
+        {
+            UF_TRY_VALUE(candidates, enumerateCandidates());
+            auto const found = std::ranges::find_if(
+                candidates,
+                [this](TargetCandidate const& candidate)
+                {
+                    return candidate.handle() == m_target.windowHandle();
+                }
+            );
+            if (found == candidates.end())
+            {
+                return fail(
+                    AutomationErrorKind::TargetUnavailable,
+                    std::format(
+                        "the {} target {:#x} is gone from the desktop",
+                        what,
+                        static_cast<uintptr>(m_target.windowHandle().value())
+                    )
+                );
+            }
+
+            auto const client = found->clientSize();
+            return DeliveryTarget::create(
+                m_target.windowHandle(),
+                m_target.sessionId(),
+                m_target.generation(),
+                client.width(),
+                client.height()
+            );
+        };
+    }
+
     auto ControllerActionSink::click(
         Point<ClientSpace> point,
         ObservationLease const& lease
@@ -116,36 +156,7 @@ namespace uf::cli::platform
         // exists for. What it does do here is FAIL: the live enumeration is re-read
         // across the hold, so a window gone by the time the button should come up is
         // reported rather than posted to.
-        auto refreshTarget = [this]() -> Result<DeliveryTarget>
-        {
-            UF_TRY_VALUE(candidates, enumerateCandidates());
-            auto const found = std::ranges::find_if(
-                candidates,
-                [this](TargetCandidate const& candidate)
-                {
-                    return candidate.handle() == m_target.windowHandle();
-                }
-            );
-            if (found == candidates.end())
-            {
-                return fail(
-                    AutomationErrorKind::TargetUnavailable,
-                    std::format(
-                        "the long press target {:#x} is gone from the desktop",
-                        static_cast<uintptr>(m_target.windowHandle().value())
-                    )
-                );
-            }
-
-            auto const client = found->clientSize();
-            return DeliveryTarget::create(
-                m_target.windowHandle(),
-                m_target.sessionId(),
-                m_target.generation(),
-                client.width(),
-                client.height()
-            );
-        };
+        auto refreshTarget = refreshTargetCallback("long press");
 
         auto delivered = uf::longPress(
             m_target,
@@ -176,7 +187,39 @@ namespace uf::cli::platform
         // message that holds nothing down, so a failed move strands no half-press.
         // controller::movePointer reads the held inputs to decide whether the
         // message is a plain move or a drag; nothing this port exposes leaves a
-        // button held across calls, so the plain move is what it picks.
+        // button held ACROSS calls, so the plain move is what it picks here. The
+        // held moves inside drag() are the other branch, and they never leave this
+        // port with a button down either.
         return uf::movePointer(m_target, lease, point, m_held, m_audit);
+    }
+
+    auto ControllerActionSink::drag(
+        Point<ClientSpace> start,
+        Point<ClientSpace> end,
+        MonotonicInstant::Duration travel,
+        ObservationLease const& lease
+    ) -> Status
+    {
+        auto delivered = uf::drag(
+            m_target,
+            lease,
+            start,
+            end,
+            travel,
+            m_held,
+            m_audit,
+            refreshTargetCallback("drag")
+        );
+        if (delivered)
+        {
+            return ok();
+        }
+
+        // The long press's clause, and the reason it matters more here: a drag can
+        // fail at any of sixteen held moves as well as at the refresh, so "the
+        // button went down and did not come up" is its ordinary failure rather
+        // than its unlucky one. The port's "released on every exit path" guarantee
+        // is kept here.
+        return drainAfterFailure(std::move(delivered).error(), "drag");
     }
 }

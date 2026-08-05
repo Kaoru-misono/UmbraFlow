@@ -1980,6 +1980,139 @@ namespace uf::task
             }
         }
 
+        TEST_CASE("observe.drag_offset demands the same authorisation a click does")
+        {
+            // A drag delivers pointer input anchored on a hit exactly as a click
+            // does, so it goes through the same door. Swap the requireAuthorisedHit
+            // call in observe.drag_offset for nothing at all and the first two subcases go
+            // red while observe.click stays green.
+            //
+            // The last two are behind that door rather than part of it, and the
+            // travel-nowhere one is the offset form's alone: a press and a release at one
+            // point IS a click, and letting it through would put an act in the
+            // trace under a name that misdescribes it.
+            auto const directory = TemporaryDirectory{"uf-model-drag-offset-auth"};
+            seedTemplates(directory.path());
+
+            struct DragCase final
+            {
+                std::string_view label;
+                std::string_view body;
+                std::string_view fragment;
+            };
+
+            auto const cases = std::vector<DragCase>{
+                DragCase{
+                    .label = "no receipt at all",
+                    .body  = R"lua(
+                        local ticket = ctx:cycle_open()
+                        local hit = observe.find(ctx, ticket, battle, slot)
+                        if hit == nil then return 0 end
+                        local ok, err = pcall(function()
+                            observe.drag_offset(ctx, ticket, nil, hit, -40, 0, 120)
+                        end)
+                        ctx:cycle_close(ticket)
+                        if ok then return 0 end
+                        return report(err)
+                    )lua",
+                    .fragment = "needs the receipt observe.resolve_page returned",
+                },
+                DragCase{
+                    .label = "a hit located on an earlier cycle",
+                    .body  = R"lua(
+                        local first = ctx:cycle_open()
+                        local stale = observe.find(ctx, first, battle, slot)
+                        ctx:cycle_close(first)
+                        if stale == nil then return 0 end
+
+                        local second = ctx:cycle_open()
+                        local receipt = observe.resolve_page(ctx, second, battle)
+                        if receipt == nil then return 0 end
+                        local ok, err = pcall(function()
+                            observe.drag_offset(ctx, second, receipt, stale, -40, 0, 120)
+                        end)
+                        ctx:cycle_close(second)
+                        if ok then return 0 end
+                        return report(err)
+                    )lua",
+                    .fragment = "hit located on another observation cycle",
+                },
+                DragCase{
+                    .label = "a travel nobody named",
+                    .body  = R"lua(
+                        local ticket = ctx:cycle_open()
+                        local receipt = observe.resolve_page(ctx, ticket, battle)
+                        if receipt == nil then return 0 end
+                        local hit = observe.find(ctx, ticket, battle, slot)
+                        if hit == nil then return 0 end
+                        local ok, err = pcall(function()
+                            observe.drag_offset(ctx, ticket, receipt, hit, -40, 0)
+                        end)
+                        ctx:cycle_close(ticket)
+                        if ok then return 0 end
+                        return report(err)
+                    )lua",
+                    .fragment = "it has no default",
+                },
+                DragCase{
+                    .label = "a drag that travels nowhere",
+                    .body  = R"lua(
+                        local ticket = ctx:cycle_open()
+                        local receipt = observe.resolve_page(ctx, ticket, battle)
+                        if receipt == nil then return 0 end
+                        local hit = observe.find(ctx, ticket, battle, slot)
+                        if hit == nil then return 0 end
+                        local ok, err = pcall(function()
+                            observe.drag_offset(ctx, ticket, receipt, hit, 0, 0, 120)
+                        end)
+                        ctx:cycle_close(ticket)
+                        if ok then return 0 end
+                        return report(err)
+                    )lua",
+                    .fragment = "was asked to travel nowhere",
+                },
+            };
+
+            for (auto const& subcase : cases)
+            {
+                CAPTURE(subcase.label);
+
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0), pixels(2, 5, 0)},
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto source = std::string{
+                    "local function report(err)\n"
+                    "    if type(err) ~= 'string' then return 0 end\n"
+                    "    if string.find(err, [==["
+                };
+                source += subcase.fragment;
+                source += "]==], 1, true) == nil then return 0 end\n"
+                          "    return 1\n"
+                          "end\n";
+                source += subcase.body;
+
+                auto const result = runModel(context, built, battleScript(source));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+
+                // Nothing reached the port under any of them, which is what makes
+                // these refusals rather than reports.
+                CHECK(p_clicks->drags().empty());
+                CHECK(p_clicks->clickCount() == 0U);
+            }
+        }
+
         TEST_CASE("A pixel hit clicks through the match the same cycle produced")
         {
             auto const directory = TemporaryDirectory{"uf-model-pixel-click"};
