@@ -36,14 +36,14 @@ namespace uf::cli
     // The routine writes the verdict to standard output as JSON lines, in
     // `regress.groups` order: one summary object, then one line per finding, per
     // separation measurement, per anchor subset, per page resolved on a screen,
-    // per declared page, and per cell.
+    // per declared page, per page's edge count, and per cell.
     //
-    // Two of those seven blocks depend on the run rather than on the file. The
-    // subset rows are decided by the file alone and are written whether or not
-    // this run swept; the two co-resolution blocks -- `resolution` and
-    // `page_coverage` -- exist only when it did (CheckArgs::sweepPages), because
-    // a run that offered no page to any screen would otherwise report zero
-    // resolutions for every page.
+    // Two of those eight blocks depend on the run rather than on the file. The
+    // subset and linkage rows are decided by the file alone and are written
+    // whether or not this run swept; the two co-resolution blocks --
+    // `resolution` and `page_coverage` -- exist only when it did
+    // (CheckArgs::sweepPages), because a run that offered no page to any screen
+    // would otherwise report zero resolutions for every page.
     //
     // A failure here is a check that could not be performed.
     [[nodiscard]]

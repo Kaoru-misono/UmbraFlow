@@ -7259,6 +7259,34 @@ namespace uf::task
                 end
                 return nil
             end
+            -- The same walk with the model's graph attached. Separate from
+            -- `sweepModel` rather than a sixth parameter on it: every case above
+            -- hands over a model with no graph, and that is the control the
+            -- linkage rows are measured against.
+            local function sweepLinked(pages, edges, options)
+                local byName = {}
+                for _, entry in pages do byName[entry.name] = entry end
+                return regress.check(ctx, {
+                    elements     = { markA, markB },
+                    pages        = pages,
+                    page_by_name = byName,
+                    graph        =
+                        navigation.Graph.new{ pages = pages, edges = edges },
+                    claims       = oracle.Claims.new{
+                        screens      = {
+                            screenNaming("both", hashOne),
+                            screenNaming("one_only", hashTwo),
+                        },
+                        expectations = {},
+                    },
+                }, options)
+            end
+            local function linkageOf(verdict, name)
+                for _, entry in verdict.linkage do
+                    if entry.page == name then return entry end
+                end
+                return nil
+            end
         )lua";
 
         // `walks` is how many times the body calls `sweep`: each one opens an
@@ -7667,6 +7695,250 @@ namespace uf::task
                     if pair.general ~= "battle" then return 0 end
                     if pair.specific ~= "menu" then return 0 end
                     if pair.extra ~= 0 then return 0 end
+                    return 1
+                )lua",
+                    2U
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+        }
+
+        TEST_CASE("The matrix reports how many edges reach and leave each page")
+        {
+            // The graph half of the coverage question, and capture-free like the
+            // subset lattice: a resolution row says a page can be told apart from
+            // the others on some frame, and a linkage row says the file offers any
+            // way to arrive at it. REPORTED, never judged -- a model draws its
+            // edges long after it declares its pages, so pages with no inbound
+            // edge are the normal state of an honest file.
+            auto const directory = TemporaryDirectory{"uf-model-linkage"};
+            seedTemplates(directory.path());
+            auto const hashes = seedScreens(directory.path());
+
+            SUBCASE("a page no edge names is counted, and a pop names none")
+            {
+                auto const result = runSweep(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    local start  = page("start", { row(markA, "required") })
+                    local middle = page("middle", { row(markB, "required") })
+                    local cover  = model.Page.new{
+                        name = "cover",
+                        overlay = true,
+                        references = {
+                            row(markA, "required"),
+                            row(markB, "required"),
+                        },
+                    }
+                    -- Every page needs a required clause, so an unlinked one is
+                    -- spelled as a signature no edge mentions rather than as a
+                    -- page with nothing in it.
+                    local loose  = page("loose", {
+                        row(markB, "required"),
+                        row(markA, "forbidden"),
+                    })
+
+                    -- Keys rather than clicks: a click edge needs the from page to
+                    -- exercise interact on the element, and these marks are
+                    -- identify-only. What is measured here is the edge's ends, and
+                    -- a keystroke has the same two.
+                    local verdict = sweepLinked(
+                        { start, middle, cover, loose },
+                        {
+                            navigation.Edge.new{
+                                from = start, to = { middle },
+                                via = "key", via_key = "E", kind = "navigate",
+                            },
+                            navigation.Edge.new{
+                                from = start, to = { cover },
+                                via = "key", via_key = "C", kind = "push",
+                            },
+                            navigation.Edge.new{
+                                from = cover,
+                                via = "key", via_key = "B", kind = "pop",
+                            },
+                            -- Ends the turn in place. Walking it means already
+                            -- standing on `middle`, so it is a way to leave and
+                            -- not a way to arrive; counting it inbound would let
+                            -- one such edge hide a page nothing else reaches.
+                            navigation.Edge.new{
+                                from = middle, to = { middle },
+                                via = "key", via_key = "F", kind = "navigate",
+                            },
+                        }
+                    )
+
+                    if not verdict.linked then return 0 end
+                    if #verdict.linkage ~= 4 then return 0 end
+
+                    if linkageOf(verdict, "start").inbound ~= 0 then return 0 end
+                    if linkageOf(verdict, "start").outbound ~= 2 then return 0 end
+                    -- One inbound, from `start` alone: the self edge above adds
+                    -- to the outbound side only.
+                    if linkageOf(verdict, "middle").inbound ~= 1 then return 0 end
+                    if linkageOf(verdict, "middle").outbound ~= 1 then return 0 end
+
+                    -- The pop is the point of this subcase: it leaves `cover` and
+                    -- arrives nowhere the file can name, so it counts once as
+                    -- outbound and nowhere as inbound. Were a pop credited to the
+                    -- page underneath, every overlay in a real model would invent
+                    -- an inbound edge for whichever page happened to be declared
+                    -- first.
+                    if linkageOf(verdict, "cover").inbound ~= 1 then return 0 end
+                    if linkageOf(verdict, "cover").outbound ~= 1 then return 0 end
+
+                    if linkageOf(verdict, "loose").inbound ~= 0 then return 0 end
+                    if linkageOf(verdict, "loose").outbound ~= 0 then return 0 end
+
+                    -- Never judged: two pages here have no way in and the verdict
+                    -- is still accepted.
+                    if not verdict.accepted then return 0 end
+                    if #verdict.findings ~= 0 then return 0 end
+
+                    local rendered = regress.render(verdict)
+                    local linkageLine = '{"check":"page_linkage","page":"cover",'
+                        .. '"inbound":1,"outbound":1,"interrupt":false}'
+                    if string.find(rendered, linkageLine, 1, true) == nil then
+                        return 0
+                    end
+                    -- `start` and `loose`, and not `cover`, which a pop leaves
+                    -- but nothing declares an arrival at.
+                    local summary = '"pages_unlinked":2'
+                    if string.find(rendered, summary, 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("an interrupt page is not counted among the unlinked")
+            {
+                auto const result = runSweep(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    local start = page("start", { row(markA, "required") })
+                    local alert = model.Page.new{
+                        name = "alert",
+                        overlay = true,
+                        interrupt = true,
+                        references = { row(markB, "required") },
+                    }
+
+                    local verdict = sweepLinked({ start, alert }, {})
+
+                    -- Both pages have no inbound edge and only one is counted:
+                    -- an interrupt page declares itself reachable from anywhere
+                    -- once, instead of as an inbound edge from every page it can
+                    -- cover, so an edge could never retire its zero.
+                    if linkageOf(verdict, "start").inbound ~= 0 then return 0 end
+                    if linkageOf(verdict, "alert").inbound ~= 0 then return 0 end
+                    if linkageOf(verdict, "alert").interrupt ~= true then
+                        return 0
+                    end
+                    if linkageOf(verdict, "start").interrupt ~= false then
+                        return 0
+                    end
+
+                    local rendered = regress.render(verdict)
+                    if string.find(rendered, '"pages_unlinked":1', 1, true) == nil
+                    then
+                        return 0
+                    end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("the edges are counted on a check that sweeps no page")
+            {
+                auto const result = runSweep(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    -- The product path this measurement must survive:
+                    -- `umbra-flow check` without --sweep-pages offers no page to
+                    -- any screen, and the edges are a fact about the file that
+                    -- costs no capture either way.
+                    local start = page("start", { row(markA, "required") })
+                    local other = page("other", { row(markB, "required") })
+                    local verdict = sweepLinked(
+                        { start, other },
+                        {
+                            navigation.Edge.new{
+                                from = start, to = { other },
+                                via = "key", via_key = "E", kind = "navigate",
+                            },
+                        },
+                        { sweep_pages = false }
+                    )
+
+                    -- The premise, asserted so this cannot pass by sweeping after
+                    -- all: nothing was offered to any screen.
+                    if verdict.swept then return 0 end
+                    if #verdict.resolutions ~= 0 then return 0 end
+
+                    if not verdict.linked then return 0 end
+                    if #verdict.linkage ~= 2 then return 0 end
+                    if linkageOf(verdict, "other").inbound ~= 1 then return 0 end
+
+                    local rendered = regress.render(verdict)
+                    if string.find(rendered, '"pages_unlinked":1', 1, true) == nil
+                    then
+                        return 0
+                    end
+                    -- And the co-resolution count is absent on the same line, so
+                    -- the two halves are measured independently rather than one
+                    -- of them carrying the other.
+                    if string.find(rendered, "pages_unresolved", 1, true) ~= nil
+                    then
+                        return 0
+                    end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a model handed over without its graph reports no count")
+            {
+                auto const result = runSweep(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    -- The distinction the whole row kind rests on. Every page here
+                    -- has no inbound edge, and the honest report is silence rather
+                    -- than the largest number this line can carry: nothing was
+                    -- looked at.
+                    local verdict = sweep({
+                        page("start", { row(markA, "required") }),
+                        page("other", { row(markB, "required") }),
+                    })
+
+                    if verdict.linked then return 0 end
+                    if #verdict.linkage ~= 0 then return 0 end
+
+                    local rendered = regress.render(verdict)
+                    if string.find(rendered, "pages_unlinked", 1, true) ~= nil then
+                        return 0
+                    end
+                    -- The positive control: the same summary DOES carry the count
+                    -- once a graph is there, so the absence above is the missing
+                    -- graph and not a key this report never writes.
+                    local linked = regress.render(
+                        sweepLinked({ page("only", { row(markA, "required") }) }, {})
+                    )
+                    if string.find(linked, '"pages_unlinked":1', 1, true) == nil then
+                        return 0
+                    end
                     return 1
                 )lua",
                     2U

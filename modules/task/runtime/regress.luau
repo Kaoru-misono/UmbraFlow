@@ -33,7 +33,7 @@
 --     nothing walked end to end until a screen could name its page. It is read
 --     out of the sweep below and costs the screen's own observation.
 --
--- IT ALSO REPORTS THREE THINGS IT DOES NOT JUDGE, and a reader who takes them for
+-- IT ALSO REPORTS FOUR THINGS IT DOES NOT JUDGE, and a reader who takes them for
 -- findings will break a correct model to make them go away:
 --
 --   * which OTHER declared pages resolve on each screen. Not a defect: an overlay
@@ -43,6 +43,9 @@
 --     order a dispatcher must ask in, decided from the file alone.
 --   * how many screens each page resolves on, zero included. A page nothing
 --     resolves is as likely to be a page nobody captured.
+--   * how many edges reach and leave each page. A model draws its edges long
+--     after it declares its pages, so most pages having none is the normal state
+--     of an honest file rather than a contradiction in it.
 --
 -- TWO KINDS OF CELL. An element with appearances is measured by what its
 -- templates score; an element with none by what its rectangle READS, against the
@@ -53,8 +56,9 @@
 -- that choice is made.
 --
 -- `regress` sorts last of the framework modules, which is what lets it name
--- `model`, `observe`, `oracle`, `reading` and `recognition`. It holds no state:
--- every verb takes the ctx it observes through and the model it walks.
+-- `model`, `navigation`, `observe`, `oracle`, `reading` and `recognition`. It
+-- holds no state: every verb takes the ctx it observes through and the model it
+-- walks.
 
 -- How far ahead the appearance that owns a screen must be of every other
 -- appearance of the same element there.
@@ -198,6 +202,23 @@ export type PageCoverage = {
     declared_screens: number,
 }
 
+-- What the FILE says about reaching one page: the graph half of the question the
+-- co-resolution rows answer about pixels.
+--
+-- `inbound` counts the edges naming this page in their `to` set, so a pop counts
+-- for nobody -- it declares no destination at all (`navigation.Edge`) -- and a
+-- page reached only by closing an overlay reads zero.
+--
+-- `interrupt` rides along because zero inbound means something else on a row
+-- carrying it, and a reader must not have to look the flag up elsewhere to know
+-- which kind of zero this is.
+export type PageLinkage = {
+    page: string,
+    inbound: number,
+    outbound: number,
+    interrupt: boolean,
+}
+
 -- `recognition.AnchorSubset`, respelled because this VM has no module resolver
 -- and one chunk cannot name another chunk's exported type
 -- (docs/plans/2026-08-02-luau-coding-standard.md). The producer owns the meaning;
@@ -215,6 +236,10 @@ export type AnchorSubset = {
 -- and when nothing was offered. "Measured, and the answer is none" and "not
 -- measured" are different facts, and a report that spelled them the same way
 -- would be green over the half nobody looked at.
+--
+-- `linked` says the same thing about `linkage`, and for a sharper reason: a model
+-- handed over without its graph would otherwise report every page as unreachable,
+-- which is the loudest possible way to say nothing was looked at.
 export type Verdict = {
     accepted: boolean,
     screens: number,
@@ -227,6 +252,8 @@ export type Verdict = {
     resolutions: { CoResolution },
     subsets: { AnchorSubset },
     coverage: { PageCoverage },
+    linked: boolean,
+    linkage: { PageLinkage },
     claimed: number,
     unclaimed: number,
     matches: number,
@@ -987,6 +1014,38 @@ local function identifiedElements(built: any): { [string]: boolean }
     return identified
 end
 
+-- Counts the edges that reach and leave each page, in declaration order of the
+-- pages so two runs over one file report the same rows in the same places.
+--
+-- A SELF EDGE IS NOT AN ARRIVAL. It counts as a way to leave and never as a way
+-- to arrive, because walking it requires already standing on the page -- so
+-- counting it inbound would let one edge that ends a turn in place hide a page
+-- nothing else can reach, which is the single thing this row exists to show.
+local function linkPages(built: any, verdict: Verdict)
+    local inbound: { [string]: number }  = {}
+    local outbound: { [string]: number } = {}
+
+    for _, edge in built.graph.edges do
+        outbound[edge.from.name] = (outbound[edge.from.name] or 0) + 1
+        if edge.to ~= nil then
+            for _, page in edge.to do
+                if page.name ~= edge.from.name then
+                    inbound[page.name] = (inbound[page.name] or 0) + 1
+                end
+            end
+        end
+    end
+
+    for _, page in built.pages do
+        table.insert(verdict.linkage, {
+            page      = page.name,
+            inbound   = inbound[page.name] or 0,
+            outbound  = outbound[page.name] or 0,
+            interrupt = page.interrupt == true,
+        })
+    end
+end
+
 -- Measures one screen: which pages resolve on it, then every element, then every
 -- appearance of the elements that declare more than one.
 --
@@ -1183,6 +1242,11 @@ function regress.check(ctx: any, built: any, options: CheckOptions?): Verdict
         resolutions = {},
         subsets     = {},
         coverage    = {},
+        -- `is_graph` rather than a shape test: a look-alike table counts edges
+        -- nobody constructed, and reads as a measurement rather than as one that
+        -- did not happen.
+        linked      = navigation.is_graph(built.graph),
+        linkage     = {},
         claimed     = #built.claims.expectations,
         unclaimed   = 0,
         matches     = 0,
@@ -1198,6 +1262,12 @@ function regress.check(ctx: any, built: any, options: CheckOptions?): Verdict
     -- marks land on the same frames are visible only in the sweep below. Neither
     -- half subsumes the other.
     verdict.subsets = recognition.anchor_subsets(built)
+
+    -- Capture-free like the subsets, and outside the sweep on purpose: a check
+    -- that offers no page to any screen still reports every edge.
+    if verdict.linked then
+        linkPages(built, verdict)
+    end
 
     local screens = oracle.Claims.screens_in_frame_order(built.claims)
     verdict.screens = #screens
@@ -1384,6 +1454,20 @@ local function summaryLine(verdict: Verdict): string
         end
     end
 
+    -- Absent on an unlinked verdict for the same reason as the two above. An
+    -- interrupt page is excluded because no edge could ever retire its zero: it
+    -- declares itself reachable from anywhere instead. A model's own entry page
+    -- has no such exemption and is always counted, so one is the floor.
+    local unlinkedPages: number? = nil
+    if verdict.linked then
+        unlinkedPages = 0
+        for _, page in verdict.linkage do
+            if page.inbound == 0 and not page.interrupt then
+                unlinkedPages += 1
+            end
+        end
+    end
+
     return jsonObject({
         { "check", "summary" },
         { "accepted", verdict.accepted },
@@ -1395,11 +1479,12 @@ local function summaryLine(verdict: Verdict): string
         { "unclaimed", verdict.unclaimed },
         { "matches", verdict.matches },
         { "findings", #verdict.findings },
-        -- The three measured-but-never-judged counts. They move the exit code
+        -- The four measured-but-never-judged counts. They move the exit code
         -- nowhere: `accepted` is findings alone.
         { "resolutions", resolutions },
         { "subsets", #verdict.subsets },
         { "pages_unresolved", unresolvedPages },
+        { "pages_unlinked", unlinkedPages },
         { "separation_factor", k_separationFactor },
     })
 end
@@ -1461,6 +1546,16 @@ local function coverageLine(page: PageCoverage): string
     })
 end
 
+local function linkageLine(page: PageLinkage): string
+    return jsonObject({
+        { "check", "page_linkage" },
+        { "page", page.page },
+        { "inbound", page.inbound },
+        { "outbound", page.outbound },
+        { "interrupt", page.interrupt },
+    })
+end
+
 local function cellLine(cell: Cell): string
     return jsonObject({
         { "check", "cell" },
@@ -1519,6 +1614,7 @@ function regress.groups(verdict: Verdict): { Group }
         { rows = verdict.subsets, line = subsetLine :: any },
         { rows = verdict.resolutions, line = resolutionLine :: any },
         { rows = verdict.coverage, line = coverageLine :: any },
+        { rows = verdict.linkage, line = linkageLine :: any },
         { rows = verdict.cells, line = cellLine :: any },
     }
 end
