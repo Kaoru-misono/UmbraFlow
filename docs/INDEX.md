@@ -10,7 +10,9 @@
 
 ## Current plans
 
-Six documents, in reading order. Everything else is archived.
+The first six below are the reading order; the dated decisions after them build on
+it. [`plans/README.md`](plans/README.md) carries each plan's status and is the
+canonical listing — this section is its short form. Everything else is archived.
 
 - Target form — three layers plus the Agent operator (approved 2026-08-01):
   [Three layers and the Agent operator](plans/2026-08-01-three-layers-and-agent-operator.md)
@@ -26,6 +28,19 @@ Six documents, in reading order. Everything else is archived.
   §二 design and §四之二 rulings; design conclusions stand, implementation
   position moved by the script-owned page model above):
   [Annotation model — capabilities, holding, appearances](plans/2026-07-31-annotation-model-capabilities.md)
+- Implementation shape of the exploration environment (authorised 2026-08-01):
+  [Agent front end and the exploration environment](plans/2026-08-01-agent-front-end-and-exploration.md)
+- State layer and policy slots — `l2-v2`, five rulings answered 2026-08-04, four
+  phases of which only A has landed:
+  [State layer and policy slots](plans/2026-08-04-state-layer-and-policy-slots.md)
+- Keeping the screenshot corpus out of version control — tier 4 shipped
+  2026-08-04, tier 0 retired by measurement, tiers 1–3 still proposals:
+  [Storing the evidence corpus](plans/2026-08-04-evidence-storage.md)
+- Framework capabilities for full-map route planning (settled 2026-08-05, pending
+  execution) — the drag and connectivity verbs, and three things ruled out:
+  [Framework capabilities for full-map planning](plans/2026-08-05-map-verbs-and-connectivity.md)
+- Proposal awaiting a decision, no code changed on its account:
+  [Luau coding standard — measurements and outline](plans/2026-08-02-luau-coding-standard.md)
 - Frozen real-machine acceptance ledger, retained until parity retires it:
   [M0 demo port deviations](plans/2026-07-20-m0-demo-port-deviations.md)
 - [Plans](plans/README.md)

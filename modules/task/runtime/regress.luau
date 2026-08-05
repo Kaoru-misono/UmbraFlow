@@ -83,6 +83,10 @@ local k_separationFactor = 4
 local k_subjectElement    = "element"
 local k_subjectAppearance = "appearance"
 
+-- A strip's own subject: the cell measures a COUNT rather than a score or a
+-- reading, so a reader filtering the report by subject can tell it from both.
+local k_subjectStrip      = "strip"
+
 local k_outcomeHit  = "hit"
 local k_outcomeMiss = "miss"
 
@@ -130,6 +134,12 @@ export type Cell = {
     expected_text: string?,
     text: string?,
     confidence: number?,
+
+    -- A strip cell alone: how many items the frame divided the container into,
+    -- and how many the file claims. Both absent everywhere else, because no
+    -- other cell has a number to be wrong about.
+    items: number?,
+    expected_items: number?,
     x: number?,
     y: number?,
     width: number?,
@@ -374,6 +384,8 @@ local function pushCell(
         expected_text = nil,
         text          = nil,
         confidence    = nil,
+        items          = nil,
+        expected_items = nil,
         x             = if match ~= nil then match.x else nil,
         y             = if match ~= nil then match.y else nil,
         width         = if match ~= nil then match.width else nil,
@@ -843,6 +855,106 @@ local function walkTextElement(
     end
 end
 
+-- One strip's cell: cluster the container by the spacing the model states and
+-- compare the count against what this screen claims.
+--
+-- THIS IS WHAT MAKES A SPACING FALSIFIABLE. A strip writes down no rectangle per
+-- item -- that is the whole point, since the number is the screen's to decide --
+-- so the only thing the file asserts is the gap, and the only way a stored
+-- screen can contradict it is the count that gap produces. Widen the spacing
+-- until two items merge, or narrow it until one splits, and this cell goes red.
+--
+-- A claim is required, as it is for a text cell: a strip on a screen that claims
+-- no number is a cell with no question in it, not a question this declined to
+-- answer.
+local function walkStripElement(
+    ctx: any,
+    ticket: any,
+    claims: any,
+    screen: any,
+    element: any,
+    rect: any,
+    verdict: Verdict
+)
+    local claimRect = claimedAt(element, rect)
+    local claimed   =
+        oracle.Claims.items_for(claims, screen.name, element.name, claimRect)
+    if claimed == nil then
+        pushCell(
+            verdict.cells,
+            screen,
+            element,
+            nil,
+            k_subjectStrip,
+            nil,
+            oracle.state_unclaimed,
+            rect
+        )
+        return
+    end
+
+    local expected = oracle.Claims.state_for(
+        claims,
+        screen.name,
+        element.name,
+        nil,
+        claimRect
+    )
+    local groups = observe.read_strip(
+        ctx,
+        ticket,
+        element,
+        observe.empty_is_absence
+    )
+    local counted = #groups
+
+    local cell = pushCell(
+        verdict.cells,
+        screen,
+        element,
+        nil,
+        k_subjectStrip,
+        { hit = counted == claimed },
+        expected,
+        rect
+    )
+    cell.items          = counted
+    cell.expected_items = claimed
+
+    if cell.verdict == k_verdictHole then
+        pushFinding(
+            verdict.findings,
+            k_verdictHole,
+            screen.name,
+            element.name,
+            nil,
+            nil,
+            "the project file says this strip holds "
+                .. tostring(claimed)
+                .. " items here"
+                .. whereIn(element, rect)
+                .. " and its spacing of "
+                .. tostring(element.item_spacing)
+                .. " divided the container into "
+                .. tostring(counted)
+        )
+    elseif cell.verdict == k_verdictMisfire then
+        pushFinding(
+            verdict.findings,
+            k_verdictMisfire,
+            screen.name,
+            element.name,
+            nil,
+            nil,
+            "the project file says this strip does not hold "
+                .. tostring(claimed)
+                .. " items here"
+                .. whereIn(element, rect)
+                .. " and its spacing divided the container into exactly that"
+        )
+    end
+end
+
 -- It is a function of a RECTANGLE rather than of an element, which is what lets
 -- one screen carry several rows for a shape drawn once and placed many times: the
 -- caller walks the rectangles and this measures each.
@@ -1169,7 +1281,17 @@ local function walkScreen(
             )
         else
             for _, rect in rects do
-                if #element.appearances == 0 then
+                if element.form == "strip" then
+                    walkStripElement(
+                        ctx,
+                        ticket,
+                        claims,
+                        screen,
+                        element,
+                        rect,
+                        verdict
+                    )
+                elseif #element.appearances == 0 then
                     walkTextElement(
                         ctx,
                         ticket,
@@ -1564,6 +1686,8 @@ local function cellLine(cell: Cell): string
         { "expected_text", cell.expected_text },
         { "text", cell.text },
         { "confidence", cell.confidence },
+        { "items", cell.items },
+        { "expected_items", cell.expected_items },
         { "x", cell.x },
         { "y", cell.y },
         { "width", cell.width },

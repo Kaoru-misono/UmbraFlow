@@ -62,6 +62,7 @@ local k_expectationKeys: { [string]: boolean } = {
     rect       = true,
     appearance = true,
     text       = true,
+    items      = true,
     state      = true,
     extra      = true,
     residual   = true,
@@ -134,6 +135,10 @@ export type Rect = {
 --     hit is invisible once folded with a correct one
 --     (docs/plans/2026-07-31-annotation-model-capabilities.md 2.3 correction
 --     (c)).
+--   * `items`: how many items a STRIP holds on this screen. It is the third
+--     source and the only one that is a number: a strip's rectangles are not in
+--     the file at all, so what the model asserts is the spacing and what a
+--     screen can contradict is the count that spacing produces.
 --   * `text`: what the element's rectangle READS on this screen, which is the
 --     cell an element with no templates has
 --     (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4). It is
@@ -145,6 +150,7 @@ export type Expectation = {
     rect: Rect?,
     appearance: string?,
     text: string?,
+    items: number?,
     state: string,
     extra: { [string]: any },
     residual: { string },
@@ -167,6 +173,7 @@ export type Claims = {
     expectations: { Expectation },
     state_by_cell: { [string]: string },
     text_by_cell: { [string]: string },
+    items_by_cell: { [string]: number },
     rects_by_subject: { [string]: { Rect } },
 }
 
@@ -426,7 +433,43 @@ function Expectation.new(spec: { [string]: any }): Expectation
         end
     end
 
-    if #element.appearances == 0 then
+    if spec.items ~= nil then
+        if
+            type(spec.items) ~= "number"
+            or spec.items % 1 ~= 0
+            or spec.items < 0
+        then
+            error(
+                what
+                    .. " items must be a whole number of items, zero included: "
+                    .. "an empty hand is a screen worth claiming",
+                2
+            )
+        end
+        if element.form ~= "strip" then
+            error(
+                what
+                    .. " claims a number of items and element '"
+                    .. element.name
+                    .. "' is a "
+                    .. tostring(element.form)
+                    .. "; only a strip has items, because only a strip carries "
+                    .. "the spacing that divides a container into them",
+                2
+            )
+        end
+        if spec.text ~= nil or spec.appearance ~= nil then
+            error(
+                what
+                    .. " claims items beside a text or an appearance; those are "
+                    .. "three ways an element can be verified and a cell is "
+                    .. "measured by exactly one",
+                2
+            )
+        end
+    end
+
+    if #element.appearances == 0 and element.form ~= "strip" then
         if spec.text == nil then
             error(
                 what
@@ -534,6 +577,7 @@ function Expectation.new(spec: { [string]: any }): Expectation
             else nil,
         appearance = spec.appearance,
         text       = spec.text,
+        items      = spec.items,
         state      = spec.state,
         extra      = mint.frozen_extra(spec.extra),
         residual   = mint.frozen_residual(spec.residual),
@@ -615,6 +659,7 @@ function Claims.new(spec: { [string]: any }): Claims
     local expectations: { Expectation }     = {}
     local stateByCell: { [string]: string } = {}
     local textByCell: { [string]: string }  = {}
+    local itemsByCell: { [string]: number } = {}
 
     local rectsBySubject: { [string]: { Rect } } = {}
     local rectSeen: { [string]: boolean }        = {}
@@ -669,6 +714,9 @@ function Claims.new(spec: { [string]: any }): Claims
         if expectation.text ~= nil then
             textByCell[key] = expectation.text
         end
+        if expectation.items ~= nil then
+            itemsByCell[key] = expectation.items
+        end
         -- Collected in the order the file names them, each one once, so a reader
         -- following one element down the verdict meets its cells in the order
         -- they were written.
@@ -703,6 +751,7 @@ function Claims.new(spec: { [string]: any }): Claims
         expectations     = table.freeze(expectations),
         state_by_cell    = table.freeze(stateByCell),
         text_by_cell     = table.freeze(textByCell),
+        items_by_cell    = table.freeze(itemsByCell),
         rects_by_subject = table.freeze(rectsBySubject),
     })
     mintedClaims[claims] = true
@@ -743,6 +792,17 @@ function Claims.text_for(
     return claims.text_by_cell[cellKey(screen, element, nil, rect)]
 end
 
+-- How many items this screen claims the strip holds, or nil when it claims no
+-- number. Keyed exactly as `text_for` is, and for the same reasons.
+function Claims.items_for(
+    claims: Claims,
+    screen: string,
+    element: string,
+    rect: any
+): number?
+    return claims.items_by_cell[cellKey(screen, element, nil, rect)]
+end
+
 -- Every rectangle this file wants `element` measured at on `screen`, in the
 -- order the file names them, and an empty list when it names none.
 --
@@ -768,7 +828,12 @@ end
 -- walk starts and refuses in its own words, naming the missing flag. The walk
 -- never asks -- by then the engine is there or the read fails as a control error.
 function Claims.reads_text(claims: Claims): boolean
+    -- An items claim counts as one: a strip's items are located by reading the
+    -- container, so a project claiming one needs the same engine a text claim
+    -- does. The name is about what the run has to DO, not about what the claim
+    -- looks like.
     return next(claims.text_by_cell) ~= nil
+        or next(claims.items_by_cell) ~= nil
 end
 
 -- The screens in the order the host serves their pixels: by content hash.

@@ -170,6 +170,8 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         rect       = true,
         appearance = true,
         text       = true,
+        -- How many items a strip holds on this screen; see `oracle.Expectation`.
+        items      = true,
         state      = true,
     },
 }
@@ -661,6 +663,9 @@ function project.encode(built: any): string
         end
         if expectation.text ~= nil then
             table.insert(lines, "text = " .. renderString(expectation.text))
+        end
+        if expectation.items ~= nil then
+            table.insert(lines, "items = " .. renderNumber(expectation.items))
         end
         table.insert(lines, "state = " .. renderString(expectation.state))
         pushResidual(lines, expectation.residual)
@@ -1416,6 +1421,7 @@ function project.build(ctx: any, document: any): any
                     else nil,
                 appearance = section.fields.appearance,
                 text       = section.fields.text,
+                items      = section.fields.items,
                 state      = requireField(section, "state"),
                 extra      = section.extra,
                 residual   = section.residual,

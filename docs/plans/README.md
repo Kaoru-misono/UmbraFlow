@@ -39,6 +39,24 @@ Reading order: target form, then layer ownership, then the model semantics.
   `umbraflow-annotations/v3` and `umbraflow-trace/v2`. Its **model conclusions remain
   authoritative**; where that model is implemented is superseded by the script-owned page model
   above.
+- [Agent front end and the exploration environment](2026-08-01-agent-front-end-and-exploration.md) —
+  developer-authorised 2026-08-01, the implementation shape of the second Luau environment:
+  which verbs are privileged, how the closure isolation is built, and the `annotation.*` trace
+  vocabulary. Opens no ruling of its own; it pins the shape the target form above decided.
+- [State layer and policy slots](2026-08-04-state-layer-and-policy-slots.md) —
+  direction settled with five rulings answered 2026-08-04, **four phases none executed**. The
+  `l2-v2` schema, `expected_presence`, the appearance gate, and the co-resolution matrix. Phase A
+  landed the matrix on 2026-08-04; B depends on A's evidence, C on B, D on C plus the real machine.
+- [Storing the evidence corpus](2026-08-04-evidence-storage.md) — four tiers for keeping
+  screenshots out of version control. **Tier 4 shipped 2026-08-04** (`assets/screens` left git,
+  `.git` 148 MB → 413 KB); tier 0 was retired by measurement; tiers 1–3 remain proposals.
+- [Framework capabilities for full-map planning](2026-08-05-map-verbs-and-connectivity.md) —
+  direction settled 2026-08-05, ordered and pending execution. Two new verbs (an atomic
+  `drag(start, offset)`, a two-point connectivity read), one conditional item (kind enumeration,
+  only if the expanded map page turns out not to sit on a regular grid), and a stitched-map
+  evaluation separate from the screen matrix. It also rules three things OUT: a frame-difference
+  primitive, general line-segment detection, and cross-cycle coordinate identity. The
+  game-specific measuring and annotation is in `E:\umbraflow-projects\uf-chaos\MAP.md`.
 
 ## Proposals awaiting a decision
 

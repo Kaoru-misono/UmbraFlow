@@ -8183,7 +8183,8 @@ namespace uf::task
                 pages,
                 declaredFirst,
                 declaredSecond,
-                options
+                options,
+                expectations
             )
                 local byName = {}
                 for _, entry in pages do byName[entry.name] = entry end
@@ -8196,7 +8197,7 @@ namespace uf::task
                             screenNaming("both", hashOne, declaredFirst),
                             screenNaming("one_only", hashTwo, declaredSecond),
                         },
-                        expectations = {},
+                        expectations = expectations or {},
                     },
                 }, options)
             end
@@ -8261,10 +8262,11 @@ namespace uf::task
         // second screen's pixels twice and be green for the wrong reason.
         [[nodiscard]]
         auto runSweep(
-            std::filesystem::path const&    root,
-            std::vector<std::string> const& hashes,
-            std::string_view                body,
-            std::size_t                     walks = 1U
+            std::filesystem::path const&     root,
+            std::vector<std::string> const&  hashes,
+            std::string_view                 body,
+            std::size_t                      walks  = 1U,
+            std::unique_ptr<ocr::IOcrEngine> engine = nullptr
         ) -> Result<double>
         {
             REQUIRE(hashes.size() == 2U);
@@ -8285,6 +8287,7 @@ namespace uf::task
             auto built = buildHarness(
                 HarnessSpec{
                     .framePixels = std::move(framePixels),
+                    .ocrEngine   = std::move(engine),
                     .projectRoot = root,
                 }
             );
@@ -8740,6 +8743,134 @@ namespace uf::task
                 )lua",
                     2U
                 );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+        }
+
+        TEST_CASE("A strip's spacing is contradicted by the screen it is claimed on")
+        {
+            // The cell that makes a spacing falsifiable, and the reason the
+            // strip form is worth having. A strip writes down no rectangle per
+            // item -- the number is the screen's to decide -- so the only thing
+            // the file asserts is the gap, and the only way a stored screen can
+            // contradict it is the count that gap produces.
+            auto const directory = TemporaryDirectory{"uf-model-strip-cell"};
+            seedTemplates(directory.path());
+            auto const hashes = seedScreens(directory.path());
+
+            // Four lines across the container: two belong to one item, the
+            // others stand alone. The gap inside the first item is 2; the gaps
+            // between items are 11 and 8.
+            auto const block = [] {
+                auto readout = ocr::Readout{};
+                auto add = [&readout](
+                    std::string text,
+                    uint32 x,
+                    uint32 width
+                ) -> void
+                {
+                    readout.lines.emplace_back(
+                        ocr::TextLine{
+                            .text   = std::move(text),
+                            .bounds = test::pixelRect(x, 0, width, 1),
+                            .confidenceBp = 9'000,
+                        }
+                    );
+                };
+                add("guard", 0U, 5U);
+                add("+2", 7U, 2U);
+                add("heal", 20U, 4U);
+                add("strike", 32U, 6U);
+                return readout;
+            }();
+
+            auto const run = [&](std::string_view body, uint32 spacing) {
+                auto source = std::string{R"lua(
+                    local hand = model.Element.new{
+                        name = "hand",
+                        form = "strip",
+                        capabilities = { "read" },
+                        rect = { x = 0, y = 0, width = 40, height = 3 },
+                        item_spacing = )lua"}
+                    + std::to_string(spacing) + R"lua(,
+                    }
+                    local function claimed(count)
+                        return sweepModel(
+                            { hand },
+                            {},
+                            nil,
+                            nil,
+                            { sweep_pages = false },
+                            {
+                                oracle.Expectation.new{
+                                    screen = first,
+                                    element = hand,
+                                    items = count,
+                                    state = "match",
+                                },
+                            }
+                        )
+                    end
+                    )lua"
+                    + std::string{body};
+                return runSweep(
+                    directory.path(),
+                    hashes,
+                    source,
+                    1U,
+                    std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("unused", 9'000),
+                        block
+                    )
+                );
+            };
+
+            SUBCASE("the count the spacing produces is the one claimed")
+            {
+                auto const result = run(R"lua(
+                    local verdict = claimed(3)
+                    if not verdict.accepted then return 0 end
+
+                    -- The matrix walks both screens, and only one carries the
+                    -- claim; the other's strip cell is unclaimed by design.
+                    local cell = nil
+                    for _, row in verdict.cells do
+                        if row.subject == "strip" and row.screen == "both" then
+                            cell = row
+                        end
+                    end
+                    if cell == nil then return 0 end
+                    if cell.items ~= 3 then return 0 end
+                    if cell.expected_items ~= 3 then return 0 end
+                    if cell.verdict ~= "expected" then return 0 end
+                    return 1
+                )lua", 6U);
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a spacing that merges two items is rejected by the screen")
+            {
+                // Widened past the 8-pixel gap between the last two items, so
+                // the container divides into two where the file claims three.
+                // Nothing about the file changed but the number this cell exists
+                // to measure.
+                auto const result = run(R"lua(
+                    local verdict = claimed(3)
+                    if verdict.accepted then return 0 end
+                    if #verdict.findings ~= 1 then return 0 end
+                    local finding = verdict.findings[1]
+                    if finding.kind ~= "hole" then return 0 end
+                    if string.find(finding.detail, "holds 3 items", 1, true) == nil
+                    then
+                        return 0
+                    end
+                    if string.find(finding.detail, "into 2", 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua", 9U);
                 REQUIRE(result.has_value());
                 CHECK(*result == doctest::Approx(1.0));
             }
