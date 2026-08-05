@@ -6,6 +6,7 @@
 #include <core/numeric/checked-cast.hpp>
 #include <core/types/integer.hpp>
 
+#include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 #include <domain/space.hpp>
 
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <format>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -341,8 +343,17 @@ namespace uf::task
                 (*dpi).at(1)
             )
         );
+        // Over the bytes handed in, not over what was recognised above: a model
+        // differing only in a section this scan skips is a different model, and a
+        // replay checked against it would be checked against the wrong file.
+        UF_TRY_VALUE(
+            contentHash,
+            sha256(std::as_bytes(std::span{text.data(), text.size()}))
+        );
+
         return PageModelFacts{
             .fingerprint  = fingerprint,
+            .contentHash  = contentHash,
             .elementNames = std::move(elementNames),
             .pageNames    = std::move(pageNames),
         };

@@ -54,6 +54,7 @@ namespace uf::task
             std::string projectId{};
             std::string taskName{};
             std::string sourceHash{};
+            std::string modelHash{};
             uint64      seed{};
         };
 
@@ -87,6 +88,7 @@ namespace uf::task
                     .projectId        = spec.projectId,
                     .taskName         = spec.taskName,
                     .sourceHash       = spec.sourceHash,
+                    .modelHash        = spec.modelHash,
                     .frameworkVersion = std::string{frameworkVersion()},
                     .frameworkHash    = std::string{frameworkBundleHash()},
                     .luauVersion      = luauRuntimeVersion(),
@@ -409,7 +411,10 @@ namespace uf::task
             // The run identity opens the stream before the VM exists, so every
             // later event is attributable to this exact build -- including the
             // framework version and bundle hash, which runStartedEvent reads
-            // from this binary rather than taking from here.
+            // from this binary rather than taking from here. The model hash is
+            // the generation's, taken over the page model's bytes when the
+            // project loaded, so what the run stands on is named as precisely as
+            // what it runs.
             UF_TRY(
                 recorder->emit(
                     runStartedEvent(
@@ -417,6 +422,7 @@ namespace uf::task
                             .projectId  = m_projectId,
                             .taskName   = chunk.name,
                             .sourceHash = chunk.hash.hex(),
+                            .modelHash  = m_model.contentHash.hex(),
                             .seed       = seed,
                         }
                     )

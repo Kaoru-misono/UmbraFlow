@@ -270,6 +270,12 @@ namespace uf::trace
             std::string projectId{};
             std::string taskName{};
             std::string sourceHash{};
+            // The page model this run read, by content. It answers a question
+            // `sourceHash` cannot: two runs of one task against two edits of the
+            // model are the same script over different facts, and a replay
+            // checker comparing a trace's page transitions against today's edges
+            // has to refuse when this is not today's model.
+            std::string modelHash{};
             std::string frameworkVersion{};
             std::string frameworkHash{};
             std::string luauVersion{};

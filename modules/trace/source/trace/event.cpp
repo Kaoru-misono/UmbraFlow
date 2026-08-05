@@ -345,6 +345,7 @@ namespace uf::trace
             builder.addString("projectId", run.projectId);
             builder.addString("taskName", run.taskName);
             builder.addString("sourceHash", run.sourceHash);
+            builder.addString("modelHash", run.modelHash);
             builder.addString("frameworkVersion", run.frameworkVersion);
             builder.addString("frameworkHash", run.frameworkHash);
             builder.addString("luauVersion", run.luauVersion);

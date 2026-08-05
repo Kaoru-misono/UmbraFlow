@@ -1,10 +1,13 @@
 #include <task/page-model-file.hpp>
 #include <task/script-validator.hpp>
 
+#include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
 #include <doctest/doctest.h>
 
+#include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -136,6 +139,35 @@ exercised = ["interact"]
             CHECK(model->fingerprint.width() == 4);
             CHECK(model->fingerprint.height() == 4);
             CHECK(model->fingerprint.dpiX() == 96);
+        }
+
+        TEST_CASE("A page model is identified by its bytes and not by this reading")
+        {
+            // `run.started` stamps this hash, and a replay checker refuses a trace
+            // whose model is no longer the one on disk. That refusal is only worth
+            // anything if the hash covers the whole file: nearly everything in a
+            // page model -- thresholds, references, edges, the falsification
+            // claims -- is layer two's and skipped entirely by the scan above.
+            auto const model = parsePageModelFacts(k_pageModel);
+            REQUIRE(model.has_value());
+
+            auto const expected = sha256(std::as_bytes(std::span{k_pageModel}));
+            REQUIRE(expected.has_value());
+            CHECK(model->contentHash == *expected);
+
+            // An edge is a section this reader does not recognise and does not
+            // record, so it changes nothing the facts carry -- and must still
+            // change the identity.
+            auto const edited = std::string{k_pageModel}
+                + "\n[[edge]]\nfrom = \"home\"\nto = [\"home\"]\n"
+                  "via = \"key\"\nvia_key = \"E\"\nkind = \"navigate\"\n";
+            auto const after = parsePageModelFacts(edited);
+            REQUIRE(after.has_value());
+
+            CHECK(after->elementNames == model->elementNames);
+            CHECK(after->pageNames == model->pageNames);
+            CHECK(after->fingerprint == model->fingerprint);
+            CHECK(after->contentHash != model->contentHash);
         }
 
         TEST_CASE("A canonical task script validates and enumerates its references")

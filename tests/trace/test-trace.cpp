@@ -200,6 +200,7 @@ namespace uf::trace
                 .projectId        = "personal.game",
                 .taskName         = "daily",
                 .sourceHash       = "abc123",
+                .modelHash        = "m0d3l",
                 .frameworkVersion = "0.1.0",
                 .frameworkHash    = "def456",
                 .luauVersion      = "6",
@@ -230,7 +231,8 @@ namespace uf::trace
             ",\"actionOutcome\":\"Found\",\"sadScore\":1234,\"maximumSad\":5000"
             ",\"matchedRect\":{\"x\":10,\"y\":20,\"width\":30,\"height\":40}"
             ",\"projectId\":\"personal.game\",\"taskName\":\"daily\""
-            ",\"sourceHash\":\"abc123\",\"frameworkVersion\":\"0.1.0\""
+            ",\"sourceHash\":\"abc123\",\"modelHash\":\"m0d3l\""
+            ",\"frameworkVersion\":\"0.1.0\""
             ",\"frameworkHash\":\"def456\",\"luauVersion\":\"6\",\"seed\":42"
             ",\"elements\":[\"accept\"],\"pages\":[\"home\"]"
             ",\"verb\":\"click\",\"cycleOrdinal\":4,\"hitCycleOrdinal\":5"
@@ -323,6 +325,7 @@ namespace uf::trace
                 .projectId        = "personal.game",
                 .taskName         = "daily",
                 .sourceHash       = "abc123",
+                .modelHash        = "m0d3l",
                 .frameworkVersion = "0.1.0",
                 .frameworkHash    = "def456",
                 .luauVersion      = "6",
@@ -334,7 +337,8 @@ namespace uf::trace
             "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.started\""
             ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
             ",\"projectId\":\"personal.game\",\"taskName\":\"daily\""
-            ",\"sourceHash\":\"abc123\",\"frameworkVersion\":\"0.1.0\""
+            ",\"sourceHash\":\"abc123\",\"modelHash\":\"m0d3l\""
+            ",\"frameworkVersion\":\"0.1.0\""
             ",\"frameworkHash\":\"def456\",\"luauVersion\":\"6\",\"seed\":42}"
         };
 
@@ -350,6 +354,7 @@ namespace uf::trace
             .projectId        = "personal.game",
             .taskName         = "daily",
             .sourceHash       = "abc123",
+            .modelHash        = "m0d3l",
             .frameworkVersion = "0.1.0",
             .frameworkHash    = "def456",
             .luauVersion      = "6",
@@ -803,6 +808,7 @@ namespace uf::trace
                                 .projectId        = "personal.game",
                                 .taskName         = "daily",
                                 .sourceHash       = "abc123",
+                                .modelHash        = "m0d3l",
                                 .frameworkVersion = "0.1.0",
                                 .frameworkHash    = "def456",
                                 .luauVersion      = "6",
@@ -831,7 +837,8 @@ namespace uf::trace
             == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.started\""
                ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
                ",\"projectId\":\"personal.game\",\"taskName\":\"daily\""
-               ",\"sourceHash\":\"abc123\",\"frameworkVersion\":\"0.1.0\""
+               ",\"sourceHash\":\"abc123\",\"modelHash\":\"m0d3l\""
+               ",\"frameworkVersion\":\"0.1.0\""
                ",\"frameworkHash\":\"def456\",\"luauVersion\":\"6\",\"seed\":42}"
         );
         CHECK(

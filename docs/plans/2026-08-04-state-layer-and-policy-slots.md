@@ -304,13 +304,27 @@ screen/expect;残余段落保序往返。schema 串升 `l2-v2`。
 >    它的注释还专门论证过为什么不与另一个共用。**缺的是"JSONL → TraceEvent"这一层**,
 >    不是 JSON 本身。所以这里大概率不需要走 `evaluate-core-capability` 加 core 设施,
 >    先看这两处能不能长出第三个窄读取器。
-> 2. **模型身份判得了,只是没有上线。** 原话说"host 根本不读 `page-model.toml`,所以模型
->    哈希不在 host 手上",假:`TaskHost::loadProject` 在任何 VM 存在之前就调
->    `readPageModelFacts`(`task-host.cpp:636`),整份文件已经读进内存做扁平行扫。它今天
->    取的 `ProjectFingerprint` 是**分辨率**而不是内容哈希,所以线上确实没有模型身份;
->    但字节在手,而同一个 host 已经在 `task-loader.cpp:167` 对脚本源码调 `sha256`。
->    于是最省的一条路不是新开事件也不是拿页名集合凑合,而是**对已经读进来的字节多算一次
->    哈希,搭进 `run.started`**。
+> 2. ~~**模型身份判得了,只是没有上线。**~~ **已上线(2026-08-05)。** 原话说"host 根本
+>    不读 `page-model.toml`,所以模型哈希不在 host 手上",假:`TaskHost::loadProject` 在
+>    任何 VM 存在之前就调 `readPageModelFacts`(`task-host.cpp:636`),整份文件已经读进
+>    内存做扁平行扫。它取的 `ProjectFingerprint` 是**分辨率**而不是内容哈希,所以线上
+>    此前确实没有模型身份;但字节在手,而同一个 host 已经在 `task-loader.cpp:167` 对
+>    脚本源码调 `sha256`。
+>
+>    于是走了最省的那条:`PageModelFacts` 多一个 `contentHash`,在 `parsePageModelFacts`
+>    里对**传进来的字节**求一次 sha256;`run.started` 多一个 `modelHash` 字段,紧跟在
+>    `sourceHash` 之后。没有新事件,没有新的 schema 版本——`umbraflow-trace/v4` 不动,
+>    这是 additive 字段。uf-chaos 实跑核对过:trace 首行的 `modelHash` 与
+>    `Get-FileHash page-model.toml` 逐字节相同。
+>
+>    **哈希取在字节上而不是取在解析结果上**,这条是有意的:那个扁平行扫只认段落头和
+>    `name` 行,`page-model.toml` 里绝大部分内容(阈值、引用、边、`[[expect]]`)它根本
+>    不看;取解析结果的哈希会让"只改了边"的两份模型算成同一份,而回放检查器要对的恰恰
+>    就是边。已用一对红绿钉住:把哈希改成只覆盖文件前 16 字节,身份测试与 wire 金线
+>    两处同时红。
+>
+>    于是四·2 承诺的"模型哈希不符就拒跑"从今天起有料可判。**回放检查器仍然只差
+>    JSONL→事件那一层**(见上一条)。
 >
 > 另外把今天能验的范围说准:三·4 的模式区间纯净要 `state` 字段、三·5 的围观边不换页要
 > `preview` 旗标,两者都是 B 阶段的 schema。**回放检查器今天能实现的子集是**:页转移对边、

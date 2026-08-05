@@ -2,6 +2,7 @@
 
 #include <core/error/result.hpp>
 
+#include <domain/content-hash.hpp>
 #include <domain/space.hpp>
 
 #include <cstddef>
@@ -24,21 +25,29 @@ namespace uf::task
     // it is read into memory.
     inline constexpr auto k_maximumPageModelBytes = std::size_t{4} * 1024U * 1024U;
 
-    // The only three things C++ reads out of the page model. Both facts are needed
-    // BEFORE a VM exists: the fingerprint is what the engine's compatibility
-    // refusal compares a live measurement against, and the names are what the
-    // pre-VM AST pass resolves a script's `uf.elements.<name>` and
-    // `uf.pages.<name>` literals against, so a misspelled resource fails before a
-    // VM boots (docs/plans/2026-07-31-script-owned-page-model.md 6).
+    // The only four things C++ reads out of the page model, each needed BEFORE a
+    // VM exists: the fingerprint is what the engine's compatibility refusal
+    // compares a live measurement against; the names are what the pre-VM AST pass
+    // resolves a script's `uf.elements.<name>` and `uf.pages.<name>` literals
+    // against, so a misspelled resource fails before a VM boots
+    // (docs/plans/2026-07-31-script-owned-page-model.md 6); and the content hash
+    // is what `run.started` stamps on the stream, so a later reader can refuse a
+    // trace recorded against a model that is no longer this one.
     //
     // Everything else in the file -- capabilities, rectangles, thresholds,
     // references, edges, the falsification claims -- is layer two's to interpret,
     // and a second C++ reader would be a second opinion about what a page model
     // means. This reader knows that a section header opens a section and that a
     // `name` line names one; it knows nothing about what an element or a page IS.
+    // The hash is the one fact here that does not depend on that reading at all:
+    // it is over the bytes, so it identifies the whole file including everything
+    // this parse skips.
     struct PageModelFacts final
     {
+        // Neither of these can carry an in-class initializer: both are values with
+        // no meaningful empty state, so every construction supplies them.
         ProjectFingerprint fingerprint;
+        ContentHash        contentHash;
 
         // In declaration order, and each name distinct within its own list. The
         // pass below only ever asks whether a name is present, so order carries no

@@ -13,6 +13,7 @@
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
+#include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
 #include <domain/ids.hpp>
@@ -1297,6 +1298,10 @@ exercised = ["interact"]
         REQUIRE(loaded.has_value());
         CHECK(report->sourceHash == loaded->hash.hex());
 
+        auto const hashed = sha256(std::as_bytes(std::span{k_pageModel}));
+        REQUIRE(hashed.has_value());
+        auto const& modelHash = *hashed;
+
         auto const lines = traceLines(tracePath);
 
         auto const expectedKinds = std::vector<std::string_view>{
@@ -1332,13 +1337,17 @@ exercised = ["interact"]
                 R"({{"schema":"umbraflow-trace/v4","kind":"run.started")"
                 R"(,"seq":1,"runId":1,"generationId":1,"frontEnd":"task")"
                 R"(,"projectId":"{}","taskName":"daily")"
-                R"(,"sourceHash":"{}","frameworkVersion":"{}")"
+                R"(,"sourceHash":"{}","modelHash":"{}","frameworkVersion":"{}")"
                 R"(,"frameworkHash":"{}","luauVersion":"{}","seed":{}}})",
                 // The project's own directory name is the whole of what
                 // identifies a project on the wire; no manifest carries an id
                 // (docs/plans/2026-07-31-script-owned-page-model.md 9).
                 temp.path().filename().string(),
                 report->sourceHash,
+                // The page model this run stood on, by content. Hashed here from
+                // the fixture's own text, so the line is checked against the file
+                // rather than against whatever the host happened to record.
+                modelHash.hex(),
                 frameworkVersion(),
                 frameworkBundleHash(),
                 luauRuntimeVersion(),
