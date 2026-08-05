@@ -784,6 +784,7 @@ namespace uf::task
                     0
                 )
                 ctx:cycle_close(ticket)
+                local ticket2 = ctx:cycle_open()
 
                 -- The complement of the same key on the same pixels: the other
                 -- direction takes 60 of these 320, so this one takes 260. A
@@ -798,6 +799,33 @@ namespace uf::task
                 -- what a caller believed.
                 if measured.mask.key_removes ~= true then return 0 end
                 if measured.key.removes ~= true then return 0 end
+
+                -- 260 of 320 is 81 percent, well past the ceiling a KEPT mask
+                -- is warned at. Not warned here, and the reason is the whole
+                -- point of the flag: that ceiling says a large mask is a solid
+                -- patch of one colour, and this mask is everything BUT one
+                -- colour. A warning that fired on the ordinary use of a feature
+                -- would teach a reader to ignore the one that matters.
+                if measured.mask.warning ~= nil then return 0 end
+
+                -- The control, so the silence above is this key's doing and not
+                -- a warning nothing can trip in this direction. A colour the
+                -- rect does not hold removes nothing, which leaves the template
+                -- the unmasked rectangle a mask exists to avoid.
+                local hollow = scribe.measure(
+                    ctx,
+                    ticket2,
+                    { x = 0, y = 0, width = 40, height = 8 },
+                    { red = 0, green = 255, blue = 0, removes = true },
+                    0
+                )
+                ctx:cycle_close(ticket2)
+                if hollow.mask.selected_pixels ~= 320 then return 0 end
+                if hollow.mask.warning == nil then return 0 end
+                if string.find(hollow.mask.warning, "removed almost nothing") == nil
+                then
+                    return 0
+                end
 
                 local element = scribe.author_element(ctx, measured, {
                     name         = "backdrop_cut",

@@ -99,8 +99,25 @@ namespace uf::task
     // anything; measurements and reproductions in
     // docs/pitfalls/colour-key-annotation.md. They warn and never refuse, and the
     // share is in basis points.
+    //
+    // The floor holds in both directions -- too few pixels cannot measure
+    // anything whichever way the key was read -- but the CEILING does not. Its
+    // reasoning is that a key takes one colour, so a large mask is a solid patch
+    // of that colour; a key that names the backdrop takes everything BUT one
+    // colour, and a mark filling half its own bounding box is the ordinary case
+    // rather than the pathological one. A diamond fills exactly half.
     inline constexpr auto k_minimumUsefulMaskPixels  = uint64{50};
     inline constexpr auto k_maximumUsefulMaskShareBp = uint64{5000};
+
+    // The ceiling for a key that names what to remove, where the hazard is the
+    // opposite one: the named colour was barely present, so almost nothing was
+    // masked out and the template is effectively unmasked -- which is the failure
+    // a mask exists to avoid.
+    //
+    // CALIBRATION: 9000 is a placeholder chosen from shape rather than measured.
+    // A mark filling more than nine tenths of its own bounding box leaves no
+    // backdrop worth naming, so at that point the key is trimming a rim.
+    inline constexpr auto k_maximumRemovedMaskShareBp = uint64{9000};
 
     // Host-side configuration for one TaskContext: the single cancellation source
     // shared with the owned EngineSession and the VM interrupt, plus this run's

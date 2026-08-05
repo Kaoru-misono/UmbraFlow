@@ -59,8 +59,14 @@ namespace uf::task
         // Why `selected` of `total` looks like a mask that cannot measure
         // anything, or an empty string when it does not. Both ends and the
         // reasoning are at k_minimumUsefulMaskPixels; only the wording is here.
+        //
+        // `removes` moves the ceiling and nothing else: the floor is the same
+        // hazard whichever way the key was read, while a large mask means a solid
+        // patch of one colour in one direction and an all but unmasked template
+        // in the other.
         [[nodiscard]]
-        auto maskWarning(uint64 selected, uint64 total) -> std::string
+        auto maskWarning(uint64 selected, uint64 total, bool removes)
+            -> std::string
         {
             if (selected < k_minimumUsefulMaskPixels)
             {
@@ -78,19 +84,27 @@ namespace uf::task
             auto const scaled = checkedMultiply(selected, uint64{10'000});
             UF_CHECK(scaled.has_value());
             auto const shareBp = *scaled / total;
-            if (shareBp >= k_maximumUsefulMaskShareBp)
+            auto const ceiling = removes
+                ? k_maximumRemovedMaskShareBp
+                : k_maximumUsefulMaskShareBp;
+            if (shareBp >= ceiling)
             {
                 return std::format(
                     "this key selects {} of {} pixels ({}.{:02} percent), at or "
                     "above the {} basis points where a mask stops distinguishing "
-                    "anything: a key takes one colour by construction, so a mask "
-                    "this large is a solid patch that any patch of the same "
-                    "colour matches",
+                    "anything: {}",
                     selected,
                     total,
                     shareBp / 100U,
                     shareBp % 100U,
-                    k_maximumUsefulMaskShareBp
+                    ceiling,
+                    removes
+                        ? "this key names the colour to REMOVE, and it removed "
+                          "almost nothing, so the template is very nearly the "
+                          "unmasked rectangle it was cut to avoid being"
+                        : "a key takes one colour by construction, so a mask "
+                          "this large is a solid patch that any patch of the "
+                          "same colour matches"
                 );
             }
             return {};
@@ -189,7 +203,8 @@ namespace uf::task
                     .rampSelectedPixels = measured.rampSelectedPixels,
                     .warning            = maskWarning(
                         measured.fullySelectedPixels,
-                        measured.rectPixels
+                        measured.rectPixels,
+                        key.removes
                     ),
                 },
             };
