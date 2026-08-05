@@ -5610,6 +5610,158 @@ namespace uf::task
             "exercised = [\"identify\"]\n"
             "identify = \"required\"\n";
 
+        TEST_CASE("A strip counts its items off the frame, not out of the file")
+        {
+            // Phase B 3.1. A hand is three cards or seven depending on the turn,
+            // so a model that wrote a rectangle per slot would be writing down a
+            // number the screen decides -- which is how one project came to carry
+            // `fate_card_1`, `_2` and `_3`. The spacing is the one thing the
+            // model asserts, and therefore the one thing a screen can contradict.
+            auto const directory = TemporaryDirectory{"uf-model-strip"};
+            seedTemplates(directory.path());
+
+            // Three items across a 40-wide container: two lines belong to the
+            // first card, one to each of the others. The gap inside the first
+            // item is 2 pixels; the gaps between items are 11 and 8. The spacing
+            // the model states is 6, which is above the first and below both of
+            // the others -- the whole of what makes this a measurement.
+            auto block = ocr::Readout{};
+            auto const line = [&block](
+                std::string text,
+                uint32 x,
+                uint32 y,
+                uint32 width
+            ) -> void
+            {
+                block.lines.emplace_back(
+                    ocr::TextLine{
+                        .text   = std::move(text),
+                        .bounds = test::pixelRect(x, y, width, 1),
+                        .confidenceBp = 9'000,
+                    }
+                );
+            };
+            // Deliberately NOT in left-to-right order: the frame reports lines in
+            // the order the engine found them, and grouping is a statement about
+            // position.
+            line("strike", 32U, 0U, 6U);
+            line("guard", 0U, 0U, 5U);
+            line("+2", 7U, 1U, 2U);
+            line("heal", 20U, 0U, 4U);
+
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("unused", 9'000),
+                        block
+                    ),
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, script(R"lua(
+                local function strip(spacing)
+                    return model.Element.new{
+                        name         = "hand",
+                        capabilities = { "read" },
+                        rect         = { x = 0, y = 0, width = 40, height = 3 },
+                        item_spacing = spacing,
+                    }
+                end
+
+                local ticket = ctx:cycle_open()
+                local groups = observe.read_strip(
+                    ctx,
+                    ticket,
+                    strip(6),
+                    observe.empty_is_absence
+                )
+                ctx:cycle_close(ticket)
+
+                -- Three items, and the first holds the two lines that belong to
+                -- it: an item is a GROUP of readings, because deciding which of
+                -- two lines is the name is the caller's business.
+                if #groups ~= 3 then return 0 end
+                if #groups[1] ~= 2 then return 0 end
+                if groups[1][1].text ~= "guard" then return 0 end
+                if groups[1][2].text ~= "+2" then return 0 end
+                if #groups[2] ~= 1 or groups[2][1].text ~= "heal" then return 0 end
+                if #groups[3] ~= 1 or groups[3][1].text ~= "strike" then
+                    return 0
+                end
+
+                local function refused(fragment, fn)
+                    local ok, err = pcall(fn)
+                    if ok then return false end
+                    return string.find(tostring(err), fragment, 1, true) ~= nil
+                end
+
+                -- A strip counts what is inside a CONTAINER, so it states one.
+                if not refused("nothing to count inside", function()
+                    return model.Element.new{
+                        name         = "loose",
+                        capabilities = { "read" },
+                        item_spacing = 6,
+                    }
+                end) then return 0 end
+
+                -- Its items are located by the frame, so a template would be
+                -- asserting where they are -- the thing being counted.
+                if not refused("thing being counted", function()
+                    return model.Element.new{
+                        name         = "pictured",
+                        capabilities = { "read", "identify" },
+                        rect         = { x = 0, y = 0, width = 4, height = 1 },
+                        item_spacing = 6,
+                        appearances  = {
+                            {
+                                name      = "lit",
+                                source    = "gray2.png",
+                                template  = template("gray2.png"),
+                                threshold = 10000,
+                            },
+                        },
+                    }
+                end) then return 0 end
+
+                if not refused("at least one", function()
+                    return strip(0)
+                end) then return 0 end
+
+                -- And the verb refuses an element that is not a strip, rather
+                -- than counting a container nobody said was one.
+                if not refused("declares none", function()
+                    local ticket2 = ctx:cycle_open()
+                    local plain = model.Element.new{
+                        name         = "title",
+                        capabilities = { "read" },
+                        rect         = { x = 0, y = 0, width = 40, height = 3 },
+                    }
+                    local ok, err = pcall(function()
+                        return observe.read_strip(
+                            ctx,
+                            ticket2,
+                            plain,
+                            observe.empty_is_absence
+                        )
+                    end)
+                    ctx:cycle_close(ticket2)
+                    if ok then return nil end
+                    error(err, 0)
+                end) then return 0 end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
         TEST_CASE("A preview edge stays where it is and says so")
         {
             // Phase B 3.5. Clicking a roster row swaps what the panel beside it

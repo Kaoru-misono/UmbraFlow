@@ -75,6 +75,8 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         expected_fragments = true,
         expected_presence  = true,
         read_floor    = true,
+        -- `item_spacing` makes the element a strip: see `model.Element`.
+        item_spacing  = true,
     },
     -- `key` is the colour key the template blob was cut under, written as
     -- [red, green, blue, tolerance] because it is one value with four
@@ -401,6 +403,12 @@ function project.encode(built: any): string
         -- Written only when the element stated one: the framework's own floor is
         -- the reading of an absent line, so materialising it would put a number
         -- nobody chose into every file and make it look chosen.
+        if element.item_spacing ~= nil then
+            table.insert(
+                lines,
+                "item_spacing = " .. renderNumber(element.item_spacing)
+            )
+        end
         if element.read_floor ~= nil then
             table.insert(
                 lines,
@@ -1163,6 +1171,7 @@ function project.build(ctx: any, document: any): any
             expected_text = section.fields.expected_text,
             expected_fragments = section.fields.expected_fragments,
             expected_presence  = section.fields.expected_presence,
+            item_spacing  = section.fields.item_spacing,
             read_floor    = section.fields.read_floor,
             extra         = section.extra,
             residual      = section.residual,

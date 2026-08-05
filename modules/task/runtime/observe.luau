@@ -822,6 +822,77 @@ function observe.read_element(
     })
 end
 
+-- observe.read_strip(ctx, ticket, element_or_reference, on_empty) -> { { Hit } }
+--
+-- The items a strip holds, as one group of hits each, left to right.
+--
+-- It reads the container once and groups what the frame located inside it by the
+-- element's `item_spacing`: a gap wider than that starts a new item. So the
+-- COUNT comes off the frame -- a hand is three cards or seven depending on the
+-- turn -- and the spacing is the one number the model asserts, which is what
+-- makes a strip falsifiable against a stored screen at all.
+--
+-- Grouping is by the horizontal gap alone. A strip is a ROW by construction:
+-- what a vertical list needs is a different measurement and a project that has
+-- one can say so when it has one, rather than this guessing which axis a screen
+-- meant.
+--
+-- One `Hit` per line and a group per item, rather than one hit per item: two
+-- lines of one card are two readings the caller may want separately, and joining
+-- them here would decide for it which of the two is the name.
+--
+-- Sorted by the left edge before grouping, because the frame reports lines in
+-- the order the engine found them and "the gap since the previous item" is a
+-- statement about position.
+function observe.read_strip(
+    ctx: any,
+    ticket: any,
+    elementOrReference: any,
+    onEmpty: any
+): { { Hit } }
+    requireCtx(ctx, "observe.read_strip")
+    local _, element = readTarget("observe.read_strip", elementOrReference)
+    if element.item_spacing == nil then
+        error(
+            "observe.read_strip needs a strip -- an element declaring "
+                .. "item_spacing -- and element '"
+                .. element.name
+                .. "' declares none; without a spacing there is nothing to say "
+                .. "where one item ends and the next begins",
+            2
+        )
+    end
+
+    -- Cloned before sorting: `read_lines` hands back a frozen list, and every
+    -- value this framework hands a script refuses a write.
+    local lines = table.clone(
+        observe.read_lines(ctx, ticket, elementOrReference, onEmpty)
+    )
+    table.sort(lines, function(left: any, right: any): boolean
+        return left.x < right.x
+    end)
+
+    local groups: { { Hit } } = {}
+    local current: { Hit }? = nil
+    local previousRight = 0
+    for index = 1, #lines do
+        local line = lines[index]
+        if current == nil or line.x - previousRight > element.item_spacing then
+            current = {}
+            table.insert(groups, current :: { Hit })
+        end
+        table.insert(current :: { Hit }, line)
+        -- The RIGHT edge of what has been seen so far, not of the last line: two
+        -- lines of one card overlap horizontally, and measuring from the last one
+        -- alone would reopen a gap the wider line had already closed.
+        local right = line.x + line.width
+        if right > previousRight then
+            previousRight = right
+        end
+    end
+    return groups
+end
+
 -- observe.read_lines(ctx, ticket, element_or_reference, on_empty) -> { Hit }
 --
 -- Reads the element's whole region and returns one hit per line of text the

@@ -94,6 +94,7 @@ local k_elementKeys: { [string]: boolean } = {
     expected_fragments = true,
     expected_presence  = true,
     read_floor    = true,
+    item_spacing  = true,
     extra         = true,
     residual      = true,
 }
@@ -218,10 +219,27 @@ export type ColourKey = {
 -- and for any one use exactly one of the three supplies it: `Page.new` refuses a
 -- row that neither inherits one nor states one and `Expectation.new` refuses a
 -- cell that does the same, so absent here means "the caller says where".
+-- `item_spacing` makes the element a STRIP: a container rectangle holding a row
+-- of things whose NUMBER is not a fact about the model at all. A hand of cards is
+-- three cards or seven depending on the turn, and a model that wrote down a
+-- rectangle per slot would be writing down a number the screen decides -- which
+-- is how one project came to carry `fate_card_1`, `_2` and `_3` and a
+-- `rest_card_2` and `_3` that are the same element five times.
+--
+-- The spacing is the widest gap in target pixels that still belongs to ONE item.
+-- Reading a strip clusters what the frame located inside the container by that
+-- gap and counts the clusters, so the count comes off the frame and the spacing
+-- is the one thing the model asserts -- and therefore the one thing a screen can
+-- contradict (`observe.read_strip`).
+--
+-- A strip carries the container rectangle it clusters inside and no appearances:
+-- what it holds is read, and an element that verified itself by template pixels
+-- would be asserting where its items are, which is the thing being counted.
 export type Element = {
     name: string,
     capabilities: CapabilitySet,
     rect: Rect?,
+    item_spacing: number?,
     appearances: { Appearance },
     expected_text: string?,
     expected_fragments: { string }?,
@@ -752,6 +770,54 @@ function Element.new(spec: { [string]: any }): Element
         end
     end
 
+    if spec.item_spacing ~= nil then
+        if
+            not wholeNumber(spec.item_spacing)
+            or (spec.item_spacing :: number) < 1
+        then
+            error(
+                "element '"
+                    .. name
+                    .. "' item_spacing must be a whole number of pixels, at "
+                    .. "least one: it is the widest gap that still belongs to "
+                    .. "one item, and a gap of zero divides nothing",
+                2
+            )
+        end
+        if spec.rect == nil then
+            error(
+                "element '"
+                    .. name
+                    .. "' states item_spacing and no rect; a strip counts what "
+                    .. "is inside a CONTAINER, and without one there is nothing "
+                    .. "to count inside -- a row's rect_override cannot supply "
+                    .. "it either, because the spacing is a fact about this "
+                    .. "container and not about one page's use of it",
+                2
+            )
+        end
+        if #appearances > 0 then
+            error(
+                "element '"
+                    .. name
+                    .. "' is a strip and declares appearances; a strip's items "
+                    .. "are located by the frame and counted, so a template "
+                    .. "would be asserting where they are -- which is the thing "
+                    .. "being counted",
+                2
+            )
+        end
+        if not (capabilities :: CapabilitySet).read then
+            error(
+                "element '"
+                    .. name
+                    .. "' is a strip but does not declare the read capability; "
+                    .. 'its items are located by reading, so add "read"',
+                2
+            )
+        end
+    end
+
     if spec.read_floor ~= nil then
         if
             not wholeNumber(spec.read_floor)
@@ -815,6 +881,7 @@ function Element.new(spec: { [string]: any }): Element
             then frozenRect(spec.rect :: Rect)
             else nil,
         appearances   = table.freeze(appearances),
+        item_spacing  = spec.item_spacing,
         expected_text = spec.expected_text,
         expected_fragments = if spec.expected_fragments ~= nil
             then table.freeze(table.clone(spec.expected_fragments))

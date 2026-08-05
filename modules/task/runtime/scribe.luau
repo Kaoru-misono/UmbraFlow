@@ -513,6 +513,7 @@ local function elementSpec(
         expected_text = element.expected_text,
         expected_fragments = element.expected_fragments,
         expected_presence = element.expected_presence,
+        item_spacing  = element.item_spacing,
         read_floor    = element.read_floor,
         extra         = element.extra,
         residual      = element.residual,
