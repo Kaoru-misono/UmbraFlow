@@ -222,13 +222,31 @@ end
 -- because five pages of the reference project share one `page_title` element and
 -- are told apart by nothing else -- a key on the element name alone would call
 -- them one signature.
+-- One text expectation as a key: the kind, then what it asks for. Two rows
+-- asking different things of one region are different clauses, so containment
+-- between two pages is decided on WHAT they check and not merely on which
+-- element they check -- an "equals" and a "presence" on one title box are not
+-- the same signature, and the weaker one contains the stronger.
+local function expectationKey(expectation: any): string
+    if expectation == nil then
+        return "nil"
+    end
+    if expectation.kind == "equals" then
+        return "equals\0" .. expectation.text
+    end
+    if expectation.kind == "fragments" then
+        return "fragments\0" .. table.concat(expectation.fragments, "\0")
+    end
+    return expectation.kind
+end
+
 local function identifyClauses(page: any): { [string]: string }
     local clauses: { [string]: string } = {}
     for _, reference in page.references do
         if reference.exercised.identify then
             local element = reference.element
             local checked = if #element.appearances == 0
-                then tostring(model.Reference.expected_text(reference))
+                then expectationKey(model.Reference.text_expectation(reference))
                 else "*"
             clauses[reference.identify .. "\0" .. element.name .. "\0" .. checked] =
                 reference.identify

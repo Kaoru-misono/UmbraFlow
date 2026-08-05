@@ -91,6 +91,8 @@ local k_elementKeys: { [string]: boolean } = {
     rect          = true,
     appearances   = true,
     expected_text = true,
+    expected_fragments = true,
+    expected_presence  = true,
     read_floor    = true,
     extra         = true,
     residual      = true,
@@ -123,6 +125,8 @@ local k_referenceKeys: { [string]: boolean } = {
     exercised         = true,
     identify          = true,
     expected_text     = true,
+    expected_fragments = true,
+    expected_presence  = true,
     pinned_appearance = true,
     rect_override     = true,
     extra             = true,
@@ -420,6 +424,69 @@ model.frozen_rect = frozenRect
 -- the crop verb measures it as it cuts, refuses the key that can never work, and
 -- warns about counts that measured nothing
 -- (docs/pitfalls/colour-key-annotation.md).
+-- Whether `spec` states anything at all about what its region should read.
+-- One question with three spellings, because a region can be pinned three ways:
+-- the whole reading equals a string, ordered fragments appear in it with gaps
+-- allowed, or there is any confident reading at all.
+local function statesTextExpectation(spec: any): boolean
+    return spec.expected_text ~= nil
+        or spec.expected_fragments ~= nil
+        or spec.expected_presence ~= nil
+end
+
+-- The shape of those three, and that at most ONE is stated. They are three
+-- answers to one question -- what would make this reading count -- and a row
+-- carrying two states no order between them, so the weaker would silently decide
+-- or the stronger would silently be ignored depending on which was asked first
+-- (docs/plans/2026-08-04-state-layer-and-policy-slots.md 3.3).
+--
+-- The framework owns all three and a project may only choose among them. A
+-- custom predicate would put a page's identity inside a project function, and a
+-- page signature is not a place a caller may relax per call site
+-- (`observe.resolve_page`).
+local function checkTextExpectation(what: string, spec: any): string?
+    local stated = 0
+    if spec.expected_text ~= nil then
+        stated += 1
+        if type(spec.expected_text) ~= "string" or spec.expected_text == "" then
+            return what .. " expected_text must be the text the region reads"
+        end
+    end
+    if spec.expected_fragments ~= nil then
+        stated += 1
+        local list = spec.expected_fragments
+        if type(list) ~= "table" or #(list :: { any }) == 0 then
+            return what
+                .. " expected_fragments must be a non-empty list of the pieces "
+                .. "that appear IN ORDER, with anything allowed between them"
+        end
+        for index, fragment in list :: { any } do
+            if type(fragment) ~= "string" or fragment == "" then
+                return what
+                    .. " expected_fragments entry "
+                    .. tostring(index)
+                    .. " must be a non-empty piece of text"
+            end
+        end
+    end
+    if spec.expected_presence ~= nil then
+        stated += 1
+        if spec.expected_presence ~= true then
+            return what
+                .. " expected_presence is true or absent; false would say a "
+                .. "region must read nothing, which is what a forbidden identify "
+                .. "clause already says and says better"
+        end
+    end
+    if stated > 1 then
+        return what
+            .. " states more than one of expected_text, expected_fragments and "
+            .. "expected_presence; they are three answers to one question and "
+            .. "nothing orders them"
+    end
+    return nil
+end
+
 local function checkColourKey(what: string, value: any): string?
     if type(value) ~= "table" then
         return what
@@ -650,23 +717,20 @@ function Element.new(spec: { [string]: any }): Element
         end
     end
 
-    if spec.expected_text ~= nil then
-        if type(spec.expected_text) ~= "string" or spec.expected_text == "" then
-            error(
-                "element '"
-                    .. name
-                    .. "' expected_text must be the text the region should read",
-                2
-            )
-        end
+    local expectationProblem = checkTextExpectation("element '" .. name .. "'", spec)
+    if expectationProblem ~= nil then
+        error(expectationProblem, 2)
+    end
+
+    if statesTextExpectation(spec) then
         if #appearances > 0 then
             error(
                 "element '"
                     .. name
-                    .. "' declares both appearances and expected_text; an "
+                    .. "' declares both appearances and a text expectation; an "
                     .. "element verifies itself EITHER by its template pixels OR "
-                    .. "by the text it reads, and two answers with no rule "
-                    .. "between them is not a stronger check",
+                    .. "by what it reads, and two answers with no rule between "
+                    .. "them is not a stronger check",
                 2
             )
         end
@@ -674,8 +738,9 @@ function Element.new(spec: { [string]: any }): Element
             error(
                 "element '"
                     .. name
-                    .. "' has expected_text but does not declare the read "
-                    .. 'capability; add "read" or drop the expected text',
+                    .. "' expects something of what it reads but does not "
+                    .. 'declare the read capability; add "read" or drop the '
+                    .. "expectation",
                 2
             )
         end
@@ -745,6 +810,10 @@ function Element.new(spec: { [string]: any }): Element
             else nil,
         appearances   = table.freeze(appearances),
         expected_text = spec.expected_text,
+        expected_fragments = if spec.expected_fragments ~= nil
+            then table.freeze(table.clone(spec.expected_fragments))
+            else nil,
+        expected_presence = spec.expected_presence,
         read_floor    = spec.read_floor,
         extra         = frozenExtra(spec.extra),
         residual      = frozenResidual(spec.residual),
@@ -1029,22 +1098,15 @@ function Page.new(spec: { [string]: any }): Page
 
         -- The per-page refinement of what a shared region says, checked before
         -- the identify clause below because that clause consults it.
-        if entry.expected_text ~= nil then
-            if
-                type(entry.expected_text) ~= "string"
-                or entry.expected_text == ""
-            then
-                error(
-                    what
-                        .. " expected_text must be the text this page's copy of "
-                        .. "the region should read",
-                    2
-                )
-            end
+        local rowProblem = checkTextExpectation(what, entry)
+        if rowProblem ~= nil then
+            error(rowProblem, 2)
+        end
+        if statesTextExpectation(entry) then
             if not (element.capabilities :: any).read then
                 error(
                     what
-                        .. " carries expected_text but element '"
+                        .. " expects something of what it reads but element '"
                         .. element.name
                         .. "' does not declare the read capability; a page cannot "
                         .. "refine a reading of something nothing may read",
@@ -1075,8 +1137,8 @@ function Page.new(spec: { [string]: any }): Page
             -- nor text" impossible while the shared element stays buildable.
             if
                 #element.appearances == 0
-                and entry.expected_text == nil
-                and element.expected_text == nil
+                and not statesTextExpectation(entry)
+                and not statesTextExpectation(element)
             then
                 error(
                     what
@@ -1085,9 +1147,11 @@ function Page.new(spec: { [string]: any }): Page
                         .. "', which has no appearances and no expected text "
                         .. "here; an element with no template of its own is "
                         .. "positioned BY the page that was recognised, so it has "
-                        .. "no pixels to offer as evidence -- say what this region "
-                        .. 'should read on this page with expected_text = "...", '
-                        .. "or give the element one of its own",
+                        .. "no pixels to offer as evidence -- say what would "
+                        .. "make a reading of it count on this page, with "
+                        .. "expected_text, expected_fragments or "
+                        .. "expected_presence, or give the element a template of "
+                        .. "its own",
                     2
                 )
             end
@@ -1197,6 +1261,10 @@ function Page.new(spec: { [string]: any }): Page
             exercised         = exercised :: CapabilitySet,
             identify          = entry.identify,
             expected_text     = entry.expected_text,
+            expected_fragments = if entry.expected_fragments ~= nil
+                then table.freeze(table.clone(entry.expected_fragments))
+                else nil,
+            expected_presence = entry.expected_presence,
             pinned_appearance = entry.pinned_appearance,
             rect_override     = if entry.rect_override ~= nil
                 then frozenRect(entry.rect_override :: Rect)
@@ -1273,10 +1341,49 @@ model.Reference = Reference
 -- `Page.new` asks the weaker question of the SPEC, where the row does not exist
 -- yet: whether EITHER source has text at all, never which wins.
 function Reference.expected_text(reference: Reference): string?
-    if reference.expected_text ~= nil then
-        return reference.expected_text
+    local expectation = Reference.text_expectation(reference)
+    if expectation ~= nil and expectation.kind == "equals" then
+        return expectation.text
     end
-    return reference.element.expected_text
+    return nil
+end
+
+-- What would make a reading of this row's region count, or nil when neither the
+-- row nor the element asks anything of it.
+--
+-- THE ROW WINS AS A WHOLE, which is the part a per-field precedence would get
+-- wrong: a row asking only for presence must not inherit the element's exact
+-- text and end up demanding both. So a row that states any of the three answers
+-- for all three.
+--
+-- Three kinds, spelled here and nowhere else:
+--
+--   * "equals"    -- the whole reading is this text, whitespace at the ends
+--                    forgiven. The strictest, and the only one that can tell
+--                    two screens apart by their titles.
+--   * "fragments" -- these pieces appear in this order, with anything between
+--                    them. What a sentence with a number in the middle needs.
+--   * "presence"  -- there is a confident reading at all. What a region whose
+--                    text is never twice the same needs, and the weakest thing
+--                    that is still evidence.
+function Reference.text_expectation(reference: Reference): any
+    local source: any = reference
+    if not statesTextExpectation(reference) then
+        source = reference.element
+    end
+    if source.expected_text ~= nil then
+        return table.freeze({ kind = "equals", text = source.expected_text })
+    end
+    if source.expected_fragments ~= nil then
+        return table.freeze({
+            kind      = "fragments",
+            fragments = source.expected_fragments,
+        })
+    end
+    if source.expected_presence ~= nil then
+        return table.freeze({ kind = "presence" })
+    end
+    return nil
 end
 
 return model

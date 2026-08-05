@@ -69,6 +69,11 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         capabilities  = true,
         rect          = true,
         expected_text = true,
+        -- The other two spellings of what a region must read: ordered pieces
+        -- with anything between them, and any confident reading at all. A row
+        -- or an element states at most one of the three.
+        expected_fragments = true,
+        expected_presence  = true,
         read_floor    = true,
     },
     -- `key` is the colour key the template blob was cut under, written as
@@ -111,6 +116,8 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         exercised         = true,
         identify          = true,
         expected_text     = true,
+        expected_fragments = true,
+        expected_presence  = true,
         pinned_appearance = true,
         rect_override     = true,
     },
@@ -377,6 +384,16 @@ function project.encode(built: any): string
                 "expected_text = " .. renderString(element.expected_text)
             )
         end
+        if element.expected_fragments ~= nil then
+            table.insert(
+                lines,
+                "expected_fragments = "
+                    .. renderValue(element.expected_fragments, "expected_fragments")
+            )
+        end
+        if element.expected_presence then
+            table.insert(lines, "expected_presence = true")
+        end
         -- Written only when the element stated one: the framework's own floor is
         -- the reading of an absent line, so materialising it would put a number
         -- nobody chose into every file and make it look chosen.
@@ -471,6 +488,19 @@ function project.encode(built: any): string
                     lines,
                     "expected_text = " .. renderString(reference.expected_text)
                 )
+            end
+            if reference.expected_fragments ~= nil then
+                table.insert(
+                    lines,
+                    "expected_fragments = "
+                        .. renderValue(
+                            reference.expected_fragments,
+                            "expected_fragments"
+                        )
+                )
+            end
+            if reference.expected_presence then
+                table.insert(lines, "expected_presence = true")
             end
             if reference.pinned_appearance ~= nil then
                 table.insert(
@@ -1117,6 +1147,8 @@ function project.build(ctx: any, document: any): any
                 else nil,
             appearances   = appearances,
             expected_text = section.fields.expected_text,
+            expected_fragments = section.fields.expected_fragments,
+            expected_presence  = section.fields.expected_presence,
             read_floor    = section.fields.read_floor,
             extra         = section.extra,
             residual      = section.residual,
@@ -1180,6 +1212,10 @@ function project.build(ctx: any, document: any): any
                 exercised         = requireField(referenceSection, "exercised"),
                 identify          = referenceSection.fields.identify,
                 expected_text     = referenceSection.fields.expected_text,
+                expected_fragments =
+                    referenceSection.fields.expected_fragments,
+                expected_presence =
+                    referenceSection.fields.expected_presence,
                 pinned_appearance = referenceSection.fields.pinned_appearance,
                 rect_override     = if overrideValue ~= nil
                     then rectOf(referenceSection, "rect_override", overrideValue)

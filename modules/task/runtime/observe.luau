@@ -135,6 +135,30 @@ function observe.exact_text(actual: string, expected: string): boolean
     return trimmed(actual) == trimmed(expected)
 end
 
+-- Whether `actual` carries every one of `fragments` IN ORDER, with anything at
+-- all allowed before, between and after them.
+--
+-- The rule a sentence with a number in it needs: "最大HP 増加" has to match the
+-- screen that says "最大HP が 120 増加" without the model writing down a number
+-- that changes every run. Equality cannot express that and containment of the
+-- whole string cannot either -- one substring would match a screen that says the
+-- pieces in the wrong order, which is a different sentence.
+--
+-- Plain search and never a pattern: `string.find` with `plain` set, so a
+-- fragment carrying `%` or `-` is those characters and not an operator. A
+-- project writes what it saw on the screen, and a screen does not escape itself.
+function observe.contains_fragments(actual: string, fragments: { string }): boolean
+    local from = 1
+    for index = 1, #fragments do
+        local at = string.find(actual, fragments[index], from, true)
+        if at == nil then
+            return false
+        end
+        from = at + #fragments[index]
+    end
+    return true
+end
+
 -- Whether a reading is sure enough to be evidence, judged against the floor its
 -- element declared (`model.Element.read_floor`). The number is DATA and lives in
 -- the model where it can be argued with; the comparison is a judgement and lives
@@ -342,7 +366,7 @@ local function readsExpected(
     ticket: any,
     element: any,
     rect: any,
-    expected: string
+    expectation: any
 ): (boolean, string)
     local reading =
         ctx:cycle_read(ticket, rect.x, rect.y, rect.width, rect.height)
@@ -362,13 +386,55 @@ local function readsExpected(
                 .. " this element needs before a reading counts as evidence"
     end
 
-    return observe.exact_text(reading.text, expected), '"' .. reading.text .. '"'
+    -- A table over the closed set of expectation kinds, so a kind added to
+    -- `model` without an answer here fails at the lookup rather than falling
+    -- through to whichever branch happened to be last.
+    local judged: { [string]: (any) -> boolean } = {
+        equals = function(against: any): boolean
+            return observe.exact_text(reading.text, against.text)
+        end,
+        fragments = function(against: any): boolean
+            return observe.contains_fragments(reading.text, against.fragments)
+        end,
+        -- Nothing further to ask: the floor above already refused an unconfident
+        -- reading, and `cycle_read` returning nil already refused an empty one.
+        presence = function(): boolean
+            return true
+        end,
+    }
+    local rule = judged[expectation.kind]
+    if rule == nil then
+        error(
+            "no rule for text expectation kind '"
+                .. tostring(expectation.kind)
+                .. "'",
+            0
+        )
+    end
+    return rule(expectation), '"' .. reading.text .. '"'
 end
 
 -- Whether `value` is a receipt this framework minted for `ticket`. Published
 -- here because `evidence` is not a name any script can reach, and this is the
 -- question a layer-three caller asks before committing to a branch that clicks.
 observe.is_receipt_for = evidence.is_receipt_for
+
+-- What the region was asked for, as the OBJECT of a sentence whose verb the
+-- caller supplies: "requires element 'x' to read <this>", "forbids element 'x'
+-- from reading <this>". One phrasing per kind, so a reader of the failure knows
+-- which of the three rules was applied rather than only that a reading did not
+-- satisfy it.
+local function expectationPhrase(expectation: any): string
+    if expectation.kind == "equals" then
+        return '"' .. expectation.text .. '"'
+    end
+    if expectation.kind == "fragments" then
+        return '"'
+            .. table.concat(expectation.fragments, '" then "')
+            .. '" in that order'
+    end
+    return "anything at all"
+end
 
 -- observe.resolve_page(ctx, ticket, page) -> (Receipt?, string?)
 --
@@ -416,14 +482,14 @@ function observe.resolve_page(ctx: any, ticket: any, page: any): (Receipt?, stri
                 -- that refines the search rectangle, and one on an element that
                 -- draws none, which is what makes the expected text and
                 -- `element.rect` present here by construction.
-                local expected =
-                    model.Reference.expected_text(reference) :: string
+                local expectation =
+                    model.Reference.text_expectation(reference) :: any
                 local matched, actual = readsExpected(
                     ctx,
                     ticket,
                     element,
                     element.rect,
-                    expected
+                    expectation
                 )
                 if reference.identify == "required" and not matched then
                     return nil,
@@ -431,9 +497,9 @@ function observe.resolve_page(ctx: any, ticket: any, page: any): (Receipt?, stri
                             .. page.name
                             .. "' requires element '"
                             .. element.name
-                            .. '\' to read "'
-                            .. expected
-                            .. '" and the region read '
+                            .. "' to read "
+                            .. expectationPhrase(expectation)
+                            .. " and the region read "
                             .. actual
                 end
                 if reference.identify == "forbidden" and matched then
@@ -442,9 +508,9 @@ function observe.resolve_page(ctx: any, ticket: any, page: any): (Receipt?, stri
                             .. page.name
                             .. "' forbids element '"
                             .. element.name
-                            .. '\' from reading "'
-                            .. expected
-                            .. '" and the region read exactly that'
+                            .. "' from reading "
+                            .. expectationPhrase(expectation)
+                            .. " and the region did"
                 end
             else
                 local appearance, found = foldAppearances(

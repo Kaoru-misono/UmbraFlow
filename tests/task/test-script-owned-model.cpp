@@ -498,7 +498,7 @@ namespace uf::task
                             },
                         }
                     )lua",
-                    .fragment = "both appearances and expected_text",
+                    .fragment = "both appearances and a text expectation",
                 },
                 Refusal{
                     .label = "expected text on an element nothing may read",
@@ -823,7 +823,7 @@ namespace uf::task
                             references = { anchorRow({ expected_text = "battle" }) },
                         }
                     )lua",
-                    .fragment = "carries expected_text but element 'anchor'",
+                    .fragment = "expects something of what it reads but element 'anchor'",
                 },
                 Refusal{
                     .label = "expected text that says nothing",
@@ -841,7 +841,7 @@ namespace uf::task
                             },
                         }
                     )lua",
-                    .fragment = "expected_text must be the text this page's copy",
+                    .fragment = "expected_text must be the text the region reads",
                 },
                 Refusal{
                     .label = "identifying by a region nobody said what reads",
@@ -2648,6 +2648,131 @@ namespace uf::task
                     ctx:cycle_close(ticket)
                     if receipt ~= nil then return 0 end
                     if string.find(why, "under the 9500", 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("ordered fragments match a sentence with anything between them")
+            {
+                // The rule a sentence carrying a number needs: the model writes
+                // the words it saw and not the number, which changes every run
+                // (docs/plans/2026-08-04-state-layer-and-policy-slots.md 3.3).
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0)},
+                        .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                            oneLineReadout("max HP up by 120 points", 9'000)
+                        ),
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, titleScript(R"lua(
+                    local function resolves(row)
+                        local page = model.Page.new{
+                            name = "reward",
+                            references = { titleRow(row) },
+                        }
+                        local ticket = ctx:cycle_open()
+                        local receipt, why = observe.resolve_page(ctx, ticket, page)
+                        ctx:cycle_close(ticket)
+                        return receipt ~= nil, why
+                    end
+
+                    -- The pieces are there, in this order, with a number the
+                    -- model never wrote down sitting between them.
+                    local hit = resolves({
+                        expected_fragments = { "max HP", "up", "points" },
+                    })
+                    if not hit then return 0 end
+
+                    -- Equality cannot express the same thing, which is why the
+                    -- kind exists rather than the author writing a longer string.
+                    local exact = resolves({ expected_text = "max HP up" })
+                    if exact then return 0 end
+
+                    -- ORDER is the whole difference from a bag of substrings: the
+                    -- same pieces the other way round are a different sentence,
+                    -- and the reading contains both of them.
+                    local reversed, why = resolves({
+                        expected_fragments = { "points", "max HP" },
+                    })
+                    if reversed then return 0 end
+                    if string.find(why, [["points" then "max HP"]], 1, true) == nil
+                    then
+                        return 0
+                    end
+                    if string.find(why, "in that order", 1, true) == nil then
+                        return 0
+                    end
+
+                    -- And a piece that is not there at all fails, so the rule is
+                    -- not "any fragment" wearing an ordered name.
+                    if resolves({ expected_fragments = { "max HP", "down" } }) then
+                        return 0
+                    end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("presence asks only that the region read something")
+            {
+                // The weakest thing that is still evidence, for a region whose
+                // text is never twice the same. It is not "always true": the
+                // floor and an empty read both still refuse it, which is what
+                // separates it from an identify clause that checks nothing.
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0)},
+                        .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                            oneLineReadout("whatever it says today", 9'000)
+                        ),
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, titleScript(R"lua(
+                    local page = model.Page.new{
+                        name = "event",
+                        references = { titleRow({ expected_presence = true }) },
+                    }
+                    local ticket = ctx:cycle_open()
+                    local receipt = observe.resolve_page(ctx, ticket, page)
+                    ctx:cycle_close(ticket)
+                    if receipt == nil then return 0 end
+
+                    -- Three answers to one question, and a row may give one.
+                    local ok, err = pcall(function()
+                        return model.Page.new{
+                            name = "muddled",
+                            references = {
+                                titleRow({
+                                    expected_presence = true,
+                                    expected_text = "battle",
+                                }),
+                            },
+                        }
+                    end)
+                    if ok then return 0 end
+                    if string.find(err, "more than one of", 1, true) == nil then
                         return 0
                     end
                     return 1
