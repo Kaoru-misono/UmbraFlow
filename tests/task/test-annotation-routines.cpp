@@ -16,6 +16,9 @@
 
 #include <image/png.hpp>
 
+#include <ocr/engine.hpp>
+#include <ocr/text.hpp>
+
 #include <script/engine.hpp>
 
 #include <trace/recorder.hpp>
@@ -338,6 +341,75 @@ namespace uf::task
             );
         }
 
+        // A fake OCR adapter that answers one fixed set of lines for a region
+        // read. It is what a strip cell needs and nothing else here does: the
+        // count comes off the frame, so a matrix walking a strip has to read the
+        // container and there must be something inside it to divide.
+        //
+        // Only the block layout is answered. The single-line path is what a text
+        // cell uses, and a case that quietly took this engine for one would be
+        // measuring lines nobody laid out for it.
+        class FakeBlockReader final : public ocr::IOcrEngine
+        {
+            ocr::Readout m_block;
+
+        public:
+            explicit FakeBlockReader(ocr::Readout block)
+                : m_block{std::move(block)}
+            {
+            }
+
+            [[nodiscard]]
+            auto identity() const noexcept -> std::string_view override
+            {
+                return "fake/block";
+            }
+
+            [[nodiscard]]
+            auto read(BgraImage const& /*image*/, ocr::ReadSpec const& spec)
+                -> Result<ocr::Readout> override
+            {
+                if (spec.layout != ocr::TextLayout::Block)
+                {
+                    return fail(
+                        AutomationErrorKind::UnsupportedCapability,
+                        "this adapter reads a region of lines and nothing else"
+                    );
+                }
+                return m_block;
+            }
+        };
+
+        // Four lines across one container, which a spacing of six divides into
+        // three items: the gap inside the first item is 2, and the gaps between
+        // items are 11 and 8. Written as literals rather than derived from the
+        // spacing, because a readout that moved with the model would assert
+        // nothing about the count the model produces from it.
+        [[nodiscard]]
+        auto handOfThreeItems() -> ocr::Readout
+        {
+            auto readout = ocr::Readout{};
+            auto add     = [&readout](
+                std::string text,
+                uint32 x,
+                uint32 width
+            ) -> void
+            {
+                readout.lines.emplace_back(
+                    ocr::TextLine{
+                        .text   = std::move(text),
+                        .bounds = test::pixelRect(x, 0, width, 1),
+                        .confidenceBp = 9'000,
+                    }
+                );
+            };
+            add("guard", 0U, 5U);
+            add("+2", 7U, 2U);
+            add("heal", 20U, 4U);
+            add("strike", 32U, 6U);
+            return readout;
+        }
+
         // A session over the fixture frame, on an ANNOTATION stream because a
         // crop writes an annotation.* line and no other stream may hold one.
         struct Harness final
@@ -346,8 +418,13 @@ namespace uf::task
             Result<engine::EngineSession>         session;
         };
 
+        // `ocrEngine` is null for every case that measures pixels: reading costs
+        // an engine binding a host supplies only when the project claims
+        // something that has to be read (`oracle.Claims.reads_text`), and a
+        // fixture that always supplied one would let a case read by accident.
         [[nodiscard]]
-        auto buildHarness() -> Harness
+        auto buildHarness(std::unique_ptr<ocr::IOcrEngine> ocrEngine = nullptr)
+            -> Harness
         {
             auto recorder = std::make_unique<trace::TraceRecorder>(
                 std::make_unique<DiscardingTraceSink>(),
@@ -366,7 +443,8 @@ namespace uf::task
                 std::make_unique<FakeFrameSource>(std::move(frames)),
                 std::make_unique<CountingActionSink>(),
                 *recorder,
-                baseConfig(fixtureFingerprint())
+                baseConfig(fixtureFingerprint()),
+                std::move(ocrEngine)
             );
             return Harness{
                 .recorder = std::move(recorder),
@@ -1780,6 +1858,498 @@ namespace uf::task
                 entries.emplace_back(entry.path());
             }
             CHECK(entries.size() == 1U);
+        }
+
+        // The container form, and the one an agent could not author at all: a
+        // strip is built from no measurement, so nothing in this module made one
+        // and the only way a strip reached a project was somebody typing a
+        // `[[element]]` block by hand -- past every ruling the constructors make.
+        //
+        // What has to survive the round trip is the two facts a strip states and
+        // nothing else: that its rectangle is a CONTAINER rather than a region,
+        // and the gap that divides it. How many items the container holds is
+        // deliberately not in the file, which is why the form and the spacing are
+        // the whole of what a reload can lose.
+        TEST_CASE("An agent authors a strip and the file carries its spacing")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-strip"};
+            auto const screenHash = seedScreen(directory.path());
+            seedProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view author = R"lua(
+                local built = project.load_project(ctx)
+
+                -- No measurement and no ctx: a strip carries no template of its
+                -- own, so there are no pixels to cut and nothing to save.
+                local hand = scribe.author_strip_element({
+                    name         = "hand",
+                    capabilities = { "read" },
+                    rect         = { x = 0, y = 0, width = 3, height = 1 },
+                    item_spacing = 2,
+                })
+                if hand.form ~= "strip" then return 0 end
+                if hand.item_spacing ~= 2 then return 0 end
+                if #hand.appearances ~= 0 then return 0 end
+
+                scribe.add_element(built, hand)
+                scribe.save(ctx, built)
+                return 1
+            )lua";
+
+            auto const authored = runExploration(context, author);
+            REQUIRE(authored.has_value());
+            CHECK(*authored == doctest::Approx(1.0));
+
+            // The anchor's template and nothing beside it: a strip is authored
+            // from no pixels, so authoring one writes no asset.
+            auto entries = std::vector<std::filesystem::path>{};
+            for (
+                auto const& entry :
+                std::filesystem::directory_iterator{
+                    directory.path() / "assets" / "templates"
+                }
+            )
+            {
+                entries.emplace_back(entry.path());
+            }
+            CHECK(entries.size() == 1U);
+
+            // A FRESH VM over a FRESH session: everything below comes off disk.
+            auto reloadHarness = buildHarness();
+            REQUIRE(reloadHarness.session.has_value());
+            TaskContext reloaded{
+                *std::move(reloadHarness.session),
+                *reloadHarness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view verify = R"lua(
+                local built = project.load_project(ctx)
+
+                if project.encode(built) ~= ctx:project_read(project.file_name) then
+                    return 0
+                end
+
+                local hand = built.element_by_name["hand"]
+                if hand == nil then return 0 end
+                if hand.form ~= "strip" then return 0 end
+                if hand.item_spacing ~= 2 then return 0 end
+                if hand.rect == nil then return 0 end
+                if hand.rect.width ~= 3 then return 0 end
+                if #hand.appearances ~= 0 then return 0 end
+                if not hand.capabilities.read then return 0 end
+                return 1
+            )lua";
+
+            auto const verified = runExploration(reloaded, verify);
+            REQUIRE(verified.has_value());
+            CHECK(*verified == doctest::Approx(1.0));
+        }
+
+        // The one refusal this verb makes that the constructor does not. Every
+        // other form treats a missing rectangle as a DIFFERENT SHAPE of element,
+        // placed by whatever row or claim uses it; a strip's rectangle is the
+        // container its spacing divides, so an absent one is a strip with
+        // nothing to count inside. `Element.new` refuses it too, in a sentence
+        // about the shape an author did not want -- which is why the fragment
+        // this case looks for is the verb's own.
+        TEST_CASE("A strip with no container rectangle is refused before anything is touched")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-strip-container"};
+            auto const screenHash = seedScreen(directory.path());
+            seedProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view source = R"lua(
+                local built = project.load_project(ctx)
+
+                local ok, err = pcall(function()
+                    return scribe.author_strip_element({
+                        name         = "hand",
+                        capabilities = { "read" },
+                        item_spacing = 2,
+                    })
+                end)
+                if ok then return 0 end
+                local noContainer = "a strip's rectangle is the container its spacing divides into items"
+                if string.find(tostring(err), noContainer, 1, true) == nil then
+                    return 0
+                end
+
+                -- Nothing was touched: the verb takes no model and writes no
+                -- asset, so a refused line leaves the project exactly as it was
+                -- and the agent may retry the same name.
+                if #built.elements ~= 1 then return 0 end
+                if built.element_by_name["hand"] ~= nil then return 0 end
+                return 1
+            )lua";
+
+            auto const refused = runExploration(context, source);
+            REQUIRE(refused.has_value());
+            CHECK(*refused == doctest::Approx(1.0));
+
+            auto entries = std::vector<std::filesystem::path>{};
+            for (
+                auto const& entry :
+                std::filesystem::directory_iterator{
+                    directory.path() / "assets" / "templates"
+                }
+            )
+            {
+                entries.emplace_back(entry.path());
+            }
+            CHECK(entries.size() == 1U);
+        }
+
+        // The verb IS the choice, so a spec restating it could disagree with the
+        // call it is part of. The spec here names the form the verb would have
+        // chosen anyway, because that is the case a verb which merely overwrote
+        // the field would let through -- and a caller writing `form = "fixed"`
+        // beside `author_strip_element` would then be silently obeyed by neither
+        // half of the line.
+        TEST_CASE("The strip verb makes the form choice and refuses a spec restating it")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-strip-form"};
+            auto const screenHash = seedScreen(directory.path());
+            seedProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view source = R"lua(
+                local built = project.load_project(ctx)
+
+                local ok, err = pcall(function()
+                    return scribe.author_strip_element({
+                        name         = "hand",
+                        capabilities = { "read" },
+                        rect         = { x = 0, y = 0, width = 3, height = 1 },
+                        item_spacing = 2,
+                        form         = "strip",
+                    })
+                end)
+                if ok then return 0 end
+                if string.find(tostring(err), "the spec states no form", 1, true) == nil then
+                    return 0
+                end
+
+                -- And a template the verb has no use for is refused the way the
+                -- reading verb refuses one, so neither name has a mode to get
+                -- wrong.
+                local pixelsOk, pixelsErr = pcall(function()
+                    return scribe.author_strip_element({
+                        name         = "hand",
+                        capabilities = { "read" },
+                        rect         = { x = 0, y = 0, width = 3, height = 1 },
+                        item_spacing = 2,
+                        appearances  = {},
+                    })
+                end)
+                if pixelsOk then return 0 end
+                local byPixels = "an element that searches for pixels is authored"
+                if string.find(tostring(pixelsErr), byPixels, 1, true) == nil then
+                    return 0
+                end
+
+                if #built.elements ~= 1 then return 0 end
+                return 1
+            )lua";
+
+            auto const refused = runExploration(context, source);
+            REQUIRE(refused.has_value());
+            CHECK(*refused == doctest::Approx(1.0));
+        }
+
+        // The claim that makes a spacing falsifiable, driven end to end through
+        // the authoring verbs. A strip writes down no rectangle per item -- the
+        // number is the screen's to decide -- so the file asserts only the gap,
+        // and the only thing a stored screen can contradict is the count that gap
+        // produces. Without `claim_items` an agent could author the container and
+        // then say nothing measurable about it: the matrix walks the cell and
+        // reports it UNCLAIMED, which is a row with no question in it.
+        //
+        // The fixture frame carries the pixels the seeded screen holds, and the
+        // engine reads the container's lines off that frame, which is why this is
+        // the one case here that binds an OCR adapter at all.
+        TEST_CASE("An items claim rides through the file to a judged cell")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-claim-items"};
+            auto const screenHash = seedScreen(directory.path());
+            seedProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view author = R"lua(
+                local built = project.load_project(ctx)
+
+                local hand = scribe.author_strip_element({
+                    name         = "hand",
+                    capabilities = { "read" },
+                    rect         = { x = 0, y = 0, width = 40, height = 3 },
+                    item_spacing = 6,
+                })
+                scribe.add_element(built, hand)
+
+                -- THE SENTENCE THE MATRIX CONTRADICTS. The spacing above is the
+                -- only number the file states about this container, and this is
+                -- the only kind of claim that measures one.
+                scribe.claim_items(built, "home_screen", hand, "match", 3)
+                if #built.claims.expectations ~= 2 then return 0 end
+
+                -- A screen nobody captured is nothing to measure against, and
+                -- the refusal is this module's own because only the model holds
+                -- the screen inventory.
+                local screenOk, screenErr = pcall(function()
+                    scribe.claim_items(built, "nowhere", hand, "match", 3)
+                end)
+                if screenOk then return 0 end
+                if string.find(tostring(screenErr), "no screen named", 1, true) == nil then
+                    return 0
+                end
+
+                -- And a count claimed of an element that divides into nothing is
+                -- the model's ruling, made in its own words.
+                local anchor = built.element_by_name["anchor"]
+                local formOk, formErr = pcall(function()
+                    scribe.claim_items(built, "home_screen", anchor, "match", 3)
+                end)
+                if formOk then return 0 end
+                if string.find(tostring(formErr), "only a strip has items", 1, true) == nil then
+                    return 0
+                end
+
+                if #built.claims.expectations ~= 2 then return 0 end
+                scribe.save(ctx, built)
+                return 1
+            )lua";
+
+            auto const authored = runExploration(context, author);
+            REQUIRE(authored.has_value());
+            CHECK(*authored == doctest::Approx(1.0));
+
+            // A FRESH VM over a FRESH session, this one holding the adapter the
+            // container is read through: everything below comes off disk.
+            auto reloadHarness =
+                buildHarness(std::make_unique<FakeBlockReader>(handOfThreeItems()));
+            REQUIRE(reloadHarness.session.has_value());
+            TaskContext reloaded{
+                *std::move(reloadHarness.session),
+                *reloadHarness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view verify = R"lua(
+                local built = project.load_project(ctx)
+
+                if project.encode(built) ~= ctx:project_read(project.file_name) then
+                    return 0
+                end
+
+                -- The number came back off disk under the cell the walk reads.
+                if oracle.Claims.items_for(built.claims, "home_screen", "hand") ~= 3 then
+                    return 0
+                end
+
+                local verdict = regress.check(ctx, built)
+                if not verdict.accepted then return 0 end
+
+                local cell = nil
+                for _, row in verdict.cells do
+                    if row.subject == "strip" then cell = row end
+                end
+                if cell == nil then return 0 end
+                if cell.screen ~= "home_screen" then return 0 end
+
+                -- JUDGED, not merely present. A cell the file asks no question
+                -- about is reported unclaimed and carries no numbers at all,
+                -- which is what a claim that failed to reach the file looks
+                -- like from here.
+                if cell.verdict ~= "expected" then return 0 end
+                if cell.items ~= 3 then return 0 end
+                if cell.expected_items ~= 3 then return 0 end
+                return 1
+            )lua";
+
+            auto const verified = runExploration(reloaded, verify);
+            REQUIRE(verified.has_value());
+            CHECK(*verified == doctest::Approx(1.0));
+        }
+
+        // The cell that used to be legal and unmeasurable. A strip claimed with
+        // no number built a well formed expectation, so the walk reported that
+        // cell UNCLAIMED while the summary had already counted the claim -- one
+        // run, two answers, and neither of them visible in the file.
+        //
+        // The ruling is `Expectation.new`'s rather than any verb's, because the
+        // constructor is where every door meets: the authoring verb, a
+        // hand-written `[[expect]]` block arriving through `project.load_project`,
+        // and a test assembling a model in memory. This case walks all three,
+        // since a guard in the verb alone would leave the file format able to
+        // express exactly the claim the report cannot read.
+        TEST_CASE("A strip cell with no number is refused whatever door it came in by")
+        {
+            auto const directory  = TemporaryDirectory{"uf-strip-cell-number"};
+            auto const screenHash = seedScreen(directory.path());
+            seedProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view source = R"lua(
+                local built  = project.load_project(ctx)
+                local screen = built.claims.screen_by_name["home_screen"]
+
+                local hand = scribe.author_strip_element({
+                    name         = "hand",
+                    capabilities = { "read" },
+                    rect         = { x = 0, y = 0, width = 40, height = 3 },
+                    item_spacing = 6,
+                })
+                scribe.add_element(built, hand)
+
+                -- The constructor, asked directly.
+                local ok, err = pcall(function()
+                    return oracle.Expectation.new{
+                        screen  = screen,
+                        element = hand,
+                        state   = "match",
+                    }
+                end)
+                if ok then return 0 end
+                local noQuestion = "is a strip, and states no number"
+                if string.find(tostring(err), noQuestion, 1, true) == nil then
+                    return 0
+                end
+
+                -- A strip claimed by a READING gets its own sentence. The one
+                -- this branch used to raise says the element verifies itself by
+                -- its template pixels, which a strip does not have and cannot
+                -- have: `Element.new` refuses appearances on one.
+                local textOk, textErr = pcall(function()
+                    return oracle.Expectation.new{
+                        screen  = screen,
+                        element = hand,
+                        text    = "guard",
+                        state   = "match",
+                    }
+                end)
+                if textOk then return 0 end
+                if string.find(tostring(textErr), "which is a strip", 1, true) == nil then
+                    return 0
+                end
+                if string.find(tostring(textErr), "template pixels", 1, true) ~= nil then
+                    return 0
+                end
+
+                -- The authoring verb, which adds no ruling of its own and
+                -- therefore reaches the constructor's.
+                local verbOk, verbErr = pcall(function()
+                    scribe.claim_items(built, "home_screen", hand, "match")
+                end)
+                if verbOk then return 0 end
+                if string.find(tostring(verbErr), noQuestion, 1, true) == nil then
+                    return 0
+                end
+                -- And it recorded nothing: a refused claim is rebuilt from
+                -- nothing rather than half applied.
+                if #built.claims.expectations ~= 1 then return 0 end
+
+                -- The control every refusal needs: the same cell with the number
+                -- in it is legal, so the three refusals above are failing on the
+                -- number rather than on the shape.
+                local claim = oracle.Expectation.new{
+                    screen  = screen,
+                    element = hand,
+                    items   = 3,
+                    state   = "match",
+                }
+                if claim.items ~= 3 then return 0 end
+                return 1
+            )lua";
+
+            auto const refused = runExploration(context, source);
+            REQUIRE(refused.has_value());
+            CHECK(*refused == doctest::Approx(1.0));
+
+            // The third door, and the one no verb guards: bytes already on disk.
+            // A file carrying this block loaded happily before the constructor
+            // ruled on it, and every later run measured a cell it could not read.
+            auto const handWritten = std::string{}
+                + "schema = \"umbraflow-project/l2-v2\"\n"
+                + "\n"
+                + "[[element]]\n"
+                + "name = \"hand\"\n"
+                + "form = \"strip\"\n"
+                + "capabilities = [\"read\"]\n"
+                + "rect = [0, 0, 40, 3]\n"
+                + "item_spacing = 6\n"
+                + "\n"
+                + "[[screen]]\n"
+                + "name = \"home_screen\"\n"
+                + "hash = \"" + screenHash + "\"\n"
+                + "\n"
+                + "[[expect]]\n"
+                + "screen = \"home_screen\"\n"
+                + "element = \"hand\"\n"
+                + "state = \"match\"\n";
+            writeFile(
+                directory.path() / "page-model.toml",
+                std::as_bytes(std::span{std::string_view{handWritten}})
+            );
+
+            auto reloadHarness = buildHarness();
+            REQUIRE(reloadHarness.session.has_value());
+            TaskContext reloaded{
+                *std::move(reloadHarness.session),
+                *reloadHarness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view load = R"lua(
+                local ok, err = pcall(function()
+                    return project.load_project(ctx)
+                end)
+                if ok then return 0 end
+                if string.find(tostring(err), "is a strip, and states no number", 1, true) == nil then
+                    return 0
+                end
+                return 1
+            )lua";
+
+            auto const opened = runExploration(reloaded, load);
+            REQUIRE(opened.has_value());
+            CHECK(*opened == doctest::Approx(1.0));
         }
 
         // The second face of one element, and the pages that have to follow it. An

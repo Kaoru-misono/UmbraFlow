@@ -367,6 +367,73 @@ function scribe.author_text_element(spec: { [string]: any }): any
     return model.Element.new(shaped)
 end
 
+-- scribe.author_strip_element(spec) -> element
+--
+-- Builds the CONTAINER whose items are counted off the frame: no crop, no
+-- template asset, no threshold, and therefore no measurement and no `ctx`. A
+-- strip carries no template of its own -- `Element.new` refuses appearances on
+-- one -- so there are no pixels to cut and nothing to save.
+--
+-- What the file asserts is the SPACING that divides the container; how many
+-- items it divides into is the screen's to decide, which is the sentence
+-- `scribe.claim_items` writes down and the matrix contradicts.
+--
+-- It is a verb of its own rather than a flag, for `author_text_element`'s
+-- reason: the verification source an agent chose is visible in the line it wrote
+-- (an element declares ONE source:
+-- docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4).
+--
+-- `spec` is handed to `Element.new` as written, so every ruling is made in the
+-- constructor's own words.
+function scribe.author_strip_element(spec: { [string]: any }): any
+    if type(spec) ~= "table" then
+        error("scribe.author_strip_element needs a table of fields", 2)
+    end
+    if spec.appearances ~= nil then
+        error(
+            "scribe.author_strip_element builds an element with no template of "
+                .. "its own; an element that searches for pixels is authored "
+                .. "from a measurement with scribe.author_element",
+            2
+        )
+    end
+
+    -- The verb authors a strip and says so rather than making a caller restate
+    -- what the verb already chose. A spec naming a form is refused for that
+    -- reason: it could disagree with the call it is part of.
+    if spec.form ~= nil then
+        error(
+            "scribe.author_strip_element builds a strip -- a container whose "
+                .. "spacing divides it into items -- so the spec states no form",
+            2
+        )
+    end
+
+    -- The one refusal here that is this verb's own rather than the
+    -- constructor's. For every other form a missing rectangle is a DIFFERENT
+    -- SHAPE of element, placed by whatever row or claim uses it. A strip's
+    -- rectangle is the container its spacing divides, so an absent one is not
+    -- another shape at all: it is a strip with nothing to count inside.
+    if spec.rect == nil then
+        error(
+            "scribe.author_strip_element needs rect = { x = , y = , width = , "
+                .. "height = }; a strip's rectangle is the container its "
+                .. "spacing divides into items, so leaving it out does not "
+                .. "author the element that is placed wherever it is used -- it "
+                .. "authors a strip with nothing to count inside",
+            2
+        )
+    end
+
+    -- Nothing else is asked here, because nothing else is this verb's to ask: a
+    -- spacing of at least one whole pixel, the read capability its items are
+    -- located by, and the refusal of a template on a container whose items are
+    -- counted are all ruled on by `Element.new`, in its own words.
+    local shaped = table.clone(spec)
+    shaped.form = "strip"
+    return model.Element.new(shaped)
+end
+
 -- scribe.add_element(built, element) -> ()
 --
 -- Puts `element` into the loaded model, so the next save writes it out and the
@@ -1225,6 +1292,38 @@ function scribe.claim_text(
     recordClaim(built, screenName, {
         element = element,
         text    = text,
+        rect    = rect,
+        state   = state,
+    })
+end
+
+-- scribe.claim_items(built, screen_name, element, state, items, rect?) -> ()
+--
+-- Records how many items the model says this strip holds on one of the screens
+-- the project already holds. It is the cell that makes a SPACING falsifiable:
+-- the file writes down no rectangle per item, so the count that spacing produces
+-- on a stored screen is the only thing that can contradict it. `rect` says WHICH
+-- rectangle; see `scribe.claim` for why it rides last.
+--
+-- `items` is required rather than optional, because a claim with no number is a
+-- `scribe.claim` -- and `Expectation.new` says so on the cell it refuses.
+--
+-- It rules on nothing else; every other ruling is `Expectation.new`'s -- a count
+-- that is not a whole number of items or is below zero, a count claimed of an
+-- element that is not a strip, and a count claimed beside a text or an
+-- appearance.
+function scribe.claim_items(
+    built: any,
+    screenName: string,
+    element: any,
+    state: string,
+    items: number,
+    rect: any
+)
+    requireClaims(built, "scribe.claim_items")
+    recordClaim(built, screenName, {
+        element = element,
+        items   = items,
         rect    = rect,
         state   = state,
     })

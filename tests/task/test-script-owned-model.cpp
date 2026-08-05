@@ -9769,6 +9769,16 @@ namespace uf::task
                     },
                 },
             }
+            -- A container counted off the frame. It has no appearances, like
+            -- `title`, and reaches a different arm of the constructor for that
+            -- reason: what a strip is verified by is a number, not a reading.
+            local hand = model.Element.new{
+                name = "hand",
+                form = "strip",
+                capabilities = { "read" },
+                rect = { x = 0, y = 0, width = 40, height = 3 },
+                item_spacing = 6,
+            }
         )lua";
 
         [[nodiscard]]
@@ -9881,6 +9891,29 @@ namespace uf::task
                         }
                     )lua",
                     .fragment = "at least one pixel wide",
+                },
+                Refusal{
+                    .label = "a strip cell that states no number",
+                    .body  = R"lua(
+                        return oracle.Expectation.new{
+                            screen = screen,
+                            element = hand,
+                            state = "match",
+                        }
+                    )lua",
+                    .fragment = "is a strip, and states no number",
+                },
+                Refusal{
+                    .label = "a strip claimed by what it reads",
+                    .body  = R"lua(
+                        return oracle.Expectation.new{
+                            screen = screen,
+                            element = hand,
+                            text = "guard",
+                            state = "match",
+                        }
+                    )lua",
+                    .fragment = "which is a strip",
                 },
             };
         }

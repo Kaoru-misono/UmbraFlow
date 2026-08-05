@@ -138,7 +138,9 @@ export type Rect = {
 --   * `items`: how many items a STRIP holds on this screen. It is the third
 --     source and the only one that is a number: a strip's rectangles are not in
 --     the file at all, so what the model asserts is the spacing and what a
---     screen can contradict is the count that spacing produces.
+--     screen can contradict is the count that spacing produces. Optional in the
+--     type and required on a strip: every cell about one carries a number, and
+--     no other cell may carry one at all.
 --   * `text`: what the element's rectangle READS on this screen, which is the
 --     cell an element with no templates has
 --     (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4). It is
@@ -349,7 +351,7 @@ oracle.Expectation = Expectation
 -- by `Element.new`; both are the OBJECTS rather than names, so an expectation
 -- about a screen or an element nothing declares cannot be constructed at all.
 --
--- Five rulings, all failing closed at construction:
+-- Six rulings, all failing closed at construction:
 --
 --   * A cell is about ONE verification source: `appearance` names a template and
 --     `text` names a reading, so stating both leaves nothing saying which was
@@ -361,6 +363,12 @@ oracle.Expectation = Expectation
 --     no text is a permanently green cell, so it is refused.
 --   * An element nothing may read cannot be claimed by text: it has to declare
 --     the `read` capability first, as `observe.read_element` demands.
+--   * A STRIP is claimed by a count and only that, so a cell about one states a
+--     number. The refusal is here rather than in whichever verb wrote the claim,
+--     because a hand-written `[[expect]]` block reaches this constructor through
+--     `project.load_project` on exactly the same terms an authoring verb does,
+--     and a file format able to express a claim the report cannot read is a
+--     project that saves and loads and measures nothing.
 --   * A named appearance must be one the element has, or the claim is filed under
 --     a cell the walk never visits -- the same silence as writing nothing.
 --   * EXACTLY ONE thing says where the cell was measured. An element that draws
@@ -495,6 +503,23 @@ function Expectation.new(spec: { [string]: any }): Expectation
         end
     else
         if spec.text ~= nil then
+            -- A strip is in this branch for the opposite reason everything else
+            -- here is: it declares no appearances at all, so the sentence about
+            -- template pixels would be describing an element that has none.
+            if element.form == "strip" then
+                error(
+                    what
+                        .. " claims a text for element '"
+                        .. element.name
+                        .. "', which is a strip; a reading and a count are two "
+                        .. "of the three ways an element can be verified and a "
+                        .. "cell is measured by exactly one -- what a strip "
+                        .. "holds is COUNTED off the frame, so say how many "
+                        .. "items this screen holds with items = <count> "
+                        .. "instead",
+                    2
+                )
+            end
             error(
                 what
                     .. " claims a text for element '"
@@ -523,6 +548,24 @@ function Expectation.new(spec: { [string]: any }): Expectation
                     2
                 )
             end
+        end
+        -- Asked after both sources above, so a caller that named the WRONG one
+        -- hears about what it wrote rather than about the number it left out.
+        if element.form == "strip" and spec.items == nil then
+            error(
+                what
+                    .. " claims an outcome for element '"
+                    .. element.name
+                    .. "', which is a strip, and states no number; a strip is "
+                    .. "measured by the COUNT its spacing divides the container "
+                    .. "into, so a cell with no number is a cell with no question "
+                    .. "in it -- and that is worse than either answer alone, "
+                    .. "because the walk then reports the cell unclaimed while "
+                    .. "the summary has already counted this expectation among "
+                    .. "the claims -- say how many items this screen holds with "
+                    .. "items = <count>",
+                2
+            )
         end
     end
 
@@ -792,8 +835,10 @@ function Claims.text_for(
     return claims.text_by_cell[cellKey(screen, element, nil, rect)]
 end
 
--- How many items this screen claims the strip holds, or nil when it claims no
--- number. Keyed exactly as `text_for` is, and for the same reasons.
+-- How many items this screen claims the strip holds, or nil when this screen
+-- claims nothing about it -- which is the only way the number can be missing,
+-- since `Expectation.new` refuses a strip cell that states none. Keyed exactly
+-- as `text_for` is, and for the same reasons.
 function Claims.items_for(
     claims: Claims,
     screen: string,
