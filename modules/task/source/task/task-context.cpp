@@ -32,6 +32,7 @@
 #include <vision/bgra-image.hpp>
 #include <vision/frame-analysis.hpp>
 
+#include <array>
 #include <cstddef>
 #include <format>
 #include <optional>
@@ -208,6 +209,74 @@ namespace uf::task
                     ),
                 },
             };
+        }
+
+        // What a census grid was asked for, checked against what the host can
+        // answer. Every number reaching it came from a project script, so each
+        // refusal is a Tier B InvalidResource the author can catch; vision
+        // refuses the same three as invariants, because its own caller is host
+        // C++ rather than a script.
+        //
+        // The cell division is repeated here rather than shared, for the reason
+        // model.luau repeats the tolerance ceiling: rounding a division up is
+        // arithmetic, while the CEILING it is measured against is policy and is
+        // imported.
+        [[nodiscard]]
+        auto validateCensusGrid(
+            PixelRect rect,
+            uint32 cellWidth,
+            uint32 cellHeight,
+            ProbeColourKey const& key
+        ) -> Status
+        {
+            if (key.tolerance > k_maximumColourKeyTolerance)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "a colour tolerance of {} is beyond {}, the widest the "
+                        "summed per-channel distance can express",
+                        key.tolerance,
+                        k_maximumColourKeyTolerance
+                    )
+                );
+            }
+            if (cellWidth == 0U || cellHeight == 0U)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "a census grid cell of {}x{} covers no pixel; both sides "
+                        "must be at least one",
+                        cellWidth,
+                        cellHeight
+                    )
+                );
+            }
+
+            auto const columns = (uint64{rect.width()} + cellWidth - 1U) / cellWidth;
+            auto const rows    = (uint64{rect.height()} + cellHeight - 1U) / cellHeight;
+            auto const cells   = columns * rows;
+            if (cells > k_maximumColourGridCells)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "a {}x{} region in {}x{} cells is a {} by {} grid of {} "
+                        "cells, beyond the {} one call reports; use larger cells "
+                        "or a smaller region",
+                        rect.width(),
+                        rect.height(),
+                        cellWidth,
+                        cellHeight,
+                        columns,
+                        rows,
+                        cells,
+                        k_maximumColourGridCells
+                    )
+                );
+            }
+            return {};
         }
 
         // `rgba` with every pixel's alpha replaced by the weight `weights` gives
@@ -493,6 +562,68 @@ namespace uf::task
             blob.mask = std::move(measured->reported);
         }
         return blob;
+    }
+
+    auto TaskContext::cycleCensusGrid(
+        CycleTicket ticket,
+        PixelRect rect,
+        uint32 cellWidth,
+        uint32 cellHeight,
+        ProbeColourKey key
+    ) -> Result<ColourGridReport>
+    {
+        UF_TRY(m_cycles.requireOpen(ticket));
+        UF_TRY(validateCensusGrid(rect, cellWidth, cellHeight, key));
+
+        // The rect's own pixels, taken through the verb that already knows how
+        // to widen a Gray8 capture and how to refuse a rect the frame does not
+        // contain. It is one copy of the rect and no encode, which is the whole
+        // difference from cycleCrop: the copy stays in host C++ and only the
+        // per-cell counts leave.
+        UF_TRY_VALUE(region, m_session.cropRegion(m_cycles.observation(), rect));
+
+        auto const widthSize = checkedCast<std::size_t>(region.width);
+        if (!widthSize)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "the census grid region's width is beyond range"
+            );
+        }
+        UF_TRY_VALUE(
+            view,
+            BgraImage::create(
+                region.pixels,
+                region.width,
+                region.height,
+                *widthSize * 4U
+            )
+        );
+        UF_TRY_VALUE(
+            gridRect,
+            PixelRect::create(0, 0, region.width, region.height)
+        );
+
+        // censusColourGrid is a multi-frame measurement and refuses one frame,
+        // because one frame is stable everywhere; the selection half asked for
+        // here is read off frame zero alone. Handing it the same view twice is
+        // what probePngRegion does for the same reason, and it is why every
+        // cell's spread reads zero until an observation retains more than one
+        // frame.
+        auto const frames = std::array<BgraImage, 2>{view, view};
+        return censusColourGrid(
+            frames,
+            ColourGridSpec{
+                .rect       = gridRect,
+                .cellWidth  = cellWidth,
+                .cellHeight = cellHeight,
+                .keyRed     = key.red,
+                .keyGreen   = key.green,
+                .keyBlue    = key.blue,
+                .tolerance  = key.tolerance,
+                .keyRemoves = key.removes,
+            }
+        );
     }
 
     auto TaskContext::sweepOpenCycle() noexcept -> bool

@@ -387,6 +387,51 @@ function ctx:cycle_read_lines(ticket, x, y, width, height)
     return native.cycle_read_lines(ticket, x, y, width, height)
 end
 
+-- The downsampled colour census: the region in cells of `cellWidth` by
+-- `cellHeight`, each cell reporting how many of its pixels the key took and how
+-- far it moved between frames. It answers with a frozen table carrying
+-- `columns`, `rows`, `cell_width`, `cell_height` and the flat row-major
+-- `counts` and `spreads` arrays.
+--
+-- It is forwarded here, where ctx:cycle_crop is not, because it hands back
+-- counts rather than pixels: measuring a region is ordinary business work, and
+-- the crop-then-probe route a script would otherwise take pays a PNG decode per
+-- rectangle. The key is required and the tolerance is optional; the rectangle
+-- and the cell size are scalars for cycle_match's reason.
+--
+-- `keyRemoves` states which way round the key is read, and is required for the
+-- reason every other key-taking verb requires it: true counts the pixels the
+-- colour does NOT take, so one colour read the two ways partitions each cell.
+function ctx:cycle_census_grid(
+    ticket,
+    x,
+    y,
+    width,
+    height,
+    cellWidth,
+    cellHeight,
+    keyRed,
+    keyGreen,
+    keyBlue,
+    tolerance,
+    keyRemoves
+)
+    return native.cycle_census_grid(
+        ticket,
+        x,
+        y,
+        width,
+        height,
+        cellWidth,
+        cellHeight,
+        keyRed,
+        keyGreen,
+        keyBlue,
+        tolerance,
+        keyRemoves
+    )
+end
+
 -- There is no ctx:cycle_click_point, no ctx:cycle_long_press and no
 -- ctx:cycle_drag, and do not add one. All three ACTIVATE at a bare coordinate,
 -- so all three are privileged; `ctx` is published into every project

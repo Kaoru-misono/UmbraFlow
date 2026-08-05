@@ -2371,5 +2371,265 @@ namespace uf
             std::get<SadSearchStopReason>(probeBudget->outcome)
             == SadSearchStopReason::ComparisonBudgetExhausted
         );
+
+        // The grid rides the same walk, so it takes the same stop: a grid built
+        // from part of a rect must never come back looking like a measured one.
+        auto const gridBudget = censusColourGrid(
+            frames,
+            ColourGridSpec{
+                .rect       = rect,
+                .cellWidth  = 8,
+                .cellHeight = 8,
+                .keyRed     = 250,
+                .keyGreen   = 250,
+                .keyBlue    = 250,
+                .tolerance  = 12,
+            },
+            100,
+            keepGoing
+        );
+        REQUIRE(gridBudget.has_value());
+        CHECK(
+            std::get<SadSearchStopReason>(gridBudget->outcome)
+            == SadSearchStopReason::ComparisonBudgetExhausted
+        );
+        CHECK(gridBudget->completedPixelVisits == 100);
+    }
+
+    // Helpers for the census grid cases below; the frames above carry no plane
+    // painted pixel by pixel.
+    namespace
+    {
+        struct PaintedPixel final
+        {
+            uint32 x{};
+            uint32 y{};
+
+            // Written to all three channels, so grayAt reads the value back
+            // exactly (see bgraFromGray) and a spread is a number this file
+            // chose rather than one BT.601 produced.
+            uint8 gray{};
+        };
+
+        [[nodiscard]]
+        auto paintedBgra(
+            uint32 width,
+            uint32 height,
+            std::span<PaintedPixel const> painted
+        ) -> std::vector<std::byte>
+        {
+            auto plane = std::vector<std::byte>(
+                std::size_t{width} * height * 4U,
+                std::byte{0}
+            );
+            for (auto const& pixel : painted)
+            {
+                auto const base =
+                    (((std::size_t{pixel.y} * width) + pixel.x) * 4U);
+                checkedAt(plane, base)      = asByte(pixel.gray);
+                checkedAt(plane, base + 1U) = asByte(pixel.gray);
+                checkedAt(plane, base + 2U) = asByte(pixel.gray);
+                checkedAt(plane, base + 3U) = asByte(255);
+            }
+            return plane;
+        }
+
+        [[nodiscard]]
+        auto gridOf(
+            std::span<BgraImage const> frames,
+            ColourGridSpec const& spec
+        ) -> ColourGridReport
+        {
+            auto result = censusColourGrid(frames, spec);
+            REQUIRE(result.has_value());
+            return *std::move(result);
+        }
+
+        constexpr auto k_gridWidth  = uint32{5};
+        constexpr auto k_gridHeight = uint32{3};
+
+        // Five by three under two by two cells: three columns and two rows,
+        // whose right column is one pixel wide and whose bottom row is one pixel
+        // tall. Painted white except (2,2), which is near enough to white to sit
+        // outside a tight tolerance and inside a loose one.
+        [[nodiscard]]
+        auto gridPlane() -> std::vector<std::byte>
+        {
+            auto const painted = std::array{
+                PaintedPixel{.x = 0, .y = 0, .gray = 255},
+                PaintedPixel{.x = 1, .y = 0, .gray = 255},
+                PaintedPixel{.x = 0, .y = 1, .gray = 255},
+                PaintedPixel{.x = 1, .y = 1, .gray = 255},
+                PaintedPixel{.x = 2, .y = 0, .gray = 255},
+                PaintedPixel{.x = 4, .y = 0, .gray = 255},
+                PaintedPixel{.x = 4, .y = 1, .gray = 255},
+                PaintedPixel{.x = 2, .y = 2, .gray = 250},
+                PaintedPixel{.x = 4, .y = 2, .gray = 255},
+            };
+            return paintedBgra(k_gridWidth, k_gridHeight, painted);
+        }
+
+        [[nodiscard]]
+        auto gridSpec(uint32 tolerance) -> ColourGridSpec
+        {
+            return ColourGridSpec{
+                .rect       = pixelRect(0, 0, k_gridWidth, k_gridHeight),
+                .cellWidth  = 2,
+                .cellHeight = 2,
+                .keyRed     = 255,
+                .keyGreen   = 255,
+                .keyBlue    = 255,
+                .tolerance  = tolerance,
+            };
+        }
+    }
+
+    TEST_CASE("A census grid counts every cell over its own pixels")
+    {
+        auto const plane  = gridPlane();
+        auto const image  = bgraImage(plane, k_gridWidth, k_gridHeight);
+        auto const frames = std::array{image, image};
+
+        auto const tight = gridOf(frames, gridSpec(0));
+        CHECK(tight.columns == 3);
+        CHECK(tight.rows == 2);
+        CHECK(tight.cellWidth == 2);
+        CHECK(tight.cellHeight == 2);
+        REQUIRE(tight.selectedPixels.size() == 6);
+
+        // Row major. The third entry is the one-pixel-wide right column, which
+        // holds both of its own pixels and none of the two a nominal cell would
+        // reach past the rect for; the last is the corner cell, one pixel of
+        // width and one of height.
+        CHECK(tight.selectedPixels == std::vector<uint64>{4, 1, 2, 0, 0, 1});
+
+        // The near-white pixel at (2,2) is the fifth cell's only content, so at
+        // a tolerance that admits it that cell alone moves. Without this control
+        // the zero above would pass equally against a plane with nothing there.
+        auto const loose = gridOf(frames, gridSpec(20));
+        CHECK(loose.selectedPixels == std::vector<uint64>{4, 1, 2, 0, 1, 1});
+
+        // Every cell holds still across two copies of one frame, which is what
+        // makes the single moving cell in the next case a fact about the frames.
+        CHECK(tight.meanGraySpread == std::vector<uint32>(6, 0U));
+    }
+
+    TEST_CASE("A census grid read both ways round partitions every cell")
+    {
+        // What the direction flag has to earn here. At tolerance 0 there is no
+        // antialiasing ramp, so every pixel is taken at full weight by exactly
+        // one of the two readings. Ignore `keyRemoves` in the census and the
+        // removing counts come back as the keeping ones, which no cell matches.
+        auto const plane  = gridPlane();
+        auto const image  = bgraImage(plane, k_gridWidth, k_gridHeight);
+        auto const frames = std::array{image, image};
+
+        auto removing       = gridSpec(0);
+        removing.keyRemoves = true;
+
+        auto const kept    = gridOf(frames, gridSpec(0));
+        auto const dropped = gridOf(frames, removing);
+
+        CHECK(kept.selectedPixels == std::vector<uint64>{4, 1, 2, 0, 0, 1});
+        CHECK(dropped.selectedPixels == std::vector<uint64>{0, 3, 0, 2, 2, 0});
+
+        // Cell by cell the two readings sum to the pixels the cell owns, the
+        // partial edge cells included.
+        auto const owned = std::vector<uint64>{4, 4, 2, 2, 2, 1};
+        REQUIRE(kept.selectedPixels.size() == owned.size());
+        REQUIRE(dropped.selectedPixels.size() == owned.size());
+        for (auto cell = std::size_t{0}; cell < owned.size(); ++cell)
+        {
+            CHECK(
+                checkedAt(kept.selectedPixels, cell)
+                    + checkedAt(dropped.selectedPixels, cell)
+                == checkedAt(owned, cell)
+            );
+        }
+    }
+
+    TEST_CASE("A census grid reports the one cell that moved between frames")
+    {
+        auto const plane = gridPlane();
+        auto moved       = plane;
+
+        // (4,0) goes white to black. It is the right column's top pixel, so the
+        // cell that moves is a PARTIAL one holding two pixels rather than four:
+        // divide by the nominal cell and the mean below reads 63.
+        checkedAt(moved, std::size_t{4} * 4U)      = asByte(0);
+        checkedAt(moved, (std::size_t{4} * 4U) + 1U) = asByte(0);
+        checkedAt(moved, (std::size_t{4} * 4U) + 2U) = asByte(0);
+
+        auto const first  = bgraImage(plane, k_gridWidth, k_gridHeight);
+        auto const second = bgraImage(moved, k_gridWidth, k_gridHeight);
+        auto const frames = std::array{first, second};
+
+        auto const grid = gridOf(frames, gridSpec(0));
+        CHECK(grid.meanGraySpread == std::vector<uint32>{0, 0, 127, 0, 0, 0});
+
+        // Selection reads frame zero alone, so the counts are the first case's
+        // even though the second frame lost one of the pixels they count.
+        CHECK(grid.selectedPixels == std::vector<uint64>{4, 1, 2, 0, 0, 1});
+    }
+
+    TEST_CASE("A census grid refuses a cell of no pixels and a grid too fine")
+    {
+        constexpr auto k_side = uint32{200};
+        auto const plane      = paintedBgra(
+            k_side,
+            k_side,
+            std::span<PaintedPixel const>{}
+        );
+        auto const image  = bgraImage(plane, k_side, k_side);
+        auto const frames = std::array{image, image};
+        auto const rect   = pixelRect(0, 0, k_side, k_side);
+
+        auto const black = ColourGridSpec{
+            .rect       = rect,
+            .cellWidth  = 2,
+            .cellHeight = 2,
+            .keyRed     = 0,
+            .keyGreen   = 0,
+            .keyBlue    = 0,
+            .tolerance  = 0,
+        };
+
+        auto flatCell       = black;
+        flatCell.cellHeight = 0;
+        auto const refused  = censusColourGrid(frames, flatCell);
+        REQUIRE_FALSE(refused.has_value());
+        requireErrorKind(refused.error(), AutomationErrorKind::InternalInvariant);
+        CHECK(
+            refused.error().message().find("covers no pixel")
+            != std::string_view::npos
+        );
+
+        // 200 by 200 in single pixels is 40000 cells, past the 32768 a report
+        // carries.
+        auto fine       = black;
+        fine.cellWidth  = 1;
+        fine.cellHeight = 1;
+        auto const tooFine = censusColourGrid(frames, fine);
+        REQUIRE_FALSE(tooFine.has_value());
+        requireErrorKind(tooFine.error(), AutomationErrorKind::InternalInvariant);
+        CHECK(
+            tooFine.error().message().find("40000 cells")
+            != std::string_view::npos
+        );
+
+        auto wide      = black;
+        wide.tolerance = k_maximumColourKeyTolerance + 1U;
+        auto const beyond = censusColourGrid(frames, wide);
+        REQUIRE_FALSE(beyond.has_value());
+        requireErrorKind(beyond.error(), AutomationErrorKind::InternalInvariant);
+
+        // Control: the same rect at two by two is 10000 cells and is answered in
+        // full, so the two refusals above are the ceiling and the cell size
+        // rather than the rect or the frames.
+        auto const coarse = gridOf(frames, black);
+        CHECK(coarse.columns == 100);
+        CHECK(coarse.rows == 100);
+        REQUIRE(coarse.selectedPixels.size() == 10000);
+        CHECK(checkedAt(coarse.selectedPixels, 0) == 4);
     }
 }

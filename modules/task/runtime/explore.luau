@@ -203,6 +203,63 @@ function explore.crop(
     )
 end
 
+-- explore.census_grid(ticket, x, y, width, height, cellWidth, cellHeight, key,
+--     tolerance?) -> grid
+--
+-- The colour census of one rectangle, downsampled: the rectangle is tiled into
+-- cells and each cell reports how many of its pixels the key took and how far it
+-- moved between the cycle's frames. The answer is a frozen table carrying
+-- `columns`, `rows`, `cell_width`, `cell_height` and the flat row-major `counts`
+-- and `spreads` arrays, so the cell at (column, row) is at index
+-- row * columns + column + 1. Edge cells are partial where the rectangle does
+-- not divide evenly, and count only their real pixels.
+--
+-- It is forwarded here for symmetry and NOT because it is privileged: unlike
+-- `crop` and `probe`, its primitive is on both surfaces and a business task
+-- reaches the same verb through `ctx:cycle_census_grid`. What it buys an agent
+-- is asking one question about a whole panel instead of one question per
+-- rectangle, which is the difference between measuring a screen and re-decoding
+-- one for every pixel it wants to know about.
+--
+-- The key is REQUIRED here, where `crop` takes it or leaves it: a grid counts
+-- one colour per cell, so a grid with no key is no answer rather than a weaker
+-- one. It is the same { red, green, blue, removes } table the other two take,
+-- direction included, and is unpacked here because the private surface takes
+-- scalars: read with removes = true a cell counts the pixels the colour does
+-- not take, and the two directions partition the cell.
+function explore.census_grid(
+    ticket: any,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    cellWidth: number,
+    cellHeight: number,
+    key: { red: number, green: number, blue: number, removes: boolean },
+    tolerance: number?
+): any
+    requirePrimitive("cycle_census_grid", "explore.census_grid")
+    if key == nil then
+        error(
+            "explore.census_grid needs key = { red = r, green = g, blue = b, "
+                .. "removes = }; "
+                .. "a cell reports how much of itself is one colour, and there "
+                .. "is no such thing as a grid of no colour",
+            2
+        )
+    end
+    return (native :: any).cycle_census_grid(
+        ticket,
+        x,
+        y,
+        width,
+        height,
+        cellWidth,
+        cellHeight,
+        keyScalars("explore.census_grid", key, tolerance)
+    )
+end
+
 -- explore.probe(blob, x, y, width, height, key?, tolerance?) -> stats
 --
 -- Colour statistics over one rectangle of one PNG. `key` is an optional

@@ -220,6 +220,98 @@ namespace uf
         SadSearchPoll const& poll
     ) -> Result<ColourProbeScan>;
 
+    // The widest grid one call may report. It bounds what comes BACK, not what
+    // is walked: the pixel work is already bounded by the rect, while every cell
+    // is two numbers a caller copies out. Over a 1600x900 frame this is a 256 by
+    // 128 grid, whose cells are about six by seven pixels -- finer than any
+    // layout question a downsampled census answers.
+    inline constexpr auto k_maximumColourGridCells = uint32{32768};
+
+    struct ColourGridSpec final
+    {
+        // No in-class initializer: PixelRect has no default state.
+        PixelRect rect;
+
+        // The rect is tiled by these, row major from its top left corner. Where
+        // the rect does not divide evenly the right and bottom edges keep a
+        // PARTIAL cell rather than being dropped or padded out: the caller drew
+        // the rect, and a verb that quietly shrank it would answer about a
+        // rectangle nobody asked about. Zero on either axis is refused.
+        uint32 cellWidth{};
+        uint32 cellHeight{};
+
+        uint8 keyRed{};
+        uint8 keyGreen{};
+        uint8 keyBlue{};
+
+        // Rejected above k_maximumColourKeyTolerance.
+        uint32 tolerance{};
+
+        // Whether the colour above names what to REMOVE instead of what to keep,
+        // with ColourProbeSpec::keyRemoves' meaning and weights. A census is
+        // where the two directions are most visibly complementary: read one way
+        // a cell counts how much of itself is the mark, read the other how much
+        // is the backdrop, and the two counts partition the cell.
+        bool keyRemoves{};
+    };
+
+    struct ColourGridReport final
+    {
+        uint32 columns{};
+        uint32 rows{};
+
+        // The spec's cell size echoed back, so turning a cell index into frame
+        // pixels needs nothing but this report. An edge cell covers less.
+        uint32 cellWidth{};
+        uint32 cellHeight{};
+
+        // Both row major over columns * rows.
+        //
+        // The count is of pixels the key took at FULL weight, read off frame
+        // zero as probeColour reads it. The ramp is deliberately not folded in:
+        // this grid answers "how much of this cell is that colour", and a count
+        // mixing full weights with antialiasing weights answers it differently
+        // at every cell size.
+        std::vector<uint64> selectedPixels{};
+
+        // Per cell what ColourProbeReport::rectMeanGraySpread is per rect,
+        // truncated to a whole number: a caller reading this is looking for the
+        // cells that move at all, and the fraction never decides that.
+        std::vector<uint32> meanGraySpread{};
+    };
+
+    using ColourGridOutcome = std::variant<
+        ColourGridReport,
+        SadSearchStopReason
+    >;
+
+    struct ColourGridScan final
+    {
+        ColourGridOutcome outcome{};
+        uint64            completedPixelVisits{};
+    };
+
+    // Tiles `spec.rect` into cells and reports, per cell, what the colour key
+    // takes and how far the cell moved between frames.
+    //
+    // It is probeColour downsampled, not probeColour repeated, and that is the
+    // whole point: one walk answers for every cell at once, where asking a cell
+    // at a time pays a whole call's setup per cell. At least two frames are
+    // required, for analyseStability's reason.
+    [[nodiscard]]
+    auto censusColourGrid(
+        std::span<BgraImage const> frames,
+        ColourGridSpec const& spec
+    ) -> Result<ColourGridReport>;
+
+    [[nodiscard]]
+    auto censusColourGrid(
+        std::span<BgraImage const> frames,
+        ColourGridSpec const& spec,
+        uint64 maximumPixelVisits,
+        SadSearchPoll const& poll
+    ) -> Result<ColourGridScan>;
+
     // The weights one colour key hands out over one rect, kept rather than
     // counted away.
     struct ColourKeyMask final

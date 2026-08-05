@@ -541,22 +541,73 @@ namespace uf
 
         // The weight one pixel earns under a whole key, which is `colourKeyAlpha`
         // when the key names what to keep and its complement when the key names
-        // what to remove. Both the probe and the mask cutter go through here, so
-        // the two can never come to disagree about which pixels a key takes --
-        // and `colourKeyAlpha` itself stays the one rule about nearness to a
-        // colour, with no opinion about what nearness is worth.
+        // what to remove. The probe, the mask cutter and the census grid all go
+        // through here, so no two of them can come to disagree about which
+        // pixels a key takes -- and `colourKeyAlpha` itself stays the one rule
+        // about nearness to a colour, with no opinion about what nearness is
+        // worth.
+        [[nodiscard]]
+        auto keyedWeight(
+            Bgra8Pixel pixel,
+            uint8 keyRed,
+            uint8 keyGreen,
+            uint8 keyBlue,
+            uint32 tolerance,
+            bool keyRemoves
+        ) noexcept -> uint8
+        {
+            auto const alpha = colourKeyAlpha(
+                pixel,
+                keyRed,
+                keyGreen,
+                keyBlue,
+                tolerance
+            );
+            return keyRemoves ? static_cast<uint8>(255U - alpha) : alpha;
+        }
+
+        // The spec-shaped spellings of the rule above. They exist so a call site
+        // reads as "what this key takes here" rather than as five fields unpacked
+        // by hand, which is where a transcription slip would hide.
         [[nodiscard]]
         auto keyedWeight(Bgra8Pixel pixel, ColourProbeSpec const& spec) noexcept
             -> uint8
         {
-            auto const alpha = colourKeyAlpha(
+            return keyedWeight(
                 pixel,
                 spec.keyRed,
                 spec.keyGreen,
                 spec.keyBlue,
-                spec.tolerance
+                spec.tolerance,
+                spec.keyRemoves
             );
-            return spec.keyRemoves ? static_cast<uint8>(255U - alpha) : alpha;
+        }
+
+        [[nodiscard]]
+        auto keyedWeight(Bgra8Pixel pixel, ColourGridSpec const& spec) noexcept
+            -> uint8
+        {
+            return keyedWeight(
+                pixel,
+                spec.keyRed,
+                spec.keyGreen,
+                spec.keyBlue,
+                spec.tolerance,
+                spec.keyRemoves
+            );
+        }
+
+        // How many cells of `size` cover `extent`, the last one partial. The
+        // rounding term is added in uint64 so an extent near the type's ceiling
+        // cannot wrap it.
+        [[nodiscard]]
+        auto cellsCovering(uint32 extent, uint32 size) noexcept -> uint32
+        {
+            UF_CHECK(size > 0);
+            auto const covering = (uint64{extent} + uint64{size} - 1U) / uint64{size};
+            auto const narrowed = checkedCast<uint32>(covering);
+            UF_CHECK(narrowed.has_value());
+            return *narrowed;
         }
     }
 
@@ -787,6 +838,150 @@ namespace uf
 
                 .maskedMeanGraySpread = meanOf(weightedSpread, selectedWeight),
                 .rectMeanGraySpread   = meanOf(spreadTotal, pixels),
+            },
+            .completedPixelVisits = scan.completedPixelVisits,
+        };
+    }
+
+    auto censusColourGrid(
+        std::span<BgraImage const> frames,
+        ColourGridSpec const& spec
+    ) -> Result<ColourGridReport>
+    {
+        UF_TRY_VALUE(
+            scan,
+            censusColourGrid(
+                frames,
+                spec,
+                std::numeric_limits<uint64>::max(),
+                continueScanning()
+            )
+        );
+        UF_CHECK(std::holds_alternative<ColourGridReport>(scan.outcome));
+        return std::get<ColourGridReport>(std::move(scan.outcome));
+    }
+
+    auto censusColourGrid(
+        std::span<BgraImage const> frames,
+        ColourGridSpec const& spec,
+        uint64 maximumPixelVisits,
+        SadSearchPoll const& poll
+    ) -> Result<ColourGridScan>
+    {
+        UF_TRY(validateFrames(frames, spec.rect));
+        if (spec.tolerance > k_maximumColourKeyTolerance)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                std::format(
+                    "colour key tolerance {} exceeds {}",
+                    spec.tolerance,
+                    k_maximumColourKeyTolerance
+                )
+            );
+        }
+        if (spec.cellWidth == 0U || spec.cellHeight == 0U)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                std::format(
+                    "a census grid cell of {}x{} covers no pixel",
+                    spec.cellWidth,
+                    spec.cellHeight
+                )
+            );
+        }
+
+        auto const columns = cellsCovering(spec.rect.width(), spec.cellWidth);
+        auto const rows    = cellsCovering(spec.rect.height(), spec.cellHeight);
+
+        // Two uint32 widened, so the product cannot overflow the wider type.
+        auto const cells = uint64{columns} * uint64{rows};
+        if (cells > k_maximumColourGridCells)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                std::format(
+                    "a {} by {} census grid is {} cells, beyond the {} one call "
+                    "reports",
+                    columns,
+                    rows,
+                    cells,
+                    k_maximumColourGridCells
+                )
+            );
+        }
+        auto const length = checkedCast<std::size_t>(cells);
+        UF_CHECK(length.has_value());
+
+        auto const& reference = checkedAt(frames, 0);
+        auto counts       = std::vector<uint64>(*length, 0U);
+        auto spreadTotals = std::vector<uint64>(*length, 0U);
+
+        auto const scan = scanRect(
+            frames,
+            spec.rect,
+            maximumPixelVisits,
+            poll,
+            [&](uint32 x, uint32 y, uint32 spread) -> void
+            {
+                auto const column = (x - spec.rect.x()) / spec.cellWidth;
+                auto const row    = (y - spec.rect.y()) / spec.cellHeight;
+                auto const index  = (std::size_t{row} * columns) + column;
+
+                checkedAt(spreadTotals, index) += spread;
+
+                auto const weight = keyedWeight(reference.pixelAt(x, y), spec);
+                if (weight == 255U)
+                {
+                    ++checkedAt(counts, index);
+                }
+            }
+        );
+        if (scan.stop)
+        {
+            return ColourGridScan{
+                .outcome              = *scan.stop,
+                .completedPixelVisits = scan.completedPixelVisits,
+            };
+        }
+
+        // Each cell's divisor is its own pixel count, which is smaller than the
+        // nominal cell on the right and bottom edges. Appending in row-major
+        // order makes the size so far the index of the cell being written.
+        auto means = std::vector<uint32>{};
+        means.reserve(*length);
+        for (auto row = uint32{0}; row < rows; ++row)
+        {
+            auto const top    = uint64{row} * spec.cellHeight;
+            auto const height = std::min(
+                uint64{spec.cellHeight},
+                uint64{spec.rect.height()} - top
+            );
+            for (auto column = uint32{0}; column < columns; ++column)
+            {
+                auto const left  = uint64{column} * spec.cellWidth;
+                auto const width = std::min(
+                    uint64{spec.cellWidth},
+                    uint64{spec.rect.width()} - left
+                );
+
+                auto const total = checkedAt(spreadTotals, means.size());
+                auto const mean  = checkedCast<uint32>(total / (width * height));
+                UF_CHECK(mean.has_value());
+                means.emplace_back(*mean);
+            }
+        }
+
+        return ColourGridScan{
+            .outcome = ColourGridReport{
+                .columns    = columns,
+                .rows       = rows,
+                .cellWidth  = spec.cellWidth,
+                .cellHeight = spec.cellHeight,
+
+                .selectedPixels = std::move(counts),
+                .meanGraySpread = std::move(means),
             },
             .completedPixelVisits = scan.completedPixelVisits,
         };

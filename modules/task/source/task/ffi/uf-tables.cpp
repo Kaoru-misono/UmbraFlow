@@ -1363,6 +1363,134 @@ namespace uf::task
             return 3;
         }
 
+        // One flat Lua array of whole numbers, in the order the vector holds
+        // them. An implementation-only template with a closed instantiation set:
+        // the two arrays of a census grid are the only ones.
+        template <typename Value>
+        auto pushNumberArray(
+            lua_State* state,
+            std::vector<Value> const& values
+        ) -> void
+        {
+            lua_createtable(state, static_cast<int>(values.size()), 0);
+            int const array = lua_gettop(state);
+
+            auto slot = 1;
+            for (auto const value : values)
+            {
+                lua_pushnumber(state, static_cast<double>(value));
+                lua_rawseti(state, array, slot);
+                ++slot;
+            }
+        }
+
+        // cycle_census_grid(ticket, x, y, width, height, cell_width, cell_height,
+        // key_r, key_g, key_b[, tolerance]) -> a frozen table
+        // { columns, rows, cell_width, cell_height, counts, spreads }.
+        //
+        // The rectangle is tiled into cells and each cell reports how many of its
+        // pixels the key took and how far it moved between the cycle's frames.
+        // `counts` and `spreads` are flat arrays in row-major order, so the cell
+        // at (column, row) is at index row * columns + column + 1. Cells on the
+        // right and bottom edges are partial where the rect does not divide
+        // evenly, and their counts are over their real pixels.
+        //
+        // A table rather than a field handle: every other data verb answers with
+        // a fixed set of scalars, and two arrays whose length is the caller's own
+        // arithmetic have no shape a handle can carry.
+        //
+        // Bound on BOTH surfaces, unlike the cycle_crop and probe beside it. What
+        // makes those two privileged is that they hand a script PIXELS; this one
+        // returns aggregate statistics over a grid the caller drew, is bounded
+        // per call by the host's cell ceiling, and spends no cycle -- it is the
+        // measurement verb a run-surface task is safe to hold. It exists because
+        // measuring through crop-then-probe pays a whole-blob PNG decode per
+        // rectangle, and a script measuring a screen asks about thousands.
+        //
+        // The key is REQUIRED where cycle_crop's is optional: a grid with no
+        // colour to count is not a weaker answer, it is no answer. The tolerance
+        // keeps crop's and probe's default so the three agree about one
+        // measurement.
+        auto cycleCensusGridFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto* ticket    = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
+            auto const rect = checkPixelRect(
+                state,
+                context,
+                2,
+                "cycle_census_grid region"
+            );
+            auto const cellWidth = checkPixelExtent(
+                state,
+                6,
+                "cycle_census_grid cell_width"
+            );
+            auto const cellHeight = checkPixelExtent(
+                state,
+                7,
+                "cycle_census_grid cell_height"
+            );
+            auto const key = checkColourKey(state, 8, "cycle_census_grid key");
+            if (!key.has_value())
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "cycle_census_grid needs a colour key; a census grid counts "
+                    "one colour per cell and has nothing to report without one"
+                );
+            }
+
+            auto const call = NativeCallIdentity{
+                .verb         = "cycle_census_grid",
+                .cycleOrdinal = ticket->ordinal,
+            };
+
+            auto result = context->cycleCensusGrid(
+                *ticket,
+                rect,
+                cellWidth,
+                cellHeight,
+                *key
+            );
+            if (!result)
+            {
+                traceHostCallFailure(state, context, call, result.error());
+            }
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+
+            auto const& grid = *result;
+            lua_createtable(state, 0, 6);
+            int const answer = lua_gettop(state);
+
+            addNumberField(state, "columns", grid.columns);
+            addNumberField(state, "rows", grid.rows);
+            addNumberField(state, "cell_width", grid.cellWidth);
+            addNumberField(state, "cell_height", grid.cellHeight);
+
+            pushNumberArray(state, grid.selectedPixels);
+            lua_setfield(state, answer, "counts");
+            pushNumberArray(state, grid.meanGraySpread);
+            lua_setfield(state, answer, "spreads");
+
+            // Frozen for the read-lines array's reason: what the layer above
+            // treats as evidence about the screen must not be editable by the
+            // layer that received it.
+            if (!script::deepFreeze(state, answer))
+            {
+                raiseInvariant(
+                    state,
+                    context,
+                    "the census grid table could not be frozen"
+                );
+            }
+            lua_settop(state, answer);
+            return 1;
+        }
+
         // probe(blob, x, y, width, height[, key_r, key_g, key_b, tolerance])
         // -> probe handle. Colour statistics over one rectangle of one PNG.
         //
@@ -2590,6 +2718,21 @@ namespace uf::task
                 "cycle_drag",
                 &cycleDragFn,
                 "uf_cycle_drag",
+                context
+            );
+            // Bound on both surfaces, and NOT inside the Exploration branch
+            // below, because it is not the privilege that branch guards: it
+            // returns aggregate statistics over a caller-drawn grid rather than
+            // pixels, and one call is bounded by the host's cell ceiling. That
+            // makes it the measurement verb a business task may hold -- which is
+            // the point, since the alternative on the run surface is no
+            // measurement at all.
+            installPrimitive(
+                state,
+                surface,
+                "cycle_census_grid",
+                &cycleCensusGridFn,
+                "uf_cycle_census_grid",
                 context
             );
             if (mode == ScriptTrustMode::Exploration)

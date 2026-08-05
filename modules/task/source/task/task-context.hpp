@@ -24,6 +24,8 @@
 #include <trace/recorder.hpp>
 #include <trace/replay-source.hpp>
 
+#include <vision/frame-analysis.hpp>
+
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -417,6 +419,39 @@ namespace uf::task
             PixelRect rect,
             std::optional<ProbeColourKey> key
         ) -> Result<CroppedBlob>;
+
+        // Tiles `rect` of the frame `ticket`'s cycle retains into cells of
+        // `cellWidth` by `cellHeight` and reports, per cell, how many pixels
+        // `key` takes at full weight and how far the cell moved between frames.
+        //
+        // It is the measurement verb a RUN task may reach where cycleCrop is
+        // not, and the reason is what it hands back: counts over a grid the
+        // caller drew, never a pixel, so nothing in the answer can be turned
+        // back into the screen. Before it, a script measuring a region cropped a
+        // PNG and probed it once per rectangle, paying a whole-blob decode per
+        // probe; one call answers for every cell of the rect at once.
+        //
+        // It does NOT spend the cycle and charges no per-cycle budget. The crop
+        // pool exists to bound an encode and the read pool to bound inference,
+        // and this verb performs neither: one call is one walk over one rect of
+        // one frame, and vision's k_maximumColourGridCells bounds what comes
+        // back. The rect and the key are the caller's own numbers, so a
+        // tolerance, a cell size or a cell count the host cannot honour is a
+        // Tier B InvalidResource rather than an invariant failure.
+        //
+        // The per-cell spread is what probeColour reports per rect. One
+        // observation retains ONE frame, so today every cell reads zero; the
+        // field comes through from the vision layer unchanged rather than being
+        // dropped here, so a cycle that later retains more than one frame needs
+        // no second verb.
+        [[nodiscard]]
+        auto cycleCensusGrid(
+            CycleTicket ticket,
+            PixelRect rect,
+            uint32 cellWidth,
+            uint32 cellHeight,
+            ProbeColourKey key
+        ) -> Result<ColourGridReport>;
 
         // Releases whatever cycle is open and reports whether there was one. NOT
         // a script verb and never installed as a primitive: see

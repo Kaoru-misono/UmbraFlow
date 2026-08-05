@@ -2027,6 +2027,192 @@ namespace uf::task
             }
         }
 
+        // The fixture frame is the three greys of resolvingPixels -- 2, 5, 0 --
+        // so a key on 5 at no tolerance takes the middle pixel and nothing else.
+        // At one pixel per cell that is a three-cell grid reading 0, 1, 0, which
+        // is the smallest answer that distinguishes a cell from its neighbours.
+        constexpr std::string_view k_censusGridBody = R"lua(
+            local grid = ctx:cycle_census_grid(cycle, 0, 0, 3, 1, 1, 1, 5, 5, 5, 0, false)
+            if grid.columns ~= 3 then return 0 end
+            if grid.rows ~= 1 then return 0 end
+            if grid.cell_width ~= 1 then return 0 end
+            if grid.cell_height ~= 1 then return 0 end
+            if #grid.counts ~= 3 then return 0 end
+            if grid.counts[1] ~= 0 then return 0 end
+            if grid.counts[2] ~= 1 then return 0 end
+            if grid.counts[3] ~= 0 then return 0 end
+            if #grid.spreads ~= 3 then return 0 end
+            if grid.spreads[2] ~= 0 then return 0 end
+        )lua";
+
+        TEST_CASE("cycle_census_grid is on the run surface and the exploration one")
+        {
+            // The capability split for this verb, and the one place it differs
+            // from cycle_crop and probe beside it: those two hand a script PIXELS
+            // and are bound in the Exploration branch alone, while this one hands
+            // back counts over a grid the caller drew. Move its installation
+            // inside buildPrivateSurface's Exploration branch and the run subcase
+            // goes red; drop the ctx.luau forward and it goes red too, which is
+            // what makes "a business task may measure" a fact rather than a note.
+            SUBCASE("a run VM reaches it and the cycle survives the measurement")
+            {
+                auto built = buildHarness(
+                    matchableFrames(),
+                    HarnessSpec{.recordsTrace = true}
+                );
+                REQUIRE(built.session.has_value());
+                auto* const p_traces = built.traces;
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                auto const source = std::string{R"lua(
+                    local cycle = ctx:cycle_open()
+                )lua"}
+                    + std::string{k_censusGridBody}
+                    + R"lua(
+                    -- Measuring reads pixels and changes nothing on the target,
+                    -- so the same cycle still answers. Spend the cycle in
+                    -- TaskContext::cycleCensusGrid and this second call fails.
+                    local again = ctx:cycle_census_grid(cycle, 0, 0, 3, 1, 3, 1, 5, 5, 5, 0, false)
+                    if again.columns ~= 1 then return 0 end
+                    if again.counts[1] ~= 1 then return 0 end
+                    ctx:cycle_close(cycle)
+                    return 1
+                )lua";
+
+                auto engineVm = script::Engine::create(taskVmConfig(context));
+                REQUIRE(engineVm.has_value());
+                auto const result = engineVm->runNumber(source, "census-grid-run");
+                REQUIRE(result.has_value());
+                CHECK(*result == 1.0);
+                CHECK_FALSE(context.hasOpenCycle());
+
+                // Every verb on this surface writes its own task.native_call, and
+                // a measurement that left no line would be evidence nobody could
+                // join to the frame it was taken on.
+                REQUIRE(p_traces != nullptr);
+                auto const* p_call = findNativeCall(
+                    p_traces->events(),
+                    "cycle_census_grid"
+                );
+                REQUIRE(p_call != nullptr);
+                CHECK(p_call->cycleOrdinal.has_value());
+            }
+
+            SUBCASE("an exploration VM reaches the same one through explore")
+            {
+                auto built = buildHarness(matchableFrames(), HarnessSpec{});
+                REQUIRE(built.session.has_value());
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                // `explore.census_grid` unpacks the key table into the scalars
+                // the private surface takes, and must land on the same numbers
+                // the run VM read through the ctx forward.
+                auto const source = std::string{R"lua(
+                    if not explore.has("cycle_census_grid") then return 0 end
+                    local cycle = ctx:cycle_open()
+                    local key = { red = 5, green = 5, blue = 5, removes = false }
+                    local grid = explore.census_grid(cycle, 0, 0, 3, 1, 1, 1, key, 0)
+                    if grid.counts[2] ~= 1 then return 0 end
+                    if grid.counts[1] ~= 0 then return 0 end
+                )lua"}
+                    + std::string{k_censusGridBody}
+                    + R"lua(
+                    ctx:cycle_close(cycle)
+                    return 1
+                )lua";
+
+                auto engineVm = script::Engine::create(explorationVmConfig(context));
+                REQUIRE(engineVm.has_value());
+                auto const result = engineVm->runNumber(
+                    source,
+                    "census-grid-exploration"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == 1.0);
+            }
+        }
+
+        TEST_CASE("cycle_census_grid refuses what it cannot answer, cycle intact")
+        {
+            // Each refusal is a Tier B the author catches, never a latched
+            // generation: the numbers are a script's own arithmetic, and a
+            // mistyped cell size must cost no frame. The final call is the
+            // control -- it proves the cycle and the VM survived all four.
+            auto built = buildHarness(matchableFrames(), HarnessSpec{});
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            constexpr std::string_view source = R"lua(
+                local cycle = ctx:cycle_open()
+                local function grid(cw, ch, tol)
+                    return function()
+                        ctx:cycle_census_grid(cycle, 0, 0, 3, 1, cw, ch, 5, 5, 5, tol, false)
+                    end
+                end
+
+                if pcall(grid(0, 1, 0)) then return 0 end
+                if pcall(grid(1, 0, 0)) then return 0 end
+                if pcall(grid(1, 1, 766)) then return 0 end
+                local bare = pcall(function()
+                    ctx:cycle_census_grid(cycle, 0, 0, 3, 1, 1, 1)
+                end)
+                if bare then return 0 end
+
+                local answered = ctx:cycle_census_grid(cycle, 0, 0, 3, 1, 1, 1, 5, 5, 5, 0, false)
+                if answered.counts[2] ~= 1 then return 0 end
+                return 1
+            )lua";
+
+            auto engineVm = script::Engine::create(taskVmConfig(context));
+            REQUIRE(engineVm.has_value());
+            auto const result = engineVm->runNumber(source, "census-grid-refusals");
+            REQUIRE(result.has_value());
+            CHECK(*result == 1.0);
+            CHECK_FALSE(context.fatal());
+            CHECK(context.hasOpenCycle());
+        }
+
+        TEST_CASE("A census grid over more cells than one call reports is refused")
+        {
+            // The host contract directly, because the ceiling is far above what a
+            // three-by-one fixture frame can reach through a script: 32768 cells
+            // needs a region no fixture geometry has. The rect is checked before
+            // the frame is, so the refusal lands on the cell count.
+            auto built = buildHarness(matchableFrames(), HarnessSpec{});
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+            auto const key = ProbeColourKey{
+                .red   = 5,
+                .green = 5,
+                .blue  = 5,
+
+                .tolerance = 0,
+            };
+
+            auto const wide = PixelRect::create(0, 0, 40'000, 1);
+            REQUIRE(wide.has_value());
+            auto const refused = context.cycleCensusGrid(*ticket, *wide, 1, 1, key);
+            REQUIRE_FALSE(refused.has_value());
+
+            // InvalidResource and not InternalInvariant: the cell count is the
+            // script's arithmetic, and an invariant here would report a framework
+            // bug for an author's typo.
+            CHECK(kindOfError(refused.error()) == AutomationErrorKind::InvalidResource);
+
+            // Control: the same rect at a cell size that fits the ceiling is
+            // refused for a DIFFERENT reason -- it leaves the frame -- so the
+            // refusal above is the ceiling rather than the rect.
+            auto const beyondFrame = context.cycleCensusGrid(*ticket, *wide, 8, 1, key);
+            REQUIRE_FALSE(beyondFrame.has_value());
+            CHECK(
+                beyondFrame.error().message().find("does not fit inside")
+                != std::string_view::npos
+            );
+        }
+
         TEST_CASE("Project file I/O round trips inside the project directory")
         {
             auto const directory = TemporaryDirectory{"uf-project-files-roundtrip"};
