@@ -614,6 +614,23 @@ return task.run_project(ctx, { policies = policies,
 - **B schema l2-v2**:三形态 / 外观门 / 证据 3、4 / state 与 over / preview 边;
   parse-build-encode 往返;regress 新格。门:每个新机制一对红绿
   (加上必绿,拆掉守卫必红)。
+
+  > **已完成(2026-08-05)。** 七个新字段全部落地并逐个红绿过:`form`(fixed / shape /
+  > strip,必填)、外观门、`expected_fragments` 与 `expected_presence`、`state` 与 `over`、
+  > `catch_all`、`text_expectation`、`interact_requires`、preview 边。`[[expect]]` 多一个
+  > `items = N`,它是 strip 的间距唯一能被存档屏反驳的地方——strip 不写每个条目的矩形,
+  > 所以文件断言的只有那个间隙,而屏幕能反驳的只有它切出几条。schema 从 `l2-v1` 改口为
+  > `l2-v2`,工程仓库 331 个元素、所有 fixture 与约九十处测试字面量同一次迁移完;
+  > 整个过程里 `umbra-flow check` 的 summary 逐字段不变。
+  >
+  > **`shape` 的定义改过一次,第一版是错的。** 原先写成"只有模板没有矩形",但共用的标题框
+  > 带文字、不带矩形,由量它的 claim 定位——它提供什么证据不决定它是不是 shape。现在的
+  > 定义是"不声明自己的矩形"。
+  >
+  > **B 落地暴露出一处授权面缺口**:`scribe` 的三个造元素动词
+  > (`author_element` / `author_unplaced_element` / `author_text_element`)都不产 strip,
+  > `claim` / `claim_text` 也没有 items 的对应物。也就是说这两样只能手写 TOML 绕过构造器,
+  > 而标注一轮 strip 之后当场无法证伪。补这两个动词是重新标注一轮的前置条件。
 - **C 例程层与模式机**:五·1-5.4;daily.luau 收缩改写;回放 08-03 trace 验证
   改写后行为等价。门:周期账目平(open = close + spent)是回归断言。
 - **D uf-chaos 策略化**:battle 知识表(第二个角色的表由开发者供给或从日志
