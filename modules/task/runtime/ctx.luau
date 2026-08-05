@@ -213,25 +213,6 @@ function ctx:page_resolved(name)
     native.emit("page_resolved", name)
 end
 
--- ctx:element_clicked(name) -> ()
---
--- Records which element a click was authorised against, immediately before it is
--- delivered.
---
--- The engine cannot write this: the page model is layer two's, so
--- `engine.action_delivered` names a frame and a client point and nothing that
--- ties either to the model. Without this line a reader of a recorded run can say
--- a click landed and never which edge it walked, while a keystroke -- whose key
--- the engine does record -- is attributable.
---
--- Only `observe.click` calls it, and only past `requireAuthorisedHit`. The page
--- is deliberately absent: authorisation already refuses a receipt from another
--- cycle or another page, so the authorising page is the last one this
--- observation resolved.
-function ctx:element_clicked(name)
-    native.emit("element_clicked", name)
-end
-
 -- ctx:replay_steps() -> { { kind = , seq = , label = }, ... }
 --
 -- The recorded run this run was handed, already projected off a trace file

@@ -135,6 +135,23 @@ function observe.exact_text(actual: string, expected: string): boolean
     return trimmed(actual) == trimmed(expected)
 end
 
+-- What a BARE element expects of its own region, in the same shape a row's
+-- expectation comes back in. `model.Reference.text_expectation` answers for a
+-- row; this answers for the element alone, which the read verbs accept in place
+-- of one.
+local function expectationOf(element: any): any
+    if element.expected_text ~= nil then
+        return { kind = "equals", text = element.expected_text }
+    end
+    if element.expected_fragments ~= nil then
+        return { kind = "fragments", fragments = element.expected_fragments }
+    end
+    if element.expected_presence ~= nil then
+        return { kind = "presence" }
+    end
+    return nil
+end
+
 -- Whether `actual` carries every one of `fragments` IN ORDER, with anything at
 -- all allowed before, between and after them.
 --
@@ -147,7 +164,30 @@ end
 -- Plain search and never a pattern: `string.find` with `plain` set, so a
 -- fragment carrying `%` or `-` is those characters and not an operator. A
 -- project writes what it saw on the screen, and a screen does not escape itself.
+-- An empty list and an empty fragment are REFUSED rather than answered. Both
+-- would be true of every string ever read, so a signature carrying one is a
+-- required clause that no frame can fail -- an identify row that checks nothing
+-- while looking like it checks something.
 function observe.contains_fragments(actual: string, fragments: { string }): boolean
+    if type(fragments) ~= "table" or #fragments == 0 then
+        error(
+            "observe.contains_fragments needs the pieces to look for, in the "
+                .. "order they appear; an empty list is true of every reading",
+            2
+        )
+    end
+    for index = 1, #fragments do
+        if type(fragments[index]) ~= "string" or fragments[index] == "" then
+            error(
+                "observe.contains_fragments fragment "
+                    .. tostring(index)
+                    .. " must be a non-empty piece of text; an empty one is "
+                    .. "found in every reading and narrows nothing",
+                2
+            )
+        end
+    end
+
     local from = 1
     for index = 1, #fragments do
         local at = string.find(actual, fragments[index], from, true)
@@ -725,9 +765,23 @@ function observe.read_element(
     local meaning = emptyMeaning("observe.read_element", onEmpty)
 
     local reference, element = readTarget("observe.read_element", elementOrReference)
-    local expected: string? = if reference ~= nil
-        then model.Reference.expected_text(reference)
-        else element.expected_text
+
+    -- Through the same `text_expectation` the identify clause asks, so a row
+    -- declaring ordered fragments or bare presence is judged here too. Reading
+    -- `expected_text` alone reported `matches = nil` for those -- the verb that
+    -- judges a reading pretending the model had said nothing about it.
+    local expectation: any = if reference ~= nil
+        then model.Reference.text_expectation(reference)
+        else expectationOf(element)
+    local expected: string? = if expectation ~= nil
+            and expectation.kind == "equals"
+        then expectation.text
+        else nil
+    -- The comparison is the caller's only where there is a comparison to make.
+    -- Whether two strings are equal is a rule a project may replace -- full
+    -- width against half width, traditional against simplified -- while "these
+    -- pieces appear in this order" and "there is a reading at all" are the
+    -- framework's own and take no argument.
     if expected ~= nil and type(compare) ~= "function" then
         error(
             "reading element '"
@@ -964,22 +1018,35 @@ local function requireAuthorisedHit(
     -- question and the answer, and folding them into one field would leave the
     -- question unasked whenever the answer happened to match.
     local row = model.Page.reference_for(receipt.page, hit.element)
-    if row ~= nil and row.interact_requires ~= nil then
-        if hit.appearance ~= row.interact_requires then
-            error(
-                verb
-                    .. " needs element '"
-                    .. hit.element.name
-                    .. "' to be wearing appearance '"
-                    .. row.interact_requires
-                    .. "' before this page authorises a click on it, and it is "
-                    .. "wearing "
-                    .. (if hit.appearance ~= nil
-                        then "'" .. hit.appearance .. "'"
-                        else "none this row can name"),
-                3
-            )
-        end
+    if row == nil then
+        -- Unreachable while a receipt's page is the page the hit came from, and
+        -- an error rather than a pass because of what this check IS: a gate that
+        -- cannot find the row it would consult has not decided that the input is
+        -- allowed, and a safety check whose unknown answer is "yes" is not one.
+        error(
+            verb
+                .. " holds a receipt for page '"
+                .. receipt.page.name
+                .. "' that does not reference element '"
+                .. hit.element.name
+                .. "', so nothing says on what terms this page authorises it",
+            3
+        )
+    end
+    if row.interact_requires ~= nil and hit.appearance ~= row.interact_requires then
+        error(
+            verb
+                .. " needs element '"
+                .. hit.element.name
+                .. "' to be wearing appearance '"
+                .. row.interact_requires
+                .. "' before this page authorises acting on it, and it is "
+                .. "wearing "
+                .. (if hit.appearance ~= nil
+                    then "'" .. hit.appearance .. "'"
+                    else "none this row can name"),
+            3
+        )
     end
 end
 
@@ -1000,7 +1067,21 @@ end
 function observe.click(ctx: any, ticket: any, receipt: any, hit: any)
     requireCtx(ctx, "observe.click")
     requireAuthorisedHit("observe.click", ticket, receipt, hit)
-    ctx:element_clicked(hit.element.name)
+
+    -- Through `native` and not through `ctx`, which is the whole confinement:
+    -- `ctx` is published into every project environment, so a forward there
+    -- would let a business script write the very line a replay weighs -- naming
+    -- an element it never pressed -- exactly as a `ctx` forward for the bare
+    -- click would let it skip every check above.
+    if native == nil then
+        error(
+            "observe.click needs the host's private surface to record which "
+                .. "element a click was authorised against; this VM has no "
+                .. "bound session",
+            2
+        )
+    end
+    native.emit("element_clicked", hit.element.name)
 
     if hit.match ~= nil then
         ctx:cycle_click(ticket, hit.match)
@@ -1323,6 +1404,21 @@ function observe.walk_edge(
             2
         )
     end
+    -- Refused BEFORE anything is delivered. A preview declares that walking it
+    -- changes no page, so there is no arrival to wait for; reaching the wait
+    -- below would post the input and then fail on a destination set the file
+    -- deliberately does not carry. The verb that delivers one re-resolves
+    -- instead, which is a different routine and not this one.
+    if edge.preview then
+        error(
+            "observe.walk_edge was given the preview edge leaving page '"
+                .. edge.from.name
+                .. "'; a preview changes no page, so there is no arrival to "
+                .. "wait for -- deliver it and resolve again instead",
+            2
+        )
+    end
+
     if type(options) ~= "table" then
         error("observe.walk_edge needs an options table", 2)
     end

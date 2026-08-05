@@ -78,6 +78,21 @@ namespace uf::trace
                 .step        = ReplayStepKind::ActionDelivered,
                 .labelMember = {},
             },
+            // A long press and a scroll reach the target and name nothing, which
+            // is the same fact about a move as an unnamed click. Left out they
+            // would not read as unattributable -- they would read as NO input at
+            // all, and the move that followed would be reported as spontaneous
+            // and then as an edge the model failed to draw.
+            ProjectedKind{
+                .wireName    = "engine.long_press_delivered",
+                .step        = ReplayStepKind::ActionDelivered,
+                .labelMember = {},
+            },
+            ProjectedKind{
+                .wireName    = "engine.scroll_delivered",
+                .step        = ReplayStepKind::ActionDelivered,
+                .labelMember = {},
+            },
             ProjectedKind{
                 .wireName    = "engine.key_delivered",
                 .step        = ReplayStepKind::KeyDelivered,

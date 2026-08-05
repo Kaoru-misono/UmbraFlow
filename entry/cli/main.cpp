@@ -99,7 +99,6 @@ namespace uf::cli
             return exitCodeForReport(*report, runCancellationRequested());
         }
 
-        [[nodiscard]]
         // The replay verb, on dispatchCheck's shape for its reason: the verdict
         // is JSON on standard output and the human summary is on standard error,
         // so the two never interleave in a pipe.
@@ -134,6 +133,7 @@ namespace uf::cli
             return exitCodeForReplay(*report);
         }
 
+        [[nodiscard]]
         auto dispatchCheck(std::span<std::string const> raw) -> ExitCode
         {
             auto const args = parseCheckArguments(raw);

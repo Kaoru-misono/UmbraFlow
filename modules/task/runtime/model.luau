@@ -224,6 +224,8 @@ export type Element = {
     rect: Rect?,
     appearances: { Appearance },
     expected_text: string?,
+    expected_fragments: { string }?,
+    expected_presence: boolean?,
     read_floor: number?,
     extra: { [string]: any },
     residual: { string },
@@ -269,6 +271,8 @@ export type Reference = {
     exercised: CapabilitySet,
     identify: string?,
     expected_text: string?,
+    expected_fragments: { string }?,
+    expected_presence: boolean?,
     pinned_appearance: string?,
     interact_requires: string?,
     rect_override: Rect?,
@@ -1257,6 +1261,28 @@ function Page.new(spec: { [string]: any }): Page
                     2
                 )
             end
+            -- A pin decides what a click SEARCHES for and a gate decides what
+            -- authorises one, so naming two different appearances is a door
+            -- whose key is on the other side: the search can only ever answer
+            -- with the pinned look, and the gate refuses everything but the
+            -- other. Refused for the reason a gate naming an absent appearance
+            -- is -- both are configurations that open on no frame.
+            if
+                entry.pinned_appearance ~= nil
+                and entry.pinned_appearance ~= entry.interact_requires
+            then
+                error(
+                    what
+                        .. ' pins appearance "'
+                        .. entry.pinned_appearance
+                        .. '" and requires "'
+                        .. entry.interact_requires
+                        .. '" for interact; the pin is what a click searches '
+                        .. "for, so the gate could never see anything else and "
+                        .. "would refuse every frame",
+                    2
+                )
+            end
         end
 
         if entry.rect_override ~= nil then
@@ -1369,16 +1395,13 @@ end
 local Reference = {}
 model.Reference = Reference
 
--- What this row expects its element's region to read, or nil when neither the row
--- nor the element says anything about it.
+-- The exact text this row expects, or nil -- INCLUDING when it expects something
+-- else. A row asking for ordered fragments or for any reading at all has an
+-- expectation and no expected text, and every caller here wants the second
+-- reading rather than the first.
 --
--- THE ROW WINS, and this is the only place that precedence is written down.
--- `observe.resolve_page`'s identify clause and `observe.read_element` both ask
--- it, and two copies of "the reference's, else the element's" would come to
--- disagree about a page's identity where nothing downstream could notice.
---
--- `Page.new` asks the weaker question of the SPEC, where the row does not exist
--- yet: whether EITHER source has text at all, never which wins.
+-- Precedence is not decided here any more; `Reference.text_expectation` below is
+-- the one place it is written down.
 function Reference.expected_text(reference: Reference): string?
     local expectation = Reference.text_expectation(reference)
     if expectation ~= nil and expectation.kind == "equals" then

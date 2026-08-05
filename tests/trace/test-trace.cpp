@@ -949,6 +949,21 @@ namespace uf::trace
                     .emit(TraceEvent{.kind = TraceEventKind::EngineActionDelivered})
                     .has_value()
             );
+            // An input that reached the target and named nothing. Left out of the
+            // projection it would read as NO input at all, and the move after it
+            // as an edge the model failed to draw rather than as one nobody can
+            // spell.
+            REQUIRE(
+                recorder
+                    .emit(
+                        TraceEvent{
+                            .kind        = TraceEventKind::EngineLongPressDelivered,
+                            .clickClient = Point<ClientSpace>{4.0F, 5.0F},
+                            .holdMillis  = uint64{250},
+                        }
+                    )
+                    .has_value()
+            );
             page("node_reward");
 
             REQUIRE(
@@ -991,17 +1006,19 @@ namespace uf::trace
         CHECK(run->taskName == "daily");
         CHECK(run->modelHash == "m0d3l");
 
-        // Six steps out of ten lines: the run bracket and the observation are
+        // Seven steps out of eleven lines: the run bracket and the observation are
         // kinds this does not project, and skipping them is the projection doing
         // its job rather than losing a step.
-        REQUIRE(run->steps.size() == 6U);
+        REQUIRE(run->steps.size() == 7U);
         CHECK(run->steps[0].kind == ReplayStepKind::PageResolved);
         CHECK(run->steps[0].label == "home");
         CHECK(run->steps[1].kind == ReplayStepKind::KeyDelivered);
         CHECK(run->steps[1].label == "E");
         CHECK(run->steps[2].kind == ReplayStepKind::PageResolved);
         CHECK(run->steps[2].label == "battle");
-        CHECK(run->steps[5].label == "node_reward");
+        CHECK(run->steps[5].kind == ReplayStepKind::ActionDelivered);
+        CHECK(run->steps[5].label.empty());
+        CHECK(run->steps[6].label == "node_reward");
 
         // The two halves of one click, in the order the framework writes them:
         // which element the page authorised, then whether it reached the target.

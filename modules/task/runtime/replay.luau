@@ -12,14 +12,20 @@
 -- stream that was recorded earlier and the model as it is now. That is what lets
 -- a run recorded on a real target be checked on a machine that has none.
 --
--- WHAT IT DOES NOT CHECK, and why not yet: mode purity needs `page.state` and
--- the preview contract needs a `preview` edge flag, and both are phase B schema
--- (the same plan, 3.4 and 3.5). The two front-end and model-identity refusals
--- are not here either -- they are the caller's, decided before a VM boots, and
--- `replay.check` states what it assumes about them.
+-- WHAT IT DOES NOT CHECK, all three named so none is quietly missing:
 --
--- `replay` sorts after `regress` and before `scribe`, so every module this
--- framework has is already bound when it loads. It names `jsonl` and
+--   * Mode purity (the plan's 3.4) and the preview contract (3.5) need
+--     `page.state` and the `preview` edge flag to be CONSUMED by a routine; the
+--     fields exist and nothing reads them yet.
+--   * Whether a delivery had the effect the run expected (5.2). That needs the
+--     four-beat step it belongs to, which is phase C, and no line of the stream
+--     records an expectation today.
+--
+-- The front-end and model-identity refusals are not here either -- they are the
+-- caller's, decided before a VM boots, and `replay.check` states what it assumes
+-- about them.
+--
+-- `replay` sorts after `regress` and before `scribe`. It names `jsonl` and
 -- `navigation`, and nothing that costs a capture.
 
 local replay = {}
@@ -63,12 +69,14 @@ local k_stepKinds: { [string]: boolean } = {
 --                        pop lands is the run's stack and not the file's to
 --                        know, so the destination is not checked and must not be
 --                        reported as agreement.
---   * "unattributable" -- a click reached the target and nothing named the
---                        element. It is its own answer and never a finding: the
---                        model is not contradicted by a move nobody can spell.
---                        A run recorded before `framework.element_clicked`
---                        existed reads entirely like this, which is why it is a
---                        row rather than silence.
+--   * "unattributable" -- an input reached the target and nothing named what it
+--                        landed on. It is its own answer and never a finding:
+--                        the model is not contradicted by a move nobody can
+--                        spell, and counting it as a missing edge would fill a
+--                        report with edges that most likely exist. A bare
+--                        coordinate press, a long press and a scroll all read
+--                        this way, because none of them names an element and the
+--                        edge schema can spell no trigger but a click or a key.
 export type Transition = {
     from: string,
     to: string,
@@ -104,13 +112,21 @@ export type Verdict = {
     findings: { Finding },
 }
 
--- The trigger a run performed between two resolutions, folded from the steps in
--- between. Nil until something was delivered.
+-- The trigger a run performed since the page last CHANGED, folded from the steps
+-- in between. Nil until something was delivered.
+--
+-- `delivered` is the half an authorisation alone does not have. `observe.click`
+-- names the element before the input is posted, so a click that was authorised
+-- and then failed to reach the target leaves this false -- and a move that
+-- follows one of those was not caused by it. Without the distinction a lease
+-- that expired between the two lines would have the next page blamed on an
+-- element nothing ever pressed.
 type Pending = {
     trigger: string,
     element: string?,
     key: string?,
     seq: number,
+    delivered: boolean,
 }
 
 -- Whether `edge` is the one the run took: same trigger, same name, and -- unless
@@ -128,6 +144,13 @@ local function edgeExplains(edge: any, pending: Pending, arrived: string): boole
     if edge.kind == "pop" then
         return true
     end
+    -- A preview declares that walking it changes no page, so it explains no
+    -- transition at all -- and the page DID change here or this function would
+    -- not have been called. It carries no `to` to compare, and iterating one
+    -- crashed the checker at the exact moment it owed a finding.
+    if edge.preview then
+        return false
+    end
     for _, page in edge.to do
         if page.name == arrived then
             return true
@@ -142,7 +165,9 @@ end
 -- read the same in a bare refusal.
 local function triggerDeclared(edges: { any }, pending: Pending): boolean
     for _, edge in edges do
-        if edge.via == pending.trigger then
+        -- A preview is not a way out of this page, so it cannot be the "leaves
+        -- the page and lands elsewhere" half of the sentence either.
+        if edge.via == pending.trigger and not edge.preview then
             if edge.via == "click" then
                 if edge.via_element.name == pending.element then
                     return true
@@ -213,34 +238,51 @@ function replay.check(built: any, steps: { Step }): Verdict
         end
 
         if step.kind == replay.element_clicked then
-            -- Authorised, not yet delivered. It is kept rather than acted on
-            -- because a click that was authorised and never landed changes no
-            -- page, and the delivery below is what says it did.
+            -- Authorised, not yet delivered. The delivery below is what says it
+            -- landed, and until then this explains nothing.
             pending = {
-                trigger = "click",
-                element = step.label,
-                seq     = step.seq,
+                trigger   = "click",
+                element   = step.label,
+                seq       = step.seq,
+                delivered = false,
             }
         elseif step.kind == replay.action_delivered then
-            if pending == nil or (pending :: Pending).trigger ~= "click" then
-                -- A click nothing named: a long press, or a stream older than
-                -- the line that names one. Recorded as a trigger with no name,
-                -- so the transition it explains reads "unattributable" rather
-                -- than "no edge".
-                pending = { trigger = "click", seq = step.seq }
+            if pending ~= nil and (pending :: Pending).trigger == "click" then
+                pending = {
+                    trigger   = "click",
+                    element   = (pending :: Pending).element,
+                    seq       = (pending :: Pending).seq,
+                    delivered = true,
+                }
+            else
+                -- An input that reached the target and named nothing: the bare
+                -- coordinate `observe.wake` presses, a long press, a scroll.
+                -- Recorded as a trigger with no name, so the transition it
+                -- explains reads "unattributable" rather than "no edge".
+                pending = {
+                    trigger   = "click",
+                    seq       = step.seq,
+                    delivered = true,
+                }
             end
         elseif step.kind == replay.key_delivered then
             pending = {
-                trigger = "key",
-                key     = step.label,
-                seq     = step.seq,
+                trigger   = "key",
+                key       = step.label,
+                seq       = step.seq,
+                delivered = true,
             }
         else
             verdict.resolutions += 1
             local arrived = step.label
             if current ~= nil and current ~= arrived then
-                local moved = pending
-                    or { trigger = "spontaneous", seq = step.seq }
+                -- A pending that was authorised and never delivered explains
+                -- nothing: the page moved for some other reason, and blaming it
+                -- on an element nothing pressed would name the wrong edge.
+                local moved: any = if pending ~= nil
+                        and (pending :: Pending).delivered
+                    then pending
+                    else { trigger = "spontaneous", seq = step.seq }
                 local standing = navigation.Graph.page_named(graph, current)
 
                 -- Only reachable when the trace and the model disagree about
@@ -311,8 +353,17 @@ function replay.check(built: any, steps: { Step }): Verdict
                     end
                 end
             end
+            -- Cleared only when the page CHANGED. A run that resolves every
+            -- cycle -- which a hand-written dispatcher does -- reports the page
+            -- it is standing on again and again while an animation finishes, and
+            -- clearing here would throw away the click that started the move and
+            -- report the move that followed as spontaneous. The transition above
+            -- is the only thing a trigger explains, so it is the only thing that
+            -- may consume one.
+            if current ~= arrived then
+                pending = nil
+            end
             current = arrived
-            pending = nil
         end
     end
 
@@ -324,10 +375,13 @@ end
 
 local function summaryLine(verdict: Verdict): string
     local matched        = 0
+    local matchedPop     = 0
     local unattributable = 0
     for _, transition in verdict.transitions do
         if transition.verdict == "unattributable" then
             unattributable += 1
+        elseif transition.verdict == "matched_pop" then
+            matchedPop += 1
         else
             matched += 1
         end
@@ -340,6 +394,11 @@ local function summaryLine(verdict: Verdict): string
         { "resolutions", verdict.resolutions },
         { "transitions", #verdict.transitions },
         { "matched", matched },
+        -- Counted apart from the matched ones, because a pop is matched on its
+        -- trigger alone: where it lands is the run's stack and nothing here
+        -- checked it. A reader adding the two together is claiming a check that
+        -- did not happen.
+        { "matched_pop", matchedPop },
         -- Counted apart from the matched ones and never among the findings: a
         -- move nobody can spell is not a move the model got wrong, and a reader
         -- watching this number fall is watching evidence arrive rather than

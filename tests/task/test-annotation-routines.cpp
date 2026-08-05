@@ -377,7 +377,12 @@ namespace uf::task
         {
             auto engine = script::Engine::create(explorationVmConfig(context));
             REQUIRE(engine.has_value());
-            return engine->runNumber(source, "annotation-routines");
+            auto answer = engine->runNumber(source, "annotation-routines");
+            if (!answer)
+            {
+                MESSAGE("luau: ", std::string{answer.error().message()});
+            }
+            return answer;
         }
 
         TEST_CASE("An agent authors an element from a crop and the matrix accepts it")
@@ -480,6 +485,130 @@ namespace uf::task
             auto const verified = runExploration(reloaded, verify);
             REQUIRE(verified.has_value());
             CHECK(*verified == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("Writing one row keeps every field the rows beside it carried")
+        {
+            // The silent-deletion failure this whole file format exists to
+            // prevent, at the one place it can still happen: `add_reference`
+            // REBUILDS every row of the page it writes to, so a field the
+            // rebuild does not carry is erased from a page nobody touched. It
+            // has happened once -- six fields landed across the model in one
+            // afternoon and none of them reached `scribe`.
+            auto const directory = TemporaryDirectory{"uf-scribe-carries-fields"};
+            auto const screenHash = seedScreen(directory.path());
+            seedProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runExploration(context, R"lua(
+                local built = project.load_project(ctx)
+
+                -- The fixture project already declares an element with a
+                -- template; reusing its appearance keeps this case about the
+                -- rebuild rather than about authoring pixels.
+                local seeded = built.element_by_name["anchor"]
+                local mark = model.Element.new{
+                    name         = "mark",
+                    capabilities = { "identify", "interact" },
+                    rect         = { x = 0, y = 0, width = 2, height = 1 },
+                    appearances  = {
+                        {
+                            name      = "lit",
+                            source    = seeded.appearances[1].source,
+                            template  = seeded.appearances[1].template,
+                            threshold = 9000,
+                        },
+                    },
+                }
+                local caption = model.Element.new{
+                    name               = "caption",
+                    capabilities       = { "identify", "read" },
+                    rect               = { x = 0, y = 1, width = 2, height = 1 },
+                    expected_fragments = { "max HP", "up" },
+                }
+                scribe.add_element(built, mark)
+                scribe.add_element(built, caption)
+
+                -- One page carrying every field the four phase-B commits added,
+                -- built directly so the rebuild below is the only thing that can
+                -- lose one.
+                scribe.add_page(built, {
+                    name      = "fate",
+                    overlay   = true,
+                    catch_all = true,
+                    over      = { "battle", "route" },
+                    references = {
+                        {
+                            element           = mark,
+                            holding           = "owned",
+                            exercised         = { "identify", "interact" },
+                            identify          = "required",
+                            interact_requires = "lit",
+                            pinned_appearance = "lit",
+                        },
+                    },
+                })
+
+                -- Writing a SECOND row is what rebuilds the first.
+                scribe.add_reference(built, "fate", caption, {
+                    holding           = "owned",
+                    exercised         = { "identify" },
+                    identify          = "required",
+                    expected_presence = true,
+                })
+
+                local page = built.page_by_name["fate"]
+                if page.catch_all ~= true then return 0 end
+                if page.over == nil or #page.over ~= 2 then return 0 end
+                if page.over[1] ~= "battle" then return 0 end
+
+                local kept = model.Page.reference_for(page, mark)
+                if kept == nil then return 0 end
+                if kept.interact_requires ~= "lit" then return 0 end
+
+                local added = model.Page.reference_for(page, caption)
+                if added == nil then return 0 end
+                if added.expected_presence ~= true then return 0 end
+
+                -- The element the row points at is rebuilt too.
+                if built.element_by_name["caption"].expected_fragments == nil then
+                    return 0
+                end
+                if #built.element_by_name["caption"].expected_fragments ~= 2 then
+                    return 0
+                end
+
+                -- And a `state` page, which the same rebuild path carries on a
+                -- page that is not an overlay.
+                scribe.add_page(built, {
+                    name  = "map",
+                    state = "route",
+                    references = {
+                        {
+                            element   = mark,
+                            holding   = "referenced",
+                            exercised = { "identify" },
+                            identify  = "required",
+                        },
+                    },
+                })
+                scribe.add_reference(built, "map", caption, {
+                    holding   = "referenced",
+                    exercised = { "identify" },
+                    identify  = "required",
+                })
+                if built.page_by_name["map"].state ~= "route" then return 0 end
+                return 1
+            )lua");
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
         }
 
         TEST_CASE("A wake point survives the file and is refused where it presses")

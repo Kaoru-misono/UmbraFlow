@@ -459,6 +459,11 @@ end
 -- that would hurt most: a row identified by text carries the whole of its page's
 -- signature in that one string, so writing ONE new row would break a page nobody
 -- touched.
+--
+-- EVERY field a constructor accepts is listed here, and a field added to one
+-- without being added here is deleted from the file the next time an author
+-- writes anything to its page. That has happened once already: six fields landed
+-- across the model in one afternoon and none of them reached this function.
 local function referenceSpec(reference: any): { [string]: any }
     return {
         element           = reference.element,
@@ -466,7 +471,10 @@ local function referenceSpec(reference: any): { [string]: any }
         exercised         = model.capability_list(reference.exercised),
         identify          = reference.identify,
         expected_text     = reference.expected_text,
+        expected_fragments = reference.expected_fragments,
+        expected_presence = reference.expected_presence,
         pinned_appearance = reference.pinned_appearance,
+        interact_requires = reference.interact_requires,
         rect_override     = reference.rect_override,
         extra             = reference.extra,
         residual          = reference.residual,
@@ -503,6 +511,8 @@ local function elementSpec(
         rect          = element.rect,
         appearances   = appearances,
         expected_text = element.expected_text,
+        expected_fragments = element.expected_fragments,
+        expected_presence = element.expected_presence,
         read_floor    = element.read_floor,
         extra         = element.extra,
         residual      = element.residual,
@@ -565,6 +575,7 @@ local function remappedEdge(
         via_element = clicked,
         via_key     = edge.via_key,
         kind        = edge.kind,
+        preview     = edge.preview,
         extra       = edge.extra,
         residual    = edge.residual,
     })
@@ -579,6 +590,9 @@ local function rebuiltPage(page: any, references: { any }): any
         name       = page.name,
         overlay    = page.overlay,
         interrupt  = page.interrupt,
+        catch_all  = page.catch_all,
+        state      = page.state,
+        over       = page.over,
         references = references,
         extra      = page.extra,
         residual   = page.residual,

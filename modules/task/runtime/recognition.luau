@@ -223,10 +223,18 @@ end
 -- are told apart by nothing else -- a key on the element name alone would call
 -- them one signature.
 -- One text expectation as a key: the kind, then what it asks for. Two rows
--- asking different things of one region are different clauses, so containment
--- between two pages is decided on WHAT they check and not merely on which
--- element they check -- an "equals" and a "presence" on one title box are not
--- the same signature, and the weaker one contains the stronger.
+-- asking different things of one region are different clauses, so a page pinning
+-- a title to one string and a page asking only that it read something are not
+-- reported as one signature.
+--
+-- WHAT THIS DOES NOT SEE, and it is the containment the new kinds introduce:
+-- these keys are compared for EQUALITY, so an `expected_presence` clause and an
+-- `expected_text` clause on one element read as unrelated -- while in truth the
+-- first is implied by the second, and a page resting on presence alone swallows
+-- every page that pins the same region to a string. Seeing that needs clause
+-- IMPLICATION rather than set containment, which is a different algorithm from
+-- the one below. Until it exists the matrix reports no row for that pair, which
+-- is silence and not a clean bill.
 local function expectationKey(expectation: any): string
     if expectation == nil then
         return "nil"

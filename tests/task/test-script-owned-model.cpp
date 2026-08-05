@@ -5893,6 +5893,45 @@ namespace uf::task
                     if not refused("does not have", function()
                         return gated("blazing")
                     end) then return 0 end
+
+                    -- A pin decides what a click SEARCHES for, so a gate naming
+                    -- a different appearance is a door whose key is on the other
+                    -- side: the search can only answer with the pinned look.
+                    if not refused("could never see anything else", function()
+                        return model.Page.new{
+                            name = "contradiction",
+                            references = {
+                                {
+                                    element = confirm,
+                                    holding = "owned",
+                                    exercised = { "identify", "interact" },
+                                    identify = "required",
+                                    pinned_appearance = "grey",
+                                    interact_requires = "lit",
+                                },
+                            },
+                        }
+                    end) then return 0 end
+
+                    -- The same two naming ONE appearance is the ordinary case and
+                    -- stays buildable, so the refusal is about the disagreement
+                    -- rather than about pinning and gating together.
+                    local agreed = model.Page.new{
+                        name = "agreed",
+                        references = {
+                            {
+                                element = confirm,
+                                holding = "owned",
+                                exercised = { "identify", "interact" },
+                                identify = "required",
+                                pinned_appearance = "lit",
+                                interact_requires = "lit",
+                            },
+                        },
+                    }
+                    if agreed.references[1].interact_requires ~= "lit" then
+                        return 0
+                    end
                     return 1
                     )lua")
                 );
@@ -8727,6 +8766,150 @@ namespace uf::task
             )lua"));
             REQUIRE(result.has_value());
             CHECK(*result == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("A replay keeps a trigger across a page that resolved again")
+        {
+            // The shape a hand-written dispatcher makes on every cycle: resolve,
+            // act, resolve the SAME page while the animation finishes, resolve
+            // the next one. A checker that cleared the trigger on every
+            // resolution would report the move as spontaneous and then as an
+            // edge the model failed to draw -- pointing at an edge the run had
+            // just walked.
+            auto const directory = TemporaryDirectory{"uf-model-replay-hold"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, graphScript(R"lua(
+                local model_only = { graph = graph }
+                local function at(kind, seq, label)
+                    return { kind = kind, seq = seq, label = label }
+                end
+                local function page(seq, name)
+                    return at(replay.page_resolved, seq, name)
+                end
+                local function click(seq, element)
+                    return at(replay.element_clicked, seq, element)
+                end
+                local function landed(seq)
+                    return at(replay.action_delivered, seq, "")
+                end
+
+                local held = replay.check(model_only, {
+                    page(1, "base"),
+                    click(2, "mark_base"),
+                    landed(3),
+                    -- The animation is not finished, so this cycle recognises
+                    -- the page it is still standing on.
+                    page(4, "base"),
+                    page(5, "detail"),
+                })
+                if not held.accepted then return 0 end
+                if #held.transitions ~= 1 then return 0 end
+                if held.transitions[1].verdict ~= "matched" then return 0 end
+                if held.transitions[1].element ~= "mark_base" then return 0 end
+
+                -- A click that was AUTHORISED and never landed explains nothing:
+                -- the lease expired between the two lines, and blaming the next
+                -- page on an element nothing pressed would name the wrong edge.
+                local lost = replay.check(model_only, {
+                    page(1, "base"),
+                    click(2, "mark_base"),
+                    page(3, "detail"),
+                })
+                if lost.accepted then return 0 end
+                if #lost.findings ~= 1 then return 0 end
+                if lost.findings[1].trigger ~= "spontaneous" then return 0 end
+                if lost.findings[1].element ~= nil then return 0 end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("A preview edge explains no move, and walking one is refused")
+        {
+            // A preview declares that nothing changes. Two places used to read
+            // its absent `to` as a list: the checker crashed at the exact moment
+            // it owed a finding, and `walk_edge` delivered the input and then
+            // failed waiting for an arrival the file never promised.
+            auto const directory = TemporaryDirectory{"uf-model-preview-walk"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, graphScript(R"lua(
+                local look = navigation.Edge.new{
+                    from = base,
+                    via = "click",
+                    via_element = mark_base,
+                    kind = "navigate",
+                    preview = true,
+                }
+                local previewGraph = navigation.Graph.new{
+                    pages = { base, detail, zoom, alert, result },
+                    edges = { look },
+                }
+
+                -- The page changed after a preview was walked, which is the
+                -- broken contract this check exists to report. A finding, not a
+                -- crash, and not a match either.
+                local verdict = replay.check({ graph = previewGraph }, {
+                    { kind = replay.page_resolved, seq = 1, label = "base" },
+                    { kind = replay.element_clicked, seq = 2, label = "mark_base" },
+                    { kind = replay.action_delivered, seq = 3, label = "" },
+                    { kind = replay.page_resolved, seq = 4, label = "detail" },
+                })
+                if verdict.accepted then return 0 end
+                if #verdict.findings ~= 1 then return 0 end
+                if verdict.findings[1].kind ~= "no_edge" then return 0 end
+
+                -- And walk_edge refuses one BEFORE delivering: the click must not
+                -- reach the target only for the wait to fail afterwards.
+                local stack = navigation.stack_new{
+                    graph = previewGraph,
+                    max_depth = 4,
+                }
+                -- The options are deliberately not spelled: the refusal comes
+                -- before they are read, because whether an edge may be walked at
+                -- all does not depend on how long a caller was willing to wait.
+                local ok, err = pcall(function()
+                    return observe.walk_edge(ctx, stack, look, {})
+                end)
+                if ok then return 0 end
+                if string.find(tostring(err), "no arrival to wait for", 1, true) == nil
+                then
+                    return 0
+                end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+
+            // Nothing was delivered: the refusal happened before the click.
+            CHECK(p_clicks->clickCount() == 0U);
         }
 
         TEST_CASE("An appearance set is judged where a page identifies by it")
