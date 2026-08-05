@@ -953,6 +953,34 @@ local function requireAuthorisedHit(
             3
         )
     end
+
+    -- The appearance gate. The row may say a click is authorised only while one
+    -- named appearance is the one on screen -- a confirm button that is drawn
+    -- grey until a card is chosen is one element wearing two looks, and clicking
+    -- it grey is an input the target ignores while the run believes it landed.
+    --
+    -- Read off the ROW rather than off the hit, because the hit says which
+    -- appearance answered and the row says which one authorises. The two are the
+    -- question and the answer, and folding them into one field would leave the
+    -- question unasked whenever the answer happened to match.
+    local row = model.Page.reference_for(receipt.page, hit.element)
+    if row ~= nil and row.interact_requires ~= nil then
+        if hit.appearance ~= row.interact_requires then
+            error(
+                verb
+                    .. " needs element '"
+                    .. hit.element.name
+                    .. "' to be wearing appearance '"
+                    .. row.interact_requires
+                    .. "' before this page authorises a click on it, and it is "
+                    .. "wearing "
+                    .. (if hit.appearance ~= nil
+                        then "'" .. hit.appearance .. "'"
+                        else "none this row can name"),
+                3
+            )
+        end
+    end
 end
 
 -- observe.click(ctx, ticket, receipt, hit) -> ()

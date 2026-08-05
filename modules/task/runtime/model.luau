@@ -128,6 +128,7 @@ local k_referenceKeys: { [string]: boolean } = {
     expected_fragments = true,
     expected_presence  = true,
     pinned_appearance = true,
+    interact_requires = true,
     rect_override     = true,
     extra             = true,
     residual          = true,
@@ -269,6 +270,7 @@ export type Reference = {
     identify: string?,
     expected_text: string?,
     pinned_appearance: string?,
+    interact_requires: string?,
     rect_override: Rect?,
     extra: { [string]: any },
     residual: { string },
@@ -1221,6 +1223,42 @@ function Page.new(spec: { [string]: any }): Page
             end
         end
 
+        -- The appearance GATE, and the reason it is not `pinned_appearance`
+        -- wearing a second meaning: a pin says which appearance a click should
+        -- search for, and this says a click is authorised ONLY while that
+        -- appearance is the one on screen. A confirm button drawn lit and drawn
+        -- grey is one element with two appearances, and clicking it grey is a
+        -- click the target ignores while the run believes it landed
+        -- (docs/plans/2026-08-04-state-layer-and-policy-slots.md 3.2).
+        if entry.interact_requires ~= nil then
+            if type(entry.interact_requires) ~= "string" then
+                error(
+                    what .. " interact_requires must be an appearance name",
+                    2
+                )
+            end
+            if not (exercised :: CapabilitySet).interact then
+                error(
+                    what
+                        .. " gates an appearance without exercising interact; "
+                        .. "the gate decides whether a CLICK is authorised, and "
+                        .. "a row that may not click has nothing to gate",
+                    2
+                )
+            end
+            if Element.appearance_named(element, entry.interact_requires) == nil then
+                error(
+                    what
+                        .. ' requires appearance "'
+                        .. entry.interact_requires
+                        .. "\" for interact, which element '"
+                        .. element.name
+                        .. "' does not have",
+                    2
+                )
+            end
+        end
+
         if entry.rect_override ~= nil then
             local overrideProblem =
                 checkRect(what .. " rect_override", entry.rect_override)
@@ -1266,6 +1304,7 @@ function Page.new(spec: { [string]: any }): Page
                 else nil,
             expected_presence = entry.expected_presence,
             pinned_appearance = entry.pinned_appearance,
+            interact_requires = entry.interact_requires,
             rect_override     = if entry.rect_override ~= nil
                 then frozenRect(entry.rect_override :: Rect)
                 else nil,

@@ -5610,6 +5610,195 @@ namespace uf::task
             "exercised = [\"identify\"]\n"
             "identify = \"required\"\n";
 
+        TEST_CASE("A row can require the appearance an element is wearing")
+        {
+            // The appearance GATE
+            // (docs/plans/2026-08-04-state-layer-and-policy-slots.md 3.2). A
+            // confirm button drawn grey until a card is chosen is one element
+            // wearing two looks, and clicking it grey is an input the target
+            // ignores while the run believes it landed -- the failure a receipt
+            // cannot catch, because the page really did resolve.
+            auto const directory = TemporaryDirectory{"uf-model-appearance-gate"};
+            seedTemplates(directory.path());
+
+            constexpr std::string_view k_gateModel = R"lua(
+                local confirm = model.Element.new{
+                    name = "confirm",
+                    capabilities = { "identify", "interact" },
+                    rect = { x = 0, y = 0, width = 3, height = 1 },
+                    appearances = {
+                        {
+                            name = "grey",
+                            source = "gray2.png",
+                            template = template("gray2.png"),
+                            threshold = 10000,
+                        },
+                        {
+                            name = "lit",
+                            source = "gray5.png",
+                            template = template("gray5.png"),
+                            threshold = 10000,
+                        },
+                    },
+                }
+                local function gated(requires)
+                    return model.Page.new{
+                        name = "fate",
+                        references = {
+                            {
+                                element = confirm,
+                                holding = "owned",
+                                exercised = { "identify", "interact" },
+                                identify = "required",
+                                interact_requires = requires,
+                            },
+                        },
+                    }
+                end
+                local function attempt(page)
+                    local ticket = ctx:cycle_open()
+                    local receipt = observe.resolve_page(ctx, ticket, page)
+                    if receipt == nil then
+                        ctx:cycle_close(ticket)
+                        return "unresolved"
+                    end
+                    local hit = observe.find(ctx, ticket, page, confirm)
+                    if hit == nil then
+                        ctx:cycle_close(ticket)
+                        return "unfound"
+                    end
+                    local ok, err = pcall(function()
+                        observe.click(ctx, ticket, receipt, hit)
+                    end)
+                    ctx:cycle_close(ticket)
+                    if ok then return "clicked" end
+                    return tostring(err)
+                end
+            )lua";
+
+            SUBCASE("the click is refused while the wrong appearance is on screen")
+            {
+                // Only the grey template is on this frame, so the element is
+                // found -- the page resolves and the hit is real -- and the gate
+                // is the only thing between that and a click.
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 2, 0), pixels(2, 2, 0)},
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(
+                    context,
+                    built,
+                    script(std::string{k_gateModel} + R"lua(
+                    local refused = attempt(gated("lit"))
+                    if string.find(refused, "wearing appearance 'lit'", 1, true) == nil
+                    then
+                        return 0
+                    end
+                    if string.find(refused, "wearing 'grey'", 1, true) == nil then
+                        return 0
+                    end
+
+                    -- The control, on the SAME frame: without the gate the click
+                    -- goes through, so what refused above is the gate and not the
+                    -- page failing to resolve or the element not being found.
+                    if attempt(gated(nil)) ~= "clicked" then return 0 end
+                    return 1
+                    )lua")
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("the click goes through once the gate's appearance is worn")
+            {
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(5, 5, 0)},
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(
+                    context,
+                    built,
+                    script(std::string{k_gateModel} + R"lua(
+                    if attempt(gated("lit")) ~= "clicked" then return 0 end
+                    return 1
+                    )lua")
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a gate is refused where it could never decide anything")
+            {
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0)},
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(
+                    context,
+                    built,
+                    script(std::string{k_gateModel} + R"lua(
+                    local function refused(fragment, fn)
+                        local ok, err = pcall(fn)
+                        if ok then return false end
+                        return string.find(tostring(err), fragment, 1, true) ~= nil
+                    end
+
+                    -- A row that may not click has nothing to gate.
+                    if not refused("nothing to gate", function()
+                        return model.Page.new{
+                            name = "looks_only",
+                            references = {
+                                {
+                                    element = confirm,
+                                    holding = "owned",
+                                    exercised = { "identify" },
+                                    identify = "required",
+                                    interact_requires = "lit",
+                                },
+                            },
+                        }
+                    end) then return 0 end
+
+                    -- And a gate naming an appearance the element does not have
+                    -- would never open.
+                    if not refused("does not have", function()
+                        return gated("blazing")
+                    end) then return 0 end
+                    return 1
+                    )lua")
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+        }
+
         TEST_CASE("A page says which mode it belongs to and when it is asked")
         {
             // Phase B's first schema field set

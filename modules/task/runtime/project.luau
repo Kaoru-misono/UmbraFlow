@@ -119,6 +119,7 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         expected_fragments = true,
         expected_presence  = true,
         pinned_appearance = true,
+        interact_requires = true,
         rect_override     = true,
     },
     -- An edge is a top-level section because it is a fact about a PAIR of pages
@@ -506,6 +507,13 @@ function project.encode(built: any): string
                 table.insert(
                     lines,
                     "pinned_appearance = " .. renderString(reference.pinned_appearance)
+                )
+            end
+            if reference.interact_requires ~= nil then
+                table.insert(
+                    lines,
+                    "interact_requires = "
+                        .. renderString(reference.interact_requires)
                 )
             end
             if reference.rect_override ~= nil then
@@ -1217,6 +1225,8 @@ function project.build(ctx: any, document: any): any
                 expected_presence =
                     referenceSection.fields.expected_presence,
                 pinned_appearance = referenceSection.fields.pinned_appearance,
+                interact_requires =
+                    referenceSection.fields.interact_requires,
                 rect_override     = if overrideValue ~= nil
                     then rectOf(referenceSection, "rect_override", overrideValue)
                     else nil,
