@@ -232,6 +232,19 @@ function ctx:element_clicked(name)
     native.emit("element_clicked", name)
 end
 
+-- ctx:replay_steps() -> { { kind = , seq = , label = }, ... }
+--
+-- The recorded run this run was handed, already projected off a trace file
+-- before this VM existed. Empty on every run that is not a replay.
+--
+-- It is here rather than on `replay` so that module stays what it says it is:
+-- a judgement over a projection and a model, reaching no host at all. Every
+-- route to the host is a `ctx` verb, and this is the only one that costs
+-- nothing -- no capture, no budget, no observation.
+function ctx:replay_steps()
+    return native.replay_steps()
+end
+
 -- ctx:cycle(fn) -> whatever fn returned.
 --
 -- Opens one observation cycle, hands its view to fn, and closes it on every exit

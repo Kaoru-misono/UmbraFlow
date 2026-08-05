@@ -2143,6 +2143,61 @@ namespace uf::task
             return 0;
         }
 
+        // The Luau spelling of one projected step kind. It is spelled here and in
+        // `replay.luau`, which is the same split `frontEndWireName` has: an enum
+        // this side, a string that side, and one table each so a rename cannot
+        // half-happen.
+        [[nodiscard]]
+        auto replayStepKindName(trace::ReplayStepKind kind) noexcept
+            -> std::string_view
+        {
+            switch (kind)
+            {
+            case trace::ReplayStepKind::PageResolved:
+                return "page_resolved";
+            case trace::ReplayStepKind::ElementClicked:
+                return "element_clicked";
+            case trace::ReplayStepKind::ActionDelivered:
+                return "action_delivered";
+            case trace::ReplayStepKind::KeyDelivered:
+                return "key_delivered";
+            }
+
+            UF_UNREACHABLE_MSG("Unknown ReplayStepKind value");
+        }
+
+        // replay_steps() -> the recorded run this context was configured with, as
+        // a list of { kind, seq, label } tables. Empty on every run that is not a
+        // replay.
+        //
+        // It hands over DATA and not source. The routine's other parameters are
+        // baked into its Luau text by the caller, and a page name baked in that
+        // way is a project's own string becoming part of the program that checks
+        // it.
+        //
+        // No budget is charged and nothing is observed: the steps were read off a
+        // file before this VM existed.
+        auto replayStepsFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto const steps = context->replaySteps();
+            lua_createtable(state, static_cast<int>(steps.size()), 0);
+            for (auto index = std::size_t{0}; index < steps.size(); ++index)
+            {
+                auto const& step = steps[index];
+                lua_createtable(state, 0, 3);
+                addTextField(state, "kind", replayStepKindName(step.kind));
+                addNumberField(state, "seq", step.seq);
+                addTextField(state, "label", step.label);
+                lua_setreadonly(state, -1, 1);
+                lua_rawseti(state, -2, static_cast<int>(index) + 1);
+            }
+            lua_setreadonly(state, -1, 1);
+            return 1;
+        }
+
         // terminal() -> bool. Whether this generation is already spent.
         //
         // The one primitive that does not enter through guardFatal, which is its
@@ -2542,6 +2597,14 @@ namespace uf::task
                 context
             );
             installPrimitive(state, surface, "emit", &emitFn, "uf_emit", context);
+            installPrimitive(
+                state,
+                surface,
+                "replay_steps",
+                &replayStepsFn,
+                "uf_replay_steps",
+                context
+            );
             installPrimitive(
                 state,
                 surface,

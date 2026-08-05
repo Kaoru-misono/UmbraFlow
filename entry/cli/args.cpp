@@ -534,6 +534,73 @@ namespace uf::cli
             "                                bulk of the wall clock on a real corpus\n";
     }
 
+    auto parseReplayArguments(std::span<std::string const> raw)
+        -> Result<ReplayArgs>
+    {
+        auto project = std::optional<std::filesystem::path>{};
+        auto trace   = std::optional<std::filesystem::path>{};
+
+        auto index = std::size_t{0};
+        while (index < raw.size())
+        {
+            auto const& flag = raw[index];
+            if (flag != "--project" && flag != "--trace")
+            {
+                return invalid(std::format("unknown argument \"{}\"", flag));
+            }
+            if (index + 1U >= raw.size())
+            {
+                return invalid(std::format("missing value for {}", flag));
+            }
+            auto const& value = raw[index + 1U];
+
+            if (flag == "--project")
+            {
+                project = std::filesystem::path{value};
+            }
+            else
+            {
+                trace = std::filesystem::path{value};
+            }
+            index += 2U;
+        }
+
+        // Both required and neither defaulted. A default project would check a
+        // run against whatever model happened to sit under the working
+        // directory, and a default trace would replay whichever run was written
+        // there last -- while a replay names exactly one of each by
+        // construction.
+        UF_TRY_VALUE(requiredProject, require(std::move(project), "--project"));
+        UF_TRY_VALUE(requiredTrace, require(std::move(trace), "--trace"));
+
+        return ReplayArgs{
+            .project = std::move(requiredProject),
+            .trace   = std::move(requiredTrace),
+        };
+    }
+
+    auto replayUsageText() noexcept -> std::string_view
+    {
+        return
+            "Usage:\n"
+            "  umbra-flow replay --project DIR --trace PATH\n"
+            "\n"
+            "Reads one recorded run and reports every page it moved between\n"
+            "against the edges the project's page model draws, as JSON lines.\n"
+            "Exits non-zero when the verdict is not accepted.\n"
+            "\n"
+            "It binds no target and opens no frame: everything it judges was\n"
+            "measured when the run happened.\n"
+            "\n"
+            "Refused before anything is judged: a trace recorded by a front end\n"
+            "that delivers no input, and a trace whose page model is not the one\n"
+            "on disk now.\n"
+            "\n"
+            "Required:\n"
+            "  --project DIR                Published annotation project directory\n"
+            "  --trace PATH                 A run's trace JSONL, as an INPUT\n";
+    }
+
     auto usageText() -> std::string
     {
         auto text = std::string{runUsageText()};
@@ -541,6 +608,8 @@ namespace uf::cli
         text += exploreUsageText();
         text += '\n';
         text += checkUsageText();
+        text += '\n';
+        text += replayUsageText();
         return text;
     }
 }

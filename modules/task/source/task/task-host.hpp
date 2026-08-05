@@ -115,6 +115,11 @@ namespace uf::task
         // run config is where every recognition and delivery bound is stated.
         uint32 maximumCropsPerCycle{k_defaultMaximumCropsPerCycle};
 
+        // The recorded run a replay judges, projected off a trace before this
+        // config existed. Empty on every run that is not a replay; it travels to
+        // the context, where `ctx:replay_steps` hands it to the routine.
+        std::vector<trace::ReplayStep> replaySteps{};
+
         // The VM's hard memory ceiling, or zero for the script layer's own
         // default. Here rather than left to that default because one caller's
         // need is a property of the FILE and not of a policy: the falsification
@@ -330,6 +335,14 @@ namespace uf::task
         // line scan nothing new.
         [[nodiscard]]
         auto projectElementCount(GenerationId generation) -> Result<std::size_t>;
+
+        // The content address of `generation`'s page model, as the hex this host
+        // stamps on `run.started`. It is here for the replay verb, which has to
+        // compare the model a recorded run read against the one on disk now
+        // BEFORE a VM boots -- the hash never reaches the script layer, so the
+        // comparison cannot happen anywhere else.
+        [[nodiscard]]
+        auto projectModelHash(GenerationId generation) -> Result<std::string>;
 
         // Runs one of the host's own trusted routines against `generation`'s
         // project and reports how it ended and what it answered.

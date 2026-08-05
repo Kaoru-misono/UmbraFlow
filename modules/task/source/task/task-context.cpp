@@ -403,6 +403,12 @@ namespace uf::task
         return lines;
     }
 
+    auto TaskContext::replaySteps() const noexcept
+        -> std::span<trace::ReplayStep const>
+    {
+        return m_config.replaySteps;
+    }
+
     auto TaskContext::cycleCrop(
         CycleTicket ticket,
         PixelRect rect,

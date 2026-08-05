@@ -30,6 +30,8 @@ add_library(${CLI_LIBRARY} STATIC
     cli/platform/ocr-engine-binding.hpp
     cli/project-skeleton.cpp
     cli/project-skeleton.hpp
+    cli/replay.cpp
+    cli/replay.hpp
     # The queue/results wire `explore` runs on: one framed reader, one results
     # writer, and the durable cursor that keeps a restart from re-delivering a
     # queue against a live target. It stays a pair of files of its own because

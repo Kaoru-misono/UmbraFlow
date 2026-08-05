@@ -2,6 +2,7 @@
 
 #include <args.hpp>
 #include <check.hpp>
+#include <replay.hpp>
 #include <file-frame-source.hpp>
 #include <run.hpp>
 
@@ -1297,5 +1298,158 @@ namespace uf::cli
                     - crossing * static_cast<long long>(tightSmall.crossings)
             )
         );
+    }
+
+    // ------------------------------------------------- the replay verb
+
+    // These live beside the check cases because both verbs are offline products
+    // over one project and this file owns the synthetic project they need.
+    namespace
+    {
+        // One recorded run, written the way the recorder writes one. Only the
+        // members the projection reads are spelled: a line carrying more is what
+        // a real stream looks like, and one carrying less is what this pins.
+        [[nodiscard]]
+        auto traceText(
+            std::string_view frontEnd,
+            std::string_view modelHash,
+            std::span<std::string const> pages
+        ) -> std::string
+        {
+            auto text = std::format(
+                R"({{"schema":"umbraflow-trace/v4","kind":"run.started","seq":1)"
+                R"(,"frontEnd":"{}","projectId":"fixture","taskName":"daily")"
+                R"(,"sourceHash":"aa","modelHash":"{}","seed":1}})"
+                "\n",
+                frontEnd,
+                modelHash
+            );
+            auto seq = 1U;
+            for (auto const& page : pages)
+            {
+                ++seq;
+                text += std::format(
+                    R"({{"kind":"framework.page_resolved","seq":{})"
+                    R"(,"frontEnd":"{}","label":"{}"}})"
+                    "\n",
+                    seq,
+                    frontEnd,
+                    page
+                );
+            }
+            return text;
+        }
+
+        [[nodiscard]]
+        auto modelHashOf(std::string_view pageModelText) -> std::string
+        {
+            auto const hashed = sha256(std::as_bytes(std::span{pageModelText}));
+            REQUIRE(hashed.has_value());
+            return hashed->hex();
+        }
+    }
+
+    TEST_CASE("a replay refuses a stream that is not a run")
+    {
+        // The exclusion that has to happen before a VM boots. `umbra-flow check`
+        // resolves every page it cares about against ONE frame, so its
+        // resolutions are a sweep; read as a walk they report a task that stood
+        // on dozens of pages and delivered nothing. Measured on the reference
+        // corpus: a real check trace replayed as a task produces 186 findings
+        // and not one of them is about the model.
+        auto const directory = TemporaryDirectory{"uf-replay-front-end"};
+        auto project        = twentyElementProject();
+        project.screenPages = {"only"};
+        auto const text      = layOutProject(directory.path(), project);
+
+        auto const trace = directory.path() / "check-run.jsonl";
+        auto const pages = std::vector<std::string>{"only"};
+        writeText(trace, traceText("check", modelHashOf(text), pages));
+
+        auto const report = replayProduct(
+            ReplayArgs{.project = directory.path(), .trace = trace}
+        );
+        REQUIRE_FALSE(report.has_value());
+        CHECK(
+            automationErrorKind(report.error())
+            == AutomationErrorKind::InvalidResource
+        );
+        CHECK(std::string{report.error().message()}.contains("front end"));
+    }
+
+    TEST_CASE("a replay refuses a run recorded against another page model")
+    {
+        // Every move a replay could report is about edges, and a stream recorded
+        // against a different file may never have had them. The hash never
+        // reaches the script layer, so this is the only place the comparison can
+        // happen.
+        auto const directory = TemporaryDirectory{"uf-replay-model-hash"};
+        auto project        = twentyElementProject();
+        project.screenPages = {"only"};
+        layOutProject(directory.path(), project);
+
+        auto const trace = directory.path() / "other-model.jsonl";
+        auto const pages = std::vector<std::string>{"only"};
+        writeText(
+            trace,
+            traceText("task", std::string(64U, 'b'), pages)
+        );
+
+        auto const report = replayProduct(
+            ReplayArgs{.project = directory.path(), .trace = trace}
+        );
+        REQUIRE_FALSE(report.has_value());
+        CHECK(std::string{report.error().message()}.contains("page model"));
+    }
+
+    TEST_CASE("a replay of a run that made no move accepts and says so")
+    {
+        // The whole pipeline end to end: a trace read off a file, projected,
+        // handed to the VM as data through `ctx:replay_steps`, judged against
+        // the graph, and printed. One resolution is no move at all, so the
+        // model is not contradicted -- and the report still says what it looked
+        // at, which is what tells this apart from a routine that printed nothing.
+        auto const directory = TemporaryDirectory{"uf-replay-accepted"};
+        auto project        = twentyElementProject();
+        project.screenPages = {"only"};
+        auto const text      = layOutProject(directory.path(), project);
+
+        auto const trace = directory.path() / "run.jsonl";
+        auto const pages = std::vector<std::string>{"only", "only"};
+        writeText(trace, traceText("task", modelHashOf(text), pages));
+
+        // The routine prints through Lua's `print`, which writes the C stdout
+        // and not std::cout, so the redirect is the same file-descriptor one the
+        // check cases use.
+        auto const sink = directory.path() / "report.jsonl";
+        std::fflush(stdout);
+        auto const saved = duplicatedStdout();
+        REQUIRE(saved >= 0);
+        auto restore = scopeExit([saved]() noexcept { restoreStdout(saved); });
+        REQUIRE(redirectStdoutTo(sink));
+
+        auto const report = replayProduct(
+            ReplayArgs{.project = directory.path(), .trace = trace}
+        );
+        restoreStdout(saved);
+        restore.release();
+
+        REQUIRE(report.has_value());
+        auto const failure = report->run.failure
+            ? std::string{report->run.failure->message()}
+            : std::string{};
+        CHECK_MESSAGE(!report->run.failure.has_value(), failure);
+        CHECK(report->findings == 0U);
+        CHECK(exitCodeForReplay(*report) == ExitCode::Success);
+
+        auto stream = std::ifstream{sink, std::ios::binary};
+        REQUIRE(stream.is_open());
+        auto const printed = std::string{
+            std::istreambuf_iterator<char>{stream},
+            std::istreambuf_iterator<char>{}
+        };
+        CHECK(printed.contains(R"({"replay":"summary")"));
+        CHECK(printed.contains(R"("resolutions":2)"));
+        CHECK(printed.contains(R"("transitions":0)"));
     }
 }

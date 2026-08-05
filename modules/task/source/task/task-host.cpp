@@ -465,6 +465,7 @@ namespace uf::task
                     .randomSeed           = seed,
                     .projectRoot          = m_projectRoot,
                     .maximumReadsPerCycle = config.maximumReadsPerCycle,
+                    .replaySteps          = std::move(config.replaySteps),
                 },
             };
 
@@ -725,6 +726,14 @@ namespace uf::task
     {
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
         return p_generation->model().elementNames.size();
+    }
+
+    auto TaskHost::projectModelHash(
+        GenerationId generation
+    ) -> Result<std::string>
+    {
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
+        return p_generation->model().contentHash.hex();
     }
 
     auto TaskHost::runFrameworkRoutine(

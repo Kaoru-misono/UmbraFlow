@@ -8,6 +8,7 @@
 #include <task/template-store.hpp>
 
 #include <core/error/result.hpp>
+#include <core/safety/annotations.hpp>
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
@@ -21,6 +22,7 @@
 
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
+#include <trace/replay-source.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -147,6 +149,18 @@ namespace uf::task
 
         // See k_defaultMaximumCropsPerCycle, on the same reasoning again.
         uint32 maximumCropsPerCycle{k_defaultMaximumCropsPerCycle};
+
+        // The recorded run a replay checks, projected by `trace::readReplayedRun`
+        // before this context existed. Empty on every run that is not a replay,
+        // and `ctx:replay_steps` then hands back an empty list rather than
+        // refusing: a run with no steps is a run that made no move, which is a
+        // verdict rather than an error.
+        //
+        // It travels as DATA through a primitive and not as a table baked into
+        // the routine's source, which the routine's other parameters do. A page
+        // name is a project's own string, and a project's string that becomes
+        // part of a program is a project that can rewrite the thing checking it.
+        std::vector<trace::ReplayStep> replaySteps{};
     };
 
     // Host-owned bridge between one task VM and one EngineSession. It owns the
@@ -260,6 +274,13 @@ namespace uf::task
         auto operator=(TaskContext&&) -> TaskContext& = delete;
 
         ~TaskContext() = default;
+
+        // The recorded run this context was configured with, or an empty span.
+        // The view borrows this context's own storage and lives exactly as long
+        // as the context does, which outlives the VM by construction.
+        [[nodiscard]]
+        auto replaySteps() const noexcept UF_LIFETIME_BOUND
+            -> std::span<trace::ReplayStep const>;
 
         // Observes one frame and opens the generation's single observation cycle
         // over it, returning the ticket that names it. A cycle that is already

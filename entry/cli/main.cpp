@@ -2,6 +2,7 @@
 #include "application-info.hpp"
 #include "check.hpp"
 #include "explore.hpp"
+#include "replay.hpp"
 #include "run.hpp"
 
 #include <core/numeric/checked-cast.hpp>
@@ -99,6 +100,40 @@ namespace uf::cli
         }
 
         [[nodiscard]]
+        // The replay verb, on dispatchCheck's shape for its reason: the verdict
+        // is JSON on standard output and the human summary is on standard error,
+        // so the two never interleave in a pipe.
+        [[nodiscard]]
+        auto dispatchReplay(std::span<std::string const> raw) -> ExitCode
+        {
+            auto const args = parseReplayArguments(raw);
+            if (!args)
+            {
+                std::cerr << formatRunError(args.error()) << '\n';
+                std::cerr << replayUsageText();
+                return exitCodeForError(args.error(), false);
+            }
+
+            auto const report = replayProduct(*args);
+            if (!report)
+            {
+                std::cerr << formatRunError(report.error()) << '\n';
+                return exitCodeForError(report.error(), false);
+            }
+
+            if (report->run.failure)
+            {
+                std::cerr << formatRunError(*report->run.failure) << '\n';
+            }
+            std::cerr << std::format(
+                "replay: project=\"{}\" findings={} trace=\"{}\"\n",
+                args->project.string(),
+                report->findings,
+                args->trace.string()
+            );
+            return exitCodeForReplay(*report);
+        }
+
         auto dispatchCheck(std::span<std::string const> raw) -> ExitCode
         {
             auto const args = parseCheckArguments(raw);
@@ -159,6 +194,10 @@ namespace uf::cli
             if (raw.front() == "check")
             {
                 return dispatchCheck(raw.subspan(1));
+            }
+            if (raw.front() == "replay")
+            {
+                return dispatchReplay(raw.subspan(1));
             }
 
             std::cerr << std::format("unknown subcommand \"{}\"\n", raw.front());

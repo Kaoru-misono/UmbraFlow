@@ -200,6 +200,28 @@ namespace uf::cli
 
     [[nodiscard]] auto checkUsageText() noexcept -> std::string_view;
 
+    // Parsed inputs for the `replay` subcommand: one recorded run, checked
+    // against the model it ran on.
+    //
+    // It binds no target and opens no frame, so it declares no budget, no
+    // timeout and no OCR models: everything it judges was measured when the run
+    // happened, and re-measuring it now would be measuring a different screen.
+    //
+    // `trace` is an INPUT here and an output everywhere else in this file, which
+    // is the whole shape of the verb.
+    struct ReplayArgs final
+    {
+        std::filesystem::path project{};
+        std::filesystem::path trace{};
+
+        auto operator==(ReplayArgs const&) const -> bool = default;
+    };
+
+    [[nodiscard]]
+    auto parseReplayArguments(std::span<std::string const> raw) -> Result<ReplayArgs>;
+
+    [[nodiscard]] auto replayUsageText() noexcept -> std::string_view;
+
     // Every usage, for the bare invocation and for an unknown subcommand: the
     // modes are equal citizens, so none is the one a reader is shown by default.
     [[nodiscard]] auto usageText() -> std::string;
