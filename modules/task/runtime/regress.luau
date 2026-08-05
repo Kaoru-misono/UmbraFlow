@@ -40,7 +40,10 @@
 --     screen resolves the page underneath it and the model cannot yet say which
 --     page that is (`recognition`).
 --   * which pages' identify clauses contain another's. A statement about the
---     order a dispatcher must ask in, decided from the file alone.
+--     order a dispatcher must ask in, decided from the file alone. ONE shape of
+--     it is a finding rather than a row -- see `checkInterruptOrder` -- because
+--     a page that is asked first and is contained by another has made the
+--     second unresolvable, which the file says about itself.
 --   * how many screens each page resolves on, zero included. A page nothing
 --     resolves is as likely to be a page nobody captured.
 --   * how many edges reach and leave each page. A model draws its edges long
@@ -1013,6 +1016,50 @@ local function identifiedElements(built: any): { [string]: boolean }
     return identified
 end
 
+-- The one thing the subset lattice can decide by itself, and the reason the
+-- lattice is computed at all.
+--
+-- A subset pair says every frame that resolves the SPECIFIC page also resolves
+-- the GENERAL one. That is ordinarily just a fact -- the dispatcher asks the
+-- specific page first and the general one never gets the chance to answer
+-- wrongly. `interrupt` takes that chance away: an interrupt page is asked FIRST,
+-- because it may be covering anything, so a general page carrying it answers
+-- before the specific page is ever tried and the specific page can never resolve
+-- again (docs/plans/2026-08-04-state-layer-and-policy-slots.md 3.4).
+--
+-- A FINDING and not a row, unlike every other product of the lattice: this is
+-- not a fact about the corpus that a reader has to interpret, it is a
+-- contradiction the file states about itself, and no screen has to be captured
+-- to see it.
+--
+-- `catch_all` on the general page is the REPAIR rather than a second version of
+-- the same defect. It says ask this last, after every specific page has had its
+-- turn -- which is exactly what the containment needs -- so a pair whose general
+-- side carries it is healthy and reported nowhere.
+local function checkInterruptOrder(built: any, verdict: Verdict)
+    for _, subset in verdict.subsets do
+        local general = built.page_by_name[subset.general]
+        if general ~= nil and general.interrupt then
+            table.insert(verdict.findings, {
+                kind   = "interrupt_swallows",
+                screen = "",
+                page   = subset.general,
+                rival  = subset.specific,
+                detail = "page '"
+                    .. subset.general
+                    .. "' declares interrupt, so it is asked before every "
+                    .. "specific page, and its identify clauses are contained by "
+                    .. "page '"
+                    .. subset.specific
+                    .. "' -- so every frame that is the second resolves as the "
+                    .. "first, and the second can never resolve at all. Move the "
+                    .. "flag to catch_all, which is asked last, or give the "
+                    .. "general page a clause the specific one contradicts",
+            })
+        end
+    end
+end
+
 -- Counts the edges that reach and leave each page, in declaration order of the
 -- pages so two runs over one file report the same rows in the same places.
 --
@@ -1261,6 +1308,7 @@ function regress.check(ctx: any, built: any, options: CheckOptions?): Verdict
     -- marks land on the same frames are visible only in the sweep below. Neither
     -- half subsumes the other.
     verdict.subsets = recognition.anchor_subsets(built)
+    checkInterruptOrder(built, verdict)
 
     -- Capture-free like the subsets, and outside the sweep on purpose: a check
     -- that offers no page to any screen still reports every edge.

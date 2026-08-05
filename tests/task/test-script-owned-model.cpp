@@ -8215,6 +8215,80 @@ namespace uf::task
                 CHECK(*result == doctest::Approx(1.0));
             }
 
+            SUBCASE("a contained page asked first is a finding, and catch_all repairs it")
+            {
+                // The one thing the lattice decides by itself. An interrupt page
+                // is asked FIRST because it may be covering anything, so one
+                // whose clauses are contained by another answers before the
+                // other is ever tried -- and the other can never resolve again.
+                // No screen has to be captured to see it, which is why it is a
+                // finding rather than a row.
+                auto const result = runSweep(
+                    directory.path(),
+                    hashes,
+                    R"lua(
+                    local function pageWith(name, flags, rows)
+                        local spec = { name = name, references = rows }
+                        for key, value in flags do spec[key] = value end
+                        return model.Page.new(spec)
+                    end
+
+                    local tight = page("tight", {
+                        row(markA, "required"),
+                        row(markB, "required"),
+                    })
+
+                    -- Contained AND asked first: the pair the check exists for.
+                    local swallowing = sweep({
+                        pageWith(
+                            "loose",
+                            { overlay = true, interrupt = true },
+                            { row(markA, "required") }
+                        ),
+                        tight,
+                    })
+                    if swallowing.accepted then return 0 end
+                    local found = nil
+                    for _, finding in swallowing.findings do
+                        if finding.kind == "interrupt_swallows" then
+                            found = finding
+                        end
+                    end
+                    if found == nil then return 0 end
+                    if found.page ~= "loose" then return 0 end
+                    if found.rival ~= "tight" then return 0 end
+
+                    -- The SAME containment with the flag moved to catch_all is
+                    -- healthy: asked last is exactly what the containment needs,
+                    -- so nothing is reported and the subset row is still there.
+                    local repaired = sweep({
+                        pageWith(
+                            "loose",
+                            { overlay = true, catch_all = true },
+                            { row(markA, "required") }
+                        ),
+                        tight,
+                    })
+                    if not repaired.accepted then return 0 end
+                    if #repaired.subsets ~= 1 then return 0 end
+
+                    -- And containment WITHOUT either flag stays a row, because a
+                    -- dispatcher asking the specific page first is the ordinary
+                    -- arrangement and not a defect.
+                    local plain = sweep({
+                        page("loose", { row(markA, "required") }),
+                        tight,
+                    })
+                    if not plain.accepted then return 0 end
+                    if #plain.subsets ~= 1 then return 0 end
+                    return 1
+                )lua",
+                    3U
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
             SUBCASE("a forbidden clause keeps the tighter page off the looser one's screens")
             {
                 auto const result = runSweep(
