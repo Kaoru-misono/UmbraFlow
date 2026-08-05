@@ -324,7 +324,7 @@ namespace uf::cli
             std::vector<std::string> const& screenHashes
         ) -> std::string
         {
-            auto text = std::string{"schema = \"umbraflow-project/l2-v1\"\n"};
+            auto text = std::string{"schema = \"umbraflow-project/l2-v2\"\n"};
 
             // The geometry every rectangle below is measured at. The host reads
             // it out of this file rather than out of a compiled manifest, so a

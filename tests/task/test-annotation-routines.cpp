@@ -152,7 +152,7 @@ namespace uf::task
             );
 
             auto const model = std::string{}
-                + "schema = \"umbraflow-project/l2-v1\"\n"
+                + "schema = \"umbraflow-project/l2-v2\"\n"
                 + "\n"
                 + "[[element]]\n"
                 + "name = \"anchor\"\n"
@@ -218,7 +218,7 @@ namespace uf::task
             );
 
             auto const model = std::string{}
-                + "schema = \"umbraflow-project/l2-v1\"\n"
+                + "schema = \"umbraflow-project/l2-v2\"\n"
                 + "\n"
                 + "[[element]]\n"
                 + "name = \"action\"\n"
@@ -327,7 +327,7 @@ namespace uf::task
             );
 
             auto const model =
-                std::string{"schema = \"umbraflow-project/l2-v1\"\n"};
+                std::string{"schema = \"umbraflow-project/l2-v2\"\n"};
 
             writeFile(
                 root / "page-model.toml",
@@ -2196,7 +2196,7 @@ namespace uf::task
             );
 
             auto const seeded = std::string{}
-                + "schema = \"umbraflow-project/l2-v1\"\n"
+                + "schema = \"umbraflow-project/l2-v2\"\n"
                 + "\n"
                 + "[[element]]\n"
                 + "name = \"crest\"\n"
@@ -3029,7 +3029,7 @@ namespace uf::task
             // Deliberately NOT seedEmptyProject: the point is a project
             // directory with no assets/templates in it at all.
             auto const model =
-                std::string{"schema = \"umbraflow-project/l2-v1\"\n"};
+                std::string{"schema = \"umbraflow-project/l2-v2\"\n"};
             writeFile(
                 directory.path() / "page-model.toml",
                 std::as_bytes(std::span{std::string_view{model}})

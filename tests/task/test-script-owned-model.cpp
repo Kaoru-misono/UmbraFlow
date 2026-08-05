@@ -5125,7 +5125,7 @@ namespace uf::task
         // that belongs to the project rather than to this layer, and a whole
         // [[gadget]] section kind nothing here understands.
         constexpr std::string_view k_canonicalProject =
-            "schema = \"umbraflow-project/l2-v1\"\n"
+            "schema = \"umbraflow-project/l2-v2\"\n"
             "\n"
             "[[element]]\n"
             "name = \"anchor\"\n"
@@ -5185,7 +5185,7 @@ namespace uf::task
         // from, so a save that never ran would leave these bytes on disk; starting
         // from the canonical form instead would let a no-op save pass.
         constexpr std::string_view k_unsortedProject =
-            "schema = \"umbraflow-project/l2-v1\"\n"
+            "schema = \"umbraflow-project/l2-v2\"\n"
             "\n"
             "[[element]]\n"
             "name = \"slot\"\n"
@@ -5399,7 +5399,7 @@ namespace uf::task
         // layer. The pop edge carries no `to` line at all, because where a pop lands
         // is the run's page stack rather than anything a file can state.
         constexpr std::string_view k_canonicalGraphProject =
-            "schema = \"umbraflow-project/l2-v1\"\n"
+            "schema = \"umbraflow-project/l2-v2\"\n"
             "\n"
             "[[element]]\n"
             "name = \"mark_base\"\n"
@@ -5485,7 +5485,7 @@ namespace uf::task
         // order a save puts them in. A save that never ran would leave these bytes
         // on disk and the comparison against the canonical form would fail.
         constexpr std::string_view k_unsortedGraphProject =
-            "schema = \"umbraflow-project/l2-v1\"\n"
+            "schema = \"umbraflow-project/l2-v2\"\n"
             "\n"
             "[[edge]]\n"
             "from = \"detail\"\n"
@@ -5571,7 +5571,7 @@ namespace uf::task
         // the BYTES rather than on the built tables -- a field the encoder
         // dropped would still be on the model this test could read.
         constexpr std::string_view k_modeProject =
-            "schema = \"umbraflow-project/l2-v1\"\n"
+            "schema = \"umbraflow-project/l2-v2\"\n"
             "base_resolution = [3, 2]\n"
             "base_dpi = [96, 96]\n"
             "\n"
@@ -6299,7 +6299,7 @@ namespace uf::task
             auto const directory = TemporaryDirectory{"uf-model-edge-dangling"};
             seedTemplates(directory.path());
             constexpr std::string_view dangling =
-                "schema = \"umbraflow-project/l2-v1\"\n"
+                "schema = \"umbraflow-project/l2-v2\"\n"
                 "\n"
                 "[[element]]\n"
                 "name = \"mark_base\"\n"
@@ -6375,7 +6375,7 @@ namespace uf::task
             auto const directory = TemporaryDirectory{"uf-model-screen-dangling"};
             seedTemplates(directory.path());
             constexpr std::string_view dangling =
-                "schema = \"umbraflow-project/l2-v1\"\n"
+                "schema = \"umbraflow-project/l2-v2\"\n"
                 "\n"
                 "[[element]]\n"
                 "name = \"mark_base\"\n"
@@ -6481,7 +6481,7 @@ namespace uf::task
             auto const directory = TemporaryDirectory{"uf-model-project-owner"};
             seedTemplates(directory.path());
             constexpr std::string_view twoHomes =
-                "schema = \"umbraflow-project/l2-v1\"\n"
+                "schema = \"umbraflow-project/l2-v2\"\n"
                 "\n"
                 "[[element]]\n"
                 "name = \"anchor\"\n"
@@ -6555,7 +6555,7 @@ namespace uf::task
                 TemporaryDirectory{"uf-model-project-orphan-appearance"};
             seedTemplates(directory.path());
             constexpr std::string_view orphan =
-                "schema = \"umbraflow-project/l2-v1\"\n"
+                "schema = \"umbraflow-project/l2-v2\"\n"
                 "\n"
                 "[[element]]\n"
                 "name = \"slot\"\n"
@@ -6626,7 +6626,7 @@ namespace uf::task
                 TemporaryDirectory{"uf-model-project-orphan-reference"};
             seedTemplates(directory.path());
             constexpr std::string_view orphan =
-                "schema = \"umbraflow-project/l2-v1\"\n"
+                "schema = \"umbraflow-project/l2-v2\"\n"
                 "\n"
                 "[[element]]\n"
                 "name = \"anchor\"\n"
@@ -6704,7 +6704,7 @@ namespace uf::task
             };
 
             auto const result = runModel(context, built, R"lua(
-                local text = 'schema = "umbraflow-project/l2-v1"\n'
+                local text = 'schema = "umbraflow-project/l2-v2"\n'
                     .. '\n[[gadget]]\nname = "x"\n'
                     .. '\n[gadget.extra]\ntone = "dark"\n'
                 local document = project.parse(text)
@@ -9469,7 +9469,7 @@ namespace uf::task
         // measured by a template, and two cells measured by what one shared
         // region reads.
         constexpr std::string_view k_canonicalClaimsProject =
-            "schema = \"umbraflow-project/l2-v1\"\n"
+            "schema = \"umbraflow-project/l2-v2\"\n"
             "\n"
             "[[element]]\n"
             "name = \"mark\"\n"
@@ -9542,7 +9542,7 @@ namespace uf::task
         // order a save puts them in, and the text written after the state it
         // qualifies.
         constexpr std::string_view k_unsortedClaimsProject =
-            "schema = \"umbraflow-project/l2-v1\"\n"
+            "schema = \"umbraflow-project/l2-v2\"\n"
             "\n"
             "[[element]]\n"
             "name = \"mark\"\n"
@@ -9703,7 +9703,7 @@ namespace uf::task
         // two claims about it on one screen: the whole of the new shape, in
         // canonical form.
         constexpr std::string_view k_canonicalPlacedProject =
-            "schema = \"umbraflow-project/l2-v1\"\n"
+            "schema = \"umbraflow-project/l2-v2\"\n"
             "\n"
             "[[element]]\n"
             "name = \"anchor\"\n"
@@ -9764,7 +9764,7 @@ namespace uf::task
         // order, the fields inside a block shuffled, the two claims in the
         // reverse of the order a save puts them in, and the screen after them.
         constexpr std::string_view k_unsortedPlacedProject =
-            "schema = \"umbraflow-project/l2-v1\"\n"
+            "schema = \"umbraflow-project/l2-v2\"\n"
             "\n"
             "[[element]]\n"
             "name = \"drifting\"\n"

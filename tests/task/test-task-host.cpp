@@ -86,7 +86,7 @@ namespace uf::task
         // it: the geometry rectangles were measured at, and the names a script
         // may spell. Everything else in the file is layer two's.
         constexpr auto k_pageModel = std::string_view{R"toml(
-schema = "umbraflow-project/l2-v1"
+schema = "umbraflow-project/l2-v2"
 base_resolution = [3, 2]
 base_dpi = [96, 96]
 

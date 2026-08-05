@@ -212,7 +212,7 @@ they mean did not change; their spellings did.
 
 Element, page, reference, appearance and edge are **trusted-Luau types** now —
 `modules/task/runtime/{model,navigation,oracle}.luau` — persisted to
-`umbraflow-project/l2-v1` (`page-model.toml`, written by `project.luau`). C++
+`umbraflow-project/l2-v2` (`page-model.toml`, written by `project.luau`). C++
 keeps pixels, tickets and guarantees, and the `annotation::` spellings that
 appear below are history, not alternatives.
 

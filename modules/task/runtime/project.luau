@@ -37,7 +37,7 @@
 -- It names the constructors in `model`, `navigation` and `oracle`, and nothing
 -- from `observe`: parsing and writing a file costs no capture.
 
-local k_schema   = "umbraflow-project/l2-v1"
+local k_schema   = "umbraflow-project/l2-v2"
 local k_fileName = "page-model.toml"
 
 local k_sectionKinds: { [string]: boolean } = {

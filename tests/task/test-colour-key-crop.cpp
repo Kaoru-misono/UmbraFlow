@@ -622,7 +622,7 @@ namespace uf::task
                 );
 
                 auto const model =
-                    std::string{"schema = \"umbraflow-project/l2-v1\"\n"};
+                    std::string{"schema = \"umbraflow-project/l2-v2\"\n"};
                 auto stream = std::ofstream{
                     m_path / "page-model.toml",
                     std::ios::binary | std::ios::trunc

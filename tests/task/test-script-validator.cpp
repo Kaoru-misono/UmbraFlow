@@ -23,7 +23,7 @@ namespace uf::task
         // the text rather than a compiled catalog. `home_marker` is here because
         // an element that only identifies is still a name a script may write.
         constexpr auto k_pageModel = std::string_view{R"toml(
-schema = "umbraflow-project/l2-v1"
+schema = "umbraflow-project/l2-v2"
 base_resolution = [4, 4]
 base_dpi = [96, 96]
 

@@ -197,6 +197,22 @@ observe 里"page signature 不是项目可按调用点放松的地方"的裁决�
 wake_point 与其"证明什么都不按"的矩阵检查;能力集合;Holding/exercised;
 screen/expect;残余段落保序往返。schema 串升 `l2-v2`。
 
+> **B 阶段落地情况(2026-08-05)。** 三·2 外观门(`interact_requires`)、三·3 两种新证据
+> (`expected_fragments` / `expected_presence`)、三·4(`state` / `over` / `catch_all`)、
+> 三·5(`preview`)、三·1 的 **strip**(`item_spacing` + `observe.read_strip`)与本节的
+> schema 串**都已落地**,每一项一对红绿。工程文件已迁移到 `l2-v2`。
+>
+> **两件明写没做的**,免得被当成做完了:
+>
+> 1. **strip 的 regress 格**。本节承诺「在声明的屏上按间距聚类,条目数与 expect 声明的数目
+>    比对」,但 oracle 今天没有承载那个数目的声明字段。所以 strip 的间距是在文件里断言、
+>    没有任何屏幕检查它。
+> 2. **三·1 的 `shape` 形态**。「只有模板、rect 免写」今天已经成立(rect 本来可选)。要把
+>    「删掉死 rect」变成「不许写」,需要元素上一个显式且必填的 `form` 字段——按
+>    「Break it rather than bridge it」它不能有缺省——于是工程仓库 331 个元素都要迁移,
+>    而迁移的内容是把文件已经说过的话再说一遍。**这个取舍留给开发者**:代价是少了「这里
+>    故意没有 rect」和「有人忘了写 rect」的区分。
+
 > **更正(2026-08-04):`project.parse` 从不拒绝未知字段。** 未知顶层键进
 > `document.preamble`,已知段落里的未知键进该段的 `residual`,未知 `[[段落]]` 进
 > `document.blocks`,三者都原样往返写回。拒绝未知键的是 `mint.unknown_key`,作用在
