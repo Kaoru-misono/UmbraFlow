@@ -198,22 +198,29 @@ namespace uf::trace
                     );
                 }
 
-                auto modelHash = memberString(split.line, "modelHash");
-                if (!modelHash)
+                // Every member run.started carries is required here. A default
+                // would accept a malformed opening line as a run, and the run it
+                // reported would be attributed to no project and no task.
+                for (auto const member : {"projectId", "taskName", "modelHash"})
                 {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "run.started states no modelHash, so nothing says which "
-                        "page model this run stood on; every finding a replay "
-                        "could report is about edges that may never have been in "
-                        "the file it read"
-                    );
+                    if (!memberString(split.line, member))
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "run.started states no {}, so nothing says which "
+                                "run this stream records or which page model it "
+                                "stood on",
+                                member
+                            )
+                        );
+                    }
                 }
 
                 run.frontEnd  = *known;
-                run.projectId = memberString(split.line, "projectId").value_or("");
-                run.taskName  = memberString(split.line, "taskName").value_or("");
-                run.modelHash = *std::move(modelHash);
+                run.projectId = *memberString(split.line, "projectId");
+                run.taskName  = *memberString(split.line, "taskName");
+                run.modelHash = *memberString(split.line, "modelHash");
                 begun         = true;
                 continue;
             }

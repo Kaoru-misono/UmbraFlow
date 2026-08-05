@@ -529,6 +529,7 @@ namespace uf::task
                     red = )lua"} + std::to_string(k_glyphLevel) + R"lua(,
                     green = )lua" + std::to_string(k_glyphLevel) + R"lua(,
                     blue = )lua" + std::to_string(k_glyphLevel) + R"lua(,
+                    removes = false,
                 }, 0)
                 if glyph == nil then return 0 end
                 if glyph.selected_pixels ~= )lua"
@@ -543,6 +544,7 @@ namespace uf::task
                     red = )lua" + std::to_string(k_speckRed) + R"lua(,
                     green = )lua" + std::to_string(k_speckGreen) + R"lua(,
                     blue = )lua" + std::to_string(k_speckBlue) + R"lua(,
+                    removes = false,
                 }, 0)
                 if speck.selected_pixels ~= )lua"
                 + std::to_string(k_speckPixels) + R"lua( then return 0 end
@@ -557,6 +559,7 @@ namespace uf::task
                     red = )lua" + std::to_string(k_backgroundLevel) + R"lua(,
                     green = )lua" + std::to_string(k_backgroundLevel) + R"lua(,
                     blue = )lua" + std::to_string(k_backgroundLevel) + R"lua(,
+                    removes = false,
                 }, 0)
                 if flat.selected_pixels ~= )lua"
                 + std::to_string(k_backgroundPixels) + R"lua( then return 0 end
@@ -673,6 +676,7 @@ namespace uf::task
                         red = )lua"} + std::to_string(k_glyphLevel) + R"lua(,
                         green = )lua" + std::to_string(k_glyphLevel) + R"lua(,
                         blue = )lua" + std::to_string(k_glyphLevel) + R"lua(,
+                        removes = false,
                     },
                     0
                 )

@@ -28,11 +28,10 @@ namespace uf::task
 {
     namespace
     {
-        // The two top-level keys layer two added for this reader. They are layer
-        // two's own keys under the schema's rule that every non-`extra` key
-        // belongs to it, so an older build reading a file that carries them
-        // preserves them as residual rather than dropping them -- which is what
-        // makes adding them an additive change to l2-v1 rather than a new schema.
+        // The two top-level keys layer two states for this reader. They are layer
+        // two's own under the schema's rule that every non-`extra` key belongs to
+        // it, and both are REQUIRED: a page model that states no geometry is
+        // refused below rather than given one.
         constexpr auto k_baseResolutionKey = std::string_view{"base_resolution"};
         constexpr auto k_baseDpiKey        = std::string_view{"base_dpi"};
 

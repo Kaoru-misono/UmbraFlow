@@ -59,23 +59,31 @@ end
 -- The three channels, the tolerance and the direction as the scalars the private
 -- surface takes, or nothing at all when there is no key.
 --
--- `removes` says the colour names the pixels to DROP rather than the pixels to
--- keep. Absent it is false, which is what every key meant before the flag
--- existed. It is normalised to a boolean here rather than passed through,
--- because the host reads that position with Lua truthiness and a caller who
--- wrote `removes = 0` means false in every language this project is written in.
+-- `removes` says whether the colour names the pixels to DROP or the pixels to
+-- keep. It is REQUIRED, because the two read one colour into complementary
+-- masks: a caller who left it out would get whichever reading this layer
+-- happened to prefer, and half of them would be measuring the complement of
+-- what they meant.
 local function keyScalars(verb: string, key: any, tolerance: number?)
     if key == nil then
         return
     end
     if type(key) ~= "table" then
         error(
-            verb .. " takes key = { red = r, green = g, blue = b } or no key "
-                .. "at all",
+            verb .. " takes key = { red = r, green = g, blue = b, removes = }"
+                .. " or no key at all",
             3
         )
     end
-    return key.red, key.green, key.blue, tolerance, key.removes == true
+    if type(key.removes) ~= "boolean" then
+        error(
+            verb .. " needs key.removes = true or false: true keys on the "
+                .. "pixels to drop and false on the pixels to keep, and one "
+                .. "colour read the two ways cuts complementary masks",
+            3
+        )
+    end
+    return key.red, key.green, key.blue, tolerance, key.removes
 end
 
 -- explore.click_point(ticket, x, y) -> ()
@@ -130,7 +138,7 @@ end
 -- With a key the crop is a masked template: the host bakes the weights into the
 -- PNG's alpha channel, which is what makes the matcher compare the glyph rather
 -- than the whole rectangle. The key is the same optional
--- { red, green, blue, removes? } table `explore.probe` takes and is unpacked
+-- { red, green, blue, removes } table `explore.probe` takes and is unpacked
 -- here because the private surface takes scalars. The third return says what the
 -- key took -- `key_red`, `key_green`, `key_blue`, `tolerance` and `key_removes`
 -- as the HOST applied them, so a caller that named no tolerance reads the
@@ -145,7 +153,7 @@ function explore.crop(
     y: number,
     width: number,
     height: number,
-    key: { red: number, green: number, blue: number, removes: boolean? }?,
+    key: { red: number, green: number, blue: number, removes: boolean }?,
     tolerance: number?
 ): (string, string, any)
     requirePrimitive("cycle_crop", "explore.crop")
@@ -162,7 +170,7 @@ end
 -- explore.probe(blob, x, y, width, height, key?, tolerance?) -> stats
 --
 -- Colour statistics over one rectangle of one PNG. `key` is an optional
--- { red, green, blue, removes? } table and `tolerance` an optional whole number;
+-- { red, green, blue, removes } table and `tolerance` an optional whole number;
 -- with no key the answer carries the census fields alone, which is what an agent
 -- reads to CHOOSE a key. Unpacking the table into scalars is this layer's whole
 -- contribution: the numbers are the host's and the judgement is the caller's.
@@ -176,7 +184,7 @@ function explore.probe(
     y: number,
     width: number,
     height: number,
-    key: { red: number, green: number, blue: number, removes: boolean? }?,
+    key: { red: number, green: number, blue: number, removes: boolean }?,
     tolerance: number?
 ): any
     requirePrimitive("probe", "explore.probe")

@@ -483,6 +483,7 @@ namespace uf::task
                     red = )lua"} + std::to_string(k_leftRed) + R"lua(,
                     green = )lua" + std::to_string(k_leftGreen) + R"lua(,
                     blue = )lua" + std::to_string(k_leftBlue) + R"lua(,
+                    removes = false,
                 }, 0)
                 if keyed.fully_selected_pixels ~= 4 then return 0 end
                 if keyed.ramp_selected_pixels ~= 0 then return 0 end
@@ -491,7 +492,7 @@ namespace uf::task
                 -- A key nothing on this crop wears selects nothing, and says so
                 -- with a zero rather than with an absence.
                 local miss = explore.probe(blob, 0, 0, 4, 2, {
-                    red = 1, green = 2, blue = 3,
+                    red = 1, green = 2, blue = 3, removes = false,
                 }, 0)
                 if miss.fully_selected_pixels ~= 0 then return 0 end
                 if miss.rect_pixels ~= 8 then return 0 end

@@ -104,7 +104,7 @@ function scribe.measure(
     ctx: any,
     ticket: any,
     rect: { x: number, y: number, width: number, height: number },
-    key: { red: number, green: number, blue: number, removes: boolean? }?,
+    key: { red: number, green: number, blue: number, removes: boolean }?,
     tolerance: number?
 ): Measurement
     if type(ctx) ~= "table" then

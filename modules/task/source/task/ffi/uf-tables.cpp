@@ -722,6 +722,28 @@ namespace uf::task
         //
         // Presence is decided by the first position alone, so half a key is told
         // which channel is missing rather than silently keying on black.
+        // Which way round a key was read, at `index`. A framework bug rather
+        // than a bad argument: `explore.crop` and `explore.probe` both refuse a
+        // key table that states no direction, so nothing that reaches here can
+        // have omitted it.
+        [[nodiscard]]
+        auto checkColourDirection(
+            lua_State* state,
+            int index,
+            std::string const& what
+        ) -> bool
+        {
+            if (lua_type(state, index) != LUA_TBOOLEAN)
+            {
+                raiseInvariant(
+                    state,
+                    boundContext(state),
+                    what + " direction must be a boolean"
+                );
+            }
+            return lua_toboolean(state, index) != 0;
+        }
+
         [[nodiscard]]
         auto checkColourKey(
             lua_State* state,
@@ -740,10 +762,10 @@ namespace uf::task
                 .tolerance = lua_isnoneornil(state, first + 3)
                     ? k_defaultProbeTolerance
                     : checkPixelExtent(state, first + 3, what + " tolerance"),
-                // Absent means "keep what this colour names", the reading every
-                // key had before this flag existed, so a caller that spells no
-                // fifth scalar gets exactly the old behaviour.
-                .removes = lua_toboolean(state, first + 4) != 0,
+                // Read as a boolean and never as an absence: `explore` refuses
+                // a key that does not state its direction, so a missing fifth
+                // scalar is a framework bug rather than a caller's shorthand.
+                .removes = checkColourDirection(state, first + 4, what),
             };
         }
 
