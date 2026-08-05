@@ -1,6 +1,7 @@
 #include <trace/event.hpp>
 #include <trace/file-sink.hpp>
 #include <trace/recorder.hpp>
+#include <trace/replay-source.hpp>
 #include <trace/sink.hpp>
 
 #include <core/error/result.hpp>
@@ -9,6 +10,7 @@
 
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
+#include <domain/key.hpp>
 #include <domain/space.hpp>
 
 #include <vision/sad.hpp>
@@ -849,6 +851,292 @@ namespace uf::trace
         );
 
         std::filesystem::remove(path);
+    }
+
+    // ------------------------------------------- reading a recorded run back
+
+    namespace
+    {
+        // One stream written by this module's own recorder, so what the reader is
+        // tested against is what the writer produces rather than a hand-typed
+        // line that could drift from it.
+        [[nodiscard]]
+        auto recordRun(
+            std::filesystem::path const& path,
+            FrontEnd                     frontEnd,
+            std::string_view             modelHash
+        ) -> void
+        {
+            auto sink = FileTraceSink::create(path);
+            REQUIRE(sink.has_value());
+            auto recorder = TraceRecorder{
+                std::move(*sink),
+                k_runId,
+                k_generationId,
+                frontEnd,
+            };
+
+            REQUIRE(
+                recorder
+                    .emit(
+                        TraceEvent{
+                            .kind = TraceEventKind::RunStarted,
+                            .run  = TraceEvent::Run{
+                                .projectId  = "uf-chaos",
+                                .taskName   = "daily",
+                                .sourceHash = "abc123",
+                                .modelHash  = std::string{modelHash},
+                                .seed       = uint64{42},
+                            },
+                        }
+                    )
+                    .has_value()
+            );
+
+            // A page, a keystroke, a page, a click, a page: the shape a walk
+            // leaves behind. The observation event between them is a kind this
+            // projection does not carry and must not choke on.
+            auto const page = [&](std::string_view name) -> void
+            {
+                REQUIRE(
+                    recorder
+                        .emit(
+                            TraceEvent{
+                                .kind      = TraceEventKind::FrameworkPageResolved,
+                                .framework = TraceEvent::Framework{
+                                    .label = std::string{name},
+                                },
+                            }
+                        )
+                        .has_value()
+                );
+            };
+
+            page("home");
+            auto const key = KeyName::create("E");
+            REQUIRE(key.has_value());
+            REQUIRE(
+                recorder
+                    .emit(
+                        TraceEvent{
+                            .kind = TraceEventKind::EngineKeyDelivered,
+                            .key  = *key,
+                        }
+                    )
+                    .has_value()
+            );
+            page("battle");
+            REQUIRE(
+                recorder.emit(TraceEvent{.kind = TraceEventKind::EngineObserved})
+                    .has_value()
+            );
+            REQUIRE(
+                recorder
+                    .emit(TraceEvent{.kind = TraceEventKind::EngineActionDelivered})
+                    .has_value()
+            );
+            page("node_reward");
+
+            REQUIRE(
+                recorder
+                    .emit(
+                        TraceEvent{
+                            .kind       = TraceEventKind::RunFinished,
+                            .runOutcome = RunOutcome::Completed,
+                        }
+                    )
+                    .has_value()
+            );
+        }
+
+        [[nodiscard]]
+        auto readBack(std::filesystem::path const& path) -> std::string
+        {
+            auto stream = std::ifstream{path, std::ios::binary};
+            REQUIRE(stream.is_open());
+            return std::string{
+                std::istreambuf_iterator<char>{stream},
+                std::istreambuf_iterator<char>{}
+            };
+        }
+    }
+
+    TEST_CASE("A recorded run projects back to what it believed and what it did")
+    {
+        auto const path =
+            std::filesystem::temp_directory_path() / "uf-replay-source.jsonl";
+        std::filesystem::remove(path);
+        recordRun(path, FrontEnd::Task, "m0d3l");
+
+        auto const run = readReplayedRun(path);
+        REQUIRE(run.has_value());
+
+        // The identity a checker gates on before it reads one step.
+        CHECK(run->frontEnd == FrontEnd::Task);
+        CHECK(run->projectId == "uf-chaos");
+        CHECK(run->taskName == "daily");
+        CHECK(run->modelHash == "m0d3l");
+
+        // Five steps out of nine lines: the run bracket and the observation are
+        // kinds this does not project, and skipping them is the projection doing
+        // its job rather than losing a step.
+        REQUIRE(run->steps.size() == 5U);
+        CHECK(run->steps[0].kind == ReplayStepKind::PageResolved);
+        CHECK(run->steps[0].label == "home");
+        CHECK(run->steps[1].kind == ReplayStepKind::KeyDelivered);
+        CHECK(run->steps[1].label == "E");
+        CHECK(run->steps[2].kind == ReplayStepKind::PageResolved);
+        CHECK(run->steps[2].label == "battle");
+        CHECK(run->steps[3].kind == ReplayStepKind::ActionDelivered);
+        CHECK(run->steps[4].label == "node_reward");
+
+        // A click names nothing, and that is the stream's doing: no event
+        // records the element a click was authorised against, which is why a
+        // checker can attribute a keystroke to an edge and not a click.
+        CHECK(run->steps[3].label.empty());
+
+        // In stream order, and pointing at lines rather than at list positions.
+        for (auto index = std::size_t{1}; index < run->steps.size(); ++index)
+        {
+            CHECK(run->steps[index - 1U].seq < run->steps[index].seq);
+        }
+        CHECK(run->steps.front().seq == 2U);
+
+        std::filesystem::remove(path);
+    }
+
+    TEST_CASE("A page name outside ASCII survives the projection whole")
+    {
+        // Page names are bounded at the host's label ceiling in BYTES precisely
+        // because they are written to this stream, and a project may name its
+        // pages in its own script. `escapeJsonString` passes every byte above
+        // 0x1F through unchanged, so the only way this breaks is a reader that
+        // decodes what the writer never encoded.
+        auto lines    = std::vector<std::string>{};
+        auto recorder = TraceRecorder{
+            std::make_unique<CollectingTraceSink>(&lines),
+            k_runId,
+            k_generationId,
+            FrontEnd::Task,
+        };
+        REQUIRE(
+            recorder
+                .emit(
+                    TraceEvent{
+                        .kind = TraceEventKind::RunStarted,
+                        .run  = TraceEvent::Run{.taskName = "daily"},
+                    }
+                )
+                .has_value()
+        );
+        REQUIRE(
+            recorder
+                .emit(
+                    TraceEvent{
+                        .kind      = TraceEventKind::FrameworkPageResolved,
+                        .framework = TraceEvent::Framework{.label = "擲骰結果"},
+                    }
+                )
+                .has_value()
+        );
+
+        auto text = std::string{};
+        for (auto const& line : lines)
+        {
+            text += line;
+            text += '\n';
+        }
+
+        auto const run = projectReplayedRun(text);
+        REQUIRE(run.has_value());
+        REQUIRE(run->steps.size() == 1U);
+        CHECK(run->steps.front().label == "擲骰結果");
+    }
+
+    TEST_CASE("A projection refuses a stream it cannot honestly shorten")
+    {
+        auto const path =
+            std::filesystem::temp_directory_path() / "uf-replay-refuse.jsonl";
+        std::filesystem::remove(path);
+        recordRun(path, FrontEnd::Task, "m0d3l");
+        auto const good = readBack(path);
+        std::filesystem::remove(path);
+
+        // The control: the text this case mutates does project.
+        REQUIRE(projectReplayedRun(good).has_value());
+
+        SUBCASE("a line that is not an event is refused rather than skipped")
+        {
+            auto const broken = good + "not json at all\n";
+            auto const read   = projectReplayedRun(broken);
+            REQUIRE_FALSE(read.has_value());
+            CHECK(
+                automationErrorKind(read.error())
+                == AutomationErrorKind::InvalidResource
+            );
+        }
+
+        SUBCASE("a stream that does not open with run.started is refused")
+        {
+            auto const from = good.find('\n');
+            REQUIRE(from != std::string::npos);
+            auto const read = projectReplayedRun(good.substr(from + 1U));
+            REQUIRE_FALSE(read.has_value());
+            CHECK(
+                std::string{read.error().message()}.contains("run.started")
+            );
+        }
+
+        SUBCASE("empty text carries no run")
+        {
+            REQUIRE_FALSE(projectReplayedRun("").has_value());
+        }
+    }
+
+    TEST_CASE("A check's own trace projects as a check")
+    {
+        // The one fact the replay checker gates on: `umbra-flow check` drives the
+        // same page resolution and so writes the same steps, and a checker that
+        // read one as a run would report a task that stood on dozens of pages
+        // without delivering anything
+        // (docs/plans/2026-08-04-state-layer-and-policy-slots.md 4.2).
+        auto const path =
+            std::filesystem::temp_directory_path() / "uf-replay-check.jsonl";
+        std::filesystem::remove(path);
+        recordRun(path, FrontEnd::Check, "m0d3l");
+
+        auto const run = readReplayedRun(path);
+        REQUIRE(run.has_value());
+        CHECK(run->frontEnd == FrontEnd::Check);
+
+        // And it is NOT refused here. Which front ends may be replayed is the
+        // checker's ruling; this reader reports and judges nothing.
+        CHECK(run->steps.size() == 5U);
+
+        std::filesystem::remove(path);
+    }
+
+    TEST_CASE("A stream recorded before modelHash existed reads as no model")
+    {
+        // Absent and empty must not be told apart here, but they must not be
+        // told apart as AGREEMENT either: the reader hands back an empty hash and
+        // the checker refuses it, because a replay judged against a model the run
+        // may never have read is a replay whose every finding is unfounded.
+        auto const path =
+            std::filesystem::temp_directory_path() / "uf-replay-nomodel.jsonl";
+        std::filesystem::remove(path);
+        recordRun(path, FrontEnd::Task, "m0d3l");
+
+        auto text = readBack(path);
+        std::filesystem::remove(path);
+        auto const at = text.find(R"(,"modelHash":"m0d3l")");
+        REQUIRE(at != std::string::npos);
+        text.erase(at, std::string_view{R"(,"modelHash":"m0d3l")"}.size());
+
+        auto const run = projectReplayedRun(text);
+        REQUIRE(run.has_value());
+        CHECK(run->modelHash.empty());
+        CHECK(run->steps.size() == 5U);
     }
 
     TEST_CASE("FileTraceSink reports an unopenable trace path as an error Status")
