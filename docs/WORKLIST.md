@@ -1,6 +1,6 @@
 # 工作队列 — 下一个 session 从这里开工
 
-最后更新 2026-08-04。
+最后更新 2026-08-05。
 
 **这份文件不是新的台账。** 记录之实仍然是 [`docs/TODO.md`](TODO.md)、两份
 [plan](plans/) 和工程目录里的 `SEASON.md` / `COVERAGE.md` / `PITFALLS.md`。这里做两件
@@ -27,6 +27,22 @@
 >   (`season_team`、`node_reward`、`boss_settle` 等)本来没有自己的 `[[screen]]`,却在
 >   别的屏上解析成功——"没有屏"和"没有证据"不是一回事。
 
+> **2026-08-05 更新:season 相关内容整体搁置**,等开发者给出重新标注的办法之后再动
+> (裁决见[状态层与策略插槽](plans/2026-08-04-state-layer-and-policy-slots.md) 九·6)。
+> 下面三条受影响,在此一次说清,免得下一个 session 从里面挑活:
+>
+> - **1.1 现在没有可动的目标**:它点名的三个重裁模板(`seasonflashpick_pill`、
+>   `seasonevent_crest`、`seasonroute_zoom`)全是赛季的。无掩膜是 26/27 个模板的共同
+>   问题,这条根因不因搁置而失效——只是它今天举得出的例子都在搁置范围内。
+> - **1.2 赛季派发器**与 **1.6 `查看内容` 唯一性**一并搁置。
+> - **1.5 不受影响**,而且它是搁置之后剩下的第一优先级:25 页里只有 2 页是赛季的。
+>
+> 同日另落一件:`umbra-flow check` 现在还报**页的连通性**(`page_linkage` 行与
+> `pages_unlinked`),纯文件、零抓帧,不受 `--sweep-pages` 影响。实测 87 页里 **60 页**
+> 没有入边,排掉唯一的 interrupt 页后 `pages_unlinked` 报 **59**;其中 `battle`、
+> `equip_assign`、`fate_choice`、`flash_result` 四页有出边而无入边。这是 plan 四·2 那份
+> 回放检查器里唯一不需要轨迹的断言;检查器其余部分的缺口记在 plan 四·2。
+
 ---
 
 ## 一、没落进任何文档的(这一节是新增内容)
@@ -36,6 +52,12 @@
 **27 个模板里 26 个没有颜色键**,即整块矩形像素直接比。这一天里的模板假阳性
 (`seasonevent_crest` 烧掉四轮、`seasonflashpick_pill` 把战斗结算页的奖励条认成了
 查看内容药丸)根因都在这里:**没有掩膜,比的就是"这块矩形长得像不像",背景一起进了分母。**
+
+分母有多大是可以算的。`seasonevent_crest` 是 104×72 = 7488 个像素,判据是
+`score * 10000 <= maximum * (10000 - threshold)`(`observe.matched`),score 是逐像素
+绝对差之和。所以 threshold = 8500 基点的实际含义是**平均每像素差 38 灰阶以内即命中**
+(255 的 15%)。而那块裁图里真正是纹章的只占一小部分,其余是黑底——于是"左上角偏暗"
+这一个条件就够它命中,这正是它在 59 张屏上解析成功的机制。
 
 当时的补救是调阈值(8000 → 9500),那只是把症状压下去。正确做法是重裁:
 `scribe.measure` 的键**同时裁 crop 和 probe**,带键出来的 PNG 多一个 alpha 平面,
@@ -124,7 +146,8 @@ WGC 在锁屏下仍能取到画面(这条 07-25 量过),但**点击到不了被�
 > **已完成(2026-08-04)。** 跑的是 85 屏 × 87 页 = 7395 次页解析,另出 28985 个矩阵格
 > (两个数不是一回事)。62 屏有不止一页解析、
 > 3 条锚点子集、18 页零解析。三件产出都在 `umbra-flow check` 的 stdout 里,行类型
-> `resolution` / `anchor_subset` / `page_coverage`,**只报不判**。
+> `resolution` / `anchor_subset` / `page_coverage`,**只报不判**。(2026-08-05 又加了
+> 第四种 `page_linkage`,见本文件顶部。)
 > 顺带发现两件本节没预料到的:一是矩阵此前从未跑起来过(屏数不等,直接拒绝);
 > 二是报告本身会撞 VM 内存上限,已按
 > [`pitfalls/embedded-vm-memory-ceiling.md`](pitfalls/embedded-vm-memory-ceiling.md)

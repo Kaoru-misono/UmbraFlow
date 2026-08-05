@@ -224,7 +224,8 @@ screen/expect;残余段落保序往返。schema 串升 `l2-v2`。
 > **已落地并跑出第一份报告(2026-08-04)。** `regress.check` 里加了
 > `recognition.sweep`(骑在每屏那唯一一次观察上,不多开一帧)与
 > `recognition.anchor_subsets`(纯文件、零抓帧),verdict 多出 `resolution` /
-> `anchor_subset` / `page_coverage` 三种行,**全部只报不判**——`accepted` 仍然只数
+> `anchor_subset` / `page_coverage` 三种行(08-05 又加第四种 `page_linkage`,见
+> 四·2),**全部只报不判**——`accepted` 仍然只数
 > findings(裁决见[三层文档](2026-08-01-three-layers-and-agent-operator.md)
 > 2026-08-04 一节)。量出来的:
 >
@@ -259,6 +260,62 @@ screen/expect;残余段落保序往返。schema 串升 `l2-v2`。
 > 这条序列,本节第一件要验的事不再没有料。**回放检查器本身仍然不存在**——这里改的
 > 只是"没有输入",不是"做完了"。它必须遵守的一条约束见八·A 的进度注:按
 > `run.started.frontEnd` 排除 check 自己的轨迹,而不是按任务名。
+
+> **连通性那一半不用等轨迹,已落地(2026-08-05)。** 本节把「页转移命中一条边」记成回放
+> 才能问的事,但它有一半是纯文件的:哪些页**根本没有任何入边**,不看任何一次运行就能算。
+> 这半已经进 `regress`,与锚点子集同一档——零抓帧,只报不判。verdict 多出 `linkage` 行
+> (`page_linkage`:每页的入边数、出边数、是否 `interrupt`)与 summary 的 `pages_unlinked`。
+>
+> pop 不计入任何页的入边:pop 落在被关掉的那一页**下面**,那是运行时的栈知道而文件不知道
+> 的事(`navigation.Edge`)。所以「只靠关浮层才能到达」的页在这里读作零,这是诚实答案而
+> 不是缺陷。`interrupt` 页也不计入 `pages_unlinked`:它一次性声明了「随处可盖」,没有任何
+> 一条边能消掉它的零。
+>
+> **自环不算入边。** 走一条自环的前提是已经站在那一页上,所以它是"离开的方式"而不是
+> "到达的方式"。反过来算的代价是具体的:`battle` 今天正是"有出边无入边"四页之一,一旦
+> 有人把"按 E 结束回合仍留在 battle"建成 `battle → battle`,它就会从未连通清单里消失,
+> 而它仍然没有任何进入方式——那正是这行要防的事。
+>
+> uf-chaos 实测:87 页里 **60 页没有入边**,排掉唯一声明 `interrupt` 的 `network_retry`
+> 之后 `pages_unlinked` 报 **59**。其中 **4 页有出边而无入边**(`battle`、`equip_assign`、
+> `fate_choice`、`flash_result`:运行离得开,文件却没说怎么到),**56 页一条边都不沾**
+> (排掉 interrupt 是 55)。边的构成是 27 条 navigate + 4 条 push,零 pop、零自环。
+> summary 其余字段与本次改动前逐字段相同。
+>
+> 另记一条底噪:模型里没有"入口页"这个概念(`wake_point` 是坐标不是页),所以任何诚实
+> 模型的起始页都会被算进 `pages_unlinked`,这个数的地板是 1 而不是 0。
+>
+> `network_retry` 的 `interrupt = true` 是本次按三·4 补的,而**它对 uf-chaos 今天零行为
+> 变化**:这个旗标的运行期消费者只有 `observe.walk_edge` 的超时兜底,而 `tasks/daily.luau`
+> 与 `tasks/idle-cycles.luau` 一次都没用过 `navigation` / `walk_edge`——两个任务都走自己的
+> 手排派发表。补它是对的(声明属实,且模式机要靠它),但理由是"文件说了真话",不是
+> "运行时立刻受益"。它今天唯一可见的效果就是把 `pages_unlinked` 从 60 压到 59。
+>
+> 门已验(证伪而非正例):去掉 `linkPages` 调用,三个 subcase 全红;只去掉 summary 里
+> 对 `interrupt` 的排除,只有第二个红;把自环算进入边,只有第一个红;把 `linkPages`
+> 关进 `if swept`,只有第四个红。
+>
+> **回放检查器本身还缺两块地基,但都比先前记的这段浅——两条原话都是错的,已更正。**
+>
+> 1. **读 JSON 不必从零开始。** 原话说"仓库没有任何 JSON 读取器、也没有 JSON 解析设施",
+>    两句都假:`modules/trace/source/trace/event.cpp` 里就有 `skipString` / `skipValue` /
+>    `findTopLevelMember`(`stripNonGoldenFields` 按成员名从已渲染的 trace 行里裁字段),
+>    `entry/cli/explore-protocol.cpp` 的 `LineReader` 是一个严格的逐行 JSON 对象读取器,
+>    它的注释还专门论证过为什么不与另一个共用。**缺的是"JSONL → TraceEvent"这一层**,
+>    不是 JSON 本身。所以这里大概率不需要走 `evaluate-core-capability` 加 core 设施,
+>    先看这两处能不能长出第三个窄读取器。
+> 2. **模型身份判得了,只是没有上线。** 原话说"host 根本不读 `page-model.toml`,所以模型
+>    哈希不在 host 手上",假:`TaskHost::loadProject` 在任何 VM 存在之前就调
+>    `readPageModelFacts`(`task-host.cpp:636`),整份文件已经读进内存做扁平行扫。它今天
+>    取的 `ProjectFingerprint` 是**分辨率**而不是内容哈希,所以线上确实没有模型身份;
+>    但字节在手,而同一个 host 已经在 `task-loader.cpp:167` 对脚本源码调 `sha256`。
+>    于是最省的一条路不是新开事件也不是拿页名集合凑合,而是**对已经读进来的字节多算一次
+>    哈希,搭进 `run.started`**。
+>
+> 另外把今天能验的范围说准:三·4 的模式区间纯净要 `state` 字段、三·5 的围观边不换页要
+> `preview` 旗标,两者都是 B 阶段的 schema。**回放检查器今天能实现的子集是**:页转移对边、
+> 无边可解释的点击(`unattributable`)、连通性(文件那半已如上落地),加上按 `frontEnd`
+> 排除自己。
 
 ### 4.3 语料管理(回答"screens 要不要进版本管理")
 
@@ -463,3 +520,16 @@ D 依赖 C 加真机。
 4. 工程目录:**已 init**(uf-chaos `775ae2d`,72 文件;`.gitignore` 排除
    运行输出,`.gitattributes` 关掉换行改写以保规范字节)。
 5. 牌表来源:**押后到 D 阶段**,到策略化那一步再定手写还是从日志起草。
+6. **season 相关内容整体搁置**(2026-08-05 直答):27 个 `season_*` 页、它们的元素与
+   模板、以及矩阵对它们报出的行,一律不动,等开发者给出重新标注的办法之后再谈。
+   随之落定三件:
+   - 四·1 报的 `season_event` 命中 85 屏中的 59 屏(`seasonevent_crest` 是常量而不是
+     页面签名)**不再是待裁项**,留档等重标。机制已量清,记在
+     [WORKLIST](../WORKLIST.md) 一·1。
+   - 三对锚点子集里有两对(`dismiss_overlay` ⊆ `season_flash_cards` /
+     `season_mental_intro`)一并搁置,但三·4 的 `catch_all` 裁决**不重开**:它成立的
+     理由是 `dismiss_overlay` 的签名描述的是一类画面,与包含它的是哪两页无关;而第三对
+     `event_node` ⊆ `event` 是非 season 的同形证据,`catch_all` 的下一个候选就在那里。
+   - 覆盖缺口**不受影响**,而且是搁置之后的第一优先级:25 页从未被任何 `[[screen]]`
+     声明为归属页(矩阵报的 18 页零解析是其中一部分),其中只有 `season_deck_viewer`、
+     `season_team` 两页是赛季的,其余 23 页是日常那批。

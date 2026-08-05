@@ -330,7 +330,8 @@
   而它一行都不进 exit code。关掉时仍用 `recognition.verify` 解析每屏自己声明的那一页,
   findings 一个不少;少的是 `resolution` / `page_coverage` 行,而且 summary 是**省略**
   `resolutions` 和 `pages_unresolved` 两个字段而不是报 0——「没测」和「测了、没有」
-  是两回事。`recognition.needs_engine` 也跟着收这个开关:不扫描时,没有屏幕声明的页面
+  是两回事。(`page_linkage` 行与 `pages_unlinked` **不受这个开关影响**:边是文件上的
+  事实,两条路径都报。)`recognition.needs_engine` 也跟着收这个开关:不扫描时,没有屏幕声明的页面
   根本不会被解析,不该为它点名要 `--ocr-models`。
   - 默认 69 s、开扫描 110 s(release,参考工程)。**注意剩下那 69 s 的主项不是扫描**,
     是元素 × 屏幕那张矩阵的 2295 次模板搜索;要把 `check` 做成秒级,下一刀在匹配器上。
