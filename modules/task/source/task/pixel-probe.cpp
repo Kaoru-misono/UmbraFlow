@@ -149,6 +149,7 @@ namespace uf::task
                     .keyGreen  = key->green,
                     .keyBlue   = key->blue,
                     .tolerance = key->tolerance,
+                    .keyRemoves = key->removes,
                 }
             )
         );

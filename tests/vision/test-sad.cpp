@@ -2073,6 +2073,76 @@ namespace uf
         CHECK(missing.rectMeanGraySpread == doctest::Approx(56.979).epsilon(1e-9));
     }
 
+    TEST_CASE("a key that names what to remove selects exactly the rest")
+    {
+        // The reading a multi-coloured mark needs. One colour cannot select an
+        // emblem of a dozen hues, but its BACKDROP is one colour, so the same
+        // rule selects the mark when it is read the other way round. Without
+        // this such a mark can only be cut unmasked, and an unmasked template is
+        // mostly backdrop, which is how a template comes to match every screen
+        // (docs/pitfalls/colour-key-annotation.md).
+        auto const& colour = test::k_sortieColourLabel;
+        auto const blueData = bgraFromRgbHex(colour.overBlueArtworkRgbHex);
+        auto const purpleData = bgraFromRgbHex(colour.overPurpleArtworkRgbHex);
+        auto const frames = std::array{
+            bgraImage(blueData, colour.width, colour.height),
+            bgraImage(purpleData, colour.width, colour.height),
+        };
+        auto const rect = pixelRect(0, 0, colour.width, colour.height);
+
+        auto const key = ColourProbeSpec{
+            .rect      = rect,
+            .keyRed    = 255,
+            .keyGreen  = 255,
+            .keyBlue   = 255,
+            .tolerance = 12,
+        };
+        auto const kept = probeOf(frames, key);
+
+        auto inverted       = key;
+        inverted.keyRemoves = true;
+        auto const dropped = probeOf(frames, inverted);
+
+        // Exactly complementary, and the arithmetic is the assertion: what the
+        // white key took at full weight is what the same key now refuses, and
+        // every remaining pixel is taken.
+        CHECK(dropped.rectPixels == kept.rectPixels);
+        CHECK(
+            dropped.fullySelectedPixels
+            == kept.rectPixels - kept.fullySelectedPixels - kept.rampSelectedPixels
+        );
+        CHECK(dropped.fullySelectedPixels == 3640);
+
+        // The rim is still the rim. A weight strictly between nothing and all
+        // stays strictly between when complemented, so an antialiased edge is
+        // readmitted at the weight it deserves on the side it is now on -- it
+        // does not collapse into either bucket.
+        CHECK(dropped.rampSelectedPixels == kept.rampSelectedPixels);
+        CHECK(dropped.rampSelectedPixels == 32);
+
+        // And the whole-rect measurement is untouched: the key decides what is
+        // weighed, never what the pixels are.
+        CHECK(
+            dropped.rectMeanGraySpread
+            == doctest::Approx(kept.rectMeanGraySpread).epsilon(1e-9)
+        );
+
+        // The far end of the same rule. A colour nothing in the rect is near
+        // selects nothing when kept -- the control above -- and everything when
+        // removed, with no ramp because no pixel is anywhere near the boundary.
+        auto absent = ColourProbeSpec{
+            .rect      = rect,
+            .keyRed    = 0,
+            .keyGreen  = 255,
+            .keyBlue   = 0,
+            .tolerance = 0,
+        };
+        absent.keyRemoves = true;
+        auto const everything = probeOf(frames, absent);
+        CHECK(everything.fullySelectedPixels == everything.rectPixels);
+        CHECK(everything.rampSelectedPixels == 0);
+    }
+
     TEST_CASE("the mirrored colour-key ramp holds full weight then falls to nothing")
     {
         // The values were measured against the authoring-side ColourKey that

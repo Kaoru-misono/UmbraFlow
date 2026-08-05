@@ -146,11 +146,12 @@ namespace uf::task
                 maskColourKey(
                     view,
                     ColourProbeSpec{
-                        .rect      = cropRect,
-                        .keyRed    = key.red,
-                        .keyGreen  = key.green,
-                        .keyBlue   = key.blue,
-                        .tolerance = key.tolerance,
+                        .rect       = cropRect,
+                        .keyRed     = key.red,
+                        .keyGreen   = key.green,
+                        .keyBlue    = key.blue,
+                        .tolerance  = key.tolerance,
+                        .keyRemoves = key.removes,
                     }
                 )
             );

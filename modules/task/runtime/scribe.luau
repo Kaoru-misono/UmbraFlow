@@ -73,7 +73,13 @@ export type Measurement = {
     -- Read off `mask` rather than off the caller's argument, because a caller
     -- that named no tolerance got the host's default and the project file has to
     -- record the key that really cut these pixels.
-    key: { red: number, green: number, blue: number, tolerance: number }?,
+    key: {
+        red: number,
+        green: number,
+        blue: number,
+        tolerance: number,
+        removes: boolean,
+    }?,
 }
 
 -- scribe.measure(ctx, ticket, rect, key?, tolerance?) -> Measurement
@@ -98,7 +104,7 @@ function scribe.measure(
     ctx: any,
     ticket: any,
     rect: { x: number, y: number, width: number, height: number },
-    key: { red: number, green: number, blue: number }?,
+    key: { red: number, green: number, blue: number, removes: boolean? }?,
     tolerance: number?
 ): Measurement
     if type(ctx) ~= "table" then
@@ -130,14 +136,20 @@ function scribe.measure(
         tolerance
     )
 
-    local applied: { red: number, green: number, blue: number, tolerance: number }? =
-        nil
+    local applied: {
+        red: number,
+        green: number,
+        blue: number,
+        tolerance: number,
+        removes: boolean,
+    }? = nil
     if mask ~= nil then
         applied = {
             red       = mask.key_red,
             green     = mask.key_green,
             blue      = mask.key_blue,
             tolerance = mask.tolerance,
+            removes   = mask.key_removes,
         }
     end
 

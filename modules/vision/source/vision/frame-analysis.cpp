@@ -538,6 +538,26 @@ namespace uf
             }
             return static_cast<double>(total) / static_cast<double>(count);
         }
+
+        // The weight one pixel earns under a whole key, which is `colourKeyAlpha`
+        // when the key names what to keep and its complement when the key names
+        // what to remove. Both the probe and the mask cutter go through here, so
+        // the two can never come to disagree about which pixels a key takes --
+        // and `colourKeyAlpha` itself stays the one rule about nearness to a
+        // colour, with no opinion about what nearness is worth.
+        [[nodiscard]]
+        auto keyedWeight(Bgra8Pixel pixel, ColourProbeSpec const& spec) noexcept
+            -> uint8
+        {
+            auto const alpha = colourKeyAlpha(
+                pixel,
+                spec.keyRed,
+                spec.keyGreen,
+                spec.keyBlue,
+                spec.tolerance
+            );
+            return spec.keyRemoves ? static_cast<uint8>(255U - alpha) : alpha;
+        }
     }
 
     auto colourKeyAlpha(
@@ -732,13 +752,7 @@ namespace uf
             {
                 spreadTotal += spread;
 
-                auto const weight = colourKeyAlpha(
-                    reference.pixelAt(x, y),
-                    spec.keyRed,
-                    spec.keyGreen,
-                    spec.keyBlue,
-                    spec.tolerance
-                );
+                auto const weight = keyedWeight(reference.pixelAt(x, y), spec);
                 if (weight == 0)
                 {
                     return;
@@ -876,13 +890,7 @@ namespace uf
         {
             for (auto x = spec.rect.x(); x < spec.rect.right(); ++x)
             {
-                auto const weight = colourKeyAlpha(
-                    frame.pixelAt(x, y),
-                    spec.keyRed,
-                    spec.keyGreen,
-                    spec.keyBlue,
-                    spec.tolerance
-                );
+                auto const weight = keyedWeight(frame.pixelAt(x, y), spec);
                 weights.emplace_back(std::byte{weight});
                 if (weight == 255U)
                 {

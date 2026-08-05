@@ -547,6 +547,13 @@ namespace uf::task
             lua_setfield(state, -2, name);
         }
 
+        auto addBooleanField(lua_State* state, char const* name, bool value)
+            -> void
+        {
+            lua_pushboolean(state, value ? 1 : 0);
+            lua_setfield(state, -2, name);
+        }
+
         // Adds one string field to the field table on the stack top, with its
         // length rather than as a C string, so any bytes reach the script whole.
         auto addTextField(
@@ -733,6 +740,10 @@ namespace uf::task
                 .tolerance = lua_isnoneornil(state, first + 3)
                     ? k_defaultProbeTolerance
                     : checkPixelExtent(state, first + 3, what + " tolerance"),
+                // Absent means "keep what this colour names", the reading every
+                // key had before this flag existed, so a caller that spells no
+                // fifth scalar gets exactly the old behaviour.
+                .removes = lua_toboolean(state, first + 4) != 0,
             };
         }
 
@@ -1310,6 +1321,11 @@ namespace uf::task
             addNumberField(state, "key_green", mask.key.green);
             addNumberField(state, "key_blue", mask.key.blue);
             addNumberField(state, "tolerance", mask.key.tolerance);
+            // Always present, unlike `warning`: the layer that records a key in
+            // the project file records the one that cut these pixels, and a
+            // missing field there would be read as "kept", which is the opposite
+            // of what this mask did.
+            addBooleanField(state, "key_removes", mask.key.removes);
             addNumberField(state, "rect_pixels", mask.rectPixels);
             addNumberField(state, "selected_pixels", mask.selectedPixels);
             addNumberField(

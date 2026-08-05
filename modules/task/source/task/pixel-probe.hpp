@@ -38,6 +38,12 @@ namespace uf::task
         // Rejected above vision's k_maximumColourKeyTolerance, which is the
         // widest distance the summed per-channel rule can express.
         uint32 tolerance{};
+
+        // Whether the colour names the pixels to REMOVE rather than the pixels to
+        // keep, for the reason `vision::ColourProbeSpec` gives: a multi-coloured
+        // mark over a flat backdrop is selected by naming the backdrop, and no
+        // single colour selects the mark itself.
+        bool removes{};
     };
 
     // What one probe measured.

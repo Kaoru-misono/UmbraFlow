@@ -153,6 +153,19 @@ namespace uf
 
         // Rejected above k_maximumColourKeyTolerance.
         uint32 tolerance{};
+
+        // Whether the colour above names what to REMOVE instead of what to keep.
+        // Every weight becomes its complement, so the ramp still readmits the
+        // antialiased rim -- at the weight the rim deserves on the side it is
+        // now on.
+        //
+        // It exists because a mark is not always one colour. A glyph is, and the
+        // key was cut for glyphs; an emblem with a dozen hues over a flat
+        // backdrop is not, and no single colour selects it. Its BACKDROP is one
+        // colour, so the same one-colour rule selects the mark exactly when it is
+        // read the other way round. Without this, such a mark can only be cut
+        // unmasked, which is what makes a template match the whole screen.
+        bool keyRemoves{};
     };
 
     struct ColourProbeReport final

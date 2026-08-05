@@ -174,11 +174,20 @@ export type Appearance = {
 -- A colour key: the RGB triple a mask was cut around, and how far a pixel may
 -- sit from it and still be taken. The tolerance is carried rather than defaulted,
 -- because a file that omitted it is a file whose mask cannot be reproduced.
+--
+-- `removes` inverts what the triple names: false, the mask KEPT the pixels near
+-- it, and true, the mask kept everything else. A glyph is one colour and is
+-- selected directly; an emblem of a dozen hues over a flat backdrop is selected
+-- only by naming the backdrop, and the same one-colour rule does both. It is
+-- optional in the file for the reason the field exists at all -- every key
+-- written before it meant `false`, and re-reading those as anything else would
+-- silently invert masks nobody re-cut.
 export type ColourKey = {
     red: number,
     green: number,
     blue: number,
     tolerance: number,
+    removes: boolean?,
 }
 
 -- `expected_text` is what this region should read wherever the element is used,
@@ -386,6 +395,7 @@ local function checkColourKey(what: string, value: any): string?
     if type(value) ~= "table" then
         return what
             .. " must be a table { red = , green = , blue = , tolerance = }"
+            .. " with an optional removes = true"
     end
     for _, channel in { "red", "green", "blue" } do
         local component = (value :: any)[channel]
@@ -404,6 +414,12 @@ local function checkColourKey(what: string, value: any): string?
             .. tostring(k_maximumColourTolerance)
             .. ", the widest the summed per-channel distance can express"
     end
+    if key.removes ~= nil and type(key.removes) ~= "boolean" then
+        return what
+            .. ".removes must be true or false; it says whether the colour names "
+            .. "the pixels the mask KEPT or the pixels it dropped, and a mask "
+            .. "read the wrong way round selects the complement of its subject"
+    end
     return nil
 end
 
@@ -413,6 +429,11 @@ local function frozenColourKey(value: ColourKey): ColourKey
         green     = value.green,
         blue      = value.blue,
         tolerance = value.tolerance,
+        -- Normalised to a boolean rather than carried as nil, so every key a
+        -- built model holds answers the question and only the FILE has a third
+        -- state (see `project.encode`, which writes the field back only when it
+        -- is true).
+        removes   = value.removes == true,
     })
 end
 

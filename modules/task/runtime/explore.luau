@@ -56,8 +56,14 @@ local function requirePrimitive(name: string, verb: string)
     end
 end
 
--- The three channels and the tolerance as the scalars the private surface
--- takes, or nothing at all when there is no key.
+-- The three channels, the tolerance and the direction as the scalars the private
+-- surface takes, or nothing at all when there is no key.
+--
+-- `removes` says the colour names the pixels to DROP rather than the pixels to
+-- keep. Absent it is false, which is what every key meant before the flag
+-- existed. It is normalised to a boolean here rather than passed through,
+-- because the host reads that position with Lua truthiness and a caller who
+-- wrote `removes = 0` means false in every language this project is written in.
 local function keyScalars(verb: string, key: any, tolerance: number?)
     if key == nil then
         return
@@ -69,7 +75,7 @@ local function keyScalars(verb: string, key: any, tolerance: number?)
             3
         )
     end
-    return key.red, key.green, key.blue, tolerance
+    return key.red, key.green, key.blue, tolerance, key.removes == true
 end
 
 -- explore.click_point(ticket, x, y) -> ()
@@ -123,21 +129,23 @@ end
 --
 -- With a key the crop is a masked template: the host bakes the weights into the
 -- PNG's alpha channel, which is what makes the matcher compare the glyph rather
--- than the whole rectangle. The key is the same optional { red, green, blue }
--- table `explore.probe` takes and is unpacked here because the private surface
--- takes scalars. The third return says what the key took -- `key_red`,
--- `key_green`, `key_blue` and `tolerance` as the HOST applied them, so a caller
--- that named no tolerance reads the default back, then `rect_pixels`,
--- `selected_pixels`, `ramp_selected_pixels`, and a `warning` when those counts
--- look like a mask that cannot measure anything. It is nil when no key was
--- given, and a key that selects NO pixel is refused by the host.
+-- than the whole rectangle. The key is the same optional
+-- { red, green, blue, removes? } table `explore.probe` takes and is unpacked
+-- here because the private surface takes scalars. The third return says what the
+-- key took -- `key_red`, `key_green`, `key_blue`, `tolerance` and `key_removes`
+-- as the HOST applied them, so a caller that named no tolerance reads the
+-- default back, then `rect_pixels`, `selected_pixels`, `ramp_selected_pixels`,
+-- and a `warning` when those counts look like a mask that cannot measure
+-- anything. It is nil when no key was given, and a key that selects NO pixel is
+-- refused by the host -- which a `removes` key hits by naming a colour that
+-- covers the whole rectangle.
 function explore.crop(
     ticket: any,
     x: number,
     y: number,
     width: number,
     height: number,
-    key: { red: number, green: number, blue: number }?,
+    key: { red: number, green: number, blue: number, removes: boolean? }?,
     tolerance: number?
 ): (string, string, any)
     requirePrimitive("cycle_crop", "explore.crop")
@@ -154,17 +162,21 @@ end
 -- explore.probe(blob, x, y, width, height, key?, tolerance?) -> stats
 --
 -- Colour statistics over one rectangle of one PNG. `key` is an optional
--- { red, green, blue } table and `tolerance` an optional whole number; with no
--- key the answer carries the census fields alone, which is what an agent reads
--- to CHOOSE a key. Unpacking the table into scalars is this layer's whole
+-- { red, green, blue, removes? } table and `tolerance` an optional whole number;
+-- with no key the answer carries the census fields alone, which is what an agent
+-- reads to CHOOSE a key. Unpacking the table into scalars is this layer's whole
 -- contribution: the numbers are the host's and the judgement is the caller's.
+--
+-- `removes` is what makes the census usable on a multi-coloured mark: probing
+-- unkeyed names the dominant colour, and on such a mark that is the BACKDROP, so
+-- the key an agent then writes is the one that drops it.
 function explore.probe(
     blob: string,
     x: number,
     y: number,
     width: number,
     height: number,
-    key: { red: number, green: number, blue: number }?,
+    key: { red: number, green: number, blue: number, removes: boolean? }?,
     tolerance: number?
 ): any
     requirePrimitive("probe", "explore.probe")

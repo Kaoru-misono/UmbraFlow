@@ -752,5 +752,109 @@ namespace uf::task
             };
             CHECK(text.contains("key = [240, 240, 240, 0]"));
         }
+
+        TEST_CASE("A key can name the backdrop instead of the mark")
+        {
+            // What a multi-coloured mark needs. The fixture's glyph is one
+            // colour, which is what lets the two directions be compared exactly:
+            // whatever the glyph key keeps, the backdrop key must take the rest.
+            auto const directory = ProjectDirectory{"uf-colour-key-removes"};
+
+            auto harness = buildScreenHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const author = std::string{R"lua(
+                local built  = project.load_project(ctx)
+                local ticket = ctx:cycle_open()
+                local measured = scribe.measure(
+                    ctx,
+                    ticket,
+                    { x = 0, y = 0, width = 40, height = 8 },
+                    {
+                        red = )lua"} + std::to_string(k_glyphLevel) + R"lua(,
+                        green = )lua" + std::to_string(k_glyphLevel) + R"lua(,
+                        blue = )lua" + std::to_string(k_glyphLevel) + R"lua(,
+                        removes = true,
+                    },
+                    0
+                )
+                ctx:cycle_close(ticket)
+
+                -- The complement of the same key on the same pixels: the other
+                -- direction takes 60 of these 320, so this one takes 260. A
+                -- tolerance of zero leaves no ramp for either.
+                if measured.mask.rect_pixels ~= 320 then return 0 end
+                if measured.mask.selected_pixels ~= 260 then return 0 end
+                if measured.mask.ramp_selected_pixels ~= 0 then return 0 end
+                if measured.stats.fully_selected_pixels ~= 260 then return 0 end
+
+                -- The direction comes back off the MASK, which is the host's
+                -- report of what it applied -- not off the argument, which is
+                -- what a caller believed.
+                if measured.mask.key_removes ~= true then return 0 end
+                if measured.key.removes ~= true then return 0 end
+
+                local element = scribe.author_element(ctx, measured, {
+                    name         = "backdrop_cut",
+                    capabilities = { "identify" },
+                    threshold    = 9900,
+                })
+                scribe.add_element(built, element)
+                scribe.save(ctx, built)
+                return 1
+            )lua";
+
+            auto const authored = runExploration(context, author);
+            REQUIRE(authored.has_value());
+            CHECK(*authored == doctest::Approx(1.0));
+
+            auto stream = std::ifstream{
+                directory.path() / "page-model.toml",
+                std::ios::binary
+            };
+            REQUIRE(stream.is_open());
+            auto const text = std::string{
+                std::istreambuf_iterator<char>{stream},
+                std::istreambuf_iterator<char>{}
+            };
+            CHECK(text.contains("key = [240, 240, 240, 0]"));
+            CHECK(text.contains("key_removes = true"));
+
+            // A fresh session and a fresh VM: the direction has to survive the
+            // file, because a mask re-cut the other way round selects the
+            // complement of its subject and every score it reports is about the
+            // wrong pixels.
+            auto reloadHarness = buildScreenHarness();
+            REQUIRE(reloadHarness.session.has_value());
+            TaskContext reloaded{
+                *std::move(reloadHarness.session),
+                *reloadHarness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const verify = std::string{R"lua(
+                local built = project.load_project(ctx)
+                local key   = built.element_by_name["backdrop_cut"].appearances[1].key
+                if key == nil then return 0 end
+                if key.removes ~= true then return 0 end
+
+                -- And writing it back is a fixpoint: a load and a save of an
+                -- unchanged model reproduce the same line rather than dropping
+                -- the flag or writing it twice.
+                local text = project.encode(built)
+                local _, count = string.gsub(text, "key_removes = true", "")
+                if count ~= 1 then return 0 end
+                return 1
+            )lua"};
+
+            auto const verified = runExploration(reloaded, verify);
+            REQUIRE(verified.has_value());
+            CHECK(*verified == doctest::Approx(1.0));
+        }
     }
 }

@@ -75,12 +75,18 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
     -- [red, green, blue, tolerance] because it is one value with four
     -- components. The mask itself is in the PNG's alpha channel; this is the
     -- record of what carved it, which a later session needs to re-cut the glyph.
+    --
+    -- `key_removes` is that key's direction, and it is a SEPARATE line rather
+    -- than a fifth component: the four are one measurement in one unit and a
+    -- boolean among them would be neither. Absent reads as false, which is what
+    -- every key written before this field meant.
     appearance = {
-        element   = true,
-        name      = true,
-        source    = true,
-        threshold = true,
-        key       = true,
+        element     = true,
+        name        = true,
+        source      = true,
+        threshold   = true,
+        key         = true,
+        key_removes = true,
     },
     page = {
         name      = true,
@@ -302,6 +308,8 @@ local function rectList(rect: any): { number }
     return { rect.x, rect.y, rect.width, rect.height }
 end
 
+-- The four components as the file writes them. The direction is not among them:
+-- see `key_removes` in the known-key table above.
 local function colourKeyList(key: any): { number }
     return { key.red, key.green, key.blue, key.tolerance }
 end
@@ -387,6 +395,11 @@ function project.encode(built: any): string
                     lines,
                     "key = " .. renderValue(colourKeyList(appearance.key), "key")
                 )
+                -- Written only when true, so every file authored before this
+                -- field round trips byte for byte through a load and a save.
+                if appearance.key.removes then
+                    table.insert(lines, "key_removes = true")
+                end
             end
             pushResidual(lines, appearance.residual)
         end
@@ -905,8 +918,19 @@ end
 -- the LIST SHAPE is checked here, because by the time `Element.new` sees a
 -- malformed key it no longer knows which line of which file it came from.
 -- Whether the four numbers are a channel and a tolerance stays the constructor's.
-local function colourKeyOf(section: any, value: any): any
+local function colourKeyOf(section: any, value: any, removes: any): any
     if value == nil then
+        if removes ~= nil then
+            error(
+                "the [["
+                    .. section.kind
+                    .. "]] starting at line "
+                    .. tostring(section.line)
+                    .. " states key_removes but no key; the flag says which way "
+                    .. "round a colour was read, and there is no colour here",
+                0
+            )
+        end
         return nil
     end
     if type(value) ~= "table" or #value ~= 4 then
@@ -924,6 +948,7 @@ local function colourKeyOf(section: any, value: any): any
         green     = value[2],
         blue      = value[3],
         tolerance = value[4],
+        removes   = removes,
     }
 end
 
@@ -1037,7 +1062,8 @@ function project.build(ctx: any, document: any): any
                 threshold = requireField(appearanceSection, "threshold"),
                 key       = colourKeyOf(
                     appearanceSection,
-                    appearanceSection.fields.key
+                    appearanceSection.fields.key,
+                    appearanceSection.fields.key_removes
                 ),
                 residual  = appearanceSection.residual,
             }
