@@ -49,6 +49,7 @@ namespace uf::task
                 std::string{"reading"},
                 std::string{"recognition"},
                 std::string{"regress"},
+                std::string{"replay"},
             }
         );
 

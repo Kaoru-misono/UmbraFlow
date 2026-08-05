@@ -7984,6 +7984,163 @@ namespace uf::task
             }
         }
 
+        TEST_CASE("A replayed run is judged against the edges the model draws")
+        {
+            // The trace library's half of falsifiability: the screen library
+            // makes "recognise" and "permit" checkable and this makes "change"
+            // checkable (docs/plans/2026-08-04-state-layer-and-policy-slots.md
+            // 4.2). It costs no capture -- the run was recorded earlier and the
+            // graph is on the file -- so every case here is one Luau call.
+            auto const directory = TemporaryDirectory{"uf-model-replay"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, graphScript(R"lua(
+                local model_only = { graph = graph }
+                local function at(kind, seq, label)
+                    return { kind = kind, seq = seq, label = label }
+                end
+                local function page(seq, name)
+                    return at(replay.page_resolved, seq, name)
+                end
+                local function click(seq, element)
+                    return at(replay.element_clicked, seq, element)
+                end
+                local function landed(seq)
+                    return at(replay.action_delivered, seq, "")
+                end
+                local function key(seq, name)
+                    return at(replay.key_delivered, seq, name)
+                end
+                local function only(verdict)
+                    if #verdict.transitions ~= 1 then return nil end
+                    return verdict.transitions[1]
+                end
+
+                -- A click edge, walked. The authorisation names the element and
+                -- the delivery says it landed; the model draws base --mark_base->
+                -- detail, so the move is explained.
+                local walked = replay.check(model_only, {
+                    page(1, "base"),
+                    click(2, "mark_base"),
+                    landed(3),
+                    page(4, "detail"),
+                })
+                if not walked.accepted then return 0 end
+                if only(walked) == nil then return 0 end
+                if only(walked).verdict ~= "matched" then return 0 end
+                if only(walked).element ~= "mark_base" then return 0 end
+                if walked.resolutions ~= 2 then return 0 end
+
+                -- A key edge, and the key is what tells it from the other edge
+                -- leaving the same page.
+                local pressed = replay.check(model_only, {
+                    page(1, "detail"),
+                    key(2, "Z"),
+                    page(3, "zoom"),
+                })
+                if only(pressed).verdict ~= "matched" then return 0 end
+                if only(pressed).key ~= "Z" then return 0 end
+
+                -- A pop is matched WITHOUT checking where it landed: the file
+                -- declares no destination for one, so agreeing about the
+                -- destination would be agreeing about something nobody wrote.
+                local popped = replay.check(model_only, {
+                    page(1, "zoom"),
+                    click(2, "mark_zoom"),
+                    landed(3),
+                    page(4, "detail"),
+                })
+                if popped.accepted ~= true then return 0 end
+                if only(popped).verdict ~= "matched_pop" then return 0 end
+
+                -- Nothing was delivered and the page changed anyway, which is
+                -- exactly what a spontaneous edge declares.
+                local drifted = replay.check(model_only, {
+                    page(1, "detail"),
+                    page(2, "result"),
+                })
+                if only(drifted).verdict ~= "matched" then return 0 end
+                if only(drifted).trigger ~= "spontaneous" then return 0 end
+
+                -- The self edge: base ends its turn on base. No page changed, so
+                -- there is no move to explain and no row to report -- and the
+                -- run is still accepted.
+                local stayed = replay.check(model_only, {
+                    page(1, "base"),
+                    key(2, "E"),
+                    page(3, "base"),
+                })
+                if #stayed.transitions ~= 0 then return 0 end
+                if #stayed.findings ~= 0 then return 0 end
+                if stayed.resolutions ~= 2 then return 0 end
+
+                -- The finding this whole check exists for: the run went
+                -- somewhere the model draws no way to.
+                local unexplained = replay.check(model_only, {
+                    page(1, "base"),
+                    key(2, "Q"),
+                    page(3, "result"),
+                })
+                if unexplained.accepted then return 0 end
+                if #unexplained.findings ~= 1 then return 0 end
+                local missing = unexplained.findings[1]
+                if missing.kind ~= "no_edge" then return 0 end
+                if missing.from ~= "base" or missing.to ~= "result" then
+                    return 0
+                end
+                if string.find(missing.detail, "no way out", 1, true) == nil then
+                    return 0
+                end
+
+                -- The other mistake, told apart from it: the model DOES draw
+                -- this trigger leaving this page, and it lands elsewhere. Same
+                -- kind, different sentence, because they are repaired
+                -- differently.
+                local elsewhere = replay.check(model_only, {
+                    page(1, "base"),
+                    click(2, "mark_base"),
+                    landed(3),
+                    page(4, "result"),
+                })
+                if elsewhere.accepted then return 0 end
+                local wrong = elsewhere.findings[1]
+                if string.find(wrong.detail, "somewhere else", 1, true) == nil then
+                    return 0
+                end
+
+                -- A click nothing named -- a long press, or a run recorded
+                -- before the line that names one. It is a row and NEVER a
+                -- finding: a model is not contradicted by a move nobody can
+                -- spell, and counting it as a missing edge would fill the report
+                -- with edges that may well exist.
+                local nameless = replay.check(model_only, {
+                    page(1, "base"),
+                    landed(2),
+                    page(3, "result"),
+                })
+                if not nameless.accepted then return 0 end
+                if #nameless.findings ~= 0 then return 0 end
+                if only(nameless).verdict ~= "unattributable" then return 0 end
+                if only(nameless).element ~= nil then return 0 end
+
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
         TEST_CASE("An appearance set is judged where a page identifies by it")
         {
             // `ambiguous_appearances` and `thin_separation` both ask whether the

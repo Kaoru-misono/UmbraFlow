@@ -50,6 +50,13 @@ namespace uf::task
         constexpr auto k_readingModule     = "reading";
         constexpr auto k_recognitionModule = "recognition";
         constexpr auto k_regressModule     = "regress";
+        // The trace library's checker, published for the same reason: the
+        // routine that replays a recorded run reaches it through this list, and
+        // a project reading its verdict names it. It reaches no primitive at all
+        // -- it takes a projection of a stream and the model, and costs no
+        // capture -- so publishing it confers nothing a file could not already
+        // compute.
+        constexpr auto k_replayModule      = "replay";
         // The two modules ONLY the exploration environment publishes. `explore`
         // is the forwards for the privileged primitives -- the bare-coordinate
         // click, the crop and the probe -- and `scribe` is the measure-and-author
@@ -94,6 +101,7 @@ namespace uf::task
             std::string{k_readingModule},
             std::string{k_recognitionModule},
             std::string{k_regressModule},
+            std::string{k_replayModule},
         };
     }
 
