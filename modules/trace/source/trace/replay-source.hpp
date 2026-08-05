@@ -73,9 +73,10 @@ namespace uf::trace
         std::string projectId{};
         std::string taskName{};
 
-        // The page model the run stood on, by content. Empty on a stream recorded
-        // before `modelHash` existed, which a checker must refuse rather than
-        // read as agreement.
+        // The page model the run stood on, by content. Never empty: a stream that
+        // names none is refused here rather than handed on, because every finding
+        // a replay could report is about edges that may never have been in the
+        // file the run read.
         std::string modelHash{};
 
         std::vector<ReplayStep> steps{};

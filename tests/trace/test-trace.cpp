@@ -1116,12 +1116,13 @@ namespace uf::trace
         std::filesystem::remove(path);
     }
 
-    TEST_CASE("A stream recorded before modelHash existed reads as no model")
+    TEST_CASE("A stream that names no page model is refused")
     {
-        // Absent and empty must not be told apart here, but they must not be
-        // told apart as AGREEMENT either: the reader hands back an empty hash and
-        // the checker refuses it, because a replay judged against a model the run
-        // may never have read is a replay whose every finding is unfounded.
+        // A replay is a check of one run against one model. A stream that does
+        // not say which model it read cannot be checked against any -- every
+        // finding would be about edges that may never have been in the file --
+        // so it is refused here rather than handed on as an empty hash for
+        // someone downstream to notice.
         auto const path =
             std::filesystem::temp_directory_path() / "uf-replay-nomodel.jsonl";
         std::filesystem::remove(path);
@@ -1129,14 +1130,17 @@ namespace uf::trace
 
         auto text = readBack(path);
         std::filesystem::remove(path);
+
+        // The control: the text this case mutates does project.
+        REQUIRE(projectReplayedRun(text).has_value());
+
         auto const at = text.find(R"(,"modelHash":"m0d3l")");
         REQUIRE(at != std::string::npos);
         text.erase(at, std::string_view{R"(,"modelHash":"m0d3l")"}.size());
 
-        auto const run = projectReplayedRun(text);
-        REQUIRE(run.has_value());
-        CHECK(run->modelHash.empty());
-        CHECK(run->steps.size() == 5U);
+        auto const read = projectReplayedRun(text);
+        REQUIRE_FALSE(read.has_value());
+        CHECK(std::string{read.error().message()}.contains("modelHash"));
     }
 
     TEST_CASE("FileTraceSink reports an unopenable trace path as an error Status")

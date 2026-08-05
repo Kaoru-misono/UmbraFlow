@@ -16,6 +16,22 @@ and [`docs/INDEX.md`](docs/INDEX.md) for project documentation.
 - Use `correct-doc-drift` immediately when a decision is finalized or changed,
   and whenever a document contradicts the code or a newer document.
 
+## Break it rather than bridge it
+
+Nothing here is released and nothing outside this repository consumes it. When
+a change needs a different shape, change the shape: rename the field, drop the
+old spelling, migrate the data, and fix every caller in the same change.
+
+Do not add a compatibility path to leave existing callers or existing files
+untouched — no fallback branch, no version flag, no "absent means the old
+behaviour" reading, no accepting two spellings of one thing. A shim outlives
+the reason it was added, and the next reader cannot tell which spelling is the
+real one.
+
+Where bytes already on disk or already recorded must be understood, migrate
+them in the same change and say so, rather than teaching a reader both shapes.
+State in the commit message what was broken and what moved with it.
+
 ## Always-on C++ safety
 
 - Ownership must remain visible in values, members, parameters, and returns.

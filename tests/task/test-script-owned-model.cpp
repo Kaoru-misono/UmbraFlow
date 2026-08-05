@@ -8819,7 +8819,13 @@ namespace uf::task
                         source = "gray2.png",
                         template = template("gray2.png"),
                         threshold = 10000,
-                        key = { red = 1, green = 2, blue = 3, tolerance = 10 },
+                        key = {
+                            red = 1,
+                            green = 2,
+                            blue = 3,
+                            tolerance = 10,
+                            removes = false,
+                        },
                     },
                 },
             }

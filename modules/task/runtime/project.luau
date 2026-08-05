@@ -78,8 +78,9 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
     --
     -- `key_removes` is that key's direction, and it is a SEPARATE line rather
     -- than a fifth component: the four are one measurement in one unit and a
-    -- boolean among them would be neither. Absent reads as false, which is what
-    -- every key written before this field meant.
+    -- boolean among them would be neither. It is REQUIRED beside a key: a colour
+    -- alone does not say whether the mask kept the pixels near it or dropped
+    -- them, and those two cut complementary templates.
     appearance = {
         element     = true,
         name        = true,
@@ -395,11 +396,15 @@ function project.encode(built: any): string
                     lines,
                     "key = " .. renderValue(colourKeyList(appearance.key), "key")
                 )
-                -- Written only when true, so every file authored before this
-                -- field round trips byte for byte through a load and a save.
-                if appearance.key.removes then
-                    table.insert(lines, "key_removes = true")
-                end
+                -- Always written beside the key, never only when true. A key
+                -- read the wrong way round selects the complement of its
+                -- subject, so a file that leaves the direction to a default is
+                -- a file whose masks cannot be reproduced from it.
+                table.insert(
+                    lines,
+                    "key_removes = "
+                        .. (if appearance.key.removes then "true" else "false")
+                )
             end
             pushResidual(lines, appearance.residual)
         end
@@ -932,6 +937,18 @@ local function colourKeyOf(section: any, value: any, removes: any): any
             )
         end
         return nil
+    end
+    if type(removes) ~= "boolean" then
+        error(
+            "the [["
+                .. section.kind
+                .. "]] starting at line "
+                .. tostring(section.line)
+                .. " states a key and no key_removes; a colour alone does not "
+                .. "say whether the mask kept the pixels near it or dropped "
+                .. "them, and the two cut complementary templates",
+            0
+        )
     end
     if type(value) ~= "table" or #value ~= 4 then
         error(

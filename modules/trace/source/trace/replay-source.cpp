@@ -198,10 +198,22 @@ namespace uf::trace
                     );
                 }
 
+                auto modelHash = memberString(split.line, "modelHash");
+                if (!modelHash)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "run.started states no modelHash, so nothing says which "
+                        "page model this run stood on; every finding a replay "
+                        "could report is about edges that may never have been in "
+                        "the file it read"
+                    );
+                }
+
                 run.frontEnd  = *known;
                 run.projectId = memberString(split.line, "projectId").value_or("");
                 run.taskName  = memberString(split.line, "taskName").value_or("");
-                run.modelHash = memberString(split.line, "modelHash").value_or("");
+                run.modelHash = *std::move(modelHash);
                 begun         = true;
                 continue;
             }
