@@ -15,6 +15,8 @@ and [`docs/INDEX.md`](docs/INDEX.md) for project documentation.
 - Use `post-change-validation` after code changes.
 - Use `correct-doc-drift` immediately when a decision is finalized or changed,
   and whenever a document contradicts the code or a newer document.
+- Use `pitfall-lookup` before investigating any failure, and record a new
+  non-obvious root cause there once it is understood.
 
 ## Break it rather than bridge it
 
@@ -86,7 +88,22 @@ Use `x64-debug` on Windows, `linux-debug` on Linux, and `macos-debug` on macOS.
 
 - Permanent plans: `docs/plans/YYYY-MM-DD-<topic>.md`.
 - Reusable failure knowledge: `docs/pitfalls/`.
-- Intentional shortcuts: `TODO(cpp-debt): ...` and the `cpp-debt` skill.
+- Intentional shortcuts: `TODO(cpp-debt): ...`. Harvest them with
+  `rg -n "TODO\(cpp-debt\)" --glob '!**/.worktrees/**' modules/ entry/ tests/ cmake/`
+  into `docs/plans/cpp-debt-ledger.md`; never edit source while harvesting.
+- Archive a finished plan into `docs/archive/plans/` and a closed review into
+  `docs/archive/reviews/`. Move the file normally, never with `git mv`, and
+  never stage or commit as part of archiving.
+- Skills live in `.claude/skills/<name>/SKILL.md`. Only the description is
+  loaded every session, so it carries the triggers and nothing else.
+
+## Diagnosing a failure
+
+Reproduce deterministically and confirm the reproduction matches the reported
+symptom before forming hypotheses; then test one variable at a time. Tag
+temporary instrumentation `[DEBUG-...]` and remove it before completion. When
+the user asked for a diagnosis only, do not implement the fix. For a failure
+only a human can trigger, adapt a copy of `scripts/hitl-loop.template.sh`.
 
 ## Workflow red lines
 

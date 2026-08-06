@@ -1,6 +1,6 @@
 ---
 name: pitfall-lookup
-description: Search the project pitfalls base before debugging. MUST be used whenever encountering a bug, test failure, runtime error, assertion failure, unexpected behavior, or any issue that requires investigation. Also use when the user reports a problem, pastes an error message, or asks "why is X happening". The pitfalls base at docs/pitfalls/ contains hard-won debugging insights organized by module — checking it first prevents hours of re-investigation on already-solved problems.
+description: Search docs/pitfalls/ before investigating anything. MUST be used whenever a bug, test failure, runtime error, assertion failure, crash, or unexpected behavior appears, when the user reports a problem or pastes an error message, or asks why something is happening.
 ---
 
 # Pitfall Lookup

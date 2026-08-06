@@ -1,6 +1,6 @@
 ---
 name: post-change-validation
-description: Validate project changes with formatting, focused build targets, tests, and static inspection.
+description: Run the repository gates — formatting, module and safety checks, focused build targets, and tests. Use after every code or build-system change, and before reporting work complete.
 ---
 
 # Post-change validation

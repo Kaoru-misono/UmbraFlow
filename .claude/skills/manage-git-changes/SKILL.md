@@ -1,6 +1,6 @@
 ---
 name: manage-git-changes
-description: Prepare and execute safe, semantic Git workspace changes, tags, pull requests, and CI follow-up. Use when the user asks to stage files, create or reorganize commits, soft-reset or recombine unpublished commits, run or unwind a bisect, create a session or milestone tag, push a branch, open or update a pull request, or inspect a workspace specifically in preparation for those actions. Also use at the end of a substantial working session to create the session review tag. Do not use for read-only status, log, blame, or code-review history inspection.
+description: Prepare and execute safe, semantic Git mutations — staging, commits, recombining unpublished commits, bisect, session and milestone tags, branch pushes, pull requests, and the CI follow-up. Use for every Git mutation, and at the end of a substantial working session for the session review tag. Do not use for read-only status, log, blame, or history inspection.
 ---
 
 # Manage Git Changes

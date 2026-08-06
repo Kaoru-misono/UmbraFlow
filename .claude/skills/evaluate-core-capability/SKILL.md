@@ -1,6 +1,6 @@
 ---
 name: evaluate-core-capability
-description: Evaluate whether a reusable C++ facility belongs in project core, should use the C++23 standard library directly, remain product-local, or be deferred. Use when proposing, designing, reviewing, or promoting a generic core abstraction, ownership or runtime facility, container, concurrency primitive, reflection helper, or serialization primitive. Do not use for ordinary feature work or fixes inside an already-approved facility.
+description: Decide whether a reusable C++ facility belongs in core, in the C++23 standard library, product-local, or deferred. Use when proposing, designing, reviewing, or promoting a generic core abstraction, ownership or runtime facility, container, concurrency primitive, reflection helper, or serialization primitive. Not for ordinary work inside an approved facility.
 ---
 
 # Evaluate Core Capability

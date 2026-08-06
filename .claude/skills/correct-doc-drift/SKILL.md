@@ -1,6 +1,6 @@
 ---
 name: correct-doc-drift
-description: Detect and correct factual, decision, and terminology drift in project documents (plans, TODO, S0 contracts, knowledge base, CONTEXT.md, ADRs) — wording that a newer decision, a rename, or landed code has made inaccurate. Use immediately after a decision is finalized or changed (grill session, ADR, plan approval); when reading any document reveals a claim contradicted by code or by a newer document; when a document calls something deferred/blocked/待定 that has since been resolved; or when one document queues a correction to another. For progress/checkbox status syncing use sync-doc-status instead.
+description: Correct factual, decision, and terminology drift in project documents (plans, TODO, CONTEXT.md, S0 contracts, knowledge base). Use when a decision is finalized or changed, when a document contradicts the code or a newer document, when it still calls something deferred/blocked/待定 that has since been resolved, or when one document queues a correction to another.
 ---
 
 # Correct Document Drift
@@ -47,7 +47,7 @@ drift at the moment it becomes visible, not in a someday cleanup.
    editing any.
 4. **Correct each hit by document type** (table below). Small fixes land now;
    structural rework (restructuring TODO sections, full knowledge resync)
-   gets a marker + a note to run sync-doc-status or the regeneration flow.
+   gets a marker plus a note recording exactly what remains.
 5. **Report**: what changed, what was deliberately left as history, what was
    deferred and where that is recorded.
 
@@ -58,7 +58,7 @@ drift at the moment it becomes visible, not in a someday cleanup.
 | LOCKED / developer-approved docs (annotation-design) | Never silently rewrite. Amend inline **only** for developer-approved changes, with a dated note: `> Amended YYYY-MM-DD: ...` |
 | Decision logs (grill-decisions) | History is immutable. Add a dated redirect note at the top ("read X as Y, see <artifact>"); never rewrite past rulings |
 | Current-authority prose (roadmap constraints, plan bodies) | Fix inline, append a dated parenthetical naming the deciding artifact |
-| Execution lists (TODO.md) | Fix stale claims, add a pointer to the deciding artifact; checkbox restructuring belongs to sync-doc-status |
+| Execution lists (TODO.md) | Fix stale claims, add a pointer to the deciding artifact; checkbox restructuring is a separate pass, not this one |
 | Knowledge base (docs/knowledge/) | Small factual fix: edit **both** language mirrors. Larger drift: add the repo's DIRTY banner to both mirrors — `> **DIRTY (YYYY-MM-DD)**: <what outdated it>. Trust the code and <plan> until resynced.` — then regenerate later (atlas flow) |
 | CONTEXT.md | Renames go here **first**: new canonical term, old term into `_Avoid_`; then propagate outward |
 | ADRs | Never edit a decision; a reversal gets a new ADR with `superseded by` status on the old one |
