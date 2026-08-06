@@ -61,7 +61,6 @@ drift at the moment it becomes visible, not in a someday cleanup.
 | Execution lists (TODO.md) | Fix stale claims, add a pointer to the deciding artifact; checkbox restructuring is a separate pass, not this one |
 | Knowledge base (docs/knowledge/) | Small factual fix: edit **both** language mirrors. Larger drift: add the repo's DIRTY banner to both mirrors — `> **DIRTY (YYYY-MM-DD)**: <what outdated it>. Trust the code and <plan> until resynced.` — then regenerate later (atlas flow) |
 | CONTEXT.md | Renames go here **first**: new canonical term, old term into `_Avoid_`; then propagate outward |
-| ADRs | Never edit a decision; a reversal gets a new ADR with `superseded by` status on the old one |
 
 ## Rules
 
@@ -72,3 +71,6 @@ drift at the moment it becomes visible, not in a someday cleanup.
   leaving sibling hits stale converts one drift into two.
 - Chinese/English mirrored docs are one unit; a fix that touches only one
   language is half a fix.
+- This repository retired ADRs (82f8027). Decisions live in `docs/plans/` and
+  terminology in `CONTEXT.md`. Do not reintroduce `docs/adr/`, and treat a
+  document that still points at it as drift.

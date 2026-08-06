@@ -17,7 +17,12 @@ Treat the workflow red lines in `CLAUDE.md` as mandatory.
 3. Group changes by task semantics. Keep architecture, runtime behavior, tests,
    documentation, and assets separate unless they form one minimal behavior
    change.
-4. Stage only explicit paths. Never use `git add .` or `git add -A`.
+4. Stage only explicit paths. Never use `git add .`, `git add -A`, or
+   `git add -u`. Read `git status` immediately before staging: another session
+   may have touched a file you are about to stage, and a path-scoped `git add`
+   takes its hunks too. When the index already holds someone else's staging,
+   do not reset it — commit your subset with `git commit -- <paths>`, which
+   commits those paths and leaves the rest of the index intact.
 5. Review `git diff --cached --check`, the staged file list, staged statistics,
    and the complete staged diff before committing.
 6. Follow the repository's recent commit-message style. Do not add

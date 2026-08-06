@@ -69,20 +69,23 @@ Useful starter targets are `${PROJECT_NAME}_core`, `${PROJECT_NAME}`, and
 
 ## Verification
 
-After code changes, use the `post-change-validation` skill. The minimum gate is:
+After code changes, use the `post-change-validation` skill. The whole gate is one
+command: `scripts/ci-local.ps1` on Windows, `scripts/ci-local.sh` on Linux and
+macOS. It runs the four checks below, configures, builds, and runs
+`ctest -L CI`, chooses the preset from the host, and prints `GATE: PASS` only
+when every step passed. On Windows it needs the MSVC activation above.
 
-Use `python` on Windows and `python3` on Linux or macOS for Python commands.
+Run a single check on its own only while iterating on one failure:
 
 ```bash
 python scripts/fix_format.py --check
 python scripts/check_cpp_format.py
 python scripts/check_modules.py
 python scripts/check_safety.py
-cmake --build --preset <host-debug-preset>
-ctest --test-dir build/<host-debug-preset> -L CI --output-on-failure
 ```
 
-Use `x64-debug` on Windows, `linux-debug` on Linux, and `macos-debug` on macOS.
+Use `python` on Windows and `python3` on Linux or macOS. The host presets are
+`x64-debug` on Windows, `linux-debug` on Linux, and `macos-debug` on macOS.
 
 ## Plans and pitfalls
 

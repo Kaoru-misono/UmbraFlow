@@ -22,11 +22,12 @@ Before investigating ANY issue:
 
 ### Step 1: Read the pitfalls base
 
-Glob all `.md` files in `docs/pitfalls/` and read them. The files are organized by module (e.g., `slang-reflection.md`, `material-system.md`). Each file may contain multiple entries.
-
-```
-docs/pitfalls/*.md
-```
+Read `docs/pitfalls/README.md` first. It indexes every entry by subsystem with a
+one-line hook, which is enough to name the two or three files worth opening.
+Read those in full; each may hold several entries. Do not read the whole
+directory — the index exists so that a lookup costs one file plus the ones that
+actually match. An entry marked historical in the index describes a subsystem
+that no longer exists; only the rules its banner names still transfer.
 
 ### Step 2: Match against current issue
 

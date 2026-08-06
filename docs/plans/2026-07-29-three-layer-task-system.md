@@ -1662,6 +1662,11 @@ pause 的实现(只留 §13 的签名,以及「framework 的观察周期边界�
 > 未处理、留给开发者的治理问题:`docs/adr/` 已空,而
 > `.claude/skills/improve-codebase-architecture` 仍教「读 `docs/adr/`、按需写
 > `docs/adr/NNNN-*.md`」。ADR 在本仓库是否还作为决策记录格式,是治理裁决而非漂移。
+>
+> > 已裁决(2026-08-07):ADR 不再作为本仓库的决策记录格式,决策留在 `docs/plans/`,
+> > 术语留在 `CONTEXT.md`。仍教读写 `docs/adr/` 的
+> > `.claude/skills/improve-codebase-architecture` 已随同批 skill 精简删除
+> > (`dafc874`),该约束改记在 `correct-doc-drift` 的 Rules 一节。
 
 修正范围:
 
