@@ -1,5 +1,8 @@
 {
   "effortLevel": "xhigh",
   "ultracode": true,
-  "enableWorkflows": true
+  "enableWorkflows": true,
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  }
 }
