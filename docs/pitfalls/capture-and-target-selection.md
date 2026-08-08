@@ -5,51 +5,54 @@ capture, and the observation lease. First recorded during the B1 smoke
 acceptance against 卡厄思梦境 (ChaosZeroNightmare via `ssr-stove-shield.exe`)
 on 2026-07-25.
 
-## Anti-automation decoy windows defeat a title-substring selector
+## The real window is one of a hundred the game owns; take the `GLFW30` row
 
 ### Symptom
 
-`umbra-flow run --selector <game-title>` fails with
-`selector "..." matches 25 windows; refine it: "...", "..._thread_0", ...`.
-The refine list is dozens of near-identical titles: the real title plus many
-`<title>_thread_0` and one `<title>_thread_<random>` entries, all from the same
-PID.
+`umbra-flow targets` (or any enumeration of this game's windows) shows one entry
+per real window and, behind it, dozens more from the same PID whose titles are
+the real title plus a suffix: `<title>_thread_0`, `<title>_thread_<random>`,
+plus `NVOpenGLPbuffer` surfaces and `IME` windows. Around 103 in total. Naming
+the wrong one binds a capture session that never produces a frame.
 
 ### Root cause
 
-The game's protection layer creates dozens of **invisible** top-level windows
-whose titles are the real window title with a suffix, evidently to break
-title-based window finding. `selectCandidate` matched on title substring alone,
-so every decoy matched and the single-match requirement could never be met. The
-decoys carry `IsWindowVisible == FALSE`; only the real game window is visible.
+The game's protection layer creates the extras deliberately, to break
+window-finding. They carry `IsWindowVisible == FALSE`; only the real game window
+is visible.
 
 ### Fix
 
-`entry/cli/run-windows.cpp` `selectCandidate` now requires
-`candidate.isVisible()` before a title match counts. The decoys drop out and the
-single visible window resolves. Error text became "no visible window title
-contains ...".
+Take the entry whose class is `GLFW30` and whose title carries no `_thread_N`
+suffix. `umbra-flow targets` already drops every invisible window, so the decoys
+are not in its output at all, and `selectCandidate` refuses a handle naming one
+rather than binding it.
 
 ### Regression check
 
-`ctest -L CI` (the selection helper has no unit seam yet — it is in an
-anonymous namespace in the Windows-only entry). Real-machine check: with the
-game running, `umbra-flow run --selector <title>` resolves exactly one target
-instead of reporting an N-window ambiguity.
+`ctest -L CI` — `tests/cli/test-candidate-selection.cpp` pins that a handle
+naming an invisible decoy is refused by name. Real-machine: `umbra-flow targets`
+with the game running lists exactly one `GLFW30` row and none of its decoys.
 
-## "No visible window title contains X" usually means the target is minimized
+## "No window on this desktop has that handle" and its minimized cousin
 
 ### Symptom
 
-`umbra-flow run` (or the workbench Capture) fails with `no visible window title
-contains "<selector>"` even though the game is clearly running.
+`umbra-flow run` (or the workbench Capture) refuses a window that is clearly
+running: `no window on this desktop has handle 0x...`, or
+`window 0x... ("...") is minimized`.
 
 ### Root cause
 
 Target selection requires a **visible, non-minimized** window (`isVisible() &&
 !isIconic()`), which is correct — a minimized window renders nothing to capture.
-When the game is minimized every candidate is filtered out. This is easy to
-misread as a DPI or elevation bug. Two traps make it confusing:
+This is easy to misread as a DPI or elevation bug. Three traps make it
+confusing:
+
+- A handle dies with its window. A game restarted since the handle was read
+  reports "no window has that handle" while a window with the same title is
+  plainly on screen. Re-read it with `umbra-flow targets`; a script that binds
+  more than once should re-read before each launch rather than cache.
 
 - `IsWindowVisible` returns TRUE for a minimized window (WS_VISIBLE is set); only
   `IsIconic` distinguishes it, so a minimized window is excluded by the
@@ -67,8 +70,9 @@ restore a window owned by an elevated (High-integrity) game via `ShowWindow`
 
 ### Regression check
 
-Real-machine: with the game minimized, capture/run reports the "no visible
-window" error; restoring it lets the same command resolve the target.
+Real-machine: with the game minimized, `umbra-flow targets` still lists it and
+marks it `minimized`, and binding its handle is refused in those words;
+restoring the window lets the same command resolve the target.
 
 ## `CaptureStalled` used to name the symptom and withhold "the window is minimized"
 
@@ -219,11 +223,15 @@ delivery (`ctest -L CI`). To reproduce the latency gap, time
 `RecognitionRuntime::evaluatePage`/`evaluateActionTarget` on a 1600x900 frame in
 debug vs release; debug is ~1 s, release is tens of ms.
 
-## CJK selectors work; a mojibake selector is a caller-side encoding mistake
+## A mojibake CJK argument is a caller-side encoding mistake
+
+`umbra-flow` no longer takes a title, but it PRINTS CJK titles from
+`targets` and `m0-demo` still takes one, so the round-trip below is still
+reachable from either side.
 
 ### Symptom
 
-`umbra-flow run --selector 卡厄思梦境` appears to fail with
+`m0-demo capture --selector 卡厄思梦境` appears to fail with
 `no visible window title contains "鍗″巹"` — the selector shows up as mojibake.
 
 ### Root cause
@@ -232,7 +240,7 @@ Not a product bug. The `umbra-flow` / `m0-demo` executables embed a UTF-8
 `activeCodePage` manifest (`cpp_apply_utf8_manifest` in `entry/CMakeLists.txt`),
 so the process ANSI code page is UTF-8 and `main(int, char**)` receives argv as
 UTF-8 — matching the UTF-8 window titles discovery produces
-(`utf16BufferToString`). A literal CJK `--selector` on the command line matches
+(`utf16BufferToString`). A literal CJK argument on the command line matches
 correctly. The mojibake above was self-inflicted: the caller passed a string
 that had already been re-decoded through GBK (`鍗″巹` is `卡厄` reinterpreted as
 GBK), so the tool faithfully searched for the wrong string.
@@ -245,8 +253,9 @@ that were round-tripped through a legacy code page.
 
 ### Regression check
 
-Real-machine: `umbra-flow run --selector <CJK-title>` with the correct
-characters resolves the target; there is no encoding step in the tool to fix.
+Real-machine: `umbra-flow targets` prints the CJK title readably, and a
+`m0-demo` selector with the correct characters resolves the target; there is no
+encoding step in either tool to fix.
 
 ## `--pid` alone cannot select this game's window
 
@@ -258,17 +267,12 @@ because `--pid` is what was already passed.
 
 ### Root cause
 
-The same anti-automation decoys that defeat a title-substring selector also
-defeat a bare pid selector: one process owns 103 top-level windows, of which one
-is the real `GLFW30` window titled 卡厄思梦境 and the rest are `_thread_N`
-clones, `NVOpenGLPbuffer` surfaces, and `IME` windows. The visible-window filter
-that fixed the title selector (`entry/cli/run-windows.cpp`) is not on this path.
+The decoys of the first entry defeat a bare pid selector too, and `m0-demo` has
+no visible-window filter on this path.
 
 ### Fix
 
-Pass `--hwnd` with the real window's handle. It is the entry in the refine list
-whose class is `GLFW30` and whose title is exactly the game's, with no
-`_thread_N` suffix.
+Pass `--hwnd` with the real window's handle, per the first entry.
 
 ### Regression check
 
