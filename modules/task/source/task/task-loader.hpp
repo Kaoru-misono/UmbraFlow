@@ -14,8 +14,10 @@ namespace uf::task
     // Upper bound on a task script's on-disk size, enforced before the bytes are
     // read so a malformed or hostile project cannot force an unbounded read. A
     // task is human-written Luau, orders of magnitude smaller than this; the cap
-    // mirrors the engine runtime loader's capped-read discipline
-    // (engine::k_maximumRuntimeManifestBytes) rather than any script property.
+    // states this module's own capped-read discipline rather than any script
+    // property. (Corrected 2026-08-09: it cited
+    // engine::k_maximumRuntimeManifestBytes, which went with the engine's
+    // runtime manifest loader when the catalog left C++.)
     inline constexpr auto k_maximumTaskSourceBytes = std::size_t{4} * 1024U * 1024U;
 
     // One task resolved from its owning project by name

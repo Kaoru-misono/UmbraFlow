@@ -19,7 +19,7 @@ namespace uf::cli
 {
     // Canonicalized and checked before the desktop is touched, so a mistyped path
     // fails without declaring DPI awareness, enumerating windows or opening a
-    // capture resource -- the ordering `run` and `drive` both use.
+    // capture resource -- the ordering `run` uses too.
     struct ExploreIpcPaths final
     {
         std::filesystem::path queue{};
@@ -71,7 +71,7 @@ namespace uf::cli
 
     // Runs agent chunks against one bound target. Implemented per host: the Windows
     // build binds a live target and performs the full composition; other hosts
-    // report the explore path as unsupported, as `run` and `drive` do.
+    // report the explore path as unsupported, as `run` does.
     [[nodiscard]]
     auto exploreProduct(ExploreArgs const& args) -> Result<task::TaskRunReport>;
 }

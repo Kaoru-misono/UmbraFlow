@@ -94,10 +94,13 @@ namespace uf::task
     //
     // The bare-coordinate verbs -- `cycle_click_point` and `cycle_long_press` --
     // are privileged but are bound on BOTH surfaces, so do not read this mode as
-    // their fence. Their confinement is that no business environment can NAME
-    // them: frameworkProjectGlobals() publishes only `ctx` and `task`, and
-    // ctx.luau forwards neither verb. See their install sites in
-    // task/ffi/uf-tables.cpp.
+    // their fence. Their confinement is that no environment NAMES the private
+    // surface: the host hands it to the framework bundle as a chunk argument and
+    // drops the reference, so only a framework module body holds one. `ctx` is
+    // published into every project environment and forwards neither verb, and
+    // says so at its own definition; `observe` is published too and does reach
+    // both, but only from framework code and only with an authorised hit's
+    // coordinates. See their install sites in task/ffi/uf-tables.cpp.
     [[nodiscard]]
     auto scriptPrivateCapabilities(TaskContext& context, ScriptTrustMode mode)
         -> script::PrivateCapabilityInstaller;

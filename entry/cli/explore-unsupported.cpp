@@ -11,7 +11,7 @@ namespace uf::cli
     // The composition binds a live Windows target through the controller module,
     // which only builds on Windows. Every other host keeps the binary buildable
     // and reports the explore path as unsupported rather than failing to link,
-    // exactly as the run and drive paths do.
+    // exactly as the run path does.
     auto exploreProduct(ExploreArgs const&) -> Result<task::TaskRunReport>
     {
         return fail(

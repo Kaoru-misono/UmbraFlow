@@ -31,12 +31,13 @@ namespace uf::cli
         }
 
         // A strict reader for the one JSON shape this protocol uses: a flat object
-        // of exactly two string members. Deliberately not a reuse of the operator's
-        // reader, which is strict about different things -- six optional members of
-        // mixed type and a builder that decides which combination names a command
-        // -- and sharing would mean a reader parameterised by a field table. What
-        // IS shared is the half where a difference would silently corrupt a file
-        // rather than fail: escapeJsonString, in trace/json-text.hpp.
+        // of exactly two string members. It was deliberately not a reuse of the
+        // retired operator protocol's reader, which was strict about different
+        // things -- six optional members of mixed type and a builder that decided
+        // which combination named a command -- because sharing would have meant a
+        // reader parameterised by a field table. What IS shared is the half where
+        // a difference would silently corrupt a file rather than fail:
+        // escapeJsonString, in trace/json-text.hpp.
         class LineReader final
         {
             std::string_view m_source;

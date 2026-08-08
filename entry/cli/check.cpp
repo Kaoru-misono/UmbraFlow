@@ -282,7 +282,7 @@ return #verdict.findings
         UF_TRY_VALUE(fingerprint, host.projectFingerprint(generation));
         UF_TRY_VALUE(declaredElements, host.projectElementCount(generation));
 
-        // The same binding `run`, `drive` and `explore` use, so a cell the matrix
+        // The same binding `run` and `explore` use, so a cell the matrix
         // reads is read by the engine a run would have used. Built before the
         // frame source so a model directory that will not produce an engine fails
         // before any screen is opened.

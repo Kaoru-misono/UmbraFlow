@@ -13,10 +13,11 @@
 
 namespace uf::cli
 {
-    // The queue-and-results plumbing every line-driven front-end runs on:
-    // `drive` reads operator commands, `explore` reads agent chunks, and a
-    // difference between the two readers is a difference in which lines reach a
-    // live target.
+    // The queue-and-results plumbing every line-driven front-end runs on.
+    // `explore` is the only one left: the second reader, `drive`, was retired on
+    // 2026-08-03 in `eafc273`. The plumbing stays front-end-agnostic anyway,
+    // because what a reader is allowed to reach with a line is the front-end's
+    // property and not this file's.
 
     [[nodiscard]]
     auto invalid(std::string message) -> std::unexpected<Error>;
@@ -35,9 +36,10 @@ namespace uf::cli
     ) -> Result<std::filesystem::path>;
 
     // What a front-end calls its queue file and itself, as a reader's refusals
-    // spell them: `{.queue = "command queue", .session = "a drive session"}`.
-    // They are supplied rather than inferred because they are the whole
-    // difference between the operator's queue and the agent's.
+    // spell them: `{.queue = "chunk queue", .session = "an exploration
+    // session"}` is the one caller, in explore.cpp. They are supplied rather
+    // than inferred because a refusal has to name the queue the reader was
+    // pointed at, and this file does not know which front-end pointed it.
     struct QueueNaming final
     {
         std::string_view queue{};
@@ -89,7 +91,7 @@ namespace uf::cli
         ResultWriter(std::ofstream stream, std::string label) noexcept;
 
     public:
-        // `label` names the front-end in an append failure ("drive", "explore").
+        // `label` names the front-end in an append failure ("explore").
         [[nodiscard]]
         static auto create(
             std::filesystem::path const& path,

@@ -18,7 +18,7 @@ namespace uf::cli::platform
     // the target binding.
     //
     // An absent directory is still a null engine and NOT a failure, which is the
-    // difference between this and the run path. `run`, `drive` and `explore` are
+    // difference between this and the run path. `run` and `explore` are
     // unsupported here outright; `check` is not, because its frames come from files
     // and its template half needs no adapter. So an operator who asked for nothing
     // gets a check that measures every template cell, and only one who claimed what

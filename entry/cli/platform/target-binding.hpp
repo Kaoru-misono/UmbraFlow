@@ -24,7 +24,9 @@ namespace uf::cli::platform
         ProjectFingerprint liveFingerprint;
     };
 
-    // Declares per-monitor DPI awareness, resolves the named window, builds the
+    // Declares per-monitor DPI awareness, resolves the window the handle names --
+    // the enumeration still happens, because only the desktop can say whether it
+    // is still there and still capturable -- builds the
     // live fingerprint from the resolved geometry, and wires the capture session
     // and the delivery target into the two engine ports. This is the whole of what
     // a front-end contributes below the capability surface, and `run` and

@@ -65,9 +65,12 @@ namespace uf::task
     auto frameworkScriptModules() -> std::vector<script::FrameworkModule>;
 
     // The framework module names a project script may name, in the shape
-    // script::EngineConfig::frameworkProjectGlobals takes: `ctx`, the context
-    // object a task uses while it runs, and `task`, the declaration surface it
-    // registers its interrupts through.
+    // script::EngineConfig::frameworkProjectGlobals takes. Twelve of the
+    // bundle's modules are published here, `ctx` and `task` among them -- the
+    // context object a task uses while it runs, and the declaration surface it
+    // registers its interrupts through. The exclusions carry the meaning:
+    // `evidence`, `mint` and `jsonl` are compiled into the bundle and reach no
+    // environment at all.
     //
     // The names are spelled here rather than derived, because the generator takes
     // them from file stems and a C++ constant cannot read one. A rename that

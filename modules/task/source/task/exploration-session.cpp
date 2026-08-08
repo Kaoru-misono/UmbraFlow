@@ -36,10 +36,12 @@ namespace uf::task
         // The opening line of an exploration session's run bracket.
         //
         // The framework version, the bundle hash and the Luau compiler version are
-        // named where an operator's line leaves them empty: a trusted Luau
-        // framework DOES run here, and an agent's chunk calls into `explore`,
-        // `observe` and `model`. The seed is real for the same reason -- the
-        // exploration surface carries `random`.
+        // all named here: a trusted Luau framework DOES run in this session, and
+        // an agent's chunk calls into `explore`, `observe` and `model`. The seed
+        // is real for the same reason -- the exploration surface carries
+        // `random`. (Corrected 2026-08-09: this drew the contrast against the
+        // operator front-end's bracket, which left them empty; that front-end was
+        // retired on 2026-08-03 in `eafc273`.)
         //
         // The task name and the source hash stay empty, and both absences are
         // accurate: a session is a sequence of chunks the agent wrote as it went,

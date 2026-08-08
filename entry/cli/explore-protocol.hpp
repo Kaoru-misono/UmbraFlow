@@ -12,9 +12,10 @@
 
 namespace uf::cli
 {
-    // Larger than the operator protocol's ceiling because an agent line is a
-    // program rather than a handful of scalars: far above any hand- or
-    // model-written chunk, far below a line that could only be a mistake.
+    // Sized for a line that is a program rather than a handful of scalars: far
+    // above any hand- or model-written chunk, far below a line that could only
+    // be a mistake. (The retired operator protocol carried scalars and had a far
+    // lower ceiling; this one never inherited it.)
     inline constexpr auto k_maxExploreLineBytes = std::size_t{256} * 1024U;
 
     // An id also labels the chunk in compile diagnostics and tracebacks, where a
