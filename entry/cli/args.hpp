@@ -74,8 +74,17 @@ namespace uf::cli
     struct RunArgs final
     {
         std::filesystem::path project{};
-        std::string           selector{};
         std::string           task{};
+
+        // The target window, spelled as `umbra-flow targets` prints it. A plain
+        // integer here and a controller WindowHandle at the platform boundary,
+        // because this header parses on every host while the module that owns
+        // the strong type builds on Windows alone.
+        //
+        // Identity rather than a title substring, which cannot separate a title
+        // from any title CONTAINING it and so made every window quoting the
+        // target's name a second match.
+        intptr windowHandle{};
 
         uint64                     budget{k_defaultPixelComparisonBudget};
         MonotonicInstant::Duration recognitionTimeout{k_defaultRunRecognitionTimeout};
@@ -135,7 +144,10 @@ namespace uf::cli
     struct ExploreArgs final
     {
         std::filesystem::path project{};
-        std::string           selector{};
+
+        // Same field, same spelling, same reason as RunArgs::windowHandle: the
+        // front-ends must not be able to name a target differently.
+        intptr windowHandle{};
 
         std::filesystem::path queue{};
         std::filesystem::path results{};
@@ -157,12 +169,16 @@ namespace uf::cli
 
     [[nodiscard]] auto exploreUsageText() noexcept -> std::string_view;
 
+    // The window listing. It takes no arguments at all: it is the step that
+    // ANSWERS --hwnd, so anything it required would have to be discovered first.
+    [[nodiscard]] auto targetsUsageText() noexcept -> std::string_view;
+
     // Parsed inputs for the `check` subcommand: the falsification matrix over a
     // whole project.
     //
-    // There is no --selector and there never will be. A frame taken from a
-    // running target is not a screen the model is authored on, and the matrix is
-    // a statement about the authored ones. The pixels come from
+    // There is no --hwnd and there never will be. A frame taken from a running
+    // target is not a screen the model is authored on, and the matrix is a
+    // statement about the authored ones. The pixels come from
     // <project>/assets/screens, which is why this subcommand binds no target,
     // declares no DPI awareness, and runs on every host.
     //

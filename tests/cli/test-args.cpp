@@ -43,8 +43,8 @@ namespace uf::cli
             return {
                 "--project",
                 "proj",
-                "--selector",
-                "Game",
+                "--hwnd",
+                "0x20",
                 "--task",
                 "daily",
             };
@@ -89,7 +89,7 @@ namespace uf::cli
     {
         auto const raw = std::vector<std::string>{
             "--project",             "proj",
-            "--selector",            "Game Window",
+            "--hwnd",                "0x504f2",
             "--task",                "daily",
             "--budget",              "500",
             "--recognition-timeout", "1500",
@@ -101,7 +101,7 @@ namespace uf::cli
         auto const result = parse(raw);
         REQUIRE(result.has_value());
         CHECK(result->project == "proj");
-        CHECK(result->selector == "Game Window");
+        CHECK(result->windowHandle == intptr{0x504f2});
         CHECK(result->task == "daily");
         CHECK(result->budget == uint64{500});
         CHECK(
@@ -137,6 +137,48 @@ namespace uf::cli
                 == std::string{"unknown argument \""} + std::string{flag} + "\""
             );
         }
+    }
+
+    TEST_CASE("parseRunArguments accepts only the 0x spelling of a window handle")
+    {
+        // A handle has no natural reading, so a second accepted spelling would
+        // let a dropped prefix name a different window and still parse: "0x20"
+        // and "20" are two different windows, and only one of them is refused.
+        auto constexpr rejected = std::array<std::string_view, 5>{
+            "20",
+            "0x",
+            "0x2g",
+            "0x0",
+            "",
+        };
+
+        for (auto const value : rejected)
+        {
+            auto raw = std::vector<std::string>{
+                "--project", "proj",
+                "--hwnd",    std::string{value},
+                "--task",    "daily",
+            };
+
+            auto const result = parse(raw);
+            REQUIRE_FALSE(result.has_value());
+            CHECK(automationErrorKind(result.error()) == AutomationErrorKind::InvalidResource);
+        }
+    }
+
+    TEST_CASE("parseRunArguments reads a handle with the address top bit set")
+    {
+        // The top bit of a pointer-width handle is address, not sign, so the
+        // parse is unsigned and only the stored spelling is signed.
+        auto const raw = std::vector<std::string>{
+            "--project", "proj",
+            "--hwnd",    "0xffffffffffff0001",
+            "--task",    "daily",
+        };
+
+        auto const result = parse(raw);
+        REQUIRE(result.has_value());
+        CHECK(static_cast<uintptr>(result->windowHandle) == uintptr{0xffffffffffff0001});
     }
 
     TEST_CASE("runUsageText documents the --task run mode")
@@ -179,10 +221,10 @@ namespace uf::cli
     TEST_CASE("parseExploreArguments accepts the same optional --ocr-models flag as run")
     {
         auto const withoutFlag = std::vector<std::string>{
-            "--project",  "proj",
-            "--selector", "Game",
-            "--queue",    "queue.jsonl",
-            "--results",  "results.jsonl",
+            "--project", "proj",
+            "--hwnd",    "0x20",
+            "--queue",   "queue.jsonl",
+            "--results", "results.jsonl",
         };
         auto const withoutResult = parseExploreArguments(withoutFlag);
         REQUIRE(withoutResult.has_value());
@@ -300,7 +342,7 @@ namespace uf::cli
 
         auto const cases = std::vector<Case>{
             {"--project", "missing required argument --project"},
-            {"--selector", "missing required argument --selector"},
+            {"--hwnd", "missing required argument --hwnd"},
             {"--task", "missing required argument --task"},
         };
 

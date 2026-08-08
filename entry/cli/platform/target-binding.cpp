@@ -18,19 +18,20 @@
 #include <domain/space.hpp>
 
 #include <memory>
-#include <string_view>
 #include <utility>
 
 namespace uf::cli::platform
 {
-    auto bindTarget(std::string_view selector) -> Result<BoundTarget>
+    auto bindTarget(WindowHandle window) -> Result<BoundTarget>
     {
         // 1. Declare per-monitor DPI awareness through the controller.
         UF_TRY(ensurePerMonitorAwareV2());
 
-        // 2. Enumerate, pick by selector substring, and resolve the target.
+        // 2. Enumerate, find the named window, and resolve the target. The
+        // enumeration still happens: the handle says which window, and only the
+        // desktop can say whether it is still there and still capturable.
         UF_TRY_VALUE(candidates, enumerateCandidates());
-        UF_TRY_VALUE(chosen, selectCandidate(candidates, selector));
+        UF_TRY_VALUE(chosen, selectCandidate(candidates, window));
         auto const targetSelector = TargetSelector{}.withWindowHandle(chosen.handle());
         UF_TRY_VALUE(resolved, resolveTarget(candidates, targetSelector));
 

@@ -5,6 +5,7 @@
 #include "platform/windows-console-cancellation.hpp"
 #include "project-skeleton.hpp"
 
+#include <controller/discovery.hpp>
 #include <core/error/result.hpp>
 
 #include <task/exploration-session.hpp>
@@ -26,8 +27,8 @@ namespace uf::cli
         // Before the project is loaded, because an authoring session's first write
         // would otherwise find the directory missing and the store it writes through
         // will not create one (see project-skeleton.hpp). Only `explore` does this:
-        // check, run and drive all READ a project somebody already authored, so a
-        // missing directory there is evidence about that project.
+        // run, check and replay all READ a project somebody already authored, so
+        // a missing directory there is evidence about that project.
         UF_TRY(ensureProjectSkeleton(args.project));
 
         auto host = task::TaskHost{};
@@ -41,16 +42,16 @@ namespace uf::cli
             )
         );
 
-        // Before the target, as `run` and `drive` order it: a model directory that
+        // Before the target, as `run` orders it: a model directory that
         // will not build an engine must fail before any window is enumerated.
         UF_TRY_VALUE(ocrEngine, platform::bindOcrEngine(args.ocrModels));
 
-        UF_TRY_VALUE(bound, platform::bindTarget(args.selector));
+        UF_TRY_VALUE(bound, platform::bindTarget(WindowHandle{args.windowHandle}));
 
-        // Every bound below is the same field with the same default the other two
+        // Every bound below is the same field with the same default the other
         // front-ends pass. startExplorationSession latches the generation's
-        // front-end claim, so a generation a task run or an operator already drove
-        // refuses here.
+        // front-end claim, so a generation a task run or a framework routine
+        // already claimed refuses here.
         UF_TRY_VALUE(
             session,
             host.startExplorationSession(

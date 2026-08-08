@@ -1,5 +1,6 @@
 #pragma once
 
+#include <controller/discovery.hpp>
 #include <core/error/result.hpp>
 
 #include <domain/space.hpp>
@@ -7,7 +8,6 @@
 #include <engine/ports.hpp>
 
 #include <memory>
-#include <string_view>
 
 namespace uf::cli::platform
 {
@@ -24,11 +24,11 @@ namespace uf::cli::platform
         ProjectFingerprint liveFingerprint;
     };
 
-    // Declares per-monitor DPI awareness, resolves the target by title substring,
-    // builds the live fingerprint from the resolved geometry, and wires the capture
-    // session and the delivery target into the two engine ports. This is the whole
-    // of what a front-end contributes below the capability surface, and `run` and
-    // `drive` share it so the operator path cannot run under different guarantees
+    // Declares per-monitor DPI awareness, resolves the named window, builds the
+    // live fingerprint from the resolved geometry, and wires the capture session
+    // and the delivery target into the two engine ports. This is the whole of what
+    // a front-end contributes below the capability surface, and `run` and
+    // `explore` share it so the agent path cannot run under different guarantees
     // from the task path.
-    [[nodiscard]] auto bindTarget(std::string_view selector) -> Result<BoundTarget>;
+    [[nodiscard]] auto bindTarget(WindowHandle window) -> Result<BoundTarget>;
 }

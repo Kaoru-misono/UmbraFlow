@@ -93,6 +93,7 @@ set(CLI_TEST_SOURCES
     cli/test-check.cpp
     cli/test-explore-protocol.cpp
     cli/test-project-skeleton.cpp
+    cli/test-targets.cpp
 )
 # selectCandidate operates on the controller's TargetCandidate and is compiled
 # into cli_support only on Windows, so its test is registered only there.

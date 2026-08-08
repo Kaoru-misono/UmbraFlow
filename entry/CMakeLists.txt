@@ -42,6 +42,11 @@ add_library(${CLI_LIBRARY} STATIC
     cli/queue-ipc.hpp
     cli/run.cpp
     cli/run.hpp
+    # The listing that ANSWERS --hwnd. Its rendering is here and its enumeration
+    # is gated below, so the line a script parses is testable on a host with no
+    # desktop.
+    cli/targets.cpp
+    cli/targets.hpp
 )
 cpp_apply_safety_profile(${CLI_LIBRARY})
 target_include_directories(${CLI_LIBRARY}
@@ -69,6 +74,7 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
             cli/candidate-selection.hpp
             cli/explore-windows.cpp
             cli/run-windows.cpp
+            cli/targets-windows.cpp
             cli/platform/controller-action-sink.cpp
             cli/platform/controller-action-sink.hpp
             cli/platform/ocr-engine-binding.cpp
@@ -91,6 +97,7 @@ else()
         PRIVATE
             cli/explore-unsupported.cpp
             cli/run-unsupported.cpp
+            cli/targets-unsupported.cpp
             cli/platform/ocr-engine-binding-unsupported.cpp
     )
 endif()

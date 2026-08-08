@@ -491,15 +491,15 @@ namespace uf::cli
         TEST_CASE("explore takes the four flags that name a session")
         {
             auto const raw = std::vector<std::string>{
-                "--project",  "proj",
-                "--selector", "Game",
-                "--queue",    "q.jsonl",
-                "--results",  "r.jsonl",
+                "--project", "proj",
+                "--hwnd",    "0x504f2",
+                "--queue",   "q.jsonl",
+                "--results", "r.jsonl",
             };
             auto const parsed = parseExploreArguments(raw);
             REQUIRE(parsed.has_value());
             CHECK(parsed->project == std::filesystem::path{"proj"});
-            CHECK(parsed->selector == "Game");
+            CHECK(parsed->windowHandle == intptr{0x504f2});
             CHECK(parsed->budget == k_defaultPixelComparisonBudget);
             CHECK(!parsed->ocrModels.has_value());
 

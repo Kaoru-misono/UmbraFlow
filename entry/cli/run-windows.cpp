@@ -4,6 +4,7 @@
 #include "platform/target-binding.hpp"
 #include "platform/windows-console-cancellation.hpp"
 
+#include <controller/discovery.hpp>
 #include <core/error/result.hpp>
 
 #include <task/task-host.hpp>
@@ -37,9 +38,9 @@ namespace uf::cli
         // build an engine must fail before any window is enumerated.
         UF_TRY_VALUE(ocrEngine, platform::bindOcrEngine(args.ocrModels));
 
-        // Shared with `drive`, so the two front-ends cannot bind a target
-        // differently.
-        UF_TRY_VALUE(bound, platform::bindTarget(args.selector));
+        // Shared with `explore`, so the two front-ends that bind a live target
+        // cannot bind it differently.
+        UF_TRY_VALUE(bound, platform::bindTarget(WindowHandle{args.windowHandle}));
 
         return host.startTask(
             generation,

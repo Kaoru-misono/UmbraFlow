@@ -28,7 +28,7 @@ namespace uf::cli
         {
             auto constexpr flags = std::array<std::string_view, 9>{
                 "--project",
-                "--selector",
+                "--hwnd",
                 "--task",
                 "--max-runtime",
                 "--budget",
@@ -48,7 +48,7 @@ namespace uf::cli
         {
             auto constexpr flags = std::array<std::string_view, 10>{
                 "--project",
-                "--selector",
+                "--hwnd",
                 "--queue",
                 "--results",
                 "--budget",
@@ -61,9 +61,9 @@ namespace uf::cli
             return std::ranges::find(flags, flag) != flags.end();
         }
 
-        // The absence of --selector is the argument shape stating what the matrix
-        // is: authored screens against authored marks, with no live frame in it.
-        // See CheckArgs.
+        // The absence of --hwnd is the argument shape stating what the matrix is:
+        // authored screens against authored marks, with no live frame in it. See
+        // CheckArgs.
         [[nodiscard]]
         auto isCheckValueFlag(std::string_view flag) noexcept -> bool
         {
@@ -113,6 +113,51 @@ namespace uf::cli
             return parsed;
         }
 
+        // Hexadecimal with an explicit 0x, which is the one spelling
+        // `umbra-flow targets` prints and the one every Win32 tool shows.
+        // Decimal is not also accepted: a handle has no natural reading, so two
+        // spellings would let a dropped prefix name a different window and still
+        // parse.
+        [[nodiscard]]
+        auto parseWindowHandle(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<intptr>
+        {
+            auto constexpr prefix = std::string_view{"0x"};
+            auto const digits     = (
+                value.starts_with(prefix) ? value.substr(prefix.size())
+                                          : std::string_view{}
+            );
+
+            auto parsed             = uintptr{};
+            auto const* const begin = std::to_address(digits.begin());
+            auto const* const end   = std::to_address(digits.end());
+            auto const result       = std::from_chars(begin, end, parsed, 16);
+            if (digits.empty() || result.ec != std::errc{} || result.ptr != end)
+            {
+                return invalid(
+                    std::format(
+                        "{} expects a window handle as 0x-prefixed hexadecimal, "
+                        "got \"{}\"; `umbra-flow targets` prints them",
+                        flag,
+                        value
+                    )
+                );
+            }
+            if (parsed == uintptr{0})
+            {
+                return invalid(
+                    std::format("{} expects a window handle, got \"{}\"", flag, value)
+                );
+            }
+
+            // A handle is pointer-width and its top bit is address, not sign, so
+            // the parse is unsigned and the narrowing here is the well-defined
+            // modular one. WindowHandle stores the signed spelling.
+            return static_cast<intptr>(parsed);
+        }
+
         template <typename Unit>
         [[nodiscard]]
         auto parseDurationCount(
@@ -160,9 +205,9 @@ namespace uf::cli
 
     auto parseRunArguments(std::span<std::string const> raw) -> Result<RunArgs>
     {
-        auto project  = std::optional<std::filesystem::path>{};
-        auto selector = std::optional<std::string>{};
-        auto task     = std::optional<std::string>{};
+        auto project      = std::optional<std::filesystem::path>{};
+        auto windowHandle = std::optional<intptr>{};
+        auto task         = std::optional<std::string>{};
 
         auto budget             = k_defaultPixelComparisonBudget;
         auto recognitionTimeout = k_defaultRunRecognitionTimeout;
@@ -189,9 +234,10 @@ namespace uf::cli
             {
                 project = std::filesystem::path{value};
             }
-            else if (flag == "--selector")
+            else if (flag == "--hwnd")
             {
-                selector = value;
+                UF_TRY_VALUE(parsed, parseWindowHandle(value, flag));
+                windowHandle = parsed;
             }
             else if (flag == "--task")
             {
@@ -254,13 +300,20 @@ namespace uf::cli
         }
 
         UF_TRY_VALUE(requiredProject, require(std::move(project), "--project"));
-        UF_TRY_VALUE(requiredSelector, require(std::move(selector), "--selector"));
         UF_TRY_VALUE(requiredTask, require(std::move(task), "--task"));
+
+        // Not through `require`, which reports an empty string as absent: a
+        // handle has no empty value, and parseWindowHandle already refused the
+        // one integer that is not a window.
+        if (!windowHandle)
+        {
+            return invalid("missing required argument --hwnd");
+        }
 
         return RunArgs{
             .project            = std::move(requiredProject),
-            .selector           = std::move(requiredSelector),
             .task               = std::move(requiredTask),
+            .windowHandle       = *windowHandle,
             .budget             = budget,
             .recognitionTimeout = recognitionTimeout,
             .maxFrameAge        = maxFrameAge,
@@ -272,10 +325,10 @@ namespace uf::cli
 
     auto parseExploreArguments(std::span<std::string const> raw) -> Result<ExploreArgs>
     {
-        auto project  = std::optional<std::filesystem::path>{};
-        auto selector = std::optional<std::string>{};
-        auto queue    = std::optional<std::filesystem::path>{};
-        auto results  = std::optional<std::filesystem::path>{};
+        auto project      = std::optional<std::filesystem::path>{};
+        auto windowHandle = std::optional<intptr>{};
+        auto queue        = std::optional<std::filesystem::path>{};
+        auto results      = std::optional<std::filesystem::path>{};
 
         auto budget             = k_defaultPixelComparisonBudget;
         auto recognitionTimeout = k_defaultRunRecognitionTimeout;
@@ -302,9 +355,10 @@ namespace uf::cli
             {
                 project = std::filesystem::path{value};
             }
-            else if (flag == "--selector")
+            else if (flag == "--hwnd")
             {
-                selector = value;
+                UF_TRY_VALUE(parsed, parseWindowHandle(value, flag));
+                windowHandle = parsed;
             }
             else if (flag == "--queue")
             {
@@ -358,13 +412,17 @@ namespace uf::cli
         }
 
         UF_TRY_VALUE(requiredProject, require(std::move(project), "--project"));
-        UF_TRY_VALUE(requiredSelector, require(std::move(selector), "--selector"));
         UF_TRY_VALUE(requiredQueue, require(std::move(queue), "--queue"));
         UF_TRY_VALUE(requiredResults, require(std::move(results), "--results"));
 
+        if (!windowHandle)
+        {
+            return invalid("missing required argument --hwnd");
+        }
+
         return ExploreArgs{
             .project            = std::move(requiredProject),
-            .selector           = std::move(requiredSelector),
+            .windowHandle       = *windowHandle,
             .queue              = std::move(requiredQueue),
             .results            = std::move(requiredResults),
             .budget             = budget,
@@ -451,12 +509,13 @@ namespace uf::cli
     {
         return
             "Usage:\n"
-            "  umbra-flow run --project DIR --selector TITLE-SUBSTRING "
+            "  umbra-flow run --project DIR --hwnd 0xHANDLE "
             "--task NAME [options]\n"
             "\n"
             "Required:\n"
             "  --project DIR                Published annotation project directory\n"
-            "  --selector TITLE-SUBSTRING   Substring of the target window title\n"
+            "  --hwnd 0xHANDLE              Target window handle, as\n"
+            "                                `umbra-flow targets` prints it\n"
             "  --task NAME                  Run project task tasks/NAME.luau\n"
             "\n"
             "Options:\n"
@@ -476,7 +535,7 @@ namespace uf::cli
     {
         return
             "Usage:\n"
-            "  umbra-flow explore --project DIR --selector TITLE-SUBSTRING "
+            "  umbra-flow explore --project DIR --hwnd 0xHANDLE "
             "--queue PATH --results PATH [options]\n"
             "\n"
             "Executes Luau chunks arriving as JSON lines appended to --queue, one\n"
@@ -487,7 +546,8 @@ namespace uf::cli
             "\n"
             "Required:\n"
             "  --project DIR                Annotation project directory\n"
-            "  --selector TITLE-SUBSTRING   Substring of the target window title\n"
+            "  --hwnd 0xHANDLE              Target window handle, as\n"
+            "                                `umbra-flow targets` prints it\n"
             "  --queue PATH                 Chunk queue this session tails\n"
             "  --results PATH               Result lines; must not already exist\n"
             "\n"
@@ -501,6 +561,27 @@ namespace uf::cli
             "  --ocr-models DIR             \"models\" directory enabling the text\n"
             "                                reads; default: no engine, both read verbs\n"
             "                                refuse\n";
+    }
+
+    auto targetsUsageText() noexcept -> std::string_view
+    {
+        return
+            "Usage:\n"
+            "  umbra-flow targets\n"
+            "\n"
+            "Prints one line per window on this desktop that could be captured:\n"
+            "handle, window class, client size, DPI, whether it is minimized, and\n"
+            "the title last because a title contains spaces. The handle is the\n"
+            "value --hwnd takes.\n"
+            "\n"
+            "Windows the desktop reports as not visible are left out. A shield\n"
+            "surrounds a protected window with dozens of invisible decoys whose\n"
+            "titles are the real one plus a suffix, and no operator can mean one\n"
+            "of those. A minimized window IS listed, and marked: a window that is\n"
+            "there but uncapturable has to read differently from one that is gone.\n"
+            "\n"
+            "It takes no arguments: this is the step that answers --hwnd, so\n"
+            "anything it required would have to be discovered first.\n";
     }
 
     auto checkUsageText() noexcept -> std::string_view
@@ -606,6 +687,8 @@ namespace uf::cli
         auto text = std::string{runUsageText()};
         text += '\n';
         text += exploreUsageText();
+        text += '\n';
+        text += targetsUsageText();
         text += '\n';
         text += checkUsageText();
         text += '\n';

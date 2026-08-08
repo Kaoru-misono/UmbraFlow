@@ -38,68 +38,65 @@ namespace uf::cli
         }
     }
 
-    TEST_CASE("selectCandidate ignores invisible decoy windows around the real one")
+    TEST_CASE("selectCandidate takes the named window, not one that resembles it")
     {
-        // A shield spawns many invisible decoys whose titles are the real title
-        // plus a suffix; only the real window is visible.
+        // The case a title substring could never decide: an unrelated window
+        // whose title CONTAINS the target's, alongside the target itself.
+        auto candidates = std::vector<TargetCandidate>{};
+        candidates.emplace_back(makeCandidate(0x10, "searching Game for events", true, false));
+        candidates.emplace_back(makeCandidate(0x20, "Game", true, false));
+
+        auto const chosen = selectCandidate(candidates, WindowHandle{0x20});
+        REQUIRE(chosen.has_value());
+        CHECK(chosen->title() == "Game");
+    }
+
+    TEST_CASE("selectCandidate takes the named decoy's sibling, not the decoy")
+    {
+        // Every decoy is invisible and they share the real window's title, so
+        // only the handle separates them.
         auto candidates = std::vector<TargetCandidate>{};
         candidates.emplace_back(makeCandidate(0x10, "Game_thread_0", false, false));
         candidates.emplace_back(makeCandidate(0x20, "Game", true, false));
-        candidates.emplace_back(makeCandidate(0x30, "Game_thread_0", false, false));
-        candidates.emplace_back(makeCandidate(0x40, "Game_thread_7", false, false));
+        candidates.emplace_back(makeCandidate(0x30, "Game_thread_7", false, false));
 
-        auto const chosen = selectCandidate(candidates, "Game");
+        auto const chosen = selectCandidate(candidates, WindowHandle{0x20});
         REQUIRE(chosen.has_value());
         CHECK(chosen->handle() == WindowHandle{0x20});
     }
 
-    TEST_CASE("selectCandidate reports no match when every title match is invisible")
+    TEST_CASE("selectCandidate reports a handle no window carries")
     {
         auto candidates = std::vector<TargetCandidate>{};
-        candidates.emplace_back(makeCandidate(0x10, "Game_thread_0", false, false));
-        candidates.emplace_back(makeCandidate(0x20, "Game_thread_1", false, false));
+        candidates.emplace_back(makeCandidate(0x20, "Game", true, false));
 
-        auto const chosen = selectCandidate(candidates, "Game");
+        auto const chosen = selectCandidate(candidates, WindowHandle{0x99});
         REQUIRE_FALSE(chosen.has_value());
         CHECK(automationErrorKind(chosen.error()) == AutomationErrorKind::TargetUnavailable);
-        CHECK(chosen.error().message() == "no visible window title contains \"Game\"");
+        CHECK(chosen.error().message().find("0x99") != std::string::npos);
     }
 
-    TEST_CASE("selectCandidate excludes a minimized window")
+    TEST_CASE("selectCandidate refuses a minimized window and says which it was")
     {
-        // A minimized window is visible in the WS_VISIBLE sense but cannot be
-        // captured, so it must not be selected.
+        // Visible in the WS_VISIBLE sense and still uncapturable, which is the
+        // distinction the message has to carry: the window is there.
         auto candidates = std::vector<TargetCandidate>{};
         candidates.emplace_back(makeCandidate(0x20, "Game", true, true));
 
-        auto const chosen = selectCandidate(candidates, "Game");
+        auto const chosen = selectCandidate(candidates, WindowHandle{0x20});
         REQUIRE_FALSE(chosen.has_value());
         CHECK(automationErrorKind(chosen.error()) == AutomationErrorKind::TargetUnavailable);
+        CHECK(chosen.error().message().find("minimized") != std::string::npos);
     }
 
-    TEST_CASE("selectCandidate refuses to guess between multiple visible matches")
+    TEST_CASE("selectCandidate refuses an invisible decoy by handle")
     {
         auto candidates = std::vector<TargetCandidate>{};
-        candidates.emplace_back(makeCandidate(0x20, "Game One", true, false));
-        candidates.emplace_back(makeCandidate(0x30, "Game Two", true, false));
+        candidates.emplace_back(makeCandidate(0x10, "Game_thread_0", false, false));
 
-        auto const chosen = selectCandidate(candidates, "Game");
+        auto const chosen = selectCandidate(candidates, WindowHandle{0x10});
         REQUIRE_FALSE(chosen.has_value());
         CHECK(automationErrorKind(chosen.error()) == AutomationErrorKind::TargetUnavailable);
-        CHECK(
-            chosen.error().message()
-            == "selector \"Game\" matches 2 visible windows; refine it: "
-               "\"Game One\", \"Game Two\""
-        );
-    }
-
-    TEST_CASE("selectCandidate reports no match when no title contains the selector")
-    {
-        auto candidates = std::vector<TargetCandidate>{};
-        candidates.emplace_back(makeCandidate(0x20, "Other", true, false));
-
-        auto const chosen = selectCandidate(candidates, "Game");
-        REQUIRE_FALSE(chosen.has_value());
-        CHECK(automationErrorKind(chosen.error()) == AutomationErrorKind::TargetUnavailable);
+        CHECK(chosen.error().message().find("not visible") != std::string::npos);
     }
 }

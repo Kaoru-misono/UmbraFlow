@@ -4,6 +4,7 @@
 #include "explore.hpp"
 #include "replay.hpp"
 #include "run.hpp"
+#include "targets.hpp"
 
 #include <core/numeric/checked-cast.hpp>
 
@@ -99,6 +100,30 @@ namespace uf::cli
             return exitCodeForReport(*report, runCancellationRequested());
         }
 
+        // The one verb that binds nothing and reads no project: it answers the
+        // --hwnd every other target-bound verb requires, so it must work before
+        // anything else does.
+        [[nodiscard]]
+        auto dispatchTargets(std::span<std::string const> raw) -> ExitCode
+        {
+            if (!raw.empty())
+            {
+                std::cerr << std::format("unknown argument \"{}\"\n", raw.front());
+                std::cerr << targetsUsageText();
+                return ExitCode::Failure;
+            }
+
+            auto const listings = targetsProduct();
+            if (!listings)
+            {
+                std::cerr << formatRunError(listings.error()) << '\n';
+                return exitCodeForError(listings.error(), false);
+            }
+
+            std::cout << formatTargetListings(*listings);
+            return ExitCode::Success;
+        }
+
         // The replay verb, on dispatchCheck's shape for its reason: the verdict
         // is JSON on standard output and the human summary is on standard error,
         // so the two never interleave in a pipe.
@@ -190,6 +215,10 @@ namespace uf::cli
             if (raw.front() == "explore")
             {
                 return dispatchExplore(raw.subspan(1));
+            }
+            if (raw.front() == "targets")
+            {
+                return dispatchTargets(raw.subspan(1));
             }
             if (raw.front() == "check")
             {
