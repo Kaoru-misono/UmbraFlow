@@ -10,9 +10,16 @@ task scripts written in Luau drive the loop through a minimal capability API.
 
 **Capability namespace (`uf`)**:
 The single read-only global root through which a project task script reaches
-the host: `uf.task` and `uf.errors`. (`uf.pages` and `uf.elements` were host-built
+the host: `uf.errors`, and nothing else. (Corrected 2026-08-08: this said
+`uf.task` and `uf.errors`; `task` is its own project global published by
+`frameworkProjectGlobals()`, never a member of `uf` -- the root carries data
+alone, so there is no verb form under it to approve. `uf.pages` and
+`uf.elements` were host-built
 tables until 2026-08-01; pages and elements are trusted-Luau values now, reached
-through `project.load_project`, and the tables are gone rather than empty.) A script
+through `project.load_project`, and the tables are gone rather than empty. The
+spellings `uf.elements.<name>` and `uf.pages.<name>` survive only as names a
+pass before the VM resolves against the project file, `script-validator.hpp`.)
+A script
 sees nothing of the host outside this root, and effects reach it only through
 the `ctx` object passed into a task's `run`. `uf` is the same product
 abbreviation as the C++ `uf::` namespace, used deliberately in both languages.
@@ -348,5 +355,6 @@ name none of them. Its runs stamp `FrontEnd::Annotation`, whose trace stream
 structurally refuses `engine.action_delivered`, because a bare click has no
 element and no page and the vocabulary has to stay honest.
 _Avoid_: handing a task raw pixels or a bare click, `engine.action_delivered`
-for an exploratory click, "operator mode" (the drive front-end is a different
-consumer, and it has no model access at all)
+for an exploratory click, "operator mode" (the `drive` front-end was a separate
+consumer with no model access at all; it was retired into this one on
+2026-08-03 in `eafc273`, so the phrase now names nothing)
