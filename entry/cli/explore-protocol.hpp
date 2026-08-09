@@ -25,7 +25,7 @@ namespace uf::cli
     // The exploration queue protocol: one JSON object per line, two required
     // members and one optional.
     //
-    //   {"id":"step-3","chunk":"local t = ctx:cycle_open() ... return 'home'"}
+    //   {"id":"step-3","chunk":"return explore.cycle(function(c) ... end)"}
     //   {"id":"step-4","chunk":"return 'done'","end":true}
     //
     // A line carries a chunk rather than one command because an agent's smallest

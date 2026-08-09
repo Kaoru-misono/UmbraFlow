@@ -1,4 +1,4 @@
-#include "run.hpp"
+#include "cli-result.hpp"
 
 #include <core/types/enum-reflection.hpp>
 #include <core/types/integer.hpp>
@@ -14,7 +14,7 @@
 
 namespace uf::cli
 {
-    auto formatRunError(Error const& error) -> std::string
+    auto formatError(Error const& error) -> std::string
     {
         auto kindName = std::optional<std::string_view>{};
         if (auto const kind = automationErrorKind(error); kind)
@@ -22,7 +22,9 @@ namespace uf::cli
             kindName = enumName(*kind);
         }
 
-        auto formatted = std::string{kindName.value_or("UnknownAutomationErrorKind")};
+        auto formatted = std::string{
+            kindName.value_or("UnknownAutomationErrorKind")
+        };
         formatted += ": ";
         formatted += error.message();
 
@@ -42,7 +44,9 @@ namespace uf::cli
 
         auto const location = error.location();
         formatted += " | at ";
-        formatted += std::filesystem::path{location.file_name()}.filename().string();
+        formatted += std::filesystem::path{
+            location.file_name()
+        }.filename().string();
         formatted += ':';
         formatted += std::to_string(location.line());
 
@@ -54,9 +58,6 @@ namespace uf::cli
         bool stopRequested
     ) noexcept -> ExitCode
     {
-        // A Ctrl-C during a blocked step surfaces as that step's failure (a stalled
-        // capture reports CaptureStalled), not as Cancelled. The operator's intent
-        // to stop takes precedence in reporting.
         if (stopRequested)
         {
             return ExitCode::Cancelled;
@@ -67,6 +68,7 @@ namespace uf::cli
         {
             return ExitCode::Failure;
         }
+
         switch (*kind)
         {
         case AutomationErrorKind::Cancelled:
@@ -93,16 +95,11 @@ namespace uf::cli
         return ExitCode::Failure;
     }
 
-    auto exitCodeForReport(
+    auto exitCodeForTaskReport(
         task::TaskRunReport const& report,
         bool stopRequested
     ) noexcept -> ExitCode
     {
-        // A run that ended cleanly reports success even if a stop arrived while it
-        // was finishing: the task did what it was asked to do. Every other ending
-        // goes through the same mapping a run that never started does -- a cancelled
-        // run reports Cancelled because its failure kind is Cancelled, not because
-        // this function knows about cancellation separately.
         if (!report.failure)
         {
             return ExitCode::Success;

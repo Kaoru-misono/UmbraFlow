@@ -18,9 +18,9 @@ namespace uf::cli::platform
         auto cancellationSource() noexcept -> std::stop_source&
         {
             // Process-lifetime: once a Ctrl-C stops this source it stays stopped,
-            // so a second runProduct() in the same process would observe an
-            // already-stopped token and refuse to act. The CLI runs exactly one
-            // run per process by design (P0), so each invocation starts unstopped.
+            // so a second session in the same process would observe an already-
+            // stopped token and refuse to act. The CLI starts at most one
+            // privileged exploration session per process.
             static auto s_source = std::stop_source{};
             return s_source;
         }

@@ -8,7 +8,7 @@
 namespace uf::cli::platform
 {
     // Installs a console Ctrl-C / Ctrl-Break handler that requests stop on a
-    // process-lifetime stop_source, and removes it on destruction. The engine
+    // process-lifetime stop_source, and removes it on destruction. Exploration
     // observes cancellation through token(); the OS callback cannot capture, so
     // the source is module-static and this RAII type owns only the registration.
     class ConsoleCancellation final

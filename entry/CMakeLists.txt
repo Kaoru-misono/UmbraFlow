@@ -9,29 +9,20 @@ configure_file(
 
 set(CLI_LIBRARY ${PROJECT_NAME}_cli_support)
 
-# Platform-free product logic: argument parsing and the error/exit-code
-# boundary. Linked into the executable and tests. The run lifecycle itself lives
-# in modules/task's TaskHost, and the trace file sink in modules/trace, which
-# owns the single evidence stream.
+# Platform-free privileged annotation logic: argument parsing, queue protocol,
+# and the process error/exit-code boundary.
 add_library(${CLI_LIBRARY} STATIC
     cli/args.cpp
     cli/args.hpp
-    cli/check.cpp
-    cli/check.hpp
+    cli/cli-result.cpp
+    cli/cli-result.hpp
     cli/explore.cpp
     cli/explore.hpp
     cli/explore-protocol.cpp
     cli/explore-protocol.hpp
-    cli/file-frame-source.cpp
-    cli/file-frame-source.hpp
-    # The OCR binding's DECLARATION is platform-free: `check` composes on every
-    # host and needs an engine whenever a project claims what a region reads, so
-    # it includes this header everywhere. Only the definition is gated below.
     cli/platform/ocr-engine-binding.hpp
     cli/project-skeleton.cpp
     cli/project-skeleton.hpp
-    cli/replay.cpp
-    cli/replay.hpp
     # The queue/results wire `explore` runs on: one framed reader, one results
     # writer, and the durable cursor that keeps a restart from re-delivering a
     # queue against a live target. It stays a pair of files of its own because
@@ -40,8 +31,6 @@ add_library(${CLI_LIBRARY} STATIC
     cli/queue-cursor.hpp
     cli/queue-ipc.cpp
     cli/queue-ipc.hpp
-    cli/run.cpp
-    cli/run.hpp
     # The listing that ANSWERS --hwnd. Its rendering is here and its enumeration
     # is gated below, so the line a script parses is testable on a host with no
     # desktop.
@@ -53,17 +42,12 @@ target_include_directories(${CLI_LIBRARY}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/cli
 )
-# The exit-code boundary maps a task::TaskRunReport, so the task module is part
-# of this library's interface on every host, not only where the run composition
-# builds. The image module is private and is here for one consumer: the
-# file-backed frame source `check` replays a project's own screens through
-# decodes each screen's PNG.
+# Privileged exploration is still implemented by task::ExplorationSession, so
+# task and engine remain public dependencies until the authoring host is split.
 target_link_libraries(${CLI_LIBRARY}
     PUBLIC
         ${PROJECT_NAME}_engine
         ${PROJECT_NAME}_task
-    PRIVATE
-        ${PROJECT_NAME}_image
 )
 target_compile_features(${CLI_LIBRARY} PUBLIC cxx_std_23)
 
@@ -73,7 +57,6 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
             cli/candidate-selection.cpp
             cli/candidate-selection.hpp
             cli/explore-windows.cpp
-            cli/run-windows.cpp
             cli/targets-windows.cpp
             cli/platform/controller-action-sink.cpp
             cli/platform/controller-action-sink.hpp
@@ -96,9 +79,7 @@ else()
     target_sources(${CLI_LIBRARY}
         PRIVATE
             cli/explore-unsupported.cpp
-            cli/run-unsupported.cpp
             cli/targets-unsupported.cpp
-            cli/platform/ocr-engine-binding-unsupported.cpp
     )
 endif()
 

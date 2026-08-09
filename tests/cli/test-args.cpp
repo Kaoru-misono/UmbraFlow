@@ -1,18 +1,19 @@
 #include <args.hpp>
-#include <run.hpp>
+#include <cli-result.hpp>
 
 #include <core/types/integer.hpp>
+
 #include <domain/error.hpp>
 
 #include <task/task-host.hpp>
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <filesystem>
 #include <source_location>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -22,12 +23,6 @@ namespace uf::cli
 {
     namespace
     {
-        [[nodiscard]]
-        auto parse(std::vector<std::string> const& raw) -> Result<RunArgs>
-        {
-            return parseRunArguments(raw);
-        }
-
         template <typename Rep, typename Period>
         [[nodiscard]]
         auto asDuration(
@@ -38,15 +33,17 @@ namespace uf::cli
         }
 
         [[nodiscard]]
-        auto minimalArgs() -> std::vector<std::string>
+        auto minimalExploreArgs() -> std::vector<std::string>
         {
             return {
                 "--project",
                 "proj",
                 "--hwnd",
                 "0x20",
-                "--task",
-                "daily",
+                "--queue",
+                "queue.jsonl",
+                "--results",
+                "results.jsonl",
             };
         }
 
@@ -60,13 +57,12 @@ namespace uf::cli
         auto reportFailedWith(AutomationErrorKind kind) -> task::TaskRunReport
         {
             return task::TaskRunReport{
-                .taskName = "daily",
-                .failure  = errorOfKind(kind),
+                .failure = errorOfKind(kind),
             };
         }
     }
 
-    TEST_CASE("run error rendering includes its originating source location")
+    TEST_CASE("CLI error rendering includes its originating source location")
     {
         auto const location = std::source_location::current();
         auto failure = fail(
@@ -76,7 +72,7 @@ namespace uf::cli
             location
         );
 
-        auto const rendered = formatRunError(failure.error());
+        auto const rendered = formatError(failure.error());
         auto origin = std::filesystem::path{location.file_name()}
                           .filename()
                           .string();
@@ -85,468 +81,167 @@ namespace uf::cli
         CHECK(rendered.find(origin) != std::string::npos);
     }
 
-    TEST_CASE("parseRunArguments accepts every flag on the happy path")
+    TEST_CASE("parseExploreArguments accepts the complete privileged entry shape")
     {
-        auto const raw = std::vector<std::string>{
-            "--project",             "proj",
-            "--hwnd",                "0x504f2",
-            "--task",                "daily",
-            "--budget",              "500",
-            "--recognition-timeout", "1500",
-            "--max-frame-age",       "600",
-            "--max-runtime",         "900000",
-            "--trace",               "out.jsonl",
-        };
-
-        auto const result = parse(raw);
-        REQUIRE(result.has_value());
-        CHECK(result->project == "proj");
-        CHECK(result->windowHandle == intptr{0x504f2});
-        CHECK(result->task == "daily");
-        CHECK(result->budget == uint64{500});
-        CHECK(
-            result->recognitionTimeout == asDuration(std::chrono::milliseconds{1500})
+        auto const result = parseExploreArguments(
+            std::vector<std::string>{
+                "--project",
+                "project-root",
+                "--hwnd",
+                "0x7f",
+                "--queue",
+                "queue.jsonl",
+                "--results",
+                "results.jsonl",
+                "--budget",
+                "4096",
+                "--recognition-timeout",
+                "125",
+                "--max-frame-age",
+                "250",
+                "--idle-timeout",
+                "7",
+                "--trace",
+                "trace.jsonl",
+                "--ocr-models",
+                "models",
+            }
         );
-        CHECK(result->maxFrameAge == asDuration(std::chrono::milliseconds{600}));
-        CHECK(result->maxRuntime == asDuration(std::chrono::milliseconds{900000}));
-        CHECK(result->trace == "out.jsonl");
-    }
 
-    TEST_CASE("parseRunArguments no longer accepts the removed run-shape flags")
-    {
-        // None of the four is merely ignored: an invocation carrying one is
-        // refused by name, so a stale script fails loudly instead of quietly
-        // running under a budget nobody applies.
-        auto constexpr removed = std::array<std::string_view, 4>{
-            "--page",
-            "--action",
-            "--timeout",
-            "--poll",
-        };
-
-        for (auto const flag : removed)
-        {
-            auto raw = minimalArgs();
-            raw.emplace_back(flag);
-            raw.emplace_back("home");
-
-            auto const result = parse(raw);
-            REQUIRE_FALSE(result.has_value());
-            CHECK(
-                result.error().message()
-                == std::string{"unknown argument \""} + std::string{flag} + "\""
-            );
-        }
-    }
-
-    TEST_CASE("parseRunArguments accepts only the 0x spelling of a window handle")
-    {
-        // A handle has no natural reading, so a second accepted spelling would
-        // let a dropped prefix name a different window and still parse: "0x20"
-        // and "20" are two different windows, and only one of them is refused.
-        auto constexpr rejected = std::array<std::string_view, 5>{
-            "20",
-            "0x",
-            "0x2g",
-            "0x0",
-            "",
-        };
-
-        for (auto const value : rejected)
-        {
-            auto raw = std::vector<std::string>{
-                "--project", "proj",
-                "--hwnd",    std::string{value},
-                "--task",    "daily",
-            };
-
-            auto const result = parse(raw);
-            REQUIRE_FALSE(result.has_value());
-            CHECK(automationErrorKind(result.error()) == AutomationErrorKind::InvalidResource);
-        }
-    }
-
-    TEST_CASE("parseRunArguments reads a handle with the address top bit set")
-    {
-        // The top bit of a pointer-width handle is address, not sign, so the
-        // parse is unsigned and only the stored spelling is signed.
-        auto const raw = std::vector<std::string>{
-            "--project", "proj",
-            "--hwnd",    "0xffffffffffff0001",
-            "--task",    "daily",
-        };
-
-        auto const result = parse(raw);
         REQUIRE(result.has_value());
-        CHECK(static_cast<uintptr>(result->windowHandle) == uintptr{0xffffffffffff0001});
+        CHECK(result->project == std::filesystem::path{"project-root"});
+        CHECK(result->windowHandle == intptr{0x7f});
+        CHECK(result->queue == std::filesystem::path{"queue.jsonl"});
+        CHECK(result->results == std::filesystem::path{"results.jsonl"});
+        CHECK(result->budget == uint64{4096});
+        CHECK(
+            result->recognitionTimeout
+            == asDuration(std::chrono::milliseconds{125})
+        );
+        CHECK(
+            result->maxFrameAge
+            == asDuration(std::chrono::milliseconds{250})
+        );
+        CHECK(result->idleTimeout == asDuration(std::chrono::seconds{7}));
+        CHECK(result->trace == std::filesystem::path{"trace.jsonl"});
+        CHECK(result->ocrModels == std::filesystem::path{"models"});
     }
 
-    TEST_CASE("runUsageText documents the --task run mode")
+    TEST_CASE("parseExploreArguments applies safe defaults")
     {
-        auto const usage = runUsageText();
-        CHECK(usage.find("--task") != std::string_view::npos);
-        CHECK(usage.find("--max-runtime") != std::string_view::npos);
-        CHECK(usage.find("--page") == std::string_view::npos);
-        CHECK(usage.find("--action") == std::string_view::npos);
-    }
-
-    TEST_CASE("parseRunArguments applies defaults for omitted optional flags")
-    {
-        auto const result = parse(minimalArgs());
+        auto const result = parseExploreArguments(minimalExploreArgs());
         REQUIRE(result.has_value());
         CHECK(result->budget == k_defaultPixelComparisonBudget);
-        CHECK(result->recognitionTimeout == k_defaultRunRecognitionTimeout);
-        CHECK(result->maxFrameAge == k_defaultRunMaxFrameAge);
-        // Resolved by the parser rather than by the composition: an omitted flag
-        // leaves the field carrying the ceiling the run is actually held to.
-        CHECK(result->maxRuntime == k_defaultRunMaxRuntime);
-        CHECK(result->trace == k_defaultTracePath);
-        // Absent by default: a run that never asked for --ocr-models must not
-        // pay for an engine, and cycle_read refuses on its own terms instead.
+        CHECK(result->recognitionTimeout == k_defaultRecognitionTimeout);
+        CHECK(result->maxFrameAge == k_defaultMaxFrameAge);
+        CHECK(result->idleTimeout == k_defaultExploreIdleTimeout);
+        CHECK(result->trace == std::filesystem::path{k_defaultTracePath});
         CHECK_FALSE(result->ocrModels.has_value());
     }
 
-    TEST_CASE("parseRunArguments accepts --ocr-models and passes the directory through")
+    TEST_CASE("parseExploreArguments requires every authority-bearing locator")
     {
-        auto raw = minimalArgs();
-        raw.emplace_back("--ocr-models");
-        raw.emplace_back("models");
-
-        auto const result = parse(raw);
-        REQUIRE(result.has_value());
-        REQUIRE(result->ocrModels.has_value());
-        CHECK(*result->ocrModels == std::filesystem::path{"models"});
-    }
-
-    TEST_CASE("parseExploreArguments accepts the same optional --ocr-models flag as run")
-    {
-        auto const withoutFlag = std::vector<std::string>{
-            "--project", "proj",
-            "--hwnd",    "0x20",
-            "--queue",   "queue.jsonl",
-            "--results", "results.jsonl",
+        auto const required = std::array{
+            std::string{"--project"},
+            std::string{"--hwnd"},
+            std::string{"--queue"},
+            std::string{"--results"},
         };
-        auto const withoutResult = parseExploreArguments(withoutFlag);
-        REQUIRE(withoutResult.has_value());
-        CHECK_FALSE(withoutResult->ocrModels.has_value());
-
-        auto withFlag = withoutFlag;
-        withFlag.emplace_back("--ocr-models");
-        withFlag.emplace_back("models");
-
-        auto const withResult = parseExploreArguments(withFlag);
-        REQUIRE(withResult.has_value());
-        REQUIRE(withResult->ocrModels.has_value());
-        CHECK(*withResult->ocrModels == std::filesystem::path{"models"});
-    }
-
-    TEST_CASE("parseCheckArguments accepts the same optional --ocr-models flag")
-    {
-        // An element with no template identifies by the text its rectangle
-        // reads, so the matrix needs the models directory: a parser that
-        // accepts the flag and then drops it must go red on the read-back.
-        auto const withoutFlag = std::vector<std::string>{"--project", "proj"};
-        auto const withoutResult = parseCheckArguments(withoutFlag);
-        REQUIRE(withoutResult.has_value());
-        CHECK_FALSE(withoutResult->ocrModels.has_value());
-        CHECK(withoutResult->trace == k_defaultCheckTracePath);
-
-        auto withFlag = withoutFlag;
-        withFlag.emplace_back("--ocr-models");
-        withFlag.emplace_back("models");
-
-        auto const withResult = parseCheckArguments(withFlag);
-        REQUIRE(withResult.has_value());
-        REQUIRE(withResult->ocrModels.has_value());
-        CHECK(*withResult->ocrModels == std::filesystem::path{"models"});
-
-        CHECK(checkUsageText().find("--ocr-models") != std::string_view::npos);
-    }
-
-    TEST_CASE("--sweep-pages is a switch, off unless it is named")
-    {
-        // The one flag here that takes no value, so the parser must not consume
-        // the argument after it: read it as a value flag and the --trace below is
-        // swallowed as this one's value and the path never arrives.
-        auto const bare = std::vector<std::string>{"--project", "proj"};
-
-        auto const without = parseCheckArguments(bare);
-        REQUIRE(without.has_value());
-        CHECK_FALSE(without->sweepPages);
-
-        auto named = bare;
-        named.emplace_back("--sweep-pages");
-        named.emplace_back("--trace");
-        named.emplace_back("out.jsonl");
-
-        auto const with = parseCheckArguments(named);
-        REQUIRE(with.has_value());
-        CHECK(with->sweepPages);
-        CHECK(with->trace == std::filesystem::path{"out.jsonl"});
-
-        // A value handed to it is an argument nothing takes, and saying so is the
-        // whole reason the switch is refused rather than quietly tolerated.
-        auto valued = bare;
-        valued.emplace_back("--sweep-pages");
-        valued.emplace_back("true");
-        CHECK_FALSE(parseCheckArguments(valued).has_value());
-
-        CHECK(checkUsageText().find("--sweep-pages") != std::string_view::npos);
-    }
-
-    TEST_CASE("the default comparison budget covers a page evaluation but not a full frame")
-    {
-        // A candidate position costs the template's pixels; a search walks one
-        // position per placement that still fits inside the region.
-        auto constexpr searchCost = [](
-            uint64 templateWidth,
-            uint64 templateHeight,
-            uint64 roiWidth,
-            uint64 roiHeight
-        ) -> uint64
+        for (auto const& missing : required)
         {
-            return (roiWidth - templateWidth + 1U)
-                * (roiHeight - templateHeight + 1U)
-                * templateWidth
-                * templateHeight;
-        };
+            auto raw = minimalExploreArgs();
+            auto const found = std::ranges::find(raw, missing);
+            REQUIRE(found != raw.end());
+            raw.erase(found, found + 2);
 
-        // The two real authored elements this default was found wanting by.
-        auto constexpr narrowAnchor = searchCost(90, 33, 180, 70);
-        auto constexpr widestAnchor = searchCost(200, 50, 480, 90);
-        static_assert(narrowAnchor == 10'270'260U);
-        static_assert(widestAnchor == 115'210'000U);
-
-        // evaluatePage shares one budget across every page anchor in the catalog,
-        // so the figure to cover is the sum over a whole evaluation: eight pages
-        // of two anchors each, all as costly as the widest.
-        auto constexpr anchorsPerPageEvaluation = uint64{16};
-        auto constexpr pageEvaluation = widestAnchor * anchorsPerPageEvaluation;
-        CHECK(k_defaultPixelComparisonBudget >= pageEvaluation);
-        CHECK(k_defaultPixelComparisonBudget >= narrowAnchor);
-
-        // The ceiling stays real: a small template over a whole 1600x900 frame
-        // has to be asked for with --budget, or nothing fails closed.
-        auto constexpr fullFrameSmallTemplate = searchCost(66, 46, 1600, 900);
-        static_assert(fullFrameSmallTemplate == 3'984'522'300U);
-        CHECK(k_defaultPixelComparisonBudget < fullFrameSmallTemplate);
-    }
-
-    TEST_CASE("parseRunArguments reports each missing required flag")
-    {
-        struct Case final
-        {
-            std::string_view omitted;
-            std::string_view expected;
-        };
-
-        auto const cases = std::vector<Case>{
-            {"--project", "missing required argument --project"},
-            {"--hwnd", "missing required argument --hwnd"},
-            {"--task", "missing required argument --task"},
-        };
-
-        for (auto const& testCase : cases)
-        {
-            auto raw   = std::vector<std::string>{};
-            auto const full = minimalArgs();
-            for (auto index = std::size_t{0}; index < full.size(); index += 2U)
-            {
-                if (full[index] == testCase.omitted)
-                {
-                    continue;
-                }
-                raw.emplace_back(full[index]);
-                raw.emplace_back(full[index + 1U]);
-            }
-
-            auto const result = parse(raw);
-            REQUIRE_FALSE(result.has_value());
-            CHECK(automationErrorKind(result.error()) == AutomationErrorKind::InvalidResource);
-            CHECK(result.error().message() == testCase.expected);
+            INFO("missing flag: ", missing);
+            CHECK_FALSE(parseExploreArguments(raw).has_value());
         }
     }
 
-    TEST_CASE("parseRunArguments rejects an unknown flag")
+    TEST_CASE("parseExploreArguments rejects alternate and malformed input shapes")
     {
-        auto raw = minimalArgs();
-        raw.emplace_back("--bogus");
-        raw.emplace_back("value");
+        auto const invalidCases = std::array{
+            std::vector<std::string>{"--unknown", "value"},
+            std::vector<std::string>{"--project"},
+            std::vector<std::string>{
+                "--project", "p", "--hwnd", "32", "--queue", "q",
+                "--results", "r",
+            },
+            std::vector<std::string>{
+                "--project", "p", "--hwnd", "0x0", "--queue", "q",
+                "--results", "r",
+            },
+            std::vector<std::string>{
+                "--project", "p", "--hwnd", "0x20", "--queue", "q",
+                "--results", "r", "--budget", "many",
+            },
+            std::vector<std::string>{
+                "--project", "p", "--hwnd", "0x20", "--queue", "q",
+                "--results", "r", "--idle-timeout", "soon",
+            },
+        };
 
-        auto const result = parse(raw);
-        REQUIRE_FALSE(result.has_value());
-        CHECK(result.error().message() == "unknown argument \"--bogus\"");
+        for (auto const& raw : invalidCases)
+        {
+            CHECK_FALSE(parseExploreArguments(raw).has_value());
+        }
     }
 
-    TEST_CASE("parseRunArguments rejects a flag missing its value")
+    TEST_CASE("public usage contains only privileged annotation commands")
     {
-        auto const raw = std::vector<std::string>{"--project"};
-
-        auto const result = parse(raw);
-        REQUIRE_FALSE(result.has_value());
-        CHECK(result.error().message() == "missing value for --project");
+        auto const usage = usageText();
+        CHECK(usage.find("  umbra-flow explore ") != std::string::npos);
+        CHECK(usage.find("  umbra-flow targets\n") != std::string::npos);
+        CHECK(usage.find("  umbra-flow run ") == std::string::npos);
+        CHECK(usage.find("  umbra-flow check ") == std::string::npos);
+        CHECK(usage.find("  umbra-flow replay ") == std::string::npos);
     }
 
-    TEST_CASE("parseRunArguments rejects a non-integer duration")
+    TEST_CASE("ExitCode uses the compact current command contract")
     {
-        auto raw = minimalArgs();
-        raw.emplace_back("--recognition-timeout");
-        raw.emplace_back("soon");
-
-        auto const result = parse(raw);
-        REQUIRE_FALSE(result.has_value());
-        CHECK(
-            result.error().message()
-            == "--recognition-timeout expects an integer, got \"soon\""
-        );
-    }
-
-    TEST_CASE("parseRunArguments rejects a non-integer budget")
-    {
-        auto raw = minimalArgs();
-        raw.emplace_back("--budget");
-        raw.emplace_back("lots");
-
-        auto const result = parse(raw);
-        REQUIRE_FALSE(result.has_value());
-        CHECK(result.error().message() == "--budget expects an integer, got \"lots\"");
-    }
-
-    TEST_CASE("parseRunArguments refuses a zero run ceiling")
-    {
-        // A zero ceiling puts the run's deadline at its own start instant, so
-        // the task would die at the first safepoint. It is refused by name
-        // rather than read as "absent" and silently replaced by the default.
-        auto raw = minimalArgs();
-        raw.emplace_back("--max-runtime");
-        raw.emplace_back("0");
-
-        auto const result = parse(raw);
-        REQUIRE_FALSE(result.has_value());
-        CHECK(
-            automationErrorKind(result.error())
-            == AutomationErrorKind::InvalidResource
-        );
-        CHECK(
-            result.error().message()
-            == "--max-runtime expects a positive millisecond count, got \"0\""
-        );
-    }
-
-    TEST_CASE("ExitCode preserves the documented process values")
-    {
-        // 3 stays absent: it was ActionAbsent, and reassigning it would tell an
-        // operator reading an old 3 that it meant something else.
-        auto constexpr cases = std::array{
+        auto const values = std::array{
             std::pair{ExitCode::Success, uint8{0}},
             std::pair{ExitCode::Failure, uint8{1}},
             std::pair{ExitCode::TargetCompatibilityUnverified, uint8{2}},
-            std::pair{ExitCode::Timeout, uint8{4}},
-            std::pair{ExitCode::Cancelled, uint8{5}},
+            std::pair{ExitCode::Timeout, uint8{3}},
+            std::pair{ExitCode::Cancelled, uint8{4}},
         };
-
-        for (auto const& [code, value] : cases)
+        for (auto const& [code, value] : values)
         {
             CHECK(std::to_underlying(code) == value);
         }
     }
 
-    TEST_CASE("exitCodeForError maps each failure kind to its documented code")
+    TEST_CASE("exit-code mapping preserves automation failure meaning")
     {
-        auto constexpr cases = std::array{
+        auto const cases = std::array{
             std::pair{AutomationErrorKind::Cancelled, ExitCode::Cancelled},
             std::pair{AutomationErrorKind::Timeout, ExitCode::Timeout},
             std::pair{
                 AutomationErrorKind::TargetCompatibilityUnverified,
-                ExitCode::TargetCompatibilityUnverified,
+                ExitCode::TargetCompatibilityUnverified
             },
             std::pair{AutomationErrorKind::CaptureStalled, ExitCode::Failure},
+            std::pair{AutomationErrorKind::IoFailure, ExitCode::Failure},
         };
 
         for (auto const& [kind, code] : cases)
         {
             CHECK(exitCodeForError(errorOfKind(kind), false) == code);
-        }
-    }
-
-    TEST_CASE("exitCodeForError reports cancellation when a stop was requested")
-    {
-        // A Ctrl-C during a blocked capture surfaces as the capture failure, but
-        // the operator's stop intent takes precedence in the reported exit code.
-        auto constexpr kinds = std::array{
-            AutomationErrorKind::CaptureStalled,
-            AutomationErrorKind::Timeout,
-            AutomationErrorKind::IoFailure,
-        };
-
-        for (auto const kind : kinds)
-        {
-            CHECK(exitCodeForError(errorOfKind(kind), true) == ExitCode::Cancelled);
-        }
-    }
-
-    TEST_CASE("exitCodeForReport maps every run outcome to its process exit code")
-    {
-        // A started run reports through this function alone, so every way a run
-        // can end has to land on a documented code here.
-        SUBCASE("a completed run succeeds")
-        {
-            CHECK(
-                exitCodeForReport(task::TaskRunReport{.taskName = "daily"}, false)
-                == ExitCode::Success
-            );
+            CHECK(exitCodeForTaskReport(reportFailedWith(kind), false) == code);
         }
 
-        SUBCASE("a cancelled run reports the cancellation code")
-        {
-            CHECK(
-                exitCodeForReport(
-                    reportFailedWith(AutomationErrorKind::Cancelled),
-                    false
-                )
-                == ExitCode::Cancelled
-            );
-        }
-
-        SUBCASE("a failed run reports its own kind's code")
-        {
-            auto constexpr cases = std::array{
-                std::pair{AutomationErrorKind::Timeout, ExitCode::Timeout},
-                std::pair{
-                    AutomationErrorKind::TargetCompatibilityUnverified,
-                    ExitCode::TargetCompatibilityUnverified,
-                },
-                std::pair{AutomationErrorKind::CaptureStalled, ExitCode::Failure},
-                std::pair{AutomationErrorKind::IoFailure, ExitCode::Failure},
-                std::pair{
-                    AutomationErrorKind::InternalInvariant,
-                    ExitCode::Failure,
-                },
-            };
-
-            for (auto const& [kind, code] : cases)
-            {
-                CHECK(exitCodeForReport(reportFailedWith(kind), false) == code);
-            }
-        }
-
-        SUBCASE("a requested stop takes precedence over the failure's own code")
-        {
-            CHECK(
-                exitCodeForReport(
-                    reportFailedWith(AutomationErrorKind::CaptureStalled),
-                    true
-                )
-                == ExitCode::Cancelled
-            );
-        }
-
-        SUBCASE("a run that completed as a stop arrived still succeeds")
-        {
-            CHECK(
-                exitCodeForReport(task::TaskRunReport{.taskName = "daily"}, true)
-                == ExitCode::Success
-            );
-        }
+        CHECK(
+            exitCodeForError(
+                errorOfKind(AutomationErrorKind::CaptureStalled),
+                true
+            )
+            == ExitCode::Cancelled
+        );
+        CHECK(
+            exitCodeForTaskReport(task::TaskRunReport{}, false)
+            == ExitCode::Success
+        );
     }
 }

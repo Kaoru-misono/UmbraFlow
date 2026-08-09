@@ -3,14 +3,13 @@
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/numeric/checked-cast.hpp>
+#include <core/text/json-text.hpp>
 #include <core/text/utf8.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
 
 #include <script/engine.hpp>
-
-#include <trace/json-text.hpp>
 
 #include <cmath>
 #include <cstddef>
@@ -37,7 +36,7 @@ namespace uf::cli
         // which combination named a command -- because sharing would have meant a
         // reader parameterised by a field table. What IS shared is the half where
         // a difference would silently corrupt a file rather than fail:
-        // escapeJsonString, in trace/json-text.hpp.
+        // appendJsonString, in core/text/json-text.hpp.
         class LineReader final
         {
             std::string_view m_source;
@@ -391,7 +390,7 @@ namespace uf::cli
     auto serializeExploreResult(ExploreResult const& result) -> std::string
     {
         auto line = std::string{"{\"id\":"};
-        line += trace::escapeJsonString(result.id);
+        appendJsonString(line, result.id);
         line += result.ok ? ",\"ok\":true" : ",\"ok\":false";
 
         if (result.boolean.has_value())
@@ -408,17 +407,17 @@ namespace uf::cli
         if (result.text.has_value())
         {
             line += ",\"value\":";
-            line += trace::escapeJsonString(*result.text);
+            appendJsonString(line, *result.text);
         }
         if (result.errorKind.has_value())
         {
             line += ",\"error\":";
-            line += trace::escapeJsonString(*result.errorKind);
+            appendJsonString(line, *result.errorKind);
         }
         if (result.message.has_value())
         {
             line += ",\"message\":";
-            line += trace::escapeJsonString(*result.message);
+            appendJsonString(line, *result.message);
         }
         if (result.heap.has_value())
         {

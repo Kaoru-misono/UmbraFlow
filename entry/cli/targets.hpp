@@ -29,7 +29,7 @@ namespace uf::cli
     };
 
     // Implemented per host: Windows enumerates the desktop, every other host
-    // reports the path as unsupported, as `run` and `explore` do.
+    // reports the path as unsupported, as `explore` does.
     [[nodiscard]] auto targetsProduct() -> Result<std::vector<TargetListing>>;
 
     // Separate from the enumeration so the shape an operator and a script both

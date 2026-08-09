@@ -19,22 +19,20 @@ namespace uf::cli
     {
         // First, before anything observable exists: the cursor decides whether chunks
         // already in the queue have run, so a session that bound a target before
-        // reading it could re-deliver clicks the agent never asked for twice.
+        // reading it could repeat an authoring write the agent sent only once.
         UF_TRY_VALUE(paths, validateExploreIpcPaths(args));
 
         UF_TRY_VALUE(cancellation, platform::ConsoleCancellation::install());
 
         // Before the project is loaded, because an authoring session's first write
         // would otherwise find the directory missing and the store it writes through
-        // will not create one (see project-skeleton.hpp). Only `explore` does this:
-        // run, check and replay all READ a project somebody already authored, so
-        // a missing directory there is evidence about that project.
+        // will not create one (see project-skeleton.hpp).
         UF_TRY(ensureProjectSkeleton(args.project));
 
         auto host = task::TaskHost{};
         UF_TRY_VALUE(
             generation,
-            host.loadProject(
+            host.openAnnotationProject(
                 args.project,
                 task::TaskHostConfig{
                     .externalCancellation = cancellation.token(),
@@ -42,16 +40,15 @@ namespace uf::cli
             )
         );
 
-        // Before the target, as `run` orders it: a model directory that
-        // will not build an engine must fail before any window is enumerated.
+        // A model directory that will not build an engine must fail before any
+        // window is enumerated.
         UF_TRY_VALUE(ocrEngine, platform::bindOcrEngine(args.ocrModels));
 
         UF_TRY_VALUE(bound, platform::bindTarget(WindowHandle{args.windowHandle}));
 
         // Every bound below is the same field with the same default the other
-        // front-ends pass. startExplorationSession latches the generation's
-        // front-end claim, so a generation a task run or a framework routine
-        // already claimed refuses here.
+        // front-ends pass. startExplorationSession latches the Annotation claim,
+        // so a Runtime generation or an already claimed generation refuses here.
         UF_TRY_VALUE(
             session,
             host.startExplorationSession(
@@ -70,5 +67,10 @@ namespace uf::cli
         );
 
         return exploreSession(*session, args, paths, cancellation.token());
+    }
+
+    auto exploreCancellationRequested() noexcept -> bool
+    {
+        return platform::ConsoleCancellation::stopRequested();
     }
 }

@@ -29,8 +29,7 @@ namespace uf::cli::platform
     // is still there and still capturable -- builds the
     // live fingerprint from the resolved geometry, and wires the capture session
     // and the delivery target into the two engine ports. This is the whole of what
-    // a front-end contributes below the capability surface, and `run` and
-    // `explore` share it so the agent path cannot run under different guarantees
-    // from the task path.
+    // the privileged exploration front end contributes below the capability
+    // surface.
     [[nodiscard]] auto bindTarget(WindowHandle window) -> Result<BoundTarget>;
 }

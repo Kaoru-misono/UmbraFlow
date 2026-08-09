@@ -10,7 +10,7 @@ namespace uf::cli
 {
     // Enumerating the desktop goes through the controller module, which only
     // builds on Windows. Every other host keeps the binary buildable and reports
-    // the listing as unsupported rather than failing to link, as `run` does.
+    // the listing as unsupported rather than failing to link.
     auto targetsProduct() -> Result<std::vector<TargetListing>>
     {
         return fail(
