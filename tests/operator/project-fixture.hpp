@@ -3,6 +3,7 @@
 #include <operator/journal-entry.hpp>
 #include <operator/manifest.hpp>
 #include <operator/project-plugin.hpp>
+#include <operator/reconcile-outcome.hpp>
 #include <operator/runtime-installation.hpp>
 #include <operator/tool-invocation.hpp>
 
@@ -32,6 +33,7 @@ namespace uf::operator_runtime::test_support
         ProjectSchemaOwner            schemaOwner;
         ProjectJournalSchemaOwner     journalSchemaOwner;
         ProjectToolCatalogSchemaOwner toolCatalogSchemaOwner;
+        ProjectReconcileSchemaOwner   reconcileSchemaOwner;
 
         // The exact bytes the document validator last saw as a Reduce input.
         // The fixture records them because the property under test is that the
@@ -188,8 +190,11 @@ namespace uf::operator_runtime::test_support
             {
                 constexpr auto accepted = std::array{
                     std::string_view{"{}"},
+                    std::string_view{"{\"disposition\":\"ambiguous\"}"},
                     std::string_view{"{\"disposition\":\"confirmed\"}"},
                     std::string_view{"{\"disposition\":\"continue\"}"},
+                    std::string_view{"{\"disposition\":\"diverged\"}"},
+                    std::string_view{"{\"disposition\":\"rejected\"}"},
                     std::string_view{"{\"journal_events\":[],\"prior_project_state\":null}"},
                     std::string_view{"{\"journal_events\":[],\"prior_project_state\":{\"revision\":0}}"},
                     std::string_view{"{\"kind\":\"baseline\"}"},
@@ -227,8 +232,8 @@ namespace uf::operator_runtime::test_support
                         valid = looksLikeReduceEnvelope(exactJcs);
                         break;
                     case ProjectPluginFunction::Reconcile:
-                        valid = exactJcs == "{\"disposition\":\"continue\"}"
-                            || exactJcs == "{\"disposition\":\"confirmed\"}";
+                        valid = exactJcs.starts_with("{\"disposition\":\"")
+                            && exactJcs.ends_with("\"}");
                         break;
                     case ProjectPluginFunction::Derive:
                     case ProjectPluginFunction::Plan:
@@ -245,8 +250,8 @@ namespace uf::operator_runtime::test_support
                         valid = exactJcs == "{\"revision\":0}";
                         break;
                     case ProjectPluginFunction::Reconcile:
-                        valid = exactJcs == "{\"disposition\":\"continue\"}"
-                            || exactJcs == "{\"disposition\":\"confirmed\"}";
+                        valid = exactJcs.starts_with("{\"disposition\":\"")
+                            && exactJcs.ends_with("\"}");
                         break;
                     case ProjectPluginFunction::Derive:
                     case ProjectPluginFunction::Plan:
@@ -269,6 +274,7 @@ namespace uf::operator_runtime::test_support
 
         auto journalSchemaOwner = ProjectJournalSchemaOwner::create(
             *registration,
+            "journal",
             [](std::string_view eventType,
                std::string_view payload) -> Result<ContentHash>
             {
@@ -404,11 +410,63 @@ namespace uf::operator_runtime::test_support
         );
         REQUIRE(toolCatalogSchemaOwner.has_value());
 
+        auto reconcileSchemaOwner = ProjectReconcileSchemaOwner::create(
+            *registration,
+            "reconcile",
+            [](std::string_view exactJcs) -> Result<ReconcileDisposition>
+            {
+                struct DispositionCase final
+                {
+                    std::string_view     document{};
+                    ReconcileDisposition disposition{ReconcileDisposition::Ambiguous};
+                };
+                constexpr auto cases = std::array{
+                    DispositionCase{
+                        .document    = "{\"disposition\":\"continue\"}",
+                        .disposition = ReconcileDisposition::Continue,
+                    },
+                    DispositionCase{
+                        .document    = "{\"disposition\":\"confirmed\"}",
+                        .disposition = ReconcileDisposition::Confirmed,
+                    },
+                    DispositionCase{
+                        .document    = "{\"disposition\":\"rejected\"}",
+                        .disposition = ReconcileDisposition::Rejected,
+                    },
+                    DispositionCase{
+                        .document    = "{\"disposition\":\"ambiguous\"}",
+                        .disposition = ReconcileDisposition::Ambiguous,
+                    },
+                    DispositionCase{
+                        .document    = "{\"disposition\":\"diverged\"}",
+                        .disposition = ReconcileDisposition::Diverged,
+                    },
+                };
+                auto const found = std::ranges::find_if(
+                    cases,
+                    [exactJcs](DispositionCase const& candidate)
+                    {
+                        return candidate.document == exactJcs;
+                    }
+                );
+                if (found == cases.end())
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "fixture reconcile output carries no known disposition"
+                    );
+                }
+                return found->disposition;
+            }
+        );
+        REQUIRE(reconcileSchemaOwner.has_value());
+
         return ProjectFixture{
             .registration           = *registration,
             .schemaOwner            = *schemaOwner,
             .journalSchemaOwner     = *journalSchemaOwner,
             .toolCatalogSchemaOwner = *toolCatalogSchemaOwner,
+            .reconcileSchemaOwner   = *reconcileSchemaOwner,
             .lastReduceInput        = std::move(lastReduceInput),
         };
     }
@@ -439,6 +497,24 @@ namespace uf::operator_runtime::test_support
         );
         REQUIRE(result.has_value());
         return *result;
+    }
+
+    // Runs the plugin's reconcile and reads its conclusion through the
+    // authority, which is the only way a ReconciliationCommit can name one.
+    [[nodiscard]]
+    inline auto reconcileOutcome(
+        ProjectFixture const& project,
+        ProjectPluginHandle const& plugin,
+        std::string document
+    ) -> ValidatedReconcileOutcome
+    {
+        auto proposal = plugin.reconcile(
+            canonical(project.schemaOwner, std::move(document))
+        );
+        REQUIRE(proposal.has_value());
+        auto outcome = project.reconcileSchemaOwner.validate(*std::move(proposal));
+        REQUIRE(outcome.has_value());
+        return *outcome;
     }
 
     [[nodiscard]]

@@ -265,16 +265,16 @@ return {
         }
 
         [[nodiscard]]
-        auto reconciliationProposal(
+        auto reconciliationOutcome(
             PreparedStore const& prepared,
-            std::string value
-        ) -> ValidatedDocument
+            std::string document
+        ) -> ValidatedReconcileOutcome
         {
-            auto result = prepared.plugin.reconcile(
-                canonical(prepared.project.schemaOwner, std::move(value))
+            return test_support::reconcileOutcome(
+                prepared.project,
+                prepared.plugin,
+                std::move(document)
             );
-            REQUIRE(result.has_value());
-            return *result;
         }
 
         [[nodiscard]]
@@ -560,11 +560,7 @@ return {
                 .operationId                  = operation.operationId,
                 .expectedOperationRevision    = reconciling->revision,
                 .expectedProjectStateRevision = 0U,
-                .disposition                  = ReconcileDisposition::Continue,
-                .proposal = reconciliationProposal(
-                    prepared,
-                    "{\"disposition\":\"continue\"}"
-                ),
+                .outcome                      = reconciliationOutcome(prepared, "{\"disposition\":\"continue\"}"),
                 .journalEvents                = {
                     JournalAppend{
                         .eventId = "event-1",
@@ -586,11 +582,7 @@ return {
                 .operationId                  = operation.operationId,
                 .expectedOperationRevision    = progress->revision,
                 .expectedProjectStateRevision = 0U,
-                .disposition                  = ReconcileDisposition::Confirmed,
-                .proposal = reconciliationProposal(
-                    prepared,
-                    "{\"disposition\":\"confirmed\"}"
-                ),
+                .outcome                      = reconciliationOutcome(prepared, "{\"disposition\":\"confirmed\"}"),
                 .journalEvents                = {
                     JournalAppend{
                         .eventId = "event-stale",
@@ -610,11 +602,7 @@ return {
                 .operationId                  = operation.operationId,
                 .expectedOperationRevision    = progress->revision,
                 .expectedProjectStateRevision = 1U,
-                .disposition                  = ReconcileDisposition::Confirmed,
-                .proposal = reconciliationProposal(
-                    prepared,
-                    "{\"disposition\":\"confirmed\"}"
-                ),
+                .outcome                      = reconciliationOutcome(prepared, "{\"disposition\":\"confirmed\"}"),
                 .journalEvents                = {
                     JournalAppend{
                         .eventId = "event-2",
@@ -642,11 +630,7 @@ return {
                 .operationId                  = operation.operationId,
                 .expectedOperationRevision    = progress->revision,
                 .expectedProjectStateRevision = 1U,
-                .disposition                  = ReconcileDisposition::Confirmed,
-                .proposal = reconciliationProposal(
-                    prepared,
-                    "{\"disposition\":\"confirmed\"}"
-                ),
+                .outcome                      = reconciliationOutcome(prepared, "{\"disposition\":\"confirmed\"}"),
                 .journalEvents                = {
                     JournalAppend{
                         .eventId = "event-2",

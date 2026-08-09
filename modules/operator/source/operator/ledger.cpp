@@ -3205,7 +3205,7 @@ namespace uf::operator_runtime
     {
         UF_TRY(requireName(commit.operationId, "operation_id"));
         if (
-            commit.disposition == ReconcileDisposition::Diverged
+            commit.outcome.disposition() == ReconcileDisposition::Diverged
             && commit.journalEvents.empty()
         )
         {
@@ -3216,8 +3216,8 @@ namespace uf::operator_runtime
         }
         if (
             (
-                commit.disposition == ReconcileDisposition::Rejected
-                || commit.disposition == ReconcileDisposition::Ambiguous
+                commit.outcome.disposition() == ReconcileDisposition::Rejected
+                || commit.outcome.disposition() == ReconcileDisposition::Ambiguous
             )
             && !commit.journalEvents.empty()
         )
@@ -3307,16 +3307,14 @@ namespace uf::operator_runtime
                 "Reconciliation ProjectPlugin does not match the Operation"
             );
         }
-        if (
-            commit.proposal.projectRegistrationHash()
-                != plugin.projectRegistrationHash()
-            || commit.proposal.function() != ProjectPluginFunction::Reconcile
-            || commit.proposal.direction() != ProjectDocumentDirection::Output
-        )
+        // The outcome carries the registration its authority was bound to, so
+        // asking it rather than only its document also pins which reconcile
+        // schema read the disposition.
+        if (commit.outcome.projectRegistrationHash() != plugin.projectRegistrationHash())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "Reconciliation proposal is not the pinned ProjectPlugin output"
+                "Reconciliation outcome was minted for a different ProjectRegistration"
             );
         }
 
@@ -3343,7 +3341,7 @@ namespace uf::operator_runtime
         // Rejected is not enough, because an earlier Continue on the same
         // Operation may already have committed one; the Journal it wrote is
         // where the proof lives, so that is what is asked.
-        if (commit.disposition == ReconcileDisposition::Rejected)
+        if (commit.outcome.disposition() == ReconcileDisposition::Rejected)
         {
             UF_TRY_VALUE(
                 effectQuery,
@@ -3580,19 +3578,19 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             reconciliationInsert.get(),
             2,
-            reconciliationWireName(commit.disposition)
+            reconciliationWireName(commit.outcome.disposition())
         ));
         UF_TRY(bindText(
             m_impl->database.get(),
             reconciliationInsert.get(),
             3,
-            commit.proposal.contentHash().hex()
+            commit.outcome.proposal().contentHash().hex()
         ));
         UF_TRY(bindText(
             m_impl->database.get(),
             reconciliationInsert.get(),
             4,
-            commit.proposal.bytes()
+            commit.outcome.proposal().bytes()
         ));
         UF_TRY(expectDone(m_impl->database.get(), reconciliationInsert.get()));
 
@@ -3600,7 +3598,7 @@ namespace uf::operator_runtime
             nextOperationRevision,
             checkedSqlIncrement(operationRevision, "Operation revision")
         );
-        auto const nextState = operationStateFor(commit.disposition);
+        auto const nextState = operationStateFor(commit.outcome.disposition());
         UF_TRY_VALUE(
             operationUpdate,
             prepare(

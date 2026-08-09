@@ -1,8 +1,11 @@
 #include "journal-entry.hpp"
 
+#include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace uf::operator_runtime
@@ -64,6 +67,7 @@ namespace uf::operator_runtime
 
     auto ProjectJournalSchemaOwner::create(
         VerifiedProjectRegistration const& registration,
+        std::string_view exactJournalSchemaManifestBytes,
         JournalPayloadSchemaValidator validatePayload,
         JournalProvenanceValidator validateProvenance
     ) -> Result<ProjectJournalSchemaOwner>
@@ -73,6 +77,18 @@ namespace uf::operator_runtime
             return fail(
                 AutomationErrorKind::InvalidResource,
                 "ProjectJournalSchemaOwner requires payload and provenance validators"
+            );
+        }
+        UF_TRY_VALUE(
+            manifestHash,
+            sha256(std::as_bytes(std::span{exactJournalSchemaManifestBytes}))
+        );
+        if (manifestHash != registration.journalEventSchemaManifestHash())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "journal event schema manifest bytes do not match the "
+                "registration's journal_event_schema_manifest_hash"
             );
         }
         return ProjectJournalSchemaOwner{

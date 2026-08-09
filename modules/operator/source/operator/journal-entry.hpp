@@ -79,9 +79,14 @@ namespace uf::operator_runtime
         );
 
     public:
+        // The exact journal event schema manifest bytes are required so the
+        // payload validator provably answers for the manifest this
+        // registration named; without them the recorded payload_schema_hash is
+        // whatever an arbitrary validator chose to return.
         [[nodiscard]]
         static auto create(
             VerifiedProjectRegistration const& registration,
+            std::string_view exactJournalSchemaManifestBytes,
             JournalPayloadSchemaValidator validatePayload,
             JournalProvenanceValidator validateProvenance
         ) -> Result<ProjectJournalSchemaOwner>;

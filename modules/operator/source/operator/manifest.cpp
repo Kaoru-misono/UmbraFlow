@@ -229,6 +229,35 @@ namespace uf::operator_runtime
         return m_claims.toolCatalogHash;
     }
 
+    auto VerifiedProjectRegistration::manifestSchemaHash() const -> ContentHash
+    {
+        return m_claims.manifestSchemaHash;
+    }
+
+    auto VerifiedProjectRegistration::projectObservationSchemaHash() const
+        -> ContentHash
+    {
+        return m_claims.projectObservationSchemaHash;
+    }
+
+    auto VerifiedProjectRegistration::projectToolPreconditionSchemaHash() const
+        -> ContentHash
+    {
+        return m_claims.projectToolPreconditionSchemaHash;
+    }
+
+    auto VerifiedProjectRegistration::reconcilePayloadSchemaManifestHash() const
+        -> ContentHash
+    {
+        return m_claims.reconcilePayloadSchemaManifestHash;
+    }
+
+    auto VerifiedProjectRegistration::journalEventSchemaManifestHash() const
+        -> ContentHash
+    {
+        return m_claims.journalEventSchemaManifestHash;
+    }
+
     auto VerifiedProjectRegistration::baselineEventType() const -> std::string
     {
         return m_claims.baselineEventType;

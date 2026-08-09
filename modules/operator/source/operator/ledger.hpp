@@ -4,6 +4,7 @@
 #include "manifest.hpp"
 #include "operation.hpp"
 #include "project-plugin.hpp"
+#include "reconcile-outcome.hpp"
 #include "tool-invocation.hpp"
 
 #include <task/page-model-file.hpp>
@@ -143,25 +144,17 @@ namespace uf::operator_runtime
         ValidatedJournalEntryData entry;
     };
 
-    // What a reconciliation concluded about the step that was dispatched.
-    // Ambiguous is the default because an unset disposition means the outcome
-    // was never established, which is exactly what Ambiguous records.
-    enum class ReconcileDisposition : uint8
-    {
-        Continue,
-        Confirmed,
-        Rejected,
-        Ambiguous,
-        Diverged,
-    };
-
     struct ReconciliationCommit final
     {
-        std::string          operationId{};
-        uint64               expectedOperationRevision{};
-        uint64               expectedProjectStateRevision{};
-        ReconcileDisposition disposition{ReconcileDisposition::Ambiguous};
-        ValidatedDocument    proposal;
+        std::string operationId{};
+        uint64      expectedOperationRevision{};
+        uint64      expectedProjectStateRevision{};
+
+        // The reconcile output and the disposition read out of it by the
+        // authority bound to this registration. They travel together because
+        // they are one conclusion: a separate caller-set disposition would let
+        // a proposal that concluded Rejected be committed as Confirmed.
+        ValidatedReconcileOutcome outcome;
 
         // The events this reconciliation appends to the Project Journal. There
         // is deliberately no reducer input beside them: the Operator derives

@@ -95,6 +95,16 @@ namespace uf::operator_runtime
         [[nodiscard]] auto pluginHash() const -> ContentHash;
         [[nodiscard]] auto projectStateSchemaHash() const -> ContentHash;
         [[nodiscard]] auto toolCatalogHash() const -> ContentHash;
+
+        // Each schema-owning authority is bound to the exact bytes the
+        // registration names here, so that an owner cannot answer for a schema
+        // this registration never pinned.
+        [[nodiscard]] auto manifestSchemaHash() const -> ContentHash;
+        [[nodiscard]] auto projectObservationSchemaHash() const -> ContentHash;
+        [[nodiscard]] auto projectToolPreconditionSchemaHash() const -> ContentHash;
+        [[nodiscard]] auto reconcilePayloadSchemaManifestHash() const -> ContentHash;
+        [[nodiscard]] auto journalEventSchemaManifestHash() const -> ContentHash;
+
         [[nodiscard]] auto baselineEventType() const -> std::string;
 
         [[nodiscard]]

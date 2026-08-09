@@ -55,6 +55,19 @@ return {
 }
 )LUAU"};
 
+        // Same shape, different plugin_id, so it can be both registered and
+        // loaded under fixture.foreign.
+        constexpr auto k_foreignPluginSource = std::string_view{R"LUAU(
+return {
+    plugin_id = "fixture.foreign",
+    derive = function(_input) return '{}' end,
+    plan = function(_input) return '{}' end,
+    next_step = function(_input) return '{}' end,
+    reconcile = function(input) return input end,
+    reduce = function(_input) return '{"revision":0}' end,
+}
+)LUAU"};
+
         class TemporaryDirectory final
         {
             std::filesystem::path m_path{};
@@ -211,16 +224,16 @@ return {
         }
 
         [[nodiscard]]
-        auto reconciliationProposal(
+        auto reconciliationOutcome(
             PreparedStore const& prepared,
-            std::string value
-        ) -> ValidatedDocument
+            std::string document
+        ) -> ValidatedReconcileOutcome
         {
-            auto result = prepared.plugin.reconcile(
-                canonical(prepared.project.schemaOwner, std::move(value))
+            return test_support::reconcileOutcome(
+                prepared.project,
+                prepared.plugin,
+                std::move(document)
             );
-            REQUIRE(result.has_value());
-            return *result;
         }
 
         [[nodiscard]]
@@ -520,11 +533,7 @@ return {
                 .operationId = operation->operationId,
                 .expectedOperationRevision = reconciles->revision,
                 .expectedProjectStateRevision = 0U,
-                .disposition                  = ReconcileDisposition::Confirmed,
-                .proposal = reconciliationProposal(
-                    prepared,
-                    "{\"disposition\":\"confirmed\"}"
-                ),
+                .outcome                      = reconciliationOutcome(prepared, "{\"disposition\":\"confirmed\"}"),
                 .journalEvents = {
                     JournalAppend{
                         .eventId = "event-foreign",
@@ -544,11 +553,7 @@ return {
                 .operationId = operation->operationId,
                 .expectedOperationRevision = reconciles->revision,
                 .expectedProjectStateRevision = 0U,
-                .disposition                  = ReconcileDisposition::Confirmed,
-                .proposal = reconciliationProposal(
-                    prepared,
-                    "{\"disposition\":\"confirmed\"}"
-                ),
+                .outcome                      = reconciliationOutcome(prepared, "{\"disposition\":\"confirmed\"}"),
                 .journalEvents = {
                     JournalAppend{
                         .eventId = "event-1",
@@ -622,11 +627,7 @@ return {
                 .operationId                  = operation.operationId,
                 .expectedOperationRevision    = operation.revision,
                 .expectedProjectStateRevision = expectedProjectStateRevision,
-                .disposition                  = ReconcileDisposition::Confirmed,
-                .proposal                     = reconciliationProposal(
-                    prepared,
-                    "{\"disposition\":\"confirmed\"}"
-                ),
+                .outcome                      = reconciliationOutcome(prepared, "{\"disposition\":\"confirmed\"}"),
                 .journalEvents = {
                     JournalAppend{
                         .eventId = std::move(eventId),
@@ -705,13 +706,13 @@ return {
         auto prepared  = prepareStore(temporary.path());
         auto const operation = reconcilingOperation(prepared, "request-1", "command-1");
 
-        for (auto const disposition : {
-                 ReconcileDisposition::Rejected,
-                 ReconcileDisposition::Ambiguous,
+        for (auto const document : {
+                 std::string_view{"{\"disposition\":\"rejected\"}"},
+                 std::string_view{"{\"disposition\":\"ambiguous\"}"},
              })
         {
-            auto commit        = confirmedCommit(prepared, operation, 0U, "event-1", "{\"value\":1}");
-            commit.disposition = disposition;
+            auto commit    = confirmedCommit(prepared, operation, 0U, "event-1", "{\"value\":1}");
+            commit.outcome = reconciliationOutcome(prepared, std::string{document});
             CHECK_FALSE(
                 prepared.store.commitReconciliation(prepared.plugin, commit).has_value()
             );
@@ -720,9 +721,79 @@ return {
         // Diverged is the mirror image: it may not claim a correction without
         // recording one.
         auto empty          = confirmedCommit(prepared, operation, 0U, "event-1", "{\"value\":1}");
-        empty.disposition   = ReconcileDisposition::Diverged;
+        empty.outcome       = reconciliationOutcome(prepared, "{\"disposition\":\"diverged\"}");
         empty.journalEvents = {};
         CHECK_FALSE(prepared.store.commitReconciliation(prepared.plugin, empty).has_value());
+    }
+
+    TEST_CASE("the reconciler owns the disposition, not the requester")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto const operation = reconcilingOperation(prepared, "request-1", "command-1");
+
+        // A proposal that concluded Rejected cannot be committed as anything
+        // else, because the disposition is read out of that document rather
+        // than supplied beside it.
+        auto rejected    = confirmedCommit(prepared, operation, 0U, "event-1", "{\"value\":1}");
+        rejected.outcome = reconciliationOutcome(prepared, "{\"disposition\":\"rejected\"}");
+        CHECK_FALSE(
+            prepared.store.commitReconciliation(prepared.plugin, rejected).has_value()
+        );
+
+        // An outcome minted against another registration is refused even though
+        // its document would be byte-identical.
+        auto const foreign = makeProject("fixture.foreign", k_foreignPluginSource);
+        auto foreignCommit = confirmedCommit(prepared, operation, 0U, "event-2", "{\"value\":1}");
+        foreignCommit.outcome = test_support::reconcileOutcome(
+            foreign,
+            loadPlugin(foreign, k_foreignPluginSource),
+            "{\"disposition\":\"confirmed\"}"
+        );
+        CHECK_FALSE(
+            prepared.store.commitReconciliation(prepared.plugin, foreignCommit).has_value()
+        );
+    }
+
+    TEST_CASE("a schema owner cannot answer for a schema its registration never named")
+    {
+        auto const project = makeProject("fixture.alpha", k_pluginSource);
+        auto const anything = [](std::string_view, std::string_view) -> Result<ToolDescriptor>
+        {
+            return ToolDescriptor{.toolVersion = "1", .mutability = ToolMutability::ReadOnly};
+        };
+
+        // Every authority takes the exact bytes it answers for; the hash in the
+        // registration is what decides, so a validator for some other catalog,
+        // journal or reconcile schema has nowhere to attach.
+        CHECK_FALSE(
+            ProjectToolCatalogSchemaOwner::create(
+                project.registration,
+                "not-the-catalogue",
+                anything
+            ).has_value()
+        );
+        CHECK_FALSE(
+            ProjectReconcileSchemaOwner::create(
+                project.registration,
+                "not-the-reconcile-manifest",
+                [](std::string_view) -> Result<ReconcileDisposition>
+                {
+                    return ReconcileDisposition::Confirmed;
+                }
+            ).has_value()
+        );
+        CHECK_FALSE(
+            ProjectJournalSchemaOwner::create(
+                project.registration,
+                "not-the-journal-manifest",
+                [](std::string_view, std::string_view) -> Result<ContentHash>
+                {
+                    return hashOf("anything");
+                },
+                [](std::string_view) -> Status { return ok(); }
+            ).has_value()
+        );
     }
 
     TEST_CASE("ApprovalToken is operation-bound and single-use")
