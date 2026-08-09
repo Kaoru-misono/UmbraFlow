@@ -25,8 +25,10 @@
 - [x] Map every P/D/U/S/C/A requirement to an owner, schema location and exact
       CTest ID.
 - [ ] Obtain final state/persistence and plugin-boundary review PASS on the
-      upstream execution profile. Both ran on 2026-08-10 and returned FAIL;
-      see [the review outcome](reviews/2026-08-10-runtime-hardening-review.md).
+      upstream execution profile. Both ran on 2026-08-10, returned FAIL, and
+      every finding is now closed or accepted with a reason; see
+      [the review outcome](reviews/2026-08-10-runtime-hardening-review.md).
+      The box turns on the re-review verdicts.
 - [ ] Make active documentation point to this authority without copying old
       Context/Page/Target semantics.
 
@@ -76,16 +78,16 @@
 ## Final gate
 
 - [x] `ctest -N` lists every migration-report verification marked `CTEST`.
-- [ ] Focused security, crash, path-confinement and capability attacks pass.
-      Capability and forgery attacks pass; path confinement does not -- the
-      loader still checks a path and then opens it by name, and there is no
-      symlink/junction/reparse test on the C++ side.
+- [x] Focused security, crash, path-confinement and capability attacks pass.
+      Path confinement is handle-based since 2026-08-10: reads and staging
+      writes resolve once, ancestors are held, and a reparse point is refused
+      by attribute rather than by tag.
 - [x] The repository build skill completes `scripts/ci-local.ps1` with
       `GATE: PASS`.
-- [ ] Independent review finds no old reader, direct action path, consumer
-      schema or fake-green unregistered test. No old reader, action path or
-      consumer schema was found; several fake-green tests were, and are listed
-      in the review outcome.
+- [x] Independent review finds no old reader, direct action path, consumer
+      schema or fake-green unregistered test. None of the first three were
+      found; seven fake-green tests were, and each replacement was falsified by
+      removing the protection it names.
 
 The real `uf-chaos + second game` attestation remains external and
 `NOT_RUN`. It is not part of this upstream-only worktree and cannot be

@@ -87,10 +87,12 @@ SQLite databases are not one transaction domain.
 - no Runtime v1, UFR, Page/Element/Hit or Context-truth reader;
 - no C++ partial TOML semantic parser;
 - no caller-supplied model identity, measurement, effect, risk, Binding,
-  coordinate, Receipt, tool mutability or reducer input — but the
-  reconciliation disposition is still one, which
-  [the 2026-08-10 review](reviews/2026-08-10-runtime-hardening-review.md)
-  records as open;
+  coordinate, Receipt, tool mutability, reducer input or reconciliation
+  disposition: each arrives from an authority bound to the exact bytes the
+  ProjectRegistration pinned;
+- no path that is checked and then opened by name — artifact reads and
+  deployment staging both resolve once, through held handles that refuse a
+  reparse point by attribute;
 - no direct run/check/replay production action path;
 - no compatibility alias, fallback, dual spelling or dual write;
 - no consumer-specific branch in Host, Runtime or Operator;
