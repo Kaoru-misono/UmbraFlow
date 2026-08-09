@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbraflow.local/schema/project-registration-v1",
+  "title": "Umbraflow ProjectRegistrationManifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_schema_hash",
+    "plugin_id",
+    "plugin_hash",
+    "tool_catalog_hash",
+    "project_state_schema_hash",
+    "project_observation_schema_hash",
+    "project_tool_precondition_schema_hash",
+    "reconcile_payload_schema_manifest_hash",
+    "journal_event_schema_manifest_hash",
+    "baseline_event_type",
+    "project_artifact_roots"
+  ],
+  "properties": {
+    "manifest_schema_hash": { "$ref": "#/$defs/hash" },
+    "plugin_id": { "$ref": "#/$defs/namespaced_name" },
+    "plugin_hash": { "$ref": "#/$defs/hash" },
+    "tool_catalog_hash": { "$ref": "#/$defs/hash" },
+    "project_state_schema_hash": { "$ref": "#/$defs/hash" },
+    "project_observation_schema_hash": { "$ref": "#/$defs/hash" },
+    "project_tool_precondition_schema_hash": { "$ref": "#/$defs/hash" },
+    "reconcile_payload_schema_manifest_hash": { "$ref": "#/$defs/hash" },
+    "journal_event_schema_manifest_hash": { "$ref": "#/$defs/hash" },
+    "baseline_event_type": { "$ref": "#/$defs/namespaced_name" },
+    "project_artifact_roots": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact_root" }
+    }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "root_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)*$"
+    },
+    "namespaced_name": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)+$"
+    },
+    "artifact_root": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "root_hash"],
+      "properties": {
+        "name": { "$ref": "#/$defs/root_name" },
+        "root_hash": { "$ref": "#/$defs/hash" }
+      }
+    }
+  }
+}

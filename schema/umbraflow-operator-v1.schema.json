@@ -1,0 +1,1179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbraflow.local/schema/operator-v1",
+  "title": "Umbraflow Operator protocol v1",
+  "oneOf": [
+    { "$ref": "#/$defs/OperatorSession" },
+    { "$ref": "#/$defs/ToolInvocation" },
+    { "$ref": "#/$defs/CommandRecord" },
+    { "$ref": "#/$defs/Operation" },
+    { "$ref": "#/$defs/ToolResult" },
+    { "$ref": "#/$defs/ReconcileProposal" }
+  ],
+  "$defs": {
+    "Hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "Identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "NamespacedIdentifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
+    },
+    "Risk": {
+      "enum": ["read_only", "low", "medium", "high", "critical"]
+    },
+    "CanonicalJsonValue": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "boolean" },
+        { "type": "number" },
+        { "type": "string" },
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CanonicalJsonValue" }
+        },
+        {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/CanonicalJsonValue" }
+        }
+      ]
+    },
+    "OpaqueProjectDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_hash", "content_hash", "canonical_opaque_payload"],
+      "properties": {
+        "schema_hash": { "$ref": "#/$defs/Hash" },
+        "content_hash": { "$ref": "#/$defs/Hash" },
+        "canonical_opaque_payload": { "$ref": "#/$defs/CanonicalJsonValue" }
+      }
+    },
+    "CanonicalDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_hash", "content_hash", "canonical_payload"],
+      "properties": {
+        "schema_hash": { "$ref": "#/$defs/Hash" },
+        "content_hash": { "$ref": "#/$defs/Hash" },
+        "canonical_payload": { "$ref": "#/$defs/CanonicalJsonValue" }
+      }
+    },
+    "SessionEpoch": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "FencingToken": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "SnapshotToken": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{32,128}$"
+    },
+    "ReceiptRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receipt_id"],
+      "properties": {
+        "receipt_id": { "$ref": "#/$defs/Identifier" }
+      }
+    },
+    "RuntimeModelBindingRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding_ref",
+        "controlled_target_id",
+        "target_generation",
+        "runtime_model_schema_hash",
+        "runtime_model_artifact_root_hash"
+      ],
+      "properties": {
+        "binding_ref": { "$ref": "#/$defs/Identifier" },
+        "controlled_target_id": { "$ref": "#/$defs/Identifier" },
+        "target_generation": { "type": "integer", "minimum": 1 },
+        "runtime_model_schema_hash": { "$ref": "#/$defs/Hash" },
+        "runtime_model_artifact_root_hash": { "$ref": "#/$defs/Hash" }
+      }
+    },
+    "ControllerCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability_id",
+        "allowed_operations",
+        "allowed_tools",
+        "allowed_effect_types",
+        "maximum_risk"
+      ],
+      "properties": {
+        "capability_id": { "$ref": "#/$defs/Identifier" },
+        "allowed_operations": {
+          "type": "array",
+          "items": {
+            "enum": ["read", "execute", "approve", "takeover", "recover"]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "allowed_tools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NamespacedIdentifier" },
+          "uniqueItems": true
+        },
+        "allowed_effect_types": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NamespacedIdentifier" },
+          "uniqueItems": true
+        },
+        "maximum_risk": { "$ref": "#/$defs/Risk" }
+      }
+    },
+    "SessionManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host_protocol_schema_hash",
+        "runtime_model_schema_hash",
+        "runtime_model_artifact_root_hash",
+        "operator_protocol_schema_hash",
+        "project_registration_hash",
+        "policy_artifact_hash",
+        "journal_envelope_schema_hash",
+        "agent_profile_hash"
+      ],
+      "properties": {
+        "host_protocol_schema_hash": { "$ref": "#/$defs/Hash" },
+        "runtime_model_schema_hash": { "$ref": "#/$defs/Hash" },
+        "runtime_model_artifact_root_hash": { "$ref": "#/$defs/Hash" },
+        "operator_protocol_schema_hash": { "$ref": "#/$defs/Hash" },
+        "project_registration_hash": { "$ref": "#/$defs/Hash" },
+        "policy_artifact_hash": { "$ref": "#/$defs/Hash" },
+        "journal_envelope_schema_hash": { "$ref": "#/$defs/Hash" },
+        "agent_profile_hash": { "$ref": "#/$defs/Hash" }
+      }
+    },
+    "OperatorSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "authenticated_controller_id",
+        "controlled_target_id",
+        "project_instance_key",
+        "project_registration_hash",
+        "session_manifest_hash",
+        "session_epoch",
+        "mode",
+        "capability_profile_hash"
+      ],
+      "properties": {
+        "session_id": { "$ref": "#/$defs/Identifier" },
+        "authenticated_controller_id": { "$ref": "#/$defs/Identifier" },
+        "controlled_target_id": { "$ref": "#/$defs/Identifier" },
+        "project_instance_key": { "$ref": "#/$defs/Identifier" },
+        "project_registration_hash": { "$ref": "#/$defs/Hash" },
+        "session_manifest_hash": { "$ref": "#/$defs/Hash" },
+        "session_epoch": { "$ref": "#/$defs/SessionEpoch" },
+        "mode": { "enum": ["read", "write"] },
+        "capability_profile_hash": { "$ref": "#/$defs/Hash" }
+      }
+    },
+    "ControlLease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lease_id",
+        "controlled_target_id",
+        "owner_id",
+        "mode",
+        "session_epoch",
+        "fencing_token",
+        "issued_at",
+        "capability_profile_hash",
+        "revision"
+      ],
+      "properties": {
+        "lease_id": { "$ref": "#/$defs/Identifier" },
+        "controlled_target_id": { "$ref": "#/$defs/Identifier" },
+        "owner_id": { "$ref": "#/$defs/Identifier" },
+        "mode": { "enum": ["read", "write"] },
+        "session_epoch": { "$ref": "#/$defs/SessionEpoch" },
+        "fencing_token": { "$ref": "#/$defs/FencingToken" },
+        "issued_at": { "type": "string", "format": "date-time" },
+        "capability_profile_hash": { "$ref": "#/$defs/Hash" },
+        "revision": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ControlTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transition_id",
+        "controlled_target_id",
+        "kind",
+        "actor_id",
+        "prior_lease_id",
+        "new_lease_id",
+        "session_epoch",
+        "fencing_token",
+        "reason",
+        "occurred_at"
+      ],
+      "properties": {
+        "transition_id": { "$ref": "#/$defs/Identifier" },
+        "controlled_target_id": { "$ref": "#/$defs/Identifier" },
+        "kind": { "enum": ["acquire", "release", "revoke", "takeover"] },
+        "actor_id": { "$ref": "#/$defs/Identifier" },
+        "prior_lease_id": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Identifier" }
+          ]
+        },
+        "new_lease_id": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Identifier" }
+          ]
+        },
+        "session_epoch": { "$ref": "#/$defs/SessionEpoch" },
+        "fencing_token": { "$ref": "#/$defs/FencingToken" },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "occurred_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ExternalInputFinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "finding_id",
+        "controlled_target_id",
+        "session_epoch",
+        "source",
+        "detected_after_cursor",
+        "invalidated_snapshot_revision",
+        "operation_id",
+        "required_action",
+        "occurred_at"
+      ],
+      "properties": {
+        "finding_id": { "$ref": "#/$defs/Identifier" },
+        "controlled_target_id": { "$ref": "#/$defs/Identifier" },
+        "session_epoch": { "$ref": "#/$defs/SessionEpoch" },
+        "source": { "enum": ["reported", "observed"] },
+        "detected_after_cursor": { "$ref": "#/$defs/SubscriptionCursor" },
+        "invalidated_snapshot_revision": { "type": "integer", "minimum": 0 },
+        "operation_id": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Identifier" }
+          ]
+        },
+        "required_action": { "enum": ["freeze_and_reobserve", "freeze_and_reconcile"] },
+        "occurred_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "SnapshotParts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_epoch",
+        "controlled_target_id",
+        "target_generation",
+        "observation_id",
+        "state_resolution_hash",
+        "project_observation_revision",
+        "project_observation_hash",
+        "project_instance_key",
+        "project_state_revision",
+        "project_state_hash",
+        "decision_basis_hash",
+        "session_manifest_hash",
+        "availability_revision",
+        "lease_id",
+        "fencing_token"
+      ],
+      "properties": {
+        "session_epoch": { "$ref": "#/$defs/SessionEpoch" },
+        "controlled_target_id": { "$ref": "#/$defs/Identifier" },
+        "target_generation": { "type": "integer", "minimum": 1 },
+        "observation_id": { "$ref": "#/$defs/Identifier" },
+        "state_resolution_hash": { "$ref": "#/$defs/Hash" },
+        "project_observation_revision": { "type": "integer", "minimum": 0 },
+        "project_observation_hash": { "$ref": "#/$defs/Hash" },
+        "project_instance_key": { "$ref": "#/$defs/Identifier" },
+        "project_state_revision": { "type": "integer", "minimum": 0 },
+        "project_state_hash": { "$ref": "#/$defs/Hash" },
+        "decision_basis_hash": { "$ref": "#/$defs/Hash" },
+        "session_manifest_hash": { "$ref": "#/$defs/Hash" },
+        "availability_revision": { "type": "integer", "minimum": 0 },
+        "lease_id": { "$ref": "#/$defs/Identifier" },
+        "fencing_token": { "$ref": "#/$defs/FencingToken" }
+      }
+    },
+    "SnapshotIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "token_id",
+        "session_id",
+        "snapshot_revision",
+        "session_epoch",
+        "controlled_target_id",
+        "target_generation",
+        "observation_id",
+        "state_resolution_hash",
+        "project_observation_revision",
+        "project_observation_hash",
+        "project_instance_key",
+        "project_state_revision",
+        "project_state_hash",
+        "decision_basis_hash",
+        "session_manifest_hash",
+        "availability_revision",
+        "lease_id",
+        "fencing_token"
+      ],
+      "properties": {
+        "token_id": { "$ref": "#/$defs/SnapshotToken" },
+        "session_id": { "$ref": "#/$defs/Identifier" },
+        "snapshot_revision": { "type": "integer", "minimum": 0 },
+        "session_epoch": { "$ref": "#/$defs/SessionEpoch" },
+        "controlled_target_id": { "$ref": "#/$defs/Identifier" },
+        "target_generation": { "type": "integer", "minimum": 1 },
+        "observation_id": { "$ref": "#/$defs/Identifier" },
+        "state_resolution_hash": { "$ref": "#/$defs/Hash" },
+        "project_observation_revision": { "type": "integer", "minimum": 0 },
+        "project_observation_hash": { "$ref": "#/$defs/Hash" },
+        "project_instance_key": { "$ref": "#/$defs/Identifier" },
+        "project_state_revision": { "type": "integer", "minimum": 0 },
+        "project_state_hash": { "$ref": "#/$defs/Hash" },
+        "decision_basis_hash": { "$ref": "#/$defs/Hash" },
+        "session_manifest_hash": { "$ref": "#/$defs/Hash" },
+        "availability_revision": { "type": "integer", "minimum": 0 },
+        "lease_id": { "$ref": "#/$defs/Identifier" },
+        "fencing_token": { "$ref": "#/$defs/FencingToken" }
+      }
+    },
+    "DecisionBasis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state_resolution_hash",
+        "project_observation_hash",
+        "project_state_hash",
+        "session_manifest_hash",
+        "decision_basis_hash"
+      ],
+      "properties": {
+        "state_resolution_hash": { "$ref": "#/$defs/Hash" },
+        "project_observation_hash": { "$ref": "#/$defs/Hash" },
+        "project_state_hash": { "$ref": "#/$defs/Hash" },
+        "session_manifest_hash": { "$ref": "#/$defs/Hash" },
+        "decision_basis_hash": { "$ref": "#/$defs/Hash" }
+      }
+    },
+    "ProjectSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity",
+        "token",
+        "ui_observation",
+        "project_observation",
+        "project_state",
+        "prior_project_observation",
+        "pending_operation_transition",
+        "pinned_project_artifact_identities",
+        "available_tools",
+        "event_cursor"
+      ],
+      "properties": {
+        "identity": { "$ref": "#/$defs/SnapshotIdentity" },
+        "token": { "$ref": "#/$defs/SnapshotToken" },
+        "ui_observation": { "$ref": "#/$defs/CanonicalDocument" },
+        "project_observation": { "$ref": "#/$defs/OpaqueProjectDocument" },
+        "project_state": { "$ref": "#/$defs/OpaqueProjectDocument" },
+        "prior_project_observation": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/OpaqueProjectDocument" }
+          ]
+        },
+        "pending_operation_transition": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/CanonicalJsonValue" }
+          ]
+        },
+        "pinned_project_artifact_identities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Hash" },
+          "uniqueItems": true
+        },
+        "available_tools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NamespacedIdentifier" },
+          "uniqueItems": true
+        },
+        "event_cursor": { "$ref": "#/$defs/SubscriptionCursor" }
+      }
+    },
+    "WorkflowLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maximum_steps",
+        "maximum_dispatches",
+        "maximum_observations",
+        "maximum_waits",
+        "maximum_elapsed_ms"
+      ],
+      "properties": {
+        "maximum_steps": { "type": "integer", "minimum": 0 },
+        "maximum_dispatches": { "type": "integer", "minimum": 0 },
+        "maximum_observations": { "type": "integer", "minimum": 1 },
+        "maximum_waits": { "type": "integer", "minimum": 0 },
+        "maximum_elapsed_ms": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ExpectedEffect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "namespaced_type",
+        "risk",
+        "scope_kind",
+        "scope_key",
+        "payload_schema_hash",
+        "opaque_project_payload"
+      ],
+      "properties": {
+        "namespaced_type": { "$ref": "#/$defs/NamespacedIdentifier" },
+        "risk": { "$ref": "#/$defs/Risk" },
+        "scope_kind": { "$ref": "#/$defs/Identifier" },
+        "scope_key": { "$ref": "#/$defs/Identifier" },
+        "payload_schema_hash": { "$ref": "#/$defs/Hash" },
+        "opaque_project_payload": { "$ref": "#/$defs/CanonicalJsonValue" }
+      }
+    },
+    "ObservedOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "namespaced_type",
+        "status",
+        "payload_schema_hash",
+        "opaque_project_payload",
+        "provenance_hash"
+      ],
+      "properties": {
+        "namespaced_type": { "$ref": "#/$defs/NamespacedIdentifier" },
+        "status": { "enum": ["confirmed", "not_observed", "ambiguous", "diverged"] },
+        "payload_schema_hash": { "$ref": "#/$defs/Hash" },
+        "opaque_project_payload": { "$ref": "#/$defs/CanonicalJsonValue" },
+        "provenance_hash": { "$ref": "#/$defs/Hash" }
+      }
+    },
+    "PlanProposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool_name",
+        "tool_version",
+        "canonical_args",
+        "effects",
+        "allowed_ui_actions",
+        "workflow_limits"
+      ],
+      "properties": {
+        "tool_name": { "$ref": "#/$defs/NamespacedIdentifier" },
+        "tool_version": { "$ref": "#/$defs/Identifier" },
+        "canonical_args": { "$ref": "#/$defs/CanonicalJsonValue" },
+        "effects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExpectedEffect" }
+        },
+        "allowed_ui_actions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NamespacedIdentifier" },
+          "uniqueItems": true
+        },
+        "workflow_limits": { "$ref": "#/$defs/WorkflowLimits" }
+      }
+    },
+    "EffectivePlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool_name",
+        "tool_version",
+        "canonical_args",
+        "command_fingerprint",
+        "project_registration_hash",
+        "decision_basis_hash",
+        "effective_effects",
+        "risk",
+        "allowed_ui_actions",
+        "workflow_limits",
+        "required_approvals",
+        "plan_hash"
+      ],
+      "properties": {
+        "tool_name": { "$ref": "#/$defs/NamespacedIdentifier" },
+        "tool_version": { "$ref": "#/$defs/Identifier" },
+        "canonical_args": { "$ref": "#/$defs/CanonicalJsonValue" },
+        "command_fingerprint": { "$ref": "#/$defs/Hash" },
+        "project_registration_hash": { "$ref": "#/$defs/Hash" },
+        "decision_basis_hash": { "$ref": "#/$defs/Hash" },
+        "effective_effects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExpectedEffect" }
+        },
+        "risk": { "$ref": "#/$defs/Risk" },
+        "allowed_ui_actions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NamespacedIdentifier" },
+          "uniqueItems": true
+        },
+        "workflow_limits": { "$ref": "#/$defs/WorkflowLimits" },
+        "required_approvals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Identifier" },
+          "uniqueItems": true
+        },
+        "plan_hash": { "$ref": "#/$defs/Hash" }
+      }
+    },
+    "TimeoutPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximum_elapsed_ms", "on_timeout"],
+      "properties": {
+        "maximum_elapsed_ms": { "type": "integer", "minimum": 1 },
+        "on_timeout": { "enum": ["reobserve", "reconcile", "stop"] }
+      }
+    },
+    "UIActionIntent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step_key",
+        "action",
+        "required_ui_preconditions",
+        "binding_variant_constraints",
+        "expected_ui_postconditions",
+        "delivery_class",
+        "timeout_policy"
+      ],
+      "properties": {
+        "step_key": { "$ref": "#/$defs/Identifier" },
+        "action": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["surface_id", "ui_target_id", "action_id", "canonical_parameters"],
+          "properties": {
+            "surface_id": { "$ref": "#/$defs/Identifier" },
+            "ui_target_id": { "$ref": "#/$defs/Identifier" },
+            "action_id": { "$ref": "#/$defs/Identifier" },
+            "canonical_parameters": { "$ref": "#/$defs/CanonicalJsonValue" }
+          }
+        },
+        "required_ui_preconditions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CanonicalJsonValue" }
+        },
+        "binding_variant_constraints": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CanonicalJsonValue" }
+        },
+        "expected_ui_postconditions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CanonicalJsonValue" }
+        },
+        "delivery_class": { "enum": ["delivery_safe", "keyed_external", "non_idempotent"] },
+        "timeout_policy": { "$ref": "#/$defs/TimeoutPolicy" }
+      }
+    },
+    "WaitIntent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_key", "condition", "timeout_policy", "observation_budget"],
+      "properties": {
+        "step_key": { "$ref": "#/$defs/Identifier" },
+        "condition": { "$ref": "#/$defs/CanonicalJsonValue" },
+        "timeout_policy": { "$ref": "#/$defs/TimeoutPolicy" },
+        "observation_budget": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "ToolInvocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool_name",
+        "tool_version",
+        "args",
+        "snapshot_token",
+        "client_request_id",
+        "approval_refs",
+        "deadline",
+        "correlation_id"
+      ],
+      "properties": {
+        "tool_name": { "$ref": "#/$defs/NamespacedIdentifier" },
+        "tool_version": { "$ref": "#/$defs/Identifier" },
+        "args": { "$ref": "#/$defs/CanonicalJsonValue" },
+        "snapshot_token": { "$ref": "#/$defs/SnapshotToken" },
+        "client_request_id": { "$ref": "#/$defs/Identifier" },
+        "approval_refs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Identifier" },
+          "uniqueItems": true
+        },
+        "deadline": { "type": "string", "format": "date-time" },
+        "correlation_id": { "$ref": "#/$defs/Identifier" },
+        "intent_note": { "type": "string", "maxLength": 4096 }
+      }
+    },
+    "CommandRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_id",
+        "authenticated_session_id",
+        "authenticated_controller_id",
+        "tool_name",
+        "tool_version",
+        "canonical_args",
+        "idempotency_namespace",
+        "client_request_id",
+        "command_fingerprint",
+        "snapshot_identity"
+      ],
+      "properties": {
+        "command_id": { "$ref": "#/$defs/Identifier" },
+        "authenticated_session_id": { "$ref": "#/$defs/Identifier" },
+        "authenticated_controller_id": { "$ref": "#/$defs/Identifier" },
+        "tool_name": { "$ref": "#/$defs/NamespacedIdentifier" },
+        "tool_version": { "$ref": "#/$defs/Identifier" },
+        "canonical_args": { "$ref": "#/$defs/CanonicalJsonValue" },
+        "idempotency_namespace": { "$ref": "#/$defs/Identifier" },
+        "client_request_id": { "$ref": "#/$defs/Identifier" },
+        "command_fingerprint": { "$ref": "#/$defs/Hash" },
+        "snapshot_identity": { "$ref": "#/$defs/SnapshotIdentity" }
+      }
+    },
+    "OperationState": {
+      "enum": [
+        "proposed",
+        "awaiting_approval",
+        "ready",
+        "needs_revalidation",
+        "running",
+        "reconciling",
+        "confirmed",
+        "rejected",
+        "ambiguous",
+        "invalid",
+        "denied",
+        "cancelled",
+        "expired",
+        "diverged"
+      ]
+    },
+    "PlanVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "decision_basis_hash", "effective_plan", "status"],
+      "properties": {
+        "version": { "type": "integer", "minimum": 1 },
+        "decision_basis_hash": { "$ref": "#/$defs/Hash" },
+        "effective_plan": { "$ref": "#/$defs/EffectivePlan" },
+        "status": { "enum": ["provisional", "frozen", "superseded"] }
+      }
+    },
+    "DeliveryAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "controlled_target_id",
+        "target_generation",
+        "session_epoch",
+        "lease_id",
+        "fencing_token",
+        "operation_id",
+        "dispatch_seq",
+        "frozen_plan_hash",
+        "authority_decision_id",
+        "receipt_ref"
+      ],
+      "properties": {
+        "controlled_target_id": { "$ref": "#/$defs/Identifier" },
+        "target_generation": { "type": "integer", "minimum": 1 },
+        "session_epoch": { "$ref": "#/$defs/SessionEpoch" },
+        "lease_id": { "$ref": "#/$defs/Identifier" },
+        "fencing_token": { "$ref": "#/$defs/FencingToken" },
+        "operation_id": { "$ref": "#/$defs/Identifier" },
+        "dispatch_seq": { "type": "integer", "minimum": 1 },
+        "frozen_plan_hash": { "$ref": "#/$defs/Hash" },
+        "authority_decision_id": { "$ref": "#/$defs/Identifier" },
+        "receipt_ref": { "$ref": "#/$defs/ReceiptRef" }
+      }
+    },
+    "DeliveryOutcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reason"],
+          "properties": {
+            "kind": { "const": "not_delivered" },
+            "reason": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "const": "delivered" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reason"],
+          "properties": {
+            "kind": { "const": "transport_unknown" },
+            "reason": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "DispatchOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dispatch_seq", "transport", "ui_outcome"],
+      "properties": {
+        "dispatch_seq": { "type": "integer", "minimum": 1 },
+        "transport": { "$ref": "#/$defs/DeliveryOutcome" },
+        "ui_outcome": { "enum": ["unknown", "satisfied", "violated"] }
+      }
+    },
+    "AuthorityDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority_decision_id",
+        "operation_id",
+        "dispatch_seq",
+        "frozen_plan_hash",
+        "step_intent_hash",
+        "controller_id",
+        "lease_id",
+        "session_epoch",
+        "fencing_token",
+        "policy_artifact_hash",
+        "approval_token_ids",
+        "decision",
+        "created_at"
+      ],
+      "properties": {
+        "authority_decision_id": { "$ref": "#/$defs/Identifier" },
+        "operation_id": { "$ref": "#/$defs/Identifier" },
+        "dispatch_seq": { "type": "integer", "minimum": 1 },
+        "frozen_plan_hash": { "$ref": "#/$defs/Hash" },
+        "step_intent_hash": { "$ref": "#/$defs/Hash" },
+        "controller_id": { "$ref": "#/$defs/Identifier" },
+        "lease_id": { "$ref": "#/$defs/Identifier" },
+        "session_epoch": { "$ref": "#/$defs/SessionEpoch" },
+        "fencing_token": { "$ref": "#/$defs/FencingToken" },
+        "policy_artifact_hash": { "$ref": "#/$defs/Hash" },
+        "approval_token_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Identifier" },
+          "uniqueItems": true
+        },
+        "decision": { "enum": ["allowed", "denied"] },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "DispatchRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dispatch_seq",
+        "snapshot_identity",
+        "decision_basis_hash",
+        "frozen_plan_hash",
+        "authority_decision_id",
+        "delivery_authority",
+        "ui_action_intent",
+        "dispatch_started_at",
+        "outcome",
+        "observation_after"
+      ],
+      "properties": {
+        "dispatch_seq": { "type": "integer", "minimum": 1 },
+        "snapshot_identity": { "$ref": "#/$defs/SnapshotIdentity" },
+        "decision_basis_hash": { "$ref": "#/$defs/Hash" },
+        "frozen_plan_hash": { "$ref": "#/$defs/Hash" },
+        "authority_decision_id": { "$ref": "#/$defs/Identifier" },
+        "delivery_authority": { "$ref": "#/$defs/DeliveryAuthority" },
+        "ui_action_intent": { "$ref": "#/$defs/UIActionIntent" },
+        "dispatch_started_at": { "type": "string", "format": "date-time" },
+        "outcome": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/DispatchOutcome" }
+          ]
+        },
+        "observation_after": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/CanonicalDocument" }
+          ]
+        }
+      }
+    },
+    "ApprovalToken": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approval_token_id",
+        "approval_authority_decision_id",
+        "issuer_principal_id",
+        "approver_capability_id",
+        "controller_id",
+        "tool_name",
+        "tool_version",
+        "canonical_args_hash",
+        "command_fingerprint",
+        "effective_plan_hash",
+        "step_intent_hash",
+        "effect_envelope_hash",
+        "approved_effects",
+        "controlled_target_id",
+        "session_id",
+        "lease_id",
+        "decision_basis_hash",
+        "project_state_revision",
+        "target_generation",
+        "session_manifest_hash",
+        "session_epoch",
+        "fencing_token",
+        "policy_artifact_hash",
+        "expires_at",
+        "consumption"
+      ],
+      "properties": {
+        "approval_token_id": { "$ref": "#/$defs/Identifier" },
+        "approval_authority_decision_id": { "$ref": "#/$defs/Identifier" },
+        "issuer_principal_id": { "$ref": "#/$defs/Identifier" },
+        "approver_capability_id": { "$ref": "#/$defs/Identifier" },
+        "controller_id": { "$ref": "#/$defs/Identifier" },
+        "tool_name": { "$ref": "#/$defs/NamespacedIdentifier" },
+        "tool_version": { "$ref": "#/$defs/Identifier" },
+        "canonical_args_hash": { "$ref": "#/$defs/Hash" },
+        "command_fingerprint": { "$ref": "#/$defs/Hash" },
+        "effective_plan_hash": { "$ref": "#/$defs/Hash" },
+        "step_intent_hash": { "$ref": "#/$defs/Hash" },
+        "effect_envelope_hash": { "$ref": "#/$defs/Hash" },
+        "approved_effects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExpectedEffect" },
+          "minItems": 1
+        },
+        "controlled_target_id": { "$ref": "#/$defs/Identifier" },
+        "session_id": { "$ref": "#/$defs/Identifier" },
+        "lease_id": { "$ref": "#/$defs/Identifier" },
+        "decision_basis_hash": { "$ref": "#/$defs/Hash" },
+        "project_state_revision": { "type": "integer", "minimum": 0 },
+        "target_generation": { "type": "integer", "minimum": 1 },
+        "session_manifest_hash": { "$ref": "#/$defs/Hash" },
+        "session_epoch": { "$ref": "#/$defs/SessionEpoch" },
+        "fencing_token": { "$ref": "#/$defs/FencingToken" },
+        "policy_artifact_hash": { "$ref": "#/$defs/Hash" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "consumption": {
+          "oneOf": [
+            { "const": "unused" },
+            { "const": "superseded" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["operation_id", "dispatch_seq", "frozen_plan_hash"],
+              "properties": {
+                "operation_id": { "$ref": "#/$defs/Identifier" },
+                "dispatch_seq": { "type": "integer", "minimum": 1 },
+                "frozen_plan_hash": { "$ref": "#/$defs/Hash" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ReconcileProposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["journal_events", "observed_outcomes", "findings", "disposition"],
+      "properties": {
+        "journal_events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/OpaqueProjectDocument" }
+        },
+        "observed_outcomes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ObservedOutcome" }
+        },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/OpaqueProjectDocument" }
+        },
+        "disposition": { "enum": ["continue", "confirmed", "rejected", "ambiguous", "diverged"] },
+        "result": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/OpaqueProjectDocument" }
+          ]
+        }
+      }
+    },
+    "MutationChain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "controlled_target_id",
+        "project_instance_key",
+        "operation_id",
+        "acquired_at_revision",
+        "state"
+      ],
+      "properties": {
+        "controlled_target_id": { "$ref": "#/$defs/Identifier" },
+        "project_instance_key": { "$ref": "#/$defs/Identifier" },
+        "operation_id": { "$ref": "#/$defs/Identifier" },
+        "acquired_at_revision": { "type": "integer", "minimum": 1 },
+        "state": { "enum": ["held", "released"] }
+      }
+    },
+    "WorkflowBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["remaining_steps", "remaining_dispatches", "remaining_observations", "remaining_waits"],
+      "properties": {
+        "remaining_steps": { "type": "integer", "minimum": 0 },
+        "remaining_dispatches": { "type": "integer", "minimum": 0 },
+        "remaining_observations": { "type": "integer", "minimum": 0 },
+        "remaining_waits": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "OperationTimestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created_at", "updated_at"],
+      "properties": {
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_id",
+        "revision",
+        "command_record",
+        "plugin_id",
+        "project_instance_key",
+        "state",
+        "originating_controller_id",
+        "current_control_binding",
+        "control_transitions",
+        "plan_versions",
+        "frozen_plan_hash",
+        "plan_frozen_at",
+        "frozen_effective_effects",
+        "current_step",
+        "workflow_budget",
+        "dispatches",
+        "observations",
+        "observed_outcomes",
+        "reconciliations",
+        "authority_decisions",
+        "mutation_chain",
+        "recovery_state",
+        "timestamps"
+      ],
+      "properties": {
+        "operation_id": { "$ref": "#/$defs/Identifier" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "command_record": { "$ref": "#/$defs/CommandRecord" },
+        "plugin_id": { "$ref": "#/$defs/Identifier" },
+        "project_instance_key": { "$ref": "#/$defs/Identifier" },
+        "state": { "$ref": "#/$defs/OperationState" },
+        "originating_controller_id": { "$ref": "#/$defs/Identifier" },
+        "current_control_binding": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/ControlLease" }
+          ]
+        },
+        "control_transitions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ControlTransition" }
+        },
+        "plan_versions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PlanVersion" },
+          "minItems": 1
+        },
+        "frozen_plan_hash": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Hash" }
+          ]
+        },
+        "plan_frozen_at": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "format": "date-time" }
+          ]
+        },
+        "frozen_effective_effects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExpectedEffect" }
+        },
+        "current_step": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/UIActionIntent" },
+            { "$ref": "#/$defs/WaitIntent" }
+          ]
+        },
+        "workflow_budget": { "$ref": "#/$defs/WorkflowBudget" },
+        "dispatches": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DispatchRecord" }
+        },
+        "observations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CanonicalDocument" }
+        },
+        "observed_outcomes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ObservedOutcome" }
+        },
+        "reconciliations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ReconcileProposal" }
+        },
+        "authority_decisions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AuthorityDecision" }
+        },
+        "mutation_chain": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/MutationChain" }
+          ]
+        },
+        "recovery_state": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/CanonicalJsonValue" }
+          ]
+        },
+        "timestamps": { "$ref": "#/$defs/OperationTimestamps" }
+      }
+    },
+    "ToolResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_id",
+        "operation_state",
+        "dispatch_outcomes",
+        "reconciliation_progress",
+        "project_disposition",
+        "result"
+      ],
+      "properties": {
+        "operation_id": { "$ref": "#/$defs/Identifier" },
+        "operation_state": { "$ref": "#/$defs/OperationState" },
+        "dispatch_outcomes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DispatchOutcome" }
+        },
+        "reconciliation_progress": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ReconcileProposal" }
+        },
+        "project_disposition": { "enum": ["pending", "confirmed", "rejected", "ambiguous", "diverged"] },
+        "result": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/OpaqueProjectDocument" }
+          ]
+        }
+      }
+    },
+    "SubscriptionCursor": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ResyncRequired": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested_cursor", "oldest_available_cursor", "current_cursor"],
+      "properties": {
+        "requested_cursor": { "$ref": "#/$defs/SubscriptionCursor" },
+        "oldest_available_cursor": { "$ref": "#/$defs/SubscriptionCursor" },
+        "current_cursor": { "$ref": "#/$defs/SubscriptionCursor" }
+      }
+    },
+    "AgentBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maximum_tool_calls",
+        "maximum_mutations",
+        "maximum_observations",
+        "maximum_elapsed_ms",
+        "maximum_risk_units"
+      ],
+      "properties": {
+        "maximum_tool_calls": { "type": "integer", "minimum": 1 },
+        "maximum_mutations": { "type": "integer", "minimum": 0 },
+        "maximum_observations": { "type": "integer", "minimum": 1 },
+        "maximum_elapsed_ms": { "type": "integer", "minimum": 1 },
+        "maximum_risk_units": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ProgressMarker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state_fingerprint",
+        "command_fingerprint",
+        "sequence",
+        "same_state_repetitions",
+        "elapsed_without_progress_ms",
+        "last_operation_state"
+      ],
+      "properties": {
+        "state_fingerprint": { "$ref": "#/$defs/Hash" },
+        "command_fingerprint": { "$ref": "#/$defs/Hash" },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "same_state_repetitions": { "type": "integer", "minimum": 0 },
+        "elapsed_without_progress_ms": { "type": "integer", "minimum": 0 },
+        "last_operation_state": { "$ref": "#/$defs/OperationState" }
+      }
+    }
+  }
+}

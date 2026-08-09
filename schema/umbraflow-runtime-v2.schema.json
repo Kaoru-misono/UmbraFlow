@@ -1,0 +1,545 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbraflow.dev/schema/umbraflow-runtime-v2.schema.json",
+  "title": "Umbraflow RuntimeModel v2",
+  "description": "Field shapes for the trusted RuntimeModel parser and its two-stage results. Cross-reference, coverage, placement and same-cycle authority rules are enforced by the trusted Luau compiler/resolver.",
+  "$ref": "#/$defs/runtime_model",
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._:-]*$"
+    },
+    "asset_path": {
+      "type": "string",
+      "pattern": "^assets/[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$"
+    },
+    "size": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "integer", "minimum": 1 },
+        { "type": "integer", "minimum": 1 }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "rect": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "integer", "minimum": 0 },
+        { "type": "integer", "minimum": 0 },
+        { "type": "integer", "minimum": 1 },
+        { "type": "integer", "minimum": 1 }
+      ],
+      "items": false,
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "point": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "integer", "minimum": 0 },
+        { "type": "integer", "minimum": 0 }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "ui_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": { "enum": ["control", "region"] }
+      }
+    },
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "asset_path", "threshold"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": { "const": "template" },
+        "asset_path": { "$ref": "#/$defs/asset_path" },
+        "threshold": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "reader": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "confidence_floor", "normalization"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": { "const": "text" },
+        "confidence_floor": { "type": "number", "minimum": 0, "maximum": 1 },
+        "normalization": { "enum": ["raw", "trim", "collapse_whitespace"] }
+      }
+    },
+    "locator_predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "locator"],
+      "properties": {
+        "kind": { "const": "locator_present" },
+        "locator": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "text_predicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "reader", "value"],
+      "properties": {
+        "kind": { "const": "text_equals" },
+        "reader": { "$ref": "#/$defs/identifier" },
+        "value": { "type": "string" }
+      }
+    },
+    "predicate": {
+      "oneOf": [
+        { "$ref": "#/$defs/locator_predicate" },
+        { "$ref": "#/$defs/text_predicate" }
+      ]
+    },
+    "detector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["all", "any", "none"],
+      "properties": {
+        "all": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/predicate" }
+        },
+        "any": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/predicate" }
+        },
+        "none": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/predicate" }
+        }
+      },
+      "anyOf": [
+        { "properties": { "all": { "minItems": 1 } } },
+        { "properties": { "any": { "minItems": 1 } } }
+      ]
+    },
+    "surface_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["all", "any", "none"],
+      "properties": {
+        "all": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        },
+        "any": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        },
+        "none": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        }
+      },
+      "anyOf": [
+        { "properties": { "all": { "minItems": 1 } } },
+        { "properties": { "any": { "minItems": 1 } } }
+      ]
+    },
+    "fixed_placement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "rect"],
+      "properties": {
+        "kind": { "const": "fixed" },
+        "rect": { "$ref": "#/$defs/rect" },
+        "action_point": { "$ref": "#/$defs/point" }
+      }
+    },
+    "click_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "proof_locator"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": { "const": "click" },
+        "proof_locator": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "surface",
+        "ui_target",
+        "variant",
+        "placement",
+        "detector",
+        "actions"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "surface": { "$ref": "#/$defs/identifier" },
+        "ui_target": { "$ref": "#/$defs/identifier" },
+        "variant": { "$ref": "#/$defs/identifier" },
+        "placement": { "$ref": "#/$defs/fixed_placement" },
+        "detector": { "$ref": "#/$defs/detector" },
+        "actions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/click_action" }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "actions": { "minItems": 1 } },
+            "required": ["actions"]
+          },
+          "then": {
+            "properties": { "placement": { "required": ["action_point"] } }
+          },
+          "else": {
+            "properties": {
+              "placement": { "not": { "required": ["action_point"] } }
+            }
+          }
+        }
+      ]
+    },
+    "surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "covers", "identity"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": { "enum": ["scene", "overlay", "interrupt"] },
+        "covers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        },
+        "identity": { "$ref": "#/$defs/surface_identity" }
+      }
+    },
+    "transition_trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding", "action"],
+      "properties": {
+        "binding": { "$ref": "#/$defs/identifier" },
+        "action": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "from_surfaces", "trigger", "to_surfaces"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "from_surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        },
+        "trigger": { "$ref": "#/$defs/transition_trigger" },
+        "to_surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "runtime_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "base_resolution",
+        "base_dpi",
+        "ui_targets",
+        "locators",
+        "readers",
+        "bindings",
+        "surfaces",
+        "transitions"
+      ],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "base_resolution": { "$ref": "#/$defs/size" },
+        "base_dpi": { "$ref": "#/$defs/size" },
+        "ui_targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ui_target" }
+        },
+        "locators": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/locator" }
+        },
+        "readers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/reader" }
+        },
+        "bindings": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/binding" }
+        },
+        "surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/surface" }
+        },
+        "transitions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/transition" }
+        }
+      }
+    },
+    "template_evidence_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "binding", "locator"],
+      "properties": {
+        "kind": { "const": "template" },
+        "binding": { "$ref": "#/$defs/identifier" },
+        "locator": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "text_evidence_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "binding", "reader"],
+      "properties": {
+        "kind": { "const": "text" },
+        "binding": { "$ref": "#/$defs/identifier" },
+        "reader": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "missing_evidence_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "binding", "predicate"],
+      "properties": {
+        "kind": { "const": "measurement" },
+        "binding": { "$ref": "#/$defs/identifier" },
+        "predicate": { "type": "string", "minLength": 1 }
+      }
+    },
+    "evidence_source": {
+      "oneOf": [
+        { "$ref": "#/$defs/template_evidence_source" },
+        { "$ref": "#/$defs/text_evidence_source" },
+        { "$ref": "#/$defs/missing_evidence_source" }
+      ]
+    },
+    "present_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "confidence", "source"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "present" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source": { "$ref": "#/$defs/evidence_source" }
+      }
+    },
+    "absent_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "source"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "absent" },
+        "source": { "$ref": "#/$defs/evidence_source" }
+      }
+    },
+    "unknown_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "reason", "source"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "unknown" },
+        "reason": {
+          "enum": [
+            "not_measured",
+            "low_confidence",
+            "ocr_unreadable",
+            "locator_failed",
+            "stale_cycle",
+            "host_unavailable",
+            "internal_error"
+          ]
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source": { "$ref": "#/$defs/evidence_source" }
+      }
+    },
+    "evidence_summary": {
+      "oneOf": [
+        { "$ref": "#/$defs/present_evidence" },
+        { "$ref": "#/$defs/absent_evidence" },
+        { "$ref": "#/$defs/unknown_evidence" }
+      ]
+    },
+    "resolved_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "ordered_surface_stack", "evidence"],
+      "properties": {
+        "kind": { "const": "resolved_state" },
+        "id": { "type": "string", "minLength": 1 },
+        "ordered_surface_stack": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence_summary" }
+        }
+      }
+    },
+    "unknown_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "reason", "evidence"],
+      "properties": {
+        "kind": { "const": "unknown_state" },
+        "reason": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence_summary" }
+        }
+      }
+    },
+    "ambiguous_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "candidates", "conflicts", "evidence"],
+      "properties": {
+        "kind": { "const": "ambiguous_state" },
+        "candidates": { "type": "array", "items": { "type": "object" } },
+        "conflicts": { "type": "array", "minItems": 1, "items": { "type": "object" } },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence_summary" }
+        }
+      }
+    },
+    "state_resolution": {
+      "oneOf": [
+        { "$ref": "#/$defs/resolved_state" },
+        { "$ref": "#/$defs/unknown_state" },
+        { "$ref": "#/$defs/ambiguous_state" }
+      ]
+    },
+    "resolved_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id",
+        "state_identity",
+        "surface",
+        "ui_target",
+        "binding",
+        "variant",
+        "evidence"
+      ],
+      "properties": {
+        "kind": { "const": "resolved_binding" },
+        "id": { "type": "string", "minLength": 1 },
+        "state_identity": { "type": "string", "minLength": 1 },
+        "surface": { "$ref": "#/$defs/identifier" },
+        "ui_target": { "$ref": "#/$defs/identifier" },
+        "binding": { "$ref": "#/$defs/identifier" },
+        "variant": { "$ref": "#/$defs/identifier" },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence_summary" }
+        }
+      }
+    },
+    "unknown_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "reason", "evidence"],
+      "properties": {
+        "kind": { "const": "unknown_binding" },
+        "reason": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence_summary" }
+        }
+      }
+    },
+    "ambiguous_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "candidates", "evidence"],
+      "properties": {
+        "kind": { "const": "ambiguous_binding" },
+        "candidates": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence_summary" }
+        }
+      }
+    },
+    "binding_resolution": {
+      "oneOf": [
+        { "$ref": "#/$defs/resolved_binding" },
+        { "$ref": "#/$defs/unknown_binding" },
+        { "$ref": "#/$defs/ambiguous_binding" }
+      ]
+    },
+    "receipt_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id",
+        "state_identity",
+        "surface",
+        "ui_target",
+        "binding",
+        "variant",
+        "action",
+        "action_kind",
+        "evidence_ids"
+      ],
+      "properties": {
+        "kind": { "const": "receipt_request" },
+        "id": { "type": "string", "minLength": 1 },
+        "state_identity": { "type": "string", "minLength": 1 },
+        "surface": { "$ref": "#/$defs/identifier" },
+        "ui_target": { "$ref": "#/$defs/identifier" },
+        "binding": { "$ref": "#/$defs/identifier" },
+        "variant": { "$ref": "#/$defs/identifier" },
+        "action": { "$ref": "#/$defs/identifier" },
+        "action_kind": { "const": "click" },
+        "evidence_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

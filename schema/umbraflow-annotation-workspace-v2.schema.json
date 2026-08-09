@@ -1,0 +1,546 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbraflow.dev/schema/umbraflow-annotation-workspace-v2.schema.json",
+  "title": "Umbraflow annotation authoring and export contract v2",
+  "description": "The only v2 shape for the private authoring workspace, trusted replay/publication gate, and deployment-neutral release manifest.",
+  "oneOf": [
+    { "$ref": "#/$defs/AuthoringCapabilityRoot" },
+    { "$ref": "#/$defs/Blob" },
+    { "$ref": "#/$defs/CandidateRevision" },
+    { "$ref": "#/$defs/CandidateHead" },
+    { "$ref": "#/$defs/AgentCheckpoint" },
+    { "$ref": "#/$defs/ReviewDecision" },
+    { "$ref": "#/$defs/TrustedReplayResult" },
+    { "$ref": "#/$defs/ReplayBundle" },
+    { "$ref": "#/$defs/ReplayAttestation" },
+    { "$ref": "#/$defs/ReplayGate" },
+    { "$ref": "#/$defs/ReleaseManifest" },
+    { "$ref": "#/$defs/Publication" },
+    { "$ref": "#/$defs/PublishedHead" }
+  ],
+  "$defs": {
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "CandidateRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      }
+    },
+    "RuntimeAssetRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asset_type", "path", "sha256"],
+      "properties": {
+        "asset_type": { "enum": ["template_png", "template_webp"] },
+        "path": {
+          "type": "string",
+          "pattern": "^assets/[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$"
+        },
+        "sha256": { "$ref": "#/$defs/Sha256" }
+      }
+    },
+    "TrustedCapabilityFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability_version", "nonce", "principal", "purpose"],
+      "properties": {
+        "capability_version": { "const": 1 },
+        "nonce": { "$ref": "#/$defs/Sha256" },
+        "principal": { "type": "string", "minLength": 1 },
+        "purpose": { "enum": ["human-review", "replay-runner", "publication"] }
+      }
+    },
+    "ReplayPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame_corpus_hash", "policy_version", "transition_corpus_hash"],
+      "properties": {
+        "frame_corpus_hash": { "$ref": "#/$defs/Sha256" },
+        "policy_version": { "const": 1 },
+        "transition_corpus_hash": { "$ref": "#/$defs/Sha256" }
+      }
+    },
+    "AuthoringCapabilityRoot": {
+      "description": "The roots a production principal may not open, attach, walk or reach through a plugin, and the purpose-bound capabilities that authorize acting on them. The four roots are named rather than implied because isolation is asserted about them by name.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspace_id",
+        "workspace_database",
+        "candidate_workspace_root",
+        "evidence_blob_root",
+        "replay_bundle_root",
+        "human_review_capability_hash",
+        "replay_runner_capability_hash",
+        "publication_capability_hash",
+        "replay_policy_hash"
+      ],
+      "properties": {
+        "workspace_id": { "$ref": "#/$defs/Sha256" },
+        "workspace_database": { "const": "annotation-workspace.sqlite" },
+        "candidate_workspace_root": { "const": "objects/runtime-artifacts" },
+        "evidence_blob_root": { "const": "blobs/evidence" },
+        "replay_bundle_root": { "const": "replay-bundles" },
+        "human_review_capability_hash": { "$ref": "#/$defs/Sha256" },
+        "replay_runner_capability_hash": { "$ref": "#/$defs/Sha256" },
+        "publication_capability_hash": { "$ref": "#/$defs/Sha256" },
+        "replay_policy_hash": { "$ref": "#/$defs/Sha256" }
+      }
+    },
+    "Blob": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "size", "kind", "asset_type", "created_at"],
+      "properties": {
+        "sha256": { "$ref": "#/$defs/Sha256" },
+        "size": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "kind": { "enum": ["evidence", "runtime_asset"] },
+        "asset_type": {
+          "oneOf": [
+            { "type": "null" },
+            { "enum": ["template_png", "template_webp"] }
+          ]
+        },
+        "created_at": { "$ref": "#/$defs/Timestamp" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "evidence" } } },
+          "then": { "properties": { "asset_type": { "type": "null" } } },
+          "else": {
+            "properties": {
+              "asset_type": { "enum": ["template_png", "template_webp"] },
+              "size": { "minimum": 1, "maximum": 268435456 }
+            }
+          }
+        }
+      ]
+    },
+    "CandidateRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "revision",
+        "proposed_by",
+        "evidence_blob_hashes",
+        "runtime_assets",
+        "runtime_model",
+        "open_issues"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "proposed_by": { "type": "string", "minLength": 1 },
+        "evidence_blob_hashes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/Sha256" }
+        },
+        "runtime_assets": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/RuntimeAssetRef" }
+        },
+        "runtime_model": { "$ref": "umbraflow-runtime-v2.schema.json" },
+        "open_issues": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "CandidateHead": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "revision"],
+      "properties": {
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      }
+    },
+    "AgentCheckpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate",
+        "evidence_blob_hashes",
+        "input_artifact_roots",
+        "job_id",
+        "resume_state",
+        "revision",
+        "phase"
+      ],
+      "properties": {
+        "candidate": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/CandidateRef" }
+          ]
+        },
+        "evidence_blob_hashes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/Sha256" }
+        },
+        "input_artifact_roots": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/Sha256" }
+        },
+        "job_id": { "type": "string", "minLength": 1 },
+        "resume_state": { "type": "object" },
+        "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "phase": { "enum": ["collecting", "proposing", "validating", "complete", "failed"] }
+      }
+    },
+    "ReviewDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision_id",
+        "candidate_id",
+        "candidate_revision",
+        "reviewer_principal",
+        "capability_hash",
+        "outcome",
+        "comment",
+        "created_at"
+      ],
+      "properties": {
+        "decision_id": { "$ref": "#/$defs/Sha256" },
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "candidate_revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "reviewer_principal": { "type": "string", "minLength": 1 },
+        "capability_hash": { "$ref": "#/$defs/Sha256" },
+        "outcome": { "enum": ["accepted", "rejected"] },
+        "comment": { "type": "string" },
+        "created_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "TrustedReplayResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result_id",
+        "candidate_id",
+        "candidate_revision",
+        "runtime_model_hash",
+        "kind",
+        "corpus_hash",
+        "replay_policy_hash",
+        "passed",
+        "report_hash",
+        "report",
+        "runner_principal",
+        "capability_hash",
+        "created_at"
+      ],
+      "properties": {
+        "result_id": { "$ref": "#/$defs/Sha256" },
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "candidate_revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "runtime_model_hash": { "$ref": "#/$defs/Sha256" },
+        "corpus_hash": { "$ref": "#/$defs/Sha256" },
+        "replay_policy_hash": { "$ref": "#/$defs/Sha256" },
+        "kind": { "enum": ["frame", "transition"] },
+        "passed": { "const": true },
+        "report_hash": { "$ref": "#/$defs/Sha256" },
+        "report": { "type": "object" },
+        "runner_principal": { "type": "string", "minLength": 1 },
+        "capability_hash": { "$ref": "#/$defs/Sha256" },
+        "created_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "FrameTrustedReplayResult": {
+      "allOf": [
+        { "$ref": "#/$defs/TrustedReplayResult" },
+        {
+          "type": "object",
+          "required": ["kind"],
+          "properties": { "kind": { "const": "frame" } }
+        }
+      ]
+    },
+    "TransitionTrustedReplayResult": {
+      "allOf": [
+        { "$ref": "#/$defs/TrustedReplayResult" },
+        {
+          "type": "object",
+          "required": ["kind"],
+          "properties": { "kind": { "const": "transition" } }
+        }
+      ]
+    },
+    "ReplayBundle": {
+      "description": "The offline closure a project/operation replay is run from: one baseline event, the Journal prefix after it, the structured observations, the Operation rows and the session manifest it all happened under. Frames are optional and retention-bounded; an empty frame list still supports audit but cannot stand in for a frame replay.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bundle_id",
+        "baseline_event_id",
+        "journal_prefix",
+        "observations",
+        "operation_rows",
+        "session_manifest_hash",
+        "frames",
+        "frame_retention_expires_at"
+      ],
+      "properties": {
+        "bundle_id": { "$ref": "#/$defs/Sha256" },
+        "baseline_event_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "journal_prefix": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 65536,
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+        },
+        "observations": {
+          "type": "array",
+          "maxItems": 65536,
+          "items": { "$ref": "#/$defs/Sha256" }
+        },
+        "operation_rows": {
+          "type": "array",
+          "maxItems": 65536,
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+        },
+        "session_manifest_hash": { "$ref": "#/$defs/Sha256" },
+        "frames": {
+          "type": "array",
+          "maxItems": 65536,
+          "items": { "$ref": "#/$defs/Sha256" }
+        },
+        "frame_retention_expires_at": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Timestamp" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "frames": { "maxItems": 0 } },
+            "required": ["frames"]
+          },
+          "then": {
+            "properties": { "frame_retention_expires_at": { "type": "null" } }
+          },
+          "else": {
+            "properties": { "frame_retention_expires_at": { "$ref": "#/$defs/Timestamp" } }
+          }
+        }
+      ]
+    },
+    "ReplayAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attestation_id",
+        "replay_result_id",
+        "publication_id",
+        "candidate_id",
+        "candidate_revision",
+        "runtime_model_hash",
+        "kind",
+        "corpus_hash",
+        "replay_policy_hash",
+        "passed",
+        "report_hash",
+        "runner_principal",
+        "capability_hash",
+        "created_at"
+      ],
+      "properties": {
+        "attestation_id": { "$ref": "#/$defs/Sha256" },
+        "replay_result_id": { "$ref": "#/$defs/Sha256" },
+        "publication_id": { "$ref": "#/$defs/Sha256" },
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "candidate_revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "runtime_model_hash": { "$ref": "#/$defs/Sha256" },
+        "kind": { "enum": ["frame", "transition"] },
+        "corpus_hash": { "$ref": "#/$defs/Sha256" },
+        "replay_policy_hash": { "$ref": "#/$defs/Sha256" },
+        "passed": { "const": true },
+        "report_hash": { "$ref": "#/$defs/Sha256" },
+        "runner_principal": { "type": "string", "minLength": 1 },
+        "capability_hash": { "$ref": "#/$defs/Sha256" },
+        "created_at": { "$ref": "#/$defs/Timestamp" }
+      }
+    },
+    "FrameReplayAttestation": {
+      "allOf": [
+        { "$ref": "#/$defs/ReplayAttestation" },
+        {
+          "type": "object",
+          "required": ["kind"],
+          "properties": { "kind": { "const": "frame" } }
+        }
+      ]
+    },
+    "TransitionReplayAttestation": {
+      "allOf": [
+        { "$ref": "#/$defs/ReplayAttestation" },
+        {
+          "type": "object",
+          "required": ["kind"],
+          "properties": { "kind": { "const": "transition" } }
+        }
+      ]
+    },
+    "ReplayGate": {
+      "description": "The two gates that do not substitute for each other: UI model replay gates publishing a RuntimeModel, project/operation replay gates publishing a ProjectPlugin. They are inlined rather than referenced so that neither can be published while carrying only the other's evidence.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "replay_policy_hash",
+        "ui_model_replay",
+        "project_operation_replay"
+      ],
+      "properties": {
+        "replay_policy_hash": { "$ref": "#/$defs/Sha256" },
+        "ui_model_replay": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "frame_attestation_id",
+            "transition_attestation_id",
+            "passed"
+          ],
+          "properties": {
+            "frame_attestation_id": { "$ref": "#/$defs/Sha256" },
+            "transition_attestation_id": { "$ref": "#/$defs/Sha256" },
+            "passed": { "const": true }
+          }
+        },
+        "project_operation_replay": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "replay_bundle_id",
+            "attestation_id",
+            "passed"
+          ],
+          "properties": {
+            "replay_bundle_id": { "$ref": "#/$defs/Sha256" },
+            "attestation_id": { "$ref": "#/$defs/Sha256" },
+            "passed": { "const": true }
+          }
+        }
+      }
+    },
+    "ReleaseManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "annotation_workspace_schema_hash",
+        "candidate_id",
+        "candidate_revision",
+        "generation",
+        "predecessor_publication_id",
+        "replay_gate_hash",
+        "runtime_artifact_root_hash",
+        "workspace_sqlite_schema_hash"
+      ],
+      "properties": {
+        "annotation_workspace_schema_hash": { "$ref": "#/$defs/Sha256" },
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "candidate_revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "predecessor_publication_id": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Sha256" }
+          ]
+        },
+        "replay_gate_hash": { "$ref": "#/$defs/Sha256" },
+        "runtime_artifact_root_hash": { "$ref": "#/$defs/Sha256" },
+        "workspace_sqlite_schema_hash": { "$ref": "#/$defs/Sha256" }
+      }
+    },
+    "Publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "publication_id",
+        "generation",
+        "predecessor_publication_id",
+        "candidate_id",
+        "candidate_revision",
+        "review_decision_id",
+        "runtime_model_hash",
+        "runtime_artifact_root_hash",
+        "replay_gate_hash",
+        "runtime_manifest",
+        "release_manifest",
+        "export_name",
+        "publisher_principal",
+        "publication_capability_hash",
+        "created_at",
+        "replay_attestations"
+      ],
+      "properties": {
+        "publication_id": { "$ref": "#/$defs/Sha256" },
+        "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "predecessor_publication_id": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Sha256" }
+          ]
+        },
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "candidate_revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "review_decision_id": { "$ref": "#/$defs/Sha256" },
+        "runtime_model_hash": { "$ref": "#/$defs/Sha256" },
+        "runtime_artifact_root_hash": { "$ref": "#/$defs/Sha256" },
+        "replay_gate_hash": { "$ref": "#/$defs/Sha256" },
+        "runtime_manifest": { "$ref": "umbraflow-runtime-artifact-v1.schema.json" },
+        "release_manifest": { "$ref": "#/$defs/ReleaseManifest" },
+        "export_name": { "$ref": "#/$defs/Sha256" },
+        "publisher_principal": { "type": "string", "minLength": 1 },
+        "publication_capability_hash": { "$ref": "#/$defs/Sha256" },
+        "created_at": { "$ref": "#/$defs/Timestamp" },
+        "replay_attestations": {
+          "type": "array",
+          "prefixItems": [
+            { "$ref": "#/$defs/FrameReplayAttestation" },
+            { "$ref": "#/$defs/TransitionReplayAttestation" }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    },
+    "PublishedHead": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publication_id", "generation"],
+      "properties": {
+        "publication_id": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/Sha256" }
+          ]
+        },
+        "generation": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+      }
+    }
+  }
+}

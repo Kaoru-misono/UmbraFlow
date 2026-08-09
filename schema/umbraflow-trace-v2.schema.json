@@ -1,0 +1,278 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbraflow.local/schema/trace-v2",
+  "title": "Umbraflow screenshot-free audit trace v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "event_type",
+    "session_id",
+    "session_manifest_hash",
+    "monotonic_sequence",
+    "recorded_at_unix_millis",
+    "audit",
+    "payload"
+  ],
+  "properties": {
+    "schema": {
+      "const": "umbraflow-trace/v2"
+    },
+    "event_type": {
+      "$ref": "#/$defs/namespaced_name"
+    },
+    "session_id": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/identity"
+        },
+        {
+          "$ref": "#/$defs/safe_text"
+        }
+      ]
+    },
+    "session_manifest_hash": {
+      "$ref": "#/$defs/hash"
+    },
+    "monotonic_sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "recorded_at_unix_millis": {
+      "type": "integer"
+    },
+    "audit": {
+      "$ref": "#/$defs/audit"
+    },
+    "payload": {
+      "$ref": "#/$defs/payload"
+    }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "identity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)*$"
+    },
+    "namespaced_name": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)+$"
+    },
+    "safe_field_name": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/name"
+        },
+        {
+          "not": {
+            "pattern": "screen[._-]*shot|frame[._-]*(bytes|data)|pixel[._-]*(bytes|data)|image[._-]*(bytes|data)|png[._-]*bytes|jpeg[._-]*bytes|annotation[._-]*workspace[._-]*(path|sqlite)"
+          }
+        }
+      ]
+    },
+    "safe_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+      "allOf": [
+        {
+          "not": {
+            "pattern": "[dD][aA][tT][aA]:[iI][mM][aA][gG][eE]/"
+          }
+        },
+        {
+          "not": {
+            "pattern": "[aA][nN][nN][oO][tT][aA][tT][iI][oO][nN][^A-Za-z0-9]*[wW][oO][rR][kK][sS][pP][aA][cC][eE][^A-Za-z0-9]*[sS][qQ][lL][iI][tT][eE]"
+          }
+        }
+      ]
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id"
+      ],
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/safe_field_name"
+        },
+        "id": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/identity"
+            },
+            {
+              "$ref": "#/$defs/safe_text"
+            }
+          ]
+        }
+      }
+    },
+    "payload_text": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safe_text"
+        },
+        {
+          "not": {
+            "pattern": "^[ ]*(?:[A-Za-z0-9+/_=-][ ]*){64,}$"
+          }
+        }
+      ]
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actor",
+        "producer",
+        "references"
+      ],
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/name"
+        },
+        "producer": {
+          "$ref": "#/$defs/name"
+        },
+        "references": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        }
+      }
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/safe_field_name"
+        },
+        "type": {
+          "enum": [
+            "null",
+            "bool",
+            "int64",
+            "uint64",
+            "text"
+          ]
+        },
+        "value": true
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "null"
+            }
+          },
+          "not": {
+            "required": [
+              "value"
+            ]
+          }
+        },
+        {
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "bool"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "int64"
+            },
+            "value": {
+              "type": "integer",
+              "minimum": -9223372036854775808,
+              "maximum": 9223372036854775807
+            }
+          }
+        },
+        {
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "uint64"
+            },
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            }
+          }
+        },
+        {
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "text"
+            },
+            "value": {
+              "$ref": "#/$defs/payload_text"
+            }
+          }
+        }
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_hash",
+        "fields"
+      ],
+      "properties": {
+        "schema_hash": {
+          "$ref": "#/$defs/hash"
+        },
+        "fields": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/field"
+          }
+        }
+      }
+    }
+  }
+}

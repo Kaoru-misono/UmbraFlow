@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbraflow.dev/schema/umbraflow-runtime-artifact-v1.schema.json",
+  "title": "Umbraflow RuntimeArtifact manifest",
+  "description": "Exact RFC 8785 JCS manifest bytes for one immutable runtime artifact. The Host confines paths before access, verifies every size and SHA-256, requires assets to be sorted and unique by UTF-8 path, and requires the asset set to exactly equal the trusted parser output.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_schema_hash",
+    "runtime_model_schema_hash",
+    "page_model",
+    "assets"
+  ],
+  "properties": {
+    "manifest_schema_hash": { "$ref": "#/$defs/sha256" },
+    "runtime_model_schema_hash": { "$ref": "#/$defs/sha256" },
+    "page_model": { "$ref": "#/$defs/page_model_file" },
+    "assets": {
+      "type": "array",
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/asset_file" }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "page_model_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "size", "sha256"],
+      "properties": {
+        "path": { "const": "page-model.toml" },
+        "size": { "type": "integer", "minimum": 1, "maximum": 4194304 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "asset_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "size", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^assets/[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*$"
+        },
+        "size": { "type": "integer", "minimum": 1, "maximum": 268435456 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

@@ -1,47 +1,47 @@
-"""Minimal stdlib HTTP/CLI backend for the offline annotation decision queue."""
+"""Authenticated loopback Agent API for candidates and checkpoints only."""
 
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
+import hashlib
+import hmac
 import json
+import re
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
-from typing import Any
+from typing import Any, Callable, Mapping
+from urllib.parse import unquote, urlparse
 
-try:
-    from .candidate_model import (  # type: ignore[import-not-found]
-        build_runtime_model,
-        candidate_summary,
-        validate_candidate_model,
-        validate_runtime_model,
-    )
-    from .evidence_store import EvidenceStore, EvidenceStoreError
-    from .model_file import CanonicalSchemas, SchemaIssue, compile_runtime_toml
-    from .patches import PatchDecisionError, apply_semantic_patch, candidate_is_ready, reject_semantic_patch
-except ImportError:  # pragma: no cover - supports ``python tools/annotate/serve.py``
-    from candidate_model import (  # type: ignore[no-redef]
-        build_runtime_model,
-        candidate_summary,
-        validate_candidate_model,
-        validate_runtime_model,
-    )
-    from evidence_store import EvidenceStore, EvidenceStoreError  # type: ignore[no-redef]
-    from model_file import CanonicalSchemas, SchemaIssue, compile_runtime_toml  # type: ignore[no-redef]
-    from patches import PatchDecisionError, apply_semantic_patch, candidate_is_ready, reject_semantic_patch  # type: ignore[no-redef]
+from .candidate_model import build_runtime_model, candidate_summary, validate_candidate_model
+from .model_file import SchemaIssue, compile_runtime_toml
+from .safe_paths import UnsafePath, paths_overlap, read_plain_file
+from .store import (
+    APPLICATION_ID,
+    DATABASE_NAME,
+    SCHEMA_ROOT_HASH,
+    SCHEMA_VERSION,
+    AnnotationStore,
+    BlobUpload,
+    Conflict,
+    NotFound,
+    StoreError,
+)
 
 
-CAPABILITIES = [
-    "list_candidates",
+_SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "schema"
+_MAX_REQUEST_BYTES = 360 * 1024 * 1024
+_TOKEN = re.compile(r"^[A-Za-z0-9_-]{43,128}$")
+CAPABILITIES = (
+    "get_agent_checkpoint",
     "get_candidate",
-    "accept_patch",
-    "reject_patch",
-    "compile_candidate",
-    "run_validation",
-    "get_conflicts",
-    "get_provenance",
-]
+    "list_candidates",
+    "propose_candidate",
+    "save_agent_checkpoint",
+    "validate_candidate",
+)
 
 
 class BackendError(RuntimeError):
@@ -56,252 +56,300 @@ class BackendError(RuntimeError):
         return {"code": self.code, "message": self.message, "retryable": self.retryable}
 
 
-class AnnotationBackend:
-    def __init__(self, store: EvidenceStore, runtime_path: Path | str | None = None) -> None:
+def _exact_fields(body: Mapping[str, Any], required: set[str]) -> None:
+    if set(body) != required:
+        raise BackendError("invalid_request", f"request fields must be exactly {sorted(required)!r}")
+
+
+def load_agent_bearer(path: Path | str, workspace: Path | str) -> str:
+    token_path = Path(path).absolute()
+    if paths_overlap(token_path, Path(workspace).absolute()):
+        raise StoreError("Agent bearer file must be outside the authoring workspace")
+    try:
+        content = read_plain_file(token_path, maximum=256)
+        token = content.decode("ascii")
+    except (UnsafePath, UnicodeDecodeError) as error:
+        raise StoreError("Agent bearer file must be one small plain ASCII file") from error
+    if _TOKEN.fullmatch(token) is None:
+        raise StoreError("Agent bearer must be canonical base64url with at least 256 bits")
+    try:
+        decoded = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+    except (ValueError, binascii.Error) as error:
+        raise StoreError("Agent bearer is not valid base64url") from error
+    if len(decoded) < 32 or base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=") != token:
+        raise StoreError("Agent bearer must be canonical base64url with at least 256 bits")
+    return token
+
+
+class AgentBackend:
+    """The complete untrusted mutation surface; no trusted authority methods exist here."""
+
+    def __init__(self, store: AnnotationStore) -> None:
         self.store = store
-        self.runtime_path = Path(runtime_path) if runtime_path is not None else self.store.root / "page-model.toml"
-        self.schemas = store.schemas
 
     def schema_manifest(self) -> dict[str, Any]:
+        annotation_schema = _SCHEMA_ROOT / "umbraflow-annotation-workspace-v2.schema.json"
+        runtime_schema = _SCHEMA_ROOT / "umbraflow-runtime-v2.schema.json"
         return {
-            "api_version": 1,
-            "runtime_schema": "umbraflow-runtime-v1.schema.json",
-            "offline_schema": "umbraflow-offline-v1.schema.json",
-            "capabilities": CAPABILITIES,
-        }
-
-    def list_candidates(self, status: str | None = None, cursor: str | None = None) -> dict[str, Any]:
-        rows = self.store.candidates(status)
-        start = 0
-        if cursor:
-            try:
-                start = int(cursor)
-            except ValueError as error:
-                raise BackendError("invalid_cursor", "cursor must be an integer", 400) from error
-        page = rows[start : start + 100]
-        response: dict[str, Any] = {"items": [candidate_summary(row) for row in page]}
-        if start + 100 < len(rows):
-            response["next_cursor"] = str(start + 100)
-        return response
-
-    def get_candidate(self, candidate_id: str) -> dict[str, Any]:
-        try:
-            return self.store.get_candidate(candidate_id)
-        except EvidenceStoreError as error:
-            raise BackendError("not_found", str(error), 404) from error
-
-    def _revision(self, candidate_id: str, reviewed: int) -> dict[str, Any]:
-        candidate = self.get_candidate(candidate_id)
-        if reviewed != candidate["revision"]:
-            raise BackendError("revision_conflict", "candidate revision is stale", 409, True)
-        return candidate
-
-    def accept_patch(self, candidate_id: str, patch_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        candidate = self._revision(candidate_id, body["candidate_revision"])
-        patch = next((item for item in candidate["patches"] if item["id"] == patch_id), None)
-        if patch is None:
-            raise BackendError("not_found", f"patch {patch_id!r} was not found", 404)
-        try:
-            changed = apply_semantic_patch(candidate, patch, self.schemas)
-        except PatchDecisionError as error:
-            raise BackendError("invalid_patch", str(error), 422) from error
-        self.store.save_candidate(changed)
-        self.store.append_decision(changed["id"], patch_id, body["actor"], "accepted", body.get("comment", ""))
-        return {"candidate_id": candidate_id, "patch_id": patch_id, "status": "accepted", "revision": changed["revision"]}
-
-    def reject_patch(self, candidate_id: str, patch_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        candidate = self._revision(candidate_id, body["candidate_revision"])
-        try:
-            changed = reject_semantic_patch(candidate, patch_id, body["actor"], body.get("comment"))
-        except PatchDecisionError as error:
-            raise BackendError("invalid_patch", str(error), 422) from error
-        self.store.save_candidate(changed)
-        self.store.append_decision(changed["id"], patch_id, body["actor"], "rejected", body.get("comment", ""))
-        return {"candidate_id": candidate_id, "patch_id": patch_id, "status": "rejected", "revision": changed["revision"]}
-
-    def run_validation(self, candidate_id: str, revision: int) -> dict[str, Any]:
-        candidate = self._revision(candidate_id, revision)
-        workspace = self.store.workspace()
-        diagnostics = validate_candidate_model(candidate, workspace, self.schemas)
-        runtime = build_runtime_model(candidate)
-        runtime_diagnostics = validate_runtime_model(runtime, self.schemas)
-        all_diagnostics = diagnostics + runtime_diagnostics
-        conflict_ids = [conflict["id"] for conflict in candidate["conflicts"] if conflict["status"] == "open"]
-        coverage = self._coverage(workspace)
-        valid = not all_diagnostics and not conflict_ids and candidate_is_ready(candidate)
-        return {
-            "candidate_id": candidate_id,
-            "revision": candidate["revision"],
-            "valid": valid,
-            "conflict_ids": conflict_ids,
-            "coverage": coverage,
-            "diagnostics": all_diagnostics,
+            "annotation_schema_sha256": hashlib.sha256(annotation_schema.read_bytes()).hexdigest(),
+            "capabilities": list(CAPABILITIES),
+            "database": DATABASE_NAME,
+            "sqlite_application_id": APPLICATION_ID,
+            "sqlite_schema_root_hash": SCHEMA_ROOT_HASH,
+            "sqlite_user_version": SCHEMA_VERSION,
+            "runtime_schema_sha256": hashlib.sha256(runtime_schema.read_bytes()).hexdigest(),
         }
 
     @staticmethod
-    def _coverage(workspace: dict[str, Any]) -> dict[str, int]:
-        by_frame: dict[str, list[dict[str, Any]]] = {frame["id"]: [] for frame in workspace["frames"]}
-        for assertion in workspace["assertions"]:
-            if assertion["claim"]["kind"] in {"surface_identity", "surface_stack"}:
-                by_frame.setdefault(assertion["frame_id"], []).append(assertion)
-        resolved = ambiguous = unknown = 0
-        for assertions in by_frame.values():
-            accepted_present = [item for item in assertions if item["review"]["status"] == "accepted" and item["outcome"] == "present"]
-            if len(accepted_present) == 1:
-                resolved += 1
-            elif len(accepted_present) > 1:
-                ambiguous += 1
-            else:
-                unknown += 1
-        return {"frames": len(by_frame), "resolved": resolved, "ambiguous": ambiguous, "unknown": unknown}
-
-    def compile_candidate(self, candidate_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        candidate = self._revision(candidate_id, body["candidate_revision"])
-        validation = self.run_validation(candidate_id, candidate["revision"])
-        if not validation["valid"]:
-            return {
-                "candidate_id": candidate_id,
-                "revision": candidate["revision"],
-                "valid": False,
-                "diagnostics": validation["diagnostics"] + [{"severity": "error", "message": "candidate is not ready for compilation"}],
+    def _decode_blobs(values: Any, allowed_kinds: set[str]) -> list[BlobUpload]:
+        if not isinstance(values, list):
+            raise BackendError("invalid_request", "blobs must be an array")
+        decoded: list[BlobUpload] = []
+        for value in values:
+            if not isinstance(value, dict) or value.get("kind") not in allowed_kinds:
+                raise BackendError("invalid_request", "blob entry has an unsupported kind")
+            kind = value["kind"]
+            fields = {"content_base64", "kind"} if kind == "evidence" else {
+                "asset_type",
+                "content_base64",
+                "kind",
             }
-        runtime = build_runtime_model(candidate)
+            if set(value) != fields or not isinstance(value["content_base64"], str):
+                raise BackendError("invalid_request", f"{kind} blob entry has the wrong exact shape")
+            try:
+                content = base64.b64decode(value["content_base64"], validate=True)
+            except (ValueError, binascii.Error) as error:
+                raise BackendError("invalid_request", "content_base64 is invalid") from error
+            if base64.b64encode(content).decode("ascii") != value["content_base64"]:
+                raise BackendError("invalid_request", "content_base64 is not canonical")
+            decoded.append(
+                BlobUpload(
+                    kind,
+                    content,
+                    None if kind == "evidence" else value["asset_type"],
+                )
+            )
+        if len({hashlib.sha256(item.content).digest() for item in decoded}) != len(decoded):
+            raise BackendError("invalid_request", "uploaded bytes must have unique identities")
+        return decoded
+
+    def propose_candidate(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        _exact_fields(body, {"blobs", "candidate", "expected_revision"})
+        candidate = body["candidate"]
+        expected = body["expected_revision"]
+        if not isinstance(candidate, dict):
+            raise BackendError("invalid_request", "candidate must be an object")
+        if expected is not None and (
+            not isinstance(expected, int) or isinstance(expected, bool) or expected <= 0
+        ):
+            raise BackendError("invalid_request", "expected_revision must be positive or null")
+        uploads = self._decode_blobs(body["blobs"], {"evidence", "runtime_asset"})
         try:
-            content, digest = compile_runtime_toml(runtime, self.runtime_path if body.get("write", False) else None, self.schemas)
-        except SchemaIssue as error:
-            return {
-                "candidate_id": candidate_id,
-                "revision": candidate["revision"],
-                "valid": False,
-                "diagnostics": [{"severity": "error", "path": error.path, "message": error.message}],
-            }
-        changed = dict(candidate)
-        changed["revision"] += 1
-        changed["status"] = "compiled" if body.get("write", False) else "accepted"
-        if body.get("write", False):
-            changed["patches"] = [
-                {**patch, "status": "applied" if patch["status"] == "accepted" else patch["status"]}
-                for patch in candidate["patches"]
-            ]
-        self.store.save_candidate(changed)
-        response = {"candidate_id": candidate_id, "revision": changed["revision"], "valid": True, "diagnostics": [], "runtime_model_hash": digest}
-        _ = content
-        return response
+            return self.store.commit_candidate_with_uploads(candidate, expected, uploads)
+        except Conflict as error:
+            raise BackendError("revision_conflict", str(error), 409, True) from error
+        except (NotFound, StoreError) as error:
+            raise BackendError("invalid_candidate", str(error), 422) from error
 
-    def get_conflicts(self, candidate_id: str) -> list[dict[str, Any]]:
-        return self.get_candidate(candidate_id)["conflicts"]
+    def save_agent_checkpoint(self, body: Mapping[str, Any]) -> dict[str, Any]:
+        _exact_fields(body, {"checkpoint", "evidence_blobs", "expected_revision"})
+        if not isinstance(body["checkpoint"], dict):
+            raise BackendError("invalid_request", "checkpoint must be an object")
+        expected = body["expected_revision"]
+        if expected is not None and (
+            not isinstance(expected, int) or isinstance(expected, bool) or expected <= 0
+        ):
+            raise BackendError("invalid_request", "expected_revision must be positive or null")
+        uploads = self._decode_blobs(body["evidence_blobs"], {"evidence"})
+        try:
+            return self.store.save_agent_checkpoint_with_uploads(
+                body["checkpoint"], expected, uploads
+            )
+        except Conflict as error:
+            raise BackendError("checkpoint_conflict", str(error), 409, True) from error
+        except NotFound as error:
+            raise BackendError("not_found", str(error), 404) from error
+        except StoreError as error:
+            raise BackendError("invalid_checkpoint", str(error), 422) from error
 
-    def get_provenance(self, candidate_id: str) -> list[dict[str, Any]]:
-        candidate = self.get_candidate(candidate_id)
-        records: list[dict[str, Any]] = []
-        for collection in ("targets", "entities", "patches"):
-            for item in candidate[collection]:
-                records.append({"source_id": item.get("candidate_id", item.get("id")), "kind": collection[:-1], "provenance": item["provenance"]})
-        records.extend(self.store.decision_records(candidate_id))
-        records.extend(self.store.pipeline_records())
-        return records
+    def get_agent_checkpoint(self, job_id: str) -> dict[str, Any]:
+        try:
+            return {"checkpoint": self.store.get_agent_checkpoint(job_id)}
+        except NotFound as error:
+            raise BackendError("not_found", str(error), 404) from error
+
+    def list_candidates(self) -> dict[str, Any]:
+        return {"items": [candidate_summary(candidate) for candidate in self.store.candidates()]}
+
+    def get_candidate(self, candidate_id: str, revision: int | None = None) -> dict[str, Any]:
+        try:
+            return {"candidate": self.store.get_candidate(candidate_id, revision)}
+        except NotFound as error:
+            raise BackendError("not_found", str(error), 404) from error
+
+    def validate_candidate(self, candidate_id: str, revision: int) -> dict[str, Any]:
+        candidate = self.get_candidate(candidate_id, revision)["candidate"]
+        diagnostics = validate_candidate_model(candidate)
+        model_hash = None
+        if not diagnostics:
+            try:
+                _, model_hash = compile_runtime_toml(build_runtime_model(candidate))
+            except SchemaIssue as error:
+                diagnostics.append({"path": error.path, "message": error.message})
+        return {
+            "candidate_id": candidate_id,
+            "candidate_revision": revision,
+            "diagnostics": diagnostics,
+            "model_hash": model_hash,
+            "open_issues": candidate["open_issues"],
+            "valid": not diagnostics,
+        }
+
+    def validate_candidate_request(self, candidate_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        _exact_fields(body, {"candidate_revision"})
+        revision = body["candidate_revision"]
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision <= 0:
+            raise BackendError("invalid_request", "candidate_revision must be positive")
+        return self.validate_candidate(candidate_id, revision)
 
 
 class _Handler(BaseHTTPRequestHandler):
-    backend: AnnotationBackend
+    backend: AgentBackend
+    bearer: str
+    allowed_hosts: frozenset[str]
+    allowed_origins: frozenset[str]
 
-    def _send(self, status: int, value: dict[str, Any]) -> None:
+    def _send(self, status: int, value: Any) -> None:
         payload = json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(payload)
 
+    def _authenticate(self) -> None:
+        hosts = self.headers.get_all("Host", failobj=[])
+        authorizations = self.headers.get_all("Authorization", failobj=[])
+        origins = self.headers.get_all("Origin", failobj=[])
+        if len(hosts) != 1 or hosts[0] not in self.allowed_hosts:
+            raise BackendError("forbidden", "Host is not the bound loopback endpoint", 403)
+        expected = f"Bearer {self.bearer}"
+        if len(authorizations) != 1 or not hmac.compare_digest(authorizations[0], expected):
+            raise BackendError("unauthorized", "valid Agent bearer required", 401)
+        if len(origins) > 1 or (origins and origins[0] not in self.allowed_origins):
+            raise BackendError("forbidden", "Origin is not the bound loopback endpoint", 403)
+        fetch_site = self.headers.get("Sec-Fetch-Site")
+        if fetch_site not in {None, "none", "same-origin"}:
+            raise BackendError("forbidden", "cross-site browser requests are forbidden", 403)
+
     def _body(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as error:
+            raise BackendError("invalid_request", "invalid Content-Length") from error
+        if length < 0 or length > _MAX_REQUEST_BYTES:
+            raise BackendError("invalid_request", "request body is too large", 413)
         value = json.loads(self.rfile.read(length) or b"{}")
         if not isinstance(value, dict):
-            raise BackendError("invalid_request", "request body must be an object", 400)
+            raise BackendError("invalid_request", "request body must be an object")
         return value
 
-    def _run(self, callback: Any) -> None:
+    def _run(self, callback: Callable[[], Any]) -> None:
         try:
+            self._authenticate()
             self._send(200, callback())
         except BackendError as error:
             self._send(error.status, error.problem())
-        except (EvidenceStoreError, ValueError, json.JSONDecodeError) as error:
+        except (StoreError, UnsafePath, ValueError, json.JSONDecodeError) as error:
             self._send(400, {"code": "invalid_request", "message": str(error), "retryable": False})
 
     def do_GET(self) -> None:  # noqa: N802
-        parsed = urlparse(self.path)
-        parts = [unquote(part) for part in parsed.path.split("/") if part]
-        query = parse_qs(parsed.query)
+        parts = [unquote(part) for part in urlparse(self.path).path.split("/") if part]
         if parts == ["api", "schema"]:
-            self._run(self.backend.schema_manifest)
+            callback = self.backend.schema_manifest
         elif parts == ["api", "candidates"]:
-            self._run(lambda: self.backend.list_candidates(query.get("status", [None])[0], query.get("cursor", [None])[0]))
+            callback = self.backend.list_candidates
         elif len(parts) == 3 and parts[:2] == ["api", "candidates"]:
-            self._run(lambda: self.backend.get_candidate(parts[2]))
-        elif len(parts) == 4 and parts[:2] == ["api", "candidates"] and parts[3] in {"conflicts", "provenance"}:
-            self._run(lambda: self.backend.get_conflicts(parts[2]) if parts[3] == "conflicts" else self.backend.get_provenance(parts[2]))
+            callback = lambda: self.backend.get_candidate(parts[2])
+        elif len(parts) == 3 and parts[:2] == ["api", "checkpoints"]:
+            callback = lambda: self.backend.get_agent_checkpoint(parts[2])
         else:
-            self._send(404, {"code": "not_found", "message": "endpoint not found", "retryable": False})
+            callback = lambda: (_ for _ in ()).throw(
+                BackendError("not_found", "endpoint not found", 404)
+            )
+        self._run(callback)
 
     def do_POST(self) -> None:  # noqa: N802
-        parsed = urlparse(self.path)
-        parts = [unquote(part) for part in parsed.path.split("/") if part]
-        try:
+        parts = [unquote(part) for part in urlparse(self.path).path.split("/") if part]
+
+        def dispatch() -> Any:
             body = self._body()
-        except (ValueError, json.JSONDecodeError) as error:
-            self._send(400, {"code": "invalid_request", "message": str(error), "retryable": False})
-            return
-        if len(parts) == 5 and parts[:2] == ["api", "candidates"] and parts[3] == "patches" and parts[4] in {"accept", "reject"}:
-            callback = lambda: self.backend.accept_patch(parts[2], body["patch_id"], body) if parts[4] == "accept" else self.backend.reject_patch(parts[2], body["patch_id"], body)
-        elif len(parts) == 4 and parts[:2] == ["api", "candidates"] and parts[3] == "compile":
-            callback = lambda: self.backend.compile_candidate(parts[2], body)
-        elif len(parts) == 4 and parts[:2] == ["api", "candidates"] and parts[3] == "validate":
-            callback = lambda: self.backend.run_validation(parts[2], body["revision"])
-        else:
-            self._send(404, {"code": "not_found", "message": "endpoint not found", "retryable": False})
-            return
-        self._run(callback)
+            if parts == ["api", "candidates"]:
+                return self.backend.propose_candidate(body)
+            if parts == ["api", "checkpoints"]:
+                return self.backend.save_agent_checkpoint(body)
+            if len(parts) == 4 and parts[:2] == ["api", "candidates"] and parts[3] == "validate":
+                return self.backend.validate_candidate_request(parts[2], body)
+            raise BackendError("not_found", "endpoint not found", 404)
+
+        self._run(dispatch)
 
     def log_message(self, format: str, *args: Any) -> None:
         return
 
 
+def make_server(backend: AgentBackend, bearer: str, port: int) -> ThreadingHTTPServer:
+    handler = type(
+        "AnnotationAgentHandler",
+        (_Handler,),
+        {"backend": backend, "bearer": bearer},
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    bound_port = int(server.server_address[1])
+    hosts = frozenset({f"127.0.0.1:{bound_port}", f"localhost:{bound_port}"})
+    handler.allowed_hosts = hosts
+    handler.allowed_origins = frozenset(f"http://{host}" for host in hosts)
+    return server
+
+
+def _one_shot(backend: AgentBackend, request: Mapping[str, Any]) -> Any:
+    operation = request.get("operation")
+    if operation == "propose_candidate":
+        return backend.propose_candidate(request["body"])
+    if operation == "save_agent_checkpoint":
+        return backend.save_agent_checkpoint(request["body"])
+    if operation == "get_agent_checkpoint":
+        return backend.get_agent_checkpoint(request["job_id"])
+    if operation == "list_candidates":
+        return backend.list_candidates()
+    if operation == "get_candidate":
+        return backend.get_candidate(request["candidate_id"], request.get("candidate_revision"))
+    if operation == "validate_candidate":
+        return backend.validate_candidate(request["candidate_id"], request["candidate_revision"])
+    raise BackendError("invalid_request", f"unsupported Agent operation: {operation!r}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--store", required=True, type=Path)
-    parser.add_argument("--project-id", default=None)
-    parser.add_argument("--runtime", type=Path, default=None)
-    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--request", help="execute one API operation as JSON and exit")
+    parser.add_argument("--bearer-file", type=Path)
+    parser.add_argument("--request", help="execute one local Agent operation as JSON and exit")
     arguments = parser.parse_args(argv)
-    project_id = arguments.project_id or arguments.store.name or "offline-project"
-    backend = AnnotationBackend(EvidenceStore(arguments.store, project_id), arguments.runtime)
+    backend = AgentBackend(AnnotationStore(arguments.store))
     if arguments.request:
-        request = json.loads(arguments.request)
-        operation = request["operation"]
-        if operation == "list_candidates":
-            result = backend.list_candidates(request.get("status"), request.get("cursor"))
-        elif operation == "get_candidate":
-            result = backend.get_candidate(request["candidate_id"])
-        elif operation in {"accept_patch", "reject_patch"}:
-            body = request["body"]
-            result = getattr(backend, operation)(request["candidate_id"], request["patch_id"], body)
-        elif operation == "compile_candidate":
-            result = backend.compile_candidate(request["candidate_id"], request["body"])
-        elif operation == "run_validation":
-            result = backend.run_validation(request["candidate_id"], request["revision"])
-        elif operation == "get_conflicts":
-            result = backend.get_conflicts(request["candidate_id"])
-        elif operation == "get_provenance":
-            result = backend.get_provenance(request["candidate_id"])
-        else:
-            raise SystemExit(f"unsupported operation: {operation}")
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print(json.dumps(_one_shot(backend, json.loads(arguments.request)), ensure_ascii=False, indent=2))
         return 0
-    handler = type("AnnotationHandler", (_Handler,), {"backend": backend})
-    server = ThreadingHTTPServer((arguments.host, arguments.port), handler)
-    print(f"annotation backend listening on http://{arguments.host}:{arguments.port}", file=sys.stderr)
+    if arguments.bearer_file is None:
+        parser.error("--bearer-file is required for the loopback HTTP server")
+    bearer = load_agent_bearer(arguments.bearer_file, arguments.store)
+    server = make_server(backend, bearer, arguments.port)
+    print(
+        f"authenticated annotation Agent API listening on http://127.0.0.1:{server.server_address[1]}",
+        file=sys.stderr,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:
