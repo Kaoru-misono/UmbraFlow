@@ -18,6 +18,10 @@ Reading order: target form, then layer ownership, then the model semantics.
 - [Runtime v2 migration report](2026-08-09-runtime-migration-report.md) —
   reproducible inherited baseline, KEEP/REWRITE/DELETE dispositions, and the exact
   requirement-to-owner/schema/CTest map.
+- [The next block after runtime hardening](2026-08-10-next-block.md) --
+  proposed, nothing built on its account. Establishes that the tree is mid Phase
+  2A rather than past it, that this branch has never been pushed and so has
+  never been through CI, and orders the deferred work by dependency.
 
 ## Retained predecessor references
 
