@@ -50,6 +50,14 @@ E:\github\umbraflow-cpp-annotation-design\.claude\skills\post-change-validation\
 
 如果这些 hash 变化，先重读新版本并重新做需求差异检查，仍不得修改消费者仓库。
 
+> 2026-08-10：bundle 已升到 1.8。上表是接管时的记录，保持原样。当前哈希见
+> [ARCHITECTURE](../ARCHITECTURE.md) 与
+> [runtime hardening authority](2026-08-09-runtime-hardening-rewrite.md)。
+> 本条要求的差异检查已做：设计文档只做了原地版本号替换，本仓库依赖的七处契约面
+> （disposition 五值、reduce 信封、I-13 与契约 15、两条重放门禁、Replay Bundle
+> 闭包、authoring capability root、provenance 词表）字节与行号均未变动。项目层
+> 文档的两处纠正不改变上游契约。
+
 ## 3. Git / worktree 状态
 
 ```text

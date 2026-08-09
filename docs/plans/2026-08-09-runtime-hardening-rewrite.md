@@ -7,19 +7,19 @@ Scope: `umbraflow-cpp` only; consumer projects are read-only
 
 ## Frozen product authority
 
-The normative product input is the read-only v1.7 bundle at
+The normative product input is the read-only v1.8 bundle at
 `E:/umbraflow-projects/uf-chaos/docs/architecture/`.
 
 - bundle manifest: `spec-bundle.manifest.json`
-- bundle root SHA-256: `90496173f8a920e59659b7c4568c8d04abe7b4d3d209db493a59fc3c55226ed0`
-- main design: `ee10aaa76dac787a3a9354ab47849e5048dfd0ca194c634d7ee55629d2a0fcf4`
-- project-layer design: `65d444f73a6d682ca5a5b36b7b8393666da53c266892653f1d3141a99abc7bb3`
-- requirements: `6864b06f180e4cd7851d1db127ae3cfb190827ae7c1413d2d3c4e56ef1d79cd6`
-- failure/recovery audit: `1fe1612a78ebb4c5506bf52c3e8a70a5285c165bce18ec679b724ec4d47a28a1`
+- bundle root SHA-256: `099feae33aac10f1d3ef6973ed1dbcc7b7cb934b13f43c1fe594333818e8c132`
+- main design: `77cccfd2e811abaddc427304dddcede7519f544f1efa0b8efd75ab3877588ec9`
+- project-layer design: `ea3474a5003d284dd75fd15d7644805e6915e11e8df97fe15edd65d1bdf2cc2b`
+- requirements: `7e9c87e787f118bab546715d4e53d24b072489b91140e3ebee4865d8266ffac2`
+- failure/recovery audit: `026751df6aaa0b69b500acffd1a83930a1a396875ebf8b98ca0b837b0cd0beac`
 
 If any byte differs, implementation stops. Umbraflow does not modify that
 consumer repository. This file is the upstream execution profile and records
-four executable conformance resolutions derived from explicit v1.7 clauses; it
+four executable conformance resolutions derived from explicit v1.8 clauses; it
 does not add product behavior or import consumer-specific schemas into core.
 
 ## Executable conformance resolutions
