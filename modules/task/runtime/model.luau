@@ -30,6 +30,13 @@ export type RuntimeState = {
     surfaces: { Identifier },
 }
 
+export type Surface = {
+    id: Identifier,
+    kind: string,
+    contexts: { Identifier },
+    covers: { Identifier }?,
+}
+
 export type Target = {
     id: Identifier,
     kind: string,
@@ -113,7 +120,7 @@ export type RuntimeModel = {
     locators: { Locator },
     locator_variants: { LocatorVariant },
     readers: { Reader },
-    surfaces: { any },
+    surfaces: { Surface },
     bindings: { Binding },
     transitions: { Transition },
     context_by_id: { [Identifier]: Context },
@@ -121,7 +128,7 @@ export type RuntimeModel = {
     locator_by_id: { [Identifier]: Locator },
     locator_variant_by_id: { [Identifier]: LocatorVariant },
     reader_by_id: { [Identifier]: Reader },
-    surface_by_id: { [Identifier]: any },
+    surface_by_id: { [Identifier]: Surface },
     binding_by_id: { [Identifier]: Binding },
     transition_by_id: { [Identifier]: Transition },
     bindings_by_surface: { [Identifier]: { Binding } },
@@ -738,7 +745,7 @@ end
 
 local Surface = {}
 model.Surface = Surface
-function Surface.new(spec: { [string]: any }): any
+function Surface.new(spec: { [string]: any }): Surface
     local value = requireTable("Surface.new", spec)
     local kind = requireString("surface kind", value.kind)
     local known = { id = true, kind = true, contexts = true, covers = true }
