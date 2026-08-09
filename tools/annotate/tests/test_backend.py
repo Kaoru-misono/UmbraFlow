@@ -10,6 +10,7 @@ import json
 import multiprocessing
 import os
 import sqlite3
+import subprocess
 import stat
 import tempfile
 import threading
@@ -934,13 +935,35 @@ class PublicationBoundaryTests(WorkspaceTestCase):
         with self.assertRaisesRegex(StoreError, "uncommitted entry"):
             clean.publish("candidate-1", 1, None, ids)
 
-    def test_nested_symlink_or_reparse_is_rejected(self) -> None:
-        synthetic = type(
-            "Metadata",
-            (),
-            {"st_mode": stat.S_IFDIR, "st_file_attributes": 0x400},
-        )()
-        self.assertTrue(is_reparse(synthetic))
+    def test_nested_junction_is_rejected_where_only_the_reparse_bit_sees_it(self) -> None:
+        # A junction rather than a symlink, because a symlink is already
+        # rejected by S_ISLNK and so cannot show that the reparse check does
+        # anything. lstat reports a junction as a plain directory, junctions
+        # need no privilege on Windows, and disabling is_reparse lets
+        # remove_plain_tree follow one out of the workspace.
+        if os.name != "nt":
+            self.skipTest("a junction is a Windows reparse point")
+        make_plain_directories(self.workspace.handoff)
+        make_plain_directories(self.workspace.handoff / ".staging")
+        target = self.workspace.base / "outside"
+        target.mkdir()
+        link = self.workspace.handoff / ".staging" / "escape"
+        created = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(created.returncode, 0, created.stderr)
+
+        metadata = os.lstat(link)
+        self.assertFalse(stat.S_ISLNK(metadata.st_mode))
+        self.assertTrue(stat.S_ISDIR(metadata.st_mode))
+        self.assertTrue(is_reparse(metadata))
+
+        with self.assertRaises(StoreError):
+            self.workspace.publisher()
+
+    def test_nested_symlink_is_rejected(self) -> None:
         make_plain_directories(self.workspace.handoff)
         make_plain_directories(self.workspace.handoff / ".staging")
         target = self.workspace.base / "outside"

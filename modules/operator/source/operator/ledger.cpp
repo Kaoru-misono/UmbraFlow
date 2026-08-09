@@ -2343,7 +2343,8 @@ namespace uf::operator_runtime
                 "session.project_registration_hash "
                 "FROM sessions session JOIN project_registrations "
                 "registration ON registration.registration_hash="
-                "session.project_registration_hash WHERE session.session_id=?1"
+                "session.project_registration_hash "
+                "WHERE session.session_id=?1 AND session.active=1"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), sessionQuery.get(), 1, request.sessionId));
@@ -2385,7 +2386,7 @@ namespace uf::operator_runtime
                 "SELECT operation_id, command_fingerprint, tool_name, tool_version, "
                 "canonical_args, mutating, state, revision, "
                 "frozen_plan_hash, EXISTS(SELECT 1 FROM dispatches d WHERE "
-                "d.operation_id=operations.operation_id) FROM operations "
+                "d.operation_id=operations.operation_id), session_id FROM operations "
                 "WHERE idempotency_namespace=?1 AND plugin_id=?2 "
                 "AND project_instance_key=?3 AND client_request_id=?4"
             )
@@ -2412,6 +2413,18 @@ namespace uf::operator_runtime
                 return fail(
                     AutomationErrorKind::ActionRejected,
                     "client_request_id was already used for different canonical command bytes"
+                );
+            }
+
+            // The idempotency key does not carry a session, and nothing makes
+            // an idempotency_namespace unique to one. Without this, the hit
+            // path hands another session's operation id and revision back,
+            // which is all transitionOperation needs to terminate it.
+            if (columnText(existingQuery.get(), 10) != request.sessionId)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "client_request_id belongs to another session"
                 );
             }
             UF_TRY_VALUE(state, parseOperationState(columnText(existingQuery.get(), 6)));
@@ -3244,13 +3257,26 @@ namespace uf::operator_runtime
                 "FROM operations o JOIN sessions session ON session.session_id=o.session_id "
                 "JOIN project_registrations registration ON "
                 "registration.registration_hash=session.project_registration_hash "
-                "WHERE o.operation_id=?1"
+                "WHERE o.operation_id=?1 AND session.active=1 AND session.session_epoch=?2"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), operationQuery.get(), 1, commit.operationId));
+        UF_TRY(bindInteger(
+            m_impl->database.get(),
+            operationQuery.get(),
+            2,
+            m_impl->sessionEpoch
+        ));
         if (sqlite3_step(operationQuery.get()) != SQLITE_ROW)
         {
-            return fail(AutomationErrorKind::InvalidResource, "Unknown operation_id");
+            // The epoch and active flag are part of the lookup rather than a
+            // later comparison: a restart revokes every lease and deactivates
+            // every session, and the Journal is the heaviest write there is, so
+            // a process fenced out of dispatch must not reach it either.
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Unknown operation_id, or its session is not active in this epoch"
+            );
         }
         UF_TRY_VALUE(state, parseOperationState(columnText(operationQuery.get(), 0)));
         if (state != OperationState::Reconciling)
@@ -3312,6 +3338,37 @@ namespace uf::operator_runtime
                 "Reconciliation requires an existing provisioned ProjectState baseline"
             );
         }
+        // v1.7 failure-and-recovery contract 15: a multi-step Operation with a
+        // proven partial effect may not enter Rejected. Refusing an appending
+        // Rejected is not enough, because an earlier Continue on the same
+        // Operation may already have committed one; the Journal it wrote is
+        // where the proof lives, so that is what is asked.
+        if (commit.disposition == ReconcileDisposition::Rejected)
+        {
+            UF_TRY_VALUE(
+                effectQuery,
+                prepare(
+                    m_impl->database.get(),
+                    "SELECT 1 FROM journal_events WHERE operation_id=?1 LIMIT 1"
+                )
+            );
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                effectQuery.get(),
+                1,
+                commit.operationId
+            ));
+            if (sqlite3_step(effectQuery.get()) == SQLITE_ROW)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Rejected is not available once the Journal records an effect "
+                    "for this Operation; commit the proven facts and Continue, or "
+                    "reach Diverged through a correction"
+                );
+            }
+        }
+
         auto const storedStateRevision = static_cast<uint64>(
             sqlite3_column_int64(stateQuery.get(), 0)
         );

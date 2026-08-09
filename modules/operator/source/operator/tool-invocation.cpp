@@ -1,8 +1,11 @@
 #include "tool-invocation.hpp"
 
+#include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace uf::operator_runtime
@@ -69,6 +72,7 @@ namespace uf::operator_runtime
 
     auto ProjectToolCatalogSchemaOwner::create(
         VerifiedProjectRegistration const& registration,
+        std::string_view exactToolCatalogBytes,
         ToolCatalogValidator validateInvocation
     ) -> Result<ProjectToolCatalogSchemaOwner>
     {
@@ -79,9 +83,20 @@ namespace uf::operator_runtime
                 "ProjectToolCatalogSchemaOwner requires a catalog validator"
             );
         }
+        UF_TRY_VALUE(
+            catalogHash,
+            sha256(std::as_bytes(std::span{exactToolCatalogBytes}))
+        );
+        if (catalogHash != registration.toolCatalogHash())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool Catalog bytes do not match the registration's tool_catalog_hash"
+            );
+        }
         return ProjectToolCatalogSchemaOwner{
             registration.hash(),
-            registration.toolCatalogHash(),
+            catalogHash,
             std::move(validateInvocation),
         };
     }

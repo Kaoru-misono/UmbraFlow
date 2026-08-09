@@ -406,6 +406,19 @@ class BlobUpload:
     asset_type: str | None = None
 
 
+# The workspace-relative roots that belong to the authoring capability, named
+# so that "production may not read them" is asserted about something. They are
+# fixed rather than stored: the layout is created by initialize() below, and the
+# schema pins each one as a const, so a row could not disagree with the contract
+# without one of the two being wrong.
+AUTHORING_ROOTS: dict[str, str] = {
+    "workspace_database": DATABASE_NAME,
+    "candidate_workspace_root": "objects/runtime-artifacts",
+    "evidence_blob_root": "blobs/evidence",
+    "replay_bundle_root": "replay-bundles",
+}
+
+
 @dataclass(frozen=True)
 class AuthoringCapabilityRoot:
     workspace_id: str
@@ -419,7 +432,10 @@ class AuthoringCapabilityRoot:
             _hash(getattr(self, field), field)
 
     def document(self) -> dict[str, Any]:
-        return {field: getattr(self, field) for field in self.__dataclass_fields__}
+        return {
+            **{field: getattr(self, field) for field in self.__dataclass_fields__},
+            **AUTHORING_ROOTS,
+        }
 
 
 def _descriptor_document(
@@ -713,11 +729,11 @@ class AnnotationStore:
         if os.path.lexists(database):
             raise Conflict(f"authoring database already exists: {database}")
         for directory in (
-            workspace / "blobs" / "evidence",
+            workspace / AUTHORING_ROOTS["evidence_blob_root"],
             workspace / "blobs" / "runtime-assets",
             *(workspace / "blobs" / "runtime-assets" / value for value in sorted(_ASSET_TYPES)),
-            workspace / "objects" / "runtime-artifacts",
-            workspace / "replay-bundles",
+            workspace / AUTHORING_ROOTS["candidate_workspace_root"],
+            workspace / AUTHORING_ROOTS["replay_bundle_root"],
             workspace / ".staging",
         ):
             make_plain_directories(directory)

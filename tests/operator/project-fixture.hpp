@@ -343,6 +343,7 @@ namespace uf::operator_runtime::test_support
 
         auto toolCatalogSchemaOwner = ProjectToolCatalogSchemaOwner::create(
             *registration,
+            "catalogue",
             [](std::string_view toolName,
                std::string_view exactArgsJcs) -> Result<ToolDescriptor>
             {

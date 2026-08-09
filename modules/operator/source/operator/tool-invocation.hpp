@@ -102,9 +102,14 @@ namespace uf::operator_runtime
         );
 
     public:
+        // The exact Tool Catalog bytes are required, not merely referenced:
+        // without them an owner is bound to a registration whose
+        // tool_catalog_hash it never has to satisfy, and any validator at all
+        // could answer for that catalog.
         [[nodiscard]]
         static auto create(
             VerifiedProjectRegistration const& registration,
+            std::string_view exactToolCatalogBytes,
             ToolCatalogValidator validateInvocation
         ) -> Result<ProjectToolCatalogSchemaOwner>;
 

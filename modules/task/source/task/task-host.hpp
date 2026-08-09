@@ -177,6 +177,15 @@ namespace uf::task
             GenerationId generation;
             ContentHash  artifactRootHash;
             ContentHash  semanticHash;
+            // TODO(cpp-debt): a stored borrow with no backing-owner contract --
+            // the context is caller-owned, unbinds when its run returns, and
+            // m_receipts is pruned only by a successful deliver, so an
+            // undelivered Receipt outlives what it points at. Latent only
+            // because deliver() has no production caller yet.
+            // ceiling: Phase 1, where production input stays closed;
+            // upgrade: drop the pointer and re-resolve the context from the
+            // generation at delivery, which also makes the cycle check the
+            // single gate.
             TaskContext*                 p_context{};
             CycleTicket                cycle;
             std::optional<uint64>      evidenceCycleOrdinal{};

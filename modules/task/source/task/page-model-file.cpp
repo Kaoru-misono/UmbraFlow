@@ -576,13 +576,13 @@ namespace uf::task
             {
                 return ioFailure("enumerate", canonicalRoot, error);
             }
+            // The guard belongs in the condition, not the body: a failed
+            // increment leaves the iterator at end, so a body-only check never
+            // runs for the last step and an interrupted walk would be accepted
+            // as a closed set.
             auto const end = std::filesystem::recursive_directory_iterator{};
-            for (; iterator != end; iterator.increment(error))
+            for (; !error && iterator != end; iterator.increment(error))
             {
-                if (error)
-                {
-                    return ioFailure("enumerate", canonicalRoot, error);
-                }
                 auto const status = iterator->symlink_status(error);
                 if (error)
                 {
@@ -623,6 +623,10 @@ namespace uf::task
                         std::format("runtime artifact contains undeclared path '{}'", spelling)
                     );
                 }
+            }
+            if (error)
+            {
+                return ioFailure("enumerate", canonicalRoot, error);
             }
             return ok();
         }
