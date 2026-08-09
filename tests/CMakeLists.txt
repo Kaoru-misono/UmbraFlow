@@ -641,6 +641,22 @@ set_tests_properties(
     LABELS "CI"
 )
 
+# The authoring authority's only coverage. It ran in no gate at all until
+# 2026-08-10, so every property it proves -- capability minting, publication
+# CAS, the cross-process lock, blob and document quotas, the loopback header
+# checks -- was unenforced between runs somebody remembered to do by hand.
+add_test(
+    NAME test-annotate-backend
+    COMMAND ${Python3_EXECUTABLE} -m unittest tools.annotate.tests.test_backend
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(
+    test-annotate-backend
+    PROPERTIES
+    TIMEOUT 300
+    LABELS "CI"
+)
+
 get_property(REGISTERED_CONTRACT_CASES GLOBAL PROPERTY UF_REGISTERED_CONTRACT_CASES)
 set(SORTED_REQUIRED_CONTRACT_CASES ${UF_REQUIRED_DOCTEST_CONTRACTS})
 set(SORTED_REGISTERED_CONTRACT_CASES ${REGISTERED_CONTRACT_CASES})

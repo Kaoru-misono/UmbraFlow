@@ -15,8 +15,6 @@
 #include <cstddef>
 #include <filesystem>
 #include <format>
-#include <fstream>
-#include <ios>
 #include <set>
 #include <span>
 #include <string>
@@ -376,72 +374,6 @@ namespace uf::task
                 .pageModel              = std::move(pageModel),
                 .runtimeModelSchemaHash = runtimeModelSchemaHash,
             };
-        }
-
-        [[nodiscard]]
-        auto readBytes(
-            std::filesystem::path const& path,
-            std::size_t maximumBytes
-        ) -> Result<std::vector<std::byte>>
-        {
-            auto error        = std::error_code{};
-            auto const status = std::filesystem::symlink_status(path, error);
-            if (error)
-            {
-                return ioFailure("inspect", path, error);
-            }
-            if (status.type() != std::filesystem::file_type::regular)
-            {
-                return refuse(
-                    std::format("runtime artifact path {} is not a regular file", path.string())
-                );
-            }
-
-            auto const rawSize = std::filesystem::file_size(path, error);
-            if (error)
-            {
-                return ioFailure("measure", path, error);
-            }
-            auto const size = checkedCast<std::size_t>(rawSize);
-            if (!size || *size > maximumBytes)
-            {
-                return refuse(
-                    std::format(
-                        "runtime artifact file {} exceeds its {} byte ceiling",
-                        path.string(),
-                        maximumBytes
-                    )
-                );
-            }
-
-            auto stream = std::ifstream{path, std::ios::binary};
-            if (!stream)
-            {
-                return fail(
-                    AutomationErrorKind::IoFailure,
-                    std::format("cannot open runtime artifact file {}", path.string())
-                );
-            }
-            auto text = std::string(*size, '\0');
-            if (*size != 0U)
-            {
-                stream.read(text.data(), static_cast<std::streamsize>(*size));
-            }
-            if (!stream || stream.gcount() != static_cast<std::streamsize>(*size))
-            {
-                return fail(
-                    AutomationErrorKind::IoFailure,
-                    std::format("runtime artifact file {} changed while reading", path.string())
-                );
-            }
-
-            auto bytes = std::vector<std::byte>{};
-            bytes.reserve(text.size());
-            for (auto const value : text)
-            {
-                bytes.push_back(static_cast<std::byte>(static_cast<unsigned char>(value)));
-            }
-            return bytes;
         }
 
         [[nodiscard]]

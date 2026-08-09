@@ -10,6 +10,7 @@
 #include <domain/content-hash.hpp>
 
 #include <functional>
+#include <string>
 #include <string_view>
 
 namespace uf::operator_runtime
@@ -38,12 +39,14 @@ namespace uf::operator_runtime
 
         ContentHash          m_projectRegistrationHash;
         ContentHash          m_reconcileSchemaManifestHash;
+        std::string          m_operationId;
         ValidatedDocument    m_proposal;
         ReconcileDisposition m_disposition;
 
         ValidatedReconcileOutcome(
             ContentHash projectRegistrationHash,
             ContentHash reconcileSchemaManifestHash,
+            std::string operationId,
             ValidatedDocument proposal,
             ReconcileDisposition disposition
         );
@@ -51,6 +54,15 @@ namespace uf::operator_runtime
     public:
         [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
         [[nodiscard]] auto reconcileSchemaManifestHash() const -> ContentHash;
+
+        // The Operation this conclusion is about. Without it an outcome is
+        // only bound to a registration, so a Confirmed conclusion reached for
+        // one Operation could be committed against another that happens to be
+        // reconciling -- which is the relabel this authority exists to stop,
+        // reached one step further out.
+        [[nodiscard]]
+        auto operationId() const noexcept UF_LIFETIME_BOUND
+            -> std::string const&;
 
         [[nodiscard]]
         auto proposal() const noexcept UF_LIFETIME_BOUND
@@ -90,6 +102,7 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         auto validate(
+            std::string operationId,
             ValidatedDocument proposal
         ) const -> Result<ValidatedReconcileOutcome>;
     };

@@ -721,6 +721,19 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
             frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{19}),
             1'000
         };
+
+        // The other context must be holding a cycle of its own, or the refusal
+        // proves only that it has none -- which would still hold with the
+        // generation stamp removed. With both open, the stamp is what separates
+        // them.
+        auto const otherCycle = TaskHostTestAccess::run(
+            host,
+            generation,
+            other.context(),
+            "return observe.open(project.load_project()) ~= nil"
+        );
+        REQUIRE(otherCycle.has_value());
+        CHECK(otherCycle->boolean() == std::optional<bool>{true});
         CHECK_FALSE(
             TaskHostTestAccess::deliver(
                 host,

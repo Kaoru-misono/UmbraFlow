@@ -97,6 +97,18 @@ namespace uf::operator_runtime
                                                           ProjectDocumentDirection direction,
                                                           std::string_view exactJcs)>;
 
+    // The exact bytes of the three schemas this owner answers for. They are
+    // required for the same reason the Journal, Tool Catalog and reconcile
+    // owners require theirs: an owner that merely names a hash is a
+    // convention, and every ValidatedDocument it stamps is downstream proof
+    // that the pinned schema was applied.
+    struct ProjectDocumentSchemaBytes final
+    {
+        std::string_view projectState{};
+        std::string_view projectObservation{};
+        std::string_view toolPrecondition{};
+    };
+
     class ProjectSchemaOwner final
     {
         class State;
@@ -125,6 +137,7 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         static auto create(VerifiedProjectRegistration const& registration,
+                           ProjectDocumentSchemaBytes const& exactSchemas,
                            CanonicalJsonValidator validateCanonicalJson,
                            ProjectDocumentValidator validateDocument) -> Result<ProjectSchemaOwner>;
 

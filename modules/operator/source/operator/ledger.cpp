@@ -865,6 +865,19 @@ namespace uf::operator_runtime
             return envelope;
         }
 
+        // An Operation may only be advanced by the session that owns it, while
+        // that session is still active at this process epoch AND still holds
+        // the lease on its target. The lease clause is separate from the epoch
+        // one because takeoverLease replaces the lease row without deactivating
+        // the session it replaced: a human takeover would otherwise leave the
+        // displaced controller able to append to the Journal.
+        constexpr auto k_liveControllerJoin = std::string_view{
+            "JOIN sessions session ON session.session_id=o.session_id "
+            "JOIN control_leases lease "
+            "ON lease.controlled_target_key=o.controlled_target_key "
+            "AND lease.session_id=o.session_id "
+        };
+
         [[nodiscard]]
         auto beginSessionEpoch(sqlite3* database) -> Result<uint64>
         {
@@ -2605,16 +2618,22 @@ namespace uf::operator_runtime
             query,
             prepare(
                 m_impl->database.get(),
-                "SELECT state, revision, frozen_plan_hash, mutating, "
+                "SELECT o.state, o.revision, o.frozen_plan_hash, o.mutating, "
                 "EXISTS(SELECT 1 FROM dispatches d "
-                "WHERE d.operation_id=operations.operation_id) FROM operations "
-                "WHERE operation_id=?1"
+                "WHERE d.operation_id=o.operation_id) FROM operations o "
+                + std::string{k_liveControllerJoin}
+                + "WHERE o.operation_id=?1 AND session.active=1 "
+                "AND session.session_epoch=?2"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), query.get(), 1, operationId));
+        UF_TRY(bindInteger(m_impl->database.get(), query.get(), 2, m_impl->sessionEpoch));
         if (sqlite3_step(query.get()) != SQLITE_ROW)
         {
-            return fail(AutomationErrorKind::InvalidResource, "Unknown operation_id");
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Unknown operation_id, or its session no longer controls the target"
+            );
         }
         auto const revision = static_cast<uint64>(sqlite3_column_int64(query.get(), 1));
         if (revision != expectedRevision)
@@ -3267,8 +3286,9 @@ namespace uf::operator_runtime
                 "SELECT o.state, o.revision, registration.plugin_id, "
                 "session.project_instance_key, session.manifest_hash, "
                 "registration.plugin_hash, session.project_registration_hash "
-                "FROM operations o JOIN sessions session ON session.session_id=o.session_id "
-                "JOIN project_registrations registration ON "
+                "FROM operations o "
+                + std::string{k_liveControllerJoin}
+                + "JOIN project_registrations registration ON "
                 "registration.registration_hash=session.project_registration_hash "
                 "WHERE o.operation_id=?1 AND session.active=1 AND session.session_epoch=?2"
             )
@@ -3323,11 +3343,15 @@ namespace uf::operator_runtime
         // The outcome carries the registration its authority was bound to, so
         // asking it rather than only its document also pins which reconcile
         // schema read the disposition.
-        if (commit.outcome.projectRegistrationHash() != plugin.projectRegistrationHash())
+        if (
+            commit.outcome.projectRegistrationHash() != plugin.projectRegistrationHash()
+            || commit.outcome.operationId() != commit.operationId
+        )
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "Reconciliation outcome was minted for a different ProjectRegistration"
+                "Reconciliation outcome was minted for a different ProjectRegistration "
+                "or a different Operation"
             );
         }
 
@@ -3356,11 +3380,22 @@ namespace uf::operator_runtime
         // where the proof lives, so that is what is asked.
         if (commit.outcome.disposition() == ReconcileDisposition::Rejected)
         {
+            // "Journal/outcome 证明部分 effect" -- the outcome half matters as
+            // much as the Journal half, and I-13 wants every possible external
+            // effect proven ABSENT. Only not_delivered is that proof: a NULL
+            // outcome is a dispatch nobody has answered for, transport_unknown
+            // is the recovery path's way of saying it does not know, and
+            // delivered says it happened. Any of the three leaves Rejected
+            // claiming more than the ledger can support.
             UF_TRY_VALUE(
                 effectQuery,
                 prepare(
                     m_impl->database.get(),
-                    "SELECT 1 FROM journal_events WHERE operation_id=?1 LIMIT 1"
+                    "SELECT 1 FROM journal_events WHERE operation_id=?1 "
+                    "UNION ALL "
+                    "SELECT 1 FROM dispatches WHERE operation_id=?1 AND ("
+                    "delivery_outcome IS NULL OR delivery_outcome<>'not_delivered') "
+                    "LIMIT 1"
                 )
             );
             UF_TRY(bindText(
@@ -3373,9 +3408,10 @@ namespace uf::operator_runtime
             {
                 return fail(
                     AutomationErrorKind::ActionRejected,
-                    "Rejected is not available once the Journal records an effect "
-                    "for this Operation; commit the proven facts and Continue, or "
-                    "reach Diverged through a correction"
+                    "Rejected requires every possible external effect proven not to "
+                    "have happened; this Operation has a Journal event or a dispatch "
+                    "that is not proven undelivered. Commit the proven facts and "
+                    "Continue, or reach Diverged through a correction"
                 );
             }
         }

@@ -198,6 +198,7 @@ namespace uf::operator_runtime
     }
 
     auto ProjectSchemaOwner::create(VerifiedProjectRegistration const& registration,
+                                    ProjectDocumentSchemaBytes const& exactSchemas,
                                     CanonicalJsonValidator validateCanonicalJson,
                                     ProjectDocumentValidator validateDocument)
         -> Result<ProjectSchemaOwner>
@@ -205,6 +206,28 @@ namespace uf::operator_runtime
         if (!validateCanonicalJson || !validateDocument)
         {
             return refuse("ProjectSchemaOwner requires canonical and document validators");
+        }
+        auto const pinned = std::array{
+            std::pair{exactSchemas.projectState, registration.projectStateSchemaHash()},
+            std::pair{
+                exactSchemas.projectObservation,
+                registration.projectObservationSchemaHash(),
+            },
+            std::pair{
+                exactSchemas.toolPrecondition,
+                registration.projectToolPreconditionSchemaHash(),
+            },
+        };
+        for (auto const& [bytes, expected] : pinned)
+        {
+            UF_TRY_VALUE(actual, sha256(std::as_bytes(std::span{bytes})));
+            if (actual != expected)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "ProjectSchemaOwner bytes do not match a hash this registration pinned"
+                );
+            }
         }
         auto state = std::make_shared<State>(State{
             .projectRegistrationHash = registration.hash(),

@@ -159,6 +159,11 @@ return {
 
             auto schemaOwnerResult = ProjectSchemaOwner::create(
                 *registrationResult,
+                ProjectDocumentSchemaBytes{
+                    .projectState       = "state",
+                    .projectObservation = "observation",
+                    .toolPrecondition   = "precondition",
+                },
                 [](std::string_view exactJcs) -> Status {
                     constexpr auto accepted = std::array{
                         k_input,
@@ -432,6 +437,11 @@ return {
 
             auto invalidOwnerResult = ProjectSchemaOwner::create(
                 fixture.registration,
+                ProjectDocumentSchemaBytes{
+                    .projectState       = "state",
+                    .projectObservation = "observation",
+                    .toolPrecondition   = "precondition",
+                },
                 [](std::string_view) -> Status { return ok(); },
                 [](ProjectPluginFunction,
                    ProjectDocumentDirection direction,
@@ -463,6 +473,11 @@ return {
 
             auto const laxOwner = ProjectSchemaOwner::create(
                 fixture.registration,
+                ProjectDocumentSchemaBytes{
+                    .projectState       = "state",
+                    .projectObservation = "observation",
+                    .toolPrecondition   = "precondition",
+                },
                 [](std::string_view) -> Status { return ok(); },
                 [](ProjectPluginFunction, ProjectDocumentDirection, std::string_view) -> Status {
                     return ok();

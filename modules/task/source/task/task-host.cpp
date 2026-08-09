@@ -561,10 +561,21 @@ namespace uf::task
                 "this observation cycle already has an unconsumed Host Receipt"
             );
         }
-        // Undelivered Receipts are only removed by a successful delivery, and
-        // each one holds seven script-supplied strings, so the list needs a
-        // ceiling of its own: a script that mints and never delivers would
-        // otherwise grow Host memory for as long as the generation lives.
+        // A Receipt that outlived its freshness bound or its fence can never be
+        // delivered, so it is swept before the ceiling is applied. Without this
+        // the ceiling is a wedge rather than a bound: nothing but a successful
+        // delivery removes an entry, and Phase 1 publishes no production
+        // deliverer, so a runtime that authorizes once per cycle would reach
+        // the limit and then be refused forever.
+        auto const now = MonotonicInstant::now();
+        std::erase_if(
+            m_receipts,
+            [this, now](PendingReceipt const& pending) noexcept
+            {
+                return pending.fence != m_fence
+                    || now.saturatingDurationSince(pending.mintedAt) > pending.maximumAge;
+            }
+        );
         if (m_receipts.size() >= k_maximumPendingReceipts)
         {
             return fail(

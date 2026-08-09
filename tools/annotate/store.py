@@ -396,12 +396,15 @@ def _require_document_budget(connection: sqlite3.Connection, encoded: str) -> No
     """
     if len(encoded.encode()) > _MAX_DOCUMENT_BYTES:
         raise StoreError("document exceeds its size ceiling")
+    # length() counts characters; the ceiling is in bytes. Casting to blob
+    # measures what the ceiling is about, so a document of multi-byte text
+    # cannot be four times its accounted size.
     total = connection.execute(
-        "SELECT coalesce(sum(length(document)), 0) FROM candidate_revisions"
+        "SELECT coalesce(sum(length(cast(document as blob))), 0) FROM candidate_revisions"
     ).fetchone()[0] + connection.execute(
-        "SELECT coalesce(sum(length(document)), 0) FROM agent_checkpoints"
+        "SELECT coalesce(sum(length(cast(document as blob))), 0) FROM agent_checkpoints"
     ).fetchone()[0]
-    if total + len(encoded) > _MAX_DOCUMENT_STORE_BYTES:
+    if total + len(encoded.encode()) > _MAX_DOCUMENT_STORE_BYTES:
         raise StoreError("workspace document quota is exhausted")
 
 
@@ -458,10 +461,19 @@ class AuthoringCapabilityRoot:
             _hash(getattr(self, field), field)
 
     def document(self) -> dict[str, Any]:
-        return {
+        value = {
             **{field: getattr(self, field) for field in self.__dataclass_fields__},
             **AUTHORING_ROOTS,
         }
+        # Validated, not merely shaped to match. Every release manifest stamps
+        # this schema's hash, so a root that no longer satisfies it would be
+        # published under a claim nothing checked.
+        require_valid(
+            "umbraflow-annotation-workspace-v2.schema.json",
+            value,
+            "authoring capability root",
+        )
+        return value
 
 
 def _descriptor_document(
@@ -586,6 +598,7 @@ def _open_capability(path: Path | str, capability_type: type[_DescriptorAuthorit
         descriptor = open_plain_read(requested)
     except UnsafePath as error:
         raise StoreError("trusted capability file cannot be opened") from error
+    instance = None
     try:
         metadata = os.fstat(descriptor)
         if os.name != "nt" and metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
@@ -601,7 +614,14 @@ def _open_capability(path: Path | str, capability_type: type[_DescriptorAuthorit
         instance.verify_open()
         return instance
     except BaseException:
-        os.close(descriptor)
+        # Close through the instance once it exists: it owns the descriptor
+        # from construction, and closing the bare number here as well would
+        # close it twice -- in a process opening files concurrently, the second
+        # close lands on whatever reused it.
+        if instance is None:
+            os.close(descriptor)
+        else:
+            instance.close()
         raise
 
 
@@ -618,6 +638,10 @@ def open_publication_capability(path: Path | str) -> PublicationCapability:
 
 
 class ReplayPolicy:
+    # Same reasoning as _DescriptorAuthority: verify_open is the on-disk
+    # tamper re-check, so it must not be replaceable on an instance.
+    __slots__ = ("path", "_descriptor", "_content", "_document", "exact_hash", "_guard")
+
     def __init__(
         self,
         path: Path,
@@ -696,6 +720,7 @@ def open_replay_policy(path: Path | str) -> ReplayPolicy:
         descriptor = open_plain_read(requested)
     except UnsafePath as error:
         raise StoreError("replay policy cannot be opened") from error
+    policy = None
     try:
         metadata = os.fstat(descriptor)
         if os.name != "nt" and metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
@@ -705,7 +730,10 @@ def open_replay_policy(path: Path | str) -> ReplayPolicy:
         policy.verify_open()
         return policy
     except BaseException:
-        os.close(descriptor)
+        if policy is None:
+            os.close(descriptor)
+        else:
+            policy.close()
         raise
 
 

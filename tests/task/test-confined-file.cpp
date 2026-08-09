@@ -111,10 +111,19 @@ namespace uf::task_platform
         auto const inside = temporary.path() / "root";
         std::filesystem::create_directories(inside);
         write(inside / "manifest.json", "{}");
-        if (!linkDirectory(inside / "assets", outside))
+        auto const linked = linkDirectory(inside / "assets", outside);
+#if defined(_WIN32)
+        // A junction needs no privilege here, so a failure is a broken test
+        // rather than an unavailable feature. Returning quietly would delete
+        // the only reparse coverage in the repository without a signal.
+        REQUIRE(linked);
+#else
+        if (!linked)
         {
+            MESSAGE("this account cannot create a directory symlink");
             return;
         }
+#endif
 
         // The link resolves for anything that walks the path by name, so this
         // is exactly the read that hash verification alone would not prevent
@@ -130,10 +139,16 @@ namespace uf::task_platform
         auto const outside = temporary.path() / "outside";
         std::filesystem::create_directories(outside);
         write(outside / "manifest.json", "{}");
-        if (!linkDirectory(temporary.path() / "root", outside))
+        auto const linked = linkDirectory(temporary.path() / "root", outside);
+#if defined(_WIN32)
+        REQUIRE(linked);
+#else
+        if (!linked)
         {
+            MESSAGE("this account cannot create a directory symlink");
             return;
         }
+#endif
         CHECK_FALSE(ConfinedRoot::open(temporary.path() / "root").has_value());
     }
 

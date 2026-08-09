@@ -186,6 +186,11 @@ namespace uf::operator_runtime::test_support
         auto lastReduceInput = std::make_shared<std::string>();
         auto schemaOwner = ProjectSchemaOwner::create(
             *registration,
+            ProjectDocumentSchemaBytes{
+                .projectState       = "state",
+                .projectObservation = "observation",
+                .toolPrecondition   = "precondition",
+            },
             [](std::string_view exactJcs) -> Status
             {
                 constexpr auto accepted = std::array{
@@ -505,6 +510,7 @@ namespace uf::operator_runtime::test_support
     inline auto reconcileOutcome(
         ProjectFixture const& project,
         ProjectPluginHandle const& plugin,
+        std::string operationId,
         std::string document
     ) -> ValidatedReconcileOutcome
     {
@@ -512,7 +518,10 @@ namespace uf::operator_runtime::test_support
             canonical(project.schemaOwner, std::move(document))
         );
         REQUIRE(proposal.has_value());
-        auto outcome = project.reconcileSchemaOwner.validate(*std::move(proposal));
+        auto outcome = project.reconcileSchemaOwner.validate(
+            std::move(operationId),
+            *std::move(proposal)
+        );
         REQUIRE(outcome.has_value());
         return *outcome;
     }

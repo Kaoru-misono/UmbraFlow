@@ -253,12 +253,14 @@ return {
         [[nodiscard]]
         auto reconciliationOutcome(
             PreparedStore const& prepared,
+            std::string operationId,
             std::string document
         ) -> ValidatedReconcileOutcome
         {
             return test_support::reconcileOutcome(
                 prepared.project,
                 prepared.plugin,
+                std::move(operationId),
                 std::move(document)
             );
         }
@@ -560,7 +562,7 @@ return {
                 .operationId = operation->operationId,
                 .expectedOperationRevision = reconciles->revision,
                 .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(prepared, "{\"disposition\":\"confirmed\"}"),
+                .outcome                      = reconciliationOutcome(prepared, operation->operationId, "{\"disposition\":\"confirmed\"}"),
                 .journalEvents = {
                     JournalAppend{
                         .eventId = "event-foreign",
@@ -580,7 +582,7 @@ return {
                 .operationId = operation->operationId,
                 .expectedOperationRevision = reconciles->revision,
                 .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(prepared, "{\"disposition\":\"confirmed\"}"),
+                .outcome                      = reconciliationOutcome(prepared, operation->operationId, "{\"disposition\":\"confirmed\"}"),
                 .journalEvents = {
                     JournalAppend{
                         .eventId = "event-1",
@@ -608,8 +610,11 @@ return {
             std::string_view toolName
         ) -> StoredOperation
         {
+            // Every dispatch needs its own authority decision id, so it is
+            // derived from the request rather than fixed.
+            auto const authority = "authority-" + clientRequestId;
             auto operation = prepared.store.createOrLoadOperation(
-                command(prepared.snapshot, std::move(clientRequestId)),
+                command(prepared.snapshot, clientRequestId),
                 toolInvocation(prepared.project, std::string{toolName})
             );
             REQUIRE(operation.has_value());
@@ -626,7 +631,7 @@ return {
                 hashOf("decision-basis"),
                 hashOf("frozen-plan"),
                 hashOf("step-1"),
-                "authority-1",
+                authority,
                 std::nullopt
             );
             REQUIRE(dispatch.has_value());
@@ -654,7 +659,7 @@ return {
                 .operationId                  = operation.operationId,
                 .expectedOperationRevision    = operation.revision,
                 .expectedProjectStateRevision = expectedProjectStateRevision,
-                .outcome                      = reconciliationOutcome(prepared, "{\"disposition\":\"confirmed\"}"),
+                .outcome                      = reconciliationOutcome(prepared, operation.operationId, "{\"disposition\":\"confirmed\"}"),
                 .journalEvents = {
                     JournalAppend{
                         .eventId = std::move(eventId),
@@ -739,7 +744,11 @@ return {
              })
         {
             auto commit    = confirmedCommit(prepared, operation, 0U, "event-1", "{\"value\":1}");
-            commit.outcome = reconciliationOutcome(prepared, std::string{document});
+            commit.outcome = reconciliationOutcome(
+                prepared,
+                operation.operationId,
+                std::string{document}
+            );
             CHECK_FALSE(
                 prepared.store.commitReconciliation(prepared.plugin, commit).has_value()
             );
@@ -748,7 +757,11 @@ return {
         // Diverged is the mirror image: it may not claim a correction without
         // recording one.
         auto empty          = confirmedCommit(prepared, operation, 0U, "event-1", "{\"value\":1}");
-        empty.outcome       = reconciliationOutcome(prepared, "{\"disposition\":\"diverged\"}");
+        empty.outcome = reconciliationOutcome(
+            prepared,
+            operation.operationId,
+            "{\"disposition\":\"diverged\"}"
+        );
         empty.journalEvents = {};
         CHECK_FALSE(prepared.store.commitReconciliation(prepared.plugin, empty).has_value());
     }
@@ -763,7 +776,11 @@ return {
         // else, because the disposition is read out of that document rather
         // than supplied beside it.
         auto rejected    = confirmedCommit(prepared, operation, 0U, "event-1", "{\"value\":1}");
-        rejected.outcome = reconciliationOutcome(prepared, "{\"disposition\":\"rejected\"}");
+        rejected.outcome = reconciliationOutcome(
+            prepared,
+            operation.operationId,
+            "{\"disposition\":\"rejected\"}"
+        );
         CHECK_FALSE(
             prepared.store.commitReconciliation(prepared.plugin, rejected).has_value()
         );
@@ -775,10 +792,38 @@ return {
         foreignCommit.outcome = test_support::reconcileOutcome(
             foreign,
             loadPlugin(foreign, k_foreignPluginSource),
+            operation.operationId,
             "{\"disposition\":\"confirmed\"}"
         );
         CHECK_FALSE(
             prepared.store.commitReconciliation(prepared.plugin, foreignCommit).has_value()
+        );
+    }
+
+    TEST_CASE("a reconcile outcome cannot be moved to another Operation")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto const first = reconcilingOperation(prepared, "request-1", "command-1");
+        auto const stolen = reconciliationOutcome(
+            prepared,
+            first.operationId,
+            "{\"disposition\":\"confirmed\"}"
+        );
+        REQUIRE(prepared.store.commitReconciliation(
+            prepared.plugin,
+            confirmedCommit(prepared, first, 0U, "event-1", "{\"value\":1}")
+        ).has_value());
+
+        // The first Operation is terminal now, so the mutation chain is free
+        // for a second one. Same registration, same schema, same disposition
+        // document -- only the Operation the conclusion was reached about
+        // separates them.
+        auto const second = reconcilingOperation(prepared, "request-2", "command-2");
+        auto transplanted    = confirmedCommit(prepared, second, 1U, "event-2", "{\"value\":1}");
+        transplanted.outcome = stolen;
+        CHECK_FALSE(
+            prepared.store.commitReconciliation(prepared.plugin, transplanted).has_value()
         );
     }
 

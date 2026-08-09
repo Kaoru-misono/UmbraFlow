@@ -4,6 +4,7 @@
 #include <domain/error.hpp>
 
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -12,11 +13,13 @@ namespace uf::operator_runtime
     ValidatedReconcileOutcome::ValidatedReconcileOutcome(
         ContentHash projectRegistrationHash,
         ContentHash reconcileSchemaManifestHash,
+        std::string operationId,
         ValidatedDocument proposal,
         ReconcileDisposition disposition
     )
         : m_projectRegistrationHash{projectRegistrationHash}
         , m_reconcileSchemaManifestHash{reconcileSchemaManifestHash}
+        , m_operationId{std::move(operationId)}
         , m_proposal{std::move(proposal)}
         , m_disposition{disposition}
     {
@@ -32,6 +35,12 @@ namespace uf::operator_runtime
         -> ContentHash
     {
         return m_reconcileSchemaManifestHash;
+    }
+
+    auto ValidatedReconcileOutcome::operationId() const noexcept
+        -> std::string const&
+    {
+        return m_operationId;
     }
 
     auto ValidatedReconcileOutcome::proposal() const noexcept
@@ -90,9 +99,17 @@ namespace uf::operator_runtime
     }
 
     auto ProjectReconcileSchemaOwner::validate(
+        std::string operationId,
         ValidatedDocument proposal
     ) const -> Result<ValidatedReconcileOutcome>
     {
+        if (operationId.empty())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "a reconcile outcome must name the Operation it concluded about"
+            );
+        }
         if (
             proposal.projectRegistrationHash() != m_projectRegistrationHash
             || proposal.function() != ProjectPluginFunction::Reconcile
@@ -112,6 +129,7 @@ namespace uf::operator_runtime
         return ValidatedReconcileOutcome{
             m_projectRegistrationHash,
             m_reconcileSchemaManifestHash,
+            std::move(operationId),
             std::move(proposal),
             disposition,
         };

@@ -56,7 +56,12 @@ namespace uf::task_platform
             {
                 auto const slash = rest.find('/');
                 auto const part  = rest.substr(0U, slash);
-                if (part.empty() || part == "." || part == "..")
+                if (
+                    part.empty()
+                    || part == "."
+                    || part == ".."
+                    || part.contains('\\')
+                )
                 {
                     return refuse(
                         std::format("confined path '{}' has an unusable component", relativeText)
@@ -306,11 +311,38 @@ namespace uf::task_platform
     }
 
 #if defined(_WIN32)
+    namespace
+    {
+        [[nodiscard]]
+        auto rootIdentity(Handle const& handle) -> Result<std::pair<uint32, uint64>>
+        {
+            auto information = BY_HANDLE_FILE_INFORMATION{};
+            // SAFETY: handle is valid and information is a local the API fills
+            // completely on success.
+            if (::GetFileInformationByHandle(handle.get(), &information) == 0)
+            {
+                return ioFailure("cannot identify a confined root");
+            }
+            auto const index = (static_cast<uint64>(information.nFileIndexHigh) << 32U)
+                | static_cast<uint64>(information.nFileIndexLow);
+            return std::pair{static_cast<uint32>(information.dwVolumeSerialNumber), index};
+        }
+    }
+
     class ConfinedRoot::Impl final
     {
     public:
         std::wstring rootPath{};
         Handle       root{};
+
+        // The identity the root had when it was opened. Windows has no openat,
+        // so components are still reached through the accumulated path string;
+        // re-checking this before each walk is what makes the held handle the
+        // anchor rather than the name. Without it a rename of any directory
+        // ABOVE the root redirects the whole prefix -- the one thing the POSIX
+        // branch gets for free.
+        uint32 volumeSerial{};
+        uint64 fileIndex{};
     };
 #else
     class ConfinedRoot::Impl final
@@ -338,9 +370,12 @@ namespace uf::task_platform
     {
         auto const native = root.native();
         UF_TRY_VALUE(handle, openNoFollow(native, OpenKind::Directory));
+        UF_TRY_VALUE(identity, rootIdentity(handle));
         auto implementation = std::make_unique<Impl>();
-        implementation->rootPath = native;
-        implementation->root     = std::move(handle);
+        implementation->rootPath     = native;
+        implementation->root         = std::move(handle);
+        implementation->volumeSerial = identity.first;
+        implementation->fileIndex    = identity.second;
         return ConfinedRoot{std::move(implementation)};
     }
 
@@ -350,6 +385,20 @@ namespace uf::task_platform
     ) const -> Result<std::vector<std::byte>>
     {
         UF_TRY_VALUE(parts, components(relativeText));
+
+        // The name must still reach the object this root was opened on; a
+        // rename above it would otherwise silently move the whole walk.
+        UF_TRY_VALUE(anchor, openNoFollow(m_impl->rootPath, OpenKind::Directory));
+        UF_TRY_VALUE(identity, rootIdentity(anchor));
+        if (
+            identity.first != m_impl->volumeSerial
+            || identity.second != m_impl->fileIndex
+        )
+        {
+            return refuse(
+                "the confined root no longer resolves to the directory it was opened on"
+            );
+        }
 
         // Every ancestor is held open until the file itself has been opened, so
         // no directory on the way can be renamed or replaced in between.
@@ -375,6 +424,20 @@ namespace uf::task_platform
     ) const -> Status
     {
         UF_TRY_VALUE(parts, components(relativeText));
+
+        // The name must still reach the object this root was opened on; a
+        // rename above it would otherwise silently move the whole walk.
+        UF_TRY_VALUE(anchor, openNoFollow(m_impl->rootPath, OpenKind::Directory));
+        UF_TRY_VALUE(identity, rootIdentity(anchor));
+        if (
+            identity.first != m_impl->volumeSerial
+            || identity.second != m_impl->fileIndex
+        )
+        {
+            return refuse(
+                "the confined root no longer resolves to the directory it was opened on"
+            );
+        }
 
         auto held = std::vector<Handle>{};
         auto path = m_impl->rootPath;
