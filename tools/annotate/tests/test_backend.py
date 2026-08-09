@@ -595,6 +595,30 @@ class CapabilitySecurityTests(WorkspaceTestCase):
         with self.assertRaisesRegex(StoreError, "purpose"):
             open_human_review_capability(wrong)
 
+    def test_a_capability_file_cannot_be_swapped_under_its_open_descriptor(self) -> None:
+        # Two different mechanisms defend this, and which one fires depends on
+        # the platform, so the test says which it is checking rather than
+        # passing on whichever happens to hold.
+        #
+        # Windows: the open handle refuses the replacement outright.
+        # POSIX: the replacement succeeds and the identity re-check in
+        # _descriptor_document catches it. Removing that comparison turns this
+        # red on POSIX only -- it has no positive control on Windows, which is
+        # recorded in docs/reviews/2026-08-10-runtime-hardening-review.md.
+        other = self.workspace.base / "other-capability.json"
+        write_jcs(other, capability_document("human-review", "human:mallory"))
+        try:
+            os.replace(other, self.workspace.human_path)
+        except OSError:
+            self.assertEqual(
+                self.workspace.human_path.read_bytes(),
+                jcs_bytes(capability_document("human-review", "human:alice")),
+            )
+            self.workspace.human.verify_open()
+            return
+        with self.assertRaisesRegex(StoreError, "identity|exact bytes"):
+            self.workspace.human.verify_open()
+
     def test_verify_rereads_exact_capability_and_policy_descriptor_bytes(self) -> None:
         replacement = jcs_bytes(capability_document("human-review", "human:mallory"))
         try:

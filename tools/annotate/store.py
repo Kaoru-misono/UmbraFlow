@@ -498,6 +498,11 @@ def _descriptor_document(
 class _DescriptorAuthority:
     PURPOSE = ""
 
+    # __slots__ so that in-process code cannot bolt a replacement verify_open or
+    # sha256 onto an instance. The real gate is still the live descriptor and
+    # the DB-pinned hash; this only removes the cheapest way to sidestep them.
+    __slots__ = ("path", "_descriptor", "_content", "_document", "sha256", "_guard")
+
     def __init__(
         self,
         path: Path,

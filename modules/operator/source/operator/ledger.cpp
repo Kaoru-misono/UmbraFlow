@@ -1064,6 +1064,12 @@ namespace uf::operator_runtime
         RuntimeArtifactInstallRequest const& request
     ) -> Result<task::InstalledRuntimeArtifact>
     {
+        // The artifact directory is published before this transaction and is
+        // deliberately NOT removed when the compare-and-swap below fails. It is
+        // content-addressed and re-verified on every open, and a concurrent
+        // publisher may have put the identical bytes there first -- which is
+        // one of the ways the CAS fails. Deleting it on our own failure would
+        // break their installation to tidy ours.
         UF_TRY_VALUE(stagingToken, randomToken(m_impl->database.get()));
         UF_TRY_VALUE(
             prepared,
@@ -2427,15 +2433,22 @@ namespace uf::operator_runtime
                     "client_request_id belongs to another session"
                 );
             }
+            // Every column is read into a local before the commit. Reading a
+            // row after committing its transaction happens to work in this
+            // SQLite, which is exactly why it should not be relied on.
             UF_TRY_VALUE(state, parseOperationState(columnText(existingQuery.get(), 6)));
-            auto const frozen = sqlite3_column_type(existingQuery.get(), 8) != SQLITE_NULL;
+            auto operationId  = columnText(existingQuery.get(), 0);
+            auto const revision = static_cast<uint64>(
+                sqlite3_column_int64(existingQuery.get(), 7)
+            );
+            auto const frozen     = sqlite3_column_type(existingQuery.get(), 8) != SQLITE_NULL;
             auto const dispatched = sqlite3_column_int(existingQuery.get(), 9) != 0;
             UF_TRY(transaction.commit());
             return StoredOperation{
-                .operationId   = columnText(existingQuery.get(), 0),
+                .operationId   = std::move(operationId),
                 .lookup        = CommandLookup::Existing,
                 .state         = state,
-                .revision      = static_cast<uint64>(sqlite3_column_int64(existingQuery.get(), 7)),
+                .revision      = revision,
                 .planFrozen    = frozen,
                 .hasDispatched = dispatched,
             };
