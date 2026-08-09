@@ -323,7 +323,7 @@
       "required": ["candidate_id", "entity_kind", "state", "value", "confidence", "evidence_ids", "provenance"],
       "properties": {
         "candidate_id": { "$ref": "#/$defs/Identifier" },
-        "entity_kind": { "enum": ["context", "locator_variant", "reader", "surface", "binding", "transition"] },
+        "entity_kind": { "enum": ["context", "locator", "locator_variant", "reader", "surface", "binding", "transition"] },
         "state": { "$ref": "#/$defs/CandidateState" },
         "value": {},
         "confidence": { "$ref": "#/$defs/Confidence" },
