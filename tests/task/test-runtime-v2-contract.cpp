@@ -102,15 +102,27 @@ namespace uf::task
         }
 
         [[nodiscard]]
-        static auto deliver(TaskHost& host, TaskHost::Receipt const& receipt)
-            -> Result<engine::ActReceipt>
+        static auto deliver(
+            TaskHost& host,
+            TaskHost::Receipt const& receipt,
+            TaskContext& context
+        ) -> Result<engine::ActReceipt>
         {
-            return host.deliver(host.deliveryAuthority(), receipt);
+            return host.deliver(host.deliveryAuthority(), receipt, context);
         }
     };
 
     namespace
     {
+        constexpr auto k_authorizeSource = std::string_view{R"lua(
+            local cycle = observe.open(project.load_project())
+            local state = cycle:resolve_state()
+            local binding = cycle:resolve_binding(state, "confirm")
+            local receipt, reason = cycle:authorize(binding, "activate")
+            if receipt == nil then error(reason) end
+            return 1
+        )lua"};
+
         constexpr auto k_anchorGray = uint8{2};
         constexpr auto k_actionGray = uint8{5};
 
@@ -681,14 +693,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
             host,
             generation,
             runtime.context(),
-            R"lua(
-                local cycle = observe.open(project.load_project())
-                local state = cycle:resolve_state()
-                local binding = cycle:resolve_binding(state, "confirm")
-                local receipt, reason = cycle:authorize(binding, "activate")
-                if receipt == nil then error(reason) end
-                return 1
-            )lua"
+            k_authorizeSource
         );
         REQUIRE(minted.has_value());
         CHECK(minted->number() == std::optional<double>{1.0});
@@ -696,9 +701,34 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         CHECK(TaskHostTestAccess::pendingSemanticHash(host) != hash(runtimeModel()));
 
         auto const receipt = TaskHostTestAccess::pendingReceipt(host);
-        REQUIRE(TaskHostTestAccess::deliver(host, receipt).has_value());
+        REQUIRE(TaskHostTestAccess::deliver(host, receipt, runtime.context()).has_value());
         CHECK(runtime.actions().clicks() == 1U);
-        CHECK_FALSE(TaskHostTestAccess::deliver(host, receipt).has_value());
+        CHECK_FALSE(TaskHostTestAccess::deliver(host, receipt, runtime.context()).has_value());
+        CHECK(runtime.actions().clicks() == 1U);
+
+        // A Receipt authorizes one delivery against the cycle it was minted in,
+        // so presenting a fresh one with a different context is refused before
+        // any click: no other context holds that cycle. That is what lets the
+        // Host stop remembering a pointer to the context that minted it.
+        auto const reminted = TaskHostTestAccess::run(
+            host,
+            generation,
+            runtime.context(),
+            k_authorizeSource
+        );
+        REQUIRE(reminted.has_value());
+        auto other = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{19}),
+            1'000
+        };
+        CHECK_FALSE(
+            TaskHostTestAccess::deliver(
+                host,
+                TaskHostTestAccess::pendingReceipt(host),
+                other.context()
+            ).has_value()
+        );
+        CHECK(other.actions().clicks() == 0U);
         CHECK(runtime.actions().clicks() == 1U);
     }
 

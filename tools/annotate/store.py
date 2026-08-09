@@ -48,6 +48,12 @@ _CHECKPOINT_STAGES = {"collecting", "proposing", "validating", "complete", "fail
 _ASSET_TYPES = {"template_png", "template_webp"}
 _MAX_RUNTIME_ASSET_BYTES = 268_435_456
 _MAX_BLOB_STORE_BYTES = 4 * 1024 * 1024 * 1024
+# Candidate revisions are immutable and checkpoints cannot be deleted, so a
+# document the untrusted Agent controls needs a ceiling per row and in
+# total. Without both, posting large documents under fresh ids grows the
+# workspace database irreversibly.
+_MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
+_MAX_DOCUMENT_STORE_BYTES = 512 * 1024 * 1024
 _ANNOTATION_SCHEMA_PATH = (
     Path(__file__).resolve().parents[2] / "schema" / "umbraflow-annotation-workspace-v2.schema.json"
 )
@@ -150,7 +156,8 @@ _SCHEMA_OBJECTS: tuple[tuple[str, str], ...] = (
         f"""CREATE TABLE candidate_revisions(
             candidate_id TEXT NOT NULL CHECK(length(candidate_id) > 0),
             revision INTEGER NOT NULL CHECK(revision > 0),
-            document TEXT NOT NULL CHECK(length(document) > 1),
+            document TEXT NOT NULL CHECK(length(document) > 1
+                AND length(document) <= {_MAX_DOCUMENT_BYTES}),
             document_hash TEXT NOT NULL CHECK({_hash_check('document_hash')}),
             created_at TEXT NOT NULL,
             PRIMARY KEY(candidate_id, revision)
@@ -188,7 +195,8 @@ _SCHEMA_OBJECTS: tuple[tuple[str, str], ...] = (
             revision INTEGER NOT NULL CHECK(revision > 0),
             candidate_id TEXT,
             candidate_revision INTEGER,
-            document TEXT NOT NULL CHECK(length(document) > 1),
+            document TEXT NOT NULL CHECK(length(document) > 1
+                AND length(document) <= {_MAX_DOCUMENT_BYTES}),
             document_hash TEXT NOT NULL CHECK({_hash_check('document_hash')}),
             updated_at TEXT NOT NULL,
             CHECK((candidate_id IS NULL) = (candidate_revision IS NULL)),
@@ -377,6 +385,24 @@ SCHEMA_ROOT_HASH = _sha256(
     )
 )
 ANNOTATION_CONTRACT_HASH = _sha256(_ANNOTATION_SCHEMA_PATH.read_bytes())
+
+
+def _require_document_budget(connection: sqlite3.Connection, encoded: str) -> None:
+    """Refuse a document that would push the workspace past its total ceiling.
+
+    The per-row CHECK bounds one document; this bounds how many there can be.
+    Both are needed because candidate revisions are immutable and checkpoints
+    cannot be deleted, so anything the untrusted Agent writes here is permanent.
+    """
+    if len(encoded.encode()) > _MAX_DOCUMENT_BYTES:
+        raise StoreError("document exceeds its size ceiling")
+    total = connection.execute(
+        "SELECT coalesce(sum(length(document)), 0) FROM candidate_revisions"
+    ).fetchone()[0] + connection.execute(
+        "SELECT coalesce(sum(length(document)), 0) FROM agent_checkpoints"
+    ).fetchone()[0]
+    if total + len(encoded) > _MAX_DOCUMENT_STORE_BYTES:
+        raise StoreError("workspace document quota is exhausted")
 
 
 class StoreError(RuntimeError):
@@ -1180,6 +1206,7 @@ class AnnotationStore:
                 raise NotFound(f"candidate {document['id']!r} was not found")
             if head["revision"] != expected_revision:
                 raise Conflict("candidate head compare-and-swap failed")
+        _require_document_budget(connection, encoded)
         connection.execute(
             """INSERT INTO candidate_revisions(
                    candidate_id, revision, document, document_hash, created_at
@@ -1367,6 +1394,7 @@ class AnnotationStore:
                         ).fetchone()
                         if row is None or row["kind"] != "evidence" or row["asset_type"] is not None:
                             raise NotFound(f"checkpoint evidence blob {digest} was not found")
+                    _require_document_budget(connection, encoded)
                     if expected_revision is None:
                         try:
                             connection.execute(

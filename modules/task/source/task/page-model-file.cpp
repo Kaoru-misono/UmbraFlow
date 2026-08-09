@@ -1,5 +1,7 @@
 #include "page-model-file.hpp"
 
+#include "platform/confined-read.hpp"
+
 #include <core/error/result.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
@@ -509,13 +511,19 @@ namespace uf::task
 
         [[nodiscard]]
         auto freezeFile(
+            task_platform::ConfinedRoot const& confinedRoot,
             std::filesystem::path const& canonicalRoot,
             ManifestFile const& declared,
             std::size_t maximumBytes
         ) -> Result<RuntimeArtifactHandle::File>
         {
-            UF_TRY_VALUE(path, resolveFile(canonicalRoot, declared.path));
-            UF_TRY_VALUE(bytes, readBytes(path, maximumBytes));
+            // resolveFile still runs, because it is what refuses a manifest
+            // spelling that escapes the root; the bytes then come from the
+            // confined root, so what was checked and what is read are one
+            // resolution rather than two.
+            UF_TRY_VALUE(checked, resolveFile(canonicalRoot, declared.path));
+            static_cast<void>(checked);
+            UF_TRY_VALUE(bytes, confinedRoot.readFile(declared.path, maximumBytes));
             auto const declaredSize = checkedCast<std::size_t>(declared.size);
             if (!declaredSize || *declaredSize != bytes.size())
             {
@@ -795,13 +803,13 @@ namespace uf::task
     ) -> Result<RuntimeArtifactHandle>
     {
         UF_TRY_VALUE(root, canonicalArtifactRoot(artifactRoot));
-        UF_TRY_VALUE(
-            manifestPath,
-            resolveFile(root, k_runtimeArtifactManifestFileName)
-        );
+        UF_TRY_VALUE(confinedRoot, task_platform::ConfinedRoot::open(root));
         UF_TRY_VALUE(
             manifestBytes,
-            readBytes(manifestPath, k_maximumRuntimeManifestBytes)
+            confinedRoot.readFile(
+                k_runtimeArtifactManifestFileName,
+                k_maximumRuntimeManifestBytes
+            )
         );
         UF_TRY_VALUE(rootHash, sha256(manifestBytes));
         if (rootHash != expectedRootHash)
@@ -867,13 +875,16 @@ namespace uf::task
         files.reserve(manifest.assets.size() + 1U);
         UF_TRY_VALUE(
             model,
-            freezeFile(root, manifest.pageModel, k_maximumRuntimeModelBytes)
+            freezeFile(confinedRoot, root, manifest.pageModel, k_maximumRuntimeModelBytes)
         );
         auto totalBytes = model.bytes.size();
         files.emplace_back(std::move(model));
         for (auto const& asset : manifest.assets)
         {
-            UF_TRY_VALUE(frozen, freezeFile(root, asset, k_maximumRuntimeAssetBytes));
+            UF_TRY_VALUE(
+                frozen,
+                freezeFile(confinedRoot, root, asset, k_maximumRuntimeAssetBytes)
+            );
             auto const next = checkedAdd(totalBytes, frozen.bytes.size());
             if (!next || *next > k_maximumRuntimeArtifactBytes)
             {

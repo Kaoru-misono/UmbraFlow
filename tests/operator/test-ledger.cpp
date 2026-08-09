@@ -137,7 +137,34 @@ return {
         static_assert(!NamesTool<CommandRequest>);
         static_assert(!NamesCanonicalArgs<CommandRequest>);
 
+        // The same guard for every authority-bearing value, not just the one
+        // that happened to get it: an aggregate could be brace-initialized past
+        // its owner, and a public constructor would make the owner optional.
         static_assert(!std::is_aggregate_v<ValidatedJournalEntryData>);
+        static_assert(!std::is_aggregate_v<ValidatedToolInvocation>);
+        static_assert(!std::is_aggregate_v<ValidatedReconcileOutcome>);
+        static_assert(!std::is_aggregate_v<ValidatedDocument>);
+        static_assert(!std::is_aggregate_v<CanonicalJson>);
+        static_assert(
+            !std::is_constructible_v<
+                ValidatedToolInvocation,
+                ContentHash,
+                ContentHash,
+                std::string,
+                std::string,
+                CanonicalJson,
+                ToolMutability
+            >
+        );
+        static_assert(
+            !std::is_constructible_v<
+                ValidatedReconcileOutcome,
+                ContentHash,
+                ContentHash,
+                ValidatedDocument,
+                ReconcileDisposition
+            >
+        );
         static_assert(
             !std::is_constructible_v<
                 ValidatedJournalEntryData,

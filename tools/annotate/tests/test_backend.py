@@ -9,6 +9,7 @@ import inspect
 import json
 import multiprocessing
 import os
+import socket
 import sqlite3
 import subprocess
 import stat
@@ -16,12 +17,14 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
 from tools.annotate import model_file
+from tools.annotate import store
 from tools.annotate.contracts import validate as validate_contract
 from tools.annotate.jcs import CanonicalJsonError, jcs_bytes, load_exact_jcs
 from tools.annotate.model_file import compile_runtime_toml
@@ -597,7 +600,14 @@ class CapabilitySecurityTests(WorkspaceTestCase):
         try:
             descriptor = os.open(self.workspace.human_path, os.O_WRONLY | os.O_TRUNC)
         except PermissionError:
-            self.workspace.human.verify_open()  # Windows handle sharing itself prevents replacement.
+            # Handle sharing refused the overwrite, which is itself the
+            # protection under test -- so assert that it held, rather than
+            # leaving the branch with nothing to fail on.
+            self.assertEqual(
+                self.workspace.human_path.read_bytes(),
+                jcs_bytes(capability_document("human-review", "human:alice")),
+            )
+            self.workspace.human.verify_open()
         else:
             try:
                 os.write(descriptor, replacement)
@@ -617,6 +627,10 @@ class CapabilitySecurityTests(WorkspaceTestCase):
         try:
             descriptor = os.open(self.workspace.policy_path, os.O_WRONLY | os.O_TRUNC)
         except PermissionError:
+            self.assertNotEqual(
+                self.workspace.policy_path.read_bytes(),
+                replacement_policy,
+            )
             self.workspace.policy.verify_open()
         else:
             try:
@@ -823,6 +837,28 @@ class BlobAndAgentTests(WorkspaceTestCase):
             self.workspace.store.save_agent_checkpoint(old, 1)
 
 
+    def test_agent_documents_are_bounded_per_row_and_in_total(self) -> None:
+        # Candidate revisions are immutable and checkpoints cannot be deleted,
+        # so an unbounded document is permanent growth the Agent controls.
+        oversized = {
+            "candidate": None,
+            "evidence_blob_hashes": [],
+            "input_artifact_roots": [],
+            "job_id": "job-oversized",
+            "resume_state": {"pad": "x" * (5 * 1024 * 1024)},
+            "revision": 1,
+            "phase": "validating",
+        }
+        with self.assertRaisesRegex(StoreError, "ceiling"):
+            self.workspace.store.save_agent_checkpoint(oversized, None)
+
+        # And the total is bounded independently of any one row.
+        with unittest.mock.patch.object(store, "_MAX_DOCUMENT_STORE_BYTES", 1):
+            within = {**oversized, "resume_state": {}, "job_id": "job-small"}
+            with self.assertRaisesRegex(StoreError, "quota"):
+                self.workspace.store.save_agent_checkpoint(within, None)
+
+
 class AgentHttpSecurityTests(WorkspaceTestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -846,6 +882,40 @@ class AgentHttpSecurityTests(WorkspaceTestCase):
             return response.status, json.loads(response.read())
         finally:
             connection.close()
+
+    def rawRequest(self, lines: list[str]) -> int:
+        """Send a literal request, because http.client cannot repeat a header."""
+        separator = "\r\n"
+        with socket.create_connection(("127.0.0.1", self.port), timeout=5) as stream:
+            stream.sendall((separator.join(lines) + separator + separator).encode())
+            head = b""
+            while separator.encode() not in head:
+                chunk = stream.recv(1)
+                if not chunk:
+                    break
+                head += chunk
+        return int(head.split()[1])
+
+    def test_a_repeated_security_header_is_rejected(self) -> None:
+        # The guards count headers, and a dict cannot express a repeat, so the
+        # existing case could never reach them. Sent literally, each duplicate
+        # must be refused rather than resolved to one of the two values.
+        base = [
+            "GET /api/schema HTTP/1.1",
+            f"Host: 127.0.0.1:{self.port}",
+            f"Authorization: Bearer {self.token}",
+            f"Origin: http://127.0.0.1:{self.port}",
+            "Sec-Fetch-Site: same-origin",
+            "Connection: close",
+        ]
+        self.assertEqual(self.rawRequest(base), 200)
+
+        for duplicate in (
+            f"Host: 127.0.0.1:{self.port}",
+            f"Authorization: Bearer {self.token}",
+            f"Origin: http://127.0.0.1:{self.port}",
+        ):
+            self.assertNotEqual(self.rawRequest([*base, duplicate]), 200)
 
     def test_bearer_host_origin_and_fetch_site_are_all_enforced(self) -> None:
         good = {"Authorization": f"Bearer {self.token}"}

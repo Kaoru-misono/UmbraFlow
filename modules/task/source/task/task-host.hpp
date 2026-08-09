@@ -22,6 +22,7 @@
 
 #include <trace/recorder.hpp>
 
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -33,6 +34,10 @@
 namespace uf::task
 {
     inline constexpr auto k_defaultMaxScriptRuntime = script::k_defaultMaxRuntime;
+
+    // A cycle can hold at most one unconsumed Receipt, so this also bounds
+    // how many observation cycles may be left un-acted upon at once.
+    inline constexpr auto k_maximumPendingReceipts = std::size_t{64};
 
     class ExplorationSession;
     class ITaskEventSink;
@@ -173,20 +178,10 @@ namespace uf::task
 
         struct PendingReceipt final
         {
-            uint64       ordinal{};
-            GenerationId generation;
-            ContentHash  artifactRootHash;
-            ContentHash  semanticHash;
-            // TODO(cpp-debt): a stored borrow with no backing-owner contract --
-            // the context is caller-owned, unbinds when its run returns, and
-            // m_receipts is pruned only by a successful deliver, so an
-            // undelivered Receipt outlives what it points at. Latent only
-            // because deliver() has no production caller yet.
-            // ceiling: Phase 1, where production input stays closed;
-            // upgrade: drop the pointer and re-resolve the context from the
-            // generation at delivery, which also makes the cycle check the
-            // single gate.
-            TaskContext*                 p_context{};
+            uint64                     ordinal{};
+            GenerationId               generation;
+            ContentHash                artifactRootHash;
+            ContentHash                semanticHash;
             CycleTicket                cycle;
             std::optional<uint64>      evidenceCycleOrdinal{};
             TrustedReceiptIntent       intent;
@@ -253,9 +248,16 @@ namespace uf::task
         [[nodiscard]] auto deliveryAuthority() const noexcept -> DeliveryAuthority;
 
         [[nodiscard]]
+        // The context is supplied at delivery rather than remembered from
+        // minting: a Receipt that stored a TaskContext* would be a borrow of
+        // caller-owned state with no contract keeping it alive. Nothing is
+        // lost by asking, because requireReceiptCycle already proves the
+        // supplied context is the one that minted this Receipt -- no other
+        // context holds that cycle.
         auto deliver(
             DeliveryAuthority authority,
-            Receipt const& receipt
+            Receipt const& receipt,
+            TaskContext& context
         ) -> Result<engine::ActReceipt>;
 
         [[nodiscard]] auto takeover() -> Status;

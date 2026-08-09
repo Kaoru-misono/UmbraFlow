@@ -544,12 +544,13 @@ namespace uf::task
         }
         UF_TRY(context.requireReceiptCycle(cycle, evidenceCycleOrdinal));
 
+        // The cycle alone identifies the duplicate: a CycleTicket names one
+        // observation of one generation, so two contexts cannot share one.
         auto const duplicate = std::ranges::find_if(
             m_receipts,
-            [&context, cycle](PendingReceipt const& pending)
+            [cycle](PendingReceipt const& pending)
             {
-                return pending.p_context == &context
-                    && pending.cycle.generation == cycle.generation
+                return pending.cycle.generation == cycle.generation
                     && pending.cycle.ordinal == cycle.ordinal;
             }
         );
@@ -558,6 +559,17 @@ namespace uf::task
             return fail(
                 AutomationErrorKind::InvalidResource,
                 "this observation cycle already has an unconsumed Host Receipt"
+            );
+        }
+        // Undelivered Receipts are only removed by a successful delivery, and
+        // each one holds seven script-supplied strings, so the list needs a
+        // ceiling of its own: a script that mints and never delivers would
+        // otherwise grow Host memory for as long as the generation lives.
+        if (m_receipts.size() >= k_maximumPendingReceipts)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Host has too many undelivered Receipts"
             );
         }
         if (m_nextReceiptOrdinal == std::numeric_limits<uint64>::max())
@@ -576,7 +588,6 @@ namespace uf::task
                 .generation = generation,
                 .artifactRootHash       = binding->artifactRootHash(),
                 .semanticHash           = binding->semanticHash(),
-                .p_context            = &context,
                 .cycle                = cycle,
                 .evidenceCycleOrdinal = evidenceCycleOrdinal,
                 .intent               = std::move(intent),
@@ -595,7 +606,8 @@ namespace uf::task
 
     auto TaskHost::deliver(
         DeliveryAuthority authority,
-        Receipt const& receipt
+        Receipt const& receipt,
+        TaskContext& context
     ) -> Result<engine::ActReceipt>
     {
         if (
@@ -649,21 +661,13 @@ namespace uf::task
                 "Host Receipt exceeded its freshness bound"
             );
         }
-        if (pending.p_context == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "Host Receipt lost its owning session"
-            );
-        }
-
         UF_TRY(
-            pending.p_context->requireReceiptCycle(
+            context.requireReceiptCycle(
                 pending.cycle,
                 pending.evidenceCycleOrdinal
             )
         );
-        return pending.p_context->deliverReceiptClick(pending.cycle, pending.intent.point);
+        return context.deliverReceiptClick(pending.cycle, pending.intent.point);
     }
 
     auto TaskHost::takeover() -> Status

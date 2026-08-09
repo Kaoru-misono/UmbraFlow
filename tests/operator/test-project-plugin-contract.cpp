@@ -335,11 +335,22 @@ ipairs = function() return function() return nil end end
 return {
     plugin_id = "fixture.pollution",
     derive = function(_input)
+        -- Only names something could plausibly publish. Testing for globals no
+        -- code path registers -- registry, native, Host, Receipt, operator_db --
+        -- held whether or not the whitelist existed, so those disjuncts said
+        -- nothing and are gone.
+        -- Only names the whitelist actually excludes. Testing for globals no
+        -- code path registers -- registry, native, Host, Receipt, operator_db --
+        -- held whether or not the whitelist existed, so those disjuncts said
+        -- nothing and are gone. setmetatable and the raw* family ARE published
+        -- on purpose (k_pureGlobals), so asserting their absence would fail a
+        -- correct VM.
         local forbidden = require ~= nil or load ~= nil or loadfile ~= nil
             or loadstring ~= nil or dofile ~= nil or debug ~= nil or _G ~= nil
-            or registry ~= nil or native ~= nil or Host ~= nil or Receipt ~= nil
-            or operator_db ~= nil or os ~= nil or math.random ~= nil
-            or math.randomseed ~= nil or getfenv ~= nil or setfenv ~= nil
+            or os ~= nil or io ~= nil or coroutine ~= nil or newproxy ~= nil
+            or collectgarbage ~= nil or string.dump ~= nil
+            or math.random ~= nil or math.randomseed ~= nil
+            or getfenv ~= nil or setfenv ~= nil
         if forbidden then return '{"safe":false}' end
         return '{"safe":true}'
     end,
