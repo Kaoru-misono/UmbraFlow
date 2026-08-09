@@ -60,10 +60,10 @@ namespace uf::task
         };
 
     private:
-        std::filesystem::path m_root;
-        ContentHash           m_rootHash;
-        ContentHash           m_manifestSchemaHash;
-        ContentHash           m_runtimeModelSchemaHash;
+        std::filesystem::path  m_root;
+        ContentHash            m_rootHash;
+        ContentHash            m_manifestSchemaHash;
+        ContentHash            m_runtimeModelSchemaHash;
         std::vector<std::byte> m_manifestBytes;
         std::vector<File>      m_files;
 
@@ -158,9 +158,9 @@ namespace uf::task
     // path can bind parser output to one verified artifact and generation.
     class RuntimeModelBinding final
     {
-        GenerationId                           m_generation;
+        GenerationId                                 m_generation;
         std::shared_ptr<RuntimeArtifactHandle const> m_artifact;
-        ContentHash                            m_semanticHash;
+        ContentHash                                  m_semanticHash;
 
         RuntimeModelBinding(
             GenerationId generation,

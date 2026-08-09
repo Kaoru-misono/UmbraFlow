@@ -243,9 +243,9 @@ return {
         [[nodiscard]]
         auto compileBytecode(std::string_view source, std::string_view label) -> Result<std::string>
         {
-            auto options = lua_CompileOptions{};
+            auto options              = lua_CompileOptions{};
             options.optimizationLevel = 1;
-            options.debugLevel = 0;
+            options.debugLevel        = 0;
 
             std::size_t bytecodeSize = 0;
             // SAFETY: luau_compile returns a malloc-owned buffer of exactly
@@ -272,7 +272,7 @@ return {
         auto armRun(InterruptState& control) -> void
         {
             control.runStartedAt = std::chrono::steady_clock::now();
-            control.deadline = control.runStartedAt + k_maximumRuntime;
+            control.deadline     = control.runStartedAt + k_maximumRuntime;
         }
 
         [[nodiscard]]
@@ -424,7 +424,7 @@ return {
                       bool invoke) -> Result<std::string>
         {
             auto artifactReader = ArtifactReaderState{.artifacts = artifacts};
-            auto vm = VmRun{};
+            auto vm  = VmRun{};
             vm.state = createStateWithQuota(&vm.quota);
             if (vm.state == nullptr)
             {
@@ -478,11 +478,11 @@ return {
     class PureDataProgram::State final
     {
     public:
-        std::string moduleId{};
+        std::string              moduleId{};
         std::vector<std::string> entryPoints{};
-        std::vector<Artifact> artifacts{};
-        std::string bridgeBytecode{};
-        std::string pluginBytecode{};
+        std::vector<Artifact>    artifacts{};
+        std::string              bridgeBytecode{};
+        std::string              pluginBytecode{};
     };
 
     PureDataProgram::PureDataProgram(std::shared_ptr<State const> p_state) noexcept
@@ -563,9 +563,9 @@ return {
                         false));
 
         auto state = std::make_shared<State>(State{
-            .moduleId = std::string{moduleId},
-            .entryPoints = std::move(ownedEntryPoints),
-            .artifacts = std::move(artifacts),
+            .moduleId       = std::string{moduleId},
+            .entryPoints    = std::move(ownedEntryPoints),
+            .artifacts      = std::move(artifacts),
             .bridgeBytecode = std::move(bridgeBytecode),
             .pluginBytecode = std::move(pluginBytecode),
         });

@@ -60,10 +60,10 @@ namespace uf::operator_runtime
     // function, and direction. No schema hash label is exposed or accepted.
     class ValidatedDocument final
     {
-        ContentHash m_projectRegistrationHash;
-        ProjectPluginFunction m_function;
+        ContentHash              m_projectRegistrationHash;
+        ProjectPluginFunction    m_function;
         ProjectDocumentDirection m_direction;
-        CanonicalJson m_canonicalJson;
+        CanonicalJson            m_canonicalJson;
 
         ValidatedDocument(ContentHash projectRegistrationHash,
                           ProjectPluginFunction function,

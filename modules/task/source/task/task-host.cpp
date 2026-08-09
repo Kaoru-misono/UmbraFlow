@@ -179,10 +179,10 @@ namespace uf::task
             }
         };
 
-        GenerationId   m_id;
-        GenerationKind m_kind;
-        std::filesystem::path m_root;
-        std::string           m_projectId;
+        GenerationId                                 m_id;
+        GenerationKind                               m_kind;
+        std::filesystem::path                        m_root;
+        std::string                                  m_projectId;
         std::shared_ptr<RuntimeArtifactHandle const> m_artifact{};
         std::shared_ptr<RuntimeModelBinding const>   m_binding{};
         std::optional<script::Engine>                m_runtimeVm{};
@@ -496,10 +496,10 @@ namespace uf::task
         auto vm = script::Engine::create(
             script::EngineConfig{
                 .cancellation      = p_generation->cancellation(),
-                .frameworkModules  = frameworkScriptModules(),
-                .installHostTables = scriptHostTableInstaller(),
+                .frameworkModules           = frameworkScriptModules(),
+                .installHostTables          = scriptHostTableInstaller(),
                 .installPrivateCapabilities = runtimePrivateCapabilities(generation),
-                .projectGlobals          = scriptProjectGlobals(),
+                .projectGlobals             = scriptProjectGlobals(),
                 .frameworkProjectGlobals = {
                     std::string{"observe"},
                     std::string{"project"},
@@ -572,15 +572,15 @@ namespace uf::task
         ++m_nextReceiptOrdinal;
         m_receipts.emplace_back(
             PendingReceipt{
-                .ordinal               = receipt.m_ordinal,
-                .generation            = generation,
+                .ordinal    = receipt.m_ordinal,
+                .generation = generation,
                 .artifactRootHash       = binding->artifactRootHash(),
                 .semanticHash           = binding->semanticHash(),
-                .p_context              = &context,
-                .cycle                  = cycle,
-                .evidenceCycleOrdinal   = evidenceCycleOrdinal,
-                .intent                 = std::move(intent),
-                .mintedAt               = MonotonicInstant::now(),
+                .p_context            = &context,
+                .cycle                = cycle,
+                .evidenceCycleOrdinal = evidenceCycleOrdinal,
+                .intent               = std::move(intent),
+                .mintedAt             = MonotonicInstant::now(),
                 .maximumAge             = p_generation->maximumReceiptAge(),
                 .fence                  = m_fence,
             }

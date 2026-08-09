@@ -130,8 +130,8 @@ namespace uf::operator_runtime
     class ProjectSchemaOwner::State final
     {
     public:
-        ContentHash projectRegistrationHash;
-        CanonicalJsonValidator validateCanonicalJson{};
+        ContentHash              projectRegistrationHash;
+        CanonicalJsonValidator   validateCanonicalJson{};
         ProjectDocumentValidator validateDocument{};
     };
 
@@ -139,8 +139,8 @@ namespace uf::operator_runtime
     {
     public:
         VerifiedProjectRegistration registration;
-        script::PureDataProgram program;
-        ProjectSchemaOwner schemaOwner;
+        script::PureDataProgram     program;
+        ProjectSchemaOwner          schemaOwner;
     };
 
     CanonicalJson::CanonicalJson(ContentHash contentHash, std::string bytes)
@@ -208,8 +208,8 @@ namespace uf::operator_runtime
         }
         auto state = std::make_shared<State>(State{
             .projectRegistrationHash = registration.hash(),
-            .validateCanonicalJson = std::move(validateCanonicalJson),
-            .validateDocument = std::move(validateDocument),
+            .validateCanonicalJson   = std::move(validateCanonicalJson),
+            .validateDocument        = std::move(validateDocument),
         });
         return ProjectSchemaOwner{std::shared_ptr<State const>{std::move(state)}};
     }
@@ -354,8 +354,8 @@ namespace uf::operator_runtime
                              "precompiling exact ProjectPlugin bytes");
         auto state = std::make_shared<ProjectPluginHandle::State>(ProjectPluginHandle::State{
             .registration = registration,
-            .program = std::move(program),
-            .schemaOwner = std::move(schemaOwner),
+            .program      = std::move(program),
+            .schemaOwner  = std::move(schemaOwner),
         });
         auto handle = ProjectPluginHandle{
             std::shared_ptr<ProjectPluginHandle::State const>{std::move(state)}};

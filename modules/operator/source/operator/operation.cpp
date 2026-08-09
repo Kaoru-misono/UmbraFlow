@@ -218,9 +218,9 @@ namespace uf::operator_runtime
             );
         }
 
-        auto machine = OperationMachine{};
-        machine.m_state = state;
-        machine.m_planFrozen = planFrozen;
+        auto machine            = OperationMachine{};
+        machine.m_state         = state;
+        machine.m_planFrozen    = planFrozen;
         machine.m_hasDispatched = hasDispatched;
         return machine;
     }
@@ -298,7 +298,7 @@ namespace uf::operator_runtime
 
         if (event == OperationEvent::DispatchStarted)
         {
-            m_planFrozen = true;
+            m_planFrozen    = true;
             m_hasDispatched = true;
         }
         m_state = rule->target;

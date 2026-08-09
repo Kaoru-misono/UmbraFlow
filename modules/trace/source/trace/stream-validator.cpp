@@ -35,7 +35,7 @@ namespace uf::trace
             m_sessionId           = event.sessionId();
             m_sessionManifestHash = event.sessionManifestHash();
             m_producer            = event.producer();
-            m_lastSequence = event.sequence();
+            m_lastSequence        = event.sequence();
             return ok();
         }
 

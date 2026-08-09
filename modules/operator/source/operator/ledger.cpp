@@ -842,7 +842,7 @@ namespace uf::operator_runtime
         ) -> std::string
         {
             auto envelope = std::string{"{\"journal_events\":["};
-            auto first = true;
+            auto first    = true;
             for (auto const& append : journalEvents)
             {
                 if (!first)

@@ -28,9 +28,6 @@ namespace uf::operator_runtime::detail
         constexpr auto k_runtimeDirectoryName = std::string_view{"runtime-artifact"};
         constexpr auto k_maximumReleaseManifestBytes = std::size_t{64U * 1024U};
         constexpr auto k_maximumExactJsonInteger = uint64{9'007'199'254'740'991U};
-        constexpr auto k_annotationWorkspaceSchemaHash = std::string_view{
-            "d3b67cc2b25989377bf12668d7f0ca03635e67bb4cfb734d88da8c55fba387e4"
-        };
 
         [[nodiscard]]
         auto refuse(std::string message) -> std::unexpected<Error>
@@ -396,7 +393,7 @@ namespace uf::operator_runtime::detail
         {
             UF_TRY(requirePlainDirectory(handoffRoot));
             auto actual = std::set<std::string>{};
-            auto error = std::error_code{};
+            auto error  = std::error_code{};
             for (auto iterator = std::filesystem::directory_iterator{handoffRoot, error};
                  !error && iterator != std::filesystem::directory_iterator{};
                  iterator.increment(error))
@@ -492,7 +489,7 @@ namespace uf::operator_runtime::detail
         ) -> Result<std::filesystem::path>
         {
             auto const destination = productionRoot / source.rootHash().hex();
-            auto error = std::error_code{};
+            auto error  = std::error_code{};
             auto status = std::filesystem::symlink_status(destination, error);
             if (!error && std::filesystem::exists(status))
             {
@@ -628,8 +625,8 @@ namespace uf::operator_runtime::detail
                 std::move(installed)
             ),
             .releaseManifestHash = releaseHash,
-            .artifactRootHash = release.artifactRootHash,
-            .productionPath = std::move(productionPath),
+            .artifactRootHash    = release.artifactRootHash,
+            .productionPath      = std::move(productionPath),
         };
     }
 

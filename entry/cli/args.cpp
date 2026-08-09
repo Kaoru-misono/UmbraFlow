@@ -40,7 +40,7 @@ namespace uf::cli
         struct ExploreFlagSpec final
         {
             std::string_view name{};
-            ExploreFlag     flag{ExploreFlag::Project};
+            ExploreFlag      flag{ExploreFlag::Project};
         };
 
         constexpr auto k_exploreFlags = std::array{

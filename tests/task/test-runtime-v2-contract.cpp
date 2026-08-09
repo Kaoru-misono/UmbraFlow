@@ -184,7 +184,7 @@ namespace uf::task
                 || std::filesystem::is_directory(parent);
             REQUIRE(parentReady);
             auto stream = std::ofstream{path, std::ios::binary | std::ios::trunc};
-            auto text = std::string{};
+            auto text   = std::string{};
             text.reserve(value.size());
             for (auto const byte : value)
             {
@@ -454,9 +454,9 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
                 auto recorder = trace::TraceRecorder::create(
                     std::make_unique<TraceSink>(),
                     trace::TraceStreamSpec{
-                        .sessionId          = "runtime-v2-contract",
+                        .sessionId           = "runtime-v2-contract",
                         .sessionManifestHash = hash("runtime-v2-contract-manifest"),
-                        .producer           = "runtime-v2-test",
+                        .producer            = "runtime-v2-test",
                     }
                 );
                 REQUIRE(recorder.has_value());
@@ -465,7 +465,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
                 );
 
                 auto actions = std::make_unique<ActionSink>();
-                m_pActions = actions.get();
+                m_pActions   = actions.get();
                 auto session = engine::EngineSession::create(
                     std::make_unique<FrameSource>(std::move(value)),
                     std::move(actions),
@@ -525,12 +525,12 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
             -> TaskRunConfig
         {
             return TaskRunConfig{
-                .frameSource             = std::make_unique<FrameSource>(std::move(value)),
-                .actionSink              = std::make_unique<ActionSink>(),
-                .liveFingerprint         = fingerprint(),
+                .frameSource     = std::make_unique<FrameSource>(std::move(value)),
+                .actionSink      = std::make_unique<ActionSink>(),
+                .liveFingerprint = fingerprint(),
                 .maximumPixelComparisons = 1'000,
-                .recognitionTimeout      = std::chrono::seconds{1},
-                .tracePath               = std::move(tracePath),
+                .recognitionTimeout = std::chrono::seconds{1},
+                .tracePath          = std::move(tracePath),
             };
         }
     }

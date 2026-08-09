@@ -17,11 +17,11 @@ namespace uf::trace
     class TraceRecorder final
     {
         std::unique_ptr<ITraceSink> m_sink;
-        TraceStreamSpec            m_stream;
-        TraceStreamValidator       m_validator{};
-        uint64                     m_nextSequence{1};
-        bool                       m_faulted{false};
-        bool                       m_exhausted{false};
+        TraceStreamSpec             m_stream;
+        TraceStreamValidator        m_validator{};
+        uint64                      m_nextSequence{1};
+        bool                        m_faulted{false};
+        bool                        m_exhausted{false};
 
         TraceRecorder(
             std::unique_ptr<ITraceSink> sink,

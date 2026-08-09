@@ -173,17 +173,17 @@ namespace uf::task
 
         struct PendingReceipt final
         {
-            uint64                       ordinal{};
-            GenerationId                 generation;
-            ContentHash                  artifactRootHash;
-            ContentHash                  semanticHash;
+            uint64       ordinal{};
+            GenerationId generation;
+            ContentHash  artifactRootHash;
+            ContentHash  semanticHash;
             TaskContext*                 p_context{};
-            CycleTicket                  cycle;
-            std::optional<uint64>        evidenceCycleOrdinal{};
-            TrustedReceiptIntent         intent;
-            MonotonicInstant             mintedAt;
-            MonotonicInstant::Duration   maximumAge{};
-            uint64                       fence{};
+            CycleTicket                cycle;
+            std::optional<uint64>      evidenceCycleOrdinal{};
+            TrustedReceiptIntent       intent;
+            MonotonicInstant           mintedAt;
+            MonotonicInstant::Duration maximumAge{};
+            uint64                     fence{};
         };
 
         friend struct TaskHostTestAccess;
@@ -192,7 +192,7 @@ namespace uf::task
         class RuntimeNativeState;
 
         std::vector<std::unique_ptr<Generation>> m_generations{};
-        std::vector<PendingReceipt>               m_receipts{};
+        std::vector<PendingReceipt>              m_receipts{};
 
         uint64 m_nextGenerationValue{1};
         uint64 m_nextRunValue{1};

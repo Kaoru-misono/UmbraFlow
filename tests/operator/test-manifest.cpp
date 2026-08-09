@@ -202,7 +202,7 @@ namespace uf::operator_runtime
 
         SUBCASE("plugin id is namespaced")
         {
-            auto claims = claimsFor(schemaHash, hashOf("plugin"));
+            auto claims     = claimsFor(schemaHash, hashOf("plugin"));
             claims.pluginId = "fixture";
             auto const exactJcs = registrationJcs(claims);
             auto owner = exactOwner(schemaHash, exactJcs, std::move(claims));
@@ -214,7 +214,7 @@ namespace uf::operator_runtime
 
         SUBCASE("baseline event type is namespaced")
         {
-            auto claims = claimsFor(schemaHash, hashOf("plugin"));
+            auto claims              = claimsFor(schemaHash, hashOf("plugin"));
             claims.baselineEventType = "Baseline";
             auto const exactJcs = registrationJcs(claims);
             auto owner = exactOwner(schemaHash, exactJcs, std::move(claims));

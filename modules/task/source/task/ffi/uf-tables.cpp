@@ -374,9 +374,9 @@ namespace uf::task
                 );
             }
             return ProbeColourKey{
-                .red       = static_cast<uint8>(red),
-                .green     = static_cast<uint8>(green),
-                .blue      = static_cast<uint8>(blue),
+                .red   = static_cast<uint8>(red),
+                .green = static_cast<uint8>(green),
+                .blue  = static_cast<uint8>(blue),
                 .tolerance = lua_isnoneornil(state, first + 3)
                     ? k_defaultProbeTolerance
                     : unsignedInteger(state, first + 3, "colour tolerance"),
@@ -642,14 +642,14 @@ namespace uf::task
 
         struct AssetToken final
         {
-            GenerationId  generation;
+            GenerationId   generation;
             TemplateTicket ticket;
         };
 
         struct ProofToken final
         {
-            GenerationId  generation;
-            CycleTicket   cycle;
+            GenerationId   generation;
+            CycleTicket    cycle;
             TemplateTicket asset;
             PixelRect      searchRect;
             PixelRect      matchedRect;
@@ -1140,8 +1140,8 @@ namespace uf::task
             pushBox(
                 state,
                 ProofToken{
-                    .generation  = self.m_generation,
-                    .cycle       = *p_cycle,
+                    .generation = self.m_generation,
+                    .cycle      = *p_cycle,
                     .asset       = p_asset->ticket,
                     .searchRect  = searchRect,
                     .matchedRect = value.matchedRect,

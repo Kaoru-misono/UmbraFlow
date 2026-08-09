@@ -194,8 +194,13 @@ local function parseToml(text: string): any
         local token = string.sub(text, start, index - 1)
         if token == "true" then return true end
         if token == "false" then return false end
+        -- The four accepted spellings are listed separately because a Lua
+        -- pattern has no optional group: `?` applies to one character class,
+        -- so a `(...)?` borrowed from regex never matches and every decimal
+        -- would be refused as a bare value.
         if string.match(token, "^[+-]?%d+$") == nil
-            and string.match(token, "^[+-]?%d+%.%d+([eE][+-]?%d+)?$") == nil
+            and string.match(token, "^[+-]?%d+%.%d+$") == nil
+            and string.match(token, "^[+-]?%d+%.%d+[eE][+-]?%d+$") == nil
             and string.match(token, "^[+-]?%d+[eE][+-]?%d+$") == nil
         then
             failure("has unsupported bare value '" .. token .. "'")

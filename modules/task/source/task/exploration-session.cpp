@@ -78,8 +78,22 @@ namespace uf::task
         {
             return trace::TraceEventSpec{
                 .eventType = "run.started",
-                .audit     = trace::AuditMetadata{.actor = "annotation"},
-                .payload   = trace::TypedTracePayload{
+                .audit     = trace::AuditMetadata{
+                    .actor = "annotation",
+
+                    // The bundle hash travels as a reference, not a payload
+                    // field: a bare 64-character hash is indistinguishable from
+                    // encoded bytes, and the trace refuses payload text that
+                    // could be a smuggled frame. A reference is what a content
+                    // hash was always meant to be here.
+                    .references = {
+                        trace::TraceReference{
+                            .type = "framework_bundle",
+                            .id   = std::string{frameworkBundleHash()},
+                        },
+                    },
+                },
+                .payload = trace::TypedTracePayload{
                     .schemaHash = traceSchemaHash(),
                     .fields = {
                         trace::TraceField{
@@ -89,10 +103,6 @@ namespace uf::task
                         trace::TraceField{
                             .name  = "framework_version",
                             .value = std::string{frameworkVersion()},
-                        },
-                        trace::TraceField{
-                            .name  = "framework_hash",
-                            .value = std::string{frameworkBundleHash()},
                         },
                         trace::TraceField{
                             .name  = "luau_version",

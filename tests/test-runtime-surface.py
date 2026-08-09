@@ -157,7 +157,7 @@ SCHEMA_AUTHORITIES = (
         "schema/umbraflow-runtime-v2.schema.json",
     ),
     (
-        "modules/operator/source/operator/runtime-installation.cpp",
+        "modules/operator/source/operator/runtime-installation.hpp",
         "k_annotationWorkspaceSchemaHash",
         "schema/umbraflow-annotation-workspace-v2.schema.json",
     ),

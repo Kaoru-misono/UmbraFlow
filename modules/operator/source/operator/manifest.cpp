@@ -47,7 +47,7 @@ namespace uf::operator_runtime
             }
 
             auto atSegmentStart = true;
-            auto hasNamespace = false;
+            auto hasNamespace   = false;
             for (auto const character : value)
             {
                 if (character == '.')
@@ -60,7 +60,7 @@ namespace uf::operator_runtime
                         );
                     }
                     atSegmentStart = true;
-                    hasNamespace = true;
+                    hasNamespace   = true;
                     continue;
                 }
                 auto const lower = character >= 'a' && character <= 'z';

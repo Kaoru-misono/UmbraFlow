@@ -14,6 +14,9 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
 - [Element choice and thresholds](element-choice-and-thresholds.md) — what to
   annotate and what number to give it; start here before drawing a rectangle.
 - [Colour-key annotation](colour-key-annotation.md)
+- [Luau patterns and long strings](luau-patterns-and-long-strings.md) — a
+  regex-style optional group never matches, and TOML `[[section]]` closes a
+  level-0 long string; both fail quietly.
 - [Embedded VM memory ceilings](embedded-vm-memory-ceiling.md) — what a hard
   ceiling measures when the runtime has no emergency GC, and the two shapes of
   memory test that prove nothing.

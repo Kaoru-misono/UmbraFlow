@@ -34,8 +34,8 @@ namespace uf::task
 
         auto engine = script::Engine::create(
             script::EngineConfig{
-                .frameworkModules       = frameworkScriptModules(),
-                .projectGlobals         = {},
+                .frameworkModules        = frameworkScriptModules(),
+                .projectGlobals          = {},
                 .frameworkProjectGlobals = frameworkProjectGlobals(),
             }
         );
@@ -57,7 +57,7 @@ namespace uf::task
 
     TEST_CASE("embedded framework identity remains deterministic")
     {
-        auto names = std::vector<std::string_view>{};
+        auto names    = std::vector<std::string_view>{};
         auto preimage = std::string{};
         for (auto const& entry : frameworkBundleEntries())
         {

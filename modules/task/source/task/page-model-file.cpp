@@ -31,7 +31,7 @@ namespace uf::task
         {
             std::string path{};
             ContentHash hash;
-            uint64 size{};
+            uint64      size{};
         };
 
         struct ParsedManifest final
@@ -369,7 +369,7 @@ namespace uf::task
                 );
             }
             return ParsedManifest{
-                .assets                = std::move(assets),
+                .assets                 = std::move(assets),
                 .manifestSchemaHash     = manifestSchemaHash,
                 .pageModel              = std::move(pageModel),
                 .runtimeModelSchemaHash = runtimeModelSchemaHash,

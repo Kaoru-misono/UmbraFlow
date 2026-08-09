@@ -48,7 +48,7 @@ return {
         struct RegistrationFixture final
         {
             VerifiedProjectRegistration registration;
-            ProjectSchemaOwner schemaOwner;
+            ProjectSchemaOwner          schemaOwner;
         };
 
         [[nodiscard]]
@@ -63,7 +63,7 @@ return {
         auto artifactRoot(std::string name, std::string_view exactBytes) -> NamedArtifactRoot
         {
             return NamedArtifactRoot{
-                .name = std::move(name),
+                .name     = std::move(name),
                 .rootHash = hashOf(exactBytes),
             };
         }
@@ -73,7 +73,7 @@ return {
             -> ProjectPluginRegistrar::ArtifactBlob
         {
             return ProjectPluginRegistrar::ArtifactBlob{
-                .name = std::move(name),
+                .name  = std::move(name),
                 .bytes = std::move(bytes),
             };
         }
@@ -86,17 +86,17 @@ return {
             -> ProjectRegistrationClaims
         {
             return ProjectRegistrationClaims{
-                .manifestSchemaHash = schemaHash,
-                .pluginId = std::move(pluginId),
-                .pluginHash = pluginHash,
-                .toolCatalogHash = hashOf("catalogue"),
-                .projectStateSchemaHash = hashOf("state"),
-                .projectObservationSchemaHash = hashOf("observation"),
-                .projectToolPreconditionSchemaHash = hashOf("precondition"),
+                .manifestSchemaHash                 = schemaHash,
+                .pluginId                           = std::move(pluginId),
+                .pluginHash                         = pluginHash,
+                .toolCatalogHash                    = hashOf("catalogue"),
+                .projectStateSchemaHash             = hashOf("state"),
+                .projectObservationSchemaHash       = hashOf("observation"),
+                .projectToolPreconditionSchemaHash  = hashOf("precondition"),
                 .reconcilePayloadSchemaManifestHash = hashOf("reconcile"),
-                .journalEventSchemaManifestHash = hashOf("journal"),
-                .baselineEventType = "fixture.baseline",
-                .projectArtifactRoots = std::move(artifactRoots),
+                .journalEventSchemaManifestHash     = hashOf("journal"),
+                .baselineEventType                  = "fixture.baseline",
+                .projectArtifactRoots               = std::move(artifactRoots),
             };
         }
 
@@ -191,7 +191,7 @@ return {
             REQUIRE(schemaOwnerResult.has_value());
             return RegistrationFixture{
                 .registration = *registrationResult,
-                .schemaOwner = *schemaOwnerResult,
+                .schemaOwner  = *schemaOwnerResult,
             };
         }
 
@@ -251,7 +251,7 @@ return {
     {
         auto registrar = ProjectPluginRegistrar{};
         auto catalogue = registrationFixture("fixture.catalogue", k_cataloguePlugin);
-        auto workflow = registrationFixture("fixture.workflow", k_workflowPlugin);
+        auto workflow  = registrationFixture("fixture.workflow", k_workflowPlugin);
 
         auto const cataloguePlugin = registrar.registerPlugin(catalogue.registration,
                                                               std::string{k_cataloguePlugin},
@@ -284,7 +284,7 @@ return {
         SUBCASE("plugin bytes must match the verified registration")
         {
             auto registrar = ProjectPluginRegistrar{};
-            auto fixture = registrationFixture("fixture.catalogue", k_cataloguePlugin);
+            auto fixture   = registrationFixture("fixture.catalogue", k_cataloguePlugin);
             CHECK_FALSE(registrar
                             .registerPlugin(fixture.registration,
                                             std::string{k_workflowPlugin},
@@ -297,7 +297,7 @@ return {
         {
             auto const source = echoPlugin("fixture.actual");
             auto registrar = ProjectPluginRegistrar{};
-            auto fixture = registrationFixture("fixture.expected", source);
+            auto fixture   = registrationFixture("fixture.expected", source);
             CHECK_FALSE(
                 registrar.registerPlugin(fixture.registration, source, {}, fixture.schemaOwner)
                     .has_value());
@@ -317,7 +317,7 @@ return {
 }
 )LUAU"};
             auto registrar = ProjectPluginRegistrar{};
-            auto fixture = registrationFixture("fixture.extra", source);
+            auto fixture   = registrationFixture("fixture.extra", source);
             CHECK_FALSE(
                 registrar.registerPlugin(fixture.registration, source, {}, fixture.schemaOwner)
                     .has_value());
@@ -350,7 +350,7 @@ return {
 }
 )LUAU"};
         auto registrar = ProjectPluginRegistrar{};
-        auto fixture = registrationFixture("fixture.pollution", source);
+        auto fixture   = registrationFixture("fixture.pollution", source);
         auto const plugin =
             registrar.registerPlugin(fixture.registration, source, {}, fixture.schemaOwner);
         REQUIRE(plugin.has_value());
@@ -377,8 +377,8 @@ return {
     reduce = function(input) return input end,
 }
 )LUAU"};
-        auto registrar = ProjectPluginRegistrar{};
-        auto fixture = registrationFixture("fixture.fresh", source);
+        auto registrar     = ProjectPluginRegistrar{};
+        auto fixture       = registrationFixture("fixture.fresh", source);
         auto mutableSource = source;
         auto const plugin =
             registrar.registerPlugin(fixture.registration, mutableSource, {}, fixture.schemaOwner);
@@ -399,7 +399,7 @@ return {
         SUBCASE("authorityless canonical input cannot be relabelled schema-valid")
         {
             auto registrar = ProjectPluginRegistrar{};
-            auto fixture = registrationFixture("fixture.catalogue", k_cataloguePlugin);
+            auto fixture   = registrationFixture("fixture.catalogue", k_cataloguePlugin);
             auto const plugin = registrar.registerPlugin(fixture.registration,
                                                          std::string{k_cataloguePlugin},
                                                          {},
@@ -414,7 +414,7 @@ return {
         {
             auto const source = echoPlugin("fixture.invalid-output");
             auto registrar = ProjectPluginRegistrar{};
-            auto fixture = registrationFixture("fixture.invalid-output", source);
+            auto fixture   = registrationFixture("fixture.invalid-output", source);
             auto const plugin =
                 registrar.registerPlugin(fixture.registration, source, {}, fixture.schemaOwner);
             REQUIRE(plugin.has_value());
@@ -487,7 +487,7 @@ return {
         SUBCASE("extra blob is rejected")
         {
             auto registrar = ProjectPluginRegistrar{};
-            auto fixture = registrationFixture("fixture.catalogue", k_cataloguePlugin);
+            auto fixture   = registrationFixture("fixture.catalogue", k_cataloguePlugin);
             CHECK_FALSE(registrar
                             .registerPlugin(fixture.registration,
                                             std::string{k_cataloguePlugin},
@@ -590,7 +590,7 @@ return {
 }
 )LUAU"};
             auto registrar = ProjectPluginRegistrar{};
-            auto fixture = registrationFixture("fixture.unknown-artifact", source);
+            auto fixture   = registrationFixture("fixture.unknown-artifact", source);
             auto const plugin =
                 registrar.registerPlugin(fixture.registration, source, {}, fixture.schemaOwner);
             REQUIRE(plugin.has_value());
@@ -737,7 +737,7 @@ return {
                 blobs.push_back(artifactBlob(name, std::move(bytes)));
             }
             auto registrar = ProjectPluginRegistrar{};
-            auto fixture = registrationFixture("fixture.artifact-memory", source, std::move(roots));
+            auto fixture   = registrationFixture("fixture.artifact-memory", source, std::move(roots));
             CHECK_FALSE(registrar
                             .registerPlugin(fixture.registration,
                                             source,
@@ -751,7 +751,7 @@ return {
             auto const source =
                 std::string{"while true do end\nreturn { plugin_id = \"fixture.loop\" }"};
             auto registrar = ProjectPluginRegistrar{};
-            auto fixture = registrationFixture("fixture.loop", source);
+            auto fixture   = registrationFixture("fixture.loop", source);
             CHECK_FALSE(
                 registrar.registerPlugin(fixture.registration, source, {}, fixture.schemaOwner)
                     .has_value());
@@ -770,7 +770,7 @@ return {
 }
 )LUAU"};
             auto registrar = ProjectPluginRegistrar{};
-            auto fixture = registrationFixture("fixture.invoke-loop", source);
+            auto fixture   = registrationFixture("fixture.invoke-loop", source);
             auto const plugin =
                 registrar.registerPlugin(fixture.registration, source, {}, fixture.schemaOwner);
             REQUIRE(plugin.has_value());
@@ -781,7 +781,7 @@ return {
         {
             auto const oversizedSource = std::string(256U * 1024U + 1U, 'x');
             auto registrar = ProjectPluginRegistrar{};
-            auto fixture = registrationFixture("fixture.oversized", oversizedSource);
+            auto fixture   = registrationFixture("fixture.oversized", oversizedSource);
             CHECK_FALSE(
                 registrar
                     .registerPlugin(fixture.registration, oversizedSource, {}, fixture.schemaOwner)
@@ -802,7 +802,7 @@ return {
     reduce = function(input) return input end,
 }
 )LUAU"};
-            auto bytes = std::string(1024U * 1024U + 1U, 'x');
+            auto bytes     = std::string(1024U * 1024U + 1U, 'x');
             auto registrar = ProjectPluginRegistrar{};
             auto fixture =
                 registrationFixture("fixture.large", source, {artifactRoot("large", bytes)});

@@ -199,7 +199,7 @@ namespace uf::trace
         auto recorder     = TraceRecorder::create(std::move(sink), streamSpec());
         REQUIRE(recorder.has_value());
 
-        auto invalid = eventSpec();
+        auto invalid      = eventSpec();
         invalid.eventType = "unnamespaced";
         CHECK_FALSE(recorder->emit(invalid).has_value());
 
@@ -219,7 +219,7 @@ namespace uf::trace
         );
         CHECK_FALSE(nullRecorder.has_value());
 
-        auto invalidProducer = streamSpec();
+        auto invalidProducer     = streamSpec();
         invalidProducer.producer = "Operator.Host";
         auto invalidProducerRecorder = TraceRecorder::create(
             std::make_unique<CollectingSink>(),
@@ -227,7 +227,7 @@ namespace uf::trace
         );
         CHECK_FALSE(invalidProducerRecorder.has_value());
 
-        auto workspaceSession = streamSpec();
+        auto workspaceSession      = streamSpec();
         workspaceSession.sessionId = "E:/private/annotation-workspace.sqlite";
         auto workspaceRecorder = TraceRecorder::create(
             std::make_unique<CollectingSink>(),

@@ -88,7 +88,7 @@ namespace uf::cli
         struct Command final
         {
             std::string_view name{};
-            CommandHandler  handler{};
+            CommandHandler   handler{};
         };
 
         constexpr auto k_commands = std::array{

@@ -3,6 +3,7 @@
 #include <operator/journal-entry.hpp>
 #include <operator/manifest.hpp>
 #include <operator/project-plugin.hpp>
+#include <operator/runtime-installation.hpp>
 #include <operator/tool-invocation.hpp>
 
 #include <task/page-model-file.hpp>
@@ -17,6 +18,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -30,6 +32,11 @@ namespace uf::operator_runtime::test_support
         ProjectSchemaOwner            schemaOwner;
         ProjectJournalSchemaOwner     journalSchemaOwner;
         ProjectToolCatalogSchemaOwner toolCatalogSchemaOwner;
+
+        // The exact bytes the document validator last saw as a Reduce input.
+        // The fixture records them because the property under test is that the
+        // Operator decides those bytes and no caller can.
+        std::shared_ptr<std::string>  lastReduceInput;
     };
 
     // Stands in for a project's reduce-input JSON Schema. It is structural
@@ -174,6 +181,7 @@ namespace uf::operator_runtime::test_support
         );
         REQUIRE(registration.has_value());
 
+        auto lastReduceInput = std::make_shared<std::string>();
         auto schemaOwner = ProjectSchemaOwner::create(
             *registration,
             [](std::string_view exactJcs) -> Status
@@ -205,7 +213,7 @@ namespace uf::operator_runtime::test_support
                 }
                 return ok();
             },
-            [](ProjectPluginFunction function,
+            [lastReduceInput](ProjectPluginFunction function,
                ProjectDocumentDirection direction,
                std::string_view exactJcs) -> Status
             {
@@ -215,6 +223,7 @@ namespace uf::operator_runtime::test_support
                     switch (function)
                     {
                     case ProjectPluginFunction::Reduce:
+                        *lastReduceInput = std::string{exactJcs};
                         valid = looksLikeReduceEnvelope(exactJcs);
                         break;
                     case ProjectPluginFunction::Reconcile:
@@ -399,6 +408,7 @@ namespace uf::operator_runtime::test_support
             .schemaOwner            = *schemaOwner,
             .journalSchemaOwner     = *journalSchemaOwner,
             .toolCatalogSchemaOwner = *toolCatalogSchemaOwner,
+            .lastReduceInput        = std::move(lastReduceInput),
         };
     }
 
@@ -526,7 +536,7 @@ namespace uf::operator_runtime::test_support
             "\"generation\":1,\"predecessor_publication_id\":null,"
             "\"replay_gate_hash\":\"{}\",\"runtime_artifact_root_hash\":\"{}\","
             "\"workspace_sqlite_schema_hash\":\"{}\"}}",
-            "d3b67cc2b25989377bf12668d7f0ca03635e67bb4cfb734d88da8c55fba387e4",
+            detail::k_annotationWorkspaceSchemaHash,
             hashOf("replay-gate").hex(),
             artifactRootHash.hex(),
             hashOf("workspace-schema").hex()

@@ -157,11 +157,11 @@ namespace uf::operator_runtime
 
     struct ReconciliationCommit final
     {
-        std::string                operationId{};
-        uint64                     expectedOperationRevision{};
-        uint64                     expectedProjectStateRevision{};
-        ReconcileDisposition       disposition{ReconcileDisposition::Ambiguous};
-        ValidatedDocument          proposal;
+        std::string          operationId{};
+        uint64               expectedOperationRevision{};
+        uint64               expectedProjectStateRevision{};
+        ReconcileDisposition disposition{ReconcileDisposition::Ambiguous};
+        ValidatedDocument    proposal;
 
         // The events this reconciliation appends to the Project Journal. There
         // is deliberately no reducer input beside them: the Operator derives
