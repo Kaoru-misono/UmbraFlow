@@ -1,0 +1,34 @@
+{
+  "format": "umbraflow-annotation-v2-behavior-1",
+  "case_id": "resolution.ocr_unknown",
+  "description": "An OCR probe with insufficient evidence remains unknown and cannot authorize an action.",
+  "frames": [
+    {
+      "id": "frame.resolution.ocr_unknown.001",
+      "measurements": [
+        {"probe": "surface.shop.title", "kind": "ocr", "result": "unknown", "confidence": 0.31, "text": "Sh?"},
+        {"probe": "target.leave_button", "result": "present", "confidence": 0.98}
+      ]
+    }
+  ],
+  "candidates": [
+    {
+      "surface": "shop",
+      "layer": "scene",
+      "identity": [{"probe": "surface.shop.title", "requires": "present"}],
+      "bindings": [{"target": "leave_button", "actions": ["click"]}]
+    }
+  ],
+  "request": {
+    "kind": "resolve_and_authorize",
+    "frame": "frame.resolution.ocr_unknown.001",
+    "action": {"target": "leave_button", "kind": "click"}
+  },
+  "expected": {
+    "resolution": "unknown",
+    "receipt": "not_minted",
+    "action": "rejected",
+    "reason": "required_identity_evidence_unknown",
+    "must_not_become": "absent"
+  }
+}

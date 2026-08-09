@@ -1,0 +1,76 @@
+{
+  "format": "umbraflow-annotation-v2-behavior-1",
+  "case_id": "target.shared_across_surfaces",
+  "description": "Leave and equip targets are shared by different surfaces without runtime ownership state.",
+  "frames": [
+    {
+      "id": "frame.target.shared_across_surfaces.shop",
+      "measurements": [
+        {"probe": "surface.shop.title", "result": "present", "confidence": 0.99},
+        {"probe": "target.leave_button", "result": "present", "confidence": 0.98},
+        {"probe": "target.equip_button", "result": "present", "confidence": 0.97}
+      ]
+    },
+    {
+      "id": "frame.target.shared_across_surfaces.loadout",
+      "measurements": [
+        {"probe": "surface.loadout.title", "result": "present", "confidence": 0.99},
+        {"probe": "target.leave_button", "result": "present", "confidence": 0.98},
+        {"probe": "target.equip_button", "result": "present", "confidence": 0.97}
+      ]
+    }
+  ],
+  "candidates": [
+    {
+      "surface": "shop",
+      "layer": "scene",
+      "identity": [{"probe": "surface.shop.title", "requires": "present"}],
+      "bindings": [
+        {"target": "leave_button", "actions": ["click"]},
+        {"target": "equip_button", "actions": ["click"]}
+      ]
+    },
+    {
+      "surface": "loadout",
+      "layer": "scene",
+      "identity": [{"probe": "surface.loadout.title", "requires": "present"}],
+      "bindings": [
+        {"target": "leave_button", "actions": ["click"]},
+        {"target": "equip_button", "actions": ["click"]}
+      ]
+    }
+  ],
+  "request": {
+    "kind": "resolve_and_authorize_each",
+    "operations": [
+      {
+        "frame": "frame.target.shared_across_surfaces.shop",
+        "action": {"target": "leave_button", "kind": "click"}
+      },
+      {
+        "frame": "frame.target.shared_across_surfaces.loadout",
+        "action": {"target": "equip_button", "kind": "click"}
+      }
+    ]
+  },
+  "expected": {
+    "shared_targets": ["leave_button", "equip_button"],
+    "per_frame": [
+      {
+        "frame": "frame.target.shared_across_surfaces.shop",
+        "resolution": "resolved",
+        "surface_stack": ["shop"],
+        "receipt": "minted",
+        "action": "authorized"
+      },
+      {
+        "frame": "frame.target.shared_across_surfaces.loadout",
+        "resolution": "resolved",
+        "surface_stack": ["loadout"],
+        "receipt": "minted",
+        "action": "authorized"
+      }
+    ],
+    "forbidden_runtime_concept": "target_ownership"
+  }
+}

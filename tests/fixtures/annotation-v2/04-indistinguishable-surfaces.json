@@ -1,0 +1,42 @@
+{
+  "format": "umbraflow-annotation-v2-behavior-1",
+  "case_id": "resolution.indistinguishable_surfaces",
+  "description": "Two surfaces have equal evidence and cannot produce an actionable result.",
+  "frames": [
+    {
+      "id": "frame.resolution.indistinguishable_surfaces.001",
+      "measurements": [
+        {"probe": "surface.common.header", "result": "present", "confidence": 0.97},
+        {"probe": "target.leave_button", "result": "present", "confidence": 0.98},
+        {"probe": "surface.shop.unique", "result": "unknown", "confidence": 0.40},
+        {"probe": "surface.equip.unique", "result": "unknown", "confidence": 0.40}
+      ]
+    }
+  ],
+  "candidates": [
+    {
+      "surface": "shop",
+      "layer": "scene",
+      "identity": [{"probe": "surface.common.header", "requires": "present"}],
+      "bindings": [{"target": "leave_button", "actions": ["click"]}]
+    },
+    {
+      "surface": "equip",
+      "layer": "scene",
+      "identity": [{"probe": "surface.common.header", "requires": "present"}],
+      "bindings": [{"target": "leave_button", "actions": ["click"]}]
+    }
+  ],
+  "request": {
+    "kind": "resolve_and_authorize",
+    "frame": "frame.resolution.indistinguishable_surfaces.001",
+    "action": {"target": "leave_button", "kind": "click"}
+  },
+  "expected": {
+    "resolution": "ambiguous",
+    "candidates": ["shop", "equip"],
+    "receipt": "not_minted",
+    "action": "rejected",
+    "reason": "multiple_equally_supported_surfaces"
+  }
+}

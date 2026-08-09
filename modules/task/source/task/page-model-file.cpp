@@ -28,19 +28,20 @@ namespace uf::task
 {
     namespace
     {
-        // The two top-level keys layer two states for this reader. They are layer
-        // two's own under the schema's rule that every non-`extra` key belongs to
-        // it, and both are REQUIRED: a page model that states no geometry is
-        // refused below rather than given one.
+        constexpr auto k_schemaVersionKey = std::string_view{"schema_version"};
+        constexpr auto k_supportedVersion = uint32{1};
+
+        // The two top-level geometry keys are required envelope facts. A runtime
+        // model that states no geometry is refused below rather than given one.
         constexpr auto k_baseResolutionKey = std::string_view{"base_resolution"};
         constexpr auto k_baseDpiKey        = std::string_view{"base_dpi"};
 
-        constexpr auto k_elementSection = std::string_view{"element"};
-        constexpr auto k_pageSection    = std::string_view{"page"};
-        constexpr auto k_nameKey        = std::string_view{"name"};
+        constexpr auto k_targetSection  = std::string_view{"target"};
+        constexpr auto k_surfaceSection = std::string_view{"surface"};
+        constexpr auto k_idKey          = std::string_view{"id"};
 
-        // Whose table a line's keys belong to. A `[element.extra]` subtable is
-        // the project's own namespace, so a key it spells -- `name`, and equally
+        // Whose table a line's keys belong to. A `[target.extra]` subtable is
+        // the project's own namespace, so a key it spells -- `id`, and equally
         // `base_resolution` -- is not this reader's to read; that state is
         // distinct from the top level rather than an absence of section.
         enum class Scan : uint8
@@ -187,17 +188,48 @@ namespace uf::task
         }
 
         [[nodiscard]]
+        auto uint32Of(std::string_view key, std::string_view value) -> Result<uint32>
+        {
+            auto parsed = uint32{};
+            auto const result = std::from_chars(
+                value.data(),
+                value.data() + value.size(),
+                parsed
+            );
+            if (
+                result.ec != std::errc{}
+                || result.ptr != value.data() + value.size()
+            )
+            {
+                return invalidModel(
+                    std::format(
+                        "'{}' holds '{}', which is not a whole number",
+                        key,
+                        value
+                    )
+                );
+            }
+            return parsed;
+        }
+
+        [[nodiscard]]
         auto recordName(
             std::vector<std::string>& names,
             std::string_view kind,
             std::string_view name
         ) -> Status
         {
+            if (name.empty())
+            {
+                return invalidModel(
+                    std::format("this runtime model declares an empty {} id", kind)
+                );
+            }
             if (std::ranges::contains(names, name))
             {
                 return invalidModel(
                     std::format(
-                        "this page model declares {} '{}' twice, so a script "
+                        "this runtime model declares {} '{}' twice, so a resource "
                         "naming it would resolve against two different rows",
                         kind,
                         name
@@ -211,11 +243,12 @@ namespace uf::task
 
     auto parsePageModelFacts(std::string_view text) -> Result<PageModelFacts>
     {
+        auto schemaVersion = std::optional<uint32>{};
         auto resolution = std::optional<std::array<uint32, 2>>{};
         auto dpi        = std::optional<std::array<uint32, 2>>{};
 
-        auto elementNames = std::vector<std::string>{};
-        auto pageNames    = std::vector<std::string>{};
+        auto targetNames  = std::vector<std::string>{};
+        auto surfaceNames = std::vector<std::string>{};
 
         // Which table the scan is inside, and the `[[kind]]` it opened. `section`
         // carries a name only in Scan::ArraySection; which keys a line may set is
@@ -224,8 +257,8 @@ namespace uf::task
         auto scan    = Scan::TopLevel;
         auto section = std::string_view{};
 
-        // Whether the current `[[element]]` or `[[page]]` has already named
-        // itself. The first `name` wins, exactly as layer two's own parser takes
+        // Whether the current `[[target]]` or `[[surface]]` has already named
+        // itself. The first `id` wins, exactly as layer two's own parser takes
         // the first assignment of a field.
         auto named = false;
 
@@ -253,7 +286,7 @@ namespace uf::task
             }
             if (line.starts_with('[') && line.ends_with(']'))
             {
-                // A single-bracket subtable: `[element.extra]` and anything else
+                // A single-bracket subtable: `[target.extra]` and anything else
                 // this reader has no business in.
                 scan = Scan::ForeignSubtable;
                 continue;
@@ -272,7 +305,15 @@ namespace uf::task
 
             if (scan == Scan::TopLevel)
             {
-                if (assignment->key == k_baseResolutionKey)
+                if (assignment->key == k_schemaVersionKey)
+                {
+                    UF_TRY_VALUE(
+                        version,
+                        uint32Of(k_schemaVersionKey, assignment->value)
+                    );
+                    schemaVersion = version;
+                }
+                else if (assignment->key == k_baseResolutionKey)
                 {
                     UF_TRY_VALUE(
                         pair,
@@ -288,11 +329,11 @@ namespace uf::task
                 continue;
             }
 
-            if (named || assignment->key != k_nameKey)
+            if (named || assignment->key != k_idKey)
             {
                 continue;
             }
-            if (section != k_elementSection && section != k_pageSection)
+            if (section != k_targetSection && section != k_surfaceSection)
             {
                 continue;
             }
@@ -301,8 +342,7 @@ namespace uf::task
             {
                 return invalidModel(
                     std::format(
-                        "a [[{}]] names itself with {}, which is not a quoted "
-                        "name",
+                        "a [[{}]] names itself with {}, which is not a quoted id",
                         section,
                         assignment->value
                     )
@@ -311,9 +351,28 @@ namespace uf::task
             named = true;
             UF_TRY(
                 recordName(
-                    section == k_elementSection ? elementNames : pageNames,
+                    section == k_targetSection ? targetNames : surfaceNames,
                     section,
                     *name
+                )
+            );
+        }
+
+        if (!schemaVersion)
+        {
+            return invalidModel(
+                "this runtime model states no schema_version; add "
+                "'schema_version = 1' at the top of the file"
+            );
+        }
+        if (*schemaVersion != k_supportedVersion)
+        {
+            return invalidModel(
+                std::format(
+                    "this runtime model uses unsupported schema_version {}, "
+                    "but this host understands {}",
+                    *schemaVersion,
+                    k_supportedVersion
                 )
             );
         }
@@ -322,7 +381,7 @@ namespace uf::task
         {
             return invalidModel(
                 std::format(
-                    "this page model states no {}, so nothing says what geometry "
+                    "this runtime model states no {}, so nothing says what geometry "
                     "its rectangles were measured at; add "
                     "'{} = [width, height]' and '{} = [dpiX, dpiY]' at the top of "
                     "the file",
@@ -351,10 +410,11 @@ namespace uf::task
         );
 
         return PageModelFacts{
-            .fingerprint  = fingerprint,
-            .contentHash  = contentHash,
-            .elementNames = std::move(elementNames),
-            .pageNames    = std::move(pageNames),
+            .schemaVersion = *schemaVersion,
+            .fingerprint   = fingerprint,
+            .contentHash   = contentHash,
+            .targetNames   = std::move(targetNames),
+            .surfaceNames  = std::move(surfaceNames),
         };
     }
 

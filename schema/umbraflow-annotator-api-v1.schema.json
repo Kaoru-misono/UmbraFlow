@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbraflow.dev/schema/annotator-api/v1",
+  "title": "Umbraflow annotator backend/UI API contract",
+  "$ref": "#/$defs/ApiProblem",
+  "$defs": {
+    "Identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "ApiProblem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "$ref": "#/$defs/Identifier" },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" },
+        "details": {}
+      }
+    },
+    "CandidateSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "project_id", "revision", "status", "open_conflicts", "pending_patches"],
+      "properties": {
+        "id": { "$ref": "#/$defs/Identifier" },
+        "project_id": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 1 },
+        "status": { "enum": ["candidate", "accepted", "rejected", "compiled"] },
+        "open_conflicts": { "type": "integer", "minimum": 0 },
+        "pending_patches": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ListCandidatesResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CandidateSummary" }
+        },
+        "next_cursor": { "type": "string", "minLength": 1 }
+      }
+    },
+    "DecisionRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_revision", "actor"],
+      "properties": {
+        "candidate_revision": { "type": "integer", "minimum": 1 },
+        "actor": { "type": "string", "minLength": 1 },
+        "comment": { "type": "string" }
+      }
+    },
+    "DecisionResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "patch_id", "status", "revision"],
+      "properties": {
+        "candidate_id": { "$ref": "#/$defs/Identifier" },
+        "patch_id": { "$ref": "#/$defs/Identifier" },
+        "status": { "enum": ["accepted", "rejected"] },
+        "revision": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "CompileRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_revision"],
+      "properties": {
+        "candidate_revision": { "type": "integer", "minimum": 1 },
+        "write": { "type": "boolean", "default": false }
+      }
+    },
+    "CompileResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "revision", "valid", "diagnostics"],
+      "properties": {
+        "candidate_id": { "$ref": "#/$defs/Identifier" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "valid": { "type": "boolean" },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["severity", "message"],
+            "properties": {
+              "severity": { "enum": ["info", "warning", "error"] },
+              "path": { "type": "string" },
+              "message": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "runtime_model_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "ValidationResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "revision", "valid", "conflict_ids", "coverage"],
+      "properties": {
+        "candidate_id": { "$ref": "#/$defs/Identifier" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "valid": { "type": "boolean" },
+        "conflict_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Identifier" },
+          "uniqueItems": true
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["frames", "resolved", "ambiguous", "unknown"],
+          "properties": {
+            "frames": { "type": "integer", "minimum": 0 },
+            "resolved": { "type": "integer", "minimum": 0 },
+            "ambiguous": { "type": "integer", "minimum": 0 },
+            "unknown": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "SchemaManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api_version", "runtime_schema", "offline_schema", "capabilities"],
+      "properties": {
+        "api_version": { "const": 1 },
+        "runtime_schema": { "type": "string", "minLength": 1 },
+        "offline_schema": { "type": "string", "minLength": 1 },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Identifier" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "ApiRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operation"],
+          "properties": { "operation": { "const": "list_candidates" }, "status": { "type": "string" }, "cursor": { "type": "string" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operation", "candidate_id"],
+          "properties": { "operation": { "const": "get_candidate" }, "candidate_id": { "$ref": "#/$defs/Identifier" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operation", "candidate_id", "patch_id", "body"],
+          "properties": {
+            "operation": { "enum": ["accept_patch", "reject_patch"] },
+            "candidate_id": { "$ref": "#/$defs/Identifier" },
+            "patch_id": { "$ref": "#/$defs/Identifier" },
+            "body": { "$ref": "#/$defs/DecisionRequest" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operation", "candidate_id", "body"],
+          "properties": {
+            "operation": { "const": "compile_candidate" },
+            "candidate_id": { "$ref": "#/$defs/Identifier" },
+            "body": { "$ref": "#/$defs/CompileRequest" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operation", "candidate_id", "revision"],
+          "properties": {
+            "operation": { "const": "run_validation" },
+            "candidate_id": { "$ref": "#/$defs/Identifier" },
+            "revision": { "type": "integer", "minimum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operation", "candidate_id"],
+          "properties": {
+            "operation": { "enum": ["get_conflicts", "get_provenance"] },
+            "candidate_id": { "$ref": "#/$defs/Identifier" }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "format": "umbraflow-annotation-v2-behavior-1",
+  "case_id": "binding.surface_specific_placement",
+  "description": "The same target uses the active surface's placement rather than one global rectangle.",
+  "frames": [
+    {
+      "id": "frame.binding.surface_specific_placement.training",
+      "measurements": [
+        {"probe": "surface.training_confirm.identity", "result": "present", "confidence": 0.99},
+        {"probe": "target.confirm_button", "result": "present", "confidence": 0.98, "rect": [100, 700, 180, 64]}
+      ]
+    },
+    {
+      "id": "frame.binding.surface_specific_placement.settlement",
+      "measurements": [
+        {"probe": "surface.settlement_confirm.identity", "result": "present", "confidence": 0.99},
+        {"probe": "target.confirm_button", "result": "present", "confidence": 0.98, "rect": [420, 700, 180, 64]}
+      ]
+    }
+  ],
+  "candidates": [
+    {
+      "surface": "training_confirm",
+      "layer": "overlay",
+      "identity": [{"probe": "surface.training_confirm.identity", "requires": "present"}],
+      "bindings": [
+        {"target": "confirm_button", "placement": {"rect": [100, 700, 180, 64]}, "actions": ["click"]}
+      ]
+    },
+    {
+      "surface": "settlement_confirm",
+      "layer": "overlay",
+      "identity": [{"probe": "surface.settlement_confirm.identity", "requires": "present"}],
+      "bindings": [
+        {"target": "confirm_button", "placement": {"rect": [420, 700, 180, 64]}, "actions": ["click"]}
+      ]
+    }
+  ],
+  "request": {
+    "kind": "resolve_and_authorize_each",
+    "operations": [
+      {
+        "frame": "frame.binding.surface_specific_placement.training",
+        "action": {"target": "confirm_button", "kind": "click"}
+      },
+      {
+        "frame": "frame.binding.surface_specific_placement.settlement",
+        "action": {"target": "confirm_button", "kind": "click"}
+      }
+    ]
+  },
+  "expected": {
+    "same_target": "confirm_button",
+    "per_frame": [
+      {
+        "frame": "frame.binding.surface_specific_placement.training",
+        "resolution": "resolved",
+        "hit_rect": [100, 700, 180, 64],
+        "action": "authorized"
+      },
+      {
+        "frame": "frame.binding.surface_specific_placement.settlement",
+        "resolution": "resolved",
+        "hit_rect": [420, 700, 180, 64],
+        "action": "authorized"
+      }
+    ],
+    "forbidden_behavior": "use_one_global_confirm_button_rect"
+  }
+}

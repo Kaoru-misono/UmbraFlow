@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbraflow.dev/schema/cpp-envelope/v1",
+  "title": "Umbraflow C++ pre-VM model envelope",
+  "description": "Facts extracted by the C++ host before the Luau VM starts. This is not a second semantic model parser.",
+  "$ref": "#/$defs/PreVmFacts",
+  "$defs": {
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "Size": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "integer", "minimum": 1 },
+        { "type": "integer", "minimum": 1 }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "Identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "PreVmFacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "content_hash", "base_resolution", "base_dpi", "target_ids", "surface_ids"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "content_hash": { "$ref": "#/$defs/Sha256" },
+        "base_resolution": { "$ref": "#/$defs/Size" },
+        "base_dpi": { "$ref": "#/$defs/Size" },
+        "target_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Identifier" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "surface_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Identifier" },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

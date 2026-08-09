@@ -16,52 +16,50 @@ namespace uf::task
 {
     namespace
     {
-        // The page model the validator resolves against: three elements and one
-        // page, written the way a project file writes them. Which names a script
+        // The runtime model envelope the validator resolves against: three targets
+        // and one surface, written the way a project file writes them. Which names
+        // a script may spell is a fact about that file
         // may spell is a fact about that file
         // (docs/plans/2026-07-31-script-owned-page-model.md 6), so the fixture is
         // the text rather than a compiled catalog. `home_marker` is here because
-        // an element that only identifies is still a name a script may write.
+        // a target that only identifies is still a name a script may write.
         constexpr auto k_pageModel = std::string_view{R"toml(
-schema = "umbraflow-project/l2-v2"
+schema_version = 1
 base_resolution = [4, 4]
 base_dpi = [96, 96]
 
-[[element]]
-name = "home_marker"
-form = "fixed"
-capabilities = ["identify"]
-rect = [0, 0, 4, 4]
+[[target]]
+id = "home_marker"
 
-[[element]]
-name = "daily_button"
-form = "fixed"
-capabilities = ["interact"]
-rect = [0, 0, 4, 4]
+[[target]]
+id = "daily_button"
 
-[element.extra]
-name = "extra_alias"
+[target.extra]
+id = "extra_alias"
 
-[[element]]
-name = "battle"
-form = "fixed"
-capabilities = ["interact"]
-rect = [0, 0, 4, 4]
+[[target]]
+id = "battle"
 
-[[appearance]]
-element = "battle"
-name = "default"
+[[locator]]
+id = "battle.default"
+target = "battle"
+kind = "template"
 source = "assets/templates/battle.png"
 threshold = 9000
 
-[[page]]
-name = "home"
+[[surface]]
+id = "home"
 
-[[reference]]
-page = "home"
-element = "battle"
-holding = "owned"
-exercised = ["interact"]
+[[binding]]
+surface = "home"
+target = "battle"
+
+[binding.identity]
+locator = "battle.default"
+polarity = "required"
+
+[binding.actions.click]
+locator = "battle.default"
 )toml"};
 
         auto buildModel() -> PageModelFacts
@@ -73,7 +71,7 @@ exercised = ["interact"]
 
         // Validates `source` and asserts it was rejected as InvalidResource whose
         // message contains every `needle` -- pinning the failure to the offending
-        // reference, so a change that rejects for the wrong reason is caught.
+        // resource access, so a change that rejects for the wrong reason is caught.
         auto expectRejected(
             PageModelFacts const& model,
             std::string_view source,
@@ -101,8 +99,7 @@ exercised = ["interact"]
             // a model with no single answer about its own pixels. The refusal
             // names the offender, because the file is hand-edited.
             auto const duplicated = std::string{k_pageModel}
-                + "\n[[element]]\nname = \"battle\"\nform = \"fixed\"\n"
-                  "capabilities = [\"interact\"]\nrect = [0, 0, 4, 4]\n";
+                + "\n[[target]]\nid = \"battle\"\n";
             auto const refused = parsePageModelFacts(duplicated);
             REQUIRE_FALSE(refused.has_value());
             CHECK(
@@ -113,6 +110,28 @@ exercised = ["interact"]
 
             // The control: the same file without the extra section loads.
             CHECK(parsePageModelFacts(k_pageModel).has_value());
+
+            auto const duplicatedSurface = std::string{k_pageModel}
+                + "\n[[surface]]\nid = \"home\"\n";
+            auto const refusedSurface = parsePageModelFacts(duplicatedSurface);
+            REQUIRE_FALSE(refusedSurface.has_value());
+            CHECK(
+                std::string{refusedSurface.error().message()}.contains("home")
+            );
+        }
+
+        TEST_CASE("A runtime model without its envelope version is refused")
+        {
+            auto without = std::string{k_pageModel};
+            auto const at = without.find("schema_version");
+            REQUIRE(at != std::string::npos);
+            without.erase(at, without.find('\n', at) - at);
+
+            auto const refused = parsePageModelFacts(without);
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(
+                std::string{refused.error().message()}.contains("schema_version")
+            );
         }
 
         TEST_CASE("A page model that states no geometry is refused")
@@ -139,6 +158,7 @@ exercised = ["interact"]
             // than one this reader chose.
             auto const model = parsePageModelFacts(k_pageModel);
             REQUIRE(model.has_value());
+            CHECK(model->schemaVersion == 1);
             CHECK(model->fingerprint.width() == 4);
             CHECK(model->fingerprint.height() == 4);
             CHECK(model->fingerprint.dpiX() == 96);
@@ -167,8 +187,8 @@ exercised = ["interact"]
             auto const after = parsePageModelFacts(edited);
             REQUIRE(after.has_value());
 
-            CHECK(after->elementNames == model->elementNames);
-            CHECK(after->pageNames == model->pageNames);
+            CHECK(after->targetNames == model->targetNames);
+            CHECK(after->surfaceNames == model->surfaceNames);
             CHECK(after->fingerprint == model->fingerprint);
             CHECK(after->contentHash != model->contentHash);
         }
