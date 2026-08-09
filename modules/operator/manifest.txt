@@ -1,0 +1,11 @@
+[module]
+name = operator
+type = static
+version = 0.1.0
+
+[build]
+unity_build = false
+
+[dependencies]
+public = core domain task
+private = trace script operator_sqlite3

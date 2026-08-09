@@ -1,0 +1,213 @@
+#pragma once
+
+#include "manifest.hpp"
+
+#include <core/error/result.hpp>
+#include <core/safety/annotations.hpp>
+#include <core/types/integer.hpp>
+
+#include <domain/content-hash.hpp>
+
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace uf::operator_runtime
+{
+    enum class ProjectPluginFunction : uint8
+    {
+        Derive,
+        Plan,
+        NextStep,
+        Reconcile,
+        Reduce,
+    };
+
+    enum class ProjectDocumentDirection : uint8
+    {
+        Input,
+        Output,
+    };
+
+    class ProjectSchemaOwner;
+
+    // Immutable exact JCS with no schema authority. It proves canonical bytes
+    // and their content hash only; it does not claim that any field is valid for
+    // a ProjectPlugin function.
+    class CanonicalJson final
+    {
+        ContentHash m_contentHash;
+        std::string m_bytes;
+
+        CanonicalJson(ContentHash contentHash, std::string bytes);
+
+        friend class ProjectSchemaOwner;
+
+    public:
+        [[nodiscard]] auto contentHash() const -> ContentHash;
+
+        [[nodiscard]]
+        auto bytes() const noexcept UF_LIFETIME_BOUND -> std::string const&;
+
+        auto operator==(CanonicalJson const&) const -> bool = default;
+    };
+
+    // A document accepted by the schema owner for one exact registration,
+    // function, and direction. No schema hash label is exposed or accepted.
+    class ValidatedDocument final
+    {
+        ContentHash m_projectRegistrationHash;
+        ProjectPluginFunction m_function;
+        ProjectDocumentDirection m_direction;
+        CanonicalJson m_canonicalJson;
+
+        ValidatedDocument(ContentHash projectRegistrationHash,
+                          ProjectPluginFunction function,
+                          ProjectDocumentDirection direction,
+                          CanonicalJson canonicalJson);
+
+        friend class ProjectSchemaOwner;
+
+    public:
+        [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
+        [[nodiscard]] auto function() const noexcept -> ProjectPluginFunction;
+
+        [[nodiscard]]
+        auto direction() const noexcept -> ProjectDocumentDirection;
+
+        [[nodiscard]] auto contentHash() const -> ContentHash;
+
+        [[nodiscard]]
+        auto bytes() const noexcept UF_LIFETIME_BOUND -> std::string const&;
+
+        auto operator==(ValidatedDocument const&) const -> bool = default;
+    };
+
+    // These validators are trusted deployment code. The canonical validator
+    // must reject anything other than exact RFC 8785 JCS. The document validator
+    // must validate the complete function-specific JSON Schema, including every
+    // project-owned nested payload. Neither callable is passed to plugin code or
+    // published in a business VM.
+    using CanonicalJsonValidator = std::function<Status(std::string_view exactJcs)>;
+    using ProjectDocumentValidator = std::function<Status(ProjectPluginFunction function,
+                                                          ProjectDocumentDirection direction,
+                                                          std::string_view exactJcs)>;
+
+    class ProjectSchemaOwner final
+    {
+        class State;
+
+        std::shared_ptr<State const> m_state;
+
+        explicit ProjectSchemaOwner(std::shared_ptr<State const> p_state) noexcept;
+
+        friend class ProjectPluginHandle;
+
+        [[nodiscard]]
+        auto validate(ProjectPluginFunction function,
+                      ProjectDocumentDirection direction,
+                      CanonicalJson const& document) const -> Status;
+
+        [[nodiscard]]
+        auto validateOutput(ProjectPluginFunction function, CanonicalJson document) const
+            -> Result<ValidatedDocument>;
+
+    public:
+        ProjectSchemaOwner(ProjectSchemaOwner const&) noexcept = default;
+        ProjectSchemaOwner(ProjectSchemaOwner&&) noexcept = default;
+        auto operator=(ProjectSchemaOwner const&) noexcept -> ProjectSchemaOwner& = default;
+        auto operator=(ProjectSchemaOwner&&) noexcept -> ProjectSchemaOwner& = default;
+        ~ProjectSchemaOwner() = default;
+
+        [[nodiscard]]
+        static auto create(VerifiedProjectRegistration const& registration,
+                           CanonicalJsonValidator validateCanonicalJson,
+                           ProjectDocumentValidator validateDocument) -> Result<ProjectSchemaOwner>;
+
+        [[nodiscard]]
+        auto canonicalize(std::string exactJcs) const -> Result<CanonicalJson>;
+
+        [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
+    };
+
+    // Immutable handle to precompiled plugin bytecode and verified artifact
+    // blobs. Every data call creates a fresh pure VM; no VM, callback registry,
+    // native handle, Host, Receipt, database, clock, RNG, loader, or path is
+    // exposed.
+    class ProjectPluginHandle final
+    {
+        class State;
+
+        friend class ProjectPluginRegistrar;
+
+        std::shared_ptr<State const> m_state;
+
+        explicit ProjectPluginHandle(std::shared_ptr<State const> p_state) noexcept;
+
+        [[nodiscard]]
+        auto invoke(ProjectPluginFunction function, CanonicalJson const& input) const
+            -> Result<ValidatedDocument>;
+
+    public:
+        ProjectPluginHandle(ProjectPluginHandle const&) noexcept = default;
+        ProjectPluginHandle(ProjectPluginHandle&&) noexcept = default;
+        auto operator=(ProjectPluginHandle const&) noexcept -> ProjectPluginHandle& = default;
+        auto operator=(ProjectPluginHandle&&) noexcept -> ProjectPluginHandle& = default;
+        ~ProjectPluginHandle() = default;
+
+        [[nodiscard]] auto pluginId() const -> std::string;
+        [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
+        [[nodiscard]] auto pluginHash() const -> ContentHash;
+
+        // Mints canonical bytes through this plugin's pinned schema owner.
+        // Trusted Operator code needs it because it assembles the reduce
+        // envelope itself rather than accepting one from a caller; it grants no
+        // authority beyond proving the bytes are exact JCS.
+        [[nodiscard]]
+        auto canonicalize(std::string exactJcs) const -> Result<CanonicalJson>;
+
+        [[nodiscard]]
+        auto derive(CanonicalJson const& input) const -> Result<ValidatedDocument>;
+
+        [[nodiscard]]
+        auto plan(CanonicalJson const& input) const -> Result<ValidatedDocument>;
+
+        [[nodiscard]]
+        auto nextStep(CanonicalJson const& input) const -> Result<ValidatedDocument>;
+
+        [[nodiscard]]
+        auto reconcile(CanonicalJson const& input) const -> Result<ValidatedDocument>;
+
+        [[nodiscard]]
+        auto reduce(CanonicalJson const& input) const -> Result<ValidatedDocument>;
+    };
+
+    // Startup-only exact registry. Registration accepts only an already verified
+    // registration, the exact plugin bytes and artifact blobs pinned by it, and a
+    // schema owner bound to the same root.
+    class ProjectPluginRegistrar final
+    {
+        std::map<std::pair<std::string, ContentHash>, ProjectPluginHandle> m_plugins{};
+
+    public:
+        struct ArtifactBlob final
+        {
+            std::string name{};
+            std::string bytes{};
+        };
+
+        [[nodiscard]]
+        auto registerPlugin(VerifiedProjectRegistration const& registration,
+                            std::string exactPluginBytes,
+                            std::vector<ArtifactBlob> exactArtifactBlobs,
+                            ProjectSchemaOwner schemaOwner) -> Result<ProjectPluginHandle>;
+
+        [[nodiscard]]
+        auto findExact(std::string const& pluginId, ContentHash projectRegistrationHash) const
+            -> Result<ProjectPluginHandle>;
+    };
+} // namespace uf::operator_runtime

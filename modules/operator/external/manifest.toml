@@ -1,0 +1,19 @@
+# SQLite backs only the production Operator ledger. The offline annotation
+# workspace is a separate database and is never attached by this module.
+#
+# The official amalgamation is pinned by SHA-256 before extraction. Version
+# 3.53.4 was the current SQLite release when this breaking rewrite was frozen.
+
+schema = "umbraflow-external/v1"
+module = "operator"
+
+[[payload]]
+name = "sqlite-amalgamation"
+version = "3.53.4"
+url = "https://www.sqlite.org/2026/sqlite-amalgamation-3530400.zip"
+sha256 = "1e71ddf93849c6a6ecf58b827c0692073d2dd7ee40196158068f7b29f422e87d"
+bytes = 2946650
+archive = "zip"
+destination = "sqlite"
+prune = ["shell.c", "sqlite3ext.h"]
+license = "blessing"
