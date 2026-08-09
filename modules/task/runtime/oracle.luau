@@ -1,903 +1,802 @@
 --!strict
--- oracle: the screens a model is measured against, and what each one is
--- supposed to show.
+-- oracle: offline annotation records only.
 --
--- It is DATA rather than a test because a template always matches the image it
--- was cut from at a distance of zero, so the only evidence that a mark
--- identifies ONE screen is what it does on the others
--- (docs/pitfalls/colour-key-annotation.md) -- and that measurement is worthless
--- unless the file says which answer was expected
--- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4). `regress`
--- walks this vocabulary.
---
--- THREE STATES AND NOT TWO. A page's signature is a conjunction over the marks
--- that identify it, never an inventory of its screen, so "the model says nothing
--- about this element here" is a different sentence from "these pixels are not
--- there". A card-detail overlay is the battle screen with a card selected, draw
--- pile and end-turn button still on it and merely dimmed; reading each of those
--- as a defect trains an author to break a correct model
--- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.1).
---
--- A cell nobody claimed is `unclaimed`, deliberately permissively: the
--- falsification pressure comes from the rules `regress` applies whatever the file
--- says, most of which hold on unclaimed cells too (the same document, 2.3
--- correction (b)).
---
--- A screen may also say which page it is of. That is not a licence to be measured
--- less: one of those rules stops firing between two captures of ONE page, and in
--- exchange the declaration is itself measured. Both halves are `recognition`'s.
---
--- Framework modules load in the sorted order of their file names. `oracle` sorts
--- after `mint`, `model`, `navigation` and `observe`, and before `project` and
--- `regress`. It names `mint` and `model`.
-
--- Where a screen's pixels live, relative to the project root. The file name is
--- the content hash, so the path is DERIVED and never authored: which bytes a
--- screen is cannot then disagree with where they are. It follows the store the
--- runtime templates use, `assets/templates/<hex>.png`.
-local k_screenDirectory = "assets/screens/"
-local k_screenSuffix    = ".png"
-
--- How long a content hash is, in lowercase hex characters. SHA-256, which is
--- the repository's one digest.
-local k_hashLength = 64
-
-local k_stateKnown: { [string]: boolean } = {
-    match     = true,
-    absent    = true,
-    unclaimed = true,
-}
-
-local k_screenKeys: { [string]: boolean } = {
-    name     = true,
-    hash     = true,
-    page     = true,
-    extra    = true,
-    residual = true,
-}
-
-local k_expectationKeys: { [string]: boolean } = {
-    screen     = true,
-    element    = true,
-    rect       = true,
-    appearance = true,
-    text       = true,
-    items      = true,
-    state      = true,
-    extra      = true,
-    residual   = true,
-}
-
-local k_claimsKeys: { [string]: boolean } = {
-    screens      = true,
-    expectations = true,
-}
-
--- One screen the model is measured against.
---
--- `path` is derived from `hash` and is here so nothing has to re-derive it;
--- `name` is what a verdict row and a finding are read by, because a hex digest
--- tells a reader nothing about which screen went wrong.
---
--- `page` is the only field a rule reads about a PAIR of screens, and it is what
--- tells two captures of one page from two pages. Both rules that read it are in
--- `recognition`.
---
--- It is OPTIONAL because a screen captured while exploring is usually of a page
--- nobody has annotated yet -- the pixels come first and the page model is written
--- afterwards -- so requiring it would refuse exactly the screens a session starts
--- with and push an author to invent a page.
---
--- It is a NAME and not a page, the same ruling `scribe.add_edge` makes for the
--- ends of an edge: writing one reference REBUILDS a page, so a frozen screen
--- holding the page object would go on naming the superseded copy.
-export type Screen = {
-    name: string,
-    hash: string,
-    page: string?,
-    path: string,
-    extra: { [string]: any },
-    residual: { string },
-}
-
--- A rectangle in target pixels: the same four numbers `model.Rect` is, restated
--- because a chunk loaded under the framework environment cannot name another
--- chunk's exported types -- there is no module resolver in this VM, only a global
--- binding. The CHECK is not restated: every rectangle passes through
--- `model.check_rect`.
-export type Rect = {
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-}
-
--- What the model states about one cell of the matrix.
---
--- `rect` is WHERE THE CELL WAS MEASURED, and it exists for the element that draws
--- no rectangle of its own: a minimap cell is searched where the script works out
--- per frame because the map pans, so the only place that position can be written
--- down and falsified is a claim about ONE stored screen. An element that draws
--- its own rectangle states none here.
---
--- It is also what makes a second claim about one element on one screen legal --
--- "it matches HERE and stays away from THERE" is two claims, one element, one
--- screen, two rectangles -- so a cell is keyed by its rectangle as well as by its
--- appearance.
---
--- `appearance` and `text` name the two VERIFICATION SOURCES and at most one of
--- the pair is ever set:
---
---   * NEITHER: the subject is the folded element measured against its templates,
---     which is what a page signature and a click read.
---   * `appearance`: one template searched alone. It is the only way to ask
---     whether a mark discriminates on a screen another appearance owns, where a
---     hit is invisible once folded with a correct one
---     (docs/plans/2026-07-31-annotation-model-capabilities.md 2.3 correction
---     (c)).
---   * `items`: how many items a STRIP holds on this screen. It is the third
---     source and the only one that is a number: a strip's rectangles are not in
---     the file at all, so what the model asserts is the spacing and what a
---     screen can contradict is the count that spacing produces. Optional in the
---     type and required on a strip: every cell about one carries a number, and
---     no other cell may carry one at all.
---   * `text`: what the element's rectangle READS on this screen, which is the
---     cell an element with no templates has
---     (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4). It is
---     stated per screen because one shared title box reads a different name on
---     every screen.
-export type Expectation = {
-    screen: string,
-    element: string,
-    rect: Rect?,
-    appearance: string?,
-    text: string?,
-    items: number?,
-    state: string,
-    extra: { [string]: any },
-    residual: { string },
-}
-
--- Every screen and every expectation of one project, checked against each other
--- and indexed for the walk.
---
--- `text_by_cell` is a second index keyed like the first, so a walk can ask for
--- the text of the cell it is standing on without first finding the expectation.
--- Only a claim about what a region reads has a text, while every claim has a
--- state, which is why the two are not one index.
---
--- `rects_by_subject` is keyed by screen and element ALONE, because a walk cannot
--- reach a cell without first knowing the rectangle it is filed under; the list of
--- rectangles is a property of the pairing rather than of any one cell.
-export type Claims = {
-    screens: { Screen },
-    screen_by_name: { [string]: Screen },
-    expectations: { Expectation },
-    state_by_cell: { [string]: string },
-    text_by_cell: { [string]: string },
-    items_by_cell: { [string]: number },
-    rects_by_subject: { [string]: { Rect } },
-}
-
--- Weak keys, for the reason spelled out over `model`'s registries.
-local mintedScreens: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
-local mintedExpectations: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
-local mintedClaims: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+-- Frame, Observation, Assertion, and CandidateModel are evidence/workspace
+-- records. They are never read by the ordinary runtime resolver and this module
+-- never opens an asset path. A Frame asset is metadata identifying an offline
+-- corpus file; it is not a runtime locator asset.
 
 local oracle = {}
 
-oracle.screen_directory = k_screenDirectory
+oracle.present = "present"
+oracle.absent = "absent"
+oracle.unknown = "unknown"
+oracle.unreviewed = "unreviewed"
 
-function oracle.is_screen(value: any): boolean
-    return mint.derives_from(value, mintedScreens)
+oracle.review_open = "open"
+oracle.review_accepted = "accepted"
+oracle.review_rejected = "rejected"
+oracle.review_superseded = "superseded"
+
+export type Frame = {
+    id: string,
+    asset: { path: string, sha256: string, width: number, height: number },
+    captured_at: string,
+    source: string,
+    tags: { string }?,
+}
+
+export type Observation = {
+    id: string,
+    frame_id: string,
+    subject: { [string]: any },
+    measurement: { [string]: any },
+    classification: string,
+    confidence: number,
+    provenance: { [string]: any },
+}
+
+export type Assertion = {
+    id: string,
+    frame_id: string,
+    claim: { [string]: any },
+    outcome: string,
+    supporting_observations: { string },
+    review: { [string]: any },
+    provenance: { [string]: any },
+}
+
+export type CandidateModel = {
+    id: string,
+    project_id: string,
+    revision: number,
+    status: string,
+    source_frame_ids: { string },
+    targets: { any },
+    entities: { any },
+    patches: { any },
+    conflicts: { any },
+}
+
+export type Workspace = {
+    schema_version: number,
+    project_id: string,
+    frames: { Frame },
+    observations: { Observation },
+    assertions: { Assertion },
+    candidates: { CandidateModel },
+}
+
+local frameRecords: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+local observationRecords: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+local assertionRecords: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+local candidateRecords: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+local workspaceRecords: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+
+local function fail(name: string, message: string)
+    error(name .. " " .. message, 3)
 end
 
-function oracle.is_expectation(value: any): boolean
-    return mint.derives_from(value, mintedExpectations)
-end
-
-function oracle.is_claims(value: any): boolean
-    return mint.derives_from(value, mintedClaims)
-end
-
--- The three states, so a caller comparing against one spells it from here
--- rather than from a literal of its own.
-oracle.state_match     = "match"
-oracle.state_absent    = "absent"
-oracle.state_unclaimed = "unclaimed"
-
--- The project-relative path holding the pixels of the screen with this hash.
-function oracle.screen_path(hash: string): string
-    return k_screenDirectory .. hash .. k_screenSuffix
-end
-
--- One rectangle as the text a key is built from, and the empty string when there
--- is none. Published because `reading` and `regress` file things by the same
--- rectangle, and a second spelling of "which rectangle" is a way for a lookup to
--- miss its row -- which reads as a cell nobody claimed rather than as a defect.
-function oracle.rect_key(rect: any): string
-    if rect == nil then
-        return ""
+local function require_table(name: string, value: any): { [string]: any }
+    if type(value) ~= "table" then
+        fail(name, "needs a table")
     end
-    return tostring(rect.x)
-        .. ","
-        .. tostring(rect.y)
-        .. ","
-        .. tostring(rect.width)
-        .. ","
-        .. tostring(rect.height)
+    return value
 end
 
--- The key one cell is filed under. NUL separates the parts because none of the
--- four can contain it, so two different cells cannot collide by concatenation.
--- The rectangle is part of the key, which is what lets one element be claimed
--- twice on one screen; two claims at ONE rectangle are still a contradiction and
--- `Claims.new` still refuses them.
-local function cellKey(
-    screen: string,
-    element: string,
-    appearance: string?,
-    rect: any
-): string
-    return screen
-        .. "\0"
-        .. element
-        .. "\0"
-        .. (appearance or "")
-        .. "\0"
-        .. oracle.rect_key(rect)
+local function require_string(name: string, value: any): string
+    if type(value) ~= "string" or value == "" then
+        fail(name, "needs a non-empty string")
+    end
+    return value
 end
 
--- The key the rectangles of one (screen, element) pairing are collected under.
-local function subjectKey(screen: string, element: string): string
-    return screen .. "\0" .. element
+local function require_confidence(name: string, value: any): number
+    if type(value) ~= "number" or value < 0 or value > 1 then
+        fail(name, "needs a number between 0 and 1")
+    end
+    return value
 end
 
-local Screen = {}
-oracle.Screen = Screen
-
--- Screen.new{ name = , hash = , page = } -> a frozen screen.
---
--- The hash is checked for shape rather than trusted, because the path is built
--- from it: a stray character names a file that does not exist, and the failure
--- would otherwise surface as a capture that ran out of frames.
---
--- Whether the project declares that PAGE is not asked here, because this
--- constructor is handed one screen's own facts and can see no pages. Both callers
--- that can see them refuse it -- `project.build` with the line number the author
--- wrote it on, `scribe.add_screen` in the voice it refuses a taken screen name --
--- because a name checked at neither would be a declaration `recognition` cannot
--- measure.
-function Screen.new(spec: { [string]: any }): Screen
-    if type(spec) ~= "table" then
-        error("Screen.new needs a table of fields", 2)
+local function require_integer(name: string, value: any, minimum: number): number
+    if type(value) ~= "number" or value % 1 ~= 0 or value < minimum then
+        fail(name, "needs an integer >= " .. tostring(minimum))
     end
+    return value
+end
 
-    local unknown = mint.unknown_key("Screen.new", spec, k_screenKeys, true)
-    if unknown ~= nil then
-        error(unknown, 2)
+local function reject_unknown(
+    name: string,
+    value: { [string]: any },
+    known: { [string]: boolean }
+)
+    for key in value do
+        if not known[key] then
+            fail(name, "does not accept field '" .. tostring(key) .. "'")
+        end
     end
+end
 
-    if type(spec.name) ~= "string" or spec.name == "" then
-        error(
-            "a screen needs a non-empty name; the hash says which bytes it is "
-                .. "and the name is what a verdict row is read by",
-            2
-        )
+local function copy_strings(name: string, value: any, non_empty: boolean): { string }
+    if type(value) ~= "table" then
+        fail(name, "needs an array of strings")
     end
-    local name = spec.name :: string
+    local result: { string } = {}
+    local seen: { [string]: boolean } = {}
+    for index = 1, #value do
+        local item = require_string(name .. "[" .. tostring(index) .. "]", value[index])
+        if seen[item] then
+            fail(name, "contains duplicate '" .. item .. "'")
+        end
+        seen[item] = true
+        result[index] = item
+    end
+    if non_empty and #result == 0 then
+        fail(name, "must not be empty")
+    end
+    return table.freeze(result)
+end
 
-    if
-        type(spec.hash) ~= "string"
-        or #(spec.hash :: string) ~= k_hashLength
-        or string.match(spec.hash :: string, "^[0-9a-f]+$") == nil
+local function hash(value: any, name: string): string
+    local text = require_string(name, value)
+    if #text ~= 64 or string.match(text, "[^0123456789abcdef]") ~= nil then
+        fail(name, "must be a lowercase SHA-256 digest")
+    end
+    return text
+end
+
+local function asset(name: string, value: any): { [string]: any }
+    local spec = require_table(name, value)
+    reject_unknown(name, spec, { path = true, sha256 = true, width = true, height = true })
+    return table.freeze({
+        path = require_string(name .. ".path", spec.path),
+        sha256 = hash(spec.sha256, name .. ".sha256"),
+        width = require_integer(name .. ".width", spec.width, 1),
+        height = require_integer(name .. ".height", spec.height, 1),
+    })
+end
+
+local function provenance(name: string, value: any): { [string]: any }
+    local spec = require_table(name, value)
+    reject_unknown(name, spec, { run_id = true, agent = true, agent_version = true, created_at = true })
+    local result: { [string]: any } = {
+        run_id = require_string(name .. ".run_id", spec.run_id),
+        agent = require_string(name .. ".agent", spec.agent),
+        created_at = require_string(name .. ".created_at", spec.created_at),
+    }
+    if spec.agent_version ~= nil then
+        result.agent_version = require_string(name .. ".agent_version", spec.agent_version)
+    end
+    return table.freeze(result)
+end
+
+local function rect(name: string, value: any): { number }
+    if type(value) ~= "table" or #value ~= 4 then
+        fail(name, "needs [x, y, width, height]")
+    end
+    local result: { number } = {}
+    for index = 1, 4 do
+        result[index] = require_integer(name .. "[" .. tostring(index) .. "]", value[index], 0)
+    end
+    if result[3] == 0 or result[4] == 0 then
+        fail(name, "needs positive width and height")
+    end
+    return table.freeze(result)
+end
+
+local function subject(name: string, value: any): { [string]: any }
+    local spec = require_table(name, value)
+    local kind = require_string(name .. ".kind", spec.kind)
+    if kind == "target" then
+        reject_unknown(name, spec, { kind = true, target_id = true, rect = true })
+        local result: { [string]: any } = {
+            kind = kind,
+            target_id = require_string(name .. ".target_id", spec.target_id),
+        }
+        if spec.rect ~= nil then
+            result.rect = rect(name .. ".rect", spec.rect)
+        end
+        return table.freeze(result)
+    elseif kind == "surface" then
+        reject_unknown(name, spec, { kind = true, surface_id = true })
+        return table.freeze({
+            kind = kind,
+            surface_id = require_string(name .. ".surface_id", spec.surface_id),
+        })
+    elseif kind == "region" then
+        reject_unknown(name, spec, { kind = true, rect = true })
+        return table.freeze({ kind = kind, rect = rect(name .. ".rect", spec.rect) })
+    end
+    fail(name, "has unknown subject kind '" .. kind .. "'")
+end
+
+local function measurement(name: string, value: any): { [string]: any }
+    local spec = require_table(name, value)
+    local kind = require_string(name .. ".kind", spec.kind)
+    if kind == "template_score" then
+        reject_unknown(name, spec, { kind = true, locator = true, variant = true, score = true, rect = true })
+        local result: { [string]: any } = {
+            kind = kind,
+            locator = require_string(name .. ".locator", spec.locator),
+            score = if type(spec.score) == "number" then spec.score else fail(name .. ".score", "needs a number"),
+            rect = rect(name .. ".rect", spec.rect),
+        }
+        if spec.variant ~= nil then
+            result.variant = require_string(name .. ".variant", spec.variant)
+        end
+        return table.freeze(result)
+    elseif kind == "ocr" then
+        reject_unknown(name, spec, { kind = true, reader = true, text = true, confidence = true, lines = true, rect = true })
+        return table.freeze({
+            kind = kind,
+            reader = require_string(name .. ".reader", spec.reader),
+            text = if type(spec.text) == "string" then spec.text else fail(name .. ".text", "needs a string"),
+            confidence = require_confidence(name .. ".confidence", spec.confidence),
+            lines = spec.lines,
+            rect = rect(name .. ".rect", spec.rect),
+        })
+    elseif kind == "geometry" then
+        reject_unknown(name, spec, { kind = true, rect = true })
+        return table.freeze({ kind = kind, rect = rect(name .. ".rect", spec.rect) })
+    elseif kind == "item_count" then
+        reject_unknown(name, spec, { kind = true, count = true })
+        return table.freeze({ kind = kind, count = require_integer(name .. ".count", spec.count, 0) })
+    end
+    fail(name, "has unknown measurement kind '" .. kind .. "'")
+end
+
+local Frame = {}
+oracle.Frame = Frame
+
+function Frame.new(spec: { [string]: any }): Frame
+    local value = require_table("Frame.new", spec)
+    reject_unknown("Frame.new", value, { id = true, asset = true, captured_at = true, source = true, tags = true })
+    local source = require_string("Frame.new.source", value.source)
+    if source ~= "exploration_trace" and source ~= "manual_capture" and source ~= "import" then
+        fail("Frame.new.source", "must be exploration_trace, manual_capture, or import")
+    end
+    local result: { [string]: any } = {
+        id = require_string("Frame.new.id", value.id),
+        asset = asset("Frame.new.asset", value.asset),
+        captured_at = require_string("Frame.new.captured_at", value.captured_at),
+        source = source,
+    }
+    if value.tags ~= nil then
+        result.tags = copy_strings("Frame.new.tags", value.tags, false)
+    end
+    local frame = table.freeze(result) :: any
+    frameRecords[frame] = true
+    return frame
+end
+
+function Frame.is(value: any): boolean
+    return frameRecords[value] == true
+end
+
+local Observation = {}
+oracle.Observation = Observation
+
+function Observation.new(spec: { [string]: any }): Observation
+    local value = require_table("Observation.new", spec)
+    reject_unknown("Observation.new", value, {
+        id = true,
+        frame_id = true,
+        subject = true,
+        measurement = true,
+        classification = true,
+        confidence = true,
+        provenance = true,
+    })
+    local classification = require_string("Observation.new.classification", value.classification)
+    if classification ~= oracle.present
+        and classification ~= oracle.absent
+        and classification ~= oracle.unknown
     then
-        error(
-            "screen '"
-                .. name
-                .. "' needs hash = the "
-                .. tostring(k_hashLength)
-                .. "-character lowercase hex content hash of its PNG; the file "
-                .. "it names is derived from it, so a malformed one is a screen "
-                .. "with no pixels",
-            2
-        )
+        fail("Observation.new.classification", "must be present, absent, or unknown")
     end
-    local hash = spec.hash :: string
+    local observation = table.freeze({
+        id = require_string("Observation.new.id", value.id),
+        frame_id = require_string("Observation.new.frame_id", value.frame_id),
+        subject = subject("Observation.new.subject", value.subject),
+        measurement = measurement("Observation.new.measurement", value.measurement),
+        classification = classification,
+        confidence = require_confidence("Observation.new.confidence", value.confidence),
+        provenance = provenance("Observation.new.provenance", value.provenance),
+    })
+    observationRecords[observation] = true
+    return observation
+end
 
-    if
-        spec.page ~= nil
-        and (type(spec.page) ~= "string" or spec.page == "")
+function Observation.is(value: any): boolean
+    return observationRecords[value] == true
+end
+
+local function claim(name: string, value: any): { [string]: any }
+    local spec = require_table(name, value)
+    local kind = require_string(name .. ".kind", spec.kind)
+    if kind == "surface_identity" then
+        reject_unknown(name, spec, { kind = true, surface_id = true })
+        return table.freeze({ kind = kind, surface_id = require_string(name .. ".surface_id", spec.surface_id) })
+    elseif kind == "target_locator" then
+        reject_unknown(name, spec, { kind = true, target_id = true, locator = true, variant = true })
+        local result: { [string]: any } = {
+            kind = kind,
+            target_id = require_string(name .. ".target_id", spec.target_id),
+            locator = require_string(name .. ".locator", spec.locator),
+        }
+        if spec.variant ~= nil then
+            result.variant = require_string(name .. ".variant", spec.variant)
+        end
+        return table.freeze(result)
+    elseif kind == "text" then
+        reject_unknown(name, spec, { kind = true, reader = true, operator = true, value = true })
+        local operator = require_string(name .. ".operator", spec.operator)
+        if operator ~= "equals" and operator ~= "contains_all" and operator ~= "present" then
+            fail(name .. ".operator", "must be equals, contains_all, or present")
+        end
+        local value_field = spec.value
+        if operator == "equals" and type(value_field) ~= "string" then
+            fail(name .. ".value", "equals needs a string")
+        elseif operator == "contains_all" then
+            value_field = copy_strings(name .. ".value", value_field, true)
+        elseif operator == "present" and value_field ~= nil then
+            fail(name, "present text claims do not carry value")
+        end
+        return table.freeze({
+            kind = kind,
+            reader = require_string(name .. ".reader", spec.reader),
+            operator = operator,
+            value = value_field,
+        })
+    elseif kind == "action_permission" then
+        reject_unknown(name, spec, { kind = true, binding_id = true, action_id = true, allowed = true })
+        if type(spec.allowed) ~= "boolean" then
+            fail(name .. ".allowed", "needs a boolean")
+        end
+        return table.freeze({
+            kind = kind,
+            binding_id = require_string(name .. ".binding_id", spec.binding_id),
+            action_id = require_string(name .. ".action_id", spec.action_id),
+            allowed = spec.allowed,
+        })
+    elseif kind == "surface_stack" then
+        reject_unknown(name, spec, { kind = true, context = true, surfaces = true })
+        return table.freeze({
+            kind = kind,
+            context = require_string(name .. ".context", spec.context),
+            surfaces = copy_strings(name .. ".surfaces", spec.surfaces, true),
+        })
+    end
+    fail(name, "has unknown claim kind '" .. kind .. "'")
+end
+
+local Assertion = {}
+oracle.Assertion = Assertion
+
+function Assertion.new(spec: { [string]: any }): Assertion
+    local value = require_table("Assertion.new", spec)
+    reject_unknown("Assertion.new", value, {
+        id = true,
+        frame_id = true,
+        claim = true,
+        outcome = true,
+        supporting_observations = true,
+        review = true,
+        provenance = true,
+    })
+    local outcome = require_string("Assertion.new.outcome", value.outcome)
+    if outcome ~= oracle.present and outcome ~= oracle.absent and outcome ~= oracle.unknown then
+        fail("Assertion.new.outcome", "must be present, absent, or unknown")
+    end
+    local review = require_table("Assertion.new.review", value.review)
+    reject_unknown("Assertion.new.review", review, { status = true, actor = true, reviewed_at = true, comment = true })
+    local status = require_string("Assertion.new.review.status", review.status)
+    if status ~= oracle.review_open
+        and status ~= oracle.review_accepted
+        and status ~= oracle.review_rejected
+        and status ~= oracle.review_superseded
     then
-        error(
-            "screen '"
-                .. name
-                .. "' page must be the NAME of a page this project declares; a "
-                .. "screen that says which page it is of is a claim the matrix "
-                .. "measures, and a screen that says nothing is a screen nobody "
-                .. "has annotated yet rather than a malformed one",
-            2
-        )
+        fail("Assertion.new.review.status", "has an unknown review status")
     end
-
-    local extraProblem = mint.check_extra("screen '" .. name .. "'", spec.extra)
-    if extraProblem ~= nil then
-        error(extraProblem, 2)
+    local support = copy_strings("Assertion.new.supporting_observations", value.supporting_observations, true)
+    local review_copy: { [string]: any } = { status = status }
+    if review.actor ~= nil then
+        review_copy.actor = require_string("Assertion.new.review.actor", review.actor)
     end
-    local residualProblem =
-        mint.check_residual("screen '" .. name .. "'", spec.residual)
-    if residualProblem ~= nil then
-        error(residualProblem, 2)
+    if review.reviewed_at ~= nil then
+        review_copy.reviewed_at = require_string("Assertion.new.review.reviewed_at", review.reviewed_at)
     end
-
-    local screen = table.freeze({
-        name     = name,
-        hash     = hash,
-        page     = spec.page,
-        path     = oracle.screen_path(hash),
-        extra    = mint.frozen_extra(spec.extra),
-        residual = mint.frozen_residual(spec.residual),
+    if review.comment ~= nil then
+        if type(review.comment) ~= "string" then
+            fail("Assertion.new.review.comment", "needs a string")
+        end
+        review_copy.comment = review.comment
+    end
+    local assertion = table.freeze({
+        id = require_string("Assertion.new.id", value.id),
+        frame_id = require_string("Assertion.new.frame_id", value.frame_id),
+        claim = claim("Assertion.new.claim", value.claim),
+        outcome = outcome,
+        supporting_observations = support,
+        review = table.freeze(review_copy),
+        provenance = provenance("Assertion.new.provenance", value.provenance),
     })
-    mintedScreens[screen] = true
-    return screen
+    assertionRecords[assertion] = true
+    return assertion
 end
 
-local Expectation = {}
-oracle.Expectation = Expectation
+function Assertion.is(value: any): boolean
+    return assertionRecords[value] == true
+end
 
--- Expectation.new{ screen = , element = , rect = , appearance = , text = , state = }
---
--- `screen` is a screen this project declares and `element` is an element built
--- by `Element.new`; both are the OBJECTS rather than names, so an expectation
--- about a screen or an element nothing declares cannot be constructed at all.
---
--- Six rulings, all failing closed at construction:
---
---   * A cell is about ONE verification source: `appearance` names a template and
---     `text` names a reading, so stating both leaves nothing saying which was
---     measured.
---   * An element with no appearances is claimed by what it READS and only that.
---     It carries no template, so there is nothing to search for and no score to
---     read an answer against; it is positioned BY the page that was recognised
---     (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.2). A cell with
---     no text is a permanently green cell, so it is refused.
---   * An element nothing may read cannot be claimed by text: it has to declare
---     the `read` capability first, as `observe.read_element` demands.
---   * A STRIP is claimed by a count and only that, so a cell about one states a
---     number. The refusal is here rather than in whichever verb wrote the claim,
---     because a hand-written `[[expect]]` block reaches this constructor through
---     `project.load_project` on exactly the same terms an authoring verb does,
---     and a file format able to express a claim the report cannot read is a
---     project that saves and loads and measures nothing.
---   * A named appearance must be one the element has, or the claim is filed under
---     a cell the walk never visits -- the same silence as writing nothing.
---   * EXACTLY ONE thing says where the cell was measured. An element that draws
---     its own rectangle may not be given a second answer here; an element that
---     draws none has nowhere to be searched until this claim says so, and a claim
---     that does not is another permanently green cell.
-function Expectation.new(spec: { [string]: any }): Expectation
-    if type(spec) ~= "table" then
-        error("Expectation.new needs a table of fields", 2)
+local function candidate_record(name: string, value: any): { [string]: any }
+    local spec = require_table(name, value)
+    local candidate_id = require_string(name .. ".candidate_id", spec.candidate_id)
+    local state = require_string(name .. ".state", spec.state)
+    if state ~= "proposed" and state ~= "accepted" and state ~= "rejected" and state ~= "superseded" then
+        fail(name .. ".state", "has an unknown candidate state")
     end
+    local result: { [string]: any } = {
+        candidate_id = candidate_id,
+        state = state,
+        value = spec.value,
+        confidence = require_confidence(name .. ".confidence", spec.confidence),
+        evidence_ids = copy_strings(name .. ".evidence_ids", spec.evidence_ids, true),
+        provenance = provenance(name .. ".provenance", spec.provenance),
+    }
+    if spec.conflict_ids ~= nil then
+        result.conflict_ids = copy_strings(name .. ".conflict_ids", spec.conflict_ids, false)
+    end
+    return table.freeze(result)
+end
 
-    local unknown =
-        mint.unknown_key("Expectation.new", spec, k_expectationKeys, true)
-    if unknown ~= nil then
-        error(unknown, 2)
-    end
-
-    if not oracle.is_screen(spec.screen) then
-        error(
-            "an expectation needs screen = a screen built by Screen.new; a "
-                .. "claim about a screen this project does not hold is a claim "
-                .. "nothing can measure",
-            2
-        )
-    end
-    local screen = spec.screen :: Screen
-
-    if not model.is_element(spec.element) then
-        error(
-            "an expectation needs element = an element built by Element.new",
-            2
-        )
-    end
-    local element = spec.element
-    local what    = "the expectation for element '"
-        .. element.name
-        .. "' on screen '"
-        .. screen.name
-        .. "'"
-
-    if type(spec.state) ~= "string" or not k_stateKnown[spec.state] then
-        error(
-            what
-                .. ' needs state = "match", "absent" or "unclaimed"; a page '
-                .. "signature names the marks that identify it rather than "
-                .. "everything on its screen, so \"the model says nothing here\" "
-                .. "is a third answer and not a missing one",
-            2
-        )
-    end
-
-    if spec.text ~= nil then
-        if type(spec.text) ~= "string" or spec.text == "" then
-            error(
-                what
-                    .. " text must be the text this element's region reads on "
-                    .. "this screen",
-                2
-            )
-        end
-        if spec.appearance ~= nil then
-            error(
-                what
-                    .. " names both an appearance and a text; those are the two "
-                    .. "ways an element can be verified and a cell is measured "
-                    .. "by exactly one of them, so a cell claiming both says "
-                    .. "nothing about which measurement was taken",
-                2
-            )
-        end
-    end
-
-    if spec.items ~= nil then
-        if
-            type(spec.items) ~= "number"
-            or spec.items % 1 ~= 0
-            or spec.items < 0
-        then
-            error(
-                what
-                    .. " items must be a whole number of items, zero included: "
-                    .. "an empty hand is a screen worth claiming",
-                2
-            )
-        end
-        if element.form ~= "strip" then
-            error(
-                what
-                    .. " claims a number of items and element '"
-                    .. element.name
-                    .. "' is a "
-                    .. tostring(element.form)
-                    .. "; only a strip has items, because only a strip carries "
-                    .. "the spacing that divides a container into them",
-                2
-            )
-        end
-        if spec.text ~= nil or spec.appearance ~= nil then
-            error(
-                what
-                    .. " claims items beside a text or an appearance; those are "
-                    .. "three ways an element can be verified and a cell is "
-                    .. "measured by exactly one",
-                2
-            )
-        end
-    end
-
-    if #element.appearances == 0 and element.form ~= "strip" then
-        if spec.text == nil then
-            error(
-                what
-                    .. " claims an outcome for an element that declares no "
-                    .. "appearances and says no text; it has no template to "
-                    .. "search for, so it is located by the page rather than by "
-                    .. "its own pixels and there is no measurement this claim "
-                    .. 'could ever be read against -- say what the region reads '
-                    .. 'on this screen with text = "..."',
-                2
-            )
-        end
-        if not element.capabilities.read then
-            error(
-                what
-                    .. " claims a text for element '"
-                    .. element.name
-                    .. "', which does not declare the read capability; nothing "
-                    .. "may ask that rectangle for a reading, so the claim names "
-                    .. "a measurement no run is allowed to take",
-                2
-            )
-        end
-    else
-        if spec.text ~= nil then
-            -- A strip is in this branch for the opposite reason everything else
-            -- here is: it declares no appearances at all, so the sentence about
-            -- template pixels would be describing an element that has none.
-            if element.form == "strip" then
-                error(
-                    what
-                        .. " claims a text for element '"
-                        .. element.name
-                        .. "', which is a strip; a reading and a count are two "
-                        .. "of the three ways an element can be verified and a "
-                        .. "cell is measured by exactly one -- what a strip "
-                        .. "holds is COUNTED off the frame, so say how many "
-                        .. "items this screen holds with items = <count> "
-                        .. "instead",
-                    2
-                )
-            end
-            error(
-                what
-                    .. " claims a text for element '"
-                    .. element.name
-                    .. "', which verifies itself by its template pixels; the "
-                    .. "matrix measures that element by what its appearances "
-                    .. "score, and a second answer with no rule between them is "
-                    .. "not a stronger check",
-                2
-            )
-        end
-        if spec.appearance ~= nil then
-            if type(spec.appearance) ~= "string" then
-                error(what .. " appearance must be an appearance name", 2)
-            end
-            if
-                model.Element.appearance_named(element, spec.appearance) == nil
-            then
-                error(
-                    what
-                        .. ' names appearance "'
-                        .. spec.appearance
-                        .. "\" which element '"
-                        .. element.name
-                        .. "' does not declare",
-                    2
-                )
-            end
-        end
-        -- Asked after both sources above, so a caller that named the WRONG one
-        -- hears about what it wrote rather than about the number it left out.
-        if element.form == "strip" and spec.items == nil then
-            error(
-                what
-                    .. " claims an outcome for element '"
-                    .. element.name
-                    .. "', which is a strip, and states no number; a strip is "
-                    .. "measured by the COUNT its spacing divides the container "
-                    .. "into, so a cell with no number is a cell with no question "
-                    .. "in it -- and that is worse than either answer alone, "
-                    .. "because the walk then reports the cell unclaimed while "
-                    .. "the summary has already counted this expectation among "
-                    .. "the claims -- say how many items this screen holds with "
-                    .. "items = <count>",
-                2
-            )
-        end
-    end
-
-    -- Where this cell is measured, asked after the verification source because
-    -- the two are independent: a shape with no rectangle of its own may be
-    -- claimed by a template or by a reading, and "where" is the same question
-    -- either way.
-    if spec.rect ~= nil then
-        if element.rect ~= nil then
-            error(
-                what
-                    .. " states a rectangle for element '"
-                    .. element.name
-                    .. "', which draws its own; a cell is measured at ONE region "
-                    .. "and the element already said which, so a second answer "
-                    .. "here would let a claim quietly move the measurement it is "
-                    .. "judged by",
-                2
-            )
-        end
-        local rectProblem = model.check_rect(what .. " rect", spec.rect)
-        if rectProblem ~= nil then
-            error(rectProblem, 2)
-        end
-    elseif element.rect == nil then
-        error(
-            what
-                .. " claims an outcome for element '"
-                .. element.name
-                .. "', which draws no rectangle of its own and is given none "
-                .. "here; there is nowhere to look, so nothing could ever "
-                .. "contradict this claim -- say where the shape is on this "
-                .. "screen with rect = { x = , y = , width = , height = }",
-            2
-        )
-    end
-
-    local extraProblem = mint.check_extra(what, spec.extra)
-    if extraProblem ~= nil then
-        error(extraProblem, 2)
-    end
-    local residualProblem = mint.check_residual(what, spec.residual)
-    if residualProblem ~= nil then
-        error(residualProblem, 2)
-    end
-
-    local expectation = table.freeze({
-        screen     = screen.name,
-        element    = element.name,
-        rect       = if spec.rect ~= nil
-            then model.frozen_rect(spec.rect)
-            else nil,
-        appearance = spec.appearance,
-        text       = spec.text,
-        items      = spec.items,
-        state      = spec.state,
-        extra      = mint.frozen_extra(spec.extra),
-        residual   = mint.frozen_residual(spec.residual),
+local function generic_candidate(name: string, value: any): { [string]: any }
+    local spec = require_table(name, value)
+    reject_unknown(name, spec, {
+        candidate_id = true,
+        entity_kind = true,
+        state = true,
+        value = true,
+        confidence = true,
+        evidence_ids = true,
+        conflict_ids = true,
+        provenance = true,
     })
-    mintedExpectations[expectation] = true
-    return expectation
+    local kind = require_string(name .. ".entity_kind", spec.entity_kind)
+    if kind ~= "context"
+        and kind ~= "locator_variant"
+        and kind ~= "reader"
+        and kind ~= "surface"
+        and kind ~= "binding"
+        and kind ~= "transition"
+    then
+        fail(name .. ".entity_kind", "has an unknown candidate entity kind")
+    end
+    local state = require_string(name .. ".state", spec.state)
+    if state ~= "proposed" and state ~= "accepted" and state ~= "rejected" and state ~= "superseded" then
+        fail(name .. ".state", "has an unknown candidate state")
+    end
+    local result: { [string]: any } = {
+        candidate_id = require_string(name .. ".candidate_id", spec.candidate_id),
+        entity_kind = kind,
+        state = state,
+        value = spec.value,
+        confidence = require_confidence(name .. ".confidence", spec.confidence),
+        evidence_ids = copy_strings(name .. ".evidence_ids", spec.evidence_ids, true),
+        provenance = provenance(name .. ".provenance", spec.provenance),
+    }
+    if spec.conflict_ids ~= nil then
+        result.conflict_ids = copy_strings(name .. ".conflict_ids", spec.conflict_ids, false)
+    end
+    return table.freeze(result)
 end
 
-local Claims = {}
-oracle.Claims = Claims
-
--- Claims.new{ screens = { ... }, expectations = { ... } } -> frozen claims.
---
--- The collection is where a screen and an expectation stop being locally well
--- formed and start being consistent with each other: no two screens share a name,
--- no two share a hash, and no cell is claimed twice. Each failure silently costs
--- a measurement -- two screens with one hash are one screen measured twice, and
--- two claims about one cell make the model whichever line was read last.
-function Claims.new(spec: { [string]: any }): Claims
-    if type(spec) ~= "table" then
-        error("Claims.new needs a table of fields", 2)
-    end
-
-    local unknown = mint.unknown_key("Claims.new", spec, k_claimsKeys, false)
-    if unknown ~= nil then
-        error(unknown, 2)
-    end
-    if type(spec.screens) ~= "table" then
-        error("Claims.new needs screens = { ... }", 2)
-    end
-    if type(spec.expectations) ~= "table" then
-        error(
-            "Claims.new needs expectations = { ... }; a project that has "
-                .. "recorded none passes an empty list, which says so",
-            2
-        )
-    end
-
-    local screens: { Screen }                = {}
-    local screenByName: { [string]: Screen } = {}
-    local screenByHash: { [string]: string } = {}
-    local declared = spec.screens :: { any }
-    for index = 1, #declared do
-        local screen = declared[index]
-        if not oracle.is_screen(screen) then
-            error(
-                "Claims.new screen "
-                    .. tostring(index)
-                    .. " is not a screen built by Screen.new",
-                2
-            )
-        end
-        if screenByName[screen.name] ~= nil then
-            error(
-                "Claims.new was given screen '"
-                    .. screen.name
-                    .. "' twice; a project names each screen once",
-                2
-            )
-        end
-        local sameBytes = screenByHash[screen.hash]
-        if sameBytes ~= nil then
-            error(
-                "screens '"
-                    .. sameBytes
-                    .. "' and '"
-                    .. screen.name
-                    .. "' carry one content hash, so they are one picture under "
-                    .. "two names; every cell would be measured twice and every "
-                    .. "answer counted twice",
-                2
-            )
-        end
-        screenByName[screen.name] = screen
-        screenByHash[screen.hash] = screen.name
-        screens[index]            = screen
-    end
-
-    local expectations: { Expectation }     = {}
-    local stateByCell: { [string]: string } = {}
-    local textByCell: { [string]: string }  = {}
-    local itemsByCell: { [string]: number } = {}
-
-    local rectsBySubject: { [string]: { Rect } } = {}
-    local rectSeen: { [string]: boolean }        = {}
-
-    local claimed = spec.expectations :: { any }
-    for index = 1, #claimed do
-        local expectation = claimed[index]
-        if not oracle.is_expectation(expectation) then
-            error(
-                "Claims.new expectation "
-                    .. tostring(index)
-                    .. " is not one built by Expectation.new",
-                2
-            )
-        end
-        if screenByName[expectation.screen] == nil then
-            error(
-                "the expectation for element '"
-                    .. expectation.element
-                    .. "' names screen '"
-                    .. expectation.screen
-                    .. "', which this collection does not hold",
-                2
-            )
-        end
-        local key = cellKey(
-            expectation.screen,
-            expectation.element,
-            expectation.appearance,
-            expectation.rect
-        )
-        if stateByCell[key] ~= nil then
-            error(
-                "element '"
-                    .. expectation.element
-                    .. "' on screen '"
-                    .. expectation.screen
-                    .. "' is claimed twice"
-                    .. (
-                        if expectation.rect ~= nil
-                            then " at ["
-                                .. oracle.rect_key(expectation.rect)
-                                .. "]"
-                            else ""
-                    )
-                    .. "; one cell has one expectation, and two of them means the "
-                    .. "model is whichever line was read last",
-                2
-            )
-        end
-        stateByCell[key] = expectation.state
-        if expectation.text ~= nil then
-            textByCell[key] = expectation.text
-        end
-        if expectation.items ~= nil then
-            itemsByCell[key] = expectation.items
-        end
-        -- Collected in the order the file names them, each one once, so a reader
-        -- following one element down the verdict meets its cells in the order
-        -- they were written.
-        if expectation.rect ~= nil then
-            local subject = subjectKey(
-                expectation.screen,
-                expectation.element
-            )
-            local rects = rectsBySubject[subject]
-            if rects == nil then
-                rects                   = {}
-                rectsBySubject[subject] = rects
-            end
-            local seen = subject .. "\0" .. oracle.rect_key(expectation.rect)
-            if not rectSeen[seen] then
-                rectSeen[seen] = true
-                table.insert(rects, expectation.rect)
-            end
-        end
-        expectations[index] = expectation
-    end
-
-    -- Frozen in place rather than replaced, because a walk holds the list this
-    -- returns and nothing outside may grow it afterwards.
-    for _, rects in rectsBySubject do
-        table.freeze(rects)
-    end
-
-    local claims = table.freeze({
-        screens          = table.freeze(screens),
-        screen_by_name   = table.freeze(screenByName),
-        expectations     = table.freeze(expectations),
-        state_by_cell    = table.freeze(stateByCell),
-        text_by_cell     = table.freeze(textByCell),
-        items_by_cell    = table.freeze(itemsByCell),
-        rects_by_subject = table.freeze(rectsBySubject),
+local function patch_record(name: string, value: any): { [string]: any }
+    local spec = require_table(name, value)
+    reject_unknown(name, spec, {
+        id = true,
+        change = true,
+        summary = true,
+        confidence = true,
+        risk = true,
+        evidence_ids = true,
+        conflict_ids = true,
+        provenance = true,
+        status = true,
     })
-    mintedClaims[claims] = true
-    return claims
-end
-
--- What the model states about one cell, or "unclaimed" when it states nothing.
--- `rect` is the rectangle the cell was measured at, nil for every element that
--- draws its own.
-function Claims.state_for(
-    claims: Claims,
-    screen: string,
-    element: string,
-    appearance: string?,
-    rect: any
-): string
-    local state = claims.state_by_cell[cellKey(screen, element, appearance, rect)]
-    if state == nil then
-        return oracle.state_unclaimed
+    local change = require_string(name .. ".change", spec.change)
+    if change ~= "create_entity"
+        and change ~= "set_field"
+        and change ~= "grant_action"
+        and change ~= "revoke_action"
+        and change ~= "merge_entities"
+        and change ~= "split_entity"
+    then
+        fail(name .. ".change", "has an unknown patch change")
     end
-    return state
-end
-
--- The text one cell claims its element's region reads there, or nil when the
--- cell claims nothing about a reading.
---
--- It takes no appearance, because a cell is measured by ONE verification source
--- so the cell a text belongs to is always the folded one -- the text of an
--- appearance cell is a question `Expectation.new` refuses to let anyone answer.
--- It does take the rectangle, because one region drawn once and placed nine times
--- reads nine different things.
-function Claims.text_for(
-    claims: Claims,
-    screen: string,
-    element: string,
-    rect: any
-): string?
-    return claims.text_by_cell[cellKey(screen, element, nil, rect)]
-end
-
--- How many items this screen claims the strip holds, or nil when this screen
--- claims nothing about it -- which is the only way the number can be missing,
--- since `Expectation.new` refuses a strip cell that states none. Keyed exactly
--- as `text_for` is, and for the same reasons.
-function Claims.items_for(
-    claims: Claims,
-    screen: string,
-    element: string,
-    rect: any
-): number?
-    return claims.items_by_cell[cellKey(screen, element, nil, rect)]
-end
-
--- Every rectangle this file wants `element` measured at on `screen`, in the
--- order the file names them, and an empty list when it names none.
---
--- It is the walk's only entry into a shape with no rectangle of its own.
---
--- A fresh list each call, so nothing outside can reorder what a walk reads.
-function Claims.rects_for(
-    claims: Claims,
-    screen: string,
-    element: string
-): { Rect }
-    local rects = claims.rects_by_subject[subjectKey(screen, element)]
-    if rects == nil then
-        return {}
+    local risk = require_string(name .. ".risk", spec.risk)
+    if risk ~= "low" and risk ~= "medium" and risk ~= "high" and risk ~= "critical" then
+        fail(name .. ".risk", "has an unknown patch risk")
     end
-    return table.clone(rects)
+    local status = require_string(name .. ".status", spec.status)
+    if status ~= "proposed"
+        and status ~= "accepted"
+        and status ~= "rejected"
+        and status ~= "applied"
+        and status ~= "superseded"
+    then
+        fail(name .. ".status", "has an unknown patch status")
+    end
+    local result: { [string]: any } = {
+        id = require_string(name .. ".id", spec.id),
+        change = change,
+        summary = require_string(name .. ".summary", spec.summary),
+        confidence = require_confidence(name .. ".confidence", spec.confidence),
+        risk = risk,
+        evidence_ids = copy_strings(name .. ".evidence_ids", spec.evidence_ids, true),
+        provenance = provenance(name .. ".provenance", spec.provenance),
+        status = status,
+    }
+    if spec.conflict_ids ~= nil then
+        result.conflict_ids = copy_strings(name .. ".conflict_ids", spec.conflict_ids, false)
+    end
+    return table.freeze(result)
 end
 
--- Whether anything this project claims can only be measured by reading a region.
---
--- It exists for the composition root rather than for the walk: reading costs an
--- optional OCR engine binding, so whoever assembles the run asks this BEFORE the
--- walk starts and refuses in its own words, naming the missing flag. The walk
--- never asks -- by then the engine is there or the read fails as a control error.
-function Claims.reads_text(claims: Claims): boolean
-    -- An items claim counts as one: a strip's items are located by reading the
-    -- container, so a project claiming one needs the same engine a text claim
-    -- does. The name is about what the run has to DO, not about what the claim
-    -- looks like.
-    return next(claims.text_by_cell) ~= nil
-        or next(claims.items_by_cell) ~= nil
+local function conflict_record(name: string, value: any): { [string]: any }
+    local spec = require_table(name, value)
+    reject_unknown(name, spec, {
+        id = true,
+        kind = true,
+        severity = true,
+        subject_ids = true,
+        message = true,
+        evidence_ids = true,
+        suggested_patch_ids = true,
+        status = true,
+    })
+    local kind = require_string(name .. ".kind", spec.kind)
+    local allowed_kinds: { [string]: boolean } = {
+        multiple_surface_match = true,
+        missing_identity = true,
+        unknown_evidence = true,
+        shared_target_ambiguity = true,
+        invalid_action = true,
+        uncovered_frame = true,
+        invalid_transition = true,
+    }
+    if not allowed_kinds[kind] then
+        fail(name .. ".kind", "has an unknown conflict kind")
+    end
+    local severity = require_string(name .. ".severity", spec.severity)
+    if severity ~= "info" and severity ~= "warning" and severity ~= "error" and severity ~= "critical" then
+        fail(name .. ".severity", "has an unknown conflict severity")
+    end
+    local status = require_string(name .. ".status", spec.status)
+    if status ~= "open" and status ~= "resolved" and status ~= "ignored" then
+        fail(name .. ".status", "has an unknown conflict status")
+    end
+    local result: { [string]: any } = {
+        id = require_string(name .. ".id", spec.id),
+        kind = kind,
+        severity = severity,
+        subject_ids = copy_strings(name .. ".subject_ids", spec.subject_ids, true),
+        message = require_string(name .. ".message", spec.message),
+        status = status,
+    }
+    if spec.evidence_ids ~= nil then
+        result.evidence_ids = copy_strings(name .. ".evidence_ids", spec.evidence_ids, false)
+    end
+    if spec.suggested_patch_ids ~= nil then
+        result.suggested_patch_ids = copy_strings(name .. ".suggested_patch_ids", spec.suggested_patch_ids, false)
+    end
+    return table.freeze(result)
 end
 
--- The screens in the order the host serves their pixels: by content hash.
---
--- This order is a CONTRACT with the frame source. A screen's file is
--- `assets/screens/<hash>.png`, the host's file-backed frame source serves that
--- directory one file per capture in file-name order, and the walk opens one
--- observation per screen, so sorting by hash pairs the Nth capture with the Nth
--- screen. The two sides walk the same set because `regress.check` reads every
--- declared screen's file -- a screen with no file fails by name -- and the host
--- refuses the run unless it served as many frames as it holds files.
---
--- A fresh list each call, so nothing outside can reorder what a walk reads.
-function Claims.screens_in_frame_order(claims: Claims): { Screen }
-    local ordered = table.clone(claims.screens)
-    table.sort(ordered, function(left: Screen, right: Screen): boolean
-        return left.hash < right.hash
-    end)
-    return ordered
+local CandidateModel = {}
+oracle.CandidateModel = CandidateModel
+
+function CandidateModel.new(spec: { [string]: any }): CandidateModel
+    local value = require_table("CandidateModel.new", spec)
+    reject_unknown("CandidateModel.new", value, {
+        id = true,
+        project_id = true,
+        revision = true,
+        status = true,
+        source_frame_ids = true,
+        targets = true,
+        entities = true,
+        patches = true,
+        conflicts = true,
+    })
+    local status = require_string("CandidateModel.new.status", value.status)
+    if status ~= "candidate" and status ~= "accepted" and status ~= "rejected" and status ~= "compiled" then
+        fail("CandidateModel.new.status", "has an unknown candidate model status")
+    end
+    local function records(name: string, input: any, builder: (string, any) -> { [string]: any }): { any }
+        if type(input) ~= "table" then
+            fail(name, "needs an array")
+        end
+        local output: { any } = {}
+        for index = 1, #input do
+            output[index] = builder(name .. "[" .. tostring(index) .. "]", input[index])
+        end
+        return table.freeze(output)
+    end
+    local candidate = table.freeze({
+        id = require_string("CandidateModel.new.id", value.id),
+        project_id = require_string("CandidateModel.new.project_id", value.project_id),
+        revision = require_integer("CandidateModel.new.revision", value.revision, 1),
+        status = status,
+        source_frame_ids = copy_strings("CandidateModel.new.source_frame_ids", value.source_frame_ids, true),
+        targets = records("CandidateModel.new.targets", value.targets, candidate_record),
+        entities = records("CandidateModel.new.entities", value.entities, generic_candidate),
+        patches = records("CandidateModel.new.patches", value.patches, patch_record),
+        conflicts = records("CandidateModel.new.conflicts", value.conflicts, conflict_record),
+    }) :: any
+    candidateRecords[candidate] = true
+    return candidate
+end
+
+function CandidateModel.is(value: any): boolean
+    return candidateRecords[value] == true
+end
+
+local function unique_records(name: string, values: { any }, predicate: (any) -> string)
+    local seen: { [string]: boolean } = {}
+    for index, value in values do
+        local id = predicate(value)
+        if seen[id] then
+            fail(name, "contains duplicate id '" .. id .. "'")
+        end
+        seen[id] = true
+        if value == nil then
+            fail(name .. "[" .. tostring(index) .. "]", "is missing")
+        end
+    end
+end
+
+local Workspace = {}
+oracle.Workspace = Workspace
+
+function Workspace.new(spec: { [string]: any }): Workspace
+    local value = require_table("Workspace.new", spec)
+    reject_unknown("Workspace.new", value, {
+        schema_version = true,
+        project_id = true,
+        frames = true,
+        observations = true,
+        assertions = true,
+        candidates = true,
+    })
+    if value.schema_version ~= 1 then
+        fail("Workspace.new.schema_version", "must be 1")
+    end
+    local function list(name: string, input: any): { any }
+        if type(input) ~= "table" then
+            fail(name, "needs an array")
+        end
+        return input
+    end
+    local frames: { Frame } = {}
+    for index, value_frame in list("Workspace.new.frames", value.frames) do
+        frames[index] = if Frame.is(value_frame)
+            then value_frame
+            else Frame.new(value_frame)
+    end
+    local observations: { Observation } = {}
+    for index, value_observation in list("Workspace.new.observations", value.observations) do
+        observations[index] = if Observation.is(value_observation)
+            then value_observation
+            else Observation.new(value_observation)
+    end
+    local assertions: { Assertion } = {}
+    for index, value_assertion in list("Workspace.new.assertions", value.assertions) do
+        assertions[index] = if Assertion.is(value_assertion)
+            then value_assertion
+            else Assertion.new(value_assertion)
+    end
+    local candidates: { CandidateModel } = {}
+    for index, value_candidate in list("Workspace.new.candidates", value.candidates) do
+        candidates[index] = if CandidateModel.is(value_candidate)
+            then value_candidate
+            else CandidateModel.new(value_candidate)
+    end
+    unique_records("Workspace.new.frames", frames, function(record): string return record.id end)
+    unique_records("Workspace.new.observations", observations, function(record): string return record.id end)
+    unique_records("Workspace.new.assertions", assertions, function(record): string return record.id end)
+    unique_records("Workspace.new.candidates", candidates, function(record): string return record.id end)
+
+    local frame_ids: { [string]: boolean } = {}
+    for _, frame in frames do
+        frame_ids[frame.id] = true
+    end
+    local observation_ids: { [string]: boolean } = {}
+    for _, observation in observations do
+        if not frame_ids[observation.frame_id] then
+            fail("Workspace.new.observations", "references unknown frame '" .. observation.frame_id .. "'")
+        end
+        observation_ids[observation.id] = true
+    end
+    for _, assertion in assertions do
+        if not frame_ids[assertion.frame_id] then
+            fail("Workspace.new.assertions", "references unknown frame '" .. assertion.frame_id .. "'")
+        end
+        for _, observation_id in assertion.supporting_observations do
+            if not observation_ids[observation_id] then
+                fail("Workspace.new.assertions", "references unknown observation '" .. observation_id .. "'")
+            end
+        end
+    end
+    local workspace = table.freeze({
+        schema_version = 1,
+        project_id = require_string("Workspace.new.project_id", value.project_id),
+        frames = table.freeze(frames),
+        observations = table.freeze(observations),
+        assertions = table.freeze(assertions),
+        candidates = table.freeze(candidates),
+    }) :: any
+    workspaceRecords[workspace] = true
+    return workspace
+end
+
+function Workspace.is(value: any): boolean
+    return workspaceRecords[value] == true
+end
+
+function oracle.read_workspace(value: any): Workspace
+    if Workspace.is(value) then
+        return value
+    end
+    return Workspace.new(value)
+end
+
+function oracle.assertion_status(value: any): string
+    if type(value) ~= "table" or type(value.review) ~= "table" then
+        return oracle.unreviewed
+    end
+    if value.review.status ~= oracle.review_accepted then
+        return oracle.unreviewed
+    end
+    return value.outcome
+end
+
+function oracle.assertion_is_active(value: any): boolean
+    return type(value) == "table"
+        and type(value.review) == "table"
+        and value.review.status == oracle.review_accepted
+end
+
+function oracle.assertion_claims(value: any, kind: string): boolean
+    return type(value) == "table"
+        and type(value.claim) == "table"
+        and value.claim.kind == kind
+end
+
+function oracle.frames_by_id(workspace: Workspace): { [string]: Frame }
+    local result: { [string]: Frame } = {}
+    for _, frame in workspace.frames do
+        result[frame.id] = frame
+    end
+    return result
+end
+
+function oracle.observations_by_id(workspace: Workspace): { [string]: Observation }
+    local result: { [string]: Observation } = {}
+    for _, observation in workspace.observations do
+        result[observation.id] = observation
+    end
+    return result
+end
+
+function oracle.assertions_for_frame(workspace: Workspace, frame_id: string): { Assertion }
+    local result: { Assertion } = {}
+    for _, assertion in workspace.assertions do
+        if assertion.frame_id == frame_id then
+            table.insert(result, assertion)
+        end
+    end
+    return result
 end
 
 return oracle

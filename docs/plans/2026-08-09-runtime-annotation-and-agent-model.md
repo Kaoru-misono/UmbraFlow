@@ -835,4 +835,3 @@ The design is complete only when:
 - the compiler and all tools use one schema authority;
 - runtime fields cannot be silently dropped by one writer;
 - the known uf-chaos misclassification cases become automated regression cases.
-

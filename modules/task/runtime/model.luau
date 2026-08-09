@@ -1,1581 +1,1208 @@
 --!strict
--- model: the trusted framework's element and page vocabulary.
+-- model: the trusted framework's v1 runtime model.
 --
--- C++ keeps the primitives that carry a GUARANTEE -- pixels for a rectangle,
--- text for a rectangle, a click delivered against a live ticket -- and the
--- vocabulary that carries an OPINION lives here, where changing it for the next
--- game is a Luau edit (docs/plans/2026-07-31-script-owned-page-model.md 1).
---
--- No guarantee rests on this file: the ledger, the lease, the fingerprint and
--- the single-consumption rule are C++'s and are checked against the TICKET
--- (docs/plans/2026-07-31-script-owned-page-model.md 5), so nothing here may
--- cache one.
---
--- Layer three extends what is built here with
--- `setmetatable({ ... }, { __index = base })` (the same document, 3), and both
--- constructors accept an element derived that way; what they refuse is a table
--- nobody minted.
---
--- The page graph is next door in `navigation`: an edge is a fact about a PAIR of
--- pages, so it has no single owner here. See `Page.new` for why a page's own
--- flags are here while the edges are not.
---
--- Framework modules load in the sorted order of their file names, and each
--- module's frozen exports are bound in the framework environment under its own
--- name. `model` sorts after `ctx` and `mint` and before `navigation`, `observe`
--- and `project`. The only module it names is `mint`.
+-- This module deliberately has no Page, Element, Reference, CapabilitySet or
+-- holding vocabulary.  The file is the semantic boundary between the runtime
+-- model compiler and the future resolver: constructors validate local shape,
+-- RuntimeModel.new validates references and builds the indexes every consumer
+-- needs.  Screens, observations and review data are offline concerns and do
+-- not enter this module.
 
--- The private capability surface, for the one number this file cannot decide;
--- see `k_maxPageNameBytes`. No primitive is called here: a page is authored
--- data, so nothing in this file observes or acts.
-local native = ...
+export type Identifier = string
+export type Rect = { number }
+export type Size = { number }
+export type Offset = { number }
+export type Point = { number }
 
--- How long a page name may be, in bytes, taken from the host rather than
--- spelled here so it cannot drift from the ceiling that forces it
--- (`k_maxScopeLabelBytes`, modules/trace/source/trace/stream-validator.hpp).
--- Nil on a VM booted with no bound task session, which has no trace stream and
--- so no label to bound.
-local k_maxPageNameBytes: number? = if native ~= nil
-    then native.max_label_bytes
-    else nil
-
--- Every capability an element can declare, in the one canonical order the
--- project file writes them in. Serialising a set needs an order, and a constant
--- rather than a table walk is what makes two runs produce the same bytes.
-local k_capabilityOrder = { "identify", "interact", "read" }
-
-local k_capabilityKnown: { [string]: boolean } = {
-    identify = true,
-    interact = true,
-    read     = true,
+export type AssetRef = {
+    path: string,
+    sha256: string,
 }
 
--- The three shapes an element can be. It is stated and never inferred: an
--- element with no rectangle could be one a project meant to place from the row,
--- or one whose rectangle somebody forgot, and nothing downstream can tell those
--- apart from the absence alone.
-local k_formKnown: { [string]: boolean } = {
-    -- A rectangle and evidence: everything the model held before the forms
-    -- existed, and what almost every element still is.
-    fixed = true,
-
-    -- NO rectangle of its own: where to look comes from the row that uses it or
-    -- from the claim that measures it. What a minimap cell is -- the map pans,
-    -- so where the cell is depends on the frame -- and equally what a confirm
-    -- button drawn once and reused on nine screens is. Under this form writing a
-    -- rectangle is refused rather than merely pointless, which is the whole
-    -- reason to name the form: an absent rectangle could be this or a mistake,
-    -- and only the form can say which.
-    shape = true,
-
-    -- A container rectangle and the spacing that divides what is inside it into
-    -- items. See `Element.item_spacing`.
-    strip = true,
+export type LocatorRef = {
+    locator: Identifier,
+    variant: Identifier?,
 }
 
-local k_holdingKnown: { [string]: boolean } = {
-    owned      = true,
-    referenced = true,
+export type Context = { id: Identifier }
+export type RuntimeState = {
+    context: Identifier,
+    surfaces: { Identifier },
 }
 
-local k_polarityKnown: { [string]: boolean } = {
-    required  = true,
-    forbidden = true,
+export type Target = {
+    id: Identifier,
+    kind: string,
+    geometry: any,
+    locators: { Identifier },
+    readers: { Identifier },
 }
 
--- How sure the engine has to be, in basis points, before a reading of a region
--- counts as evidence about it -- for an element that does not say.
---
--- There is a floor because reading is the one capability that fails OPEN: a
--- template search on the wrong screen returns nothing, while a text read on the
--- wrong screen returns plausible text. So identity by reading asks two questions,
--- and "was the engine reading rather than guessing" needs a number.
---
--- 8000 because the engine this project ships reads the target's own page titles
--- at 9600 basis points and above. An element may raise it where the glyphs are
--- small or lower it where the font is hostile; an absent `read_floor` reads as
--- this number rather than as zero, so the question is never left unasked.
-local k_defaultReadFloor = 8000
-
--- The widest colour-key tolerance that means anything: a key's distance is the
--- sum of the three channel distances, so 765 already admits every colour and the
--- host refuses anything above it. A mirror of `k_maximumColourKeyTolerance` in
--- modules/vision/source/vision/frame-analysis.hpp rather than a second opinion,
--- since 255 * 3 is arithmetic and not policy.
-local k_maximumColourTolerance = 765
-
--- The keys each constructor owns. Anything else in a spec table is refused and
--- the author is pointed at `extra`, the reserved subtable a project puts its own
--- fields under (docs/plans/2026-07-31-script-owned-page-model.md 8); see
--- `mint.unknown_key` for why the refusal is what makes `extra` work.
-local k_elementKeys: { [string]: boolean } = {
-    name          = true,
-    form          = true,
-    capabilities  = true,
-    rect          = true,
-    appearances   = true,
-    expected_text = true,
-    expected_fragments = true,
-    expected_presence  = true,
-    read_floor    = true,
-    item_spacing  = true,
-    extra         = true,
-    residual      = true,
-}
-
-local k_appearanceKeys: { [string]: boolean } = {
-    name      = true,
-    source    = true,
-    template  = true,
-    threshold = true,
-    key       = true,
-    residual  = true,
-}
-
-local k_pageKeys: { [string]: boolean } = {
-    name       = true,
-    overlay    = true,
-    interrupt  = true,
-    state      = true,
-    over       = true,
-    catch_all  = true,
-    references = true,
-    extra      = true,
-    residual   = true,
-}
-
-local k_referenceKeys: { [string]: boolean } = {
-    element           = true,
-    holding           = true,
-    exercised         = true,
-    identify          = true,
-    expected_text     = true,
-    expected_fragments = true,
-    expected_presence  = true,
-    pinned_appearance = true,
-    interact_requires = true,
-    rect_override     = true,
-    extra             = true,
-    residual          = true,
-}
-
--- A rectangle in target pixels. Four numbers rather than a handle, because a
--- rectangle is authored data and never a host-minted object.
-export type Rect = {
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-}
-
--- The three capabilities as a set, which is what every reader asks and what
--- makes `exercised` a subset check rather than a nested loop. The FILE form is a
--- list, and `k_capabilityOrder` is the bridge between the two.
-export type CapabilitySet = {
-    identify: boolean,
-    interact: boolean,
-    read: boolean,
-}
-
--- One way a single element can look. An appearance changes what a rectangle
--- LOOKS LIKE; it never changes where the rectangle is or what it means
--- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.4), so a geometry
--- change is not an appearance.
---
--- `template` is the opaque handle `ctx:template_load` minted and `source` is the
--- project file the blob came from. Both are required: an appearance holding only
--- a handle cannot be written back, so a model loaded and saved would silently
--- lose its own pixels.
---
--- `threshold` is in basis points of similarity, so 10000 demands an exact match.
--- Judging a score against it is `observe.matched`.
---
--- `key` is the colour key the template blob was CUT under: a record rather than
--- an instruction, since the mask already lives in the PNG's alpha channel and
--- nothing reads this field to match. It is written down because a masked
--- template whose key is unrecorded cannot be re-cut on a newer capture without
--- guessing. Absent on every unkeyed appearance.
-export type Appearance = {
-    name: string?,
-    source: string,
-    template: any,
-    threshold: number,
-    key: ColourKey?,
-    residual: { string },
-}
-
--- A colour key: the RGB triple a mask was cut around, and how far a pixel may
--- sit from it and still be taken. The tolerance is carried rather than defaulted,
--- because a file that omitted it is a file whose mask cannot be reproduced.
---
--- `removes` inverts what the triple names: false, the mask KEPT the pixels near
--- it, and true, the mask kept everything else. A glyph is one colour and is
--- selected directly; an emblem of a dozen hues over a flat backdrop is selected
--- only by naming the backdrop, and the same one-colour rule does both.
---
--- It is required, here and in the file. The two directions cut complementary
--- templates out of one colour, so a key that leaves its direction to a default
--- is a key whose mask cannot be reproduced from what was written down.
-export type ColourKey = {
-    red: number,
-    green: number,
-    blue: number,
-    tolerance: number,
-    removes: boolean,
-}
-
--- `expected_text` is what this region should read wherever the element is used,
--- and `read_floor` is how sure the engine has to be before a reading of it is
--- worth anything. Both are absent on most elements: the first because the element
--- verifies itself by pixels or because the text differs from page to page (see
--- `Reference`), the second because the project's floor holds. Ask the second
--- through `Element.read_floor`, so nothing outside has to know the default.
---
--- `rect` means WHERE TO LOOK and nothing else: `observe.find` searches it and
--- reports the hit's own position, so a title box at [125, 14, 300, 56] and a flag
--- anywhere in [1170, 20, 300, 850] are one field at two extremes.
---
--- It can be absent, because some elements have no answer -- a minimap cell is
--- matched where the SCRIPT computes for each frame since the map pans, and a
--- confirm button drawn once and reused on nine screens sits somewhere different
--- on each. A rectangle is then supplied by the page reference
--- (`rect_override`) or by the falsification claim (`oracle.Expectation.rect`),
--- and for any one use exactly one of the three supplies it: `Page.new` refuses a
--- row that neither inherits one nor states one and `Expectation.new` refuses a
--- cell that does the same, so absent here means "the caller says where".
--- `item_spacing` makes the element a STRIP: a container rectangle holding a row
--- of things whose NUMBER is not a fact about the model at all. A hand of cards is
--- three cards or seven depending on the turn, and a model that wrote down a
--- rectangle per slot would be writing down a number the screen decides -- which
--- is how one project came to carry `fate_card_1`, `_2` and `_3` and a
--- `rest_card_2` and `_3` that are the same element five times.
---
--- The spacing is the widest gap in target pixels that still belongs to ONE item.
--- Reading a strip clusters what the frame located inside the container by that
--- gap and counts the clusters, so the count comes off the frame and the spacing
--- is the one thing the model asserts -- and therefore the one thing a screen can
--- contradict (`observe.read_strip`).
---
--- A strip carries the container rectangle it clusters inside and no appearances:
--- what it holds is read, and an element that verified itself by template pixels
--- would be asserting where its items are, which is the thing being counted.
-export type Element = {
-    name: string,
-    form: string,
-    capabilities: CapabilitySet,
+export type Locator = {
+    id: Identifier,
+    target: Identifier,
+    kind: string,
+    asset: AssetRef?,
+    threshold: number?,
+    search_rect: Rect?,
+    variants: { Identifier }?,
+    reader: Identifier?,
     rect: Rect?,
-    item_spacing: number?,
-    appearances: { Appearance },
-    expected_text: string?,
-    expected_fragments: { string }?,
-    expected_presence: boolean?,
-    read_floor: number?,
-    extra: { [string]: any },
-    residual: { string },
+    anchor: LocatorRef?,
+    offset: Offset?,
+    item_locator: LocatorRef?,
+    axis: string?,
+    spacing: Size?,
+    max_items: number?,
 }
 
--- What one page does with one element. The holding relation and the exercised
--- capabilities live HERE and not on the element, because "which page owns these
--- pixels" and "what does THIS page use them for" are properties of the pairing
--- (docs/plans/2026-07-31-annotation-model-capabilities.md 2.2). `expected_text`
--- and `rect_override` are here for the same reason.
---
--- `identify` is the polarity, present exactly when identify is exercised:
--- required means the page needs this element on screen, forbidden means the page
--- is not this page if the element is there.
---
--- `pinned_appearance` names the appearance this page's pixels wear, and it
--- applies to INTERACT ONLY: identify folds across every appearance whatever is
--- pinned, because the identify sweep runs before the page is known (the same
--- document, 4-2.4 correction). A pin beside an exercised identify is accepted
--- rather than refused, so an element that is both a page anchor and a click
--- target can pin the appearance its click needs.
---
--- `expected_text` is what THIS page's copy of the region should read, which is
--- what lets one drawn rectangle serve every page: the element carries the
--- geometry and the read capability, and the fact that the box says "出擊" here
--- and "戰鬥員配置" next door belongs to the pairing. The row wins over the
--- element, and `Reference.expected_text` is where that precedence is written.
---
--- `rect_override` is where THIS page's copy of the region sits: a refinement on
--- an element that draws its own rectangle, REQUIRED on an element that draws
--- none. It is refused beside an exercised identify, because the identify sweep
--- runs before the page is known, so an element with no rectangle of its own can
--- never be part of a page signature.
---
--- `page` is the NAME of the page that declared this row; `Page.new` stamps it and
--- an author never writes it. `observe.click` needs it: it holds a receipt proving
--- one page resolved on this frame, and has to check the hit belongs to THAT page
--- rather than to another page referencing the same element.
-export type Reference = {
-    element: Element,
-    page: string,
-    holding: string,
-    exercised: CapabilitySet,
-    identify: string?,
-    expected_text: string?,
-    expected_fragments: { string }?,
-    expected_presence: boolean?,
-    pinned_appearance: string?,
-    interact_requires: string?,
-    rect_override: Rect?,
-    extra: { [string]: any },
-    residual: { string },
+export type LocatorVariant = {
+    id: Identifier,
+    locator: Identifier,
+    asset: AssetRef,
+    threshold: number?,
+    search_rect: Rect?,
 }
 
--- `overlay` says this page COVERS the screen it appeared over instead of
--- replacing it, which is what the runtime page stack is built on
--- (docs/plans/2026-07-31-script-owned-page-model.md 10). It belongs to the page
--- rather than to the edge, because the same overlay opened from three screens
--- covers all three.
---
--- `interrupt` says this page can appear over ANYTHING -- a network error box, a
--- daily-reward popup -- so it is declared once here rather than as an inbound
--- edge from every page it can interrupt. `observe.walk_edge` consults it when a
--- walk runs out of budget; what to do about the page found is the caller's.
---
--- `catch_all` is `interrupt`'s opposite ORDER and never its synonym. It says the
--- signature describes a CLASS of screens rather than one screen -- "there is an
--- overlay, and it says a tap closes it" -- so it must be asked LAST, after every
--- specific page has had its turn. Asked first it swallows every page whose
--- clauses contain its own, which is the failure the co-resolution matrix
--- measured (docs/plans/2026-08-04-state-layer-and-policy-slots.md 3.4). A page
--- may declare one of the two and not both.
---
--- `state` is the mode a scene page belongs to. The name is the project's own
--- string and this framework carries no enumeration of modes: which modes a
--- target has is a fact about that target, and a list here would be a fact about
--- one game frozen into the framework. A run narrows what it asks to the current
--- mode's pages; it never REFUSES to ask, because a crash to the home screen is
--- a real thing that happens (`navigation`, "state is belief, the frame is
--- truth").
---
--- `over` is the same question for an overlay: which modes it can be drawn on top
--- of. An overlay carries no `state`, because it covers whatever the run was
--- already in rather than being somewhere itself -- the reward strip appears
--- after a battle and after a campfire, which is what makes it a family and not
--- a mode.
---
--- The three flags default to false, nil and nil: an ordinary page states none.
-export type Page = {
-    name: string,
-    overlay: boolean,
-    interrupt: boolean,
-    catch_all: boolean,
-    state: string?,
-    over: { string }?,
-    references: { Reference },
-    extra: { [string]: any },
-    residual: { string },
+export type Reader = {
+    id: Identifier,
+    target: Identifier,
+    kind: string,
+    confidence_floor: number,
+    normalization: string?,
+    join: string?,
+    item_kind: string?,
+    min_items: number?,
+    max_items: number?,
 }
 
--- The tables this module minted, held by identity: `Page.new` refuses a
--- look-alike because accepting one fails SILENTLY -- a misspelled `capabilities`
--- yields an element that exercises nothing.
---
--- The keys are WEAK. A strong key here outlives every use of the object it
--- names: nothing removes an entry, so one `project.load_project` left its whole
--- model alive forever and a session that loaded ~150 of them hit the VM's
--- memory ceiling. Weak keys cost the registry nothing it was doing -- an entry
--- can only vanish once the object is unreachable, and an object nobody can
--- reach is one nobody can present to a predicate.
-local mintedElements: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
-local mintedPages: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
-local mintedReferences: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+export type IdentityPredicate = { [string]: any }
+export type Identity = {
+    all: { IdentityPredicate },
+    any: { IdentityPredicate },
+    none: { IdentityPredicate },
+}
+
+export type Placement = { [string]: any }
+export type Action = { [string]: any }
+
+export type Binding = {
+    id: Identifier,
+    surface: Identifier,
+    target: Identifier,
+    placement: Placement,
+    identity: Identity,
+    readers: { Identifier },
+    actions: { Action },
+}
+
+export type Transition = {
+    id: Identifier,
+    from: any,
+    trigger: any,
+    to: any,
+    verification: any,
+}
+
+export type RuntimeModel = {
+    schema_version: number,
+    base_resolution: Size,
+    base_dpi: Size,
+    contexts: { Context },
+    targets: { Target },
+    locators: { Locator },
+    locator_variants: { LocatorVariant },
+    readers: { Reader },
+    surfaces: { any },
+    bindings: { Binding },
+    transitions: { Transition },
+    context_by_id: { [Identifier]: Context },
+    target_by_id: { [Identifier]: Target },
+    locator_by_id: { [Identifier]: Locator },
+    locator_variant_by_id: { [Identifier]: LocatorVariant },
+    reader_by_id: { [Identifier]: Reader },
+    surface_by_id: { [Identifier]: any },
+    binding_by_id: { [Identifier]: Binding },
+    transition_by_id: { [Identifier]: Transition },
+    bindings_by_surface: { [Identifier]: { Binding } },
+    bindings_by_target: { [Identifier]: { Binding } },
+    locator_variants_by_locator: { [Identifier]: { LocatorVariant } },
+    readers_by_target: { [Identifier]: { Reader } },
+    surfaces_by_kind: { [string]: { any } },
+}
 
 local model = {}
 
--- The bounded inheritance walk is `mint`'s, so `navigation` asks the same
--- question of its own registries through the same code. The registries above
--- stay private and are reachable only as the predicates below, because a script
--- that could write to one could mint anything.
-local mintedOrDerived = mint.derives_from
-
-function model.is_element(value: any): boolean
-    return mintedOrDerived(value, mintedElements)
+local function weakRegistry(): { [any]: boolean }
+    return setmetatable({}, { __mode = "k" }) :: any
 end
 
-function model.is_page(value: any): boolean
-    return mintedOrDerived(value, mintedPages)
+local minted = {
+    context = weakRegistry(),
+    state = weakRegistry(),
+    target = weakRegistry(),
+    locator = weakRegistry(),
+    locator_variant = weakRegistry(),
+    reader = weakRegistry(),
+    surface = weakRegistry(),
+    binding = weakRegistry(),
+    action = weakRegistry(),
+    transition = weakRegistry(),
+    runtime_model = weakRegistry(),
+}
+
+local function derives(value: any, registry: { [any]: boolean }): boolean
+    -- A runtime object is a framework-owned immutable value.  Do not accept a
+    -- look-alike or a user-derived table: a resolver must be able to trust the
+    -- identity test without following an author-controlled metatable.
+    return type(value) == "table" and registry[value] == true
 end
 
--- References are minted too, so a verb handed one can tell a real page row from a
--- table shaped like one. There is no Reference.new: a reference exists only as
--- part of the page that declared it.
-function model.is_reference(value: any): boolean
-    return mintedOrDerived(value, mintedReferences)
-end
+local modelHashes: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any
 
--- The capability names in canonical order, for a caller that has to serialise a
--- set. A fresh copy each call, so nothing outside can reorder the constant.
-function model.capability_order(): { string }
-    return table.clone(k_capabilityOrder)
-end
-
--- The capabilities `set` holds, in the file's canonical order.
-function model.capability_list(set: any): { string }
-    local names: { string } = {}
-    for _, capability in k_capabilityOrder do
-        if set[capability] then
-            table.insert(names, capability)
-        end
-    end
-    return names
-end
-
--- Every validator below returns a SENTENCE or nil rather than raising, so the
--- constructor raises once at level 2 and the author reads their own call site;
--- the four checks every constructor repeats are in `mint`.
-local wholeNumber      = mint.whole_number
-local checkExtra       = mint.check_extra
-local frozenExtra      = mint.frozen_extra
-local checkResidual    = mint.check_residual
-local frozenResidual   = mint.frozen_residual
-local checkUnknownKeys = mint.unknown_key
-
-local function checkRect(what: string, value: any): string?
-    if type(value) ~= "table" then
-        return what .. " must be a table { x = , y = , width = , height = }"
-    end
-    for _, key in { "x", "y", "width", "height" } do
-        if not wholeNumber((value :: any)[key]) then
-            return what .. "." .. key .. " must be a whole number of pixels"
-        end
-    end
-    local rect = value :: Rect
-    if rect.x < 0 or rect.y < 0 then
-        return what .. " cannot start at a negative pixel"
-    end
-    if rect.width < 1 or rect.height < 1 then
-        return what .. " must be at least one pixel wide and one pixel tall"
-    end
-    return nil
-end
-
-local function frozenRect(value: Rect): Rect
-    return table.freeze({
-        x      = value.x,
-        y      = value.y,
-        width  = value.width,
-        height = value.height,
-    })
-end
-
--- Published because a rectangle is authored in three places and only one of them
--- is here; `oracle` builds the third, the rectangle a falsification claim
--- searches at. The checker returns a SENTENCE or nil as it does for the callers
--- in this file, so each constructor raises at its own level.
-model.check_rect  = checkRect
-model.frozen_rect = frozenRect
-
--- Checks the shape of a recorded colour key and nothing about its worth. How many
--- pixels a key takes is a fact about the PIXELS, which this layer does not hold:
--- the crop verb measures it as it cuts, refuses the key that can never work, and
--- warns about counts that measured nothing
--- (docs/pitfalls/colour-key-annotation.md).
--- Whether `spec` states anything at all about what its region should read.
--- One question with three spellings, because a region can be pinned three ways:
--- the whole reading equals a string, ordered fragments appear in it with gaps
--- allowed, or there is any confident reading at all.
-local function statesTextExpectation(spec: any): boolean
-    return spec.expected_text ~= nil
-        or spec.expected_fragments ~= nil
-        or spec.expected_presence ~= nil
-end
-
--- The shape of those three, and that at most ONE is stated. They are three
--- answers to one question -- what would make this reading count -- and a row
--- carrying two states no order between them, so the weaker would silently decide
--- or the stronger would silently be ignored depending on which was asked first
--- (docs/plans/2026-08-04-state-layer-and-policy-slots.md 3.3).
---
--- The framework owns all three and a project may only choose among them. A
--- custom predicate would put a page's identity inside a project function, and a
--- page signature is not a place a caller may relax per call site
--- (`observe.resolve_page`).
-local function checkTextExpectation(what: string, spec: any): string?
-    local stated = 0
-    if spec.expected_text ~= nil then
-        stated += 1
-        if type(spec.expected_text) ~= "string" or spec.expected_text == "" then
-            return what .. " expected_text must be the text the region reads"
-        end
-    end
-    if spec.expected_fragments ~= nil then
-        stated += 1
-        local list = spec.expected_fragments
-        if type(list) ~= "table" or #(list :: { any }) == 0 then
-            return what
-                .. " expected_fragments must be a non-empty list of the pieces "
-                .. "that appear IN ORDER, with anything allowed between them"
-        end
-        for index, fragment in list :: { any } do
-            if type(fragment) ~= "string" or fragment == "" then
-                return what
-                    .. " expected_fragments entry "
-                    .. tostring(index)
-                    .. " must be a non-empty piece of text"
-            end
-        end
-    end
-    if spec.expected_presence ~= nil then
-        stated += 1
-        if spec.expected_presence ~= true then
-            return what
-                .. " expected_presence is true or absent; false would say a "
-                .. "region must read nothing, which is what a forbidden identify "
-                .. "clause already says and says better"
-        end
-    end
-    if stated > 1 then
-        return what
-            .. " states more than one of expected_text, expected_fragments and "
-            .. "expected_presence; they are three answers to one question and "
-            .. "nothing orders them"
-    end
-    return nil
-end
-
-local function checkColourKey(what: string, value: any): string?
-    if type(value) ~= "table" then
-        return what
-            .. " must be a table { red = , green = , blue = ,"
-            .. " tolerance = , removes = }"
-    end
-    for _, channel in { "red", "green", "blue" } do
-        local component = (value :: any)[channel]
-        if not wholeNumber(component) or component < 0 or component > 255 then
-            return what .. "." .. channel .. " must be a channel value 0-255"
-        end
-    end
-    local key = value :: ColourKey
-    if
-        not wholeNumber(key.tolerance)
-        or key.tolerance < 0
-        or key.tolerance > k_maximumColourTolerance
-    then
-        return what
-            .. ".tolerance must be a whole number between 0 and "
-            .. tostring(k_maximumColourTolerance)
-            .. ", the widest the summed per-channel distance can express"
-    end
-    if type(key.removes) ~= "boolean" then
-        return what
-            .. ".removes must be true or false; it says whether the colour names "
-            .. "the pixels the mask KEPT or the pixels it dropped, and a mask "
-            .. "read the wrong way round selects the complement of its subject"
-    end
-    return nil
-end
-
-local function frozenColourKey(value: ColourKey): ColourKey
-    return table.freeze({
-        red       = value.red,
-        green     = value.green,
-        blue      = value.blue,
-        tolerance = value.tolerance,
-        removes   = value.removes,
-    })
-end
-
--- Turns the file's list form into the set form everything else reads. Returns
--- the set, or nil and a sentence.
-local function capabilitySet(
+local function unknownKey(
     what: string,
-    value: any
-): (CapabilitySet?, string?)
+    spec: { [string]: any },
+    known: { [string]: boolean }
+): string?
+    for key in spec do
+        if type(key) ~= "string" or not known[key] then
+            return what .. ' does not have a field named "' .. tostring(key) .. '"'
+        end
+    end
+    return nil
+end
+
+local function requireTable(what: string, value: any): { [any]: any }
     if type(value) ~= "table" then
-        return nil, what .. ' must be a list of capability names, such as { "identify" }'
+        error(what .. " needs a table", 3)
+    end
+    return value :: { [any]: any }
+end
+
+local function requireString(what: string, value: any): string
+    if type(value) ~= "string" or value == "" then
+        error(what .. " needs a non-empty string", 3)
+    end
+    return value :: string
+end
+
+local function isWhole(value: any): boolean
+    return type(value) == "number" and value % 1 == 0
+end
+
+local function requireWhole(what: string, value: any): number
+    if not isWhole(value) then
+        error(what .. " needs a whole number", 3)
+    end
+    return value :: number
+end
+
+local function requireIdentifier(what: string, value: any): string
+    local id = requireString(what, value)
+    if #id > 128 then
+        error(what .. " must be at most 128 bytes", 3)
+    end
+    local previousSeparator = false
+    for index = 1, #id do
+        local character = string.sub(id, index, index)
+        local lower = string.byte(character) >= string.byte("a")
+            and string.byte(character) <= string.byte("z")
+        local digit = string.byte(character) >= string.byte("0")
+            and string.byte(character) <= string.byte("9")
+        local separator = character == "." or character == "_" or character == "-"
+        if index == 1 and not lower then
+            error(what .. ' must start with a lowercase letter: "' .. id .. '"', 3)
+        end
+        if not lower and not digit and not separator then
+            error(
+                what .. ' contains an invalid identifier character in "' .. id .. '"',
+                3
+            )
+        end
+        if separator and (index == #id or previousSeparator) then
+            error(what .. ' may not contain a trailing or repeated separator', 3)
+        end
+        previousSeparator = separator
+    end
+    return id
+end
+
+local function denseList(what: string, value: any, allowEmpty: boolean): { any }
+    if type(value) ~= "table" then
+        error(what .. " needs an array", 3)
     end
     local list = value :: { any }
-    if #list == 0 then
-        return nil,
-            what
-                .. " must name at least one capability; an element nothing can "
-                .. "identify, click or read is not a temporarily unused element, "
-                .. "it is an entry nobody can explain"
+    if not allowEmpty and #list == 0 then
+        error(what .. " may not be empty", 3)
     end
+    for key in list do
+        if type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > #list then
+            error(what .. " needs a dense array", 3)
+        end
+    end
+    return list
+end
 
-    local set   = { identify = false, interact = false, read = false }
-    local flags = set :: any
+local function stringList(
+    what: string,
+    value: any,
+    allowEmpty: boolean,
+    identifiers: boolean
+): { string }
+    local list = denseList(what, value, allowEmpty)
+    local copy: { string } = {}
+    local seen: { [string]: boolean } = {}
     for index = 1, #list do
-        local name = list[index]
-        if type(name) ~= "string" or not k_capabilityKnown[name] then
-            return nil,
-                what
-                    .. " entry "
-                    .. tostring(index)
-                    .. ' is not a capability; the three are "identify", '
-                    .. '"interact" and "read"'
+        local entry = if identifiers
+            then requireIdentifier(what .. "[" .. tostring(index) .. "]", list[index])
+            else requireString(what .. "[" .. tostring(index) .. "]", list[index])
+        if seen[entry] then
+            error(what .. ' repeats "' .. entry .. '"', 3)
         end
-        if flags[name] then
-            return nil, what .. ' names "' .. name .. '" twice'
-        end
-        flags[name] = true
+        seen[entry] = true
+        copy[index] = entry
     end
-    return table.freeze(set), nil
+    return table.freeze(copy)
 end
 
-local Element = {}
-model.Element = Element
-
--- Element.new{ ... } -> a frozen element.
---
--- `capabilities` is a LIST of names on the way in and a SET on the way out: the
--- list is the file's form, the set is what every reader asks.
---
--- Two rulings here fail closed:
---
---   * An element with no appearances is positioned BY THE PAGE, so before it may
---     identify it has to offer other evidence
---     (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.2). What is
---     refused is an element with neither -- no appearances and no `read`
---     capability -- which can produce no evidence at all. WHAT the region should
---     read is not asked here: one title rectangle shared by every page reads a
---     different name on each, and only the page knows which, so `Page.new` is
---     where an identify row is made to say it. An element that reads the same
---     text everywhere may state it here and every row inherits it.
---   * An element declares ONE verification source: template appearances, or
---     expected text (docs/plans/2026-08-01-three-layers-and-agent-operator.md
---     5-4). Both at once is two answers to "did I find it" with no rule between
---     them.
---
--- `rect` is the one field whose absence is ruled on elsewhere, because "where do
--- I look" has an answer per USE: the identify sweep looks in the element's own
--- rectangle, a click in the row's, a matrix cell in the claim's. See the type.
-function Element.new(spec: { [string]: any }): Element
-    if type(spec) ~= "table" then
-        error("Element.new needs a table of fields", 2)
+local function frozenArray(what: string, value: any, count: number, check: any): { number }
+    local list = denseList(what, value, false)
+    if #list ~= count then
+        error(what .. " needs exactly " .. tostring(count) .. " numbers", 3)
     end
+    local copy: { number } = {}
+    for index = 1, count do
+        local number = check(what .. "[" .. tostring(index) .. "]", list[index])
+        copy[index] = number
+    end
+    return table.freeze(copy)
+end
 
-    local unknown = checkUnknownKeys("Element.new", spec, k_elementKeys, true)
+local function positive(what: string, value: any): number
+    local number = requireWhole(what, value)
+    if number < 1 then
+        error(what .. " must be positive", 3)
+    end
+    return number
+end
+
+local function nonNegative(what: string, value: any): number
+    local number = requireWhole(what, value)
+    if number < 0 then
+        error(what .. " may not be negative", 3)
+    end
+    return number
+end
+
+local function rect(what: string, value: any): Rect
+    local list = denseList(what, value, false)
+    if #list ~= 4 then
+        error(what .. " needs [x, y, width, height]", 3)
+    end
+    return table.freeze({
+        nonNegative(what .. "[1]", list[1]),
+        nonNegative(what .. "[2]", list[2]),
+        positive(what .. "[3]", list[3]),
+        positive(what .. "[4]", list[4]),
+    })
+end
+
+local function size(what: string, value: any): Size
+    return frozenArray(what, value, 2, positive)
+end
+
+local function offset(what: string, value: any): Offset
+    return frozenArray(what, value, 4, requireWhole)
+end
+
+local function point(what: string, value: any): Point
+    return frozenArray(what, value, 2, requireWhole)
+end
+
+local function confidence(what: string, value: any): number
+    if type(value) ~= "number" or value ~= value or value < 0 or value > 1 then
+        error(what .. " must be a number between 0 and 1", 3)
+    end
+    return value :: number
+end
+
+local function sha256(what: string, value: any): string
+    local hash = requireString(what, value)
+    if #hash ~= 64 or string.match(hash, "^[0-9a-f]+$") == nil then
+        error(what .. " must be a lowercase SHA-256 hex digest", 3)
+    end
+    return hash
+end
+
+local function asset(what: string, value: any): AssetRef
+    local tableValue = requireTable(what, value)
+    local unknown = unknownKey(what, tableValue, { path = true, sha256 = true })
     if unknown ~= nil then
-        error(unknown, 2)
+        error(unknown, 3)
     end
-
-    if type(spec.name) ~= "string" or spec.name == "" then
-        error("an element needs a non-empty name", 2)
-    end
-    local name = spec.name :: string
-
-    local capabilities, capabilityProblem =
-        capabilitySet("element '" .. name .. "' capabilities", spec.capabilities)
-    if capabilities == nil then
-        error(capabilityProblem :: string, 2)
-    end
-
-    if spec.rect ~= nil then
-        local rectProblem = checkRect("element '" .. name .. "' rect", spec.rect)
-        if rectProblem ~= nil then
-            error(rectProblem, 2)
-        end
-    end
-
-    local appearances: { Appearance } = {}
-    local seenAppearance: { [string]: boolean } = {}
-    if spec.appearances ~= nil then
-        if type(spec.appearances) ~= "table" then
-            error("element '" .. name .. "' appearances must be a list", 2)
-        end
-        local declared = spec.appearances :: { any }
-        for index = 1, #declared do
-            local entry = declared[index]
-            local what  = "element '"
-                .. name
-                .. "' appearance "
-                .. tostring(index)
-            if type(entry) ~= "table" then
-                error(what .. " must be a table", 2)
-            end
-
-            local entryUnknown =
-                checkUnknownKeys(what, entry, k_appearanceKeys, false)
-            if entryUnknown ~= nil then
-                error(entryUnknown, 2)
-            end
-            if entry.name ~= nil then
-                if type(entry.name) ~= "string" or entry.name == "" then
-                    error(what .. " has a name that is not a non-empty string", 2)
-                end
-                if seenAppearance[entry.name] then
-                    error(
-                        what
-                            .. ' repeats the appearance name "'
-                            .. entry.name
-                            .. "\"; a script tells appearances apart by name, so "
-                            .. "two of them cannot share one",
-                        2
-                    )
-                end
-                seenAppearance[entry.name] = true
-            end
-            if type(entry.source) ~= "string" or entry.source == "" then
-                error(
-                    what
-                        .. " needs source = the project file its template blob "
-                        .. "came from; an appearance that cannot be written back "
-                        .. "would vanish the next time the model is saved",
-                    2
-                )
-            end
-            -- The handle, not the blob: an author holds both here and only one
-            -- can be matched against, so the wrong one would otherwise be found
-            -- out at the first search rather than at the line that chose it.
-            if typeof(entry.template) ~= "userdata" then
-                error(
-                    what
-                        .. " needs template = the handle ctx:template_load "
-                        .. "returned for its blob, not the blob itself",
-                    2
-                )
-            end
-            if
-                not wholeNumber(entry.threshold)
-                or entry.threshold < 0
-                or entry.threshold > 10000
-            then
-                error(
-                    what
-                        .. " needs threshold = a whole number of basis points "
-                        .. "between 0 and 10000, where 10000 demands an exact "
-                        .. "match",
-                    2
-                )
-            end
-            if entry.key ~= nil then
-                local keyProblem = checkColourKey(what .. " key", entry.key)
-                if keyProblem ~= nil then
-                    error(keyProblem, 2)
-                end
-            end
-            local residualProblem = checkResidual(what, entry.residual)
-            if residualProblem ~= nil then
-                error(residualProblem, 2)
-            end
-
-            appearances[index] = table.freeze({
-                name      = entry.name,
-                source    = entry.source,
-                template  = entry.template,
-                threshold = entry.threshold,
-                key       = if entry.key ~= nil
-                    then frozenColourKey(entry.key :: ColourKey)
-                    else nil,
-                residual  = frozenResidual(entry.residual),
-            })
-        end
-    end
-
-    local expectationProblem = checkTextExpectation("element '" .. name .. "'", spec)
-    if expectationProblem ~= nil then
-        error(expectationProblem, 2)
-    end
-
-    if statesTextExpectation(spec) then
-        if #appearances > 0 then
-            error(
-                "element '"
-                    .. name
-                    .. "' declares both appearances and a text expectation; an "
-                    .. "element verifies itself EITHER by its template pixels OR "
-                    .. "by what it reads, and two answers with no rule between "
-                    .. "them is not a stronger check",
-                2
-            )
-        end
-        if not (capabilities :: CapabilitySet).read then
-            error(
-                "element '"
-                    .. name
-                    .. "' expects something of what it reads but does not "
-                    .. 'declare the read capability; add "read" or drop the '
-                    .. "expectation",
-                2
-            )
-        end
-    end
-
-    if type(spec.form) ~= "string" or not k_formKnown[spec.form] then
-        error(
-            "element '"
-                .. name
-                .. '\' needs form = "fixed", "shape" or "strip": whether it '
-                .. "draws its own rectangle, is found by its pixels wherever "
-                .. "they are, or is a container whose items are counted off the "
-                .. "frame. It is stated because an element with no rectangle "
-                .. "could be either of the last two or a mistake, and the "
-                .. "absence cannot say which",
-            2
-        )
-    end
-    local form = spec.form :: string
-
-    if form == "shape" then
-        if spec.rect ~= nil then
-            error(
-                "element '"
-                    .. name
-                    .. "' is a shape and states a rect; a shape is found by its "
-                    .. "pixels wherever they are, so a rectangle here is a claim "
-                    .. "about a position nothing keeps -- delete it or make the "
-                    .. 'element form = "fixed"',
-                2
-            )
-        end
-    elseif spec.rect == nil then
-        error(
-            "element '"
-                .. name
-                .. "' is a "
-                .. form
-                .. " and states no rect; only a shape goes without one, and it "
-                .. "says so by naming that form",
-            2
-        )
-    end
-
-    if form == "strip" then
-        if
-            not wholeNumber(spec.item_spacing)
-            or (spec.item_spacing :: number) < 1
-        then
-            error(
-                "element '"
-                    .. name
-                    .. "' is a strip and needs item_spacing = a whole number of "
-                    .. "pixels, at least one: it is the widest gap that still "
-                    .. "belongs to one item, and a gap of zero divides nothing",
-                2
-            )
-        end
-        if #appearances > 0 then
-            error(
-                "element '"
-                    .. name
-                    .. "' is a strip and declares appearances; a strip's items "
-                    .. "are located by the frame and counted, so a template "
-                    .. "would be asserting where they are -- which is the thing "
-                    .. "being counted",
-                2
-            )
-        end
-        if not (capabilities :: CapabilitySet).read then
-            error(
-                "element '"
-                    .. name
-                    .. "' is a strip but does not declare the read capability; "
-                    .. 'its items are located by reading, so add "read"',
-                2
-            )
-        end
-    elseif spec.item_spacing ~= nil then
-        error(
-            "element '"
-                .. name
-                .. "' states item_spacing and is a "
-                .. form
-                .. "; a spacing divides a container into items, which is what a "
-                .. 'strip is -- say form = "strip" or drop the spacing',
-            2
-        )
-    end
-
-    if spec.read_floor ~= nil then
-        if
-            not wholeNumber(spec.read_floor)
-            or spec.read_floor < 0
-            or spec.read_floor > 10000
-        then
-            error(
-                "element '"
-                    .. name
-                    .. "' read_floor must be a whole number of basis points "
-                    .. "between 0 and 10000; it is how sure the engine has to be "
-                    .. "before a reading of this region counts as evidence about "
-                    .. "it",
-                2
-            )
-        end
-        if not (capabilities :: CapabilitySet).read then
-            error(
-                "element '"
-                    .. name
-                    .. "' has a read_floor but does not declare the read "
-                    .. "capability; the floor judges a reading, and nothing may "
-                    .. "ask this element for one",
-                2
-            )
-        end
-    end
-
+    local path = requireString(what .. ".path", tableValue.path)
     if
-        #appearances == 0
-        and (capabilities :: CapabilitySet).identify
-        and not (capabilities :: CapabilitySet).read
+        string.sub(path, 1, 1) == "/"
+        or string.sub(path, 1, 1) == "\\"
+        or string.match(path, "^[A-Za-z]:") ~= nil
+        or string.find(path, "\\", 1, true) ~= nil
+        or string.find(path, "//", 1, true) ~= nil
+        or string.sub(path, -1) == "/"
     then
-        error(
-            "element '"
-                .. name
-                .. "' declares identify with no appearances and no read "
-                .. "capability; an element with no template of its own is "
-                .. "positioned BY the page that was recognised, so it has no "
-                .. 'pixels to offer as evidence that the page IS that page -- add '
-                .. '"read" and the text this region should show, and the reading '
-                .. "becomes the evidence instead",
-            2
-        )
+        error(what .. ".path must be a relative path using '/' separators", 3)
     end
-
-    local extraProblem = checkExtra("element '" .. name .. "'", spec.extra)
-    if extraProblem ~= nil then
-        error(extraProblem, 2)
-    end
-    local residualProblem =
-        checkResidual("element '" .. name .. "'", spec.residual)
-    if residualProblem ~= nil then
-        error(residualProblem, 2)
-    end
-
-    local element = table.freeze({
-        name          = name,
-        capabilities  = capabilities :: CapabilitySet,
-        rect          = if spec.rect ~= nil
-            then frozenRect(spec.rect :: Rect)
-            else nil,
-        appearances   = table.freeze(appearances),
-        form          = form,
-        item_spacing  = spec.item_spacing,
-        expected_text = spec.expected_text,
-        expected_fragments = if spec.expected_fragments ~= nil
-            then table.freeze(table.clone(spec.expected_fragments))
-            else nil,
-        expected_presence = spec.expected_presence,
-        read_floor    = spec.read_floor,
-        extra         = frozenExtra(spec.extra),
-        residual      = frozenResidual(spec.residual),
-    })
-    mintedElements[element] = true
-    return element
-end
-
--- How sure a reading of this element has to be before it counts as evidence, in
--- basis points. Asked OF an element rather than read off one, because the field
--- is absent on almost every element and the answer never is: reading
--- `element.read_floor` directly is how a caller compares a confidence to nil.
-function Element.read_floor(element: Element): number
-    if element.read_floor ~= nil then
-        return element.read_floor :: number
-    end
-    return k_defaultReadFloor
-end
-
--- The appearance on `element` carrying `name`, or nil. Declaration order is
--- preserved, so the index this walks is the order the model file wrote.
-function Element.appearance_named(element: Element, name: string): Appearance?
-    for index = 1, #element.appearances do
-        local appearance = element.appearances[index]
-        if appearance.name == name then
-            return appearance
+    for component in string.gmatch(path, "[^/]+") do
+        if component == ".." or component == "." or component == "" then
+            error(what .. ".path contains an invalid path component", 3)
         end
     end
-    return nil
+    return table.freeze({
+        path = path,
+        sha256 = sha256(what .. ".sha256", tableValue.sha256),
+    })
 end
 
-local Page = {}
-model.Page = Page
-
--- Page.new{ ... } -> a frozen page.
---
--- A page is a set of references plus two flags and carries no outbound edge: an
--- edge is a fact about a PAIR of pages, so `Graph.new` collects them
--- (docs/plans/2026-07-31-script-owned-page-model.md 10).
-function Page.new(spec: { [string]: any }): Page
-    if type(spec) ~= "table" then
-        error("Page.new needs a table of fields", 2)
-    end
-
-    local unknown = checkUnknownKeys("Page.new", spec, k_pageKeys, true)
+local function locatorRef(what: string, value: any): LocatorRef
+    local tableValue = requireTable(what, value)
+    local unknown = unknownKey(what, tableValue, { locator = true, variant = true })
     if unknown ~= nil then
-        error(unknown, 2)
+        error(unknown, 3)
     end
-
-    if type(spec.name) ~= "string" or spec.name == "" then
-        error("a page needs a non-empty name", 2)
+    local result: { [string]: any } = {
+        locator = requireIdentifier(what .. ".locator", tableValue.locator),
+    }
+    if tableValue.variant ~= nil then
+        result.variant = requireIdentifier(what .. ".variant", tableValue.variant)
     end
-    local name = spec.name :: string
-
-    -- The name is the label of the `framework.page_resolved` line
-    -- `observe.resolve_page` writes the instant a signature holds, and the host
-    -- refuses a label over its ceiling. Refused HERE so the cost is an authoring
-    -- error: refused there, the first frame a page is actually on ends the run,
-    -- inside a wait loop or a check walk where nothing catches it.
-    if k_maxPageNameBytes ~= nil and #name > k_maxPageNameBytes then
-        error(
-            "page name '"
-                .. name
-                .. "' is "
-                .. tostring(#name)
-                .. " bytes, over the host's "
-                .. tostring(k_maxPageNameBytes)
-                .. "-byte ceiling for a name written to the evidence stream; "
-                .. "this name is written there every time the page resolves, so "
-                .. "the run would end on the first frame that is this page",
-            2
-        )
-    end
-
-    if spec.overlay ~= nil and type(spec.overlay) ~= "boolean" then
-        error(
-            "page '"
-                .. name
-                .. "' overlay must be true or false; it says whether this page "
-                .. "COVERS the screen it appeared over instead of replacing it, "
-                .. "and a run's page stack is built entirely on that answer",
-            2
-        )
-    end
-    if spec.interrupt ~= nil and type(spec.interrupt) ~= "boolean" then
-        error(
-            "page '"
-                .. name
-                .. "' interrupt must be true or false; it says whether this page "
-                .. "can appear over anything, which is declared once here instead "
-                .. "of as an inbound edge from every page it can interrupt",
-            2
-        )
-    end
-
-    if spec.catch_all ~= nil and type(spec.catch_all) ~= "boolean" then
-        error(
-            "page '"
-                .. name
-                .. "' catch_all must be true or false; it says this signature "
-                .. "describes a CLASS of screens rather than one screen, so it "
-                .. "is asked last, after every specific page has been tried",
-            2
-        )
-    end
-
-    -- The two flags are opposite ORDERS and a page cannot want both. `interrupt`
-    -- says ask this first because it can be covering anything; `catch_all` says
-    -- ask this last because anything specific would answer better. A page
-    -- claiming both would be asked first under a rule that exists to have it
-    -- asked last, and the specific pages it describes would never resolve
-    -- (docs/plans/2026-08-04-state-layer-and-policy-slots.md 3.4).
-    if spec.interrupt == true and spec.catch_all == true then
-        error(
-            "page '"
-                .. name
-                .. "' declares both interrupt and catch_all, which are opposite "
-                .. "positions in the order pages are asked in: interrupt is "
-                .. "asked first because it may be covering anything, catch_all "
-                .. "last because anything more specific answers better",
-            2
-        )
-    end
-
-    if spec.state ~= nil and (type(spec.state) ~= "string" or spec.state == "") then
-        error(
-            "page '"
-                .. name
-                .. "' state must be a non-empty mode name; the framework carries "
-                .. "no enumeration of modes, because which modes a target has is "
-                .. "a fact about that target",
-            2
-        )
-    end
-
-    -- A mode is where a run IS, and an overlay is something drawn over wherever
-    -- it is. A page cannot be both, so the two fields are exclusive rather than
-    -- an overlay carrying the mode it happens to sit on.
-    if spec.state ~= nil and spec.overlay == true then
-        error(
-            "page '"
-                .. name
-                .. "' is an overlay and states a mode; an overlay covers "
-                .. "whatever the run was already in, so what it may cover is "
-                .. "`over` and never `state`",
-            2
-        )
-    end
-
-    if spec.over ~= nil then
-        if spec.overlay ~= true then
-            error(
-                "page '"
-                    .. name
-                    .. "' states `over` and is not an overlay; `over` names the "
-                    .. "modes this page can be drawn ON TOP OF, which only a "
-                    .. "page that covers another has",
-                2
-            )
-        end
-        if type(spec.over) ~= "table" or #(spec.over :: { any }) == 0 then
-            error(
-                "page '"
-                    .. name
-                    .. "' needs over = { \"mode\", ... }, the modes it can cover; "
-                    .. "an empty list says it covers none, which is a page no "
-                    .. "run can ever be shown",
-                2
-            )
-        end
-        local seen: { [string]: boolean } = {}
-        for index, mode in spec.over :: { any } do
-            if type(mode) ~= "string" or mode == "" then
-                error(
-                    "page '"
-                        .. name
-                        .. "' over entry "
-                        .. tostring(index)
-                        .. " must be a non-empty mode name",
-                    2
-                )
-            end
-            if seen[mode] then
-                error(
-                    "page '"
-                        .. name
-                        .. "' names mode '"
-                        .. mode
-                        .. "' twice in `over`; it is a set, and naming one mode "
-                        .. "again says nothing a second time",
-                    2
-                )
-            end
-            seen[mode] = true
-        end
-    end
-
-    if type(spec.references) ~= "table" then
-        error("page '" .. name .. "' needs references = { ... }", 2)
-    end
-    local declared = spec.references :: { any }
-    if #declared == 0 then
-        error(
-            "page '"
-                .. name
-                .. "' has no references; a page is defined by what it shows and "
-                .. "what it lets a script touch, so an empty one names nothing",
-            2
-        )
-    end
-
-    local references: { Reference } = {}
-    local seenElement: { [string]: boolean } = {}
-    local requiredCount = 0
-
-    for index = 1, #declared do
-        local entry = declared[index]
-        local what  = "page '" .. name .. "' reference " .. tostring(index)
-        if type(entry) ~= "table" then
-            error(what .. " must be a table", 2)
-        end
-
-        local entryUnknown =
-            checkUnknownKeys(what, entry, k_referenceKeys, true)
-        if entryUnknown ~= nil then
-            error(entryUnknown, 2)
-        end
-
-        if not mintedOrDerived(entry.element, mintedElements) then
-            error(
-                what
-                    .. " needs element = an element built by Element.new (or one "
-                    .. "derived from it with setmetatable); a look-alike table "
-                    .. "would fail by matching nothing rather than by failing",
-                2
-            )
-        end
-        local element = entry.element :: Element
-        if seenElement[element.name] then
-            error(
-                what
-                    .. " is the second reference to element '"
-                    .. element.name
-                    .. "' on this page; one page uses one element in one way",
-                2
-            )
-        end
-        seenElement[element.name] = true
-
-        if type(entry.holding) ~= "string" or not k_holdingKnown[entry.holding] then
-            error(
-                what
-                    .. ' needs holding = "owned" or "referenced"; owned means '
-                    .. "this page is where the element lives, referenced means it "
-                    .. "lives on another page",
-                2
-            )
-        end
-
-        local exercised, exercisedProblem =
-            capabilitySet(what .. " exercised", entry.exercised)
-        if exercised == nil then
-            error(exercisedProblem :: string, 2)
-        end
-        for _, capability in k_capabilityOrder do
-            if
-                (exercised :: any)[capability]
-                and not (element.capabilities :: any)[capability]
-            then
-                error(
-                    what
-                        .. ' exercises "'
-                        .. capability
-                        .. "\" but element '"
-                        .. element.name
-                        .. "' does not declare it; a page uses a subset of what "
-                        .. "an element can do, never more",
-                    2
-                )
-            end
-        end
-
-        -- The per-page refinement of what a shared region says, checked before
-        -- the identify clause below because that clause consults it.
-        local rowProblem = checkTextExpectation(what, entry)
-        if rowProblem ~= nil then
-            error(rowProblem, 2)
-        end
-        if statesTextExpectation(entry) then
-            if not (element.capabilities :: any).read then
-                error(
-                    what
-                        .. " expects something of what it reads but element '"
-                        .. element.name
-                        .. "' does not declare the read capability; a page cannot "
-                        .. "refine a reading of something nothing may read",
-                    2
-                )
-            end
-        end
-
-        if (exercised :: CapabilitySet).identify then
-            if
-                type(entry.identify) ~= "string"
-                or not k_polarityKnown[entry.identify]
-            then
-                error(
-                    what
-                        .. ' exercises identify, so it needs identify = "required"'
-                        .. ' or "forbidden"; a signature clause with no polarity '
-                        .. "says nothing",
-                    2
-                )
-            end
-            if entry.identify == "required" then
-                requiredCount += 1
-            end
-            -- The half of the identify ruling `Element.new` cannot make: on a
-            -- shared element the text differs per page, so the row is the only
-            -- thing that can state it. This keeps "identify with neither pixels
-            -- nor text" impossible while the shared element stays buildable.
-            if
-                #element.appearances == 0
-                and not statesTextExpectation(entry)
-                and not statesTextExpectation(element)
-            then
-                error(
-                    what
-                        .. " identifies by element '"
-                        .. element.name
-                        .. "', which has no appearances and no expected text "
-                        .. "here; an element with no template of its own is "
-                        .. "positioned BY the page that was recognised, so it has "
-                        .. "no pixels to offer as evidence -- say what would "
-                        .. "make a reading of it count on this page, with "
-                        .. "expected_text, expected_fragments or "
-                        .. "expected_presence, or give the element a template of "
-                        .. "its own",
-                    2
-                )
-            end
-            -- Must come before the rect_override refusal below, or the author is
-            -- refused twice: once for omitting the override, again for supplying
-            -- it. An identify sweep runs BEFORE the page is known, so an element
-            -- that draws no rectangle can never be part of a signature.
-            if element.rect == nil then
-                error(
-                    what
-                        .. " identifies by element '"
-                        .. element.name
-                        .. "', which draws no rectangle of its own; an identify "
-                        .. "sweep runs before the page is known, so it can only "
-                        .. "search the element's OWN rectangle and a row that "
-                        .. "supplies one cannot be part of a page signature -- "
-                        .. "give the element a rect, or identify this page by "
-                        .. "something that has one",
-                    2
-                )
-            end
-            if entry.rect_override ~= nil then
-                error(
-                    what
-                        .. " exercises identify and also refines the search "
-                        .. "rectangle; an identify sweep runs before the page is "
-                        .. "known, so it uses the element's own rectangle, and a "
-                        .. "per-page refinement here would only make the same "
-                        .. "pixels get searched twice",
-                    2
-                )
-            end
-        elseif entry.identify ~= nil then
-            error(
-                what
-                    .. " sets a polarity without exercising identify; required "
-                    .. "and forbidden describe a page signature, and this "
-                    .. "reference is not part of one",
-                2
-            )
-        end
-
-        if entry.pinned_appearance ~= nil then
-            if type(entry.pinned_appearance) ~= "string" then
-                error(what .. " pinned_appearance must be an appearance name", 2)
-            end
-            if not (exercised :: CapabilitySet).interact then
-                error(
-                    what
-                        .. " pins an appearance without exercising interact; "
-                        .. "pinning is what spares a CLICK from searching every "
-                        .. "appearance, and identify folds across all of them "
-                        .. "whatever is pinned",
-                    2
-                )
-            end
-            if Element.appearance_named(element, entry.pinned_appearance) == nil then
-                error(
-                    what
-                        .. ' pins appearance "'
-                        .. entry.pinned_appearance
-                        .. "\" which element '"
-                        .. element.name
-                        .. "' does not have",
-                    2
-                )
-            end
-        end
-
-        -- The appearance GATE, and the reason it is not `pinned_appearance`
-        -- wearing a second meaning: a pin says which appearance a click should
-        -- search for, and this says a click is authorised ONLY while that
-        -- appearance is the one on screen. A confirm button drawn lit and drawn
-        -- grey is one element with two appearances, and clicking it grey is a
-        -- click the target ignores while the run believes it landed
-        -- (docs/plans/2026-08-04-state-layer-and-policy-slots.md 3.2).
-        if entry.interact_requires ~= nil then
-            if type(entry.interact_requires) ~= "string" then
-                error(
-                    what .. " interact_requires must be an appearance name",
-                    2
-                )
-            end
-            if not (exercised :: CapabilitySet).interact then
-                error(
-                    what
-                        .. " gates an appearance without exercising interact; "
-                        .. "the gate decides whether a CLICK is authorised, and "
-                        .. "a row that may not click has nothing to gate",
-                    2
-                )
-            end
-            if Element.appearance_named(element, entry.interact_requires) == nil then
-                error(
-                    what
-                        .. ' requires appearance "'
-                        .. entry.interact_requires
-                        .. "\" for interact, which element '"
-                        .. element.name
-                        .. "' does not have",
-                    2
-                )
-            end
-            -- A pin decides what a click SEARCHES for and a gate decides what
-            -- authorises one, so naming two different appearances is a door
-            -- whose key is on the other side: the search can only ever answer
-            -- with the pinned look, and the gate refuses everything but the
-            -- other. Refused for the reason a gate naming an absent appearance
-            -- is -- both are configurations that open on no frame.
-            if
-                entry.pinned_appearance ~= nil
-                and entry.pinned_appearance ~= entry.interact_requires
-            then
-                error(
-                    what
-                        .. ' pins appearance "'
-                        .. entry.pinned_appearance
-                        .. '" and requires "'
-                        .. entry.interact_requires
-                        .. '" for interact; the pin is what a click searches '
-                        .. "for, so the gate could never see anything else and "
-                        .. "would refuse every frame",
-                    2
-                )
-            end
-        end
-
-        if entry.rect_override ~= nil then
-            local overrideProblem =
-                checkRect(what .. " rect_override", entry.rect_override)
-            if overrideProblem ~= nil then
-                error(overrideProblem, 2)
-            end
-        elseif element.rect == nil then
-            -- What keeps "a rect is optional" from meaning "nobody said where to
-            -- look": a row that inherits no rectangle and states none leaves
-            -- `observe.find` with no region, found out as a nil field deep inside
-            -- a verb rather than at the line that wrote the row.
-            error(
-                what
-                    .. " references element '"
-                    .. element.name
-                    .. "', which draws no rectangle of its own, and says no "
-                    .. "rect_override; such an element is placed by whoever uses "
-                    .. "it, so this row is the only thing that can say where it "
-                    .. 'sits on this page -- add rect_override = { x = , y = , '
-                    .. "width = , height = }",
-                2
-            )
-        end
-
-        local extraProblem = checkExtra(what, entry.extra)
-        if extraProblem ~= nil then
-            error(extraProblem, 2)
-        end
-        local residualProblem = checkResidual(what, entry.residual)
-        if residualProblem ~= nil then
-            error(residualProblem, 2)
-        end
-
-        local reference = table.freeze({
-            element           = element,
-            page              = name,
-            holding           = entry.holding,
-            exercised         = exercised :: CapabilitySet,
-            identify          = entry.identify,
-            expected_text     = entry.expected_text,
-            expected_fragments = if entry.expected_fragments ~= nil
-                then table.freeze(table.clone(entry.expected_fragments))
-                else nil,
-            expected_presence = entry.expected_presence,
-            pinned_appearance = entry.pinned_appearance,
-            interact_requires = entry.interact_requires,
-            rect_override     = if entry.rect_override ~= nil
-                then frozenRect(entry.rect_override :: Rect)
-                else nil,
-            extra             = frozenExtra(entry.extra),
-            residual          = frozenResidual(entry.residual),
-        })
-        mintedReferences[reference] = true
-        references[index] = reference
-    end
-
-    if requiredCount == 0 then
-        error(
-            "page '"
-                .. name
-                .. "' has no required identify reference; without one, every "
-                .. "screen resolves to this page, including the ones that are "
-                .. "not it",
-            2
-        )
-    end
-
-    local extraProblem = checkExtra("page '" .. name .. "'", spec.extra)
-    if extraProblem ~= nil then
-        error(extraProblem, 2)
-    end
-    local residualProblem = checkResidual("page '" .. name .. "'", spec.residual)
-    if residualProblem ~= nil then
-        error(residualProblem, 2)
-    end
-
-    local page = table.freeze({
-        name       = name,
-        overlay    = spec.overlay == true,
-        interrupt  = spec.interrupt == true,
-        state      = spec.state,
-        over       = if spec.over ~= nil
-            then table.freeze(table.clone(spec.over))
-            else nil,
-        catch_all  = spec.catch_all == true,
-        references = table.freeze(references),
-        extra      = frozenExtra(spec.extra),
-        residual   = frozenResidual(spec.residual),
-    })
-    mintedPages[page] = true
-    return page
+    return table.freeze(result) :: any
 end
 
--- This page's reference to `element`, or nil when the page does not reference
--- it at all. Comparison is by element NAME rather than by table identity, so a
--- layer-three script that derived its own element from the one the project file
--- built still finds its row.
-function Page.reference_for(page: Page, element: Element): Reference?
-    for index = 1, #page.references do
-        local reference = page.references[index]
-        if reference.element.name == element.name then
-            return reference
-        end
-    end
-    return nil
-end
-
-local Reference = {}
-model.Reference = Reference
-
--- The exact text this row expects, or nil -- INCLUDING when it expects something
--- else. A row asking for ordered fragments or for any reading at all has an
--- expectation and no expected text, and every caller here wants the second
--- reading rather than the first.
---
--- Precedence is not decided here any more; `Reference.text_expectation` below is
--- the one place it is written down.
-function Reference.expected_text(reference: Reference): string?
-    local expectation = Reference.text_expectation(reference)
-    if expectation ~= nil and expectation.kind == "equals" then
-        return expectation.text
-    end
-    return nil
-end
-
--- What would make a reading of this row's region count, or nil when neither the
--- row nor the element asks anything of it.
---
--- THE ROW WINS AS A WHOLE, which is the part a per-field precedence would get
--- wrong: a row asking only for presence must not inherit the element's exact
--- text and end up demanding both. So a row that states any of the three answers
--- for all three.
---
--- Three kinds, spelled here and nowhere else:
---
---   * "equals"    -- the whole reading is this text, whitespace at the ends
---                    forgiven. The strictest, and the only one that can tell
---                    two screens apart by their titles.
---   * "fragments" -- these pieces appear in this order, with anything between
---                    them. What a sentence with a number in the middle needs.
---   * "presence"  -- there is a confident reading at all. What a region whose
---                    text is never twice the same needs, and the weakest thing
---                    that is still evidence.
-function Reference.text_expectation(reference: Reference): any
-    local source: any = reference
-    if not statesTextExpectation(reference) then
-        source = reference.element
-    end
-    if source.expected_text ~= nil then
-        return table.freeze({ kind = "equals", text = source.expected_text })
-    end
-    if source.expected_fragments ~= nil then
+local function placement(what: string, value: any): Placement
+    local tableValue = requireTable(what, value)
+    local kind = requireString(what .. ".kind", tableValue.kind)
+    if kind == "target_geometry" then
+        local unknown = unknownKey(what, tableValue, { kind = true })
+        if unknown ~= nil then error(unknown, 3) end
+        return table.freeze({ kind = kind })
+    elseif kind == "rect" then
+        local unknown = unknownKey(what, tableValue, { kind = true, rect = true })
+        if unknown ~= nil then error(unknown, 3) end
+        return table.freeze({ kind = kind, rect = rect(what .. ".rect", tableValue.rect) })
+    elseif kind == "relative" then
+        local unknown = unknownKey(what, tableValue, { kind = true, anchor = true, offset = true })
+        if unknown ~= nil then error(unknown, 3) end
         return table.freeze({
-            kind      = "fragments",
-            fragments = source.expected_fragments,
+            kind = kind,
+            anchor = locatorRef(what .. ".anchor", tableValue.anchor),
+            offset = offset(what .. ".offset", tableValue.offset),
         })
     end
-    if source.expected_presence ~= nil then
-        return table.freeze({ kind = "presence" })
+    error(what .. '.kind must be "target_geometry", "rect" or "relative"', 3)
+end
+
+local function geometry(what: string, value: any): any
+    local tableValue = requireTable(what, value)
+    local kind = requireString(what .. ".kind", tableValue.kind)
+    if kind == "fixed" then
+        local unknown = unknownKey(what, tableValue, { kind = true, rect = true })
+        if unknown ~= nil then error(unknown, 3) end
+        return table.freeze({ kind = kind, rect = rect(what .. ".rect", tableValue.rect) })
+    elseif kind == "collection" then
+        local unknown = unknownKey(what, tableValue, {
+            kind = true, rect = true, axis = true, item_size = true,
+            spacing = true, max_items = true,
+        })
+        if unknown ~= nil then error(unknown, 3) end
+        local result: { [string]: any } = {
+            kind = kind,
+            rect = rect(what .. ".rect", tableValue.rect),
+            axis = requireString(what .. ".axis", tableValue.axis),
+            item_size = size(what .. ".item_size", tableValue.item_size),
+            spacing = size(what .. ".spacing", tableValue.spacing),
+        }
+        if result.axis ~= "horizontal" and result.axis ~= "vertical" then
+            error(what .. '.axis must be "horizontal" or "vertical"', 3)
+        end
+        if tableValue.max_items ~= nil then
+            result.max_items = positive(what .. ".max_items", tableValue.max_items)
+        end
+        return table.freeze(result)
+    elseif kind == "relative" then
+        local unknown = unknownKey(what, tableValue, { kind = true, anchor = true, offset = true })
+        if unknown ~= nil then error(unknown, 3) end
+        return table.freeze({
+            kind = kind,
+            anchor = locatorRef(what .. ".anchor", tableValue.anchor),
+            offset = offset(what .. ".offset", tableValue.offset),
+        })
     end
-    return nil
+    error(what .. '.kind must be "fixed", "collection" or "relative"', 3)
+end
+
+local function textPredicate(what: string, value: any): any
+    local tableValue = requireTable(what, value)
+    local kind = requireString(what .. ".kind", tableValue.kind)
+    if kind == "locator_present" then
+        local unknown = unknownKey(what, tableValue, { kind = true, locator = true })
+        if unknown ~= nil then error(unknown, 3) end
+        return table.freeze({ kind = kind, locator = locatorRef(what .. ".locator", tableValue.locator) })
+    elseif kind == "text_match" then
+        local unknown = unknownKey(what, tableValue, {
+            kind = true, reader = true, operator = true, value = true,
+        })
+        if unknown ~= nil then error(unknown, 3) end
+        local operator = requireString(what .. ".operator", tableValue.operator)
+        local result: { [string]: any } = {
+            kind = kind,
+            reader = requireIdentifier(what .. ".reader", tableValue.reader),
+            operator = operator,
+        }
+        if operator == "equals" or operator == "present" then
+            if operator == "present" then
+                if tableValue.value ~= nil then
+                    error(what .. ' with operator "present" has no value', 3)
+                end
+            else
+                result.value = requireString(what .. ".value", tableValue.value)
+            end
+        elseif operator == "contains_all" then
+            result.value = table.freeze(stringList(what .. ".value", tableValue.value, false, false))
+        else
+            error(what .. '.operator must be "equals", "contains_all" or "present"', 3)
+        end
+        return table.freeze(result)
+    end
+    error(what .. '.kind must be "locator_present" or "text_match"', 3)
+end
+
+local function predicateKey(value: any): string
+    local result = tostring(value.kind)
+    if value.locator ~= nil then
+        result ..= ":locator=" .. value.locator.locator
+        if value.locator.variant ~= nil then result ..= ":variant=" .. value.locator.variant end
+    end
+    if value.reader ~= nil then result ..= ":reader=" .. value.reader end
+    if value.operator ~= nil then result ..= ":operator=" .. value.operator end
+    if type(value.value) == "table" then
+        result ..= ":value=" .. table.concat(value.value, "\31")
+    elseif value.value ~= nil then
+        result ..= ":value=" .. tostring(value.value)
+    end
+    return result
+end
+
+local function predicates(what: string, value: any): { IdentityPredicate }
+    local list = denseList(what, value, true)
+    local result: { IdentityPredicate } = {}
+    local seen: { [string]: boolean } = {}
+    for index = 1, #list do
+        local predicate = textPredicate(what .. "[" .. tostring(index) .. "]", list[index])
+        local key = predicateKey(predicate)
+        if seen[key] then error(what .. " repeats a predicate", 3) end
+        seen[key] = true
+        result[index] = predicate
+    end
+    return table.freeze(result)
+end
+
+local function identity(what: string, value: any): Identity
+    local tableValue = requireTable(what, value)
+    local unknown = unknownKey(what, tableValue, { all = true, any = true, none = true })
+    if unknown ~= nil then error(unknown, 3) end
+    return table.freeze({
+        all = predicates(what .. ".all", tableValue.all),
+        any = predicates(what .. ".any", tableValue.any),
+        none = predicates(what .. ".none", tableValue.none),
+    }) :: any
+end
+
+local function preconditions(what: string, value: any): { any }
+    local list = denseList(what, value, true)
+    local result: { any } = {}
+    local seen: { [string]: boolean } = {}
+    for index = 1, #list do
+        local predicate = textPredicate(what .. "[" .. tostring(index) .. "]", list[index])
+        local key = predicateKey(predicate)
+        if seen[key] then error(what .. " repeats a predicate", 3) end
+        seen[key] = true
+        result[index] = predicate
+    end
+    return table.freeze(result)
+end
+
+local function statePattern(what: string, value: any): any
+    local tableValue = requireTable(what, value)
+    local unknown = unknownKey(what, tableValue, { context = true, surfaces = true })
+    if unknown ~= nil then error(unknown, 3) end
+    return table.freeze({
+        context = requireIdentifier(what .. ".context", tableValue.context),
+        surfaces = stringList(what .. ".surfaces", tableValue.surfaces, false, true),
+    })
+end
+
+function model.is_context(value: any): boolean return derives(value, minted.context) end
+function model.is_runtime_state(value: any): boolean return derives(value, minted.state) end
+function model.is_target(value: any): boolean return derives(value, minted.target) end
+function model.is_locator(value: any): boolean return derives(value, minted.locator) end
+function model.is_locator_variant(value: any): boolean return derives(value, minted.locator_variant) end
+function model.is_reader(value: any): boolean return derives(value, minted.reader) end
+function model.is_surface(value: any): boolean return derives(value, minted.surface) end
+function model.is_binding(value: any): boolean return derives(value, minted.binding) end
+function model.is_action(value: any): boolean return derives(value, minted.action) end
+function model.is_transition(value: any): boolean return derives(value, minted.transition) end
+function model.is_runtime_model(value: any): boolean return derives(value, minted.runtime_model) end
+
+local Context = {}
+model.Context = Context
+function Context.new(spec: { [string]: any }): Context
+    local value = requireTable("Context.new", spec)
+    local unknown = unknownKey("Context.new", value, { id = true })
+    if unknown ~= nil then error(unknown, 2) end
+    local result = table.freeze({ id = requireIdentifier("context id", value.id) })
+    minted.context[result] = true
+    return result :: any
+end
+
+local RuntimeState = {}
+model.RuntimeState = RuntimeState
+function RuntimeState.new(spec: { [string]: any }): RuntimeState
+    local value = requireTable("RuntimeState.new", spec)
+    local unknown = unknownKey("RuntimeState.new", value, { context = true, surfaces = true })
+    if unknown ~= nil then error(unknown, 2) end
+    local result = table.freeze({
+        context = requireIdentifier("runtime state context", value.context),
+        surfaces = stringList("runtime state surfaces", value.surfaces, false, true),
+    })
+    minted.state[result] = true
+    return result :: any
+end
+
+local Target = {}
+model.Target = Target
+function Target.new(spec: { [string]: any }): Target
+    local value = requireTable("Target.new", spec)
+    local unknown = unknownKey("Target.new", value, {
+        id = true, kind = true, geometry = true, locators = true, readers = true,
+    })
+    if unknown ~= nil then error(unknown, 2) end
+    local kind = requireString("target kind", value.kind)
+    if kind ~= "control" and kind ~= "label" and kind ~= "indicator"
+        and kind ~= "collection" and kind ~= "region" then
+        error("target kind must be control, label, indicator, collection or region", 2)
+    end
+    local result = table.freeze({
+        id = requireIdentifier("target id", value.id),
+        kind = kind,
+        geometry = if value.geometry ~= nil then geometry("target geometry", value.geometry) else nil,
+        locators = stringList("target locators", value.locators, false, true),
+        readers = stringList("target readers", value.readers, true, true),
+    })
+    minted.target[result] = true
+    return result :: any
+end
+
+local Locator = {}
+model.Locator = Locator
+function Locator.new(spec: { [string]: any }): Locator
+    local value = requireTable("Locator.new", spec)
+    local kind = requireString("locator kind", value.kind)
+    local common = { id = true, target = true, kind = true }
+    local result: { [string]: any } = {
+        id = requireIdentifier("locator id", value.id),
+        target = requireIdentifier("locator target", value.target),
+        kind = kind,
+    }
+    if kind == "template" then
+        local unknown = unknownKey("template locator", value, {
+            id = true, target = true, kind = true, asset = true, threshold = true,
+            search_rect = true, variants = true,
+        })
+        if unknown ~= nil then error(unknown, 2) end
+        if value.asset == nil and value.variants == nil then
+            error("a template locator needs asset or variants", 2)
+        end
+        if value.asset ~= nil then result.asset = asset("locator asset", value.asset) end
+        if value.threshold ~= nil then result.threshold = confidence("locator threshold", value.threshold) end
+        if value.search_rect ~= nil then result.search_rect = rect("locator search_rect", value.search_rect) end
+        if value.variants ~= nil then result.variants = stringList("locator variants", value.variants, false, true) end
+    elseif kind == "text" then
+        local unknown = unknownKey("text locator", value, {
+            id = true, target = true, kind = true, reader = true, search_rect = true,
+        })
+        if unknown ~= nil then error(unknown, 2) end
+        result.reader = requireIdentifier("text locator reader", value.reader)
+        if value.search_rect ~= nil then result.search_rect = rect("text locator search_rect", value.search_rect) end
+    elseif kind == "geometry" then
+        local unknown = unknownKey("geometry locator", value, { id = true, target = true, kind = true, rect = true })
+        if unknown ~= nil then error(unknown, 2) end
+        result.rect = rect("geometry locator rect", value.rect)
+    elseif kind == "relative" then
+        local unknown = unknownKey("relative locator", value, { id = true, target = true, kind = true, anchor = true, offset = true })
+        if unknown ~= nil then error(unknown, 2) end
+        result.anchor = locatorRef("relative locator anchor", value.anchor)
+        result.offset = offset("relative locator offset", value.offset)
+    elseif kind == "collection" then
+        local unknown = unknownKey("collection locator", value, {
+            id = true, target = true, kind = true, item_locator = true,
+            axis = true, spacing = true, max_items = true,
+        })
+        if unknown ~= nil then error(unknown, 2) end
+        result.item_locator = locatorRef("collection item_locator", value.item_locator)
+        result.axis = requireString("collection axis", value.axis)
+        if result.axis ~= "horizontal" and result.axis ~= "vertical" then
+            error('collection axis must be "horizontal" or "vertical"', 2)
+        end
+        result.spacing = size("collection spacing", value.spacing)
+        if value.max_items ~= nil then result.max_items = positive("collection max_items", value.max_items) end
+    else
+        error("locator kind must be template, text, geometry, relative or collection", 2)
+    end
+    local frozen = table.freeze(result)
+    minted.locator[frozen] = true
+    return frozen :: any
+end
+
+local LocatorVariant = {}
+model.LocatorVariant = LocatorVariant
+function LocatorVariant.new(spec: { [string]: any }): LocatorVariant
+    local value = requireTable("LocatorVariant.new", spec)
+    local unknown = unknownKey("LocatorVariant.new", value, {
+        id = true, locator = true, asset = true, threshold = true, search_rect = true,
+    })
+    if unknown ~= nil then error(unknown, 2) end
+    local result: { [string]: any } = {
+        id = requireIdentifier("locator variant id", value.id),
+        locator = requireIdentifier("locator variant locator", value.locator),
+        asset = asset("locator variant asset", value.asset),
+    }
+    if value.threshold ~= nil then result.threshold = confidence("locator variant threshold", value.threshold) end
+    if value.search_rect ~= nil then result.search_rect = rect("locator variant search_rect", value.search_rect) end
+    local frozen = table.freeze(result)
+    minted.locator_variant[frozen] = true
+    return frozen :: any
+end
+
+local Reader = {}
+model.Reader = Reader
+function Reader.new(spec: { [string]: any }): Reader
+    local value = requireTable("Reader.new", spec)
+    local kind = requireString("reader kind", value.kind)
+    local result: { [string]: any } = {
+        id = requireIdentifier("reader id", value.id),
+        target = requireIdentifier("reader target", value.target),
+        kind = kind,
+        confidence_floor = confidence("reader confidence_floor", value.confidence_floor),
+    }
+    if kind == "line" or kind == "block" then
+        local known = { id = true, target = true, kind = true, confidence_floor = true, normalization = true, join = true }
+        local unknown = unknownKey(kind .. " reader", value, known)
+        if unknown ~= nil then error(unknown, 2) end
+        result.normalization = requireString(kind .. " reader normalization", value.normalization)
+        if result.normalization ~= "raw" and result.normalization ~= "trim" and result.normalization ~= "collapse_whitespace" then
+            error('reader normalization must be "raw", "trim" or "collapse_whitespace"', 2)
+        end
+        if kind == "block" then
+            result.join = requireString("block reader join", value.join)
+            if result.join ~= "newline" and result.join ~= "space" then
+                error('block reader join must be "newline" or "space"', 2)
+            end
+        elseif value.join ~= nil then
+            error("line reader does not have join", 2)
+        end
+    elseif kind == "items" then
+        local unknown = unknownKey("items reader", value, {
+            id = true, target = true, kind = true, confidence_floor = true,
+            item_kind = true, min_items = true, max_items = true,
+        })
+        if unknown ~= nil then error(unknown, 2) end
+        result.item_kind = requireString("items reader item_kind", value.item_kind)
+        if result.item_kind ~= "line" and result.item_kind ~= "block" then
+            error('items reader item_kind must be "line" or "block"', 2)
+        end
+        if value.min_items ~= nil then result.min_items = nonNegative("items reader min_items", value.min_items) end
+        if value.max_items ~= nil then result.max_items = positive("items reader max_items", value.max_items) end
+        if result.min_items ~= nil and result.max_items ~= nil and result.min_items > result.max_items then
+            error("items reader min_items may not exceed max_items", 2)
+        end
+    elseif kind == "presence" then
+        local unknown = unknownKey("presence reader", value, { id = true, target = true, kind = true, confidence_floor = true })
+        if unknown ~= nil then error(unknown, 2) end
+    else
+        error("reader kind must be line, block, items or presence", 2)
+    end
+    local frozen = table.freeze(result)
+    minted.reader[frozen] = true
+    return frozen :: any
+end
+
+local Surface = {}
+model.Surface = Surface
+function Surface.new(spec: { [string]: any }): any
+    local value = requireTable("Surface.new", spec)
+    local kind = requireString("surface kind", value.kind)
+    local known = { id = true, kind = true, contexts = true, covers = true }
+    local unknown = unknownKey("Surface.new", value, known)
+    if unknown ~= nil then error(unknown, 2) end
+    local contexts = stringList("surface contexts", value.contexts, kind == "interrupt", true)
+    local result: { [string]: any } = {
+        id = requireIdentifier("surface id", value.id),
+        kind = kind,
+        contexts = contexts,
+    }
+    if kind == "scene" then
+        if #contexts == 0 then error("scene surface contexts may not be empty", 2) end
+        if value.covers ~= nil then error("scene surface may not declare covers", 2) end
+    elseif kind == "overlay" then
+        if #contexts == 0 then error("overlay surface contexts may not be empty", 2) end
+        result.covers = stringList("overlay surface covers", value.covers, false, true)
+    elseif kind == "interrupt" then
+        if value.covers ~= nil then error("interrupt surface may not declare covers", 2) end
+    else
+        error('surface kind must be "scene", "overlay" or "interrupt"', 2)
+    end
+    local frozen = table.freeze(result)
+    minted.surface[frozen] = true
+    return frozen
+end
+
+local Action = {}
+model.Action = Action
+function Action.new(spec: { [string]: any }): Action
+    local value = requireTable("Action.new", spec)
+    local kind = requireString("action kind", value.kind)
+    local result: { [string]: any } = {
+        id = requireIdentifier("action id", value.id),
+        kind = kind,
+    }
+    if kind == "click" then
+        local unknown = unknownKey("click action", value, { id = true, kind = true, locator = true, preconditions = true })
+        if unknown ~= nil then error(unknown, 2) end
+        result.locator = locatorRef("click action locator", value.locator)
+    elseif kind == "key" then
+        local unknown = unknownKey("key action", value, { id = true, kind = true, key = true, locator = true, preconditions = true })
+        if unknown ~= nil then error(unknown, 2) end
+        result.key = requireString("key action key", value.key)
+        if #result.key > 64 then error("key action key must be at most 64 bytes", 2) end
+        if value.locator ~= nil then result.locator = locatorRef("key action locator", value.locator) end
+    elseif kind == "scroll" then
+        local unknown = unknownKey("scroll action", value, { id = true, kind = true, axis = true, delta = true, locator = true, preconditions = true })
+        if unknown ~= nil then error(unknown, 2) end
+        result.axis = requireString("scroll action axis", value.axis)
+        if result.axis ~= "horizontal" and result.axis ~= "vertical" then error("scroll action axis must be horizontal or vertical", 2) end
+        result.delta = requireWhole("scroll action delta", value.delta)
+        if result.delta == 0 then error("scroll action delta may not be zero", 2) end
+        if value.locator ~= nil then result.locator = locatorRef("scroll action locator", value.locator) end
+    elseif kind == "drag" then
+        local unknown = unknownKey("drag action", value, { id = true, kind = true, locator = true, destination = true, preconditions = true })
+        if unknown ~= nil then error(unknown, 2) end
+        result.locator = locatorRef("drag action locator", value.locator)
+        local destination = requireTable("drag action destination", value.destination)
+        local destinationKind = requireString("drag action destination.kind", destination.kind)
+        if destinationKind == "point" then
+            local bad = unknownKey("drag action point destination", destination, { kind = true, point = true })
+            if bad ~= nil then error(bad, 2) end
+            result.destination = table.freeze({ kind = destinationKind, point = point("drag action destination.point", destination.point) })
+        elseif destinationKind == "locator" then
+            local bad = unknownKey("drag action locator destination", destination, { kind = true, locator = true })
+            if bad ~= nil then error(bad, 2) end
+            result.destination = table.freeze({ kind = destinationKind, locator = locatorRef("drag action destination.locator", destination.locator) })
+        else
+            error('drag action destination.kind must be "point" or "locator"', 2)
+        end
+    else
+        error("action kind must be click, key, scroll or drag", 2)
+    end
+    result.preconditions = preconditions("action preconditions", value.preconditions)
+    local frozen = table.freeze(result)
+    minted.action[frozen] = true
+    return frozen
+end
+
+local Binding = {}
+model.Binding = Binding
+function Binding.new(spec: { [string]: any }): Binding
+    local value = requireTable("Binding.new", spec)
+    local unknown = unknownKey("Binding.new", value, {
+        id = true, surface = true, target = true, placement = true,
+        identity = true, readers = true, actions = true,
+    })
+    if unknown ~= nil then error(unknown, 2) end
+    local actions = denseList("binding actions", value.actions, true)
+    local actionCopies: { Action } = {}
+    local actionIds: { [string]: boolean } = {}
+    for index = 1, #actions do
+        local action = Action.new(actions[index])
+        if actionIds[action.id] then error("binding repeats action '" .. action.id .. "'", 2) end
+        actionIds[action.id] = true
+        actionCopies[index] = action
+    end
+    local result = table.freeze({
+        id = requireIdentifier("binding id", value.id),
+        surface = requireIdentifier("binding surface", value.surface),
+        target = requireIdentifier("binding target", value.target),
+        placement = placement("binding placement", value.placement),
+        identity = identity("binding identity", value.identity),
+        readers = stringList("binding readers", value.readers, true, true),
+        actions = table.freeze(actionCopies),
+    })
+    minted.binding[result] = true
+    return result :: any
+end
+
+local Transition = {}
+model.Transition = Transition
+function Transition.new(spec: { [string]: any }): Transition
+    local value = requireTable("Transition.new", spec)
+    local unknown = unknownKey("Transition.new", value, { id = true, from = true, trigger = true, to = true, verification = true })
+    if unknown ~= nil then error(unknown, 2) end
+    local triggerValue = requireTable("transition trigger", value.trigger)
+    local triggerKind = requireString("transition trigger.kind", triggerValue.kind)
+    local trigger: { [string]: any } = { kind = triggerKind }
+    if triggerKind == "action" then
+        local bad = unknownKey("action transition trigger", triggerValue, { kind = true, binding = true, action = true })
+        if bad ~= nil then error(bad, 2) end
+        trigger.binding = requireIdentifier("transition trigger binding", triggerValue.binding)
+        trigger.action = requireIdentifier("transition trigger action", triggerValue.action)
+    elseif triggerKind == "timeout" then
+        local bad = unknownKey("timeout transition trigger", triggerValue, { kind = true, milliseconds = true })
+        if bad ~= nil then error(bad, 2) end
+        trigger.milliseconds = nonNegative("transition timeout milliseconds", triggerValue.milliseconds)
+    elseif triggerKind == "external" then
+        local bad = unknownKey("external transition trigger", triggerValue, { kind = true, name = true })
+        if bad ~= nil then error(bad, 2) end
+        trigger.name = requireIdentifier("transition external name", triggerValue.name)
+    else
+        error('transition trigger.kind must be "action", "timeout" or "external"', 2)
+    end
+    local verificationValue = requireTable("transition verification", value.verification)
+    local verificationUnknown = unknownKey("transition verification", verificationValue, { kind = true, timeout_ms = true, attempts = true })
+    if verificationUnknown ~= nil then error(verificationUnknown, 2) end
+    if verificationValue.kind ~= "resolve" then error('transition verification.kind must be "resolve"', 2) end
+    local result = table.freeze({
+        id = requireIdentifier("transition id", value.id),
+        from = statePattern("transition from", value.from),
+        trigger = table.freeze(trigger),
+        to = statePattern("transition to", value.to),
+        verification = table.freeze({
+            kind = "resolve",
+            timeout_ms = nonNegative("transition verification timeout_ms", verificationValue.timeout_ms),
+            attempts = positive("transition verification attempts", verificationValue.attempts),
+        }),
+    })
+    minted.transition[result] = true
+    return result :: any
+end
+
+local function mapById<T>(what: string, list: { T }, kind: string): { [string]: T }
+    local map: { [string]: T } = {}
+    for index = 1, #list do
+        local object: any = list[index]
+        if type(object) ~= "table" or type(object.id) ~= "string" then
+            error(what .. "[" .. tostring(index) .. "] is not a framework object", 3)
+        end
+        if map[object.id] ~= nil then error(kind .. " '" .. object.id .. "' is declared twice", 3) end
+        map[object.id] = object
+    end
+    return map
+end
+
+local function contains(list: { string }, value: string): boolean
+    for index = 1, #list do if list[index] == value then return true end end
+    return false
+end
+
+local function requireMapObject(what: string, map: { [string]: any }, id: string): any
+    local object = map[id]
+    if object == nil then error(what .. ' names unknown id "' .. id .. '"', 3) end
+    return object
+end
+
+local function validateRef(
+    what: string,
+    ref: LocatorRef,
+    targetId: string,
+    locators: { [string]: Locator },
+    variants: { [string]: LocatorVariant }
+)
+    local locator = requireMapObject(what .. ".locator", locators, ref.locator) :: Locator
+    if locator.target ~= targetId then error(what .. ' locator belongs to target "' .. locator.target .. '", not "' .. targetId .. '"', 3) end
+    if ref.variant ~= nil then
+        local variant = requireMapObject(what .. ".variant", variants, ref.variant) :: LocatorVariant
+        if variant.locator ~= locator.id then error(what .. " variant does not belong to its locator", 3) end
+    end
+end
+
+local function validatePredicate(
+    what: string,
+    predicate: any,
+    targetId: string,
+    locators: { [string]: Locator },
+    variants: { [string]: LocatorVariant },
+    readers: { [string]: Reader }
+)
+    if predicate.locator ~= nil then
+        validateRef(what, predicate.locator, targetId, locators, variants)
+    else
+        requireMapObject(what .. ".reader", readers, predicate.reader)
+        if readers[predicate.reader].target ~= targetId then error(what .. " reader is not owned by the binding target", 3) end
+    end
+end
+
+local function validateState(
+    what: string,
+    state: any,
+    contextById: { [string]: Context },
+    surfaceById: { [string]: any }
+)
+    requireMapObject(what .. ".context", contextById, state.context)
+    if #state.surfaces == 0 then error(what .. ".surfaces may not be empty", 3) end
+    local previous: any = nil
+    for index = 1, #state.surfaces do
+        local surface = requireMapObject(what .. ".surfaces", surfaceById, state.surfaces[index])
+        if index == 1 then
+            if surface.kind ~= "scene" then error(what .. " must start with a scene surface", 3) end
+            if not contains(surface.contexts, state.context) then error(what .. " scene does not support its context", 3) end
+        elseif surface.kind == "scene" then
+            error(what .. " may contain only one scene at the bottom", 3)
+        elseif surface.kind == "overlay" then
+            if previous.kind == "interrupt" then error(what .. " may not place an overlay above an interrupt", 3) end
+            if not contains(surface.covers, previous.id) then error(what .. " overlay does not cover the preceding surface", 3) end
+            if not contains(surface.contexts, state.context) then error(what .. " overlay does not support its context", 3) end
+        elseif surface.kind == "interrupt" then
+            if index ~= #state.surfaces then error(what .. " interrupt must be the top surface", 3) end
+            if #surface.contexts > 0 and not contains(surface.contexts, state.context) then error(what .. " interrupt does not support its context", 3) end
+        end
+        previous = surface
+    end
+end
+
+local RuntimeModel = {}
+model.RuntimeModel = RuntimeModel
+function RuntimeModel.new(spec: { [string]: any }): RuntimeModel
+    local value = requireTable("RuntimeModel.new", spec)
+    local unknown = unknownKey("RuntimeModel.new", value, {
+        schema_version = true, base_resolution = true, base_dpi = true,
+        contexts = true, targets = true, locators = true, locator_variants = true,
+        readers = true, surfaces = true, bindings = true, transitions = true,
+    })
+    if unknown ~= nil then error(unknown, 2) end
+    if value.schema_version ~= 1 then error("runtime model schema_version must be 1", 2) end
+    local contexts: { Context } = {}
+    for index, entry in denseList("runtime model contexts", value.contexts, false) do contexts[index] = if model.is_context(entry) then entry else Context.new(entry) end end
+    local targets: { Target } = {}
+    for index, entry in denseList("runtime model targets", value.targets, false) do targets[index] = if model.is_target(entry) then entry else Target.new(entry) end end
+    local locators: { Locator } = {}
+    for index, entry in denseList("runtime model locators", value.locators, false) do locators[index] = if model.is_locator(entry) then entry else Locator.new(entry) end end
+    local variants: { LocatorVariant } = {}
+    for index, entry in denseList("runtime model locator_variants", value.locator_variants, true) do variants[index] = if model.is_locator_variant(entry) then entry else LocatorVariant.new(entry) end end
+    local readers: { Reader } = {}
+    for index, entry in denseList("runtime model readers", value.readers, true) do readers[index] = if model.is_reader(entry) then entry else Reader.new(entry) end end
+    local surfaces: { any } = {}
+    for index, entry in denseList("runtime model surfaces", value.surfaces, false) do surfaces[index] = if model.is_surface(entry) then entry else Surface.new(entry) end end
+    local bindings: { Binding } = {}
+    for index, entry in denseList("runtime model bindings", value.bindings, false) do bindings[index] = if model.is_binding(entry) then entry else Binding.new(entry) end end
+    local transitions: { Transition } = {}
+    for index, entry in denseList("runtime model transitions", value.transitions, true) do transitions[index] = if model.is_transition(entry) then entry else Transition.new(entry) end end
+
+    local contextById = mapById("contexts", contexts, "context")
+    local targetById = mapById("targets", targets, "target")
+    local locatorById = mapById("locators", locators, "locator")
+    local variantById = mapById("locator variants", variants, "locator variant")
+    local readerById = mapById("readers", readers, "reader")
+    local surfaceById = mapById("surfaces", surfaces, "surface")
+    local bindingById = mapById("bindings", bindings, "binding")
+    local transitionById = mapById("transitions", transitions, "transition")
+
+    local result: any = {
+        schema_version = 1,
+        base_resolution = size("runtime model base_resolution", value.base_resolution),
+        base_dpi = size("runtime model base_dpi", value.base_dpi),
+        contexts = table.freeze(contexts), targets = table.freeze(targets),
+        locators = table.freeze(locators), locator_variants = table.freeze(variants),
+        readers = table.freeze(readers), surfaces = table.freeze(surfaces),
+        bindings = table.freeze(bindings), transitions = table.freeze(transitions),
+        context_by_id = table.freeze(contextById), target_by_id = table.freeze(targetById),
+        locator_by_id = table.freeze(locatorById), locator_variant_by_id = table.freeze(variantById),
+        reader_by_id = table.freeze(readerById), surface_by_id = table.freeze(surfaceById),
+        binding_by_id = table.freeze(bindingById), transition_by_id = table.freeze(transitionById),
+    }
+
+    for _, target in targets do
+        if target.geometry ~= nil and target.geometry.kind == "relative" then
+            validateRef(
+                "target '" .. target.id .. "' geometry anchor",
+                target.geometry.anchor,
+                target.id,
+                locatorById,
+                variantById
+            )
+        end
+        for _, locatorId in target.locators do
+            local locator = requireMapObject("target locators", locatorById, locatorId) :: Locator
+            if locator.target ~= target.id then error("target '" .. target.id .. "' lists a locator owned by '" .. locator.target .. "'", 2) end
+        end
+        for _, readerId in target.readers do
+            local reader = requireMapObject("target readers", readerById, readerId) :: Reader
+            if reader.target ~= target.id then error("target '" .. target.id .. "' lists a reader owned by '" .. reader.target .. "'", 2) end
+        end
+    end
+    for _, locator in locators do
+        local target = requireMapObject("locator target", targetById, locator.target) :: Target
+        if not contains(target.locators, locator.id) then error("locator '" .. locator.id .. "' is not listed by its target", 2) end
+        if locator.kind == "text" then
+            local reader = requireMapObject("text locator reader", readerById, locator.reader :: string) :: Reader
+            if reader.target ~= target.id then error("text locator '" .. locator.id .. "' uses a reader from another target", 2) end
+        elseif locator.kind == "template" and locator.variants ~= nil then
+            for _, variantId in locator.variants do
+                local variant = requireMapObject("locator variants", variantById, variantId) :: LocatorVariant
+                if variant.locator ~= locator.id then error("locator '" .. locator.id .. "' lists a variant owned by another locator", 2) end
+            end
+        elseif locator.kind == "relative" then
+            validateRef("relative locator anchor", locator.anchor :: LocatorRef, target.id, locatorById, variantById)
+        elseif locator.kind == "collection" then
+            validateRef(
+                "collection item_locator",
+                locator.item_locator :: LocatorRef,
+                target.id,
+                locatorById,
+                variantById
+            )
+        end
+    end
+    for _, variant in variants do
+        local locator = requireMapObject("locator variant locator", locatorById, variant.locator) :: Locator
+        if locator.kind ~= "template" then error("locator variant '" .. variant.id .. "' belongs to a non-template locator", 2) end
+        if locator.variants == nil or not contains(locator.variants, variant.id) then error("locator variant '" .. variant.id .. "' is not listed by its locator", 2) end
+    end
+    for _, reader in readers do
+        local target = requireMapObject("reader target", targetById, reader.target) :: Target
+        if not contains(target.readers, reader.id) then error("reader '" .. reader.id .. "' is not listed by its target", 2) end
+    end
+    for _, surface in surfaces do
+        for _, contextId in surface.contexts do requireMapObject("surface context", contextById, contextId) end
+        if surface.kind == "overlay" then
+            for _, coveredId in surface.covers do
+                local covered = requireMapObject("surface covers", surfaceById, coveredId)
+                if covered.kind ~= "scene" and covered.kind ~= "overlay" then error("overlay '" .. surface.id .. "' may cover only scene or overlay surfaces", 2) end
+                if covered.id == surface.id then error("overlay '" .. surface.id .. "' may not cover itself", 2) end
+            end
+        end
+    end
+
+    local coverVisit: { [string]: number } = {}
+    local function visitSurface(id: string)
+        local state = coverVisit[id]
+        if state == 1 then
+            error("surface covers relation contains a cycle at '" .. id .. "'", 2)
+        end
+        if state == 2 then return end
+        coverVisit[id] = 1
+        for _, coveredId in surfaceById[id].covers or {} do
+            visitSurface(coveredId)
+        end
+        coverVisit[id] = 2
+    end
+    for _, surface in surfaces do visitSurface(surface.id) end
+
+    local bindingsBySurface: { [string]: { Binding } } = {}
+    local bindingsByTarget: { [string]: { Binding } } = {}
+    for _, binding in bindings do
+        requireMapObject("binding surface", surfaceById, binding.surface)
+        local target = requireMapObject("binding target", targetById, binding.target) :: Target
+        if binding.placement.kind == "target_geometry" and target.geometry == nil then error("binding '" .. binding.id .. "' uses target_geometry but its target has no geometry", 2) end
+        if binding.placement.kind == "relative" then validateRef("binding placement anchor", binding.placement.anchor, target.id, locatorById, variantById) end
+        local readerIds = target.readers
+        for _, readerId in binding.readers do
+            local reader = requireMapObject("binding reader", readerById, readerId) :: Reader
+            if reader.target ~= target.id or not contains(readerIds, readerId) then error("binding '" .. binding.id .. "' exposes a reader outside its target", 2) end
+        end
+        local positiveIdentity = #binding.identity.all > 0 or #binding.identity.any > 0
+        if positiveIdentity then
+            for _, predicate in binding.identity.all do validatePredicate("binding identity", predicate, target.id, locatorById, variantById, readerById) end
+            for _, predicate in binding.identity.any do validatePredicate("binding identity", predicate, target.id, locatorById, variantById, readerById) end
+        end
+        for _, predicate in binding.identity.none do validatePredicate("binding identity", predicate, target.id, locatorById, variantById, readerById) end
+        for _, action in binding.actions do
+            if action.locator ~= nil then validateRef("binding action locator", action.locator, target.id, locatorById, variantById) end
+            for _, predicate in action.preconditions do validatePredicate("binding action precondition", predicate, target.id, locatorById, variantById, readerById) end
+            if action.destination ~= nil and action.destination.kind == "locator" then validateRef("binding drag destination", action.destination.locator, target.id, locatorById, variantById) end
+        end
+        if bindingsBySurface[binding.surface] == nil then bindingsBySurface[binding.surface] = {} end
+        table.insert(bindingsBySurface[binding.surface], binding)
+        if bindingsByTarget[binding.target] == nil then bindingsByTarget[binding.target] = {} end
+        table.insert(bindingsByTarget[binding.target], binding)
+    end
+    for _, surface in surfaces do
+        local rows = bindingsBySurface[surface.id] or {}
+        local positive = false
+        for _, binding in rows do if #binding.identity.all > 0 or #binding.identity.any > 0 then positive = true end end
+        if not positive then error("surface '" .. surface.id .. "' has no positive identity binding", 2) end
+    end
+
+    for _, transition in transitions do
+        validateState("transition '" .. transition.id .. "' from", transition.from, contextById, surfaceById)
+        validateState("transition '" .. transition.id .. "' to", transition.to, contextById, surfaceById)
+        if transition.trigger.kind == "action" then
+            local binding = requireMapObject("transition trigger binding", bindingById, transition.trigger.binding) :: Binding
+            local actionFound = false
+            for _, action in binding.actions do if action.id == transition.trigger.action then actionFound = true end end
+            if not actionFound then error("transition '" .. transition.id .. "' names an action not owned by its binding", 2) end
+            if not contains(transition.from.surfaces, binding.surface) then error("transition '" .. transition.id .. "' action binding is not present in its from state", 2) end
+        end
+    end
+
+    local surfacesByKind: { [string]: { any } } = { scene = {}, overlay = {}, interrupt = {} }
+    for _, surface in surfaces do table.insert(surfacesByKind[surface.kind], surface) end
+    for key, list in surfacesByKind do surfacesByKind[key] = table.freeze(list) end
+    for key, list in bindingsBySurface do bindingsBySurface[key] = table.freeze(list) end
+    for key, list in bindingsByTarget do bindingsByTarget[key] = table.freeze(list) end
+    local locatorVariantsByLocator: { [string]: { LocatorVariant } } = {}
+    for _, variant in variants do
+        local list = locatorVariantsByLocator[variant.locator]
+        if list == nil then
+            list = {}
+            locatorVariantsByLocator[variant.locator] = list
+        end
+        table.insert(list, variant)
+    end
+    local readersByTarget: { [string]: { Reader } } = {}
+    for _, reader in readers do
+        local list = readersByTarget[reader.target]
+        if list == nil then
+            list = {}
+            readersByTarget[reader.target] = list
+        end
+        table.insert(list, reader)
+    end
+    for key, list in locatorVariantsByLocator do locatorVariantsByLocator[key] = table.freeze(list) end
+    for key, list in readersByTarget do readersByTarget[key] = table.freeze(list) end
+    result.bindings_by_surface = table.freeze(bindingsBySurface)
+    result.bindings_by_target = table.freeze(bindingsByTarget)
+    result.locator_variants_by_locator = table.freeze(locatorVariantsByLocator)
+    result.readers_by_target = table.freeze(readersByTarget)
+    result.surfaces_by_kind = table.freeze(surfacesByKind)
+    local frozen = table.freeze(result)
+    minted.runtime_model[frozen] = true
+    return frozen :: any
+end
+
+model.compile = RuntimeModel.new
+model.LocatorRef = table.freeze({ new = locatorRef })
+
+function model.attach_model_hash(value: RuntimeModel, hash: any): RuntimeModel
+    if not model.is_runtime_model(value) then
+        error("attach_model_hash needs a framework-minted RuntimeModel", 2)
+    end
+    modelHashes[value] = sha256("model hash", hash)
+    return value
+end
+
+function model.model_hash(value: RuntimeModel): string?
+    if not model.is_runtime_model(value) then
+        error("model_hash needs a framework-minted RuntimeModel", 2)
+    end
+    return modelHashes[value]
 end
 
 return model

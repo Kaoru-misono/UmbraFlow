@@ -180,4 +180,3 @@ The harness may be C++ or Luau, but it should test the public result types and
 not reach into implementation-specific tables. The fixture files are the
 stable cross-agent contract; runtime and resolver agents must not modify them
 to make an implementation pass.
-

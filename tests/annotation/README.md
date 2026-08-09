@@ -24,4 +24,3 @@ The intended assertion layers are:
 Do not turn the fixture format into a copy of the runtime TOML format. The
 fixtures are behavior contracts and should remain stable if the deployment
 schema is reorganized.
-

@@ -51,4 +51,3 @@ differently; the behavior and expected result are the stable part of the test.
 | `09-stale-receipt.json` | A receipt from an earlier frame cannot authorize a later action. |
 | `10-unknown-dark-modal.json` | An unmodeled dark modal remains unknown and non-actionable. |
 | `11-declared-observed-transition.json` | Declared policy and observed history remain separate. |
-
