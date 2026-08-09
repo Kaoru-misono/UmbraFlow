@@ -1,166 +1,126 @@
 #include <trace/event.hpp>
 #include <trace/file-sink.hpp>
 #include <trace/recorder.hpp>
-#include <trace/replay-source.hpp>
 #include <trace/sink.hpp>
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
-#include <domain/error.hpp>
-#include <domain/ids.hpp>
-#include <domain/key.hpp>
-#include <domain/space.hpp>
-
-#include <vision/sad.hpp>
+#include <domain/content-hash.hpp>
 
 #include <doctest/doctest.h>
 
-#include <algorithm>
-#include <array>
-#include <charconv>
+#include <chrono>
+#include <concepts>
 #include <cstddef>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <system_error>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace uf::trace
 {
+    static_assert(
+        !std::constructible_from<TraceScalar, std::vector<std::byte>>
+    );
+    static_assert(
+        !std::constructible_from<TraceScalar, std::vector<TraceField>>
+    );
+
     namespace
     {
-        constexpr auto k_runId        = TaskRunId{7};
-        constexpr auto k_generationId = GenerationId{3};
-
-        [[nodiscard]]
-        auto pixelRect(uint32 x, uint32 y, uint32 width, uint32 height) -> PixelRect
+        [[nodiscard]] auto hashOf(char digit) -> ContentHash
         {
-            auto const rect = PixelRect::create(x, y, width, height);
-            REQUIRE(rect.has_value());
-            return *rect;
+            auto const encoded = "sha256:" + std::string(64U, digit);
+            auto const hash    = ContentHash::parse(encoded);
+            REQUIRE(hash.has_value());
+            return *hash;
         }
 
-        // Serializes every emit into a caller-owned buffer. The buffer outlives
-        // the sink, which the recorder owns: RecordedRun declares it first.
-        class CollectingTraceSink final : public ITraceSink
+        [[nodiscard]]
+        auto streamSpec(
+            std::string sessionId = "session-1",
+            char manifestDigit = 'a',
+            std::string producer = "operator.host"
+        ) -> TraceStreamSpec
         {
-            std::vector<std::string>* m_lines;
+            return TraceStreamSpec{
+                .sessionId           = std::move(sessionId),
+                .sessionManifestHash = hashOf(manifestDigit),
+                .producer            = std::move(producer),
+            };
+        }
+
+        [[nodiscard]]
+        auto eventSpec(
+            std::string eventType = "host.audit"
+        ) -> TraceEventSpec
+        {
+            return TraceEventSpec{
+                .eventType = std::move(eventType),
+                .audit     = AuditMetadata{
+                    .actor = "operator.agent",
+                },
+                .payload   = TypedTracePayload{
+                    .schemaHash = hashOf('b'),
+                },
+            };
+        }
+
+        class CollectingSink final : public ITraceSink
+        {
+            std::vector<TraceEvent> m_events{};
 
         public:
-            explicit CollectingTraceSink(std::vector<std::string>* lines) noexcept
-                : m_lines{lines}
+            [[nodiscard]] auto append(TraceEvent const& event) -> Status override
             {
-            }
-
-            [[nodiscard]] auto emit(StampedTraceEvent const& event) -> Status override
-            {
-                m_lines->emplace_back(serializeTraceEvent(event));
+                m_events.emplace_back(event);
                 return ok();
-            }
-        };
-
-        // Fails the first emit and records every later one into a caller-owned
-        // buffer. Failing only once lets a test read what the recorder stamped
-        // AFTER a lost event: the surviving seq is the only evidence the counter
-        // advanced across the failure instead of reusing the lost number.
-        class FailFirstTraceSink final : public ITraceSink
-        {
-            std::vector<std::string>* m_lines;
-            bool                      m_failed{false};
-
-        public:
-            explicit FailFirstTraceSink(std::vector<std::string>* lines) noexcept
-                : m_lines{lines}
-            {
-            }
-
-            [[nodiscard]] auto emit(StampedTraceEvent const& event) -> Status override
-            {
-                if (!m_failed)
-                {
-                    m_failed = true;
-                    return fail(
-                        AutomationErrorKind::IoFailure,
-                        "sink deliberately failing"
-                    );
-                }
-                m_lines->emplace_back(serializeTraceEvent(event));
-                return ok();
-            }
-        };
-
-        // One recorder over a collecting sink. Nothing outside modules/trace can
-        // build a StampedTraceEvent, so every serialized line goes through one.
-        class RecordedRun final
-        {
-            std::vector<std::string> m_lines{};
-            TraceRecorder            m_recorder;
-
-        public:
-            explicit RecordedRun(FrontEnd frontEnd = FrontEnd::Task)
-                : m_recorder{
-                      std::make_unique<CollectingTraceSink>(&m_lines),
-                      k_runId,
-                      k_generationId,
-                      frontEnd,
-                  }
-            {
-            }
-
-            [[nodiscard]] auto emit(TraceEvent const& event) -> Status
-            {
-                return m_recorder.emit(event);
             }
 
             [[nodiscard]]
-            auto lines() const noexcept UF_LIFETIME_BOUND
-                -> std::vector<std::string> const&
+            auto events() const noexcept UF_LIFETIME_BOUND
+                -> std::vector<TraceEvent> const&
             {
-                return m_lines;
+                return m_events;
             }
         };
 
-        // The golden form of one event: emitted through a fresh recorder, so the
-        // sequence is always 1, then stripped of the non-golden `meta` member.
-        [[nodiscard]]
-        auto goldenLine(TraceEvent const& event) -> std::string
+        class FailingSink final : public ITraceSink
         {
-            auto run = RecordedRun{};
-            REQUIRE(run.emit(event).has_value());
-            REQUIRE(run.lines().size() == 1U);
-            return stripNonGoldenFields(run.lines().back());
-        }
+            uint64 m_calls{};
 
-        // The wall clock recorded in one serialized line's non-golden meta member.
-        [[nodiscard]]
-        auto wallClockOf(std::string_view line) -> int64
-        {
-            auto constexpr member = std::string_view{"\"meta\":{\"wallClock\":"};
-            auto const start = line.find(member);
-            REQUIRE(start != std::string_view::npos);
+        public:
+            [[nodiscard]]
+            auto append(TraceEvent const& /*event*/) -> Status override
+            {
+                ++m_calls;
+                return fail(
+                    std::make_error_code(std::errc::io_error),
+                    "deliberate sink failure"
+                );
+            }
 
-            auto const digits = line.substr(start + member.size());
-            auto value        = int64{0};
-            auto const parsed = std::from_chars(
-                digits.data(),
-                digits.data() + digits.size(),
-                value
-            );
-            REQUIRE(parsed.ec == std::errc{});
-            return value;
-        }
+            [[nodiscard]] auto calls() const noexcept -> uint64
+            {
+                return m_calls;
+            }
+        };
 
         [[nodiscard]]
-        auto readLines(std::filesystem::path const& path) -> std::vector<std::string>
+        auto readLines(
+            std::filesystem::path const& path
+        ) -> std::vector<std::string>
         {
             auto stream = std::ifstream{path, std::ios::binary};
             REQUIRE(stream.is_open());
+
             auto lines = std::vector<std::string>{};
             auto line  = std::string{};
             while (std::getline(stream, line))
@@ -170,1072 +130,287 @@ namespace uf::trace
             return lines;
         }
 
-        [[nodiscard]]
-        auto uniqueTracePath() -> std::filesystem::path
+        [[nodiscard]] auto uniqueTracePath() -> std::filesystem::path
         {
-            static auto counter = 0;
+            static auto counter = uint64{};
             ++counter;
+            auto const nonce = std::chrono::steady_clock::now()
+                                   .time_since_epoch()
+                                   .count();
             return std::filesystem::temp_directory_path()
-                / ("uf-trace-" + std::to_string(counter) + ".jsonl");
+                / std::format("uf-trace-v2-{}-{}.jsonl", nonce, counter);
         }
     }
 
-    TEST_CASE("serializeTraceEvent emits every populated group in schema order")
+    TEST_CASE("recorder owns stream identity, order, and typed serialization")
     {
-        // Deliberately synthetic: no real event carries a surface group, an action
-        // group and a click at once. It pins the field order the golden lines
-        // below depend on, so a reordering breaks here once rather than everywhere.
-        auto event = TraceEvent{
-            .kind  = TraceEventKind::EngineActionFound,
-            .frame = FrameIdentity{
-                CaptureSessionId{uint64{7}},
-                TargetGeneration::fromValue(3),
-                FrameId{uint64{42}},
-            },
-            .action = TraceEvent::Action{
-                .outcome     = ActionSearch::Found,
-                .sadScore    = uint64{1234},
-                .maximumSad  = uint64{5000},
-                .matchedRect = pixelRect(10, 20, 30, 40),
-            },
-            .run = TraceEvent::Run{
-                .projectId        = "personal.game",
-                .taskName         = "daily",
-                .sourceHash       = "abc123",
-                .modelHash        = "m0d3l",
-                .frameworkVersion = "0.1.0",
-                .frameworkHash    = "def456",
-                .luauVersion      = "6",
-                .seed             = uint64{42},
-            },
-            .resources = TraceEvent::Resources{
-                .targets  = {"accept"},
-                .surfaces = {"home"},
-            },
-            .nativeCall = TraceEvent::NativeCall{
-                .verb            = "click",
-                .outcome         = NativeCallOutcome::Succeeded,
-                .cycleOrdinal    = uint64{4},
-                .hitCycleOrdinal = uint64{5},
-            },
-            .templateHash = std::string{"sha256:abcdef"},
-            .stopReason   = SadSearchStopReason::TimedOut,
-            .runOutcome   = RunOutcome::Completed,
-            .errorKind    = AutomationErrorKind::RecognitionIncomplete,
-            .message      = std::string{"hello"},
-            .clickClient  = Point<ClientSpace>{128.0F, 64.0F},
+        auto sink         = std::make_unique<CollectingSink>();
+        auto sinkObserver = sink.get();
+        auto recorder     = TraceRecorder::create(std::move(sink), streamSpec());
+        REQUIRE(recorder.has_value());
+
+        auto event = eventSpec("host.delivery");
+        event.audit.references = {
+            TraceReference{.type = "operation", .id = "op-1"},
+            TraceReference{.type = "observation", .id = "obs-1"},
         };
-
-        auto constexpr expected = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"engine.action_found\""
-            ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-            ",\"frameId\":42,\"sessionId\":7,\"targetGeneration\":3"
-            ",\"actionOutcome\":\"Found\",\"sadScore\":1234,\"maximumSad\":5000"
-            ",\"matchedRect\":{\"x\":10,\"y\":20,\"width\":30,\"height\":40}"
-            ",\"projectId\":\"personal.game\",\"taskName\":\"daily\""
-            ",\"sourceHash\":\"abc123\",\"modelHash\":\"m0d3l\""
-            ",\"frameworkVersion\":\"0.1.0\""
-            ",\"frameworkHash\":\"def456\",\"luauVersion\":\"6\",\"seed\":42"
-            ",\"targets\":[\"accept\"],\"surfaces\":[\"home\"]"
-            ",\"verb\":\"click\",\"cycleOrdinal\":4,\"hitCycleOrdinal\":5"
-            ",\"outcome\":\"Succeeded\""
-            ",\"templateHash\":\"sha256:abcdef\""
-            ",\"stopReason\":\"TimedOut\",\"runOutcome\":\"Completed\""
-            ",\"errorKind\":\"recognition_incomplete\",\"message\":\"hello\""
-            ",\"clickClientX\":128,\"clickClientY\":64}"
+        event.payload.fields = {
+            TraceField{.name = "zeta", .value = uint64{7}},
+            TraceField{.name = "alpha", .value = std::string{"a\"b\\c"}},
+            TraceField{.name = "enabled", .value = true},
+            TraceField{.name = "offset", .value = int64{-2}},
+            TraceField{.name = "reason", .value = std::monostate{}},
         };
+        REQUIRE(recorder->emit(event).has_value());
+        REQUIRE(sinkObserver->events().size() == 1U);
 
-        CHECK(goldenLine(event) == expected);
-    }
+        auto const& recorded = sinkObserver->events().front();
+        CHECK(recorded.eventType() == "host.delivery");
+        CHECK(recorded.sessionId() == "session-1");
+        CHECK(recorded.sessionManifestHash() == hashOf('a'));
+        CHECK(recorded.producer() == "operator.host");
+        CHECK(recorded.sequence() == 1U);
 
-    TEST_CASE("serializeTraceEvent emits only the stamp for a minimal event")
-    {
-        auto const event = TraceEvent{.kind = TraceEventKind::EngineActionAuthorized};
-
-        auto constexpr expected = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"engine.action_authorized\""
-            ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\"}"
-        };
-
-        CHECK(goldenLine(event) == expected);
-    }
-
-    TEST_CASE("every front-end reaches the wire under a spelling of its own")
-    {
-        // The stamp is the only thing on a line that says who produced it, so two
-        // front-ends sharing a spelling would merge two streams a reader has to
-        // tell apart. The table is exhaustive by construction: frontEndWireName
-        // switches with no default, so an unspelled value fails to compile.
-        auto const spellings = std::array<std::pair<FrontEnd, std::string_view>, 3>{
-            {
-                {FrontEnd::Task, "task"},
-                {FrontEnd::Annotation, "annotation"},
-                {FrontEnd::Check, "check"},
-            }
-        };
-
-        auto seen = std::vector<std::string_view>{};
-        for (auto const& [frontEnd, spelling] : spellings)
-        {
-            CAPTURE(spelling);
-            CHECK(frontEndWireName(frontEnd) == spelling);
-            CHECK(std::ranges::find(seen, spelling) == seen.end());
-            seen.emplace_back(spelling);
-
-            auto run = RecordedRun{frontEnd};
-            REQUIRE(
-                run.emit(
-                       TraceEvent{
-                           .kind = TraceEventKind::EngineActionAuthorized,
-                       }
-                )
-                    .has_value()
-            );
-            REQUIRE(run.lines().size() == 1U);
-            CHECK(
-                run.lines().back().contains(
-                    std::format("\"frontEnd\":\"{}\"", spelling)
-                )
-            );
-        }
-    }
-
-    TEST_CASE("serializeTraceEvent escapes quotes, backslashes, and control bytes")
-    {
-        auto message = std::string{"a\"b\\c\n"};
-        message.push_back(static_cast<char>(0x01));
-
-        auto const event = TraceEvent{
-            .kind    = TraceEventKind::EngineActionRejected,
-            .message = message,
-        };
-
-        auto constexpr expected = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"engine.action_rejected\""
-            ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-            ",\"message\":\"a\\\"b\\\\c\\n\\u0001\"}"
-        };
-
-        CHECK(goldenLine(event) == expected);
-    }
-
-    TEST_CASE("serializeTraceEvent emits a full run.started in schema order")
-    {
-        auto const event = TraceEvent{
-            .kind = TraceEventKind::RunStarted,
-            .run  = TraceEvent::Run{
-                .projectId        = "personal.game",
-                .taskName         = "daily",
-                .sourceHash       = "abc123",
-                .modelHash        = "m0d3l",
-                .frameworkVersion = "0.1.0",
-                .frameworkHash    = "def456",
-                .luauVersion      = "6",
-                .seed             = uint64{42},
-            },
-        };
-
-        auto constexpr expected = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.started\""
-            ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-            ",\"projectId\":\"personal.game\",\"taskName\":\"daily\""
-            ",\"sourceHash\":\"abc123\",\"modelHash\":\"m0d3l\""
-            ",\"frameworkVersion\":\"0.1.0\""
-            ",\"frameworkHash\":\"def456\",\"luauVersion\":\"6\",\"seed\":42}"
-        };
-
-        CHECK(goldenLine(event) == expected);
-    }
-
-    TEST_CASE("run.started distinguishes two runs of the same task on framework build")
-    {
-        // Why the framework version and bundle hash are stamped: a task whose own
-        // bytes did not change, run against a rebuilt framework, must not produce
-        // the same line.
-        auto run = TraceEvent::Run{
-            .projectId        = "personal.game",
-            .taskName         = "daily",
-            .sourceHash       = "abc123",
-            .modelHash        = "m0d3l",
-            .frameworkVersion = "0.1.0",
-            .frameworkHash    = "def456",
-            .luauVersion      = "6",
-            .seed             = uint64{42},
-        };
-        auto const first = goldenLine(
-            TraceEvent{.kind = TraceEventKind::RunStarted, .run = run}
+        auto const expected = std::format(
+            "{{\"schema\":\"umbraflow-trace/v2\",\"event_type\":\"host.delivery\""
+            ",\"session_id\":\"session-1\""
+            ",\"session_manifest_hash\":\"{}\",\"monotonic_sequence\":1"
+            ",\"recorded_at_unix_millis\":{},\"audit\":{{\"actor\":"
+            "\"operator.agent\",\"producer\":\"operator.host\",\"references\":["
+            "{{\"type\":\"observation\",\"id\":\"obs-1\"}},"
+            "{{\"type\":\"operation\",\"id\":\"op-1\"}}]}}"
+            ",\"payload\":{{\"schema_hash\":\"{}\",\"fields\":["
+            "{{\"name\":\"alpha\",\"type\":\"text\",\"value\":\"a\\\"b\\\\c\"}},"
+            "{{\"name\":\"enabled\",\"type\":\"bool\",\"value\":true}},"
+            "{{\"name\":\"offset\",\"type\":\"int64\",\"value\":-2}},"
+            "{{\"name\":\"reason\",\"type\":\"null\"}},"
+            "{{\"name\":\"zeta\",\"type\":\"uint64\",\"value\":7}}]}}}}",
+            hashOf('a').hex(),
+            recorded.recordedAtUnixMillis(),
+            hashOf('b').hex()
         );
+        CHECK(serializeTraceEvent(recorded) == expected);
+    }
 
-        run.frameworkHash = "999999";
-        auto const second = goldenLine(
-            TraceEvent{.kind = TraceEventKind::RunStarted, .run = run}
+    TEST_CASE("invalid input does not consume sequence")
+    {
+        auto sink         = std::make_unique<CollectingSink>();
+        auto sinkObserver = sink.get();
+        auto recorder     = TraceRecorder::create(std::move(sink), streamSpec());
+        REQUIRE(recorder.has_value());
+
+        auto invalid = eventSpec();
+        invalid.eventType = "unnamespaced";
+        CHECK_FALSE(recorder->emit(invalid).has_value());
+
+        REQUIRE(recorder->emit(eventSpec("host.first")).has_value());
+        REQUIRE(recorder->emit(eventSpec("host.second")).has_value());
+
+        REQUIRE(sinkObserver->events().size() == 2U);
+        CHECK(sinkObserver->events()[0].sequence() == 1U);
+        CHECK(sinkObserver->events()[1].sequence() == 2U);
+    }
+
+    TEST_CASE("recorder rejects invalid stream identity before accepting events")
+    {
+        auto nullRecorder = TraceRecorder::create(
+            std::unique_ptr<ITraceSink>{},
+            streamSpec()
         );
+        CHECK_FALSE(nullRecorder.has_value());
 
-        CHECK(first != second);
+        auto invalidProducer = streamSpec();
+        invalidProducer.producer = "Operator.Host";
+        auto invalidProducerRecorder = TraceRecorder::create(
+            std::make_unique<CollectingSink>(),
+            invalidProducer
+        );
+        CHECK_FALSE(invalidProducerRecorder.has_value());
+
+        auto workspaceSession = streamSpec();
+        workspaceSession.sessionId = "E:/private/annotation-workspace.sqlite";
+        auto workspaceRecorder = TraceRecorder::create(
+            std::make_unique<CollectingSink>(),
+            workspaceSession
+        );
+        CHECK_FALSE(workspaceRecorder.has_value());
     }
 
-    TEST_CASE("serializeTraceEvent sorts the resource name lists before emitting")
+    TEST_CASE("production Trace rejects frame data and authoring workspace leaks")
     {
-        // The lists arrive unordered on purpose: an unordered container's iteration
-        // order must never reach the wire (a determinism-ledger constraint).
-        auto const event = TraceEvent{
-            .kind      = TraceEventKind::RunResourcesValidated,
-            .resources = TraceEvent::Resources{
-                .targets  = {"battle", "accept", "daily"},
-                .surfaces = {"main", "home"},
-            },
+        auto sink     = std::make_unique<CollectingSink>();
+        auto recorder = TraceRecorder::create(std::move(sink), streamSpec());
+        REQUIRE(recorder.has_value());
+
+        auto const forbiddenNames = std::vector<std::string>{
+            "screenshot",
+            "screen.shot",
+            "audit.screenshot_data",
+            "frame_bytes",
+            "frame.bytes",
+            "payload.frame_data",
+            "pixel_bytes",
+            "annotation_workspace_path",
+            "annotation.workspace.path",
         };
-
-        auto constexpr expected = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.resources_validated\""
-            ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-            ",\"targets\":[\"accept\",\"battle\",\"daily\"]"
-            ",\"surfaces\":[\"home\",\"main\"]}"
-        };
-
-        CHECK(goldenLine(event) == expected);
-    }
-
-    TEST_CASE("serializeTraceEvent emits an empty resource list as an empty array")
-    {
-        auto const event = TraceEvent{
-            .kind      = TraceEventKind::RunResourcesValidated,
-            .resources = TraceEvent::Resources{},
-        };
-
-        auto constexpr expected = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.resources_validated\""
-            ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-            ",\"targets\":[],\"surfaces\":[]}"
-        };
-
-        CHECK(goldenLine(event) == expected);
-    }
-
-    TEST_CASE("serializeTraceEvent records every task.native_call outcome")
-    {
-        // Succeeded and Empty both completed -- Empty is the Tier A completed miss
-        // -- and a failure names its kind in the snake_case spelling the script saw.
-        SUBCASE("succeeded")
+        for (auto const& name : forbiddenNames)
         {
-            // capture mints its own sequence, so its line carries no argument id.
-            auto const event = TraceEvent{
-                .kind       = TraceEventKind::TaskNativeCall,
-                .nativeCall = TraceEvent::NativeCall{
-                    .verb    = "capture",
-                    .outcome = NativeCallOutcome::Succeeded,
-                },
+            auto event = eventSpec();
+            event.payload.fields = {
+                TraceField{.name = name, .value = std::string{"redacted"}},
             };
-
-            CHECK(
-                goldenLine(event)
-                == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"task.native_call\""
-                   ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-                   ",\"verb\":\"capture\",\"outcome\":\"Succeeded\"}"
-            );
+            CHECK_FALSE(recorder->emit(event).has_value());
         }
 
-        SUBCASE("empty")
-        {
-            auto const event = TraceEvent{
-                .kind       = TraceEventKind::TaskNativeCall,
-                .nativeCall = TraceEvent::NativeCall{
-                    .verb         = "cycle_match",
-                    .outcome      = NativeCallOutcome::Empty,
-                    .cycleOrdinal = uint64{2},
-                },
-                .templateHash = std::string{"sha256:abcdef"},
-            };
-
-            CHECK(
-                goldenLine(event)
-                == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"task.native_call\""
-                   ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-                   ",\"verb\":\"cycle_match\",\"cycleOrdinal\":2"
-                   ",\"outcome\":\"Empty\",\"templateHash\":\"sha256:abcdef\"}"
-            );
-        }
-
-        SUBCASE("failed")
-        {
-            // The failure a host-side guard produces: the ledger rejects the frame
-            // before the engine sees it, so this is the ONLY line the failure
-            // writes, and its two sequences the only record of the frames used.
-            auto const event = TraceEvent{
-                .kind       = TraceEventKind::TaskNativeCall,
-                .nativeCall = TraceEvent::NativeCall{
-                    .verb            = "click",
-                    .outcome         = NativeCallOutcome::Failed,
-                    .cycleOrdinal    = uint64{3},
-                    .hitCycleOrdinal = uint64{4},
-                },
-                .errorKind  = AutomationErrorKind::StaleObservation,
-            };
-
-            CHECK(
-                goldenLine(event)
-                == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"task.native_call\""
-                   ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-                   ",\"verb\":\"click\",\"cycleOrdinal\":3,\"hitCycleOrdinal\":4"
-                   ",\"outcome\":\"Failed\",\"errorKind\":\"stale_observation\"}"
-            );
-        }
-    }
-
-    TEST_CASE("serializeTraceEvent records every run.finished outcome")
-    {
-        SUBCASE("completed")
-        {
-            auto const event = TraceEvent{
-                .kind       = TraceEventKind::RunFinished,
-                .runOutcome = RunOutcome::Completed,
-            };
-
-            CHECK(
-                goldenLine(event)
-                == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.finished\""
-                   ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-                   ",\"runOutcome\":\"Completed\"}"
-            );
-        }
-
-        SUBCASE("failed with its error kind")
-        {
-            auto const event = TraceEvent{
-                .kind       = TraceEventKind::RunFinished,
-                .runOutcome = RunOutcome::Failed,
-                .errorKind  = AutomationErrorKind::Timeout,
-            };
-
-            CHECK(
-                goldenLine(event)
-                == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.finished\""
-                   ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-                   ",\"runOutcome\":\"Failed\",\"errorKind\":\"timeout\"}"
-            );
-        }
-
-        SUBCASE("cancelled")
-        {
-            auto const event = TraceEvent{
-                .kind       = TraceEventKind::RunFinished,
-                .runOutcome = RunOutcome::Cancelled,
-            };
-
-            CHECK(
-                goldenLine(event)
-                == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.finished\""
-                   ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-                   ",\"runOutcome\":\"Cancelled\"}"
-            );
-        }
-    }
-
-    TEST_CASE("engine.observed pins its wire kind name and the frame join key")
-    {
-        // umbraflow-trace/v4 is a wire contract, so every kind name is pinned by a
-        // full line somewhere; otherwise a typo in one ships in silence.
-        auto const event = TraceEvent{
-            .kind  = TraceEventKind::EngineObserved,
-            .frame = FrameIdentity{
-                CaptureSessionId{uint64{7}},
-                TargetGeneration::fromValue(3),
-                FrameId{uint64{17}},
+        auto dataUri = eventSpec();
+        dataUri.payload.fields = {
+            TraceField{
+                .name  = "evidence",
+                .value = std::string{"data:image/png;base64,iVBORw0KGgo="},
             },
         };
+        CHECK_FALSE(recorder->emit(dataUri).has_value());
 
-        CHECK(
-            goldenLine(event)
-            == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"engine.observed\""
-               ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-               ",\"frameId\":17,\"sessionId\":7,\"targetGeneration\":3}"
-        );
-    }
-
-    TEST_CASE("engine.observation_invalidated pins its wire kind name")
-    {
-        auto const event = TraceEvent{
-            .kind  = TraceEventKind::EngineObservationInvalidated,
-            .frame = FrameIdentity{
-                CaptureSessionId{uint64{7}},
-                TargetGeneration::fromValue(3),
-                FrameId{uint64{17}},
+        auto embeddedDataUri = eventSpec();
+        embeddedDataUri.payload.fields = {
+            TraceField{
+                .name  = "evidence",
+                .value = std::string{"blocked: data:image/png;base64,AAAA"},
             },
         };
+        CHECK_FALSE(recorder->emit(embeddedDataUri).has_value());
 
-        CHECK(
-            goldenLine(event)
-            == "{\"schema\":\"umbraflow-trace/v4\""
-               ",\"kind\":\"engine.observation_invalidated\""
-               ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-               ",\"frameId\":17,\"sessionId\":7,\"targetGeneration\":3}"
-        );
-    }
+        auto encodedBytes = eventSpec();
+        encodedBytes.payload.fields = {
+            TraceField{.name = "evidence", .value = std::string(64U, 'A')},
+        };
+        CHECK_FALSE(recorder->emit(encodedBytes).has_value());
 
-    TEST_CASE("engine.scroll_delivered pins its wire kind name and its delta")
-    {
-        // The delta reaches the wire as a signed literal because a reader sums and
-        // compares it. Both directions are pinned: a sign dropped between the verb
-        // and this line would turn every scroll up into a scroll down unnoticed.
-        auto event = TraceEvent{
-            .kind  = TraceEventKind::EngineScrollDelivered,
-            .frame = FrameIdentity{
-                CaptureSessionId{uint64{7}},
-                TargetGeneration::fromValue(3),
-                FrameId{uint64{17}},
+        auto spacedEncodedBytes = eventSpec();
+        spacedEncodedBytes.payload.fields = {
+            TraceField{
+                .name  = "evidence",
+                .value = std::string{" "} + std::string(64U, '_') + " ",
             },
         };
-        event.wheelNotches = int32{-2};
+        CHECK_FALSE(recorder->emit(spacedEncodedBytes).has_value());
 
-        CHECK(
-            goldenLine(event)
-            == "{\"schema\":\"umbraflow-trace/v4\""
-               ",\"kind\":\"engine.scroll_delivered\""
-               ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-               ",\"frameId\":17,\"sessionId\":7,\"targetGeneration\":3"
-               ",\"wheelNotches\":-2}"
-        );
-
-        event.wheelNotches = int32{3};
-        CHECK(goldenLine(event).find("\"wheelNotches\":3}") != std::string::npos);
-    }
-
-    TEST_CASE("engine.pointer_move_delivered pins its wire kind name and its point")
-    {
-        // Its own kind and not an engine.action_delivered at the same coordinate:
-        // a reader summing delivered clicks would otherwise count a message that
-        // pressed nothing. The point rides the member the click and the long press
-        // already share, so a consumer joining a move to the scroll it primed
-        // reads one spelling rather than three.
-        auto event = TraceEvent{
-            .kind  = TraceEventKind::EnginePointerMoveDelivered,
-            .frame = FrameIdentity{
-                CaptureSessionId{uint64{7}},
-                TargetGeneration::fromValue(3),
-                FrameId{uint64{17}},
+        auto controlText = eventSpec();
+        controlText.payload.fields = {
+            TraceField{
+                .name  = "message",
+                .value = std::string{"line\nbreak"},
             },
         };
-        event.clickClient = Point<ClientSpace>{4.0F, 2.0F};
+        CHECK_FALSE(recorder->emit(controlText).has_value());
 
-        CHECK(
-            goldenLine(event)
-            == "{\"schema\":\"umbraflow-trace/v4\""
-               ",\"kind\":\"engine.pointer_move_delivered\""
-               ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-               ",\"frameId\":17,\"sessionId\":7,\"targetGeneration\":3"
-               ",\"clickClientX\":4,\"clickClientY\":2}"
-        );
+        auto invalidUtf8 = eventSpec();
+        auto invalidText = std::string{};
+        invalidText.push_back(static_cast<char>(0xC3));
+        invalidUtf8.payload.fields = {
+            TraceField{.name = "message", .value = std::move(invalidText)},
+        };
+        CHECK_FALSE(recorder->emit(invalidUtf8).has_value());
+
+        auto workspace = eventSpec();
+        workspace.payload.fields = {
+            TraceField{
+                .name  = "resource",
+                .value = std::string{"E:/private/annotation-workspace.sqlite"},
+            },
+        };
+        CHECK_FALSE(recorder->emit(workspace).has_value());
+
+        auto obfuscatedWorkspace = eventSpec();
+        obfuscatedWorkspace.payload.fields = {
+            TraceField{
+                .name  = "resource",
+                .value = std::string{"annotation///workspace...sqlite"},
+            },
+        };
+        CHECK_FALSE(recorder->emit(obfuscatedWorkspace).has_value());
+
+        auto frameReference = eventSpec();
+        frameReference.audit.references = {
+            TraceReference{.type = "frame.bytes", .id = "evidence-1"},
+        };
+        CHECK_FALSE(recorder->emit(frameReference).has_value());
+
+        auto oversized = eventSpec();
+        oversized.payload.fields = {
+            TraceField{
+                .name  = "message",
+                .value = std::string(4097U, 'x'),
+            },
+        };
+        CHECK_FALSE(recorder->emit(oversized).has_value());
     }
 
-    TEST_CASE("engine.action_found keeps every outcome the old kinds distinguished")
+    TEST_CASE("duplicate payload fields and references fail closed")
     {
-        auto const frame = FrameIdentity{
-            CaptureSessionId{uint64{7}},
-            TargetGeneration::fromValue(3),
-            FrameId{uint64{17}},
+        auto sink     = std::make_unique<CollectingSink>();
+        auto recorder = TraceRecorder::create(std::move(sink), streamSpec());
+        REQUIRE(recorder.has_value());
+
+        auto fields = eventSpec();
+        fields.payload.fields = {
+            TraceField{.name = "value", .value = uint64{1}},
+            TraceField{.name = "value", .value = uint64{2}},
         };
-        auto constexpr prefix = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"engine.action_found\""
-            ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-            ",\"frameId\":17,\"sessionId\":7,\"targetGeneration\":3"
+        CHECK_FALSE(recorder->emit(fields).has_value());
+
+        auto references = eventSpec();
+        references.audit.references = {
+            TraceReference{.type = "operation", .id = "op-1"},
+            TraceReference{.type = "operation", .id = "op-1"},
         };
-
-        SUBCASE("found carries the scores and the matched rect")
-        {
-            auto const event = TraceEvent{
-                .kind  = TraceEventKind::EngineActionFound,
-                .frame = frame,
-                .action = TraceEvent::Action{
-                    .outcome     = ActionSearch::Found,
-                    .sadScore    = uint64{1234},
-                    .maximumSad  = uint64{5000},
-                    .matchedRect = pixelRect(10, 20, 30, 40),
-                },
-            };
-
-            CHECK(
-                goldenLine(event)
-                == std::string{prefix}
-                    + ",\"actionOutcome\":\"Found\",\"sadScore\":1234"
-                      ",\"maximumSad\":5000"
-                      ",\"matchedRect\":{\"x\":10,\"y\":20,\"width\":30,\"height\":40}}"
-            );
-        }
-
-        SUBCASE("absent keeps the scores that prove the search ran")
-        {
-            auto const event = TraceEvent{
-                .kind  = TraceEventKind::EngineActionFound,
-                .frame = frame,
-                .action = TraceEvent::Action{
-                    .outcome    = ActionSearch::Absent,
-                    .sadScore   = uint64{9000},
-                    .maximumSad = uint64{5000},
-                },
-            };
-
-            CHECK(
-                goldenLine(event)
-                == std::string{prefix}
-                    + ",\"actionOutcome\":\"Absent\",\"sadScore\":9000"
-                      ",\"maximumSad\":5000}"
-            );
-        }
+        CHECK_FALSE(recorder->emit(references).has_value());
     }
 
-    TEST_CASE("stripNonGoldenFields removes only the meta member")
+    TEST_CASE("sink uncertainty permanently faults a recorder")
     {
-        auto constexpr withEarlyClock = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.started\""
-            ",\"seq\":1,\"meta\":{\"wallClock\":1000}}"
-        };
-        auto constexpr withLateClock = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.started\""
-            ",\"seq\":1,\"meta\":{\"wallClock\":999999}}"
-        };
-        auto constexpr withOtherSeq = std::string_view{
-            "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.started\""
-            ",\"seq\":2,\"meta\":{\"wallClock\":1000}}"
-        };
+        auto sink         = std::make_unique<FailingSink>();
+        auto sinkObserver = sink.get();
+        auto recorder     = TraceRecorder::create(std::move(sink), streamSpec());
+        REQUIRE(recorder.has_value());
 
-        // Two lines that differ only inside meta are the same record.
-        CHECK(stripNonGoldenFields(withEarlyClock) == stripNonGoldenFields(withLateClock));
-        CHECK(
-            stripNonGoldenFields(withEarlyClock)
-            == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.started\",\"seq\":1}"
-        );
-
-        // A difference anywhere else survives, so the helper cannot mask one.
-        CHECK(stripNonGoldenFields(withEarlyClock) != stripNonGoldenFields(withOtherSeq));
-
-        // A leading meta drops its trailing comma instead, and a line without a
-        // meta member is returned unchanged.
-        CHECK(
-            stripNonGoldenFields("{\"meta\":{\"wallClock\":1},\"seq\":1}")
-            == "{\"seq\":1}"
-        );
-        CHECK(stripNonGoldenFields("{\"seq\":1}") == "{\"seq\":1}");
-        CHECK(stripNonGoldenFields("not json") == "not json");
-
-        // A `meta` spelling inside a string value is not a top-level member and
-        // must survive, so a message quoting the schema is not corrupted.
-        CHECK(
-            stripNonGoldenFields("{\"message\":\"\\\"meta\\\":1\",\"seq\":1}")
-            == "{\"message\":\"\\\"meta\\\":1\",\"seq\":1}"
-        );
+        CHECK_FALSE(recorder->emit(eventSpec()).has_value());
+        CHECK_FALSE(recorder->emit(eventSpec()).has_value());
+        CHECK(sinkObserver->calls() == 1U);
     }
 
-    TEST_CASE("TraceRecorder stamps a monotonic sequence and the run identity")
-    {
-        auto run = RecordedRun{};
-        REQUIRE(run.emit(TraceEvent{.kind = TraceEventKind::RunStarted}).has_value());
-        REQUIRE(run.emit(TraceEvent{.kind = TraceEventKind::EngineObserved}).has_value());
-        REQUIRE(run.emit(TraceEvent{.kind = TraceEventKind::RunFinished}).has_value());
-
-        REQUIRE(run.lines().size() == 3U);
-        for (auto index = std::size_t{0}; index < run.lines().size(); ++index)
-        {
-            auto const& line = run.lines()[index];
-            CHECK(line.find("\"seq\":" + std::to_string(index + 1U)) != std::string::npos);
-            CHECK(line.find("\"runId\":7") != std::string::npos);
-            CHECK(line.find("\"generationId\":3,\"frontEnd\":\"task\"") != std::string::npos);
-            CHECK(line.find("\"meta\":{\"wallClock\":") != std::string::npos);
-
-            // A frozen clock, or one stubbed to zero, satisfies every other
-            // assertion in this suite: nothing else reads the value. A lower bound
-            // rather than a window keeps the case independent of the run's length.
-            constexpr auto k_epoch2020Millis = int64{1'577'836'800'000};
-            CHECK(wallClockOf(line) > k_epoch2020Millis);
-        }
-    }
-
-    TEST_CASE("TraceRecorder surfaces a sink failure and still advances the sequence")
-    {
-        // The buffer outlives the sink the recorder owns, so it is declared first.
-        auto lines    = std::vector<std::string>{};
-        auto recorder = TraceRecorder{
-            std::make_unique<FailFirstTraceSink>(&lines),
-            k_runId,
-            k_generationId,
-            FrontEnd::Task,
-        };
-
-        auto const first = recorder.emit(TraceEvent{.kind = TraceEventKind::RunStarted});
-        REQUIRE_FALSE(first.has_value());
-        CHECK(automationErrorKind(first.error()) == AutomationErrorKind::IoFailure);
-        CHECK(lines.empty());
-
-        // A lost event leaves a visible gap rather than a silently renumbered
-        // stream: the event after the failure is stamped 2, so a reader sees one
-        // line missing. A recorder that advanced only on success would stamp 1.
-        REQUIRE(
-            recorder
-                .emit(
-                    TraceEvent{
-                        .kind       = TraceEventKind::RunFinished,
-                        .runOutcome = RunOutcome::Completed,
-                    }
-                )
-                .has_value()
-        );
-        REQUIRE(lines.size() == 1U);
-        CHECK(
-            stripNonGoldenFields(lines.front())
-            == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.finished\""
-               ",\"seq\":2,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-               ",\"runOutcome\":\"Completed\"}"
-        );
-    }
-
-    TEST_CASE("FileTraceSink appends one stamped JSONL line per emit")
+    TEST_CASE("file sink appends new evidence and never truncates old bytes")
     {
         auto const path = uniqueTracePath();
-        std::filesystem::remove(path);
 
         {
-            auto sink = FileTraceSink::create(path);
+            auto sink = FileTraceSink::createNew(path);
             REQUIRE(sink.has_value());
-            auto recorder = TraceRecorder{
-                *std::move(sink),
-                k_runId,
-                k_generationId,
-                FrontEnd::Task,
-            };
-            CHECK(
-                recorder
-                    .emit(
-                        TraceEvent{
-                            .kind = TraceEventKind::RunStarted,
-                            .run  = TraceEvent::Run{
-                                .projectId        = "personal.game",
-                                .taskName         = "daily",
-                                .sourceHash       = "abc123",
-                                .modelHash        = "m0d3l",
-                                .frameworkVersion = "0.1.0",
-                                .frameworkHash    = "def456",
-                                .luauVersion      = "6",
-                                .seed             = uint64{42},
-                            },
-                        }
-                    )
-                    .has_value()
+            auto recorder = TraceRecorder::create(
+                std::move(*sink),
+                streamSpec()
             );
-            CHECK(
-                recorder
-                    .emit(
-                        TraceEvent{
-                            .kind       = TraceEventKind::RunFinished,
-                            .runOutcome = RunOutcome::Completed,
-                        }
-                    )
-                    .has_value()
-            );
+            REQUIRE(recorder.has_value());
+            REQUIRE(recorder->emit(eventSpec("host.first")).has_value());
+            auto const flushedPrefix = readLines(path);
+            REQUIRE(flushedPrefix.size() == 1U);
+            CHECK(flushedPrefix[0].contains("\"event_type\":\"host.first\""));
+            REQUIRE(recorder->emit(eventSpec("host.second")).has_value());
         }
 
         auto const lines = readLines(path);
         REQUIRE(lines.size() == 2U);
-        CHECK(
-            stripNonGoldenFields(lines[0])
-            == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.started\""
-               ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-               ",\"projectId\":\"personal.game\",\"taskName\":\"daily\""
-               ",\"sourceHash\":\"abc123\",\"modelHash\":\"m0d3l\""
-               ",\"frameworkVersion\":\"0.1.0\""
-               ",\"frameworkHash\":\"def456\",\"luauVersion\":\"6\",\"seed\":42}"
-        );
-        CHECK(
-            stripNonGoldenFields(lines[1])
-            == "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.finished\""
-               ",\"seq\":2,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-               ",\"runOutcome\":\"Completed\"}"
-        );
+        CHECK(lines[0].contains("\"event_type\":\"host.first\""));
+        CHECK(lines[0].contains("\"monotonic_sequence\":1"));
+        CHECK(lines[1].contains("\"event_type\":\"host.second\""));
+        CHECK(lines[1].contains("\"monotonic_sequence\":2"));
 
-        std::filesystem::remove(path);
-    }
+        auto second = FileTraceSink::createNew(path);
+        CHECK_FALSE(second.has_value());
+        CHECK(readLines(path) == lines);
 
-    // ------------------------------------------- reading a recorded run back
-
-    namespace
-    {
-        // One stream written by this module's own recorder, so what the reader is
-        // tested against is what the writer produces rather than a hand-typed
-        // line that could drift from it.
-        // A task run. The click pair below is admitted on this front end alone,
-        // so a check stream is recorded by `recordCheckRun` rather than by
-        // passing a different front end here.
-        auto recordRun(
-            std::filesystem::path const& path,
-            std::string_view             modelHash
-        ) -> void
-        {
-            auto constexpr frontEnd = FrontEnd::Task;
-            auto sink = FileTraceSink::create(path);
-            REQUIRE(sink.has_value());
-            auto recorder = TraceRecorder{
-                std::move(*sink),
-                k_runId,
-                k_generationId,
-                frontEnd,
-            };
-
-            REQUIRE(
-                recorder
-                    .emit(
-                        TraceEvent{
-                            .kind = TraceEventKind::RunStarted,
-                            .run  = TraceEvent::Run{
-                                .projectId  = "uf-chaos",
-                                .taskName   = "daily",
-                                .sourceHash = "abc123",
-                                .modelHash  = std::string{modelHash},
-                                .seed       = uint64{42},
-                            },
-                        }
-                    )
-                    .has_value()
-            );
-
-            // A surface, a keystroke, a surface, a click, a surface: the shape a walk
-            // leaves behind. The observation event between them is a kind this
-            // projection does not carry and must not choke on.
-            auto const page = [&](std::string_view name) -> void
-            {
-                REQUIRE(
-                    recorder
-                        .emit(
-                            TraceEvent{
-                                .kind      = TraceEventKind::FrameworkPageResolved,
-                                .framework = TraceEvent::Framework{
-                                    .label = std::string{name},
-                                },
-                            }
-                        )
-                        .has_value()
-                );
-            };
-
-            page("home");
-            auto const key = KeyName::create("E");
-            REQUIRE(key.has_value());
-            REQUIRE(
-                recorder
-                    .emit(
-                        TraceEvent{
-                            .kind = TraceEventKind::EngineKeyDelivered,
-                            .key  = *key,
-                        }
-                    )
-                    .has_value()
-            );
-            page("battle");
-            REQUIRE(
-                recorder.emit(TraceEvent{.kind = TraceEventKind::EngineObserved})
-                    .has_value()
-            );
-            REQUIRE(
-                recorder
-                    .emit(
-                        TraceEvent{
-                            .kind      = TraceEventKind::FrameworkElementClicked,
-                            .framework = TraceEvent::Framework{
-                                .label = "battle_end_turn",
-                            },
-                        }
-                    )
-                    .has_value()
-            );
-            REQUIRE(
-                recorder
-                    .emit(TraceEvent{.kind = TraceEventKind::EngineActionDelivered})
-                    .has_value()
-            );
-            // An input that reached the target and named nothing. Left out of the
-            // projection it would read as NO input at all, and the move after it
-            // as an edge the model failed to draw rather than as one nobody can
-            // spell.
-            REQUIRE(
-                recorder
-                    .emit(
-                        TraceEvent{
-                            .kind        = TraceEventKind::EngineLongPressDelivered,
-                            .clickClient = Point<ClientSpace>{4.0F, 5.0F},
-                            .holdMillis  = uint64{250},
-                        }
-                    )
-                    .has_value()
-            );
-            page("node_reward");
-
-            REQUIRE(
-                recorder
-                    .emit(
-                        TraceEvent{
-                            .kind       = TraceEventKind::RunFinished,
-                            .runOutcome = RunOutcome::Completed,
-                        }
-                    )
-                    .has_value()
-            );
-        }
-
-        [[nodiscard]]
-        auto readBack(std::filesystem::path const& path) -> std::string
-        {
-            auto stream = std::ifstream{path, std::ios::binary};
-            REQUIRE(stream.is_open());
-            return std::string{
-                std::istreambuf_iterator<char>{stream},
-                std::istreambuf_iterator<char>{}
-            };
-        }
-    }
-
-    TEST_CASE("A recorded run projects back to what it believed and what it did")
-    {
-        auto const path =
-            std::filesystem::temp_directory_path() / "uf-replay-source.jsonl";
-        std::filesystem::remove(path);
-        recordRun(path, "m0d3l");
-
-        auto const run = readReplayedRun(path);
-        REQUIRE(run.has_value());
-
-        // The identity a checker gates on before it reads one step.
-        CHECK(run->frontEnd == FrontEnd::Task);
-        CHECK(run->projectId == "uf-chaos");
-        CHECK(run->taskName == "daily");
-        CHECK(run->modelHash == "m0d3l");
-
-        // Seven steps out of eleven lines: the run bracket and the observation are
-        // kinds this does not project, and skipping them is the projection doing
-        // its job rather than losing a step.
-        REQUIRE(run->steps.size() == 7U);
-        CHECK(run->steps[0].kind == ReplayStepKind::PageResolved);
-        CHECK(run->steps[0].label == "home");
-        CHECK(run->steps[1].kind == ReplayStepKind::KeyDelivered);
-        CHECK(run->steps[1].label == "E");
-        CHECK(run->steps[2].kind == ReplayStepKind::PageResolved);
-        CHECK(run->steps[2].label == "battle");
-        CHECK(run->steps[5].kind == ReplayStepKind::ActionDelivered);
-        CHECK(run->steps[5].label.empty());
-        CHECK(run->steps[6].label == "node_reward");
-
-        // The two halves of one click, in the order the framework writes them:
-        // which target the surface authorised, then whether it reached the target.
-        // The authorisation is what a replay attributes an edge to; a delivery
-        // names nothing of its own.
-        CHECK(run->steps[3].kind == ReplayStepKind::ElementClicked);
-        CHECK(run->steps[3].label == "battle_end_turn");
-        CHECK(run->steps[4].kind == ReplayStepKind::ActionDelivered);
-        CHECK(run->steps[4].label.empty());
-
-        // In stream order, and pointing at lines rather than at list positions.
-        for (auto index = std::size_t{1}; index < run->steps.size(); ++index)
-        {
-            CHECK(run->steps[index - 1U].seq < run->steps[index].seq);
-        }
-        CHECK(run->steps.front().seq == 2U);
-
-        std::filesystem::remove(path);
-    }
-
-    TEST_CASE("A surface name outside ASCII survives the projection whole")
-    {
-        // Surface names are bounded at the host's label ceiling in BYTES precisely
-        // because they are written to this stream, and a project may name its
-        // surfaces in its own script. `escapeJsonString` passes every byte above
-        // 0x1F through unchanged, so the only way this breaks is a reader that
-        // decodes what the writer never encoded.
-        auto lines    = std::vector<std::string>{};
-        auto recorder = TraceRecorder{
-            std::make_unique<CollectingTraceSink>(&lines),
-            k_runId,
-            k_generationId,
-            FrontEnd::Task,
-        };
-        REQUIRE(
-            recorder
-                .emit(
-                    TraceEvent{
-                        .kind = TraceEventKind::RunStarted,
-                        .run  = TraceEvent::Run{.taskName = "daily"},
-                    }
-                )
-                .has_value()
-        );
-        REQUIRE(
-            recorder
-                .emit(
-                    TraceEvent{
-                        .kind      = TraceEventKind::FrameworkPageResolved,
-                        .framework = TraceEvent::Framework{.label = "擲骰結果"},
-                    }
-                )
-                .has_value()
-        );
-
-        auto text = std::string{};
-        for (auto const& line : lines)
-        {
-            text += line;
-            text += '\n';
-        }
-
-        auto const run = projectReplayedRun(text);
-        REQUIRE(run.has_value());
-        REQUIRE(run->steps.size() == 1U);
-        CHECK(run->steps.front().label == "擲骰結果");
-    }
-
-    TEST_CASE("A projection refuses a stream it cannot honestly shorten")
-    {
-        auto const path =
-            std::filesystem::temp_directory_path() / "uf-replay-refuse.jsonl";
-        std::filesystem::remove(path);
-        recordRun(path, "m0d3l");
-        auto const good = readBack(path);
-        std::filesystem::remove(path);
-
-        // The control: the text this case mutates does project.
-        REQUIRE(projectReplayedRun(good).has_value());
-
-        SUBCASE("a line that is not an event is refused rather than skipped")
-        {
-            auto const broken = good + "not json at all\n";
-            auto const read   = projectReplayedRun(broken);
-            REQUIRE_FALSE(read.has_value());
-            CHECK(
-                automationErrorKind(read.error())
-                == AutomationErrorKind::InvalidResource
-            );
-        }
-
-        SUBCASE("a stream that does not open with run.started is refused")
-        {
-            auto const from = good.find('\n');
-            REQUIRE(from != std::string::npos);
-            auto const read = projectReplayedRun(good.substr(from + 1U));
-            REQUIRE_FALSE(read.has_value());
-            CHECK(
-                std::string{read.error().message()}.contains("run.started")
-            );
-        }
-
-        SUBCASE("empty text carries no run")
-        {
-            REQUIRE_FALSE(projectReplayedRun("").has_value());
-        }
-    }
-
-    TEST_CASE("A check's own trace projects as a check")
-    {
-        // The one fact the replay checker gates on: `umbra-flow check` drives the
-        // same surface resolution and so writes the same steps, and a checker that
-        // read one as a run would report a task that stood on dozens of surfaces
-        // without delivering anything
-        // (docs/plans/2026-08-04-state-layer-and-policy-slots.md 4.2).
-        auto const path =
-            std::filesystem::temp_directory_path() / "uf-replay-check.jsonl";
-        std::filesystem::remove(path);
-
-        auto sink = FileTraceSink::create(path);
-        REQUIRE(sink.has_value());
-        {
-            auto recorder = TraceRecorder{
-                std::move(*sink),
-                k_runId,
-                k_generationId,
-                FrontEnd::Check,
-            };
-            REQUIRE(
-                recorder
-                    .emit(
-                        TraceEvent{
-                            .kind = TraceEventKind::RunStarted,
-                            .run  = TraceEvent::Run{
-                                .projectId = "uf-chaos",
-                                .taskName  = "falsification-matrix",
-                                .modelHash = "m0d3l",
-                            },
-                        }
-                    )
-                    .has_value()
-            );
-            REQUIRE(
-                recorder
-                    .emit(
-                        TraceEvent{
-                            .kind      = TraceEventKind::FrameworkPageResolved,
-                            .framework = TraceEvent::Framework{.label = "home"},
-                        }
-                    )
-                    .has_value()
-            );
-
-            // And the boundary that makes the exclusion structural rather than a
-            // convention: a check delivers no input, so the line naming the
-            // target a click was authorised against cannot reach this stream at
-            // all. The surface resolution above can, because a run that only
-            // measures resolves against the same runtime model a task does.
-            CHECK_FALSE(
-                recorder
-                    .emit(
-                        TraceEvent{
-                            .kind      = TraceEventKind::FrameworkElementClicked,
-                            .framework = TraceEvent::Framework{.label = "confirm"},
-                        }
-                    )
-                    .has_value()
-            );
-        }
-
-        auto const run = readReplayedRun(path);
-        REQUIRE(run.has_value());
-        CHECK(run->frontEnd == FrontEnd::Check);
-
-        // The reader does NOT refuse it. Which front ends may be replayed is the
-        // checker's ruling; this reports and judges nothing.
-        CHECK(run->steps.size() == 1U);
-
-        std::filesystem::remove(path);
-    }
-
-    TEST_CASE("A stream that names no runtime model is refused")
-    {
-        // A replay is a check of one run against one runtime model. A stream that does
-        // not say which model it read cannot be checked against any -- every
-        // finding would be about edges that may never have been in the file --
-        // so it is refused here rather than handed on as an empty hash for
-        // someone downstream to notice.
-        auto const path =
-            std::filesystem::temp_directory_path() / "uf-replay-nomodel.jsonl";
-        std::filesystem::remove(path);
-        recordRun(path, "m0d3l");
-
-        auto text = readBack(path);
-        std::filesystem::remove(path);
-
-        // The control: the text this case mutates does project.
-        REQUIRE(projectReplayedRun(text).has_value());
-
-        auto const at = text.find(R"(,"modelHash":"m0d3l")");
-        REQUIRE(at != std::string::npos);
-        text.erase(at, std::string_view{R"(,"modelHash":"m0d3l")"}.size());
-
-        auto const read = projectReplayedRun(text);
-        REQUIRE_FALSE(read.has_value());
-        CHECK(std::string{read.error().message()}.contains("modelHash"));
-    }
-
-    TEST_CASE("FileTraceSink reports an unopenable trace path as an error Status")
-    {
-        auto const path = std::filesystem::temp_directory_path()
-            / "uf-trace-missing-dir"
-            / "trace.jsonl";
-        std::filesystem::remove_all(path.parent_path());
-
-        auto const sink = FileTraceSink::create(path);
-        REQUIRE_FALSE(sink.has_value());
-        CHECK(automationErrorKind(sink.error()) == AutomationErrorKind::IoFailure);
+        auto error = std::error_code{};
+        std::filesystem::remove(path, error);
+        CHECK_FALSE(error);
     }
 }

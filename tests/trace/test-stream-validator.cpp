@@ -5,748 +5,160 @@
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
-#include <core/types/integer.hpp>
 
-#include <domain/error.hpp>
-#include <domain/ids.hpp>
+#include <domain/content-hash.hpp>
 
 #include <doctest/doctest.h>
 
-#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-// The stream protocol every run's evidence must obey, driven through a real
-// TraceRecorder because the validator is not separately reachable. Every case
-// pairs a refusal with a control that would fail if the rule were vacuous: the
-// same shape well-formed is accepted, and a refusal leaves no line and no number.
 namespace uf::trace
 {
     namespace
     {
-        constexpr auto k_runId        = TaskRunId{11};
-        constexpr auto k_generationId = GenerationId{4};
+        [[nodiscard]] auto hashOf(char digit) -> ContentHash
+        {
+            auto const encoded = "sha256:" + std::string(64U, digit);
+            auto const hash    = ContentHash::parse(encoded);
+            REQUIRE(hash.has_value());
+            return *hash;
+        }
+
+        [[nodiscard]]
+        auto streamSpec(
+            std::string sessionId = "session-1",
+            char manifestDigit = 'a',
+            std::string producer = "operator.host"
+        ) -> TraceStreamSpec
+        {
+            return TraceStreamSpec{
+                .sessionId           = std::move(sessionId),
+                .sessionManifestHash = hashOf(manifestDigit),
+                .producer            = std::move(producer),
+            };
+        }
+
+        [[nodiscard]] auto eventSpec(std::string eventType) -> TraceEventSpec
+        {
+            return TraceEventSpec{
+                .eventType = std::move(eventType),
+                .audit     = AuditMetadata{
+                    .actor = "operator.agent",
+                },
+                .payload   = TypedTracePayload{
+                    .schemaHash = hashOf('b'),
+                },
+            };
+        }
 
         class CollectingSink final : public ITraceSink
         {
-            std::vector<StampedTraceEvent>* m_events;
+            std::vector<TraceEvent> m_events{};
 
         public:
-            explicit CollectingSink(
-                std::vector<StampedTraceEvent>* p_events
-            ) noexcept
-                : m_events{p_events}
+            [[nodiscard]] auto append(TraceEvent const& event) -> Status override
             {
-            }
-
-            [[nodiscard]]
-            auto emit(StampedTraceEvent const& event) -> Status override
-            {
-                m_events->emplace_back(event);
+                m_events.emplace_back(event);
                 return ok();
-            }
-        };
-
-        // One run's stream. The buffer is declared before the recorder owning the
-        // sink that borrows it, and the type is non-movable, so the borrow holds.
-        class Stream final
-        {
-            std::vector<StampedTraceEvent> m_events{};
-            TraceRecorder                  m_recorder;
-
-        public:
-            explicit Stream(FrontEnd frontEnd = FrontEnd::Task)
-                : m_recorder{
-                      std::make_unique<CollectingSink>(&m_events),
-                      k_runId,
-                      k_generationId,
-                      frontEnd,
-                  }
-            {
-            }
-
-            Stream(Stream const&) = delete;
-            Stream(Stream&&) = delete;
-            auto operator=(Stream const&) -> Stream& = delete;
-            auto operator=(Stream&&) -> Stream& = delete;
-
-            ~Stream() = default;
-
-            [[nodiscard]] auto emit(TraceEvent const& event) -> Status
-            {
-                return m_recorder.emit(event);
-            }
-
-            [[nodiscard]] auto requireScopesClosed() const -> Status
-            {
-                return m_recorder.requireScopesClosed();
             }
 
             [[nodiscard]]
             auto events() const noexcept UF_LIFETIME_BOUND
-                -> std::vector<StampedTraceEvent> const&
+                -> std::vector<TraceEvent> const&
             {
                 return m_events;
             }
         };
 
         [[nodiscard]]
-        auto plain(TraceEventKind kind) -> TraceEvent
+        auto record(
+            TraceStreamSpec const& stream,
+            std::vector<std::string> eventTypes
+        ) -> std::vector<TraceEvent>
         {
-            return TraceEvent{.kind = kind};
-        }
-
-        [[nodiscard]]
-        auto scoped(TraceEventKind kind, std::string label) -> TraceEvent
-        {
-            return TraceEvent{
-                .kind      = kind,
-                .framework = TraceEvent::Framework{.label = std::move(label)},
-            };
-        }
-
-        [[nodiscard]]
-        auto retryAttempt(uint64 attempt, uint64 attempts) -> TraceEvent
-        {
-            return TraceEvent{
-                .kind      = TraceEventKind::FrameworkRetryAttempt,
-                .framework = TraceEvent::Framework{
-                    .attempt  = attempt,
-                    .attempts = attempts,
-                },
-            };
-        }
-
-        [[nodiscard]]
-        auto nativeCall() -> TraceEvent
-        {
-            return TraceEvent{
-                .kind       = TraceEventKind::TaskNativeCall,
-                .nativeCall = TraceEvent::NativeCall{
-                    .verb    = "cycle_open",
-                    .outcome = NativeCallOutcome::Succeeded,
-                },
-            };
-        }
-
-        [[nodiscard]]
-        auto refusedKind(Status const& status) -> AutomationErrorKind
-        {
-            REQUIRE_FALSE(status.has_value());
-            auto const kind = automationErrorKind(status.error());
-            REQUIRE(kind.has_value());
-            return *kind;
-        }
-
-        TEST_CASE("only the task stream may hold a structural framework event")
-        {
-            // The rule is stated against FrontEnd::Task, so a front-end added
-            // later inherits the refusal instead of being listed. Step nesting,
-            // retry counting and interrupt matching describe a task run's
-            // orchestration; neither of the other two front-ends has one, so
-            // such a line on their streams could only be a host bug.
-            auto annotation = Stream{FrontEnd::Annotation};
-            CHECK(
-                refusedKind(
-                    annotation.emit(
-                        scoped(TraceEventKind::FrameworkStepStarted, "daily")
-                    )
-                )
-                == AutomationErrorKind::InternalInvariant
-            );
-            CHECK(annotation.events().empty());
-
-            // The control: host-authored lines still pass, so the kind was refused.
-            REQUIRE(annotation.emit(plain(TraceEventKind::RunStarted)).has_value());
-            REQUIRE(annotation.emit(nativeCall()).has_value());
-            REQUIRE(annotation.events().size() == 2U);
-            CHECK(annotation.events().front().sequence() == 1U);
-
-            // A check runs the same Luau bundle a task does, so what separates
-            // the two here is the orchestration and not the language: the matrix
-            // opens no step, and the pages it resolves are the whole reason the
-            // one non-structural kind stays admitted.
-            auto check = Stream{FrontEnd::Check};
-            CHECK(
-                refusedKind(
-                    check.emit(scoped(TraceEventKind::FrameworkStepStarted, "sweep"))
-                )
-                == AutomationErrorKind::InternalInvariant
-            );
-            CHECK(check.events().empty());
-            REQUIRE(
-                check.emit(scoped(TraceEventKind::FrameworkPageResolved, "battle"))
-                    .has_value()
-            );
-            CHECK(check.events().size() == 1U);
-
-            auto task = Stream{FrontEnd::Task};
-            CHECK(
-                task.emit(scoped(TraceEventKind::FrameworkStepStarted, "daily"))
-                    .has_value()
-            );
-        }
-
-        TEST_CASE("a delivered scroll must say how far it scrolled")
-        {
-            // A wheel names no coordinate the verb chose, unlike a click or a key,
-            // so without the delta the line says only that something was delivered.
-            auto stream = Stream{};
-            CHECK(
-                refusedKind(stream.emit(plain(TraceEventKind::EngineScrollDelivered)))
-                == AutomationErrorKind::InternalInvariant
-            );
-            CHECK(stream.events().empty());
-
-            // The control: the same kind with its delta is admitted.
-            auto delivered         = plain(TraceEventKind::EngineScrollDelivered);
-            delivered.wheelNotches = int32{-3};
-            REQUIRE(stream.emit(delivered).has_value());
-            REQUIRE(stream.events().size() == 1U);
-            CHECK(stream.events().front().sequence() == 1U);
-
-            // Zero is a delta the delivery layer refuses, but a stated one:
-            // enforcing it here too would put the wheel's wire bound in two places.
-            delivered.wheelNotches = int32{0};
-            CHECK(stream.emit(delivered).has_value());
-        }
-
-        TEST_CASE("a delivered drag must say where from, where to, and how long")
-        {
-            // Three clauses, and the middle one is the reason this kind exists
-            // apart from a click: a record with a start and a travel but no end
-            // says a drag happened and refuses to say how far. Drop any clause
-            // from requireDragPayload and the matching refusal below goes red.
-            auto stream = Stream{};
-
-            auto noEnd         = plain(TraceEventKind::EngineDragDelivered);
-            noEnd.clickClient  = Point<ClientSpace>{4.0F, 2.0F};
-            noEnd.travelMillis = uint64{240};
-            CHECK(
-                refusedKind(stream.emit(noEnd))
-                == AutomationErrorKind::InternalInvariant
-            );
-
-            auto noStart          = plain(TraceEventKind::EngineDragDelivered);
-            noStart.dragEndClient = Point<ClientSpace>{40.0F, 2.0F};
-            noStart.travelMillis  = uint64{240};
-            CHECK(
-                refusedKind(stream.emit(noStart))
-                == AutomationErrorKind::InternalInvariant
-            );
-
-            auto noTravel          = plain(TraceEventKind::EngineDragDelivered);
-            noTravel.clickClient   = Point<ClientSpace>{4.0F, 2.0F};
-            noTravel.dragEndClient = Point<ClientSpace>{40.0F, 2.0F};
-            CHECK(
-                refusedKind(stream.emit(noTravel))
-                == AutomationErrorKind::InternalInvariant
-            );
-            CHECK(stream.events().empty());
-
-            // The control: all three together are admitted.
-            auto delivered          = plain(TraceEventKind::EngineDragDelivered);
-            delivered.clickClient   = Point<ClientSpace>{4.0F, 2.0F};
-            delivered.dragEndClient = Point<ClientSpace>{40.0F, 2.0F};
-            delivered.travelMillis  = uint64{240};
-            REQUIRE(stream.emit(delivered).has_value());
-            REQUIRE(stream.events().size() == 1U);
-
-            // Admitted on the exploration stream too, the long press's precedent:
-            // it claims no recognition, so no annotation spelling corrects it.
-            auto annotation = Stream{FrontEnd::Annotation};
-            CHECK(annotation.emit(delivered).has_value());
-        }
-
-        TEST_CASE("a delivered long press must say where and for how long")
-        {
-            // It needs BOTH halves: the point alone is a click, the hold alone a
-            // press at nowhere. Drop either clause from requireLongPressPayload
-            // and the matching refusal below goes red.
-            auto stream = Stream{};
-
-            auto pointOnly        = plain(TraceEventKind::EngineLongPressDelivered);
-            pointOnly.clickClient = Point<ClientSpace>{4.0F, 2.0F};
-            CHECK(
-                refusedKind(stream.emit(pointOnly))
-                == AutomationErrorKind::InternalInvariant
-            );
-
-            auto holdOnly       = plain(TraceEventKind::EngineLongPressDelivered);
-            holdOnly.holdMillis = uint64{400};
-            CHECK(
-                refusedKind(stream.emit(holdOnly))
-                == AutomationErrorKind::InternalInvariant
-            );
-            CHECK(stream.events().empty());
-
-            // The control: both together are admitted.
-            auto delivered        = plain(TraceEventKind::EngineLongPressDelivered);
-            delivered.clickClient = Point<ClientSpace>{4.0F, 2.0F};
-            delivered.holdMillis  = uint64{400};
-            REQUIRE(stream.emit(delivered).has_value());
-            REQUIRE(stream.events().size() == 1U);
-
-            // Admitted on the exploration stream too, unlike
-            // engine.action_delivered: it claims no recognition, so no annotation
-            // spelling corrects it. Send this kind through
-            // refuseAnnotationVocabularyClash and this goes red.
-            auto annotation = Stream{FrontEnd::Annotation};
-            CHECK(annotation.emit(delivered).has_value());
-        }
-
-        TEST_CASE("a delivered pointer move must say where the pointer went")
-        {
-            // Its whole content is the point: it presses nothing, carries no
-            // delta and no hold, so without the coordinate the line records that
-            // the pointer went somewhere unstated. Drop requireMovePayload's
-            // clause and the refusal below goes red.
-            auto stream = Stream{};
-            CHECK(
-                refusedKind(
-                    stream.emit(plain(TraceEventKind::EnginePointerMoveDelivered))
-                )
-                == AutomationErrorKind::InternalInvariant
-            );
-            CHECK(stream.events().empty());
-
-            auto delivered        = plain(TraceEventKind::EnginePointerMoveDelivered);
-            delivered.clickClient = Point<ClientSpace>{4.0F, 2.0F};
-            REQUIRE(stream.emit(delivered).has_value());
-            REQUIRE(stream.events().size() == 1U);
-
-            // Admitted on the exploration stream too, the long press's precedent:
-            // a move claims no recognition, so no annotation spelling corrects it.
-            // Send this kind through refuseAnnotationVocabularyClash and this
-            // goes red.
-            auto annotation = Stream{FrontEnd::Annotation};
-            CHECK(annotation.emit(delivered).has_value());
-        }
-
-        TEST_CASE("a run bracket opens once and accepts nothing after it closes")
-        {
-            auto stream = Stream{};
-
-            REQUIRE(stream.emit(plain(TraceEventKind::RunStarted)).has_value());
-            CHECK(
-                refusedKind(stream.emit(plain(TraceEventKind::RunStarted)))
-                == AutomationErrorKind::InternalInvariant
-            );
-
-            // The control: the refusal above is about the SECOND run.started.
-            REQUIRE(stream.emit(nativeCall()).has_value());
-            REQUIRE(
-                stream.emit(scoped(TraceEventKind::FrameworkStepStarted, "live"))
-                    .has_value()
-            );
-            REQUIRE(
-                stream.emit(scoped(TraceEventKind::FrameworkStepFinished, "live"))
-                    .has_value()
-            );
-
-            REQUIRE(stream.emit(plain(TraceEventKind::RunFinished)).has_value());
-
-            CHECK(
-                refusedKind(
-                    stream.emit(scoped(TraceEventKind::FrameworkStepStarted, "late"))
-                )
-                == AutomationErrorKind::InternalInvariant
-            );
-            CHECK(
-                refusedKind(stream.emit(nativeCall()))
-                == AutomationErrorKind::InternalInvariant
-            );
-            CHECK(
-                refusedKind(stream.emit(plain(TraceEventKind::RunFinished)))
-                == AutomationErrorKind::InternalInvariant
-            );
-
-            // Five accepted, every refusal none: no number spent on a line never
-            // written.
-            REQUIRE(stream.events().size() == 5U);
-            CHECK(stream.events().back().sequence() == 5U);
-        }
-
-        TEST_CASE("steps nest strictly and a finish names the innermost open one")
-        {
-            auto stream = Stream{};
-
-            REQUIRE(
-                stream.emit(scoped(TraceEventKind::FrameworkStepStarted, "outer"))
-                    .has_value()
-            );
-            REQUIRE(
-                stream.emit(scoped(TraceEventKind::FrameworkStepStarted, "inner"))
-                    .has_value()
-            );
-
-            // Closing the outer step around an open inner one would make every
-            // line stamped since then a lie about where it happened.
-            CHECK(
-                refusedKind(
-                    stream.emit(scoped(TraceEventKind::FrameworkStepFinished, "outer"))
-                )
-                == AutomationErrorKind::InternalInvariant
-            );
-
-            // The control: in the right ORDER the same two finishes are accepted.
-            REQUIRE(
-                stream.emit(scoped(TraceEventKind::FrameworkStepFinished, "inner"))
-                    .has_value()
-            );
-            REQUIRE(
-                stream.emit(scoped(TraceEventKind::FrameworkStepFinished, "outer"))
-                    .has_value()
-            );
-            CHECK(
-                refusedKind(
-                    stream.emit(scoped(TraceEventKind::FrameworkStepFinished, "outer"))
-                )
-                == AutomationErrorKind::InternalInvariant
-            );
-        }
-
-        TEST_CASE("step nesting stops at the host's hard depth ceiling")
-        {
-            auto stream = Stream{};
-
-            for (auto depth = std::size_t{0}; depth < k_maxScopeDepth; ++depth)
+            auto sink         = std::make_unique<CollectingSink>();
+            auto sinkObserver = sink.get();
+            auto recorder     = TraceRecorder::create(std::move(sink), stream);
+            REQUIRE(recorder.has_value());
+            for (auto& eventType : eventTypes)
             {
-                auto const status = stream.emit(
-                    scoped(TraceEventKind::FrameworkStepStarted, std::to_string(depth))
-                );
-                REQUIRE(status.has_value());
-            }
-
-            // One past the ceiling, and the project's own nesting, so a refused
-            // request rather than a framework bug.
-            CHECK(
-                refusedKind(
-                    stream.emit(scoped(TraceEventKind::FrameworkStepStarted, "over"))
-                )
-                == AutomationErrorKind::InvalidResource
-            );
-
-            // Nothing opened: the stamp on the next line still reports the last
-            // accepted step as the innermost.
-            REQUIRE(stream.emit(nativeCall()).has_value());
-            auto const& steps = stream.events().back().openSteps();
-            REQUIRE(steps.size() == k_maxScopeDepth);
-            CHECK(steps.back() == std::to_string(k_maxScopeDepth - 1U));
-        }
-
-        TEST_CASE("a run may not end with a framework scope still open")
-        {
-            SUBCASE("an open step")
-            {
-                auto stream = Stream{};
-                REQUIRE(stream.requireScopesClosed().has_value());
-
                 REQUIRE(
-                    stream.emit(scoped(TraceEventKind::FrameworkStepStarted, "daily"))
-                        .has_value()
-                );
-                CHECK(
-                    refusedKind(stream.requireScopesClosed())
-                    == AutomationErrorKind::InternalInvariant
-                );
-
-                REQUIRE(
-                    stream.emit(scoped(TraceEventKind::FrameworkStepFinished, "daily"))
-                        .has_value()
-                );
-                CHECK(stream.requireScopesClosed().has_value());
-            }
-
-            SUBCASE("an interrupt still being handled")
-            {
-                auto stream = Stream{};
-                REQUIRE(
-                    stream
-                        .emit(scoped(TraceEventKind::FrameworkInterruptMatched, "popup"))
-                        .has_value()
-                );
-                CHECK(
-                    refusedKind(stream.requireScopesClosed())
-                    == AutomationErrorKind::InternalInvariant
-                );
-
-                REQUIRE(
-                    stream
-                        .emit(scoped(TraceEventKind::FrameworkInterruptHandled, "popup"))
-                        .has_value()
-                );
-                CHECK(stream.requireScopesClosed().has_value());
-            }
-        }
-
-        TEST_CASE("a retry attempt stays inside the total its policy declared")
-        {
-            SUBCASE("beyond the declared attempts")
-            {
-                auto stream = Stream{};
-                REQUIRE(stream.emit(retryAttempt(1, 3)).has_value());
-                REQUIRE(stream.emit(retryAttempt(2, 3)).has_value());
-                REQUIRE(stream.emit(retryAttempt(3, 3)).has_value());
-                CHECK(
-                    refusedKind(stream.emit(retryAttempt(4, 3)))
-                    == AutomationErrorKind::InternalInvariant
+                    recorder->emit(eventSpec(std::move(eventType))).has_value()
                 );
             }
-
-            SUBCASE("skipping a number inside one scope")
-            {
-                auto stream = Stream{};
-                REQUIRE(stream.emit(retryAttempt(1, 3)).has_value());
-                CHECK(
-                    refusedKind(stream.emit(retryAttempt(3, 3)))
-                    == AutomationErrorKind::InternalInvariant
-                );
-            }
-
-            SUBCASE("nested retry scopes each count for themselves")
-            {
-                // The control against reading the two refusals above as a rule
-                // against retrying: an inner policy that gives up and an outer
-                // one taking its next attempt is legal, and reads non-monotonic.
-                auto stream = Stream{};
-                REQUIRE(stream.emit(retryAttempt(1, 3)).has_value());
-                REQUIRE(stream.emit(retryAttempt(1, 2)).has_value());
-                REQUIRE(stream.emit(retryAttempt(2, 2)).has_value());
-                REQUIRE(stream.emit(retryAttempt(2, 3)).has_value());
-                REQUIRE(stream.emit(retryAttempt(3, 3)).has_value());
-            }
+            return sinkObserver->events();
         }
+    }
 
-        TEST_CASE("an interrupt is closed only by the match that opened it")
+    TEST_CASE("validator accepts one contiguous fixed-identity stream")
+    {
+        auto const events = record(
+            streamSpec(),
+            {"host.first", "host.second", "host.third"}
+        );
+        auto validator = TraceStreamValidator{};
+        for (auto const& event : events)
         {
-            auto stream = Stream{};
-
-            CHECK(
-                refusedKind(
-                    stream.emit(
-                        scoped(TraceEventKind::FrameworkInterruptHandled, "popup")
-                    )
-                )
-                == AutomationErrorKind::InternalInvariant
-            );
-
-            REQUIRE(
-                stream.emit(scoped(TraceEventKind::FrameworkInterruptMatched, "popup"))
-                    .has_value()
-            );
-
-            // A different id cannot close this match, nor the same id open a second.
-            CHECK(
-                refusedKind(
-                    stream.emit(
-                        scoped(TraceEventKind::FrameworkInterruptHandled, "other")
-                    )
-                )
-                == AutomationErrorKind::InternalInvariant
-            );
-            CHECK(
-                refusedKind(
-                    stream.emit(
-                        scoped(TraceEventKind::FrameworkInterruptMatched, "popup")
-                    )
-                )
-                == AutomationErrorKind::InternalInvariant
-            );
-
-            // The control: the matching close is accepted, and so is an exhausted
-            // match.
-            REQUIRE(
-                stream.emit(scoped(TraceEventKind::FrameworkInterruptHandled, "popup"))
-                    .has_value()
-            );
-            REQUIRE(
-                stream.emit(scoped(TraceEventKind::FrameworkInterruptMatched, "popup"))
-                    .has_value()
-            );
-            REQUIRE(
-                stream
-                    .emit(scoped(TraceEventKind::FrameworkInterruptExhausted, "popup"))
-                    .has_value()
-            );
+            REQUIRE(validator.admit(event).has_value());
         }
+    }
 
-        TEST_CASE("an over-budget label is refused whole, never truncated")
+    TEST_CASE("validator rejects gaps and out-of-order events without advancing")
+    {
+        auto const events = record(
+            streamSpec(),
+            {"host.first", "host.second", "host.third"}
+        );
+
+        auto firstIsSecond = TraceStreamValidator{};
+        CHECK_FALSE(firstIsSecond.admit(events[1]).has_value());
+        REQUIRE(firstIsSecond.admit(events[0]).has_value());
+
+        auto gap = TraceStreamValidator{};
+        REQUIRE(gap.admit(events[0]).has_value());
+        CHECK_FALSE(gap.admit(events[2]).has_value());
+        REQUIRE(gap.admit(events[1]).has_value());
+        REQUIRE(gap.admit(events[2]).has_value());
+    }
+
+    TEST_CASE("validator rejects mixed session, manifest, and producer identity")
+    {
+        auto const baseline = record(
+            streamSpec(),
+            {"host.baseline_first", "host.baseline_second"}
+        );
+        auto const alternatives = std::vector<TraceStreamSpec>{
+            streamSpec("session-2", 'a', "operator.host"),
+            streamSpec("session-1", 'c', "operator.host"),
+            streamSpec("session-1", 'a', "operator.worker"),
+        };
+
+        for (auto const& alternative : alternatives)
         {
-            auto stream = Stream{};
-
-            auto const tooLong = std::string(k_maxScopeLabelBytes + 1U, 'a');
-            CHECK(
-                refusedKind(
-                    stream.emit(scoped(TraceEventKind::FrameworkStepStarted, tooLong))
-                )
-                == AutomationErrorKind::InvalidResource
+            auto const mixed = record(
+                alternative,
+                {"host.mixed_first", "host.mixed_second"}
             );
-
-            // A control byte a reader's terminal would act on rather than print,
-            // and a byte sequence that is not UTF-8, which would make the trace
-            // file itself ill-formed.
-            CHECK(
-                refusedKind(
-                    stream.emit(
-                        scoped(TraceEventKind::FrameworkStepStarted, "wait\nfor home")
-                    )
-                )
-                == AutomationErrorKind::InvalidResource
-            );
-            CHECK(
-                refusedKind(
-                    stream.emit(
-                        scoped(TraceEventKind::FrameworkStepStarted, "\xC3\x28")
-                    )
-                )
-                == AutomationErrorKind::InvalidResource
-            );
-            CHECK(
-                refusedKind(
-                    stream.emit(scoped(TraceEventKind::FrameworkStepStarted, ""))
-                )
-                == AutomationErrorKind::InvalidResource
-            );
-
-            // The control, and why the rule is UTF-8 rather than ASCII: this
-            // project's tasks are written in Chinese as often as in English.
-            REQUIRE(
-                stream
-                    .emit(
-                        scoped(TraceEventKind::FrameworkStepStarted, "\xE6\x97\xA5\xE5\xB8\xB8")
-                    )
-                    .has_value()
-            );
-
-            // Nothing was truncated in: one step opened, the one accepted whole.
-            REQUIRE(stream.events().size() == 1U);
-            REQUIRE(stream.emit(nativeCall()).has_value());
-            auto const& steps = stream.events().back().openSteps();
-            REQUIRE(steps.size() == 1U);
-            CHECK(steps.front() == "\xE6\x97\xA5\xE5\xB8\xB8");
+            auto validator = TraceStreamValidator{};
+            REQUIRE(validator.admit(baseline[0]).has_value());
+            CHECK_FALSE(validator.admit(mixed[1]).has_value());
+            REQUIRE(validator.admit(baseline[1]).has_value());
         }
+    }
 
-        TEST_CASE("a resolved page must say which page resolved")
-        {
-            // The label is this kind's ENTIRE content. An unnamed one would sit
-            // in the sequence a replay check walks, indistinguishable from a
-            // transition to a page nobody can name, and no other member of the
-            // event says what it was about.
-            auto stream = Stream{};
-            CHECK(
-                refusedKind(
-                    stream.emit(scoped(TraceEventKind::FrameworkPageResolved, ""))
-                )
-                == AutomationErrorKind::InvalidResource
-            );
-            CHECK(stream.events().empty());
+    TEST_CASE("validator rejects a duplicated sequence")
+    {
+        auto const events = record(
+            streamSpec(),
+            {"host.first", "host.second"}
+        );
 
-            // No payload at all is the host's own bug rather than a request the
-            // stream declines, so it is refused under the other kind.
-            CHECK(
-                refusedKind(stream.emit(plain(TraceEventKind::FrameworkPageResolved)))
-                == AutomationErrorKind::InternalInvariant
-            );
-            CHECK(stream.events().empty());
-
-            // The control: the same kind carrying a name is admitted, and it
-            // opens no scope -- the run bracket still closes over it.
-            REQUIRE(
-                stream.emit(scoped(TraceEventKind::FrameworkPageResolved, "battle"))
-                    .has_value()
-            );
-            REQUIRE(stream.events().size() == 1U);
-            CHECK(stream.events().front().openSteps().empty());
-            CHECK(stream.requireScopesClosed().has_value());
-
-            // The one framework.* kind the front-end rule does not bind: an
-            // exploration session resolves against the same page model a task
-            // does, so refusing it there would fail that sweep rather than catch
-            // a bug. The label rule still holds on that stream.
-            auto annotation = Stream{FrontEnd::Annotation};
-            REQUIRE(
-                annotation
-                    .emit(scoped(TraceEventKind::FrameworkPageResolved, "battle"))
-                    .has_value()
-            );
-            CHECK(
-                refusedKind(
-                    annotation.emit(
-                        scoped(TraceEventKind::FrameworkPageResolved, "")
-                    )
-                )
-                == AutomationErrorKind::InvalidResource
-            );
-            CHECK(annotation.events().size() == 1U);
-        }
-
-        TEST_CASE("the open step path has a total budget of its own")
-        {
-            // Each name is legal and the depth stays far inside the ceiling, so
-            // only the TOTAL payload budget can refuse the last one: the path is
-            // stamped on every line those steps are open for, so their sum is
-            // what matters rather than any single name.
-            auto stream = Stream{};
-
-            auto opened = std::size_t{0};
-            auto label  = char{'a'};
-            while (
-                stream
-                    .emit(
-                        scoped(
-                            TraceEventKind::FrameworkStepStarted,
-                            std::string(k_maxScopeLabelBytes, label)
-                        )
-                    )
-                    .has_value()
-            )
-            {
-                ++opened;
-                ++label;
-                REQUIRE(opened < k_maxScopeDepth);
-            }
-
-            CHECK(opened > 1U);
-            CHECK(opened < k_maxScopeDepth);
-
-            // The refusal left the path exactly as it was.
-            REQUIRE(stream.emit(nativeCall()).has_value());
-            CHECK(stream.events().back().openSteps().size() == opened);
-        }
-
-        TEST_CASE("every line carries the step scope that was open when it was written")
-        {
-            auto stream = Stream{};
-
-            REQUIRE(stream.emit(nativeCall()).has_value());
-            CHECK(stream.events().back().openSteps().empty());
-
-            REQUIRE(
-                stream.emit(scoped(TraceEventKind::FrameworkStepStarted, "outer"))
-                    .has_value()
-            );
-            // A start reports the scope it opened INSIDE; its own step is named
-            // by the event.
-            CHECK(stream.events().back().openSteps().empty());
-
-            REQUIRE(
-                stream.emit(scoped(TraceEventKind::FrameworkStepStarted, "inner"))
-                    .has_value()
-            );
-            REQUIRE(stream.emit(nativeCall()).has_value());
-            auto const& steps = stream.events().back().openSteps();
-            REQUIRE(steps.size() == 2U);
-            CHECK(steps[0] == "outer");
-            CHECK(steps[1] == "inner");
-
-            // And it reaches the wire in that order.
-            CHECK(
-                serializeTraceEvent(stream.events().back())
-                    .contains(R"("steps":["outer","inner"])")
-            );
-        }
+        auto validator = TraceStreamValidator{};
+        REQUIRE(validator.admit(events[0]).has_value());
+        CHECK_FALSE(validator.admit(events[0]).has_value());
+        REQUIRE(validator.admit(events[1]).has_value());
     }
 }

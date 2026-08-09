@@ -1,696 +1,178 @@
 #include "event.hpp"
 
-#include "json-scan.hpp"
-#include "json-text.hpp"
+#include <core/text/json-text.hpp>
+#include <core/utility/variant-match.hpp>
 
-#include <core/error/contracts.hpp>
-#include <core/types/integer.hpp>
+#include <domain/content-hash.hpp>
 
-#include <domain/error.hpp>
-#include <domain/space.hpp>
-
-#include <vision/sad.hpp>
-
-#include <algorithm>
-#include <cstddef>
 #include <format>
-#include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 namespace uf::trace
 {
-    // Minimal JSON string escaper: quote the value and escape the mandatory
-    // control and structural bytes. This is the single copy the trace stream and
-    // the CLI's line protocols both write through.
-    auto escapeJsonString(std::string_view value) -> std::string
-    {
-        auto constexpr hex = std::string_view{"0123456789abcdef"};
-
-        auto output = std::string{"\""};
-        output.reserve(value.size() + 2U);
-        for (auto const character : value)
-        {
-            auto const byte = static_cast<unsigned char>(character);
-            switch (byte)
-            {
-            case '"': output += "\\\""; break;
-            case '\\': output += "\\\\"; break;
-            case '\b': output += "\\b"; break;
-            case '\f': output += "\\f"; break;
-            case '\n': output += "\\n"; break;
-            case '\r': output += "\\r"; break;
-            case '\t': output += "\\t"; break;
-            default:
-                if (byte < 0x20U)
-                {
-                    output += "\\u00";
-                    output += hex[byte >> 4U];
-                    output += hex[byte & 0x0FU];
-                }
-                else
-                {
-                    output += static_cast<char>(byte);
-                }
-                break;
-            }
-        }
-
-        output += '"';
-        return output;
-    }
-
     namespace
     {
-        // Schema-owned names, independent of enum reflection so the wire format
-        // cannot follow a rename of the enumerator. The dotted spelling names the
-        // layer that authored the event.
-        [[nodiscard]]
-        auto traceEventKindName(TraceEventKind kind) noexcept -> std::string_view
-        {
-            switch (kind)
-            {
-            case TraceEventKind::RunStarted: return "run.started";
-            case TraceEventKind::RunResourcesValidated: return "run.resources_validated";
-            case TraceEventKind::RunFinished: return "run.finished";
-            case TraceEventKind::EngineObserved: return "engine.observed";
-            case TraceEventKind::EngineActionFound: return "engine.action_found";
-            case TraceEventKind::EngineTextRead: return "engine.text_read";
-            case TraceEventKind::EngineActionAuthorized: return "engine.action_authorized";
-            case TraceEventKind::EngineActionRejected: return "engine.action_rejected";
-            case TraceEventKind::EngineActionDelivered: return "engine.action_delivered";
-            case TraceEventKind::EngineKeyDelivered: return "engine.key_delivered";
-            case TraceEventKind::EngineScrollDelivered: return "engine.scroll_delivered";
-            case TraceEventKind::EngineLongPressDelivered:
-                return "engine.long_press_delivered";
-            case TraceEventKind::EnginePointerMoveDelivered:
-                return "engine.pointer_move_delivered";
-            case TraceEventKind::EngineDragDelivered:
-                return "engine.drag_delivered";
-            case TraceEventKind::EngineCaptureRetried:
-                return "engine.capture_retried";
-            case TraceEventKind::EngineObservationInvalidated:
-                return "engine.observation_invalidated";
-            case TraceEventKind::TaskNativeCall: return "task.native_call";
-            case TraceEventKind::FrameworkStepStarted: return "framework.step_started";
-            case TraceEventKind::FrameworkStepFinished: return "framework.step_finished";
-            case TraceEventKind::FrameworkRetryAttempt: return "framework.retry_attempt";
-            case TraceEventKind::FrameworkRetryBackoff: return "framework.retry_backoff";
-            case TraceEventKind::FrameworkInterruptMatched:
-                return "framework.interrupt_matched";
-            case TraceEventKind::FrameworkInterruptHandled:
-                return "framework.interrupt_handled";
-            case TraceEventKind::FrameworkInterruptExhausted:
-                return "framework.interrupt_exhausted";
-            case TraceEventKind::FrameworkSettled: return "framework.settled";
-            case TraceEventKind::FrameworkPageResolved:
-                return "framework.page_resolved";
-            case TraceEventKind::FrameworkElementClicked:
-                return "framework.element_clicked";
-            case TraceEventKind::AnnotationClickDelivered:
-                return "annotation.click_delivered";
-            case TraceEventKind::AnnotationRegionSaved:
-                return "annotation.region_saved";
-            }
-
-            UF_UNREACHABLE_MSG("Unknown TraceEventKind value");
-        }
-
-        [[nodiscard]]
-        auto actionSearchName(ActionSearch outcome) noexcept -> std::string_view
-        {
-            switch (outcome)
-            {
-            case ActionSearch::Found: return "Found";
-            case ActionSearch::Absent: return "Absent";
-            case ActionSearch::Stopped: return "Stopped";
-            case ActionSearch::Failed: return "Failed";
-            }
-
-            UF_UNREACHABLE_MSG("Unknown ActionSearch value");
-        }
-
-        [[nodiscard]]
-        auto nativeCallOutcomeName(NativeCallOutcome outcome) noexcept -> std::string_view
-        {
-            switch (outcome)
-            {
-            case NativeCallOutcome::Succeeded: return "Succeeded";
-            case NativeCallOutcome::Empty: return "Empty";
-            case NativeCallOutcome::Failed: return "Failed";
-            }
-
-            UF_UNREACHABLE_MSG("Unknown NativeCallOutcome value");
-        }
-
-        [[nodiscard]]
-        auto runOutcomeName(RunOutcome outcome) noexcept -> std::string_view
-        {
-            switch (outcome)
-            {
-            case RunOutcome::Completed: return "Completed";
-            case RunOutcome::Failed: return "Failed";
-            case RunOutcome::Cancelled: return "Cancelled";
-            }
-
-            UF_UNREACHABLE_MSG("Unknown RunOutcome value");
-        }
-
-        [[nodiscard]]
-        auto stopReasonName(SadSearchStopReason reason) noexcept -> std::string_view
-        {
-            switch (reason)
-            {
-            case SadSearchStopReason::Cancelled: return "Cancelled";
-            case SadSearchStopReason::TimedOut: return "TimedOut";
-            case SadSearchStopReason::ComparisonBudgetExhausted:
-                return "ComparisonBudgetExhausted";
-            }
-
-            UF_UNREACHABLE_MSG("Unknown SadSearchStopReason value");
-        }
-
-        [[nodiscard]]
-        auto serializePixelRect(PixelRect const& rect) -> std::string
-        {
-            return std::format(
-                "{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}",
-                rect.x(),
-                rect.y(),
-                rect.width(),
-                rect.height()
-            );
-        }
-
-        // Accumulates a JSON object, tracking whether the leading comma is due.
-        class TraceLineBuilder final
-        {
-            std::string m_text{"{"};
-            bool        m_needsComma{false};
-
-            auto separate() -> void
-            {
-                if (m_needsComma)
-                {
-                    m_text += ',';
-                }
-
-                m_needsComma = true;
-            }
-
-        public:
-            auto addLiteral(
-                std::string_view name,
-                std::string_view literalValue
-            ) -> void
-            {
-                separate();
-                m_text += escapeJsonString(name);
-                m_text += ':';
-                m_text += literalValue;
-            }
-
-            auto addString(
-                std::string_view name,
-                std::string_view value
-            ) -> void
-            {
-                addLiteral(name, escapeJsonString(value));
-            }
-
-            // Emits a JSON array of the already-sorted `values`, each escaped, so a
-            // name carrying a quote or control byte still writes a valid line.
-            auto addStringArray(
-                std::string_view name,
-                std::span<std::string const> values
-            ) -> void
-            {
-                separate();
-                m_text += escapeJsonString(name);
-                m_text += ":[";
-                auto first = true;
-                for (auto const& value : values)
-                {
-                    if (!first)
-                    {
-                        m_text += ',';
-                    }
-                    first = false;
-                    m_text += escapeJsonString(value);
-                }
-                m_text += ']';
-            }
-
-            [[nodiscard]]
-            auto finish() -> std::string
-            {
-                m_text += '}';
-                return std::move(m_text);
-            }
-        };
-
-        // Sorts a copy of `names` before it reaches the wire, so an unordered
-        // container's iteration order can never leak into the trace.
-        [[nodiscard]]
-        auto sortedCopy(std::vector<std::string> const& names) -> std::vector<std::string>
-        {
-            auto copy = names;
-            std::ranges::sort(copy);
-            return copy;
-        }
-
-        // The group writers below take the builder by mutable reference because
-        // appending to the caller's half-built object is their whole operation;
-        // nothing is returned through the parameter.
-        auto addFrame(
-            TraceLineBuilder& builder,
-            FrameIdentity const& frame
+        auto appendField(
+            std::string& output,
+            TraceField const& field
         ) -> void
         {
-            builder.addLiteral("frameId", std::format("{}", frame.frameId().value()));
-            builder.addLiteral("sessionId", std::format("{}", frame.sessionId().value()));
-            builder.addLiteral(
-                "targetGeneration",
-                std::format("{}", frame.targetGeneration().value())
+            output += "{\"name\":";
+            appendJsonString(output, field.name);
+            output += ",\"type\":";
+            matchVariant(
+                field.value,
+                [&output](std::monostate)
+                {
+                    output += "\"null\"";
+                },
+                [&output](bool value)
+                {
+                    output += "\"bool\",\"value\":";
+                    output += value ? "true" : "false";
+                },
+                [&output](int64 value)
+                {
+                    output += "\"int64\",\"value\":";
+                    output += std::format("{}", value);
+                },
+                [&output](uint64 value)
+                {
+                    output += "\"uint64\",\"value\":";
+                    output += std::format("{}", value);
+                },
+                [&output](std::string const& value)
+                {
+                    output += "\"text\",\"value\":";
+                    appendJsonString(output, value);
+                }
             );
+            output += '}';
         }
 
-        auto addReading(
-            TraceLineBuilder& builder,
-            TraceEvent::Reading const& reading
+        auto appendReferences(
+            std::string& output,
+            std::vector<TraceReference> const& references
         ) -> void
         {
-            builder.addString("text", reading.text);
-            builder.addLiteral("readRect", serializePixelRect(reading.rect));
-            builder.addLiteral(
-                "confidenceBp",
-                std::format("{}", reading.confidenceBp)
-            );
-            builder.addString("ocrEngine", reading.engineId);
-            builder.addLiteral(
-                "readMicros",
-                std::format("{}", reading.durationMicros)
-            );
-            if (reading.lines.empty())
-            {
-                return;
-            }
-
-            // Built inline because it is the schema's only array of objects. The
-            // order is ocr::Readout's -- top to bottom, then left to right -- so
-            // the same pixels write the same line every time.
-            auto array = std::string{"["};
+            output += '[';
             auto first = true;
-            for (auto const& line : reading.lines)
+            for (auto const& reference : references)
             {
                 if (!first)
                 {
-                    array += ',';
+                    output += ',';
                 }
                 first = false;
-                array += std::format(
-                    "{{\"text\":{},\"rect\":{},\"confidenceBp\":{}}}",
-                    escapeJsonString(line.text),
-                    serializePixelRect(line.rect),
-                    line.confidenceBp
-                );
+                output += "{\"type\":";
+                appendJsonString(output, reference.type);
+                output += ",\"id\":";
+                appendJsonString(output, reference.id);
+                output += '}';
             }
-            array += ']';
-            builder.addLiteral("readLines", array);
+            output += ']';
         }
 
-        auto addAction(
-            TraceLineBuilder& builder,
-            TraceEvent::Action const& action
+        auto appendFields(
+            std::string& output,
+            std::vector<TraceField> const& fields
         ) -> void
         {
-            builder.addString("actionOutcome", actionSearchName(action.outcome));
-            if (action.sadScore.has_value())
+            output += '[';
+            auto first = true;
+            for (auto const& field : fields)
             {
-                builder.addLiteral("sadScore", std::format("{}", *action.sadScore));
+                if (!first)
+                {
+                    output += ',';
+                }
+                first = false;
+                appendField(output, field);
             }
-            if (action.maximumSad.has_value())
-            {
-                builder.addLiteral("maximumSad", std::format("{}", *action.maximumSad));
-            }
-            if (action.matchedRect.has_value())
-            {
-                builder.addLiteral("matchedRect", serializePixelRect(*action.matchedRect));
-            }
+            output += ']';
         }
-
-        auto addRun(
-            TraceLineBuilder& builder,
-            TraceEvent::Run const& run
-        ) -> void
-        {
-            builder.addString("projectId", run.projectId);
-            builder.addString("taskName", run.taskName);
-            builder.addString("sourceHash", run.sourceHash);
-            builder.addString("modelHash", run.modelHash);
-            builder.addString("frameworkVersion", run.frameworkVersion);
-            builder.addString("frameworkHash", run.frameworkHash);
-            builder.addString("luauVersion", run.luauVersion);
-            builder.addLiteral("seed", std::format("{}", run.seed));
-        }
-
     }
 
-    // Lower case like every other schema-owned spelling, and independent of the
-    // enumerator name for the reason above the kind table.
-    auto frontEndWireName(FrontEnd frontEnd) noexcept -> std::string_view
-    {
-        switch (frontEnd)
-        {
-        case FrontEnd::Task: return "task";
-        case FrontEnd::Annotation: return "annotation";
-        case FrontEnd::Check: return "check";
-        }
-
-        UF_UNREACHABLE_MSG("Unknown FrontEnd value");
-    }
-
-    StampedTraceEvent::StampedTraceEvent(
-        TraceEvent event,
-        std::vector<std::string> openSteps,
+    TraceEvent::TraceEvent(
+        TraceEventSpec spec,
+        TraceStreamSpec stream,
         uint64 sequence,
-        TaskRunId runId,
-        GenerationId generationId,
-        FrontEnd frontEnd,
-        int64 wallClockUnixMillis
+        int64 recordedAtUnixMillis
     )
-        : m_event{std::move(event)}
-        , m_openSteps{std::move(openSteps)}
+        : m_spec{std::move(spec)}
+        , m_stream{std::move(stream)}
         , m_sequence{sequence}
-        , m_runId{runId}
-        , m_generationId{generationId}
-        , m_frontEnd{frontEnd}
-        , m_wallClockUnixMillis{wallClockUnixMillis}
+        , m_recordedAtUnixMillis{recordedAtUnixMillis}
     {
     }
 
-    auto StampedTraceEvent::event() const noexcept -> TraceEvent const& { return m_event; }
-
-    auto StampedTraceEvent::openSteps() const noexcept -> std::span<std::string const>
+    auto TraceEvent::eventType() const noexcept -> std::string const&
     {
-        return m_openSteps;
+        return m_spec.eventType;
     }
 
-    auto StampedTraceEvent::sequence() const noexcept -> uint64 { return m_sequence; }
-
-    auto StampedTraceEvent::runId() const noexcept -> TaskRunId { return m_runId; }
-
-    auto StampedTraceEvent::generationId() const noexcept -> GenerationId
+    auto TraceEvent::audit() const noexcept -> AuditMetadata const&
     {
-        return m_generationId;
+        return m_spec.audit;
     }
 
-    auto StampedTraceEvent::frontEnd() const noexcept -> FrontEnd
+    auto TraceEvent::payload() const noexcept -> TypedTracePayload const&
     {
-        return m_frontEnd;
+        return m_spec.payload;
     }
 
-    auto StampedTraceEvent::wallClockUnixMillis() const noexcept -> int64
+    auto TraceEvent::sessionId() const noexcept -> std::string const&
     {
-        return m_wallClockUnixMillis;
+        return m_stream.sessionId;
     }
 
-    auto serializeTraceEvent(StampedTraceEvent const& stamped) -> std::string
+    auto TraceEvent::sessionManifestHash() const noexcept -> ContentHash
     {
-        auto const& event = stamped.event();
-        auto        builder = TraceLineBuilder{};
-
-        builder.addString("schema", k_traceSchema);
-        builder.addString("kind", traceEventKindName(event.kind));
-        builder.addLiteral("seq", std::format("{}", stamped.sequence()));
-        builder.addLiteral("runId", std::format("{}", stamped.runId().value()));
-        builder.addLiteral(
-            "generationId",
-            std::format("{}", stamped.generationId().value())
-        );
-        builder.addString("frontEnd", frontEndWireName(stamped.frontEnd()));
-
-        // Part of the stamp, so it sits with the identity triple rather than among
-        // the event's own fields. Omitted when no step is open.
-        if (!stamped.openSteps().empty())
-        {
-            builder.addStringArray("steps", stamped.openSteps());
-        }
-
-        if (event.frame.has_value())
-        {
-            addFrame(builder, *event.frame);
-        }
-
-        if (event.action.has_value())
-        {
-            addAction(builder, *event.action);
-        }
-
-        if (event.reading.has_value())
-        {
-            addReading(builder, *event.reading);
-        }
-
-        if (event.run.has_value())
-        {
-            addRun(builder, *event.run);
-        }
-
-        if (event.resources.has_value())
-        {
-            builder.addStringArray(
-                "targets",
-                sortedCopy(event.resources->targets)
-            );
-            builder.addStringArray(
-                "surfaces",
-                sortedCopy(event.resources->surfaces)
-            );
-        }
-
-        if (event.nativeCall.has_value())
-        {
-            builder.addString("verb", event.nativeCall->verb);
-            if (event.nativeCall->cycleOrdinal.has_value())
-            {
-                builder.addLiteral(
-                    "cycleOrdinal",
-                    std::format("{}", *event.nativeCall->cycleOrdinal)
-                );
-            }
-            if (event.nativeCall->hitCycleOrdinal.has_value())
-            {
-                builder.addLiteral(
-                    "hitCycleOrdinal",
-                    std::format("{}", *event.nativeCall->hitCycleOrdinal)
-                );
-            }
-            if (event.nativeCall->durationMillis.has_value())
-            {
-                builder.addLiteral(
-                    "durationMillis",
-                    std::format("{}", *event.nativeCall->durationMillis)
-                );
-            }
-            if (event.nativeCall->resourceName.has_value())
-            {
-                builder.addString("resourceName", *event.nativeCall->resourceName);
-            }
-            if (event.nativeCall->byteCount.has_value())
-            {
-                builder.addLiteral(
-                    "byteCount",
-                    std::format("{}", *event.nativeCall->byteCount)
-                );
-            }
-            if (event.nativeCall->contentHash.has_value())
-            {
-                builder.addString("contentHash", *event.nativeCall->contentHash);
-            }
-            builder.addString("outcome", nativeCallOutcomeName(event.nativeCall->outcome));
-        }
-
-        if (event.framework.has_value())
-        {
-            if (!event.framework->label.empty())
-            {
-                builder.addString("label", event.framework->label);
-            }
-            if (event.framework->attempt.has_value())
-            {
-                builder.addLiteral("attempt", std::format("{}", *event.framework->attempt));
-            }
-            if (event.framework->attempts.has_value())
-            {
-                builder.addLiteral(
-                    "attempts",
-                    std::format("{}", *event.framework->attempts)
-                );
-            }
-            if (event.framework->durationMillis.has_value())
-            {
-                builder.addLiteral(
-                    "durationMillis",
-                    std::format("{}", *event.framework->durationMillis)
-                );
-            }
-        }
-
-        if (event.annotation.has_value())
-        {
-            if (event.annotation->point.has_value())
-            {
-                builder.addLiteral(
-                    "pointX",
-                    std::format("{}", event.annotation->point->x())
-                );
-                builder.addLiteral(
-                    "pointY",
-                    std::format("{}", event.annotation->point->y())
-                );
-            }
-            if (event.annotation->rect.has_value())
-            {
-                builder.addLiteral(
-                    "regionRect",
-                    serializePixelRect(*event.annotation->rect)
-                );
-            }
-            if (event.annotation->byteCount.has_value())
-            {
-                builder.addLiteral(
-                    "byteCount",
-                    std::format("{}", *event.annotation->byteCount)
-                );
-            }
-            if (event.annotation->contentHash.has_value())
-            {
-                builder.addString("contentHash", *event.annotation->contentHash);
-            }
-        }
-
-        if (event.templateHash.has_value())
-        {
-            builder.addString("templateHash", *event.templateHash);
-        }
-
-        if (event.stopReason.has_value())
-        {
-            builder.addString("stopReason", stopReasonName(*event.stopReason));
-        }
-
-        if (event.runOutcome.has_value())
-        {
-            builder.addString("runOutcome", runOutcomeName(*event.runOutcome));
-        }
-
-        if (event.errorKind.has_value())
-        {
-            // The domain's single wire spelling, also the `kind` a script's Tier B
-            // error carries and the uf.errors constant it compares against, so a
-            // trace line names a failure with exactly the string the script saw.
-            builder.addString("errorKind", automationErrorWireName(*event.errorKind));
-        }
-
-        if (event.message.has_value())
-        {
-            builder.addString("message", *event.message);
-        }
-
-        if (event.clickClient.has_value())
-        {
-            builder.addLiteral("clickClientX", std::format("{}", event.clickClient->x()));
-            builder.addLiteral("clickClientY", std::format("{}", event.clickClient->y()));
-        }
-
-        if (event.key.has_value())
-        {
-            builder.addString("key", event.key->value());
-        }
-
-        // A literal rather than a string: the count is a signed number a reader
-        // compares and sums, and quoting it would make every consumer parse it out.
-        if (event.wheelNotches.has_value())
-        {
-            builder.addLiteral("wheelNotches", std::format("{}", *event.wheelNotches));
-        }
-
-        if (event.captureAttempt.has_value())
-        {
-            builder.addLiteral(
-                "captureAttempt",
-                std::format("{}", *event.captureAttempt)
-            );
-        }
-
-        // A literal for wheelNotches' reason: a hold is a duration a reader
-        // compares against the target's own long-press threshold.
-        if (event.holdMillis.has_value())
-        {
-            builder.addLiteral("holdMillis", std::format("{}", *event.holdMillis));
-        }
-
-        // Written beside clickClient rather than instead of it: the pair is the
-        // record, and a reader that finds only one of them has half a drag.
-        if (event.dragEndClient.has_value())
-        {
-            builder.addLiteral(
-                "dragEndClientX",
-                std::format("{}", event.dragEndClient->x())
-            );
-            builder.addLiteral(
-                "dragEndClientY",
-                std::format("{}", event.dragEndClient->y())
-            );
-        }
-
-        // A literal for holdMillis' reason: it is a duration a reader compares
-        // against how slowly the target needs to be dragged before it follows.
-        if (event.travelMillis.has_value())
-        {
-            builder.addLiteral(
-                "travelMillis",
-                std::format("{}", *event.travelMillis)
-            );
-        }
-
-        // The non-golden member goes last, so a reader scanning a line meets the
-        // reproducible record first and the wall clock only at the end.
-        builder.addLiteral(
-            k_nonGoldenMember,
-            std::format("{{\"wallClock\":{}}}", stamped.wallClockUnixMillis())
-        );
-
-        return builder.finish();
+        return m_stream.sessionManifestHash;
     }
 
-    auto stripNonGoldenFields(std::string_view line) -> std::string
+    auto TraceEvent::producer() const noexcept -> std::string const&
     {
-        auto const span = findTopLevelMember(line, k_nonGoldenMember);
-        if (!span)
-        {
-            return std::string{line};
-        }
+        return m_stream.producer;
+    }
 
-        // Drop the separating comma with the member: the one before it when the
-        // member is not first, otherwise the one after it.
-        auto begin = span->begin;
-        auto end   = span->end;
-        if (begin > 1U && line[begin - 1U] == ',')
-        {
-            --begin;
-        }
-        else if (end < line.size() && line[end] == ',')
-        {
-            ++end;
-        }
+    auto TraceEvent::sequence() const noexcept -> uint64
+    {
+        return m_sequence;
+    }
 
-        auto stripped = std::string{line.substr(0, begin)};
-        stripped += line.substr(end);
-        return stripped;
+    auto TraceEvent::recordedAtUnixMillis() const noexcept -> int64
+    {
+        return m_recordedAtUnixMillis;
+    }
+
+    auto serializeTraceEvent(TraceEvent const& event) -> std::string
+    {
+        auto output = std::string{"{\"schema\":"};
+        appendJsonString(output, k_traceSchema);
+        output += ",\"event_type\":";
+        appendJsonString(output, event.eventType());
+        output += ",\"session_id\":";
+        appendJsonString(output, event.sessionId());
+        output += ",\"session_manifest_hash\":";
+        appendJsonString(output, event.sessionManifestHash().hex());
+        output += ",\"monotonic_sequence\":";
+        output += std::format("{}", event.sequence());
+        output += ",\"recorded_at_unix_millis\":";
+        output += std::format("{}", event.recordedAtUnixMillis());
+        output += ",\"audit\":{\"actor\":";
+        appendJsonString(output, event.audit().actor);
+        output += ",\"producer\":";
+        appendJsonString(output, event.producer());
+        output += ",\"references\":";
+        appendReferences(output, event.audit().references);
+        output += "},\"payload\":{\"schema_hash\":";
+        appendJsonString(output, event.payload().schemaHash.hex());
+        output += ",\"fields\":";
+        appendFields(output, event.payload().fields);
+        output += "}}";
+        return output;
     }
 }

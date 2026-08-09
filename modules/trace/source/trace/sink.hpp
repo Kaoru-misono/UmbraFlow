@@ -6,13 +6,11 @@
 
 namespace uf::trace
 {
-    // A port that records one stamped trace event. Traceability is load-bearing, so
-    // an emit failure is an error rather than a best-effort side effect: an emitter
-    // writes at the decision instant and treats a failed emit as aborting the
-    // operation whose evidence was lost. StampedTraceEvent rather than TraceEvent
-    // because its constructor is private to TraceRecorder: a sink is reachable only
-    // through the recorder that stamps the sequence and run identity, while any
-    // sink may keep the events it is handed.
+    // One synchronous append boundary. Implementations observe calls in order
+    // and never alter an event accepted by an earlier call. Success means this
+    // sink accepted the complete event; durability remains a sink-specific
+    // guarantee. A failure may have appended an unknown prefix, so the owning
+    // recorder becomes permanently faulted and will not emit a later event.
     class ITraceSink
     {
     public:
@@ -25,6 +23,6 @@ namespace uf::trace
 
         virtual ~ITraceSink() = default;
 
-        [[nodiscard]] virtual auto emit(StampedTraceEvent const& event) -> Status = 0;
+        [[nodiscard]] virtual auto append(TraceEvent const& event) -> Status = 0;
     };
 }

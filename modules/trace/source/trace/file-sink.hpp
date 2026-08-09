@@ -11,10 +11,9 @@
 
 namespace uf::trace
 {
-    // An ITraceSink that appends one serialized JSONL line per event and flushes
-    // after each write: evidence must survive a crash, so nothing buffers across
-    // emits and a failed write or flush surfaces as an error Status. One run writes
-    // one file through one sink.
+    // Owns one new JSONL stream and appends one flushed line per event. Existing
+    // non-empty files are rejected; this sink never truncates prior evidence and
+    // does not scan old JSON to resume a stream.
     class FileTraceSink final : public ITraceSink
     {
         struct OpenTag final
@@ -27,10 +26,10 @@ namespace uf::trace
         FileTraceSink(OpenTag, std::ofstream stream) noexcept;
 
         [[nodiscard]]
-        static auto create(
+        static auto createNew(
             std::filesystem::path const& path
         ) -> Result<std::unique_ptr<ITraceSink>>;
 
-        [[nodiscard]] auto emit(StampedTraceEvent const& event) -> Status override;
+        [[nodiscard]] auto append(TraceEvent const& event) -> Status override;
     };
 }
