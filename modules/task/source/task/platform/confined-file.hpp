@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -54,5 +55,16 @@ namespace uf::task_platform
             std::string_view relativeText,
             std::size_t maximumBytes
         ) const -> Result<std::vector<std::byte>>;
+
+        // Creates a file that must not already exist. Staging a deployment
+        // needs the same confinement as reading one: a link planted at a
+        // directory the installer creates would otherwise redirect the write,
+        // and create-new means a link planted at the leaf fails outright
+        // rather than being followed.
+        [[nodiscard]]
+        auto writeNewFile(
+            std::string_view relativeText,
+            std::span<std::byte const> bytes
+        ) const -> Status;
     };
 }

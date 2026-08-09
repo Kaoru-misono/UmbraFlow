@@ -3,6 +3,8 @@
 #include <core/numeric/checked-cast.hpp>
 #include <core/text/utf8.hpp>
 
+#include <task/platform/confined-file.hpp>
+
 #include <domain/error.hpp>
 
 #include <algorithm>
@@ -420,41 +422,6 @@ namespace uf::operator_runtime::detail
             return ok();
         }
 
-        [[nodiscard]]
-        auto writeFile(
-            std::filesystem::path const& path,
-            std::span<std::byte const> bytes
-        ) -> Status
-        {
-            auto error = std::error_code{};
-            std::filesystem::create_directories(path.parent_path(), error);
-            if (error)
-            {
-                return ioFailure("create parent for", path, error);
-            }
-            auto stream = std::ofstream{path, std::ios::binary | std::ios::trunc};
-            if (!stream)
-            {
-                return ioFailure("create", path);
-            }
-            if (!bytes.empty())
-            {
-                auto const text = asString(bytes);
-                stream.write(text.data(), static_cast<std::streamsize>(text.size()));
-            }
-            stream.flush();
-            if (!stream)
-            {
-                return ioFailure("write", path);
-            }
-            stream.close();
-            if (!stream)
-            {
-                return ioFailure("close", path);
-            }
-            return ok();
-        }
-
         class StagingDirectory final
         {
             std::filesystem::path m_path;
@@ -521,18 +488,31 @@ namespace uf::operator_runtime::detail
             }
             auto cleanup = StagingDirectory{staging};
 
-            UF_TRY(writeFile(
-                staging / task::k_runtimeArtifactManifestFileName,
-                source.manifestBytes()
-            ));
-            UF_TRY(writeFile(
-                staging / task::k_runtimeModelFileName,
-                source.modelBytes()
-            ));
-            for (auto const& relative : source.assetPaths())
+            // Staging writes go through the same confinement the loader reads
+            // through. The leaf name is 32 CSPRNG bytes and so cannot be
+            // pre-created, but the directories underneath it are ours to make,
+            // and a link planted at one of those between the create and the
+            // write would otherwise redirect a deployment write out of the
+            // production root.
+            //
+            // The confined root is scoped to the writes: its handles are held
+            // without delete sharing, which is what stops the prefix moving --
+            // and would equally stop the rename below.
             {
-                UF_TRY_VALUE(bytes, source.fileBytes(relative));
-                UF_TRY(writeFile(staging / std::filesystem::path{relative}, bytes));
+                UF_TRY_VALUE(confinedStaging, task_platform::ConfinedRoot::open(staging));
+                UF_TRY(confinedStaging.writeNewFile(
+                    task::k_runtimeArtifactManifestFileName,
+                    source.manifestBytes()
+                ));
+                UF_TRY(confinedStaging.writeNewFile(
+                    task::k_runtimeModelFileName,
+                    source.modelBytes()
+                ));
+                for (auto const& relative : source.assetPaths())
+                {
+                    UF_TRY_VALUE(bytes, source.fileBytes(relative));
+                    UF_TRY(confinedStaging.writeNewFile(relative, bytes));
+                }
             }
             UF_TRY(task::loadRuntimeArtifact(staging, source.rootHash()));
 

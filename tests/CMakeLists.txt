@@ -400,7 +400,7 @@ if(TARGET ${PROJECT_NAME}_task)
         NAME test-task
         SOURCES
             task/test-adversarial-surface.cpp
-            task/test-confined-read.cpp
+            task/test-confined-file.cpp
             task/test-task-binding.cpp
             task/test-framework-bundle.cpp
             task/test-script-validator.cpp

@@ -1,4 +1,4 @@
-#include "confined-read.hpp"
+#include "confined-file.hpp"
 
 #include <core/numeric/checked-cast.hpp>
 #include <core/types/integer.hpp>
@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <format>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -367,6 +368,80 @@ namespace uf::task_platform
         UF_TRY_VALUE(file, openNoFollow(path, OpenKind::File));
         return readAll(file, maximumBytes);
     }
+
+    auto ConfinedRoot::writeNewFile(
+        std::string_view relativeText,
+        std::span<std::byte const> bytes
+    ) const -> Status
+    {
+        UF_TRY_VALUE(parts, components(relativeText));
+
+        auto held = std::vector<Handle>{};
+        auto path = m_impl->rootPath;
+        for (auto index = std::size_t{0}; index + 1U < parts.size(); ++index)
+        {
+            path += L'\\';
+            path += std::filesystem::path{parts[index]}.native();
+            // SAFETY: path is a null-terminated wide string owned here. A
+            // directory that already exists is not an error; the no-follow open
+            // below is what decides whether it is acceptable.
+            static_cast<void>(::CreateDirectoryW(path.c_str(), nullptr));
+            UF_TRY_VALUE(directory, openNoFollow(path, OpenKind::Directory));
+            held.emplace_back(std::move(directory));
+        }
+        path += L'\\';
+        path += std::filesystem::path{parts.back()}.native();
+
+        // CREATE_NEW plus FILE_FLAG_OPEN_REPARSE_POINT: an existing name of any
+        // kind, including a planted link, fails instead of being written
+        // through.
+        // SAFETY: path is null-terminated and owned here, and the handle is
+        // adopted by Handle, which closes it once.
+        auto file = Handle{
+            ::CreateFileW(
+                path.c_str(),
+                static_cast<DWORD>(GENERIC_WRITE),
+                static_cast<DWORD>(FILE_SHARE_READ),
+                nullptr,
+                static_cast<DWORD>(CREATE_NEW),
+                static_cast<DWORD>(FILE_FLAG_OPEN_REPARSE_POINT),
+                nullptr
+            )
+        };
+        if (!file.valid())
+        {
+            return ioFailure("cannot create a confined file");
+        }
+
+        auto written = std::size_t{};
+        while (written < bytes.size())
+        {
+            auto const remaining = checkedCast<DWORD>(bytes.size() - written);
+            if (!remaining)
+            {
+                return ioFailure("a confined write is larger than one call");
+            }
+            auto wrote = DWORD{};
+            // SAFETY: bytes.data() + written stays inside the span because
+            // written < bytes.size(), and the count is the remaining distance.
+            if (::WriteFile(file.get(), bytes.data() + written, *remaining, &wrote, nullptr) == 0)
+            {
+                return ioFailure("cannot write a confined file");
+            }
+            if (wrote == 0U)
+            {
+                return ioFailure("a confined write made no progress");
+            }
+            written += wrote;
+        }
+        // SAFETY: file is a valid handle; flushing before the handle closes is
+        // what makes the staged bytes durable for the verification that follows.
+        if (::FlushFileBuffers(file.get()) == 0)
+        {
+            return ioFailure("cannot flush a confined file");
+        }
+        return ok();
+    }
 #else
     auto ConfinedRoot::open(
         std::filesystem::path const& root
@@ -451,6 +526,70 @@ namespace uf::task_platform
             filled += static_cast<std::size_t>(read);
         }
         return bytes;
+    }
+
+    auto ConfinedRoot::writeNewFile(
+        std::string_view relativeText,
+        std::span<std::byte const> bytes
+    ) const -> Status
+    {
+        UF_TRY_VALUE(parts, components(relativeText));
+
+        auto parent  = Descriptor{};
+        auto current = m_impl->root.get();
+        for (auto index = std::size_t{0}; index + 1U < parts.size(); ++index)
+        {
+            // SAFETY: current is a directory descriptor owned here, and the
+            // component is null-terminated for the duration of the call. An
+            // existing directory is not an error; O_NOFOLLOW below decides.
+            static_cast<void>(::mkdirat(current, parts[index].c_str(), 0700));
+            auto next = Descriptor{
+                ::openat(
+                    current,
+                    parts[index].c_str(),
+                    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                )
+            };
+            if (!next.valid())
+            {
+                return refuse("a confined directory is missing or is a link");
+            }
+            parent  = std::move(next);
+            current = parent.get();
+        }
+
+        // SAFETY: O_EXCL means an existing name of any kind, including a
+        // planted link, fails rather than being written through.
+        auto file = Descriptor{
+            ::openat(
+                current,
+                parts.back().c_str(),
+                O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                0600
+            )
+        };
+        if (!file.valid())
+        {
+            return refuse("a confined file already exists or is a link");
+        }
+
+        auto written = std::size_t{};
+        while (written < bytes.size())
+        {
+            // SAFETY: bytes.data() + written stays inside the span because
+            // written < bytes.size().
+            auto const wrote = ::write(file.get(), bytes.data() + written, bytes.size() - written);
+            if (wrote <= 0)
+            {
+                return ioFailure("cannot write a confined file");
+            }
+            written += static_cast<std::size_t>(wrote);
+        }
+        if (::fsync(file.get()) != 0)
+        {
+            return ioFailure("cannot flush a confined file");
+        }
+        return ok();
     }
 #endif
 }

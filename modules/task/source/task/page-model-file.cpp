@@ -1,6 +1,6 @@
 #include "page-model-file.hpp"
 
-#include "platform/confined-read.hpp"
+#include "platform/confined-file.hpp"
 
 #include <core/error/result.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
