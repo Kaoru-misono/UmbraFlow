@@ -2,11 +2,14 @@
 
 ## Start here
 
+- [Runtime v2 and game-operator breaking authority](plans/2026-08-09-runtime-hardening-rewrite.md)
+- [Requirement and migration map](plans/2026-08-09-runtime-migration-report.md)
 - [Architecture](ARCHITECTURE.md)
-- [Work queue — pick up here](WORKLIST.md) — ordered, says which items need the
-  real machine, and carries the todos no other document had a home for. TODO.md
-  stays the ledger of record; this is the queue derived from it.
 - [Current execution checklist](TODO.md)
+- [Independent review outcome, 2026-08-10](reviews/2026-08-10-runtime-hardening-review.md)
+  — both reviews returned FAIL; the open findings are the delivery blockers.
+- [Historical pre-rewrite work queue](WORKLIST.md) — retained evidence only,
+  not an implementation queue.
 
 ## Current plans
 
@@ -48,8 +51,10 @@ canonical listing — this section is its short form. Everything else is archive
 ## Archive
 
 Archived planning and research material lives under `archive/plans/`; closed
-reviews live under `archive/reviews/`. `docs/reviews/` no longer exists — the
-three reviews it held were closed and moved on 2026-08-01.
+reviews live under `archive/reviews/`. `docs/reviews/` was empty between
+2026-08-01, when its three reviews were closed and moved, and 2026-08-10, when
+the runtime-hardening review reopened it. Archive that one too once its open
+findings are closed.
 
 - [Locked S0 annotation contract](archive/plans/2026-07-22-annotation-design.md)
 - [Luau task-model grill decisions](archive/plans/2026-07-21-lua-task-model-grill-decisions.md)

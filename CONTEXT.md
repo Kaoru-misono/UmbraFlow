@@ -1,10 +1,36 @@
 # UmbraFlow
 
-A strictly-background personal game automation app: a C++ host observes a game
-window, recognizes annotated pages, and delivers provable background actions;
-task scripts written in Luau drive the loop through a minimal capability API.
+> **2026-08-09 breaking rewrite:** Runtime/annotation/action clauses in this
+> file are historical where they conflict with the frozen
+> [Runtime v2 authority](docs/plans/2026-08-09-runtime-hardening-rewrite.md).
+> Page/Element/Hit/UFR, Context truth, direct task input, and compatibility APIs
+> are not implementation targets.
 
-## Language
+A reusable game-automation host: C++ owns target/capture/input safety, trusted
+Luau resolves a screenshot-free RuntimeModel, Operator exposes semantic tools,
+and game projects connect only through a data-only ProjectPlugin.
+
+## Canonical v1.7 vocabulary
+
+- **ControlledTarget**: one attached window/process generation.
+- **RuntimeArtifact**: a verified manifest, root `page-model.toml` and its
+  manifest-listed assets; never an annotation screenshot bundle.
+- **UiTarget**: semantic identity only.
+- **Binding**: the sole owner of an actionable placement/variant.
+- **StateResolution / BindingResolution**: separate same-cycle UI decisions.
+- **Receipt**: Host-owned opaque one-shot delivery authority.
+- **OperatorSession**: the only Script/Agent/Human Tool facade for snapshots,
+  semantic tools and Operations.
+- **ProjectPlugin / ProjectRegistration**: the only game extension boundary.
+
+_Avoid as current contracts_: Context truth, Page, Element, Hit, UFR, direct
+`ctx` action methods, direct run/check/replay input, caller coordinates,
+caller effects and compatibility readers.
+
+## Historical pre-v1.7 language
+
+The material below is retained as terminology history only. It cannot define a
+current API, schema or implementation when it differs from the authority above.
 
 ### Scripting
 

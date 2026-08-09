@@ -1,127 +1,92 @@
-# Umbraflow execution status
+# Umbraflow upstream execution checklist
 
-This file is the active implementation ledger for the runtime annotation
-rewrite. The current contract is frozen in
-[`2026-08-09-runtime-model-contract.md`](plans/2026-08-09-runtime-model-contract.md).
-The architecture ownership summary is in
-[`ARCHITECTURE.md`](ARCHITECTURE.md). Older plans and worklists remain
-reference material only until they are migrated or archived; they do not
-override the current contract.
+> Amended 2026-08-09: this checklist is derived from the
+> [v1.7 breaking rewrite authority](plans/2026-08-09-runtime-hardening-rewrite.md)
+> and replaces the former consumer-project queue. Work in this repository does
+> not modify a game project.
+>
+> Amended 2026-08-10: boxes below are ticked against a build and a test run
+> that actually happened -- the tree had never been compiled before this date.
+> Both independent reviews returned FAIL; their closed and open findings are in
+> [the review outcome](reviews/2026-08-10-runtime-hardening-review.md), which is
+> what the two unticked review boxes now wait on.
 
-## Completed in this documentation pass
+## G0 — contract and inherited baseline
 
-- [x] Declared `page-model.toml` to be a deployment envelope only. It does not
-      carry screenshots, evidence, CandidateModel records, review history, or
-      observed transitions.
-- [x] Assigned complete `RuntimeModel` parsing and compilation to trusted
-      Luau; limited C++ to pre-VM envelope facts, hashes, geometry, and IDs.
-- [x] Defined Context, Surface, RuntimeState, Target, Locator, Reader, Binding,
-      Action, Transition, Resolution, and Receipt ownership.
-- [x] Defined `Present` / `Absent` / `Unknown` and `Resolved` / `Ambiguous` /
-      `UnknownResolution` fail-closed behavior.
-- [x] Documented the six Agent stages, revisioned decision queue, human review
-      boundary, promotion, compile, replay, and rollback.
-- [x] Removed current active documentation's descriptions of the retired
-      object vocabulary as an implementation contract.
+- [x] Pin the four-document consumer bundle at root
+      `90496173f8a920e59659b7c4568c8d04abe7b4d3d209db493a59fc3c55226ed0`.
+- [x] Record base commit, rejected stash and the 101-entry dirty baseline
+      manifest.
+- [x] Assign exactly one disposition to all 101 inherited dirty paths
+      (67 REWRITE, 34 DELETE).
+- [x] Resolve post-dispatch approval recovery, exact registration/session root
+      bytes, Operator-owned policy and consumer-example scope in the upstream
+      authority.
+- [x] Map every P/D/U/S/C/A requirement to an owner, schema location and exact
+      CTest ID.
+- [ ] Obtain final state/persistence and plugin-boundary review PASS on the
+      upstream execution profile. Both ran on 2026-08-10 and returned FAIL;
+      see [the review outcome](reviews/2026-08-10-runtime-hardening-review.md).
+- [ ] Make active documentation point to this authority without copying old
+      Context/Page/Target semantics.
 
-## Implementation backlog
+## G1 — remove unsafe entrances and restore primitives
 
-### P0 — contract and schema authority
+- [x] Delete old check/run/replay production CLI and file-frame projection.
+- [x] Delete v1/UFR/envelope schemas, old runtime globals and compatibility
+      adapters.
+- [x] Keep and revalidate IDs, capture, cycle ledger, target generation,
+      controller input/DPI, VM limits, TaskHost lifecycle and generic Trace.
+- [x] Restore reduced regression assertions and register every planned contract
+      in CTest before claiming coverage.
+- [x] Register `contract-repository-surface` to reject retired files,
+      commands, globals, parser duplication, consumer symbols and unconsumed
+      Receipt proof fields.
 
-- [ ] Keep the four schemas and the semantic validator aligned with
-      `docs/plans/2026-08-09-runtime-model-contract.md`.
-- [ ] Add a contract check that rejects unknown fields and duplicate IDs, and
-      verifies all cross-object references and layer-stack rules.
-- [ ] Generate or validate Luau/Python/TypeScript bindings from the canonical
-      contracts rather than maintaining independent enums.
+## G2 — RuntimeArtifact and Runtime v2
 
-### P1 — trusted runtime model and compiler
+- [x] Add exact RuntimeArtifact JCS schema, confinement-first verifier and
+      generation-owned private finalize binding.
+- [x] Implement one trusted Luau RuntimeModel parser.
+- [x] Make UiTarget semantic-only and Binding the sole placement/variant owner.
+- [x] Implement StateResolution then same-cycle BindingResolution.
+- [x] Mint Host-owned expiring one-shot Receipt; keep production input closed.
+- [x] Pass `contract-runtime-u01` through `contract-runtime-u08`.
 
-- [ ] Compile the full RuntimeModel from `page-model.toml` inside trusted Luau.
-- [ ] Validate locator assets, hashes, readers, bindings, transitions, and
-      action preconditions before making a model available to a task.
-- [ ] Keep runtime packages free of offline frame/evidence stores.
+## G3 — offline authoring
 
-### P2 — C++ envelope boundary
+- [x] Implement minimal `annotation-workspace.sqlite` candidate, decision and
+      replay ledger.
+- [x] Publish immutable asset-complete releases; authoring publication is not
+      production activation.
+- [x] Prove production cannot read authoring DB/workspace/blob/replay roots.
 
-- [ ] Make the C++ reader consume only schema version, exact-file hash,
-      geometry, target IDs, and surface IDs before VM startup.
-- [ ] Add tests proving C++ does not interpret bindings, identity, locator
-      thresholds, surface selection, or transition policy.
+## G4 — Operator and two plugin fixtures
 
-### P3 — resolver and action safety
+- [x] Add minimal `modules/operator` and
+      `operator-runtime.sqlite`.
+- [x] Implement exact ProjectRegistrationManifest and SessionManifest JCS roots.
+- [x] Implement lease/fence, opaque snapshots, idempotent commands, EffectivePlan,
+      single-use approval, Operation transitions and reconciliation transaction.
+- [x] Run one contract suite over two structurally different fixture plugins;
+      core must contain no game symbol or branch.
+- [x] Pass all local `contract-product-*`,
+      `contract-state-*`, `contract-control-*` and `contract-agent-*`.
 
-- [ ] Implement same-cycle evidence, scene/overlay/interrupt stack resolution,
-      and explicit `Resolved`, `Ambiguous`, and `UnknownResolution` results.
-- [ ] Require framework-minted receipts tied to ticket, cycle, frame, model
-      hash, binding, action, and proof.
-- [ ] Reject all actions from unknown/ambiguous resolution, stale receipts,
-      missing preconditions, and forged tables.
+## Final gate
 
-### P4 — transitions, check, and replay
+- [x] `ctest -N` lists every migration-report verification marked `CTEST`.
+- [ ] Focused security, crash, path-confinement and capability attacks pass.
+      Capability and forgery attacks pass; path confinement does not -- the
+      loader still checks a path and then opens it by name, and there is no
+      symlink/junction/reparse test on the C++ side.
+- [x] The repository build skill completes `scripts/ci-local.ps1` with
+      `GATE: PASS`.
+- [ ] Independent review finds no old reader, direct action path, consumer
+      schema or fake-green unregistered test. No old reader, action path or
+      consumer schema was found; several fake-green tests were, and are listed
+      in the review outcome.
 
-- [ ] Keep declared transitions, observed transitions, and expected test
-      transitions as distinct records.
-- [ ] Make offline check/replay report coverage, unknown, ambiguity, invalid
-      actions, unexpected transitions, and missing evidence.
-- [ ] Ensure normal runtime loading never requires the offline frame corpus.
-
-### P5/P6 — Agent backend and decision queue
-
-- [ ] Store frames, observations, assertions, CandidateModels, patches,
-      conflicts, provenance, and review audit outside the runtime package.
-- [ ] Implement the six stages: Capture, Perception, Structure, Contract,
-      Verification, Repair.
-- [ ] Enforce revision checks, dry-run compile by default, and explicit patch
-      decisions.
-- [ ] Prevent bulk approval for high/critical identity or action changes.
-
-### P7/P8 — fixtures and integration gate
-
-- [ ] Keep the v2 fixture matrix green for ordinary scenes, overlays,
-      interrupts, shared targets, collections, unknown OCR, stale receipts,
-      unknown modals, and declared/observed transition divergence.
-- [ ] Run schema, compiler, resolver, receipt, backend, UI, replay, and
-      runtime-package boundary checks together before project migration.
-
-### P9–P11 — project integration
-
-- [ ] Rebuild project Context/Surface/Target/Locator/Reader/Binding data from
-      the offline corpus; do not mechanically copy retired rows.
-- [ ] Rework project task policies to branch on `Resolved`, retry or wait on
-      `Unknown`, and stop for `Ambiguous`.
-- [ ] Promote only compiled, validated model artifacts and keep their hashes
-      with the project evidence ledger.
-- [ ] Add regression cases for training confirmation, reward/loot details,
-      reroll confirmation, shared anchors, settlement tails, enemy inspection,
-      and the unknown dark modal.
-
-### P12 — documentation cleanup
-
-- [x] Rewrite the active architecture and execution ledger.
-- [x] Rewrite the 2026-08-09 runtime, Agent, work-breakdown, and fixture plans.
-- [x] Rewrite active pitfalls and the annotator backend guide around the
-      current runtime/offline boundary.
-- [ ] Migrate or archive older active plans and non-write-set indexes that
-      still present the retired vocabulary as current. See the final P12
-      handoff report for the exact files.
-
-## Non-negotiable review gates
-
-- [ ] No runtime artifact contains annotation screenshots or review metadata.
-- [ ] No `Unknown` measurement is used as negative evidence.
-- [ ] No `Ambiguous` or `UnknownResolution` can mint a receipt.
-- [ ] No action is granted by a Target alone; it must come from the active
-      Surface Binding and pass same-cycle preconditions.
-- [ ] No high/critical action or identity patch is bulk-approved.
-- [ ] Every promoted model has a compiler result, evidence replay result,
-      reviewer audit, content hash, and rollback predecessor.
-
-## Active-document migration boundary
-
-The authorized P12 write set includes this file, `ARCHITECTURE.md`, all
-`docs/plans/2026-08-09-*.md`, all `docs/pitfalls/*.md`, and
-`tools/annotate/*.md`. Older plans under `docs/plans/`, plus
-`docs/INDEX.md` and `docs/WORKLIST.md`, are outside that write set. They must
-be migrated or moved under `docs/archive/` in a later authorized cleanup; the
-old wording in those files is not a current runtime contract.
+The real `uf-chaos + second game` attestation remains external and
+`NOT_RUN`. It is not part of this upstream-only worktree and cannot be
+replaced by fixtures; it gates consumer production mutation later.

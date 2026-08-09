@@ -2,6 +2,10 @@
 
 最后更新 2026-08-05。
 
+> **已被 2026-08-09 破坏性重构取代。** 本文只保留历史实机事实，不再是执行队列；
+> 当前顺序与删除边界见
+> [`runtime-hardening-rewrite.md`](plans/2026-08-09-runtime-hardening-rewrite.md)。
+
 **这份文件不是新的台账。** 记录之实仍然是 [`docs/TODO.md`](TODO.md)、两份
 [plan](plans/) 和工程目录里的 `SEASON.md` / `COVERAGE.md` / `PITFALLS.md`。这里做两件
 它们不做的事:

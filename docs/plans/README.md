@@ -6,9 +6,23 @@ plans are under [`docs/archive/plans/`](../archive/plans/); closed reviews are
 under [`docs/archive/reviews/`](../archive/reviews/). Historical research there
 must not override the authorities below.
 
-## Current authorities
+## Current authority
 
 Reading order: target form, then layer ownership, then the model semantics.
+
+- [Runtime v2 and game-operator breaking rewrite](2026-08-09-runtime-hardening-rewrite.md) —
+  frozen breaking authority for Annotation/Observation Runtime v2, Host Receipt/delivery ownership,
+  Operator Core, and the multi-game ProjectPlugin boundary. Its pinned product design overrides every
+  conflicting Page/Element/Hit/UFR, Context, direct-run, caller-measurement, caller-effect, and
+  pre-Operator action clause below. No compatibility implementation is permitted.
+- [Runtime v2 migration report](2026-08-09-runtime-migration-report.md) —
+  reproducible inherited baseline, KEEP/REWRITE/DELETE dispositions, and the exact
+  requirement-to-owner/schema/CTest map.
+
+## Retained predecessor references
+
+The documents below preserve prior decisions and measurements. They are
+superseded wherever they conflict with the current authority above.
 
 - [Three layers and the Agent operator](2026-08-01-three-layers-and-agent-operator.md) —
   developer-approved 2026-08-01 **target form**: the C++/framework/business split, the Agent
