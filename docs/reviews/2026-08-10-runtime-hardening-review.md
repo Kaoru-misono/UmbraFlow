@@ -3,9 +3,10 @@
 Two independent reviews were run over the state/persistence half and the
 plugin/capability/annotation/Host half, as
 [the handoff](../plans/2026-08-09-runtime-hardening-rewrite.md) requires before
-the upstream rewrite can be called complete. Both returned FAIL on the first
-pass. Every finding below is now closed or accepted with a stated reason, and
-both halves were re-reviewed against the current tree.
+the upstream rewrite can be called complete. Both returned FAIL, were fixed,
+re-reviewed, and returned FAIL again with further findings — two of them
+regressions introduced by the first round of fixes. Everything below is now
+closed or accepted with a stated reason.
 
 ## Closed
 
@@ -23,8 +24,8 @@ both halves were re-reviewed against the current tree.
 | B-F3 | medium | the Journal payload schema hash was unverifiable; five registration accessors had no reader | `5575ae4` |
 | B-F5 | low | `m_receipts` had no ceiling | `8dcba9c` |
 | B-P1 | medium | agent-controlled documents had no per-row or total ceiling | `8dcba9c` |
-| B-P2 | medium | Python's `AuthoringCapabilityRoot` did not satisfy the schema whose hash it stamps into every release | `ccb39df` |
-| B-P3 | low | the trusted capability objects were ordinary mutable instances | `5e8630e` |
+| B-P2 | medium | Python's `AuthoringCapabilityRoot` did not satisfy, and never validated against, the schema whose hash it stamps into every release | `ccb39df`, `564eda0` |
+| B-P3 | low | the trusted capability objects were ordinary mutable instances | `5e8630e`, `564eda0` |
 
 ### P1-2 — path confinement
 
@@ -77,7 +78,7 @@ observing the case turn red.
 | the plugin surface case ORed five globals no code path registers | names only globals the whitelist actually excludes |
 | only `ValidatedJournalEntryData` had an aggregate/constructible guard | every authority-bearing value has one |
 
-There is no C++ symlink, junction or reparse coverage before this change at
+There was no C++ symlink, junction or reparse coverage before this change at
 all; `tests/task/test-confined-file.cpp` is the first.
 
 ### Known limit of one positive control
@@ -86,5 +87,36 @@ The capability-swap case defends through two different mechanisms and which one
 fires is platform-dependent. On Windows the open handle refuses the replacement
 outright, so the identity re-check in `_descriptor_document` never runs and the
 case would pass with that comparison deleted. Its positive control is therefore
-POSIX-only, where CI's `linux-analysis` job runs it. The case names both
-mechanisms rather than passing on whichever holds.
+POSIX-only. The case names both mechanisms rather than passing on whichever
+holds.
+
+An earlier version of this file said that control runs in CI's
+`linux-analysis` job. That was wrong, and the re-review caught it: the whole
+Python suite ran in no gate at all — not `ctest`, not `ci-local`, not the
+workflow — so every property it proves was unenforced between runs somebody
+remembered to do by hand. It is registered as `test-annotate-backend` with the
+`CI` label since `564eda0`, which is why the suite is 61 tests rather than 60.
+
+## Second round
+
+The re-reviews found seven and five further items. Closed in `564eda0`:
+
+| ID | Severity | What it was |
+|---|---|---|
+| A-NEW-1 | high | `Rejected` still reachable with a dispatch whose outcome was NULL or `transport_unknown`; only `not_delivered` proves absence |
+| A-NEW-2 | high | a reconcile outcome was bound to a registration but not to an Operation, so a conclusion could be moved between two that were both reconciling |
+| A-NEW-3 | medium | `commitReconciliation` and `transitionOperation` accepted a controller displaced by a human takeover |
+| A-NEW-4 | medium | a dead reader left by the first round would fail `-Werror` on Linux and macOS, which the Windows-only gate could not see |
+| A-NEW-5 | low-medium | the Windows walk re-resolved from the root path string, so a rename above the root redirected the prefix |
+| A-NEW-6 | low | the component split refused `..` but not a backslash |
+| A-NEW-7 | low | the junction cases returned quietly when the link could not be made |
+| B-NEW-1 | high | `ProjectSchemaOwner`, the largest authority, was still bound to nothing |
+| B-NEW-2 | high | **regression**: the receipt ceiling wedged the runtime, because nothing prunes and no production deliverer exists |
+| B-NEW-3 | medium | **false claim**: the Python suite ran in no gate |
+| B-NEW-4 | low | a failed capability open closed the same descriptor twice |
+| B-NEW-5 | low | the document quota summed characters against a byte ceiling |
+| (e) | — | **regression**: the wrong-context delivery case could not fail, because the second context held no cycle |
+
+Two of these were caused by the first round of fixes. A ceiling with no
+eviction and a test whose refusal came from the wrong cause are both the shape
+of mistake that only a second adversarial pass finds.
