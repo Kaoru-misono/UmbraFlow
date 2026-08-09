@@ -562,7 +562,10 @@ namespace uf::task_platform
             return refuse("a confined file is missing or is a link");
         }
 
-        auto metadata = struct stat{};
+        // Declared rather than `auto metadata = ...{}`: `stat` names a function
+        // as well as the struct, so ordinary lookup finds the function and the
+        // type is reachable only through its elaborated form.
+        struct stat metadata{};
         // SAFETY: file is a valid descriptor and metadata is a local the call
         // fills completely on success.
         if (::fstat(file.get(), &metadata) != 0 || !S_ISREG(metadata.st_mode))

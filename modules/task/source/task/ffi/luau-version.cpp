@@ -15,6 +15,10 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
 #pragma GCC diagnostic ignored "-Wold-style-cast"
+// GCC has no -Weverything, so every warning these headers trip has to be named.
+// Luau's containers take constructor parameters named after the members they
+// initialise, which is what -Wshadow objects to.
+#pragma GCC diagnostic ignored "-Wshadow"
 #endif
 #include <Luau/BytecodeBuilder.h>
 #if defined(_MSC_VER)

@@ -31,6 +31,25 @@ def identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
     )
 
 
+def container_identity(metadata: os.stat_result) -> tuple[int, int, int, int]:
+    """identity() minus the one field a directory changes by losing its own entries.
+
+    POSIX counts one link per subdirectory, so removing a child directory drops the
+    parent's st_nlink. Comparing the full identity across a delete would therefore
+    refuse every tree deeper than one level, on the strength of a change the delete
+    itself caused. Windows reports 1 for every directory, so st_nlink separates
+    nothing there either. Use this only where entries are being removed; anywhere
+    else identity() is the stricter and correct comparison.
+    """
+
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IFMT(metadata.st_mode),
+        getattr(metadata, "st_file_attributes", 0),
+    )
+
+
 def require_plain_ancestors(path: Path | str, *, include_leaf: bool = False) -> None:
     """Reject links, junctions, and reparse points at every existing path level."""
 
@@ -216,7 +235,7 @@ def remove_plain_tree(root: Path | str) -> None:
     """Delete one verified tree; never follow or silently unlink a reparse point."""
 
     target = Path(root).absolute()
-    root_identity = identity(require_plain_directory(target))
+    root_identity = container_identity(require_plain_directory(target))
     with os.scandir(target) as iterator:
         entries = list(iterator)
     for entry in entries:
@@ -233,7 +252,9 @@ def remove_plain_tree(root: Path | str) -> None:
             child.unlink()
         else:
             raise UnsafePath(f"refusing to delete non-plain path: {child}")
-    if root_identity != identity(target.lstat()):
+    # A concurrent entry appearing under target is still refused: rmdir fails with
+    # ENOTEMPTY rather than deleting anything the scan above did not verify.
+    if root_identity != container_identity(target.lstat()):
         raise UnsafePath(f"directory identity changed before delete: {target}")
     target.rmdir()
 

@@ -204,7 +204,7 @@ namespace uf::operator_runtime::detail
                             return failure("a canonical control-character escape");
                         }
                         auto const digits = m_source.substr(m_offset + 2U, 2U);
-                        auto value = unsigned int{};
+                        auto value = 0U;
                         auto const parsed = std::from_chars(
                             digits.data(),
                             digits.data() + digits.size(),

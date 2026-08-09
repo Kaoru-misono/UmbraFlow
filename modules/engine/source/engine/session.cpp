@@ -1083,7 +1083,7 @@ namespace uf::engine
                 "live size or DPI does not match the page model's fingerprint"
             );
             UF_TRY(rejectAction(identity, mismatch.error(), std::nullopt));
-            return std::move(mismatch);
+            return mismatch;
         }
 
         auto lease = observation.m_lease.validate(

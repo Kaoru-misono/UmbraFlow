@@ -1,5 +1,14 @@
 #include <ocr/onnx-engine.hpp>
 
+// This adapter exists only where the ONNX Runtime payload does. The manifest
+// keeps ocr_onnxruntime under [dependencies.windows] and the committed payload
+// is a Windows .dll/.lib pair, but the module autoloader globs every .cpp under
+// source/, so without this guard the translation unit is compiled on a platform
+// whose include path never carries onnxruntime_cxx_api.h. Elsewhere the unit is
+// empty and createOnnxEngine stays declared but undefined, which is the link
+// failure onnx-engine.hpp promises rather than a different engine appearing.
+#if defined(_WIN32)
+
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
 #include <core/numeric/checked-cast.hpp>
@@ -1268,3 +1277,5 @@ namespace uf::ocr
         }
     }
 }
+
+#endif

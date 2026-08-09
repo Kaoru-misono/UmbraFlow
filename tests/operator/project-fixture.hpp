@@ -191,7 +191,7 @@ namespace uf::operator_runtime::test_support
                 .projectObservation = "observation",
                 .toolPrecondition   = "precondition",
             },
-            [](std::string_view exactJcs) -> Status
+            [](std::string_view candidateJcs) -> Status
             {
                 constexpr auto accepted = std::array{
                     std::string_view{"{}"},
@@ -212,8 +212,8 @@ namespace uf::operator_runtime::test_support
                     std::string_view{"{\"value\":99}"},
                 };
                 if (
-                    std::ranges::find(accepted, exactJcs) == accepted.end()
-                    && !looksLikeReduceEnvelope(exactJcs)
+                    std::ranges::find(accepted, candidateJcs) == accepted.end()
+                    && !looksLikeReduceEnvelope(candidateJcs)
                 )
                 {
                     return fail(
@@ -225,7 +225,7 @@ namespace uf::operator_runtime::test_support
             },
             [lastReduceInput](ProjectPluginFunction function,
                ProjectDocumentDirection direction,
-               std::string_view exactJcs) -> Status
+               std::string_view candidateJcs) -> Status
             {
                 auto valid = false;
                 if (direction == ProjectDocumentDirection::Input)
@@ -233,17 +233,17 @@ namespace uf::operator_runtime::test_support
                     switch (function)
                     {
                     case ProjectPluginFunction::Reduce:
-                        *lastReduceInput = std::string{exactJcs};
-                        valid = looksLikeReduceEnvelope(exactJcs);
+                        *lastReduceInput = std::string{candidateJcs};
+                        valid = looksLikeReduceEnvelope(candidateJcs);
                         break;
                     case ProjectPluginFunction::Reconcile:
-                        valid = exactJcs.starts_with("{\"disposition\":\"")
-                            && exactJcs.ends_with("\"}");
+                        valid = candidateJcs.starts_with("{\"disposition\":\"")
+                            && candidateJcs.ends_with("\"}");
                         break;
                     case ProjectPluginFunction::Derive:
                     case ProjectPluginFunction::Plan:
                     case ProjectPluginFunction::NextStep:
-                        valid = exactJcs == "{}";
+                        valid = candidateJcs == "{}";
                         break;
                     }
                 }
@@ -252,16 +252,16 @@ namespace uf::operator_runtime::test_support
                     switch (function)
                     {
                     case ProjectPluginFunction::Reduce:
-                        valid = exactJcs == "{\"revision\":0}";
+                        valid = candidateJcs == "{\"revision\":0}";
                         break;
                     case ProjectPluginFunction::Reconcile:
-                        valid = exactJcs.starts_with("{\"disposition\":\"")
-                            && exactJcs.ends_with("\"}");
+                        valid = candidateJcs.starts_with("{\"disposition\":\"")
+                            && candidateJcs.ends_with("\"}");
                         break;
                     case ProjectPluginFunction::Derive:
                     case ProjectPluginFunction::Plan:
                     case ProjectPluginFunction::NextStep:
-                        valid = exactJcs == "{}";
+                        valid = candidateJcs == "{}";
                         break;
                     }
                 }
@@ -418,7 +418,7 @@ namespace uf::operator_runtime::test_support
         auto reconcileSchemaOwner = ProjectReconcileSchemaOwner::create(
             *registration,
             "reconcile",
-            [](std::string_view exactJcs) -> Result<ReconcileDisposition>
+            [](std::string_view candidateJcs) -> Result<ReconcileDisposition>
             {
                 struct DispositionCase final
                 {
@@ -449,9 +449,9 @@ namespace uf::operator_runtime::test_support
                 };
                 auto const found = std::ranges::find_if(
                     cases,
-                    [exactJcs](DispositionCase const& candidate)
+                    [candidateJcs](DispositionCase const& candidate)
                     {
-                        return candidate.document == exactJcs;
+                        return candidate.document == candidateJcs;
                     }
                 );
                 if (found == cases.end())

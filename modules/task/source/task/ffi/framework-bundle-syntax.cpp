@@ -20,6 +20,14 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
 #pragma GCC diagnostic ignored "-Wold-style-cast"
+// GCC has no -Weverything, so every warning these headers trip has to be named.
+// The Ast tree is the reason for the last four: its node hierarchy has a
+// non-virtual destructor, its constructors take parameters named after the
+// members they initialise, and its visitor bases leave parameters unused.
+#pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
+#pragma GCC diagnostic ignored "-Wshadow"
+#pragma GCC diagnostic ignored "-Wsign-conversion"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 #endif
 #include <Luau/Allocator.h>
 #include <Luau/Ast.h>

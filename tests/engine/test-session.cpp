@@ -59,7 +59,6 @@ namespace uf::engine
             return static_cast<std::byte>(value);
         }
 
-        [[nodiscard]]
         auto requireErrorKind(Error const& error, AutomationErrorKind expected) -> void
         {
             auto const kind = automationErrorKind(error);

@@ -179,13 +179,6 @@ namespace uf::task
             return hash(std::as_bytes(std::span{value.data(), value.size()}));
         }
 
-        [[nodiscard]] auto fixedHash(std::string_view value) -> ContentHash
-        {
-            auto parsed = ContentHash::parse(std::format("sha256:{}", value));
-            REQUIRE(parsed.has_value());
-            return *parsed;
-        }
-
         auto write(
             std::filesystem::path const& path,
             std::span<std::byte const> value

@@ -506,13 +506,16 @@ namespace uf
 
             std::ranges::sort(
                 regions,
-                [](StableRegion const& left, StableRegion const& right) noexcept -> bool
+                // leftRegion/rightRegion rather than the usual left/right: this
+                // function already names the mask's column extents left and
+                // right, and a comparand is not an edge.
+                [](StableRegion const& leftRegion, StableRegion const& rightRegion) noexcept -> bool
                 {
-                    if (left.bounds.y() != right.bounds.y())
+                    if (leftRegion.bounds.y() != rightRegion.bounds.y())
                     {
-                        return left.bounds.y() < right.bounds.y();
+                        return leftRegion.bounds.y() < rightRegion.bounds.y();
                     }
-                    return left.bounds.x() < right.bounds.x();
+                    return leftRegion.bounds.x() < rightRegion.bounds.x();
                 }
             );
             return regions;

@@ -164,7 +164,7 @@ return {
                     .projectObservation = "observation",
                     .toolPrecondition   = "precondition",
                 },
-                [](std::string_view exactJcs) -> Status {
+                [](std::string_view candidateJcs) -> Status {
                     constexpr auto accepted = std::array{
                         k_input,
                         k_catalogueOutput,
@@ -173,7 +173,7 @@ return {
                         std::string_view{"{\"safe\":true}"},
                         std::string_view{"{}"},
                     };
-                    if (std::ranges::find(accepted, exactJcs) == accepted.end())
+                    if (std::ranges::find(accepted, candidateJcs) == accepted.end())
                     {
                         return fail(AutomationErrorKind::InvalidResource,
                                     "fixture canonical validator rejected bytes");
@@ -182,10 +182,10 @@ return {
                 },
                 [](ProjectPluginFunction,
                    ProjectDocumentDirection direction,
-                   std::string_view exactJcs) -> Status {
+                   std::string_view candidateJcs) -> Status {
                     bool const valid = direction == ProjectDocumentDirection::Input
-                                           ? exactJcs == k_input
-                                           : exactJcs != "{}";
+                                           ? candidateJcs == k_input
+                                           : candidateJcs != "{}";
                     if (!valid)
                     {
                         return fail(AutomationErrorKind::InvalidResource,

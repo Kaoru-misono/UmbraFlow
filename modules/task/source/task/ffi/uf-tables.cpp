@@ -726,7 +726,10 @@ namespace uf::task
                 );
             }
             auto const absolute = lua_absindex(state, index);
-            auto const size     = lua_objlen(state, absolute);
+            // lua_objlen answers a length as int and never a negative one; the
+            // cast is what lets it meet the std::size_t counts below without a
+            // signed/unsigned comparison.
+            auto const size     = static_cast<std::size_t>(lua_objlen(state, absolute));
             auto result         = std::vector<std::string>{};
             result.reserve(size);
             for (auto child = std::size_t{1}; child <= size; ++child)
