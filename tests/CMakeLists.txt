@@ -1,5 +1,23 @@
 function(cpp_add_test)
-    cmake_parse_arguments(ARG "" "NAME" "SOURCES;LIBS" ${ARGN})
+    cmake_parse_arguments(ARG "NO_CTEST" "NAME" "SOURCES;LIBS" ${ARGN})
+
+    foreach(TEST_SOURCE IN LISTS ARG_SOURCES)
+        if(TEST_SOURCE MATCHES "\\$<")
+            message(FATAL_ERROR
+                "cpp_add_test(${ARG_NAME}) requires concrete source paths"
+            )
+        endif()
+        if(IS_ABSOLUTE "${TEST_SOURCE}")
+            set(TEST_SOURCE_PATH "${TEST_SOURCE}")
+        else()
+            set(TEST_SOURCE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/${TEST_SOURCE}")
+        endif()
+        if(NOT EXISTS "${TEST_SOURCE_PATH}")
+            message(FATAL_ERROR
+                "cpp_add_test(${ARG_NAME}) source does not exist: ${TEST_SOURCE}"
+            )
+        endif()
+    endforeach()
 
     add_executable(${ARG_NAME}
         test-main.cpp
@@ -13,13 +31,206 @@ function(cpp_add_test)
     target_link_libraries(${ARG_NAME} PRIVATE ${ARG_LIBS})
     target_compile_features(${ARG_NAME} PRIVATE cxx_std_23)
 
-    add_test(NAME ${ARG_NAME} COMMAND ${ARG_NAME})
-    set_tests_properties(${ARG_NAME} PROPERTIES
-        TIMEOUT 60
-        LABELS "CI"
-    )
+    if(NOT ARG_NO_CTEST)
+        add_test(NAME ${ARG_NAME} COMMAND ${ARG_NAME})
+        set_tests_properties(${ARG_NAME} PROPERTIES
+            TIMEOUT 60
+            LABELS "CI"
+        )
+    endif()
 endfunction()
 
+set(UF_REQUIRED_DOCTEST_CONTRACTS
+    contract-product-p01
+    contract-product-p02
+    contract-product-p03
+    contract-product-p04
+    contract-product-p05-fixtures
+    contract-product-p06
+    contract-runtime-u01
+    contract-runtime-u02
+    contract-runtime-u03
+    contract-runtime-u04
+    contract-runtime-u05
+    contract-runtime-u06
+    contract-runtime-u07
+    contract-runtime-u08
+    contract-state-s01
+    contract-state-s02
+    contract-state-s03
+    contract-state-s04
+    contract-state-s05
+    contract-state-s06
+    contract-control-c01
+    contract-control-c02
+    contract-control-c03
+    contract-control-c04
+    contract-control-c05
+    contract-control-c06
+    contract-control-c07
+    contract-control-c08
+    contract-control-c09
+    contract-control-c10
+    contract-control-c11
+    contract-control-c12
+    contract-control-c13
+    contract-control-c14
+    contract-agent-a01
+    contract-agent-a02
+    contract-agent-a03
+    contract-agent-a04
+    contract-agent-a05
+    contract-agent-a06
+    contract-agent-a07
+    contract-agent-a08
+)
+
+# A suite is valid only when its requested IDs and concrete doctest declarations
+# are the same set. The global registry also rejects placeholders, cross-suite
+# duplicates, and migration-report omissions at configure time.
+function(cpp_add_contract_suite)
+    cmake_parse_arguments(ARG "" "TARGET" "CASES;SOURCES;LIBS" ${ARGN})
+
+    if(ARG_UNPARSED_ARGUMENTS)
+        message(FATAL_ERROR
+            "cpp_add_contract_suite received unknown arguments: ${ARG_UNPARSED_ARGUMENTS}"
+        )
+    endif()
+    if(NOT ARG_TARGET)
+        message(FATAL_ERROR
+            "cpp_add_contract_suite requires TARGET"
+        )
+    endif()
+    if(NOT ARG_SOURCES)
+        message(FATAL_ERROR
+            "cpp_add_contract_suite(${ARG_TARGET}) requires concrete SOURCES"
+        )
+    endif()
+    if(NOT ARG_CASES)
+        message(FATAL_ERROR
+            "cpp_add_contract_suite(${ARG_TARGET}) requires exact CASES"
+        )
+    endif()
+
+    set(UNIQUE_CONTRACT_SOURCES ${ARG_SOURCES})
+    list(REMOVE_DUPLICATES UNIQUE_CONTRACT_SOURCES)
+    list(LENGTH ARG_SOURCES CONTRACT_SOURCE_COUNT)
+    list(LENGTH UNIQUE_CONTRACT_SOURCES UNIQUE_CONTRACT_SOURCE_COUNT)
+    if(NOT CONTRACT_SOURCE_COUNT EQUAL UNIQUE_CONTRACT_SOURCE_COUNT)
+        message(FATAL_ERROR
+            "cpp_add_contract_suite(${ARG_TARGET}) contains duplicate SOURCES"
+        )
+    endif()
+
+    set(CONTRACT_SOURCE_TEXT "")
+    foreach(CONTRACT_SOURCE IN LISTS ARG_SOURCES)
+        if(CONTRACT_SOURCE MATCHES "\\$<")
+            message(FATAL_ERROR
+                "cpp_add_contract_suite(${ARG_TARGET}) requires concrete source paths"
+            )
+        endif()
+        if(IS_ABSOLUTE "${CONTRACT_SOURCE}")
+            set(CONTRACT_SOURCE_PATH "${CONTRACT_SOURCE}")
+        else()
+            set(CONTRACT_SOURCE_PATH
+                "${CMAKE_CURRENT_SOURCE_DIR}/${CONTRACT_SOURCE}"
+            )
+        endif()
+        if(NOT EXISTS "${CONTRACT_SOURCE_PATH}")
+            message(FATAL_ERROR
+                "cpp_add_contract_suite(${ARG_TARGET}) source does not exist: ${CONTRACT_SOURCE}"
+            )
+        endif()
+        file(READ "${CONTRACT_SOURCE_PATH}" CONTRACT_SOURCE_CONTENT)
+        string(APPEND CONTRACT_SOURCE_TEXT "\n${CONTRACT_SOURCE_CONTENT}")
+    endforeach()
+
+    set(UNIQUE_CONTRACT_CASES ${ARG_CASES})
+    list(REMOVE_DUPLICATES UNIQUE_CONTRACT_CASES)
+    list(LENGTH ARG_CASES CONTRACT_CASE_COUNT)
+    list(LENGTH UNIQUE_CONTRACT_CASES UNIQUE_CONTRACT_CASE_COUNT)
+    if(NOT CONTRACT_CASE_COUNT EQUAL UNIQUE_CONTRACT_CASE_COUNT)
+        message(FATAL_ERROR
+            "cpp_add_contract_suite(${ARG_TARGET}) contains duplicate CASES"
+        )
+    endif()
+
+    string(REGEX MATCHALL
+        "TEST_CASE[ \t\r\n]*\\([ \t\r\n]*\"contract-[a-z0-9-]+\"[ \t\r\n]*\\)"
+        CONTRACT_CASE_DECLARATIONS
+        "${CONTRACT_SOURCE_TEXT}"
+    )
+    set(DECLARED_CONTRACT_CASES "")
+    foreach(CONTRACT_CASE_DECLARATION IN LISTS CONTRACT_CASE_DECLARATIONS)
+        string(REGEX MATCH
+            "contract-[a-z0-9-]+"
+            DECLARED_CONTRACT_CASE
+            "${CONTRACT_CASE_DECLARATION}"
+        )
+        list(APPEND DECLARED_CONTRACT_CASES "${DECLARED_CONTRACT_CASE}")
+    endforeach()
+
+    set(UNIQUE_DECLARED_CONTRACT_CASES ${DECLARED_CONTRACT_CASES})
+    list(REMOVE_DUPLICATES UNIQUE_DECLARED_CONTRACT_CASES)
+    list(LENGTH DECLARED_CONTRACT_CASES DECLARED_CONTRACT_CASE_COUNT)
+    list(LENGTH UNIQUE_DECLARED_CONTRACT_CASES UNIQUE_DECLARED_CONTRACT_CASE_COUNT)
+    if(NOT DECLARED_CONTRACT_CASE_COUNT EQUAL UNIQUE_DECLARED_CONTRACT_CASE_COUNT)
+        message(FATAL_ERROR
+            "cpp_add_contract_suite(${ARG_TARGET}) sources declare duplicate contract TEST_CASE names"
+        )
+    endif()
+
+    set(SORTED_REQUESTED_CONTRACT_CASES ${ARG_CASES})
+    set(SORTED_DECLARED_CONTRACT_CASES ${DECLARED_CONTRACT_CASES})
+    list(SORT SORTED_REQUESTED_CONTRACT_CASES)
+    list(SORT SORTED_DECLARED_CONTRACT_CASES)
+    if(NOT SORTED_REQUESTED_CONTRACT_CASES STREQUAL SORTED_DECLARED_CONTRACT_CASES)
+        message(FATAL_ERROR
+            "cpp_add_contract_suite(${ARG_TARGET}) CASES do not exactly match source TEST_CASE declarations; "
+            "requested=[${SORTED_REQUESTED_CONTRACT_CASES}], declared=[${SORTED_DECLARED_CONTRACT_CASES}]"
+        )
+    endif()
+
+    get_property(REGISTERED_CONTRACT_CASES GLOBAL PROPERTY UF_REGISTERED_CONTRACT_CASES)
+    foreach(CONTRACT_CASE IN LISTS ARG_CASES)
+        list(FIND UF_REQUIRED_DOCTEST_CONTRACTS "${CONTRACT_CASE}" REQUIRED_CASE_INDEX)
+        if(REQUIRED_CASE_INDEX EQUAL -1)
+            message(FATAL_ERROR
+                "cpp_add_contract_suite(${ARG_TARGET}) rejects contract ID outside the migration report: ${CONTRACT_CASE}"
+            )
+        endif()
+        list(FIND REGISTERED_CONTRACT_CASES "${CONTRACT_CASE}" REGISTERED_CASE_INDEX)
+        if(NOT REGISTERED_CASE_INDEX EQUAL -1)
+            message(FATAL_ERROR
+                "cpp_add_contract_suite(${ARG_TARGET}) duplicates registered CTest: ${CONTRACT_CASE}"
+            )
+        endif()
+        if(TEST "${CONTRACT_CASE}")
+            message(FATAL_ERROR
+                "cpp_add_contract_suite(${ARG_TARGET}) collides with existing CTest: ${CONTRACT_CASE}"
+            )
+        endif()
+    endforeach()
+
+    cpp_add_test(
+        NO_CTEST
+        NAME ${ARG_TARGET}
+        SOURCES ${ARG_SOURCES}
+        LIBS ${ARG_LIBS}
+    )
+
+    foreach(CONTRACT_CASE IN LISTS ARG_CASES)
+        add_test(
+            NAME ${CONTRACT_CASE}
+            COMMAND ${ARG_TARGET} "--test-case=${CONTRACT_CASE}"
+        )
+        set_tests_properties(${CONTRACT_CASE} PROPERTIES
+            TIMEOUT 60
+            LABELS "CI;CONTRACT"
+        )
+        set_property(GLOBAL APPEND PROPERTY UF_REGISTERED_CONTRACT_CASES "${CONTRACT_CASE}")
+    endforeach()
+endfunction()
 cpp_add_test(
     NAME test-core
     SOURCES
@@ -27,6 +238,7 @@ cpp_add_test(
         core/test-checked-access.cpp
         core/test-checked-arithmetic.cpp
         core/test-error.cpp
+        core/test-json-text.cpp
         core/test-monotonic-time.cpp
         core/test-strong-types.cpp
         core/test-utf8.cpp
@@ -74,6 +286,65 @@ cpp_add_test(
         ${PROJECT_NAME}_trace
 )
 
+if(TARGET ${PROJECT_NAME}_operator)
+    cpp_add_test(
+        NAME test-operator
+        SOURCES
+            operator/test-ledger.cpp
+            operator/test-manifest.cpp
+            operator/test-operation.cpp
+        LIBS
+            ${PROJECT_NAME}_operator
+    )
+
+    cpp_add_contract_suite(
+        TARGET test-contract-operator
+        SOURCES
+            operator/test-product-contract.cpp
+            operator/test-project-plugin-contract.cpp
+            operator/test-state-contract.cpp
+            operator/test-control-contract.cpp
+            operator/test-agent-audit-contract.cpp
+        LIBS
+            ${PROJECT_NAME}_operator
+        CASES
+            contract-product-p01
+            contract-product-p02
+            contract-product-p03
+            contract-product-p04
+            contract-product-p05-fixtures
+            contract-product-p06
+            contract-state-s01
+            contract-state-s02
+            contract-state-s03
+            contract-state-s04
+            contract-state-s05
+            contract-state-s06
+            contract-control-c01
+            contract-control-c02
+            contract-control-c03
+            contract-control-c04
+            contract-control-c05
+            contract-control-c06
+            contract-control-c07
+            contract-control-c08
+            contract-control-c09
+            contract-control-c10
+            contract-control-c11
+            contract-control-c12
+            contract-control-c13
+            contract-control-c14
+            contract-agent-a01
+            contract-agent-a02
+            contract-agent-a03
+            contract-agent-a04
+            contract-agent-a05
+            contract-agent-a06
+            contract-agent-a07
+            contract-agent-a08
+    )
+endif()
+
 cpp_add_test(
     NAME test-engine
     SOURCES
@@ -90,7 +361,6 @@ endif()
 
 set(CLI_TEST_SOURCES
     cli/test-args.cpp
-    cli/test-check.cpp
     cli/test-explore-protocol.cpp
     cli/test-project-skeleton.cpp
     cli/test-targets.cpp
@@ -100,16 +370,12 @@ set(CLI_TEST_SOURCES
 if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
     list(APPEND CLI_TEST_SOURCES cli/test-candidate-selection.cpp)
 endif()
-# The image module is private to cli_support, but the falsification-matrix cases
-# have to write the screens and template marks a synthetic project is measured
-# from, so the test links the PNG encoder itself.
 cpp_add_test(
     NAME test-cli
     SOURCES
         ${CLI_TEST_SOURCES}
     LIBS
         ${PROJECT_NAME}_cli_support
-        ${PROJECT_NAME}_image
 )
 # cli_support links engine publicly, which links ocr publicly.
 if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
@@ -133,23 +399,10 @@ if(TARGET ${PROJECT_NAME}_task)
     cpp_add_test(
         NAME test-task
         SOURCES
-            task/test-task.cpp
             task/test-adversarial-surface.cpp
             task/test-task-binding.cpp
-            task/test-task-host.cpp
-            task/test-determinism-harness.cpp
-            task/test-exploration.cpp
-            task/test-colour-key-crop.cpp
             task/test-framework-bundle.cpp
-            task/test-framework-context.cpp
-            task/test-framework-surface.cpp
-            task/test-script-owned-primitives.cpp
-            task/test-semantic-events.cpp
-            task/test-veto-blocking.cpp
-            task/test-task-loader.cpp
             task/test-script-validator.cpp
-            task/test-deterministic.cpp
-            task/test-time-primitives.cpp
         LIBS
             ${PROJECT_NAME}_task
             ${PROJECT_NAME}_image
@@ -158,6 +411,151 @@ if(TARGET ${PROJECT_NAME}_task)
     if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
         cpp_stage_runtime_libraries(test-task ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
     endif()
+
+    cpp_add_contract_suite(
+        TARGET test-contract-runtime
+        SOURCES
+            task/test-runtime-v2-contract.cpp
+        LIBS
+            ${PROJECT_NAME}_task
+            ${PROJECT_NAME}_image
+        CASES
+            contract-runtime-u01
+            contract-runtime-u02
+            contract-runtime-u03
+            contract-runtime-u04
+            contract-runtime-u05
+            contract-runtime-u06
+            contract-runtime-u07
+            contract-runtime-u08
+    )
+    if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
+        cpp_stage_runtime_libraries(
+            test-contract-runtime
+            ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES}
+        )
+    endif()
+
+    set(TASK_LUAU_RUNNER_SOURCE
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/task-luau-test-runner.cpp"
+    )
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    file(CONFIGURE
+        OUTPUT "${TASK_LUAU_RUNNER_SOURCE}"
+        CONTENT [=[
+#include <task/framework-bundle.hpp>
+
+#include <script/engine.hpp>
+
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <string>
+#include <vector>
+
+auto main(int argc, char** argv) -> int
+{
+    if (argc != 2)
+    {
+        std::cerr << "usage: task-luau-test-runner <test.luau>\n";
+        return 2;
+    }
+
+    auto input = std::ifstream{argv[1], std::ios::binary};
+    if (!input)
+    {
+        std::cerr << "cannot open Luau contract: " << argv[1] << '\n';
+        return 2;
+    }
+    auto const source = std::string{
+        std::istreambuf_iterator<char>{input},
+        std::istreambuf_iterator<char>{}
+    };
+    if (input.bad())
+    {
+        std::cerr << "cannot read Luau contract: " << argv[1] << '\n';
+        return 2;
+    }
+
+    auto engine = uf::script::Engine::create(
+        uf::script::EngineConfig{
+            .frameworkModules = uf::task::frameworkScriptModules(),
+            .frameworkProjectGlobals = {
+                "evidence",
+                "model",
+                "observe",
+                "project",
+                "resolution",
+            },
+        }
+    );
+    if (!engine)
+    {
+        std::cerr << engine.error().message() << '\n';
+        return 1;
+    }
+
+    auto result = engine->runNumber(source, argv[1]);
+    if (!result)
+    {
+        std::cerr << result.error().message() << '\n';
+        return 1;
+    }
+    if (*result != 1.0)
+    {
+        std::cerr << "Luau contract did not return 1: " << argv[1] << '\n';
+        return 1;
+    }
+    return 0;
+}
+]=]
+        NEWLINE_STYLE LF
+    )
+    if(NOT EXISTS "${TASK_LUAU_RUNNER_SOURCE}")
+        message(FATAL_ERROR "failed to generate the task Luau test runner")
+    endif()
+
+    add_executable(test-task-luau-runner
+        "${TASK_LUAU_RUNNER_SOURCE}"
+        ${CPP_UTF8_RC}
+    )
+    cpp_apply_safety_profile(test-task-luau-runner)
+    cpp_apply_utf8_manifest(test-task-luau-runner)
+    target_link_libraries(test-task-luau-runner PRIVATE ${PROJECT_NAME}_task)
+    target_compile_features(test-task-luau-runner PRIVATE cxx_std_23)
+    if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
+        cpp_stage_runtime_libraries(
+            test-task-luau-runner
+            ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES}
+        )
+    endif()
+
+    set(TASK_LUAU_TESTS
+        "test-runtime-model-v2-luau|task/test-runtime-model-v2.luau"
+        "test-resolution-v2-luau|task/test-resolution-v2.luau"
+        "test-receipt-request-v2-luau|task/test-receipt-request-v2.luau"
+    )
+    foreach(TASK_LUAU_TEST IN LISTS TASK_LUAU_TESTS)
+        string(REPLACE "|" ";" TASK_LUAU_TEST_PARTS "${TASK_LUAU_TEST}")
+        list(GET TASK_LUAU_TEST_PARTS 0 TASK_LUAU_TEST_NAME)
+        list(GET TASK_LUAU_TEST_PARTS 1 TASK_LUAU_TEST_SOURCE)
+        set(TASK_LUAU_TEST_PATH
+            "${CMAKE_CURRENT_SOURCE_DIR}/${TASK_LUAU_TEST_SOURCE}"
+        )
+        if(NOT EXISTS "${TASK_LUAU_TEST_PATH}")
+            message(FATAL_ERROR
+                "task Luau test source does not exist: ${TASK_LUAU_TEST_SOURCE}"
+            )
+        endif()
+        add_test(
+            NAME "${TASK_LUAU_TEST_NAME}"
+            COMMAND test-task-luau-runner "${TASK_LUAU_TEST_PATH}"
+        )
+        set_tests_properties("${TASK_LUAU_TEST_NAME}" PROPERTIES
+            TIMEOUT 60
+            LABELS "CI;LUAU"
+        )
+    endforeach()
 endif()
 
 if(TARGET ${PROJECT_NAME}_controller)
@@ -212,24 +610,48 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/tests/assets/real-regression)
     )
 endif()
 
-find_package(Python3 COMPONENTS Interpreter QUIET)
-if(Python3_Interpreter_FOUND)
-    add_test(
-        NAME check-modules
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_modules.py
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(
+    NAME contract-repository-surface
+    COMMAND
+        ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/test-runtime-surface.py
+        --root ${CMAKE_SOURCE_DIR}
+)
+add_test(
+    NAME check-modules
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_modules.py
+)
+add_test(
+    NAME check-safety
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_safety.py
+)
+add_test(
+    NAME test-check-safety
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test-check-safety.py
+)
+set_tests_properties(
+    contract-repository-surface
+    check-modules
+    check-safety
+    test-check-safety
+    PROPERTIES
+    TIMEOUT 30
+    LABELS "CI"
+)
+
+get_property(REGISTERED_CONTRACT_CASES GLOBAL PROPERTY UF_REGISTERED_CONTRACT_CASES)
+set(SORTED_REQUIRED_CONTRACT_CASES ${UF_REQUIRED_DOCTEST_CONTRACTS})
+set(SORTED_REGISTERED_CONTRACT_CASES ${REGISTERED_CONTRACT_CASES})
+list(SORT SORTED_REQUIRED_CONTRACT_CASES)
+list(SORT SORTED_REGISTERED_CONTRACT_CASES)
+if(NOT SORTED_REQUIRED_CONTRACT_CASES STREQUAL SORTED_REGISTERED_CONTRACT_CASES)
+    message(FATAL_ERROR
+        "Named contract CTest registration does not match the migration report; "
+        "required=[${SORTED_REQUIRED_CONTRACT_CASES}], "
+        "registered=[${SORTED_REGISTERED_CONTRACT_CASES}]"
     )
-    add_test(
-        NAME check-safety
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_safety.py
-    )
-    add_test(
-        NAME test-check-safety
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test-check-safety.py
-    )
-    set_tests_properties(check-modules check-safety test-check-safety PROPERTIES
-        TIMEOUT 30
-        LABELS "CI"
-    )
-else()
-    message(WARNING "[Safety] Python was not found; repository safety checks are not registered with CTest.")
+endif()
+if(NOT TEST contract-repository-surface)
+    message(FATAL_ERROR "contract-repository-surface was not registered")
 endif()

@@ -253,10 +253,9 @@ namespace uf::engine
     //
     // Trace lifetime contract: the session stores a non-owning borrow of the
     // run's trace::TraceRecorder, so that a run has one evidence stream and one
-    // sequence counter. `task::TaskHost::startTask` holds the recorder in a
-    // std::unique_ptr local declared before the session, and the recorder is
-    // non-movable. Any other owner MUST reproduce both -- construct the recorder
-    // before the session, destroy it after, never relocate it.
+    // sequence counter. The composition root MUST keep the recorder in stable
+    // storage declared before the session: construct it first, destroy it after,
+    // and never relocate it while the session borrows it.
     class EngineSession final
     {
         friend class Observation;
@@ -287,7 +286,7 @@ namespace uf::engine
         auto makeRecognitionPolicy() const -> RecognitionPolicy;
 
         [[nodiscard]]
-        auto emit(trace::TraceEvent const& event) -> Status;
+        auto emit(trace::TraceEventSpec const& event) -> Status;
 
         // The two gates every verb taking an existing observation opens with: the
         // handle came from this session, and it has not been consumed or moved
@@ -317,9 +316,9 @@ namespace uf::engine
 
         [[nodiscard]]
         static auto stampInput(
-            trace::TraceEvent event,
+            trace::TraceEventSpec event,
             UnaimedInput input
-        ) -> trace::TraceEvent;
+        ) -> trace::TraceEventSpec;
 
         // The terminal line a refused delivery writes, so no verb can return a
         // failure that leaves its frame's stream ending at
@@ -348,7 +347,7 @@ namespace uf::engine
 
         // The delivery sequence pressKey and scroll share, which is one
         // sequence: the opening refusals, the target-instance revalidation, the
-        // sink post, the spent handle, `deliveredKind` and the invalidation
+        // sink post, the spent handle, `deliveredEventType` and the invalidation
         // line, with every fallible step writing engine.action_rejected before
         // it returns. It holds no fingerprint check, lease-age refusal or point
         // transform, because neither verb names a coordinate.
@@ -357,7 +356,7 @@ namespace uf::engine
             Observation&& observation,
             std::string_view verb,
             std::string_view cancelMessage,
-            trace::TraceEventKind deliveredKind,
+            std::string_view deliveredEventType,
             UnaimedInput input
         ) -> Result<FrameIdentity>;
 

@@ -33,16 +33,13 @@ namespace uf::task
     // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 3).
     //
     // The second environment lives here. The VM this owns is booted with the
-    // Exploration private surface -- the run surface plus `cycle_crop` and `probe`
-    // -- and publishes the `explore` framework module a run VM does not. That
-    // difference is the whole of the trust split (see
-    // task/script-bindings.hpp and task/framework-bundle.hpp); everything else
-    // about the VM is identical to a task's, so an agent measures the system the
-    // product actually ships.
+    // authoring private surface and publishes only the `explore` framework
+    // module. That difference is the whole trust split (see
+    // task/script-bindings.hpp and task/framework-bundle.hpp).
     //
     // One chunk is one bracket. Each evaluate() runs its chunk under a project
     // environment built fresh for it, so globals one chunk writes never reach the
-    // next, and the session sweeps any observation cycle the chunk left open. What
+    // next, and the session sweeps any exploration cycle the chunk left open. What
     // survives between chunks is everything the HOST owns: the ledger's ordinals,
     // the template store, the trace sequence, and the target binding.
     //
@@ -72,7 +69,6 @@ namespace uf::task
         std::optional<script::Engine> m_vm{};
 
         std::filesystem::path m_tracePath;
-        uint64                m_seed;
 
     public:
         // Everything one exploration session needs that is a property of the
@@ -81,19 +77,11 @@ namespace uf::task
         {
             std::string projectId{};
 
-            ProjectFingerprint projectFingerprint;
-
             // The directory project_read and project_write are confined to. An
             // exploration session needs it where an operator session did not:
             // exploration project I/O must not be able to name the rest of the
             // disk.
             std::filesystem::path projectRoot{};
-
-            // This session's RNG seed, drawn by the host and recorded in
-            // run.started. The exploration surface carries `random`, so a seed is
-            // a real replay input here rather than the zero an operator session
-            // records for having no randomness at all.
-            uint64 seed{};
 
             std::stop_token cancellation{};
         };
@@ -103,8 +91,7 @@ namespace uf::task
             std::unique_ptr<trace::TraceRecorder> recorder,
             engine::EngineSession session,
             TaskContextConfig contextConfig,
-            std::filesystem::path tracePath,
-            uint64 seed
+            std::filesystem::path tracePath
         ) noexcept;
 
         ExplorationSession(ExplorationSession const&) = delete;
@@ -122,7 +109,7 @@ namespace uf::task
         static auto create(
             TaskRunConfig config,
             Spec spec,
-            TaskRunId runId,
+            EngineRunId runId,
             GenerationId generationId
         ) -> Result<std::unique_ptr<ExplorationSession>>;
 

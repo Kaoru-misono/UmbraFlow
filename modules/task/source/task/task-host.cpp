@@ -4,168 +4,137 @@
 #include "framework-bundle.hpp"
 #include "page-model-file.hpp"
 #include "script-bindings.hpp"
-#include "script-validator.hpp"
 #include "task-context.hpp"
-#include "task-loader.hpp"
 
-#include <domain/content-hash.hpp>
-
-#include <core/error/error.hpp>
+#include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
-#include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
+#include <core/utility/scope-exit.hpp>
 
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
 
-#include <engine/session.hpp>
-
 #include <script/engine.hpp>
 
 #include <trace/event.hpp>
-#include <trace/file-sink.hpp>
 #include <trace/recorder.hpp>
 
-#include <cstddef>
+#include <algorithm>
 #include <filesystem>
 #include <format>
+#include <limits>
 #include <memory>
 #include <optional>
-#include <random>
-#include <span>
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
 namespace uf::task
 {
     namespace
     {
-        // What the host knows about one run before its VM exists: which project
-        // and task it addresses, the bytes the task was compiled from, and the
-        // seed its RNG will draw from. The framework version and bundle hash, and
-        // the Luau compiler version, are deliberately NOT part of it -- they are
-        // properties of this binary rather than of the run, and runStartedEvent
-        // reads them itself, so no caller can ship a run.started that two
-        // different framework builds would write identically.
-        struct RunStartSpec final
+        [[nodiscard]] auto traceSchemaHash() -> ContentHash
         {
-            std::string projectId{};
-            std::string taskName{};
-            std::string sourceHash{};
-            std::string modelHash{};
-            uint64      seed{};
-        };
-
-        // One line for what a chunk returned. A task that returned nothing and a
-        // task that returned the empty string both said nothing, so both render
-        // empty and the report carries no third state for them.
-        [[nodiscard]]
-        auto renderReturnedValue(script::ScriptValue const& value) -> std::string
-        {
-            if (auto const* p_text = value.text(); p_text != nullptr)
-            {
-                return *p_text;
-            }
-            if (auto const boolean = value.boolean(); boolean.has_value())
-            {
-                return *boolean ? "true" : "false";
-            }
-            if (auto const number = value.number(); number.has_value())
-            {
-                return std::format("{}", *number);
-            }
-            return {};
+            auto const parsed = ContentHash::parse(
+                std::format("sha256:{}", trace::k_traceSchemaHash)
+            );
+            UF_CHECK(parsed.has_value());
+            return *parsed;
         }
 
         [[nodiscard]]
-        auto runStartedEvent(RunStartSpec const& spec) -> trace::TraceEvent
+        auto runFinishedEvent(TaskRunReport const& report) -> trace::TraceEventSpec
         {
-            return trace::TraceEvent{
-                .kind = trace::TraceEventKind::RunStarted,
-                .run  = trace::TraceEvent::Run{
-                    .projectId        = spec.projectId,
-                    .taskName         = spec.taskName,
-                    .sourceHash       = spec.sourceHash,
-                    .modelHash        = spec.modelHash,
-                    .frameworkVersion = std::string{frameworkVersion()},
-                    .frameworkHash    = std::string{frameworkBundleHash()},
-                    .luauVersion      = luauRuntimeVersion(),
-                    .seed             = spec.seed,
-                },
-            };
-        }
-
-        [[nodiscard]]
-        auto runResourcesValidatedEvent(
-            ScriptResourceReport const& report
-        ) -> trace::TraceEvent
-        {
-            return trace::TraceEvent{
-                .kind      = trace::TraceEventKind::RunResourcesValidated,
-                .resources = trace::TraceEvent::Resources{
-                    .targets  = report.targets,
-                    .surfaces = report.surfaces,
-                },
-            };
-        }
-
-        // The closing line of the run bracket, written from the same report the
-        // caller receives. Both read TaskRunReport::outcome, so the wire outcome
-        // and the reported outcome cannot drift apart. An error carrying no
-        // automation kind is still named, as InternalInvariant.
-        [[nodiscard]]
-        auto runFinishedEvent(TaskRunReport const& report) -> trace::TraceEvent
-        {
-            auto wireOutcome = trace::RunOutcome::Completed;
+            auto outcome = std::string{"completed"};
             switch (report.outcome())
             {
             case TaskRunOutcome::Completed:
-                wireOutcome = trace::RunOutcome::Completed;
+                outcome = "completed";
                 break;
             case TaskRunOutcome::Cancelled:
-                wireOutcome = trace::RunOutcome::Cancelled;
+                outcome = "cancelled";
                 break;
             case TaskRunOutcome::Failed:
-                wireOutcome = trace::RunOutcome::Failed;
+                outcome = "failed";
                 break;
             }
 
-            auto errorKind = std::optional<AutomationErrorKind>{};
-            if (report.failure)
+            auto fields = std::vector<trace::TraceField>{};
+            fields.emplace_back(
+                trace::TraceField{
+                    .name  = "outcome",
+                    .value = std::move(outcome),
+                }
+            );
+            if (report.failure.has_value())
             {
-                errorKind = automationErrorKind(*report.failure)
+                auto const kind = automationErrorKind(*report.failure)
                     .value_or(AutomationErrorKind::InternalInvariant);
+                fields.emplace_back(
+                    trace::TraceField{
+                        .name  = "error_kind",
+                        .value = std::string{automationErrorWireName(kind)},
+                    }
+                );
             }
-
-            return trace::TraceEvent{
-                .kind       = trace::TraceEventKind::RunFinished,
-                .runOutcome = wireOutcome,
-                .errorKind  = errorKind,
+            return trace::TraceEventSpec{
+                .eventType = "run.finished",
+                .audit     = trace::AuditMetadata{.actor = "host"},
+                .payload   = trace::TypedTracePayload{
+                    .schemaHash = traceSchemaHash(),
+                    .fields     = std::move(fields),
+                },
             };
         }
 
-        // A fresh seed for one run's deterministic RNG, from std::random_device and
-        // drawn once per run -- never from a constant and never from the clock. It
-        // is recorded in run.started because it is the only replay input the host
-        // controls: the sandbox removes math.random and the script can read no
-        // clock at all, so this seed plus the same observation sequence reproduces
-        // a run exactly. A seed that was silently the same on every run would still
-        // look correct in a trace while destroying that property.
         [[nodiscard]]
-        auto drawRunSeed() -> uint64
+        auto canonicalProjectRoot(std::filesystem::path const& root)
+            -> Result<std::filesystem::path>
         {
-            auto device = std::random_device{};
-            auto const high = static_cast<uint64>(device());
-            auto const low  = static_cast<uint64>(device());
-            return (high << 32U) | low;
+            auto error        = std::error_code{};
+            auto const status = std::filesystem::symlink_status(root, error);
+            if (error)
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format("cannot inspect annotation project {}: {}", root.string(), error.message())
+                );
+            }
+            if (!std::filesystem::is_directory(status) || std::filesystem::is_symlink(status))
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "annotation project root must be a real directory, not a link"
+                );
+            }
+            auto const canonical = std::filesystem::canonical(root, error);
+            if (error)
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format(
+                        "cannot canonicalize annotation project {}: {}",
+                        root.string(),
+                        error.message()
+                    )
+                );
+            }
+            if (canonical.filename().empty())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "annotation project root must have a non-empty directory name"
+                );
+            }
+            return canonical;
         }
     }
 
     auto TaskRunReport::outcome() const noexcept -> TaskRunOutcome
     {
-        if (!failure)
+        if (!failure.has_value())
         {
             return TaskRunOutcome::Completed;
         }
@@ -183,85 +152,64 @@ namespace uf::task
         std::string_view terminalMessage
     ) -> TaskRunReport
     {
-        // A generation the host spent terminally ended there whatever the session
-        // did afterwards, so the latch is folded in before the closing line is
-        // built and a spent session cannot report itself completed.
-        if (!report.failure && terminal.has_value())
+        if (!report.failure.has_value() && terminal.has_value())
         {
             report.failure = fail(*terminal, std::string{terminalMessage}).error();
         }
-
-        auto finishStatus = recorder.emit(runFinishedEvent(report));
-        if (!report.failure && !finishStatus)
+        auto closed = recorder.emit(runFinishedEvent(report));
+        if (!report.failure.has_value() && !closed)
         {
-            // The session itself succeeded but its closing evidence was lost, so
-            // it cannot be reported as completed. The session's own failure always
-            // takes precedence over the sink's.
-            report.failure = std::move(finishStatus).error();
+            report.failure = std::move(closed).error();
         }
         return report;
     }
 
-    // One loaded project instance. It owns everything a run of that project
-    // needs and nothing a single run owns: the facts read out of the runtime model
-    // survive every run, while the trace recorder, the engine session, the task
-    // context and the VM are built and destroyed inside one startTask call.
-    //
-    // Non-movable, and therefore held through a unique_ptr by the host: it
-    // contains an std::stop_callback bound to its own stop source, so its
-    // address must not change.
     class TaskHost::Generation final
     {
-        // Requests the generation's own stop source when the host-supplied
-        // external token stops, so cancel() and an outside stop feed one source
-        // and neither can shadow the other.
-        //
-        // It observes an std::stop_source owned by the same Generation. That
-        // source is declared before the callback holding the pointer; members are
-        // destroyed in reverse declaration order and ~stop_callback blocks until
-        // an in-flight invocation returns, so the observed source can never die
-        // under the callback.
         struct ExternalStopBridge final
         {
-            std::stop_source* p_target{nullptr};
+            std::stop_source* p_target{};
 
             auto operator()() const noexcept -> void
             {
                 if (p_target != nullptr)
                 {
-                    p_target->request_stop();
+                    static_cast<void>(p_target->request_stop());
                 }
             }
         };
 
-        GenerationId          m_id;
-        std::filesystem::path m_projectRoot;
+        GenerationId   m_id;
+        GenerationKind m_kind;
+        std::filesystem::path m_root;
         std::string           m_projectId;
-        RuntimeModelEnvelope  m_model;
+        std::shared_ptr<RuntimeArtifactHandle const> m_artifact{};
+        std::shared_ptr<RuntimeModelBinding const>   m_binding{};
+        std::optional<script::Engine>                m_runtimeVm{};
+        MonotonicInstant::Duration                   m_maximumReceiptAge{};
 
         std::stop_source                       m_stop{};
         std::stop_callback<ExternalStopBridge> m_externalStop;
-
-        TaskStatus m_status{};
-
-        // The front-end that owns this generation, empty until one drives it. See
-        // TaskHost::startExplorationSession for why the latch lives here.
-        std::optional<trace::FrontEnd> m_frontEnd{};
+        bool                                   m_annotationClaimed{};
+        TaskContext*                           m_pRuntimeContext{};
 
     public:
         Generation(
             GenerationId id,
-            std::filesystem::path projectRoot,
+            GenerationKind kind,
+            std::filesystem::path root,
             std::string projectId,
-            RuntimeModelEnvelope model,
-            std::stop_token externalCancellation
+            std::shared_ptr<RuntimeArtifactHandle const> artifact,
+            TaskHostConfig const& config
         )
             : m_id{id}
-            , m_projectRoot{std::move(projectRoot)}
+            , m_kind{kind}
+            , m_root{std::move(root)}
             , m_projectId{std::move(projectId)}
-            , m_model{std::move(model)}
+            , m_artifact{std::move(artifact)}
+            , m_maximumReceiptAge{config.maximumReceiptAge}
             , m_externalStop{
-                  std::move(externalCancellation),
+                  config.externalCancellation,
                   ExternalStopBridge{&m_stop},
               }
         {
@@ -271,32 +219,125 @@ namespace uf::task
         Generation(Generation&&) = delete;
         auto operator=(Generation const&) -> Generation& = delete;
         auto operator=(Generation&&) -> Generation& = delete;
-
         ~Generation() = default;
 
-        [[nodiscard]] auto identity() const noexcept -> GenerationId
+        [[nodiscard]] auto id() const noexcept -> GenerationId { return m_id; }
+        [[nodiscard]] auto kind() const noexcept -> GenerationKind { return m_kind; }
+
+        [[nodiscard]]
+        auto root() const noexcept -> std::filesystem::path const& { return m_root; }
+
+        [[nodiscard]]
+        auto projectId() const noexcept -> std::string const& { return m_projectId; }
+
+        [[nodiscard]]
+        auto artifact() const noexcept
+            -> std::shared_ptr<RuntimeArtifactHandle const> const&
         {
-            return m_id;
+            return m_artifact;
         }
 
         [[nodiscard]]
-        auto projectRoot() const noexcept UF_LIFETIME_BOUND
-            -> std::filesystem::path const&
+        auto binding() const noexcept
+            -> std::shared_ptr<RuntimeModelBinding const> const&
         {
-            return m_projectRoot;
+            return m_binding;
+        }
+
+        [[nodiscard]] auto maximumReceiptAge() const noexcept
+            -> MonotonicInstant::Duration
+        {
+            return m_maximumReceiptAge;
         }
 
         [[nodiscard]]
-        auto projectId() const noexcept UF_LIFETIME_BOUND -> std::string const&
+        auto installBinding(std::shared_ptr<RuntimeModelBinding const> binding) -> Status
         {
-            return m_projectId;
+            if (m_kind != GenerationKind::Runtime || !m_artifact)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "only a Runtime generation can own a RuntimeModelBinding"
+                );
+            }
+            if (m_binding)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "this Runtime generation is already finalized"
+                );
+            }
+            if (m_annotationClaimed)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "a claimed generation cannot be finalized"
+                );
+            }
+            m_binding = std::move(binding);
+            return ok();
         }
 
-        [[nodiscard]]
-        auto model() const noexcept UF_LIFETIME_BOUND
-            -> RuntimeModelEnvelope const&
+        [[nodiscard]] auto installRuntimeVm(script::Engine vm) -> Status
         {
-            return m_model;
+            if (m_kind != GenerationKind::Runtime || !m_binding || m_runtimeVm.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "trusted Runtime VM can be installed exactly once after finalize"
+                );
+            }
+            m_runtimeVm = std::move(vm);
+            return ok();
+        }
+
+        [[nodiscard]] auto bindRuntimeContext(TaskContext& context) -> Status
+        {
+            if (m_kind != GenerationKind::Runtime || !m_binding || !m_runtimeVm.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "trusted Runtime execution requires a finalized Runtime generation"
+                );
+            }
+            if (m_pRuntimeContext != nullptr)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "trusted Runtime execution is already active"
+                );
+            }
+            m_pRuntimeContext = &context;
+            return ok();
+        }
+
+        auto unbindRuntimeContext(TaskContext& context) noexcept -> void
+        {
+            UF_CHECK(m_pRuntimeContext == &context);
+            m_pRuntimeContext = nullptr;
+        }
+
+        [[nodiscard]] auto runtimeContext() const noexcept -> TaskContext*
+        {
+            return m_pRuntimeContext;
+        }
+
+        [[nodiscard]] auto runtimeVm() noexcept -> script::Engine*
+        {
+            return m_runtimeVm.has_value() ? &*m_runtimeVm : nullptr;
+        }
+
+        [[nodiscard]] auto claimAnnotation() -> Status
+        {
+            if (m_kind != GenerationKind::Annotation)
+            {
+                return fail(
+                    AutomationErrorKind::UnsupportedCapability,
+                    "Annotation cannot open a production Runtime generation"
+                );
+            }
+            m_annotationClaimed = true;
+            return ok();
         }
 
         [[nodiscard]] auto cancellation() const noexcept -> std::stop_token
@@ -304,323 +345,41 @@ namespace uf::task
             return m_stop.get_token();
         }
 
-        auto requestCancel() noexcept -> void
+        auto cancel() noexcept -> void
         {
             static_cast<void>(m_stop.request_stop());
         }
 
-        [[nodiscard]] auto status() const -> TaskStatus
+        [[nodiscard]] auto status() const noexcept -> TaskStatus
         {
-            auto snapshot                  = m_status;
-            snapshot.cancellationRequested = m_stop.stop_requested();
-            return snapshot;
-        }
-
-        // Latches `frontEnd` as this generation's owner, or refuses because
-        // another one already owns it. Idempotent under the same front-end and
-        // permanent under a different one: the ledger below this generation holds
-        // one open cycle, and two policy sources sharing it is the failure this
-        // exists to make unrepresentable. It is UnsupportedCapability rather than
-        // an invariant failure because asking is legitimate and nothing in this
-        // binary is broken when it happens.
-        [[nodiscard]] auto claimFrontEnd(trace::FrontEnd frontEnd) -> Status
-        {
-            if (!m_frontEnd.has_value())
-            {
-                m_frontEnd = frontEnd;
-                return ok();
-            }
-            if (*m_frontEnd == frontEnd)
-            {
-                return ok();
-            }
-            // The holder is named through trace's own spelling rather than a local
-            // test, which would have to enumerate the front-ends it knows and
-            // report the first one added after it as the fall-through value.
-            return fail(
-                AutomationErrorKind::UnsupportedCapability,
-                std::format(
-                    "generation {} is already driven by the {} front-end; two "
-                    "front-ends must not share one generation",
-                    m_id.value(),
-                    trace::frontEndWireName(*m_frontEnd)
-                )
-            );
-        }
-
-        auto noteRunStarted(std::string taskName) -> void
-        {
-            m_status.lastOutcome = std::nullopt;
-            m_status.taskName    = std::move(taskName);
-        }
-
-        auto noteRunFinished(TaskRunOutcome outcome) noexcept -> void
-        {
-            m_status.lastOutcome = outcome;
-        }
-
-        // The whole of one run, from the opening trace line to the closing one. It
-        // takes a loaded chunk rather than a task name because its two callers
-        // differ in exactly two things: where the bytes came from, and which
-        // front-end they claimed -- and the second is read off the latch here
-        // rather than passed in, so a stream's attribution cannot disagree with
-        // the exclusion that produced it. Everything else from here down -- the
-        // trace bracket, the seed, the engine session, the context, the VM's two
-        // environments, the two verdicts the script's return cannot express --
-        // is identical, and one copy of it is what keeps a routine from quietly
-        // running under different guarantees.
-        [[nodiscard]]
-        auto run(
-            TaskRunId runId,
-            GenerationId generationId,
-            LoadedTask const& chunk,
-            ScriptResourceReport const& resources,
-            TaskRunConfig config
-        ) -> Result<FrameworkRoutineReport>
-        {
-            // Both public verbs reaching here claim first, so an unlatched
-            // generation is this host contradicting itself rather than a caller
-            // asking for something odd. Refused before the trace file exists, so
-            // it opens no run bracket it could not attribute.
-            if (!m_frontEnd.has_value())
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    "a run reached the trace before any front-end claimed its "
-                    "generation"
-                );
-            }
-
-            noteRunStarted(chunk.name);
-
-            // The recorder owns this run's single evidence stream and every layer
-            // below borrows it (see the trace lifetime contracts on
-            // engine::EngineSession and TaskContext). Declared before all of them
-            // and held through a unique_ptr, so its address is fixed for the whole
-            // run and every borrower -- all locals of this scope -- is destroyed
-            // before it, on the normal path and on every early return.
-            UF_TRY_VALUE(traceSink, trace::FileTraceSink::create(config.tracePath));
-            auto recorder = std::make_unique<trace::TraceRecorder>(
-                std::move(traceSink),
-                runId,
-                generationId,
-                *m_frontEnd
-            );
-
-            auto const seed = drawRunSeed();
-
-            // The run identity opens the stream before the VM exists, so every
-            // later event is attributable to this exact build -- including the
-            // framework version and bundle hash, which runStartedEvent reads
-            // from this binary rather than taking from here. The model hash is
-            // the generation's, taken over the runtime model's bytes when the
-            // project loaded, so what the run stands on is named as precisely as
-            // what it runs.
-            UF_TRY(
-                recorder->emit(
-                    runStartedEvent(
-                        RunStartSpec{
-                            .projectId  = m_projectId,
-                            .taskName   = chunk.name,
-                            .sourceHash = chunk.hash.hex(),
-                            .modelHash  = m_model.contentHash.hex(),
-                            .seed       = seed,
-                        }
-                    )
-                )
-            );
-            UF_TRY(recorder->emit(runResourcesValidatedEvent(resources)));
-
-            // The project fingerprint is the generation's, read out of the runtime
-            // model when the project loaded; the live one is the front-end's
-            // measurement of the bound target. The engine compares the two and
-            // never learns where either came from.
-            UF_TRY_VALUE(
-                session,
-                engine::EngineSession::create(
-                    std::move(config.frameSource),
-                    std::move(config.actionSink),
-                    *recorder,
-                    engine::EngineSessionConfig{
-                        .liveFingerprint         = config.liveFingerprint,
-                        .projectFingerprint      = m_model.fingerprint,
-                        .maximumPixelComparisons = config.maximumPixelComparisons,
-                        .recognitionTimeout      = config.recognitionTimeout,
-                        .maxActionFrameAge       = config.maxActionFrameAge,
-                        .cancellation            = cancellation(),
-                    },
-                    std::move(config.ocrEngine)
-                )
-            );
-
-            // The context owns the session and borrows the same recorder, and must
-            // outlive the VM that binds it, so it is declared before the Engine and
-            // destroyed after it. The generation's one stop token drives both the
-            // engine (which returns Cancelled) and the VM interrupt (which
-            // hard-breaks the task thread), so a cancellation is a single source.
-            auto context = TaskContext{
-                std::move(session),
-                *recorder,
-                TaskContextConfig{
-                    .cancellation         = cancellation(),
-                    .randomSeed           = seed,
-                    .projectRoot          = m_projectRoot,
-                    .maximumReadsPerCycle = config.maximumReadsPerCycle,
-                    .replaySteps          = std::move(config.replaySteps),
-                },
+            return TaskStatus{
+                .cancellationRequested = m_stop.stop_requested(),
+                .annotationClaimed     = m_annotationClaimed,
+                .runtimeModelBound     = static_cast<bool>(m_binding),
             };
-
-            auto outcome = FrameworkRoutineReport{
-                .run = TaskRunReport{
-                    .taskName   = chunk.name,
-                    .sourceHash = chunk.hash.hex(),
-                    .seed       = seed,
-                    .tracePath  = config.tracePath,
-                },
-            };
-
-            // The VM boots two environments. The trusted framework bundle loads
-            // under the framework environment and is handed the private capability
-            // surface as its chunk argument; the chunk below runs under a project
-            // environment that is an explicit whitelist and holds no route back to
-            // the framework's. So the script reaches the uf data tables and the
-            // framework's own modules, and no primitive by any route.
-            //
-            // A VM that cannot be built at all ends this RUN, not this call:
-            // run.started is already in the trace, so the run happened and has to
-            // be described, and a bare Result failure here would leave a run
-            // bracket that never closed.
-            // Zero on the run config means "the script layer's own default",
-            // which is NOT what zero means to the script layer: there it
-            // disables the ceiling outright. Resolved here so no caller can
-            // reach that state by leaving a field alone.
-            auto const memoryQuota = config.memoryQuotaBytes != 0U
-                ? config.memoryQuotaBytes
-                : script::EngineConfig{}.memoryQuotaBytes;
-
-            auto vm = script::Engine::create(
-                script::EngineConfig{
-                    .cancellation      = cancellation(),
-                    .memoryQuotaBytes  = memoryQuota,
-                    .maxRuntime        = config.maxScriptRuntime,
-                    .frameworkModules  = frameworkScriptModules(),
-                    .installHostTables = scriptHostTableInstaller(),
-                    // Run, always. Every VM this function boots is a business
-                    // task or a first-party routine, and the widened surface
-                    // exists only where ExplorationSession boots one.
-                    .installPrivateCapabilities = scriptPrivateCapabilities(
-                        context,
-                        ScriptTrustMode::Run
-                    ),
-                    .projectGlobals          = scriptProjectGlobals(),
-                    .frameworkProjectGlobals = frameworkProjectGlobals(),
-                    .classifyRaisedError     = scriptRaisedErrorClassifier(),
-                }
-            );
-            if (!vm)
-            {
-                outcome.run.failure = std::move(vm).error();
-            }
-            else
-            {
-                // The value is carried both ways rather than coerced once: a
-                // framework routine answers with a number, and a project task's
-                // return is the one sentence it can address to the operator. A
-                // return no line can carry fails the run, which is the same
-                // refusal an exploration chunk meets.
-                auto runResult = vm->runValue(chunk.source, chunk.name);
-                if (!runResult)
-                {
-                    outcome.run.failure = std::move(runResult).error();
-                }
-                else
-                {
-                    outcome.run.returned = renderReturnedValue(*runResult);
-                    outcome.answer       = runResult->number().value_or(0.0);
-                }
-            }
-
-            // Two verdicts the script's own return cannot express, folded in
-            // before the closing line is built so run.finished reports the run
-            // that actually happened.
-            //
-            // A generation the host spent terminally ended there whatever the
-            // script did afterwards; design section 9's rule 5 latches that in C++
-            // so a project pcall cannot turn it into a completed run, and this is
-            // where the latch is read back. A step or an interrupt match still open
-            // at run.finished is the framework failing to close what it opened,
-            // which section 12 makes a Failed(InternalInvariant) run. Both defer to
-            // a failure the run already has: an unclosed step under a cancelled run
-            // is the cancel's consequence, not a second cause.
-            if (!outcome.run.failure)
-            {
-                auto const terminal = context.terminalKind();
-                if (terminal.has_value())
-                {
-                    outcome.run.failure = fail(
-                        *terminal,
-                        "the task generation was spent before the script returned"
-                    ).error();
-                }
-            }
-            else if (context.terminalKind() == AutomationErrorKind::Cancelled)
-            {
-                // A cancellation OUTRANKS the sentence its own unwinding
-                // produced. Cancelling raises a plain Tier C sentinel rather
-                // than a kinded carrier, deliberately, so that ctx:try re-raises
-                // it unchanged -- which means the failure sitting here is
-                // whatever the script layer made of that sentinel, and it
-                // arrives as InvalidResource. Measured on the real machine: five
-                // interrupts, four reported Failed and one Cancelled, the
-                // difference being only whether the script unwound before the
-                // host abandoned its thread (docs/TODO.md, 2026-08-03).
-                //
-                // The kind is corrected and the message is kept: the operator
-                // asked for this ending, so it is not a failure, but what
-                // actually unwound is still the useful detail.
-                outcome.run.failure = fail(
-                    AutomationErrorKind::Cancelled,
-                    std::string{outcome.run.failure->message()}
-                ).error();
-            }
-            if (!outcome.run.failure)
-            {
-                auto scopes = recorder->requireScopesClosed();
-                if (!scopes)
-                {
-                    outcome.run.failure = std::move(scopes).error();
-                }
-            }
-
-            auto finishStatus = recorder->emit(runFinishedEvent(outcome.run));
-            if (!outcome.run.failure && !finishStatus)
-            {
-                // The run itself succeeded but its closing evidence was lost, so it
-                // cannot be reported as completed. The run's own failure always
-                // takes precedence over the sink's, so this only reaches the report
-                // when there was no other failure.
-                outcome.run.failure = std::move(finishStatus).error();
-            }
-
-            noteRunFinished(outcome.run.outcome());
-            return outcome;
         }
     };
 
-    TaskHost::TaskHost() = default;
+    TaskHost::Receipt::Receipt(uint64 hostNonce, uint64 ordinal) noexcept
+        : m_hostNonce{hostNonce}
+        , m_ordinal{ordinal}
+    {
+    }
+
+    TaskHost::TaskHost()
+        : m_hostNonce{mintHandleGeneration()}
+    {
+    }
 
     TaskHost::~TaskHost() = default;
 
     auto TaskHost::findGeneration(GenerationId id) noexcept -> Generation*
     {
-        for (auto const& p_generation : m_generations)
+        auto const found = std::ranges::find(m_generations, id, [](auto const& value)
         {
-            if (p_generation->identity() == id)
-            {
-                return p_generation.get();
-            }
-        }
-        return nullptr;
+            return value->id();
+        });
+        return found == m_generations.end() ? nullptr : found->get();
     }
 
     auto TaskHost::requireGeneration(GenerationId id) -> Result<Generation*>
@@ -630,164 +389,392 @@ namespace uf::task
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
-                std::format("no loaded project for generation {}", id.value())
+                std::format("no Host generation {} exists", id.value())
             );
         }
         return p_generation;
     }
 
-    auto TaskHost::loadProject(
-        std::filesystem::path const& projectRoot,
+    auto TaskHost::finalizeRuntimeModel(
+        GenerationId generation,
+        TrustedRuntimeFinalize trusted
+    ) -> Status
+    {
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
+        auto const& artifact = p_generation->artifact();
+        if (p_generation->kind() != GenerationKind::Runtime || !artifact)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "trusted Runtime finalize requires a RuntimeArtifact generation"
+            );
+        }
+        if (trusted.parserSchemaHash != artifact->runtimeModelSchemaHash())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "trusted Runtime parser schema does not match the artifact"
+            );
+        }
+
+        auto expectedAssets = artifact->assetPaths();
+        if (
+            !std::ranges::is_sorted(trusted.assetReferences)
+            || std::ranges::adjacent_find(trusted.assetReferences)
+                != trusted.assetReferences.end()
+            || trusted.assetReferences != expectedAssets
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "trusted Runtime parser asset closure does not match the artifact"
+            );
+        }
+
+        auto binding = std::make_shared<RuntimeModelBinding const>(
+            RuntimeModelBinding{generation, artifact, trusted.semanticHash}
+        );
+        return p_generation->installBinding(std::move(binding));
+    }
+
+    auto TaskHost::runtimeAssetBytes(
+        GenerationId generation,
+        std::string_view relativePath
+    ) -> Result<std::vector<std::byte>>
+    {
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
+        auto const& binding = p_generation->binding();
+        if (p_generation->kind() != GenerationKind::Runtime || !binding)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "runtime assets require a finalized Runtime generation"
+            );
+        }
+        return p_generation->artifact()->fileBytes(relativePath);
+    }
+
+    auto TaskHost::activeRuntimeContext(
+        GenerationId generation
+    ) -> Result<TaskContext*>
+    {
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
+        auto* const p_context = p_generation->runtimeContext();
+        if (p_context == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::UnsupportedCapability,
+                "trusted Runtime observation is unavailable outside Host execution"
+            );
+        }
+        return p_context;
+    }
+
+    auto TaskHost::runTrustedRuntime(
+        GenerationId generation,
+        TaskContext& context,
+        std::string_view source,
+        std::string_view chunkName
+    ) -> Result<script::ScriptValue>
+    {
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
+        UF_TRY(p_generation->bindRuntimeContext(context));
+        auto guard = scopeExit(
+            [p_generation, &context]() noexcept
+            {
+                p_generation->unbindRuntimeContext(context);
+            }
+        );
+        auto* const p_vm = p_generation->runtimeVm();
+        UF_CHECK(p_vm != nullptr);
+        return p_vm->runValue(source, chunkName);
+    }
+
+    auto TaskHost::bootTrustedRuntime(GenerationId generation) -> Status
+    {
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
+        auto vm = script::Engine::create(
+            script::EngineConfig{
+                .cancellation      = p_generation->cancellation(),
+                .frameworkModules  = frameworkScriptModules(),
+                .installHostTables = scriptHostTableInstaller(),
+                .installPrivateCapabilities = runtimePrivateCapabilities(generation),
+                .projectGlobals          = scriptProjectGlobals(),
+                .frameworkProjectGlobals = {
+                    std::string{"observe"},
+                    std::string{"project"},
+                },
+                .classifyRaisedError     = scriptRaisedErrorClassifier(),
+            }
+        );
+        if (!vm)
+        {
+            return std::unexpected{std::move(vm).error()};
+        }
+        UF_TRY_VALUE(
+            loaded,
+            vm->runNumber("project.load_project(); return 1", "runtime-artifact-finalize")
+        );
+        if (loaded != 1.0 || !p_generation->binding())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "trusted Runtime parser returned without finalizing its artifact"
+            );
+        }
+        return p_generation->installRuntimeVm(*std::move(vm));
+    }
+
+    auto TaskHost::mintClickReceipt(
+        GenerationId generation,
+        TaskContext& context,
+        CycleTicket cycle,
+        std::optional<uint64> evidenceCycleOrdinal,
+        TrustedReceiptIntent intent
+    ) -> Result<Receipt>
+    {
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
+        auto const& binding = p_generation->binding();
+        if (p_generation->kind() != GenerationKind::Runtime || !binding)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Receipt minting requires a privately finalized Runtime generation"
+            );
+        }
+        UF_TRY(context.requireReceiptCycle(cycle, evidenceCycleOrdinal));
+
+        auto const duplicate = std::ranges::find_if(
+            m_receipts,
+            [&context, cycle](PendingReceipt const& pending)
+            {
+                return pending.p_context == &context
+                    && pending.cycle.generation == cycle.generation
+                    && pending.cycle.ordinal == cycle.ordinal;
+            }
+        );
+        if (duplicate != m_receipts.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "this observation cycle already has an unconsumed Host Receipt"
+            );
+        }
+        if (m_nextReceiptOrdinal == std::numeric_limits<uint64>::max())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Host Receipt ordinal space is exhausted"
+            );
+        }
+
+        auto const receipt = Receipt{m_hostNonce, m_nextReceiptOrdinal};
+        ++m_nextReceiptOrdinal;
+        m_receipts.emplace_back(
+            PendingReceipt{
+                .ordinal               = receipt.m_ordinal,
+                .generation            = generation,
+                .artifactRootHash       = binding->artifactRootHash(),
+                .semanticHash           = binding->semanticHash(),
+                .p_context              = &context,
+                .cycle                  = cycle,
+                .evidenceCycleOrdinal   = evidenceCycleOrdinal,
+                .intent                 = std::move(intent),
+                .mintedAt               = MonotonicInstant::now(),
+                .maximumAge             = p_generation->maximumReceiptAge(),
+                .fence                  = m_fence,
+            }
+        );
+        return receipt;
+    }
+
+    auto TaskHost::deliveryAuthority() const noexcept -> DeliveryAuthority
+    {
+        return DeliveryAuthority{.hostNonce = m_hostNonce, .fence = m_fence};
+    }
+
+    auto TaskHost::deliver(
+        DeliveryAuthority authority,
+        Receipt const& receipt
+    ) -> Result<engine::ActReceipt>
+    {
+        if (
+            authority.hostNonce != m_hostNonce
+            || authority.fence != m_fence
+            || receipt.m_hostNonce != m_hostNonce
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "delivery authority is foreign or fenced"
+            );
+        }
+
+        auto const found = std::ranges::find(m_receipts, receipt.m_ordinal, &PendingReceipt::ordinal);
+        if (found == m_receipts.end())
+        {
+            return fail(
+                AutomationErrorKind::StaleObservation,
+                "Host Receipt is unknown, stale, or already consumed"
+            );
+        }
+
+        // Linearization point: once valid Host authority presents a known token,
+        // no later failure can make the same authorization deliverable again.
+        auto pending = std::move(*found);
+        m_receipts.erase(found);
+
+        UF_TRY_VALUE(p_generation, requireGeneration(pending.generation));
+        auto const& binding = p_generation->binding();
+        if (
+            pending.fence != m_fence
+            || !binding
+            || binding->generation() != pending.generation
+            || binding->artifactRootHash() != pending.artifactRootHash
+            || binding->semanticHash() != pending.semanticHash
+        )
+        {
+            return fail(
+                AutomationErrorKind::StaleObservation,
+                "Host Receipt no longer matches its generation, binding, or fence"
+            );
+        }
+        if (
+            MonotonicInstant::now().saturatingDurationSince(pending.mintedAt)
+            > pending.maximumAge
+        )
+        {
+            return fail(
+                AutomationErrorKind::StaleObservation,
+                "Host Receipt exceeded its freshness bound"
+            );
+        }
+        if (pending.p_context == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Host Receipt lost its owning session"
+            );
+        }
+
+        UF_TRY(
+            pending.p_context->requireReceiptCycle(
+                pending.cycle,
+                pending.evidenceCycleOrdinal
+            )
+        );
+        return pending.p_context->deliverReceiptClick(pending.cycle, pending.intent.point);
+    }
+
+    auto TaskHost::takeover() -> Status
+    {
+        if (m_fence == std::numeric_limits<uint64>::max())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Host delivery fence space is exhausted"
+            );
+        }
+        ++m_fence;
+        return ok();
+    }
+
+    auto TaskHost::activateRuntimeArtifact(
+        InstalledRuntimeArtifact installed,
         TaskHostConfig const& config
     ) -> Result<GenerationId>
     {
-        UF_TRY_VALUE(model, readRuntimeModelEnvelope(projectRoot));
-
-        // The project's name in the trace is its directory's: the v3 manifest that
-        // used to carry a project id is not read at runtime any more, and inventing
-        // a second identity in the runtime model would be a fact nobody maintains. An
-        // empty filename (a root path, a trailing separator) falls back to the path
-        // itself rather than to an unattributed run.
-        auto projectId = projectRoot.filename().string();
-        if (projectId.empty())
+        if (config.maximumReceiptAge < MonotonicInstant::Duration::zero())
         {
-            projectId = projectRoot.string();
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Host Receipt freshness bound must not be negative"
+            );
         }
-
+        if (!installed.m_artifact || installed.m_installedGeneration == 0U)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Host requires a valid installed RuntimeArtifact"
+            );
+        }
+        auto artifact = std::move(installed.m_artifact);
         auto const id = GenerationId{m_nextGenerationValue};
         ++m_nextGenerationValue;
         m_generations.emplace_back(
             std::make_unique<Generation>(
                 id,
-                projectRoot,
+                GenerationKind::Runtime,
+                artifact->root(),
+                artifact->root().filename().string(),
+                std::move(artifact),
+                config
+            )
+        );
+        auto rollback = scopeExit(
+            [this, id]() noexcept
+            {
+                auto const found = std::ranges::find(
+                    m_generations,
+                    id,
+                    [](auto const& value)
+                    {
+                        return value->id();
+                    }
+                );
+                UF_CHECK(found != m_generations.end());
+                m_generations.erase(found);
+            }
+        );
+        UF_TRY(bootTrustedRuntime(id));
+        rollback.release();
+        return id;
+    }
+
+    auto TaskHost::openAnnotationProject(
+        std::filesystem::path const& projectRoot,
+        TaskHostConfig const& config
+    ) -> Result<GenerationId>
+    {
+        if (config.maximumReceiptAge < MonotonicInstant::Duration::zero())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Host Receipt freshness bound must not be negative"
+            );
+        }
+        UF_TRY_VALUE(root, canonicalProjectRoot(projectRoot));
+        auto const id = GenerationId{m_nextGenerationValue};
+        ++m_nextGenerationValue;
+        auto projectId = root.filename().string();
+        m_generations.emplace_back(
+            std::make_unique<Generation>(
+                id,
+                GenerationKind::Annotation,
+                std::move(root),
                 std::move(projectId),
-                std::move(model),
-                config.externalCancellation
+                nullptr,
+                config
             )
         );
         return id;
     }
 
-    auto TaskHost::startTask(
-        GenerationId generation,
-        std::string_view taskName,
-        TaskRunConfig config
-    ) -> Result<TaskRunReport>
-    {
-        UF_TRY_VALUE(p_generation, requireGeneration(generation));
-
-        // Claim the generation for the task front-end before anything else. It runs
-        // ahead of loading the task so a generation another front-end already owns
-        // refuses here rather than after reading and validating a script it will
-        // never run.
-        UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Task));
-
-        // Source the task from its owning project and validate every uf resource ID
-        // before anything observable exists: a missing or unsafe task name, or a
-        // reference the runtime model does not declare, must fail before a VM is
-        // created and before a trace file is opened.
-        UF_TRY_VALUE(loadedTask, loadTask(p_generation->projectRoot(), taskName));
-        UF_TRY_VALUE(
-            resourceReport,
-            validateScriptResources(
-                loadedTask.source,
-                loadedTask.name,
-                p_generation->model()
-            )
-        );
-
-        auto const runId = TaskRunId{m_nextRunValue};
-        ++m_nextRunValue;
-        UF_TRY_VALUE(
-            outcome,
-            p_generation->run(
-                runId,
-                generation,
-                loadedTask,
-                resourceReport,
-                std::move(config)
-            )
-        );
-        // A task's numeric return means nothing, so only the run report leaves
-        // here; see Generation::run for why the number is carried that far.
-        return std::move(outcome.run);
-    }
-
-    auto TaskHost::projectFingerprint(
+    auto TaskHost::runtimeModelBytes(
         GenerationId generation
-    ) -> Result<ProjectFingerprint>
+    ) -> Result<std::vector<std::byte>>
     {
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
-        return p_generation->model().fingerprint;
-    }
-
-    auto TaskHost::projectTargetCount(
-        GenerationId generation
-    ) -> Result<std::size_t>
-    {
-        UF_TRY_VALUE(p_generation, requireGeneration(generation));
-        return p_generation->model().targetIds.size();
-    }
-
-    auto TaskHost::projectSurfaceCount(
-        GenerationId generation
-    ) -> Result<std::size_t>
-    {
-        UF_TRY_VALUE(p_generation, requireGeneration(generation));
-        return p_generation->model().surfaceIds.size();
-    }
-
-    auto TaskHost::projectModelHash(
-        GenerationId generation
-    ) -> Result<std::string>
-    {
-        UF_TRY_VALUE(p_generation, requireGeneration(generation));
-        return p_generation->model().contentHash.hex();
-    }
-
-    auto TaskHost::runFrameworkRoutine(
-        GenerationId generation,
-        FrameworkRoutine const& routine,
-        TaskRunConfig config
-    ) -> Result<FrameworkRoutineReport>
-    {
-        UF_TRY_VALUE(p_generation, requireGeneration(generation));
-
-        UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Check));
-
-        // The chunk is assembled here rather than loaded, and that is the only
-        // difference from startTask. The hash is taken over the same bytes the VM
-        // compiles, so run.started attributes the run to the exact routine this
-        // binary shipped.
-        auto source = std::string{routine.source};
-        UF_TRY_VALUE(
-            sourceHash,
-            sha256(std::as_bytes(std::span{source}))
-        );
-        auto const chunk = LoadedTask{
-            .name   = std::string{routine.name},
-            .source = std::move(source),
-            .hash   = sourceHash,
-        };
-
-        UF_TRY_VALUE(
-            resourceReport,
-            validateScriptResources(
-                chunk.source,
-                chunk.name,
-                p_generation->model()
-            )
-        );
-
-        auto const runId = TaskRunId{m_nextRunValue};
-        ++m_nextRunValue;
-        return p_generation->run(
-            runId,
-            generation,
-            chunk,
-            resourceReport,
-            std::move(config)
-        );
+        auto const& artifact = p_generation->artifact();
+        if (p_generation->kind() != GenerationKind::Runtime || !artifact)
+        {
+            return fail(
+                AutomationErrorKind::UnsupportedCapability,
+                "Annotation generations do not carry RuntimeArtifact bytes"
+            );
+        }
+        auto const bytes = artifact->modelBytes();
+        return std::vector<std::byte>{bytes.begin(), bytes.end()};
     }
 
     auto TaskHost::startExplorationSession(
@@ -796,23 +783,16 @@ namespace uf::task
     ) -> Result<std::unique_ptr<ExplorationSession>>
     {
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
+        UF_TRY(p_generation->claimAnnotation());
 
-        UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Annotation));
-
-        auto const runId = TaskRunId{m_nextRunValue};
+        auto const runId = EngineRunId{m_nextRunValue};
         ++m_nextRunValue;
-
         return ExplorationSession::create(
             std::move(config),
             ExplorationSession::Spec{
-                .projectId          = p_generation->projectId(),
-                .projectFingerprint = p_generation->model().fingerprint,
-                .projectRoot        = p_generation->projectRoot(),
-                // Drawn here rather than fixed, on the same terms a task run's
-                // seed is: an agent that reaches for `random` must be replayable
-                // from a number the trace recorded.
-                .seed               = drawRunSeed(),
-                .cancellation       = p_generation->cancellation(),
+                .projectId    = p_generation->projectId(),
+                .projectRoot  = p_generation->root(),
+                .cancellation = p_generation->cancellation(),
             },
             runId,
             generation
@@ -822,7 +802,7 @@ namespace uf::task
     auto TaskHost::cancel(GenerationId generation) -> Status
     {
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
-        p_generation->requestCancel();
+        p_generation->cancel();
         return ok();
     }
 
@@ -832,28 +812,29 @@ namespace uf::task
         return p_generation->status();
     }
 
-    auto TaskHost::pause(GenerationId) -> Status
+    auto TaskHost::pause(GenerationId generation) -> Status
     {
+        UF_TRY(requireGeneration(generation));
         return fail(
             AutomationErrorKind::UnsupportedCapability,
-            "pausing a task is a P2 capability this host does not implement"
+            "pause is unavailable before Operator owns a safe boundary"
         );
     }
 
-    auto TaskHost::resume(GenerationId) -> Status
+    auto TaskHost::resume(GenerationId generation) -> Status
     {
+        UF_TRY(requireGeneration(generation));
         return fail(
             AutomationErrorKind::UnsupportedCapability,
-            "resuming a task is a P2 capability this host does not implement"
+            "resume is unavailable before Operator owns a safe boundary"
         );
     }
 
-    auto TaskHost::subscribeEvents(ITaskEventSink&) -> Status
+    auto TaskHost::subscribeEvents(ITaskEventSink& /*sink*/) -> Status
     {
         return fail(
             AutomationErrorKind::UnsupportedCapability,
-            "task event subscription is a P2 capability this host does not "
-            "implement"
+            "event subscription is unavailable before Operator exists"
         );
     }
 }

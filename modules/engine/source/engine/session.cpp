@@ -9,6 +9,7 @@
 #include <core/types/integer.hpp>
 #include <core/utility/variant-match.hpp>
 
+#include <domain/content-hash.hpp>
 #include <domain/detection.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
@@ -49,18 +50,54 @@ namespace uf::engine
 {
     namespace
     {
-        // Prefills the frame identity every engine event shares -- the join key
-        // tying an event to its capture -- so each emit site sets only its own
-        // fields.
-        [[nodiscard]]
-        auto identityEvent(
-            trace::TraceEventKind kind,
-            FrameIdentity identity
-        ) -> trace::TraceEvent
+        [[nodiscard]] auto tracePayloadSchemaHash() -> ContentHash
         {
-            return trace::TraceEvent{
-                .kind  = kind,
-                .frame = identity,
+            auto const parsed = ContentHash::parse(
+                std::format("sha256:{}", trace::k_traceSchemaHash)
+            );
+            UF_CHECK(parsed.has_value());
+            return *parsed;
+        }
+
+        // Every engine event uses the recorder-owned stream identity. A frame
+        // reference adds only the generic capture join keys; pixels and other
+        // replay material never enter Audit Trace.
+        [[nodiscard]]
+        auto engineEvent(
+            std::string_view eventType,
+            std::optional<FrameIdentity> identity = std::nullopt,
+            std::vector<trace::TraceField> fields = {}
+        ) -> trace::TraceEventSpec
+        {
+            auto references = std::vector<trace::TraceReference>{};
+            if (identity.has_value())
+            {
+                references = {
+                    trace::TraceReference{
+                        .type = "capture_session",
+                        .id   = std::to_string(identity->sessionId().value()),
+                    },
+                    trace::TraceReference{
+                        .type = "target_generation",
+                        .id   = std::to_string(identity->targetGeneration().value()),
+                    },
+                    trace::TraceReference{
+                        .type = "frame",
+                        .id   = std::to_string(identity->frameId().value()),
+                    },
+                };
+            }
+
+            return trace::TraceEventSpec{
+                .eventType = std::string{eventType},
+                .audit     = trace::AuditMetadata{
+                    .actor      = "engine",
+                    .references = std::move(references),
+                },
+                .payload   = trace::TypedTracePayload{
+                    .schemaHash = tracePayloadSchemaHash(),
+                    .fields     = std::move(fields),
+                },
             };
         }
 
@@ -374,14 +411,14 @@ namespace uf::engine
         };
     }
 
-    auto EngineSession::emit(trace::TraceEvent const& event) -> Status
+    auto EngineSession::emit(trace::TraceEventSpec const& event) -> Status
     {
         return m_recorder.emit(event);
     }
 
-    // Opens no trace line of its own: a run binds exactly one engine session, and
-    // task::TaskHost's `run.started` already records that instant with the
-    // project, task, hashes, seed and ids a bare session event never carried.
+    // Opens no trace line of its own. The owner opens the run bracket and gives
+    // the recorder its immutable session and artifact identity before binding an
+    // engine session to that stream.
     auto EngineSession::create(
         std::unique_ptr<IFrameSource> frameSource,
         std::unique_ptr<IActionSink> actionSink,
@@ -460,12 +497,28 @@ namespace uf::engine
                 );
             }
 
-            auto event           = trace::TraceEvent{};
-            event.kind           = trace::TraceEventKind::EngineCaptureRetried;
-            event.captureAttempt = attempt + 1U;
-            event.errorKind      = AutomationErrorKind::CaptureStalled;
-            event.message        = std::string{error.message()};
-            UF_TRY(emit(event));
+            UF_TRY(
+                emit(
+                    engineEvent(
+                        "engine.capture_retried",
+                        std::nullopt,
+                        {
+                            trace::TraceField{
+                                .name  = "capture_attempt",
+                                .value = static_cast<uint64>(attempt + 1U),
+                            },
+                            trace::TraceField{
+                                .name  = "error_kind",
+                                .value = std::string{
+                                    automationErrorWireName(
+                                        AutomationErrorKind::CaptureStalled
+                                    )
+                                },
+                            },
+                        }
+                    )
+                )
+            );
         }
     }
 
@@ -490,7 +543,7 @@ namespace uf::engine
         );
         auto const identity = FrameIdentity::fromFrame(frame);
 
-        UF_TRY(emit(identityEvent(trace::TraceEventKind::EngineObserved, identity)));
+        UF_TRY(emit(engineEvent("engine.observed", identity)));
 
         return Observation{std::move(frame), lease, identity, m_identity};
     }
@@ -528,13 +581,32 @@ namespace uf::engine
         // the template identity stands in for the element id it does not have.
         if (!attempt)
         {
-            auto event   = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
-            event.action = trace::TraceEvent::Action{
-                .outcome = trace::ActionSearch::Failed,
-            };
-            event.templateHash = templateImage.identity;
-            event.errorKind    = automationErrorKind(attempt.error());
-            event.message      = std::string{attempt.error().message()};
+            auto event = engineEvent(
+                "engine.action_found",
+                identity,
+                {
+                    trace::TraceField{
+                        .name  = "outcome",
+                        .value = std::string{"failed"},
+                    },
+                    trace::TraceField{
+                        .name  = "error_kind",
+                        .value = std::string{
+                            automationErrorWireName(
+                                automationErrorKind(attempt.error()).value_or(
+                                    AutomationErrorKind::InternalInvariant
+                                )
+                            )
+                        },
+                    },
+                }
+            );
+            event.audit.references.emplace_back(
+                trace::TraceReference{
+                    .type = "template",
+                    .id   = templateImage.identity,
+                }
+            );
             UF_TRY(emit(event));
             return std::unexpected{std::move(attempt).error()};
         }
@@ -543,12 +615,28 @@ namespace uf::engine
             auto const* p_stop = std::get_if<SadSearchStopReason>(&attempt->result)
         )
         {
-            auto event   = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
-            event.action = trace::TraceEvent::Action{
-                .outcome = trace::ActionSearch::Stopped,
-            };
-            event.templateHash = templateImage.identity;
-            event.stopReason   = *p_stop;
+            auto event = engineEvent(
+                "engine.action_found",
+                identity,
+                {
+                    trace::TraceField{
+                        .name  = "outcome",
+                        .value = std::string{"stopped"},
+                    },
+                    trace::TraceField{
+                        .name  = "stop_reason",
+                        .value = std::string{
+                            automationErrorWireName(searchStopKind(*p_stop))
+                        },
+                    },
+                }
+            );
+            event.audit.references.emplace_back(
+                trace::TraceReference{
+                    .type = "template",
+                    .id   = templateImage.identity,
+                }
+            );
             UF_TRY(emit(event));
             return fail(
                 searchStopKind(*p_stop),
@@ -564,11 +652,22 @@ namespace uf::engine
         );
         if (!match)
         {
-            auto event   = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
-            event.action = trace::TraceEvent::Action{
-                .outcome = trace::ActionSearch::Absent,
-            };
-            event.templateHash = templateImage.identity;
+            auto event = engineEvent(
+                "engine.action_found",
+                identity,
+                {
+                    trace::TraceField{
+                        .name  = "outcome",
+                        .value = std::string{"absent"},
+                    },
+                }
+            );
+            event.audit.references.emplace_back(
+                trace::TraceReference{
+                    .type = "template",
+                    .id   = templateImage.identity,
+                }
+            );
             UF_TRY(emit(event));
             return std::optional<MatchFound>{std::nullopt};
         }
@@ -578,14 +677,46 @@ namespace uf::engine
         auto const centerX = match->matchedRect.x() + match->matchedRect.width() / 2U;
         auto const centerY = match->matchedRect.y() + match->matchedRect.height() / 2U;
 
-        auto event   = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
-        event.action = trace::TraceEvent::Action{
-            .outcome     = trace::ActionSearch::Found,
-            .sadScore    = match->sadScore,
-            .maximumSad  = match->maximumSad,
-            .matchedRect = match->matchedRect,
-        };
-        event.templateHash = templateImage.identity;
+        auto event = engineEvent(
+            "engine.action_found",
+            identity,
+            {
+                trace::TraceField{
+                    .name  = "outcome",
+                    .value = std::string{"found"},
+                },
+                trace::TraceField{
+                    .name  = "sad_score",
+                    .value = match->sadScore,
+                },
+                trace::TraceField{
+                    .name  = "maximum_sad",
+                    .value = match->maximumSad,
+                },
+                trace::TraceField{
+                    .name  = "matched_x",
+                    .value = static_cast<uint64>(match->matchedRect.x()),
+                },
+                trace::TraceField{
+                    .name  = "matched_y",
+                    .value = static_cast<uint64>(match->matchedRect.y()),
+                },
+                trace::TraceField{
+                    .name  = "matched_width",
+                    .value = static_cast<uint64>(match->matchedRect.width()),
+                },
+                trace::TraceField{
+                    .name  = "matched_height",
+                    .value = static_cast<uint64>(match->matchedRect.height()),
+                },
+            }
+        );
+        event.audit.references.emplace_back(
+            trace::TraceReference{
+                .type = "template",
+                .id   = templateImage.identity,
+            }
+        );
         UF_TRY(emit(event));
 
         return std::optional<MatchFound>{
@@ -610,21 +741,81 @@ namespace uf::engine
         auto        reading  = readTextOnFrame(frame, rect);
         if (!reading)
         {
-            auto event      = identityEvent(trace::TraceEventKind::EngineTextRead, identity);
-            event.errorKind = automationErrorKind(reading.error());
-            event.message   = std::string{reading.error().message()};
-            UF_TRY(emit(event));
+            UF_TRY(
+                emit(
+                    engineEvent(
+                        "engine.text_read",
+                        identity,
+                        {
+                            trace::TraceField{
+                                .name  = "outcome",
+                                .value = std::string{"failed"},
+                            },
+                            trace::TraceField{
+                                .name  = "error_kind",
+                                .value = std::string{
+                                    automationErrorWireName(
+                                        automationErrorKind(reading.error()).value_or(
+                                            AutomationErrorKind::InternalInvariant
+                                        )
+                                    )
+                                },
+                            },
+                        }
+                    )
+                )
+            );
             return std::unexpected{std::move(reading).error()};
         }
 
-        auto event     = identityEvent(trace::TraceEventKind::EngineTextRead, identity);
-        event.reading  = trace::TraceEvent::Reading{
-            .text           = reading->line ? reading->line->text : std::string{},
-            .rect           = rect,
-            .confidenceBp   = reading->line ? reading->line->confidenceBp : uint32{0},
-            .engineId       = std::string{reading->engineId},
-            .durationMicros = reading->durationMicros,
-        };
+        auto event = engineEvent(
+            "engine.text_read",
+            identity,
+            {
+                trace::TraceField{
+                    .name  = "outcome",
+                    .value = std::string{"completed"},
+                },
+                trace::TraceField{
+                    .name  = "text_present",
+                    .value = reading->line.has_value(),
+                },
+                trace::TraceField{
+                    .name  = "confidence_bp",
+                    .value = static_cast<uint64>(
+                        reading->line
+                            ? reading->line->confidenceBp
+                            : uint32{0}
+                    ),
+                },
+                trace::TraceField{
+                    .name  = "read_x",
+                    .value = static_cast<uint64>(rect.x()),
+                },
+                trace::TraceField{
+                    .name  = "read_y",
+                    .value = static_cast<uint64>(rect.y()),
+                },
+                trace::TraceField{
+                    .name  = "read_width",
+                    .value = static_cast<uint64>(rect.width()),
+                },
+                trace::TraceField{
+                    .name  = "read_height",
+                    .value = static_cast<uint64>(rect.height()),
+                },
+                trace::TraceField{
+                    .name  = "read_micros",
+                    .value = reading->durationMicros,
+                },
+            }
+        );
+        event.audit.references.emplace_back(
+            trace::TraceReference{
+                .type = "ocr_engine",
+                .id   = reading->engineId,
+            }
+        );
         UF_TRY(emit(event));
 
         if (!reading->line)
@@ -647,39 +838,75 @@ namespace uf::engine
         auto        reading  = readTextLinesOnFrame(frame, rect, maximumLines);
         if (!reading)
         {
-            auto event      = identityEvent(trace::TraceEventKind::EngineTextRead, identity);
-            event.errorKind = automationErrorKind(reading.error());
-            event.message   = std::string{reading.error().message()};
-            UF_TRY(emit(event));
+            UF_TRY(
+                emit(
+                    engineEvent(
+                        "engine.text_read",
+                        identity,
+                        {
+                            trace::TraceField{
+                                .name  = "outcome",
+                                .value = std::string{"failed"},
+                            },
+                            trace::TraceField{
+                                .name  = "error_kind",
+                                .value = std::string{
+                                    automationErrorWireName(
+                                        automationErrorKind(reading.error()).value_or(
+                                            AutomationErrorKind::InternalInvariant
+                                        )
+                                    )
+                                },
+                            },
+                        }
+                    )
+                )
+            );
             return std::unexpected{std::move(reading).error()};
         }
 
-        // ONE event for the call, carrying the region, the whole cost and every
-        // located line. Per-line events would let a reader summing durations
-        // count the same milliseconds twice; a lineless event would leave a click
-        // at a line with nothing in the stream to check it against.
-        auto lines = std::vector<trace::TraceEvent::Reading::Line>{};
-        lines.reserve(reading->lines.size());
-        for (auto const& line : reading->lines)
-        {
-            lines.emplace_back(
-                trace::TraceEvent::Reading::Line{
-                    .text         = line.text,
-                    .rect         = line.rect,
-                    .confidenceBp = line.confidenceBp,
-                }
-            );
-        }
-
-        auto event    = identityEvent(trace::TraceEventKind::EngineTextRead, identity);
-        event.reading = trace::TraceEvent::Reading{
-            .text         = std::string{},
-            .rect         = rect,
-            .confidenceBp = 0,
-            .engineId       = std::string{reading->engineId},
-            .durationMicros = reading->durationMicros,
-            .lines          = std::move(lines),
-        };
+        // ONE event records the bounded read and its line count. Recognized text
+        // remains in the caller-owned result; Audit Trace is not an OCR corpus.
+        auto event = engineEvent(
+            "engine.text_read",
+            identity,
+            {
+                trace::TraceField{
+                    .name  = "outcome",
+                    .value = std::string{"completed"},
+                },
+                trace::TraceField{
+                    .name  = "line_count",
+                    .value = static_cast<uint64>(reading->lines.size()),
+                },
+                trace::TraceField{
+                    .name  = "read_x",
+                    .value = static_cast<uint64>(rect.x()),
+                },
+                trace::TraceField{
+                    .name  = "read_y",
+                    .value = static_cast<uint64>(rect.y()),
+                },
+                trace::TraceField{
+                    .name  = "read_width",
+                    .value = static_cast<uint64>(rect.width()),
+                },
+                trace::TraceField{
+                    .name  = "read_height",
+                    .value = static_cast<uint64>(rect.height()),
+                },
+                trace::TraceField{
+                    .name  = "read_micros",
+                    .value = reading->durationMicros,
+                },
+            }
+        );
+        event.audit.references.emplace_back(
+            trace::TraceReference{
+                .type = "ocr_engine",
+                .id   = reading->engineId,
+            }
+        );
         UF_TRY(emit(event));
 
         return std::move(reading->lines);
@@ -781,14 +1008,30 @@ namespace uf::engine
     }
 
     auto EngineSession::stampInput(
-        trace::TraceEvent event,
+        trace::TraceEventSpec event,
         UnaimedInput input
-    ) -> trace::TraceEvent
+    ) -> trace::TraceEventSpec
     {
         matchVariant(
             input,
-            [&event](KeyName key) { event.key = key; },
-            [&event](int32 notches) { event.wheelNotches = notches; }
+            [&event](KeyName key)
+            {
+                event.payload.fields.emplace_back(
+                    trace::TraceField{
+                        .name  = "key",
+                        .value = std::string{key.value()},
+                    }
+                );
+            },
+            [&event](int32 notches)
+            {
+                event.payload.fields.emplace_back(
+                    trace::TraceField{
+                        .name  = "wheel_notches",
+                        .value = static_cast<int64>(notches),
+                    }
+                );
+            }
         );
         return event;
     }
@@ -799,16 +1042,26 @@ namespace uf::engine
         std::optional<UnaimedInput> input
     ) -> Status
     {
-        auto event = identityEvent(
-            trace::TraceEventKind::EngineActionRejected,
-            identity
+        auto event = engineEvent(
+            "engine.action_rejected",
+            identity,
+            {
+                trace::TraceField{
+                    .name  = "error_kind",
+                    .value = std::string{
+                        automationErrorWireName(
+                            automationErrorKind(error).value_or(
+                                AutomationErrorKind::InternalInvariant
+                            )
+                        )
+                    },
+                },
+            }
         );
         if (input)
         {
             event = stampInput(std::move(event), *input);
         }
-        event.errorKind = automationErrorKind(error);
-        event.message   = std::string{error.message()};
         return emit(event);
     }
 
@@ -845,7 +1098,24 @@ namespace uf::engine
             return std::unexpected{std::move(lease).error()};
         }
 
-        UF_TRY(emit(identityEvent(trace::TraceEventKind::EngineActionAuthorized, identity)));
+        UF_TRY(
+            emit(
+                engineEvent(
+                    "engine.action_authorized",
+                    identity,
+                    {
+                        trace::TraceField{
+                            .name  = "pixel_x",
+                            .value = static_cast<uint64>(point.x()),
+                        },
+                        trace::TraceField{
+                            .name  = "pixel_y",
+                            .value = static_cast<uint64>(point.y()),
+                        },
+                    }
+                )
+            )
+        );
 
         UF_TRY_VALUE(framePoint, pixelPointToFramePoint(point));
         auto const clientPoint = observation.m_frame.transform().frameToClient(framePoint);
@@ -864,7 +1134,7 @@ namespace uf::engine
         Observation&& observation,
         std::string_view verb,
         std::string_view cancelMessage,
-        trace::TraceEventKind deliveredKind,
+        std::string_view deliveredEventType,
         UnaimedInput input
     ) -> Result<FrameIdentity>
     {
@@ -904,14 +1174,18 @@ namespace uf::engine
         // twice.
         observation.m_invalidated = true;
 
-        UF_TRY(emit(stampInput(identityEvent(deliveredKind, identity), input)));
+        UF_TRY(
+            emit(
+                stampInput(
+                    engineEvent(deliveredEventType, identity),
+                    input
+                )
+            )
+        );
 
         UF_TRY(
             emit(
-                identityEvent(
-                    trace::TraceEventKind::EngineObservationInvalidated,
-                    identity
-                )
+                engineEvent("engine.observation_invalidated", identity)
             )
         );
 
@@ -942,30 +1216,25 @@ namespace uf::engine
         // twice.
         observation.m_invalidated = true;
 
-        // The annotation line carries the FRAME point the caller named as well as
-        // the client point the desktop received -- on that stream the first is
-        // what the agent believed it was doing. Why the spelling differs: header.
-        auto clickEvent = identityEvent(
-            m_recorder.frontEnd() == trace::FrontEnd::Annotation
-                ? trace::TraceEventKind::AnnotationClickDelivered
-                : trace::TraceEventKind::EngineActionDelivered,
-            identity
+        auto clickEvent = engineEvent(
+            "engine.action_delivered",
+            identity,
+            {
+                trace::TraceField{
+                    .name  = "client_x",
+                    .value = std::format("{}", clientPoint.x()),
+                },
+                trace::TraceField{
+                    .name  = "client_y",
+                    .value = std::format("{}", clientPoint.y()),
+                },
+            }
         );
-        clickEvent.clickClient = clientPoint;
-        if (m_recorder.frontEnd() == trace::FrontEnd::Annotation)
-        {
-            clickEvent.annotation = trace::TraceEvent::Annotation{
-                .point = point,
-            };
-        }
         UF_TRY(emit(clickEvent));
 
         UF_TRY(
             emit(
-                identityEvent(
-                    trace::TraceEventKind::EngineObservationInvalidated,
-                    identity
-                )
+                engineEvent("engine.observation_invalidated", identity)
             )
         );
 
@@ -986,7 +1255,7 @@ namespace uf::engine
                 std::move(observation),
                 "pressKey",
                 "cancelled before key delivery",
-                trace::TraceEventKind::EngineKeyDelivered,
+                "engine.key_delivered",
                 UnaimedInput{key}
             )
         );
@@ -1008,7 +1277,7 @@ namespace uf::engine
                 std::move(observation),
                 "scroll",
                 "cancelled before scroll delivery",
-                trace::TraceEventKind::EngineScrollDelivered,
+                "engine.scroll_delivered",
                 UnaimedInput{notches}
             )
         );
@@ -1064,22 +1333,33 @@ namespace uf::engine
         // clickPoint's reason.
         observation.m_invalidated = true;
 
-        auto pressEvent        = identityEvent(
-            trace::TraceEventKind::EngineLongPressDelivered,
-            identity
-        );
-        pressEvent.clickClient = clientPoint;
-        pressEvent.holdMillis  = static_cast<uint64>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(hold).count()
+        auto pressEvent = engineEvent(
+            "engine.long_press_delivered",
+            identity,
+            {
+                trace::TraceField{
+                    .name  = "client_x",
+                    .value = std::format("{}", clientPoint.x()),
+                },
+                trace::TraceField{
+                    .name  = "client_y",
+                    .value = std::format("{}", clientPoint.y()),
+                },
+                trace::TraceField{
+                    .name  = "hold_millis",
+                    .value = static_cast<uint64>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            hold
+                        ).count()
+                    ),
+                },
+            }
         );
         UF_TRY(emit(pressEvent));
 
         UF_TRY(
             emit(
-                identityEvent(
-                    trace::TraceEventKind::EngineObservationInvalidated,
-                    identity
-                )
+                engineEvent("engine.observation_invalidated", identity)
             )
         );
 
@@ -1116,23 +1396,25 @@ namespace uf::engine
         // The move has landed; the handle dies for clickPoint's reason.
         observation.m_invalidated = true;
 
-        // Written under the engine spelling on every stream including the
-        // exploration one. There is no annotation.* spelling to prefer: the two
-        // exist because a bare CLICK would otherwise claim a recognition, and a
-        // move claims none on any stream.
-        auto moveEvent        = identityEvent(
-            trace::TraceEventKind::EnginePointerMoveDelivered,
-            identity
+        auto moveEvent = engineEvent(
+            "engine.pointer_move_delivered",
+            identity,
+            {
+                trace::TraceField{
+                    .name  = "client_x",
+                    .value = std::format("{}", clientPoint.x()),
+                },
+                trace::TraceField{
+                    .name  = "client_y",
+                    .value = std::format("{}", clientPoint.y()),
+                },
+            }
         );
-        moveEvent.clickClient = clientPoint;
         UF_TRY(emit(moveEvent));
 
         UF_TRY(
             emit(
-                identityEvent(
-                    trace::TraceEventKind::EngineObservationInvalidated,
-                    identity
-                )
+                engineEvent("engine.observation_invalidated", identity)
             )
         );
 
@@ -1208,23 +1490,41 @@ namespace uf::engine
         // the engine has -- a drag exists to move what the frame was a picture of.
         observation.m_invalidated = true;
 
-        auto dragEvent           = identityEvent(
-            trace::TraceEventKind::EngineDragDelivered,
-            identity
-        );
-        dragEvent.clickClient   = startClient;
-        dragEvent.dragEndClient = endClient;
-        dragEvent.travelMillis   = static_cast<uint64>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(travel).count()
+        auto dragEvent = engineEvent(
+            "engine.drag_delivered",
+            identity,
+            {
+                trace::TraceField{
+                    .name  = "start_client_x",
+                    .value = std::format("{}", startClient.x()),
+                },
+                trace::TraceField{
+                    .name  = "start_client_y",
+                    .value = std::format("{}", startClient.y()),
+                },
+                trace::TraceField{
+                    .name  = "end_client_x",
+                    .value = std::format("{}", endClient.x()),
+                },
+                trace::TraceField{
+                    .name  = "end_client_y",
+                    .value = std::format("{}", endClient.y()),
+                },
+                trace::TraceField{
+                    .name  = "travel_millis",
+                    .value = static_cast<uint64>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            travel
+                        ).count()
+                    ),
+                },
+            }
         );
         UF_TRY(emit(dragEvent));
 
         UF_TRY(
             emit(
-                identityEvent(
-                    trace::TraceEventKind::EngineObservationInvalidated,
-                    identity
-                )
+                engineEvent("engine.observation_invalidated", identity)
             )
         );
 

@@ -4,12 +4,14 @@
 #include <task/script-bindings.hpp>
 #include <task/task-context.hpp>
 #include <task/task-host.hpp>
-#include <task/task-loader.hpp>
+#include <task/runtime-version.hpp>
 
+#include <core/error/contracts.hpp>
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
+#include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
 
@@ -25,6 +27,7 @@
 #include <format>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -33,15 +36,36 @@ namespace uf::task
 {
     namespace
     {
+        [[nodiscard]] auto traceSchemaHash() -> ContentHash
+        {
+            auto const parsed = ContentHash::parse(
+                std::format("sha256:{}", trace::k_traceSchemaHash)
+            );
+            UF_CHECK(parsed.has_value());
+            return *parsed;
+        }
+
+        [[nodiscard]]
+        auto authoringTraceRootHash(
+            std::string_view projectId,
+            GenerationId generation
+        ) -> Result<ContentHash>
+        {
+            auto const manifest = std::format(
+                "protocol=annotation-trace/v1\nproject={}\nframework={}\nluau={}\ngeneration={}",
+                projectId,
+                frameworkBundleHash(),
+                luauRuntimeVersion(),
+                generation.value()
+            );
+            return sha256(std::as_bytes(std::span{manifest}));
+        }
+
         // The opening line of an exploration session's run bracket.
         //
         // The framework version, the bundle hash and the Luau compiler version are
         // all named here: a trusted Luau framework DOES run in this session, and
-        // an agent's chunk calls into `explore`, `observe` and `model`. The seed
-        // is real for the same reason -- the exploration surface carries
-        // `random`. (Corrected 2026-08-09: this drew the contrast against the
-        // operator front-end's bracket, which left them empty; that front-end was
-        // retired on 2026-08-03 in `eafc273`.)
+        // an agent's chunk calls into `explore`.
         //
         // The task name and the source hash stay empty, and both absences are
         // accurate: a session is a sequence of chunks the agent wrote as it went,
@@ -49,19 +73,32 @@ namespace uf::task
         // id its queue line carried, which reaches the trace through the chunk
         // name in a raised error rather than through this line.
         [[nodiscard]]
-        auto explorationRunStartedEvent(
-            std::string const& projectId,
-            uint64 seed
-        ) -> trace::TraceEvent
+        auto explorationRunStartedEvent(std::string const& projectId)
+            -> trace::TraceEventSpec
         {
-            return trace::TraceEvent{
-                .kind = trace::TraceEventKind::RunStarted,
-                .run  = trace::TraceEvent::Run{
-                    .projectId        = projectId,
-                    .frameworkVersion = std::string{frameworkVersion()},
-                    .frameworkHash    = std::string{frameworkBundleHash()},
-                    .luauVersion      = luauRuntimeVersion(),
-                    .seed             = seed,
+            return trace::TraceEventSpec{
+                .eventType = "run.started",
+                .audit     = trace::AuditMetadata{.actor = "annotation"},
+                .payload   = trace::TypedTracePayload{
+                    .schemaHash = traceSchemaHash(),
+                    .fields = {
+                        trace::TraceField{
+                            .name  = "project_id",
+                            .value = projectId,
+                        },
+                        trace::TraceField{
+                            .name  = "framework_version",
+                            .value = std::string{frameworkVersion()},
+                        },
+                        trace::TraceField{
+                            .name  = "framework_hash",
+                            .value = std::string{frameworkBundleHash()},
+                        },
+                        trace::TraceField{
+                            .name  = "luau_version",
+                            .value = luauRuntimeVersion(),
+                        },
+                    },
                 },
             };
         }
@@ -92,33 +129,47 @@ namespace uf::task
         std::unique_ptr<trace::TraceRecorder> recorder,
         engine::EngineSession session,
         TaskContextConfig contextConfig,
-        std::filesystem::path tracePath,
-        uint64 seed
+        std::filesystem::path tracePath
     ) noexcept
         : m_recorder{std::move(recorder)}
         , m_context{std::move(session), *m_recorder, std::move(contextConfig)}
         , m_tracePath{std::move(tracePath)}
-        , m_seed{seed}
     {
     }
 
     auto ExplorationSession::create(
         TaskRunConfig config,
         Spec spec,
-        TaskRunId runId,
+        EngineRunId runId,
         GenerationId generationId
     ) -> Result<std::unique_ptr<ExplorationSession>>
     {
-        UF_TRY_VALUE(traceSink, trace::FileTraceSink::create(config.tracePath));
+        UF_TRY_VALUE(traceSink, trace::FileTraceSink::createNew(config.tracePath));
+        UF_TRY_VALUE(
+            sessionManifestHash,
+            authoringTraceRootHash(spec.projectId, generationId)
+        );
+        UF_TRY_VALUE(
+            builtRecorder,
+            trace::TraceRecorder::create(
+                std::move(traceSink),
+                trace::TraceStreamSpec{
+                    .sessionId = std::format(
+                        "annotation-{}-{}",
+                        generationId.value(),
+                        runId.value()
+                    ),
+                    .sessionManifestHash = sessionManifestHash,
+                    .producer            = "annotation",
+                }
+            )
+        );
         auto recorder = std::make_unique<trace::TraceRecorder>(
-            std::move(traceSink),
-            runId,
-            generationId,
-            trace::FrontEnd::Annotation
+            std::move(builtRecorder)
         );
 
         UF_TRY(
-            recorder->emit(explorationRunStartedEvent(spec.projectId, spec.seed))
+            recorder->emit(explorationRunStartedEvent(spec.projectId))
         );
 
         // No run.resources_validated line. That event records the closure of uf
@@ -133,7 +184,7 @@ namespace uf::task
                 *recorder,
                 engine::EngineSessionConfig{
                     .liveFingerprint         = config.liveFingerprint,
-                    .projectFingerprint      = spec.projectFingerprint,
+                    .projectFingerprint      = config.liveFingerprint,
                     .maximumPixelComparisons = config.maximumPixelComparisons,
                     .recognitionTimeout      = config.recognitionTimeout,
                     .maxActionFrameAge       = config.maxActionFrameAge,
@@ -149,13 +200,11 @@ namespace uf::task
             std::move(session),
             TaskContextConfig{
                 .cancellation         = spec.cancellation,
-                .randomSeed           = spec.seed,
                 .projectRoot          = std::move(spec.projectRoot),
                 .maximumReadsPerCycle = config.maximumReadsPerCycle,
                 .maximumCropsPerCycle = config.maximumCropsPerCycle,
             },
-            config.tracePath,
-            spec.seed
+            config.tracePath
         );
 
         // The VM is built AFTER the session owns its context, because the private
@@ -164,9 +213,8 @@ namespace uf::task
         // declared last is what makes that ordering structural rather than a rule
         // each caller has to remember.
         //
-        // This is the only place ScriptTrustMode::Exploration and
-        // explorationProjectGlobals() are named in the product: every other VM in
-        // this binary is a Run VM.
+        // This is the only product path that installs Annotation capabilities and
+        // publishes explorationProjectGlobals().
         //
         // The VM gets no runtime ceiling of its own, on purpose.
         // script::EngineConfig's maxRuntime bounds one chunk rather than the VM's
@@ -178,11 +226,12 @@ namespace uf::task
         auto vm = script::Engine::create(
             script::EngineConfig{
                 .cancellation      = spec.cancellation,
+                .memoryQuotaBytes  = config.memoryQuotaBytes,
+                .maxRuntime        = config.maxScriptRuntime,
                 .frameworkModules  = frameworkScriptModules(),
                 .installHostTables = scriptHostTableInstaller(),
-                .installPrivateCapabilities = scriptPrivateCapabilities(
-                    owned->m_context,
-                    ScriptTrustMode::Exploration
+                .installPrivateCapabilities = annotationPrivateCapabilities(
+                    owned->m_context
                 ),
                 .projectGlobals          = scriptProjectGlobals(),
                 .frameworkProjectGlobals = explorationProjectGlobals(),
@@ -307,7 +356,6 @@ namespace uf::task
         return closeRunBracket(
             *m_recorder,
             TaskRunReport{
-                .seed      = m_seed,
                 .tracePath = m_tracePath,
                 .failure   = std::move(failure),
             },

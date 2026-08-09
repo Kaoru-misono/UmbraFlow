@@ -1,256 +1,139 @@
 --!strict
--- Contract tests for the pure v1 resolver. The task test harness supplies the
--- private `resolution` export; no screenshots, OCR engine, or host cycle is
--- needed for these synthetic measurements.
+-- Surface resolution and same-cycle Binding resolution are separate.
 
-local function present(value: any, confidence: number): any
+local function detector(locator: string): any
     return {
-        kind = "present",
-        value = value,
-        confidence = confidence,
-        proof = { { kind = "locator", target = "test_target" } },
+        all = { { kind = "locator_present", locator = locator } },
+        any = {},
+        none = {},
     }
 end
 
-local function absent(): any
+local function placement(x: number, y: number, actionable: boolean): any
     return {
-        kind = "absent",
-        proof = { { kind = "locator", target = "test_target" } },
+        kind = "fixed",
+        rect = { x, y, 120, 50 },
+        action_point = if actionable then { x + 60, y + 25 } else nil,
     }
 end
 
-local function unknown(reason: string): any
-    return {
-        kind = "unknown",
-        reason = reason,
-        confidence = 0.31,
-    }
+local runtime = model.compile({
+    schema_version = 2,
+    base_resolution = { 1280, 720 },
+    base_dpi = { 96, 96 },
+    ui_targets = {
+        { id = "scene_anchor", kind = "region" },
+        { id = "other_anchor", kind = "region" },
+        { id = "dialog_anchor", kind = "region" },
+        { id = "save", kind = "control" },
+    },
+    locators = {
+        { id = "scene.locator", kind = "template", asset_path = "assets/scene.png", threshold = 0.9 },
+        { id = "other.locator", kind = "template", asset_path = "assets/other.png", threshold = 0.9 },
+        { id = "dialog.locator", kind = "template", asset_path = "assets/dialog.png", threshold = 0.9 },
+        { id = "save.primary", kind = "template", asset_path = "assets/save-primary.png", threshold = 0.9 },
+        { id = "save.alternate", kind = "template", asset_path = "assets/save-alternate.png", threshold = 0.9 },
+    },
+    readers = {},
+    bindings = {
+        { id = "scene.identity", surface = "scene", ui_target = "scene_anchor", variant = "default", placement = placement(10, 10, false), detector = detector("scene.locator"), actions = {} },
+        { id = "other.identity", surface = "other", ui_target = "other_anchor", variant = "default", placement = placement(10, 10, false), detector = detector("other.locator"), actions = {} },
+        { id = "dialog.identity", surface = "dialog", ui_target = "dialog_anchor", variant = "default", placement = placement(400, 100, false), detector = detector("dialog.locator"), actions = {} },
+        { id = "save.primary", surface = "dialog", ui_target = "save", variant = "primary", placement = placement(800, 600, true), detector = detector("save.primary"), actions = { { id = "activate", kind = "click", proof_locator = "save.primary" } } },
+        { id = "save.alternate", surface = "dialog", ui_target = "save", variant = "alternate", placement = placement(950, 600, true), detector = detector("save.alternate"), actions = { { id = "activate", kind = "click", proof_locator = "save.alternate" } } },
+    },
+    surfaces = {
+        { id = "scene", kind = "scene", covers = {}, identity = { all = { "scene.identity" }, any = {}, none = {} } },
+        { id = "other", kind = "scene", covers = {}, identity = { all = { "other.identity" }, any = {}, none = {} } },
+        { id = "dialog", kind = "overlay", covers = { "scene" }, identity = { all = { "dialog.identity" }, any = {}, none = {} } },
+    },
+    transitions = {},
+})
+
+local function record(cycle: any, binding: string, locator: string, kind: string): any
+    local source = { kind = "template", binding = binding, locator = locator }
+    if kind == "present" then return evidence.present(cycle, source, { locator = locator }, 0.99) end
+    if kind == "absent" then return evidence.absent(cycle, source) end
+    return evidence.unknown(cycle, "locator_failed", source)
 end
 
-local function locator(id: string): any
-    return { kind = "locator_present", locator = { locator = id } }
+local function put(result: any, cycle: any, binding: string, locator: string, kind: string)
+    local predicate = { kind = "locator_present", locator = locator }
+    result[model.measurement_key(binding, predicate)] = record(cycle, binding, locator, kind)
 end
 
-local function binding(
-    id: string,
-    surface: string,
-    target: string,
-    identity: any,
-    actionId: string?
-): any
-    local actions = {}
-    if actionId ~= nil then
-        actions[1] = {
-            id = actionId,
-            kind = "click",
-            locator = { locator = target .. ".locator" },
-            preconditions = {},
-        }
-    end
-    return {
-        id = id,
-        surface = surface,
-        target = target,
-        placement = { kind = "target_geometry" },
-        identity = identity,
-        readers = {},
-        actions = actions,
-    }
-end
-
-local function model(surfaces: any, bindings: any): any
-    return {
-        schema_version = 1,
-        surfaces = surfaces,
-        bindings = bindings,
-    }
-end
-
-local function measure(values: any): any
-    return function(predicate: any): any
-        local id = if predicate.kind == "locator_present"
-            then predicate.locator.locator
-            else predicate.reader
-        return values[id] or unknown("not_measured")
-    end
+local function stateRecords(cycle: any, scene: string, other: string, dialog: string): any
+    local result = {}
+    put(result, cycle, "scene.identity", "scene.locator", scene)
+    put(result, cycle, "other.identity", "other.locator", other)
+    put(result, cycle, "dialog.identity", "dialog.locator", dialog)
+    return result
 end
 
 do
-    local runtimeModel = model(
-        {
-            { id = "battle", kind = "scene", contexts = { "chaos" } },
-            {
-                id = "enemy_inspect",
-                kind = "overlay",
-                contexts = { "chaos" },
-                covers = { "battle" },
-            },
-        },
-        {
-            binding(
-                "battle_identity",
-                "battle",
-                "battle_title",
-                { all = { locator("battle.identity") }, any = {}, none = {} },
-                nil
-            ),
-            binding(
-                "inspect_identity",
-                "enemy_inspect",
-                "close_overlay",
-                { all = { locator("enemy_inspect.identity") }, any = {}, none = {} },
-                "close"
-            ),
-        }
-    )
-    local result = resolution.resolve(
-        runtimeModel,
-        measure({
-            ["battle.identity"] = present(true, 0.96),
-            ["enemy_inspect.identity"] = present(true, 0.99),
-            ["close_overlay.locator"] = present(true, 0.98),
-        }),
-        { context = "chaos" }
-    )
-    assert(result.kind == "resolved", "scene plus overlay must resolve")
-    assert(result.state.surfaces[1] == "battle")
-    assert(result.state.surfaces[2] == "enemy_inspect")
-
-    local authorization = resolution.authorize(
-        runtimeModel,
-        result,
-        { target = "close_overlay", kind = "click" },
-        measure({ ["close_overlay.locator"] = present(true, 0.98) })
-    )
-    assert(authorization.authorized, "top overlay action must be authorized")
+    local cycle = evidence.begin_cycle()
+    local records = stateRecords(cycle, "present", "absent", "present")
+    put(records, cycle, "save.primary", "save.primary", "present")
+    put(records, cycle, "save.alternate", "save.alternate", "absent")
+    local state = resolution.resolve_state(runtime, cycle, records)
+    assert(state.kind == "resolved_state")
+    assert(state.ordered_surface_stack[1] == "scene")
+    assert(state.ordered_surface_stack[2] == "dialog")
+    assert(state.binding == nil)
+    local binding = resolution.resolve_binding(runtime, cycle, state, "save", nil, records)
+    assert(binding.kind == "resolved_binding")
+    assert(binding.binding == "save.primary")
+    assert(binding.variant == "primary")
+    assert(binding.placement == nil)
+    evidence.end_cycle(cycle)
 end
 
+-- Geometry with no measurement remains Unknown; it never manufactures Present.
 do
-    local runtimeModel = model(
-        {
-            { id = "shop", kind = "scene", contexts = { "menu" } },
-            { id = "equip", kind = "scene", contexts = { "menu" } },
-        },
-        {
-            binding(
-                "shop_identity",
-                "shop",
-                "leave_button",
-                { all = { locator("common.header") }, any = {}, none = {} },
-                "leave"
-            ),
-            binding(
-                "equip_identity",
-                "equip",
-                "leave_button",
-                { all = { locator("common.header") }, any = {}, none = {} },
-                "leave"
-            ),
-        }
-    )
-    local result = resolution.resolve(
-        runtimeModel,
-        measure({ ["common.header"] = present(true, 0.97) }),
-        { context = "menu" }
-    )
-    assert(result.kind == "ambiguous", "equal candidates must not first-match")
-    assert(#result.candidates == 2)
-    assert(result.candidates[1].state.surfaces[1] ~= nil)
-
-    local noReceipt = resolution.authorize(
-        runtimeModel,
-        result,
-        { target = "leave_button", kind = "click" },
-        measure({ ["leave_button.locator"] = present(true, 0.98) })
-    )
-    assert(not noReceipt.authorized, "ambiguous resolution must deny action")
+    local cycle = evidence.begin_cycle()
+    local state = resolution.resolve_state(runtime, cycle, {})
+    assert(state.kind == "unknown_state")
+    evidence.end_cycle(cycle)
 end
 
+-- A positive scene cannot outrank an Unknown scene competitor.
 do
-    local runtimeModel = model(
-        {
-            { id = "shop", kind = "scene", contexts = { "menu" } },
-        },
-        {
-            binding(
-                "shop_identity",
-                "shop",
-                "leave_button",
-                { all = { locator("shop.title") }, any = {}, none = {} },
-                "leave"
-            ),
-        }
-    )
-    local result = resolution.resolve(
-        runtimeModel,
-        measure({ ["shop.title"] = unknown("ocr_unreadable") }),
-        { context = "menu" }
-    )
-    assert(result.kind == "unknown", "unknown OCR must remain unknown")
-    assert(result.reason == "unknown_evidence")
+    local cycle = evidence.begin_cycle()
+    local state = resolution.resolve_state(runtime, cycle, stateRecords(cycle, "present", "unknown", "absent"))
+    assert(state.kind == "unknown_state")
+    assert(state.reason == "unknown_scene_competitor")
+    evidence.end_cycle(cycle)
 end
 
+-- An applicable Unknown layer blocks a known lower state.
 do
-    local runtimeModel = model(
-        {
-            { id = "camp", kind = "scene", contexts = { "camp" } },
-            { id = "battle", kind = "scene", contexts = { "battle" } },
-            {
-                id = "network_retry",
-                kind = "interrupt",
-                contexts = {},
-            },
-        },
-        {
-            binding(
-                "camp_identity",
-                "camp",
-                "camp_title",
-                { all = { locator("camp.identity") }, any = {}, none = {} },
-                nil
-            ),
-            binding(
-                "retry_identity",
-                "network_retry",
-                "retry",
-                { all = { locator("network_retry.identity") }, any = {}, none = {} },
-                "retry"
-            ),
-        }
-    )
-    local result = resolution.resolve(
-        runtimeModel,
-        measure({
-            ["camp.identity"] = present(true, 0.95),
-            ["network_retry.identity"] = present(true, 0.99),
-        }),
-        { context = "camp" }
-    )
-    assert(result.kind == "resolved")
-    assert(result.state.surfaces[1] == "camp")
-    assert(result.state.surfaces[2] == "network_retry")
+    local cycle = evidence.begin_cycle()
+    local state = resolution.resolve_state(runtime, cycle, stateRecords(cycle, "present", "absent", "unknown"))
+    assert(state.kind == "unknown_state")
+    assert(state.reason == "unknown_layer_competitor")
+    evidence.end_cycle(cycle)
 end
 
+-- Two positive scenes are ambiguous, not declaration-order selection.
 do
-    local runtimeModel = model(
-        {
-            { id = "known_scene", kind = "scene", contexts = { "menu" } },
-        },
-        {
-            binding(
-                "known_identity",
-                "known_scene",
-                "dismiss",
-                { all = { locator("known.identity") }, any = {}, none = {} },
-                "dismiss"
-            ),
-        }
-    )
-    local result = resolution.resolve(
-        runtimeModel,
-        measure({ ["known.identity"] = absent() }),
-        { context = "menu" }
-    )
-    assert(result.kind == "unknown")
-    assert(result.reason == "no_surface_candidate")
+    local cycle = evidence.begin_cycle()
+    local state = resolution.resolve_state(runtime, cycle, stateRecords(cycle, "present", "present", "absent"))
+    assert(state.kind == "ambiguous_state")
+    assert(#state.candidates == 2)
+    evidence.end_cycle(cycle)
 end
+
+-- A known Binding cannot outrank an Unknown same-target variant.
+do
+    local cycle = evidence.begin_cycle()
+    local records = stateRecords(cycle, "present", "absent", "present")
+    put(records, cycle, "save.primary", "save.primary", "present")
+    put(records, cycle, "save.alternate", "save.alternate", "unknown")
+    local state = resolution.resolve_state(runtime, cycle, records)
+    local binding = resolution.resolve_binding(runtime, cycle, state, "save", "save.primary", records)
+    assert(binding.kind == "unknown_binding")
+    assert(binding.reason == "unknown_competitor")
+    evidence.end_cycle(cycle)
+end
+
+return 1

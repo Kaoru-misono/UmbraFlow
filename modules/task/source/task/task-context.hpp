@@ -2,7 +2,6 @@
 
 #include <task/cycle-answers.hpp>
 #include <task/cycle-ledger.hpp>
-#include <task/deterministic.hpp>
 #include <task/pixel-probe.hpp>
 #include <task/project-files.hpp>
 #include <task/template-store.hpp>
@@ -15,14 +14,12 @@
 #include <domain/content-hash.hpp>
 
 #include <domain/error.hpp>
-#include <domain/key.hpp>
 #include <domain/space.hpp>
 
 #include <engine/session.hpp>
 
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
-#include <trace/replay-source.hpp>
 
 #include <vision/frame-analysis.hpp>
 
@@ -38,11 +35,6 @@
 
 namespace uf::task
 {
-    // Fallback seed for tests and unconfigured contexts; a real run gets a
-    // per-run seed recorded in run.started so it replays. The sandbox removed
-    // math.random, so ctx:random is a script's only randomness.
-    inline constexpr auto k_defaultRandomSeed = uint64{0x9E3779B97F4A7C15};
-
     // The longest a single ctx:settle may declare. Beyond it is a project error
     // the author can catch -- a Tier B InvalidResource, not an invariant failure.
     // CALIBRATION: thirty seconds is a placeholder, far above any settle a UI
@@ -50,28 +42,6 @@ namespace uf::task
     // to ctx:wait, which re-observes where a settle only sleeps.
     inline constexpr auto k_maxSettleDuration = MonotonicInstant::Duration{
         std::chrono::seconds{30}
-    };
-
-    // The longest a single long press may hold the button down. A separate and
-    // much lower ceiling than the settle one: a long press leaves a pointer
-    // button physically down in the target with only this host to lift it, and
-    // every other input in the run queued behind it. Beyond it is Tier B, for
-    // k_maxSettleDuration's reason.
-    // CALIBRATION: five seconds is a placeholder. Targets that publish a
-    // long-press gesture measure it in hundreds of milliseconds.
-    inline constexpr auto k_maxLongPressHold = MonotonicInstant::Duration{
-        std::chrono::seconds{5}
-    };
-
-    // The longest a single drag may spend travelling. The long-press ceiling's
-    // reason exactly -- the button is down for all of it and every other input in
-    // the run is queued behind it -- and the same number, because what is being
-    // bounded is the same thing: how long this host may leave a pointer button
-    // physically down in the target.
-    // CALIBRATION: five seconds is a placeholder. A map pan that needs more than
-    // a second of travel is more likely a script bug than a slow target.
-    inline constexpr auto k_maxDragTravel = MonotonicInstant::Duration{
-        std::chrono::seconds{5}
     };
 
     // The floor a ctx:wait poll interval is clamped up to; without it a zero
@@ -134,22 +104,18 @@ namespace uf::task
     // backdrop worth naming, so at that point the key is trimming a rim.
     inline constexpr auto k_maximumRemovedMaskShareBp = uint64{9000};
 
-    // Host-side configuration for one TaskContext: the single cancellation source
-    // shared with the owned EngineSession and the VM interrupt, plus this run's
-    // RNG seed. A default-constructed stop token never requests a stop, so the
-    // resource-only and Fake-driven paths that build a context without a cancel
-    // source are never cancelled.
+    class TaskHost;
+
+    // Host-side configuration for one TaskContext. The cancellation source is
+    // shared with the owned EngineSession and the VM interrupt. A
+    // default-constructed stop token never requests a stop, so resource-only and
+    // Fake-driven paths that build a context without one are never cancelled.
     //
     // There are deliberately no wait budgets here. How long to wait for a page
     // and how often to re-observe are policy, and the wait loop is Luau now.
     struct TaskContextConfig final
     {
         std::stop_token cancellation{};
-
-        // Left at the stable default here; a real run gets a fresh per-run seed
-        // from TaskHost::startTask, recorded in run.started so the run reproduces
-        // on replay.
-        uint64          randomSeed{k_defaultRandomSeed};
 
         // The directory project_read and project_write are confined to. Empty
         // leaves the context with no project files and both verbs refuse, which
@@ -163,17 +129,6 @@ namespace uf::task
         // See k_defaultMaximumCropsPerCycle, on the same reasoning again.
         uint32 maximumCropsPerCycle{k_defaultMaximumCropsPerCycle};
 
-        // The recorded run a replay checks, projected by `trace::readReplayedRun`
-        // before this context existed. Empty on every run that is not a replay,
-        // and `ctx:replay_steps` then hands back an empty list rather than
-        // refusing: a run with no steps is a run that made no move, which is a
-        // verdict rather than an error.
-        //
-        // It travels as DATA through a primitive and not as a table baked into
-        // the routine's source, which the routine's other parameters do. A page
-        // name is a project's own string, and a project's string that becomes
-        // part of a program is a project that can rewrite the thing checking it.
-        std::vector<trace::ReplayStep> replaySteps{};
     };
 
     // Host-owned bridge between one task VM and one EngineSession. It owns the
@@ -190,7 +145,7 @@ namespace uf::task
     // every method runs on the VM's owning thread.
     //
     // Trace lifetime contract: the context does NOT own a trace sink. It borrows
-    // the run's trace::TraceRecorder, owned by `task::TaskHost::startTask` in a
+    // the session's trace::TraceRecorder, owned by ExplorationSession in a
     // std::unique_ptr local declared before the context and the VM so both are
     // destroyed first on every path, and non-movable so its address cannot drift
     // while the context borrows it. Any other owner MUST reproduce both
@@ -260,9 +215,10 @@ namespace uf::task
         };
 
     private:
+        friend class TaskHost;
+
         engine::EngineSession m_session;
         TaskContextConfig     m_config;
-        DeterministicRng      m_rng;
         trace::TraceRecorder& m_recorder;
 
         CycleLedger      m_cycles{};
@@ -273,6 +229,16 @@ namespace uf::task
         std::optional<AutomationErrorKind> m_terminal{};
 
         bool m_traceFailed{false};
+
+        [[nodiscard]]
+        auto requireReceiptCycle(
+            CycleTicket ticket,
+            std::optional<uint64> evidenceCycleOrdinal
+        ) const -> Status;
+
+        [[nodiscard]]
+        auto deliverReceiptClick(CycleTicket ticket, PixelPoint point)
+            -> Result<engine::ActReceipt>;
 
     public:
         explicit TaskContext(
@@ -287,13 +253,6 @@ namespace uf::task
         auto operator=(TaskContext&&) -> TaskContext& = delete;
 
         ~TaskContext() = default;
-
-        // The recorded run this context was configured with, or an empty span.
-        // The view borrows this context's own storage and lives exactly as long
-        // as the context does, which outlives the VM by construction.
-        [[nodiscard]]
-        auto replaySteps() const noexcept UF_LIFETIME_BOUND
-            -> std::span<trace::ReplayStep const>;
 
         // Observes one frame and opens the generation's single observation cycle
         // over it, returning the ticket that names it. A cycle that is already
@@ -467,10 +426,8 @@ namespace uf::task
             std::span<std::byte const> pngBytes
         ) -> Result<LoadedTemplate>;
 
-        // Reads and writes one file inside the generation's project directory.
-        // Neither is cycle-scoped: a page model is loaded before any observation
-        // and written after one, and tying either to an open cycle would make a
-        // frame a precondition for touching the disk.
+        // Reads and writes one file inside the privileged annotation directory.
+        // Production RuntimeArtifact bytes never pass through this authoring seam.
         [[nodiscard]]
         auto projectRead(std::string_view name) -> Result<std::vector<std::byte>>;
 
@@ -479,126 +436,6 @@ namespace uf::task
             std::string_view name,
             std::span<std::byte const> bytes
         ) -> Status;
-
-        // Spends the cycle `ticket` names and delivers a click at `point`.
-        //
-        // A layer-two-held privilege: the trusted Luau framework binds it as a
-        // closure upvalue and a business task's environment never names it. That
-        // is where "a task only clicks annotated elements" is now enforced, since
-        // the element and the page moved up with the model. C++ still enforces
-        // the rest: the frame is this ticket's, the observation's lease is still
-        // fresh, the live fingerprint matches the project, and the cycle is spent
-        // exactly once.
-        //
-        // `hitCycleOrdinal` is the ordinal a match handle carries, or empty when
-        // the caller named a bare point. When present it must be the open cycle's
-        // own; anything else fails StaleObservation, so "the hit came from THIS
-        // frame" cannot be skipped by reaching for the point spelling with a
-        // stale match in hand.
-        [[nodiscard]]
-        auto cycleClickPoint(
-            CycleTicket ticket,
-            std::optional<uint64> hitCycleOrdinal,
-            PixelPoint point
-        ) -> Result<engine::ActReceipt>;
-
-        // Spends the cycle `ticket` names and delivers one keystroke. The
-        // engine-side reasoning is at engine::EngineSession::pressKey; what the
-        // ledger decides is below.
-        //
-        // It requires the ticket to name the generation's OPEN cycle and nothing
-        // else. There is no hit ordinal because there is no hit: a keystroke names
-        // no screen position, so no fingerprint check applies either. Requiring the
-        // open cycle is what puts the keystroke in the single-open-cycle ordering
-        // with the observations and clicks around it and gives its trace line a
-        // cycle ordinal to join on.
-        //
-        // It CONSUMES the cycle, exactly as a click does. A delivered keystroke
-        // changes the screen, so leaving the cycle open would let a later find or
-        // click act on a screen this key had already changed.
-        [[nodiscard]] auto cycleKey(CycleTicket ticket, KeyName key) -> Status;
-
-        // Spends the cycle `ticket` names and delivers one wheel scroll of
-        // `notches` detents, positive away from the operator and negative toward
-        // them.
-        //
-        // It is cycleKey's contract, not cycleClickPoint's, and every clause for
-        // the same reason: the ticket must name the generation's OPEN cycle,
-        // there is no hit ordinal and no fingerprint check because the verb names
-        // no coordinate for a geometry to invalidate, and it CONSUMES the cycle
-        // because a delivered scroll moves what is on the screen.
-        //
-        // Both environments may reach it: it hands a script neither pixels nor a
-        // bare coordinate
-        // (docs/plans/2026-08-01-three-layers-and-agent-operator.md section 7).
-        [[nodiscard]] auto cycleScroll(CycleTicket ticket, int32 notches) -> Status;
-
-        // Spends the cycle `ticket` names and delivers one long press at `point`,
-        // holding the button down for `hold`.
-        //
-        // It is cycleClickPoint's contract and not cycleKey's, because the verb
-        // names a coordinate: the ticket must name the generation's open cycle,
-        // the frame leaves the ledger here, and the rest -- fingerprint, lease,
-        // single delivery -- is the engine's, unchanged.
-        //
-        // It takes NO hit ordinal, where cycleClickPoint takes an optional one.
-        // The ordinal verifies that a MATCH HANDLE came from this frame, and this
-        // verb has no match-handle spelling: the hits it is asked about are text
-        // lines and page-positioned rectangles, which reach the host as bare
-        // coordinates. observe.luau enforces the same-frame rule for those.
-        //
-        // `hold` has NO DEFAULT anywhere on this surface: how long a target needs
-        // a button held before it treats the press as a long one is a fact about
-        // that target, which the author measured. k_maxLongPressHold bounds it,
-        // because a ceiling stops a script leaving the target mid-press while a
-        // default would be a decision.
-        //
-        // Whoever may reach cycleClickPoint may reach this, by the same mechanism.
-        [[nodiscard]]
-        auto cycleLongPress(
-            CycleTicket ticket,
-            PixelPoint point,
-            MonotonicInstant::Duration hold
-        ) -> Result<engine::LongPressReceipt>;
-
-        // Spends the cycle `ticket` names and moves the pointer to `point`,
-        // pressing nothing.
-        //
-        // The ledger's half is cycleClickPoint's without the hit ordinal, and the
-        // engine's half is clickPoint's entire fence -- see
-        // engine::EngineSession::movePointer for why a verb that presses nothing
-        // still takes every gate a click takes.
-        //
-        // Both environments may reach it, and unlike cycleClickPoint a business
-        // task may name the coordinate directly: a move activates nothing, and a
-        // scroll needs it first because a target scrolls whatever it believes is
-        // hovered (docs/pitfalls/capture-and-target-selection.md).
-        [[nodiscard]]
-        auto cycleMovePointer(
-            CycleTicket ticket,
-            PixelPoint point
-        ) -> Result<engine::PointerMoveReceipt>;
-
-        // Spends the cycle `ticket` names and drags from `start` to `end` over
-        // `travel`.
-        //
-        // The ledger's half is cycleLongPress's, and it takes no hit ordinal for
-        // the same reason: the start reaches the host as a bare coordinate, and
-        // observe.luau is what proves it was located on this frame.
-        //
-        // `end` is the caller's arithmetic rather than anything it measured, and
-        // it gets the engine's whole coordinate gate anyway -- see
-        // engine::EngineSession::drag. `travel` has no default for the hold's
-        // reason and is bounded by k_maxDragTravel for the hold's reason too.
-        //
-        // Whoever may reach cycleLongPress may reach this, by the same mechanism.
-        [[nodiscard]]
-        auto cycleDrag(
-            CycleTicket ticket,
-            PixelPoint start,
-            PixelPoint end,
-            MonotonicInstant::Duration travel
-        ) -> Result<engine::DragReceipt>;
 
         // Sleeps until `deadline`, or for `interval`, whichever comes first, and
         // reports whether budget remains afterwards -- false means the deadline
@@ -623,8 +460,7 @@ namespace uf::task
         auto settle(MonotonicInstant::Duration duration) const -> void;
 
         // Whether the run's single cancel source has requested a stop; only the
-        // time primitives need it, for the reason at requireNotCancelled in
-        // task/native-call-trace.hpp.
+        // time primitives use it to stop waits after cancellation.
         [[nodiscard]]
         auto cancellationRequested() const noexcept -> bool;
 
@@ -636,9 +472,8 @@ namespace uf::task
 
         // Latches that this generation is spent, under the kind that spent it.
         // The binding layer sets it BEFORE raising, and gates every primitive on
-        // it at the C guard entry, so a spent VM cannot resume automation even if
-        // a script swallowed what was raised. ctx:try is pure Luau and consults
-        // nothing, so this latch is the whole terminal guarantee on the Luau side.
+        // it at the C guard entry, so a spent VM cannot resume authoring or
+        // observation even if a script swallowed what was raised.
         //
         // Latching is idempotent and keeps the FIRST kind: a later refusal is a
         // consequence rather than a cause.
@@ -669,20 +504,7 @@ namespace uf::task
         // action verbs call this at their exit to emit task.native_call; the
         // owning host emits the surrounding run.* events on the same recorder.
         [[nodiscard]]
-        auto emitTrace(trace::TraceEvent const& event) -> Status;
+        auto emitTrace(trace::TraceEventSpec const& event) -> Status;
 
-        // The next uniform double in [0, 1) from the task's seeded RNG, backing the
-        // no-argument ctx:random(). Deterministic for a given seed and draw order.
-        [[nodiscard]]
-        auto nextRandomUnitDouble() noexcept -> double;
-
-        // A uniform integer in [lowInclusive, highInclusive] from the task's seeded
-        // RNG, backing ctx:random(m) and ctx:random(m, n), unbiased by rejection
-        // sampling in DeterministicRng. Precondition, enforced by the binding that
-        // parses the script arguments: lowInclusive <= highInclusive and both
-        // within +/-2^53, so the result is an exact integer.
-        [[nodiscard]]
-        auto nextRandomInRange(int64 lowInclusive, int64 highInclusive) noexcept
-            -> int64;
     };
 }

@@ -1,8 +1,8 @@
 #include <task/framework-bundle.hpp>
 
-#include <core/error/error.hpp>
-
 #include <domain/content-hash.hpp>
+
+#include <script/engine.hpp>
 
 #include <doctest/doctest.h>
 
@@ -16,113 +16,60 @@ namespace uf::task
 {
     namespace
     {
-        [[nodiscard]]
-        auto hexDigestOf(std::string_view text) -> std::string
+        [[nodiscard]] auto digest(std::string_view text) -> std::string
         {
-            auto const digest = sha256(std::as_bytes(std::span{text}));
-            REQUIRE(digest.has_value());
-            return digest->hex();
+            auto result = sha256(std::as_bytes(std::span{text}));
+            REQUIRE(result.has_value());
+            return result->hex();
         }
     }
 
-    TEST_CASE("the embedded bundle carries the modules the project environment names")
+    TEST_CASE("business framework publication is fail closed")
     {
-        auto const entries = frameworkBundleEntries();
-        REQUIRE(!entries.empty());
-
-        // Each module name and its published project global are the same string
-        // and nothing derives one from the other -- the generator takes the name
-        // from a file stem, frameworkProjectGlobals() is a C++ constant -- so a
-        // rename that touched only one side fails here rather than at VM boot.
-        auto const published = frameworkProjectGlobals();
+        CHECK(frameworkProjectGlobals().empty());
         CHECK(
-            published
-            == std::vector<std::string>{
-                std::string{"ctx"},
-                std::string{"task"},
-                std::string{"model"},
-                std::string{"observe"},
-                std::string{"project"},
-                std::string{"hits"},
-                std::string{"navigation"},
-                std::string{"oracle"},
-                std::string{"recognition"},
-                std::string{"regress"},
-                std::string{"replay"},
-            }
+            explorationProjectGlobals()
+            == std::vector<std::string>{"explore"}
         );
 
-        for (auto const& name : published)
-        {
-            auto const module = std::ranges::find(
-                entries,
-                std::string_view{name},
-                &FrameworkBundleEntry::name
-            );
-            REQUIRE(module != entries.end());
-            CHECK(module->sourceHash.size() == 64U);
-        }
-
-        // The declaration module reaches the context module's registry channel,
-        // which only holds because modules load in bundle order and `ctx` sorts
-        // first; a rename that reversed it would fail later as a nil index.
-        CHECK(std::string_view{entries.front().name} == "ctx");
-
-        CHECK(!frameworkVersion().empty());
-        CHECK(frameworkBundleHash().size() == 64U);
+        auto engine = script::Engine::create(
+            script::EngineConfig{
+                .frameworkModules       = frameworkScriptModules(),
+                .projectGlobals         = {},
+                .frameworkProjectGlobals = frameworkProjectGlobals(),
+            }
+        );
+        REQUIRE(engine.has_value());
+        auto result = engine->runNumber(
+            R"lua(
+                if ctx ~= nil or explore ~= nil or model ~= nil or observe ~= nil then return 0 end
+                if project ~= nil or navigation ~= nil or input ~= nil or receipt ~= nil then return 0 end
+                if require ~= nil or debug ~= nil or _G ~= nil or getfenv ~= nil then return 0 end
+                if load ~= nil or loadstring ~= nil or package ~= nil or io ~= nil then return 0 end
+                if native ~= nil or host ~= nil or ffi ~= nil or uf_private ~= nil then return 0 end
+                return 1
+            )lua",
+            "business-surface-attack"
+        );
+        REQUIRE(result.has_value());
+        CHECK(*result == doctest::Approx(1.0));
     }
 
-    TEST_CASE("bundle entries are sorted by name and each name appears once")
+    TEST_CASE("embedded framework identity remains deterministic")
     {
         auto names = std::vector<std::string_view>{};
-        for (auto const& entry : frameworkBundleEntries())
-        {
-            names.emplace_back(entry.name);
-        }
-
-        CHECK(std::ranges::is_sorted(names));
-        CHECK(std::ranges::adjacent_find(names) == names.end());
-    }
-
-    // The digest scripts/embed_luau.py recorded at build time must equal the one
-    // sha256 computes at run time; a failure means the Python and C++ hash
-    // definitions drifted, or embedding did not reproduce the source bytes.
-    TEST_CASE("each recorded hash equals sha256 of the embedded source")
-    {
-        for (auto const& entry : frameworkBundleEntries())
-        {
-            CHECK(entry.sourceHash == hexDigestOf(entry.source));
-        }
-    }
-
-    TEST_CASE("the bundle hash matches the recipe documented on the accessor")
-    {
         auto preimage = std::string{};
         for (auto const& entry : frameworkBundleEntries())
         {
+            names.emplace_back(entry.name);
+            CHECK(entry.sourceHash == digest(entry.source));
+            CHECK(checkFrameworkModuleSyntax(entry.source, entry.name).has_value());
             preimage += entry.name;
             preimage.push_back('\0');
             preimage += entry.source;
         }
-
-        CHECK(frameworkBundleHash() == hexDigestOf(preimage));
-    }
-
-    // The repository's syntax gate for .luau sources: it runs the vendored Luau
-    // parser the host itself uses, so a malformed module fails under
-    // `ctest -L CI` instead of at VM load time. The vendored tree is built with
-    // LUAU_BUILD_CLI OFF, so no luau-ast executable exists to shell out to.
-    TEST_CASE("every embedded framework module parses as valid Luau")
-    {
-        for (auto const& entry : frameworkBundleEntries())
-        {
-            auto const parsed = checkFrameworkModuleSyntax(entry.source, entry.name);
-            // Named rather than inlined: doctest's message macro binds its
-            // stream operator tighter than a conditional expression would.
-            auto const diagnostic = parsed
-                ? std::string{}
-                : toString(parsed.error());
-            CHECK_MESSAGE(parsed.has_value(), diagnostic);
-        }
+        CHECK(std::ranges::is_sorted(names));
+        CHECK(std::ranges::adjacent_find(names) == names.end());
+        CHECK(frameworkBundleHash() == digest(preimage));
     }
 }

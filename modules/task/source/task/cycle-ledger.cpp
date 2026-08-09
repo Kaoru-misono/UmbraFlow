@@ -76,7 +76,7 @@ namespace uf::task
         );
     }
 
-    auto CycleLedger::requireOpenOrdinal(uint64 ordinal) const -> Status
+    auto CycleLedger::requireOpenEvidence(uint64 ordinal) const -> Status
     {
         if (m_open.has_value() && m_open->ordinal == ordinal)
         {
@@ -84,7 +84,7 @@ namespace uf::task
         }
         return fail(
             AutomationErrorKind::StaleObservation,
-            "this hit came from an observation cycle that is no longer open"
+            "this evidence came from an observation cycle that is no longer open"
         );
     }
 

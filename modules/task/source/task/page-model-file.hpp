@@ -1,83 +1,200 @@
 #pragma once
 
 #include <core/error/result.hpp>
+#include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
-#include <domain/space.hpp>
+#include <domain/ids.hpp>
 
 #include <cstddef>
 #include <filesystem>
+#include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+namespace uf::operator_runtime
+{
+    class OperatorCoordinator;
+}
+
 namespace uf::task
 {
-    // The project file layer two owns, named here because the host has to open it
-    // before any VM exists. The trusted framework spells the same name on its own
-    // side as `project.file_name`, and every case that loads a project fails
-    // outright if the two disagree.
+    inline constexpr auto k_runtimeArtifactManifestFileName =
+        std::string_view{"runtime-artifact.manifest.json"};
     inline constexpr auto k_runtimeModelFileName = std::string_view{"page-model.toml"};
-
-    // The runtime model is a line-oriented text file whose deployment envelope
-    // names the targets and surfaces available to the trusted Luau layer. The
-    // largest one authored so far is fifteen kilobytes; this ceiling refuses a
-    // file that is not one at all before any of it is read into memory.
-    inline constexpr auto k_maximumRuntimeModelBytes = std::size_t{4} * 1024U * 1024U;
-
-    // The only five things C++ reads out of the runtime model, each needed BEFORE
-    // a VM exists: the schema version selects the envelope contract; the
-    // fingerprint is what the engine's compatibility refusal compares a live
-    // measurement against; the target and surface names are the pre-VM resource
-    // catalog; and the content hash is what `run.started` stamps on the stream.
-    //
-    // Everything else in the file -- locators, readers, bindings, actions,
-    // transitions and offline claims -- is layer two's to interpret, and a
-    // second C++ reader would be a second opinion about what a runtime model
-    // means. This reader knows that a section header opens a section and that an
-    // `id` line names one; it knows nothing about what a target or a surface IS.
-    // The hash is the one fact here that does not depend on that reading at all:
-    // it is over the bytes, so it identifies the whole file including everything
-    // this parse skips.
-    struct RuntimeModelEnvelope final
-    {
-        // The envelope contract selected by the file. This host currently
-        // understands one version and still records it for diagnostics.
-        uint32 schemaVersion;
-
-        // Neither of these can carry an in-class initializer: both are values with
-        // no meaningful empty state, so every construction supplies them.
-        ProjectFingerprint fingerprint;
-        ContentHash        contentHash;
-
-        // In declaration order, and each ID distinct within its own list. The
-        // pass below only ever asks whether an ID is present, so order carries no
-        // meaning; it is kept so a diagnostic that lists them reads like the file.
-        std::vector<std::string> targetIds{};
-        std::vector<std::string> surfaceIds{};
+    inline constexpr auto k_runtimeAssetDirectoryName = std::string_view{"assets"};
+    inline constexpr auto k_runtimeArtifactSchemaHash = std::string_view{
+        "57432151740401a245eac9c5f3e813438c97014a3739b18853ebf0bc19f46fe9"
+    };
+    inline constexpr auto k_runtimeModelSchemaHash = std::string_view{
+        "44be8ecf11eccc707a1a30cd04e69b612eae249f0aae837d95c40bfbcc316b3a"
     };
 
-    // Reads `text` as the runtime model file and reports the envelope facts above.
-    //
-    // It is a FLAT LINE SCAN and deliberately not a parser: every line is either a
-    // section header, a `key = value` line of the section it is inside, or ignored.
-    // Anything it does not recognise is skipped rather than refused, because
-    // refusing would make this a second authority on the format and a newer build's
-    // section would then fail to load in a way layer two would have handled. What
-    // it does refuse is the absence of a fact it was asked for, and a duplicate
-    // name, which would leave a resource literal resolving against two different
-    // rows.
-    //
-    // Exposed separately from the file read so it can be exercised on text.
-    [[nodiscard]]
-    auto parseRuntimeModelEnvelope(std::string_view text) -> Result<RuntimeModelEnvelope>;
+    inline constexpr auto k_maximumRuntimeManifestBytes = std::size_t{1024U * 1024U};
+    inline constexpr auto k_maximumRuntimeModelBytes = std::size_t{4U * 1024U * 1024U};
+    inline constexpr auto k_maximumRuntimeAssetCount = std::size_t{4096U};
+    inline constexpr auto k_maximumRuntimeAssetBytes =
+        std::size_t{256U * 1024U * 1024U};
+    inline constexpr auto k_maximumRuntimeArtifactBytes =
+        std::size_t{256U * 1024U * 1024U};
 
-    // Reads <projectRoot>/page-model.toml and parses it. The file is size-capped
-    // before any bytes are read, so a project that is not one cannot force an
-    // unbounded allocation.
+    class TaskHost;
+
+    // A confined, byte-frozen deployment artifact. Construction is available
+    // only through loadRuntimeArtifact(), which verifies the trusted root hash,
+    // exact canonical manifest, complete file closure and every declared size and
+    // digest. The handle interprets no page-model.toml semantics.
+    class RuntimeArtifactHandle final
+    {
+    public:
+        // A frozen file record is data, not authority. Public visibility lets the
+        // verifier assemble the value without making the handle constructible.
+        struct File final
+        {
+            std::string            path{};
+            ContentHash            hash;
+            std::vector<std::byte> bytes{};
+        };
+
+    private:
+        std::filesystem::path m_root;
+        ContentHash           m_rootHash;
+        ContentHash           m_manifestSchemaHash;
+        ContentHash           m_runtimeModelSchemaHash;
+        std::vector<std::byte> m_manifestBytes;
+        std::vector<File>      m_files;
+
+        RuntimeArtifactHandle(
+            std::filesystem::path root,
+            ContentHash rootHash,
+            ContentHash manifestSchemaHash,
+            ContentHash runtimeModelSchemaHash,
+            std::vector<std::byte> manifestBytes,
+            std::vector<File> files
+        ) noexcept;
+
+        friend auto loadRuntimeArtifact(
+            std::filesystem::path const& artifactRoot,
+            ContentHash const& expectedRootHash
+        ) -> Result<RuntimeArtifactHandle>;
+
+    public:
+        RuntimeArtifactHandle(RuntimeArtifactHandle const&) = delete;
+        RuntimeArtifactHandle(RuntimeArtifactHandle&&) noexcept = default;
+        auto operator=(RuntimeArtifactHandle const&) -> RuntimeArtifactHandle& = delete;
+        auto operator=(RuntimeArtifactHandle&&) noexcept
+            -> RuntimeArtifactHandle& = default;
+
+        ~RuntimeArtifactHandle() = default;
+
+        [[nodiscard]]
+        auto root() const noexcept UF_LIFETIME_BOUND -> std::filesystem::path const&;
+
+        [[nodiscard]]
+        auto rootHash() const noexcept UF_LIFETIME_BOUND -> ContentHash const&;
+
+        [[nodiscard]]
+        auto manifestSchemaHash() const noexcept UF_LIFETIME_BOUND
+            -> ContentHash const&;
+
+        [[nodiscard]]
+        auto runtimeModelSchemaHash() const noexcept UF_LIFETIME_BOUND
+            -> ContentHash const&;
+
+        [[nodiscard]]
+        auto modelHash() const noexcept UF_LIFETIME_BOUND -> ContentHash const&;
+
+        [[nodiscard]]
+        auto modelBytes() const noexcept UF_LIFETIME_BOUND -> std::span<std::byte const>;
+
+        [[nodiscard]]
+        auto manifestBytes() const noexcept UF_LIFETIME_BOUND -> std::span<std::byte const>;
+
+        [[nodiscard]] auto assetPaths() const -> std::vector<std::string>;
+
+        [[nodiscard]]
+        auto fileBytes(std::string_view relativePath) const
+            -> Result<std::vector<std::byte>>;
+    };
+
+    // Production activation authority. Verification produces only a
+    // RuntimeArtifactHandle; the production-owned installed-generation CAS is
+    // the sole constructor of this move-only value. TaskHost accepts this value
+    // and never an arbitrary filesystem path.
+    class InstalledRuntimeArtifact final
+    {
+        std::shared_ptr<RuntimeArtifactHandle const> m_artifact;
+        uint64                                       m_installedGeneration;
+
+        InstalledRuntimeArtifact(
+            std::shared_ptr<RuntimeArtifactHandle const> artifact,
+            uint64 installedGeneration
+        ) noexcept;
+
+        friend class TaskHost;
+        friend class ::uf::operator_runtime::OperatorCoordinator;
+        friend struct TaskHostTestAccess;
+
+    public:
+        InstalledRuntimeArtifact(InstalledRuntimeArtifact const&) = delete;
+        InstalledRuntimeArtifact(InstalledRuntimeArtifact&&) noexcept = default;
+        auto operator=(InstalledRuntimeArtifact const&)
+            -> InstalledRuntimeArtifact& = delete;
+        auto operator=(InstalledRuntimeArtifact&&) noexcept
+            -> InstalledRuntimeArtifact& = default;
+        ~InstalledRuntimeArtifact() = default;
+
+        [[nodiscard]] auto installedGeneration() const noexcept -> uint64;
+
+        [[nodiscard]]
+        auto rootHash() const noexcept UF_LIFETIME_BOUND -> ContentHash const&;
+    };
+
+    // The generation-owned result of the trusted Runtime parser. It can be
+    // observed but not constructed by callers: only TaskHost's private finalize
+    // path can bind parser output to one verified artifact and generation.
+    class RuntimeModelBinding final
+    {
+        GenerationId                           m_generation;
+        std::shared_ptr<RuntimeArtifactHandle const> m_artifact;
+        ContentHash                            m_semanticHash;
+
+        RuntimeModelBinding(
+            GenerationId generation,
+            std::shared_ptr<RuntimeArtifactHandle const> artifact,
+            ContentHash semanticHash
+        ) noexcept;
+
+        friend class TaskHost;
+
+    public:
+        RuntimeModelBinding(RuntimeModelBinding const&) = default;
+        RuntimeModelBinding(RuntimeModelBinding&&) noexcept = default;
+        auto operator=(RuntimeModelBinding const&) -> RuntimeModelBinding& = default;
+        auto operator=(RuntimeModelBinding&&) noexcept -> RuntimeModelBinding& = default;
+
+        ~RuntimeModelBinding() = default;
+
+        [[nodiscard]] auto generation() const noexcept -> GenerationId;
+
+        [[nodiscard]]
+        auto artifactRootHash() const noexcept UF_LIFETIME_BOUND
+            -> ContentHash const&;
+
+        [[nodiscard]]
+        auto runtimeModelSchemaHash() const noexcept UF_LIFETIME_BOUND
+            -> ContentHash const&;
+
+        [[nodiscard]]
+        auto semanticHash() const noexcept UF_LIFETIME_BOUND -> ContentHash const&;
+    };
+
     [[nodiscard]]
-    auto readRuntimeModelEnvelope(
-        std::filesystem::path const& projectRoot
-    ) -> Result<RuntimeModelEnvelope>;
+    auto loadRuntimeArtifact(
+        std::filesystem::path const& artifactRoot,
+        ContentHash const& expectedRootHash
+    ) -> Result<RuntimeArtifactHandle>;
 }

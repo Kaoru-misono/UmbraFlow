@@ -18,7 +18,7 @@
 #include <domain/content-hash.hpp>
 
 #include <domain/error.hpp>
-#include <domain/key.hpp>
+#include <domain/ids.hpp>
 #include <domain/space.hpp>
 
 #include <engine/session.hpp>
@@ -39,14 +39,23 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
-#include <variant>
 #include <vector>
 
 namespace uf::task
 {
     namespace
     {
+        [[nodiscard]] auto traceSchemaHash() -> ContentHash
+        {
+            auto const parsed = ContentHash::parse(
+                std::format("sha256:{}", trace::k_traceSchemaHash)
+            );
+            UF_CHECK(parsed.has_value());
+            return *parsed;
+        }
+
         // One crop's mask before and after it is reduced to what the caller sees:
         // the plane that becomes the PNG's alpha channel, and the counts that go
         // back to the agent. They travel together because they are one walk over
@@ -319,18 +328,11 @@ namespace uf::task
     ) noexcept
         : m_session{std::move(session)}
         , m_config{std::move(config)}
-        , m_rng{m_config.randomSeed}
         , m_recorder{recorder}
         , m_projectFiles{m_config.projectRoot}
     {
     }
 
-    // D6 known-popup sweep: it lives in the framework's interrupt registry, not
-    // here and not in the engine. A task declares the popups it knows through
-    // task.interrupt, and the Luau wait loop offers every cycle it opens to that
-    // registry before testing the target page -- so the sweep fires on the polls
-    // in the middle of a long wait, which neither candidate C++ position could do.
-    // This note records where it went so the absence is not read as an omission.
     auto TaskContext::openCycle() -> Result<CycleTicket>
     {
         // Refuse before observing. The ledger holds one cycle, and a capture
@@ -472,12 +474,6 @@ namespace uf::task
         return lines;
     }
 
-    auto TaskContext::replaySteps() const noexcept
-        -> std::span<trace::ReplayStep const>
-    {
-        return m_config.replaySteps;
-    }
-
     auto TaskContext::cycleCrop(
         CycleTicket ticket,
         PixelRect rect,
@@ -542,13 +538,39 @@ namespace uf::task
         // The crop's whole record, written AFTER the encode because the hash and
         // the byte count are what make the line worth having: a reader matching a
         // template asset against the frame it was cut from has nothing else.
-        auto event = trace::TraceEvent{
-            .kind  = trace::TraceEventKind::AnnotationRegionSaved,
-            .frame = region.frame,
-            .annotation = trace::TraceEvent::Annotation{
-                .rect        = rect,
-                .contentHash = hash->toString(),
-                .byteCount   = static_cast<uint64>(png.size()),
+        auto event = trace::TraceEventSpec{
+            .eventType = "annotation.region_saved",
+            .audit     = trace::AuditMetadata{
+                .actor = "annotation",
+                .references = {
+                    trace::TraceReference{
+                        .type = "frame",
+                        .id   = std::to_string(region.frame.frameId().value()),
+                    },
+                },
+            },
+            .payload = trace::TypedTracePayload{
+                .schemaHash = traceSchemaHash(),
+                .fields = {
+                    trace::TraceField{.name = "x", .value = uint64{rect.x()}},
+                    trace::TraceField{.name = "y", .value = uint64{rect.y()}},
+                    trace::TraceField{
+                        .name  = "width",
+                        .value = uint64{rect.width()},
+                    },
+                    trace::TraceField{
+                        .name  = "height",
+                        .value = uint64{rect.height()},
+                    },
+                    trace::TraceField{
+                        .name  = "content_hash",
+                        .value = hash->toString(),
+                    },
+                    trace::TraceField{
+                        .name  = "byte_count",
+                        .value = static_cast<uint64>(png.size()),
+                    },
+                },
             },
         };
         UF_TRY(m_recorder.emit(event));
@@ -659,108 +681,26 @@ namespace uf::task
         return m_projectFiles.write(name, bytes);
     }
 
-    auto TaskContext::cycleClickPoint(
+    auto TaskContext::requireReceiptCycle(
         CycleTicket ticket,
-        std::optional<uint64> hitCycleOrdinal,
+        std::optional<uint64> evidenceCycleOrdinal
+    ) const -> Status
+    {
+        UF_TRY(m_cycles.requireOpen(ticket));
+        if (evidenceCycleOrdinal.has_value())
+        {
+            UF_TRY(m_cycles.requireOpenEvidence(*evidenceCycleOrdinal));
+        }
+        return ok();
+    }
+
+    auto TaskContext::deliverReceiptClick(
+        CycleTicket ticket,
         PixelPoint point
     ) -> Result<engine::ActReceipt>
     {
-        // Both the ticket and, when one was supplied, the match's ordinal are
-        // checked against the one open cycle before it is spent, so a stale match
-        // leaves the cycle open for the framework to close rather than destroying
-        // a frame the script still has a live ticket for.
-        UF_TRY(m_cycles.requireOpen(ticket));
-        if (hitCycleOrdinal.has_value())
-        {
-            UF_TRY(m_cycles.requireOpenOrdinal(*hitCycleOrdinal));
-        }
-
-        // The rest of the fence -- fingerprint, lease, single delivery -- is the
-        // engine's; what the ledger contributes is that the frame leaves it here,
-        // so this ticket delivers nothing else.
         UF_TRY_VALUE(observation, m_cycles.spend(ticket));
         return m_session.clickPoint(std::move(observation), point);
-    }
-
-    auto TaskContext::cycleKey(CycleTicket ticket, KeyName key) -> Status
-    {
-        // The ticket is checked against the one open cycle first, so a stale
-        // ticket leaves the cycle open for the framework to close rather than
-        // destroying a frame a live ticket still names.
-        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
-
-        // pressKey consumes the frame by rvalue, so the cycle is spent whatever
-        // the outcome; spend already dropped the ledger entry, which is what
-        // makes every later use of this ticket fail StaleObservation.
-        UF_TRY(m_session.pressKey(std::move(observation), key));
-        return ok();
-    }
-
-    auto TaskContext::cycleScroll(CycleTicket ticket, int32 notches) -> Status
-    {
-        // The ledger's half of the fence is cycleKey's: the ticket is checked
-        // against the one open cycle, and the frame leaves the ledger here so a
-        // stale ticket is refused before anything is delivered.
-        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
-
-        // scroll consumes the frame by rvalue, so the cycle is spent whatever the
-        // outcome; spend already dropped the ledger entry, which is what makes
-        // every later use of this ticket fail StaleObservation.
-        UF_TRY(m_session.scroll(std::move(observation), notches));
-        return ok();
-    }
-
-    auto TaskContext::cycleLongPress(
-        CycleTicket ticket,
-        PixelPoint point,
-        MonotonicInstant::Duration hold
-    ) -> Result<engine::LongPressReceipt>
-    {
-        // The ledger's half of the fence: the ticket is checked against the one
-        // open cycle, and the frame leaves the ledger here so a stale ticket is
-        // refused before anything is delivered. There is no ordinal to check first
-        // -- see the header -- so the spend is the whole of it.
-        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
-
-        // longPress consumes the frame by rvalue, so the cycle is spent whatever
-        // the outcome; spend already dropped the ledger entry, which is what
-        // makes every later use of this ticket fail StaleObservation.
-        return m_session.longPress(std::move(observation), point, hold);
-    }
-
-    auto TaskContext::cycleMovePointer(
-        CycleTicket ticket,
-        PixelPoint point
-    ) -> Result<engine::PointerMoveReceipt>
-    {
-        // The ledger's half of the fence, cycleLongPress's exactly: the ticket is
-        // checked against the one open cycle, and the frame leaves the ledger here
-        // so a stale ticket is refused before anything is delivered.
-        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
-
-        // movePointer consumes the frame by rvalue, so the cycle is spent whatever
-        // the outcome; spend already dropped the ledger entry, which is what makes
-        // every later use of this ticket fail StaleObservation.
-        return m_session.movePointer(std::move(observation), point);
-    }
-
-    auto TaskContext::cycleDrag(
-        CycleTicket ticket,
-        PixelPoint start,
-        PixelPoint end,
-        MonotonicInstant::Duration travel
-    ) -> Result<engine::DragReceipt>
-    {
-        // The ledger's half of the fence, cycleLongPress's exactly.
-        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
-
-        // drag consumes the frame by rvalue, so the cycle is spent whatever the
-        // outcome; spend already dropped the ledger entry, which is what makes
-        // every later use of this ticket fail StaleObservation. That matters more
-        // for a drag than for anything else on this surface: the gesture is what
-        // moved the screen, so reusing the frame would aim at a picture the drag
-        // itself invalidated.
-        return m_session.drag(std::move(observation), start, end, travel);
     }
 
     auto TaskContext::waitUntil(
@@ -835,28 +775,9 @@ namespace uf::task
         return m_traceFailed;
     }
 
-    auto TaskContext::emitTrace(trace::TraceEvent const& event) -> Status
+    auto TaskContext::emitTrace(trace::TraceEventSpec const& event) -> Status
     {
         return m_recorder.emit(event);
     }
 
-    auto TaskContext::nextRandomUnitDouble() noexcept -> double
-    {
-        return m_rng.nextUnitDouble();
-    }
-
-    auto TaskContext::nextRandomInRange(
-        int64 lowInclusive,
-        int64 highInclusive
-    ) noexcept -> int64
-    {
-        // Precondition, guaranteed by the binding that reads the script arguments:
-        // lowInclusive <= highInclusive and both within +/-2^53. Under it the span
-        // fits in uint64, the offset is far below 2^63 so the cast back to int64 is
-        // exact, and low + offset stays within [low, high] with no signed overflow.
-        UF_ASSERT(lowInclusive <= highInclusive);
-        auto const span   = static_cast<uint64>(highInclusive - lowInclusive) + uint64{1};
-        auto const offset = m_rng.boundedUint64(span);
-        return lowInclusive + static_cast<int64>(offset);
-    }
 }

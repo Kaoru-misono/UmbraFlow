@@ -7,6 +7,7 @@
 #include <core/time/poll-sleep.hpp>
 #include <core/types/integer.hpp>
 
+#include <domain/content-hash.hpp>
 #include <domain/detection.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
@@ -31,6 +32,7 @@
 #include <span>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -46,11 +48,6 @@ namespace uf::engine
 {
     namespace
     {
-        // The identity the session's recorder stamps. The engine never authors
-        // it -- task::TaskHost does -- so any fixed pair proves the same thing.
-        constexpr auto k_runId        = TaskRunId{11};
-        constexpr auto k_generationId = GenerationId{2};
-
         // The grey levels the fixture paints with. Distinct, so a template cut
         // from one scores zero where it was painted and nonzero everywhere else.
         constexpr auto k_presentGray = uint8{5};
@@ -579,16 +576,16 @@ namespace uf::engine
         };
 
         // Records the payload of every event the recorder stamps, so a test can
-        // assert the sequence of kinds and the outcome each one carries.
+        // assert the sequence of event types and the outcome each one carries.
         class CollectingTraceSink final : public trace::ITraceSink
         {
             std::vector<trace::TraceEvent> m_events{};
 
         public:
             [[nodiscard]]
-            auto emit(trace::StampedTraceEvent const& event) -> Status override
+            auto append(trace::TraceEvent const& event) -> Status override
             {
-                m_events.emplace_back(event.event());
+                m_events.emplace_back(event);
                 return ok();
             }
 
@@ -600,22 +597,22 @@ namespace uf::engine
             }
         };
 
-        // Fails the emit whose kind matches a nominated trigger, so a fallible
+        // Fails the append whose event type matches a nominated trigger, so a fallible
         // post-click trace can be exercised deterministically.
-        class FailOnKindTraceSink final : public trace::ITraceSink
+        class FailOnEventTypeTraceSink final : public trace::ITraceSink
         {
-            trace::TraceEventKind m_failKind;
+            std::string m_failEventType;
 
         public:
-            explicit FailOnKindTraceSink(trace::TraceEventKind failKind) noexcept
-                : m_failKind{failKind}
+            explicit FailOnEventTypeTraceSink(std::string_view failEventType)
+                : m_failEventType{failEventType}
             {
             }
 
             [[nodiscard]]
-            auto emit(trace::StampedTraceEvent const& event) -> Status override
+            auto append(trace::TraceEvent const& event) -> Status override
             {
-                if (event.event().kind == m_failKind)
+                if (event.eventType() == m_failEventType)
                 {
                     return fail(
                         AutomationErrorKind::IoFailure,
@@ -625,6 +622,31 @@ namespace uf::engine
                 return ok();
             }
         };
+
+        [[nodiscard]] auto traceStreamSpec() -> trace::TraceStreamSpec
+        {
+            auto manifestHash = ContentHash::parse(
+                "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+            );
+            REQUIRE(manifestHash.has_value());
+            return trace::TraceStreamSpec{
+                .sessionId           = "engine-session-test",
+                .sessionManifestHash = *manifestHash,
+                .producer            = "engine-test",
+            };
+        }
+
+        [[nodiscard]]
+        auto makeRecorder(std::unique_ptr<trace::ITraceSink> sink)
+            -> trace::TraceRecorder
+        {
+            auto recorder = trace::TraceRecorder::create(
+                std::move(sink),
+                traceStreamSpec()
+            );
+            REQUIRE(recorder.has_value());
+            return *std::move(recorder);
+        }
 
         // Declaration order is the lifetime order the trace contract requires:
         // the recorder outlives the session that borrows it, and the unique_ptr
@@ -664,10 +686,7 @@ namespace uf::engine
             auto* const p_clicks = actionSink.get();
             auto* const p_traces = traceSink.get();
             auto recorder = std::make_unique<trace::TraceRecorder>(
-                std::move(traceSink),
-                k_runId,
-                k_generationId,
-                trace::FrontEnd::Task
+                makeRecorder(std::move(traceSink))
             );
             auto session = EngineSession::create(
                 std::move(frameSource),
@@ -701,33 +720,79 @@ namespace uf::engine
         }
 
         [[nodiscard]]
-        auto kindsOf(std::span<trace::TraceEvent const> events)
-            -> std::vector<trace::TraceEventKind>
+        auto eventTypesOf(std::span<trace::TraceEvent const> events)
+            -> std::vector<std::string>
         {
-            auto kinds = std::vector<trace::TraceEventKind>{};
-            kinds.reserve(events.size());
+            auto eventTypes = std::vector<std::string>{};
+            eventTypes.reserve(events.size());
             for (auto const& event : events)
             {
-                kinds.emplace_back(event.kind);
+                eventTypes.emplace_back(event.eventType());
             }
-            return kinds;
+            return eventTypes;
         }
 
-        // The first event of `kind`, or null. The returned pointer observes
+        // The first event of `eventType`, or null. The returned pointer observes
         // storage owned by the sink behind `events` and lives as long as it does,
         // which is what the annotation on that parameter states.
         [[nodiscard]]
         auto findEvent(
             std::span<trace::TraceEvent const> events UF_LIFETIME_BOUND,
-            trace::TraceEventKind kind
+            std::string_view eventType
         ) noexcept -> trace::TraceEvent const*
         {
-            auto const found = std::ranges::find(
+            auto const found = std::ranges::find_if(
                 events,
-                kind,
-                [](trace::TraceEvent const& event) noexcept { return event.kind; }
+                [eventType](trace::TraceEvent const& event)
+                {
+                    return event.eventType() == eventType;
+                }
             );
             return found == events.end() ? nullptr : &*found;
+        }
+
+        [[nodiscard]]
+        auto findField(
+            trace::TraceEvent const& event,
+            std::string_view name
+        ) noexcept -> trace::TraceScalar const*
+        {
+            auto const& fields = event.payload().fields;
+            auto const found = std::ranges::find_if(
+                fields,
+                [name](trace::TraceField const& field)
+                {
+                    return field.name == name;
+                }
+            );
+            return found == fields.end() ? nullptr : &found->value;
+        }
+
+        template <typename Value>
+        [[nodiscard]]
+        auto fieldAs(
+            trace::TraceEvent const& event,
+            std::string_view name
+        ) noexcept -> Value const*
+        {
+            auto const* field = findField(event, name);
+            return field == nullptr ? nullptr : std::get_if<Value>(field);
+        }
+
+        [[nodiscard]]
+        auto hasReference(
+            trace::TraceEvent const& event,
+            std::string_view type,
+            std::string_view id
+        ) noexcept -> bool
+        {
+            return std::ranges::any_of(
+                event.audit().references,
+                [type, id](trace::TraceReference const& reference)
+                {
+                    return reference.type == type && reference.id == id;
+                }
+            );
         }
     }
 
@@ -763,32 +828,31 @@ namespace uf::engine
         REQUIRE(under.clicks->lastLease().has_value());
         CHECK(under.clicks->lastLease()->frameId() == FrameId{17});
 
-        auto const expected = std::vector<trace::TraceEventKind>{
-            trace::TraceEventKind::EngineObserved,
-            trace::TraceEventKind::EngineActionFound,
-            trace::TraceEventKind::EngineActionAuthorized,
-            trace::TraceEventKind::EngineActionDelivered,
-            trace::TraceEventKind::EngineObservationInvalidated,
+        auto const expected = std::vector<std::string>{
+            "engine.observed",
+            "engine.action_found",
+            "engine.action_authorized",
+            "engine.action_delivered",
+            "engine.observation_invalidated",
         };
-        CHECK(kindsOf(under.traces->events()) == expected);
+        CHECK(eventTypesOf(under.traces->events()) == expected);
 
         // The search's line names the template by the identity it was decoded
         // under, which is the only name a template belonging to no catalog has.
         auto const* p_action = findEvent(
             under.traces->events(),
-            trace::TraceEventKind::EngineActionFound
+            "engine.action_found"
         );
         REQUIRE(p_action != nullptr);
-        REQUIRE(p_action->action.has_value());
-        CHECK(p_action->action->outcome == trace::ActionSearch::Found);
-        CHECK(p_action->action->matchedRect.has_value());
-        REQUIRE(p_action->templateHash.has_value());
-        CHECK(*p_action->templateHash == "gray-5");
+        auto const* p_outcome = fieldAs<std::string>(*p_action, "outcome");
+        REQUIRE(p_outcome != nullptr);
+        CHECK(*p_outcome == "found");
+        CHECK(fieldAs<uint64>(*p_action, "matched_width") != nullptr);
+        CHECK(hasReference(*p_action, "template", "gray-5"));
 
         for (auto const& event : under.traces->events())
         {
-            REQUIRE(event.frame.has_value());
-            CHECK(event.frame->frameId() == FrameId{17});
+            CHECK(hasReference(event, "frame", "17"));
         }
     }
 
@@ -816,11 +880,12 @@ namespace uf::engine
 
         auto const* p_action = findEvent(
             under.traces->events(),
-            trace::TraceEventKind::EngineActionFound
+            "engine.action_found"
         );
         REQUIRE(p_action != nullptr);
-        REQUIRE(p_action->action.has_value());
-        CHECK(p_action->action->outcome == trace::ActionSearch::Absent);
+        auto const* p_outcome = fieldAs<std::string>(*p_action, "outcome");
+        REQUIRE(p_outcome != nullptr);
+        CHECK(*p_outcome == "absent");
         CHECK(under.clicks->clickCount() == 0);
     }
 
@@ -896,7 +961,7 @@ namespace uf::engine
         CHECK(
             findEvent(
                 under.traces->events(),
-                trace::TraceEventKind::EngineActionRejected
+                "engine.action_rejected"
             )
             != nullptr
         );
@@ -930,7 +995,7 @@ namespace uf::engine
         CHECK(
             findEvent(
                 under.traces->events(),
-                trace::TraceEventKind::EngineActionRejected
+                "engine.action_rejected"
             )
             != nullptr
         );
@@ -1056,16 +1121,11 @@ namespace uf::engine
         // i.e. the first fallible step after the click has already landed.
         auto frameSource = std::make_unique<FakeFrameSource>(std::move(frames));
         auto actionSink  = std::make_unique<CountingActionSink>();
-        auto traceSink   = std::make_unique<FailOnKindTraceSink>(
-            trace::TraceEventKind::EngineActionDelivered
+        auto traceSink   = std::make_unique<FailOnEventTypeTraceSink>(
+            "engine.action_delivered"
         );
         auto* const p_clicks = actionSink.get();
-        auto recorder        = trace::TraceRecorder{
-            std::move(traceSink),
-            k_runId,
-            k_generationId,
-            trace::FrontEnd::Task,
-        };
+        auto recorder = makeRecorder(std::move(traceSink));
         auto session = EngineSession::create(
             std::move(frameSource),
             std::move(actionSink),
@@ -1118,12 +1178,15 @@ namespace uf::engine
 
         auto const* p_action = findEvent(
             under.traces->events(),
-            trace::TraceEventKind::EngineActionFound
+            "engine.action_found"
         );
         REQUIRE(p_action != nullptr);
-        REQUIRE(p_action->action.has_value());
-        CHECK(p_action->action->outcome == trace::ActionSearch::Stopped);
-        CHECK(p_action->stopReason == SadSearchStopReason::ComparisonBudgetExhausted);
+        auto const* p_outcome = fieldAs<std::string>(*p_action, "outcome");
+        auto const* p_reason = fieldAs<std::string>(*p_action, "stop_reason");
+        REQUIRE(p_outcome != nullptr);
+        REQUIRE(p_reason != nullptr);
+        CHECK(*p_outcome == "stopped");
+        CHECK(*p_reason == "recognition_incomplete");
     }
 
     TEST_CASE("engine session surfaces a cancelled search as a cancellation")
@@ -1154,12 +1217,15 @@ namespace uf::engine
 
         auto const* p_action = findEvent(
             under.traces->events(),
-            trace::TraceEventKind::EngineActionFound
+            "engine.action_found"
         );
         REQUIRE(p_action != nullptr);
-        REQUIRE(p_action->action.has_value());
-        CHECK(p_action->action->outcome == trace::ActionSearch::Stopped);
-        CHECK(p_action->stopReason == SadSearchStopReason::Cancelled);
+        auto const* p_outcome = fieldAs<std::string>(*p_action, "outcome");
+        auto const* p_reason = fieldAs<std::string>(*p_action, "stop_reason");
+        REQUIRE(p_outcome != nullptr);
+        REQUIRE(p_reason != nullptr);
+        CHECK(*p_outcome == "stopped");
+        CHECK(*p_reason == "cancelled");
     }
 
     TEST_CASE("engine session revalidates the target instance at the delivery edge")
@@ -1186,7 +1252,7 @@ namespace uf::engine
         CHECK(
             findEvent(
                 under.traces->events(),
-                trace::TraceEventKind::EngineActionRejected
+                "engine.action_rejected"
             )
             != nullptr
         );
@@ -1215,30 +1281,30 @@ namespace uf::engine
         REQUIRE_FALSE(receipt.has_value());
         requireErrorKind(receipt.error(), AutomationErrorKind::StaleObservation);
 
-        auto const kinds = kindsOf(under.traces->events());
+        auto const eventTypes = eventTypesOf(under.traces->events());
         CHECK(
             std::ranges::count(
-                kinds,
-                trace::TraceEventKind::EngineActionAuthorized
+                eventTypes,
+                std::string{"engine.action_authorized"}
             )
             == 1
         );
         CHECK(
             std::ranges::count(
-                kinds,
-                trace::TraceEventKind::EngineActionDelivered
+                eventTypes,
+                std::string{"engine.action_delivered"}
             )
             == 0
         );
 
         auto const* p_rejected = findEvent(
             under.traces->events(),
-            trace::TraceEventKind::EngineActionRejected
+            "engine.action_rejected"
         );
         REQUIRE(p_rejected != nullptr);
-        REQUIRE(p_rejected->errorKind.has_value());
-        CHECK(*p_rejected->errorKind == AutomationErrorKind::StaleObservation);
-        CHECK(p_rejected->message.has_value());
+        auto const* p_errorKind = fieldAs<std::string>(*p_rejected, "error_kind");
+        REQUIRE(p_errorKind != nullptr);
+        CHECK(*p_errorKind == "stale_observation");
     }
 
     TEST_CASE("engine session revalidates the target instance before a keystroke")
@@ -1263,11 +1329,12 @@ namespace uf::engine
         // only that something was refused on this frame.
         auto const* p_rejected = findEvent(
             under.traces->events(),
-            trace::TraceEventKind::EngineActionRejected
+            "engine.action_rejected"
         );
         REQUIRE(p_rejected != nullptr);
-        REQUIRE(p_rejected->key.has_value());
-        CHECK(*p_rejected->key == *key);
+        auto const* p_key = fieldAs<std::string>(*p_rejected, "key");
+        REQUIRE(p_key != nullptr);
+        CHECK(*p_key == key->value());
     }
 
     TEST_CASE("engine session delivers a keystroke and spends the observation")
@@ -1330,9 +1397,12 @@ namespace uf::engine
         requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
         CHECK(under.clicks->scrollCount() == 1);
 
-        auto const kinds = kindsOf(under.traces->events());
+        auto const eventTypes = eventTypesOf(under.traces->events());
         CHECK(
-            std::ranges::count(kinds, trace::TraceEventKind::EngineScrollDelivered)
+            std::ranges::count(
+                eventTypes,
+                std::string{"engine.scroll_delivered"}
+            )
             == 1
         );
 
@@ -1340,11 +1410,12 @@ namespace uf::engine
         // that went downward, because the wheel leaves no other trace of itself.
         auto const* p_scroll = findEvent(
             under.traces->events(),
-            trace::TraceEventKind::EngineScrollDelivered
+            "engine.scroll_delivered"
         );
         REQUIRE(p_scroll != nullptr);
-        REQUIRE(p_scroll->wheelNotches.has_value());
-        CHECK(*p_scroll->wheelNotches == int32{-2});
+        auto const* p_notches = fieldAs<int64>(*p_scroll, "wheel_notches");
+        REQUIRE(p_notches != nullptr);
+        CHECK(*p_notches == int64{-2});
     }
 
     TEST_CASE("engine session revalidates the target instance before a scroll")
@@ -1497,11 +1568,11 @@ namespace uf::engine
         requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
         CHECK(under.clicks->longPressCount() == 1);
 
-        auto const kinds = kindsOf(under.traces->events());
+        auto const eventTypes = eventTypesOf(under.traces->events());
         CHECK(
             std::ranges::count(
-                kinds,
-                trace::TraceEventKind::EngineLongPressDelivered
+                eventTypes,
+                std::string{"engine.long_press_delivered"}
             )
             == 1
         );
@@ -1509,18 +1580,22 @@ namespace uf::engine
         // And NOT as a click: a reader counting delivered clicks would otherwise
         // count an act that magnified a card rather than pressing a button.
         CHECK(
-            std::ranges::count(kinds, trace::TraceEventKind::EngineActionDelivered)
+            std::ranges::count(
+                eventTypes,
+                std::string{"engine.action_delivered"}
+            )
             == 0
         );
 
         auto const* p_press = findEvent(
             under.traces->events(),
-            trace::TraceEventKind::EngineLongPressDelivered
+            "engine.long_press_delivered"
         );
         REQUIRE(p_press != nullptr);
-        REQUIRE(p_press->holdMillis.has_value());
-        CHECK(*p_press->holdMillis == uint64{350});
-        CHECK(p_press->clickClient.has_value());
+        auto const* p_hold = fieldAs<uint64>(*p_press, "hold_millis");
+        REQUIRE(p_hold != nullptr);
+        CHECK(*p_hold == uint64{350});
+        CHECK(fieldAs<std::string>(*p_press, "client_x") != nullptr);
     }
 
     TEST_CASE("engine session delivers a drag and spends the observation")
@@ -1577,9 +1652,12 @@ namespace uf::engine
         requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
         CHECK(under.clicks->dragCount() == 1);
 
-        auto const kinds = kindsOf(under.traces->events());
+        auto const eventTypes = eventTypesOf(under.traces->events());
         CHECK(
-            std::ranges::count(kinds, trace::TraceEventKind::EngineDragDelivered)
+            std::ranges::count(
+                eventTypes,
+                std::string{"engine.drag_delivered"}
+            )
             == 1
         );
 
@@ -1589,30 +1667,38 @@ namespace uf::engine
         // a reader that drags are authorized twice. Call it for `end` as well and
         // this goes red while nothing else does.
         CHECK(
-            std::ranges::count(kinds, trace::TraceEventKind::EngineActionAuthorized)
+            std::ranges::count(
+                eventTypes,
+                std::string{"engine.action_authorized"}
+            )
             == 1
         );
 
         // And NOT as a click, for the long press's reason.
         CHECK(
-            std::ranges::count(kinds, trace::TraceEventKind::EngineActionDelivered)
+            std::ranges::count(
+                eventTypes,
+                std::string{"engine.action_delivered"}
+            )
             == 0
         );
 
         auto const* p_drag = findEvent(
             under.traces->events(),
-            trace::TraceEventKind::EngineDragDelivered
+            "engine.drag_delivered"
         );
         REQUIRE(p_drag != nullptr);
-        REQUIRE(p_drag->travelMillis.has_value());
-        CHECK(*p_drag->travelMillis == uint64{240});
-        REQUIRE(p_drag->clickClient.has_value());
+        auto const* p_travel = fieldAs<uint64>(*p_drag, "travel_millis");
+        REQUIRE(p_travel != nullptr);
+        CHECK(*p_travel == uint64{240});
+        CHECK(fieldAs<std::string>(*p_drag, "start_client_x") != nullptr);
 
         // The far end is on the line too. A record carrying only the start says
         // a drag happened and refuses to say how far, which is the one thing a
         // reader joining drags to what moved on screen needs.
-        REQUIRE(p_drag->dragEndClient.has_value());
-        CHECK(p_drag->dragEndClient->x() == doctest::Approx(2.0));
+        auto const* p_endX = fieldAs<std::string>(*p_drag, "end_client_x");
+        REQUIRE(p_endX != nullptr);
+        CHECK(*p_endX == "2");
     }
 
     TEST_CASE("engine session refuses a drag that travels backwards in time")
@@ -1639,9 +1725,12 @@ namespace uf::engine
         // of both, so a sign error costs neither a frame nor a trace line
         // claiming an act nobody performed.
         CHECK(under.clicks->dragCount() == 0);
-        auto const kinds = kindsOf(under.traces->events());
+        auto const eventTypes = eventTypesOf(under.traces->events());
         CHECK(
-            std::ranges::count(kinds, trace::TraceEventKind::EngineActionAuthorized)
+            std::ranges::count(
+                eventTypes,
+                std::string{"engine.action_authorized"}
+            )
             == 0
         );
     }
@@ -1800,11 +1889,11 @@ namespace uf::engine
         requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
         CHECK(under.clicks->moveCount() == 1);
 
-        auto const kinds = kindsOf(under.traces->events());
+        auto const eventTypes = eventTypesOf(under.traces->events());
         CHECK(
             std::ranges::count(
-                kinds,
-                trace::TraceEventKind::EnginePointerMoveDelivered
+                eventTypes,
+                std::string{"engine.pointer_move_delivered"}
             )
             == 1
         );
@@ -1812,17 +1901,21 @@ namespace uf::engine
         // And NOT as a click, for the long press's reason: a reader counting
         // delivered clicks would otherwise count a message that pressed nothing.
         CHECK(
-            std::ranges::count(kinds, trace::TraceEventKind::EngineActionDelivered)
+            std::ranges::count(
+                eventTypes,
+                std::string{"engine.action_delivered"}
+            )
             == 0
         );
 
         auto const* p_move = findEvent(
             under.traces->events(),
-            trace::TraceEventKind::EnginePointerMoveDelivered
+            "engine.pointer_move_delivered"
         );
         REQUIRE(p_move != nullptr);
-        REQUIRE(p_move->clickClient.has_value());
-        CHECK(p_move->clickClient->x() == doctest::Approx(1.0));
+        auto const* p_clientX = fieldAs<std::string>(*p_move, "client_x");
+        REQUIRE(p_clientX != nullptr);
+        CHECK(*p_clientX == "1");
     }
 
     TEST_CASE("engine session fences a pointer move exactly as it fences a click")
@@ -2020,12 +2113,7 @@ namespace uf::engine
 
             auto traces          = std::make_unique<CollectingTraceSink>();
             auto* const p_traces = traces.get();
-            auto recorder        = trace::TraceRecorder{
-                std::move(traces),
-                k_runId,
-                k_generationId,
-                trace::FrontEnd::Task
-            };
+            auto recorder = makeRecorder(std::move(traces));
 
             auto config = baseConfig(fingerprint);
             auto under  = EngineSession::create(
@@ -2050,11 +2138,15 @@ namespace uf::engine
             }
             for (auto const& event : p_traces->events())
             {
-                if (event.kind == trace::TraceEventKind::EngineCaptureRetried)
+                if (event.eventType() == "engine.capture_retried")
                 {
                     ++result.retryLines;
-                    REQUIRE(event.captureAttempt.has_value());
-                    result.lastAttemptNumber = *event.captureAttempt;
+                    auto const* p_attempt = fieldAs<uint64>(
+                        event,
+                        "capture_attempt"
+                    );
+                    REQUIRE(p_attempt != nullptr);
+                    result.lastAttemptNumber = static_cast<std::size_t>(*p_attempt);
                 }
             }
             return result;
@@ -2110,10 +2202,7 @@ namespace uf::engine
         auto frameSource     = std::make_unique<DeadlineHonouringFrameSource>();
         auto* const p_source = frameSource.get();
         auto recorder        = std::make_unique<trace::TraceRecorder>(
-            std::make_unique<CollectingTraceSink>(),
-            k_runId,
-            k_generationId,
-            trace::FrontEnd::Task
+            makeRecorder(std::make_unique<CollectingTraceSink>())
         );
         auto under = EngineSession::create(
             std::move(frameSource),

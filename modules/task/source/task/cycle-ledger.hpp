@@ -33,7 +33,7 @@ namespace uf::task
     };
 
     // The host-side ledger of open observation cycles: it holds AT MOST ONE, so
-    // "the page and the hit came from the same frame" stays a comparison the host
+    // "the resolution proof and action came from the same frame" stays a comparison the host
     // performs rather than a discipline the Luau framework keeps -- with one
     // entry, mixing two frames is not rejected, it cannot be expressed.
     //
@@ -43,9 +43,8 @@ namespace uf::task
     class CycleLedger final
     {
         // The one open cycle: the frame it retains, and how much of the cycle's
-        // own read budget has been spent on it. It holds no resolved page -- the
-        // click's authorisation evidence is the receipt observe.resolve_page mints
-        // against this cycle's ticket (modules/task/runtime/observe.luau). What
+        // own read budget has been spent on it. It holds no semantic resolution --
+        // the trusted Runtime mints authorization against this cycle's ticket. What
         // the ledger owns is the part a Luau table could not be trusted with: one
         // frame, spent once.
         struct OpenCycle final
@@ -95,9 +94,8 @@ namespace uf::task
         // the open cycle's names a cycle that no longer exists.
         [[nodiscard]] auto requireOpen(CycleTicket ticket) const -> Status;
 
-        // The same check for the ordinal a hit handle carries, a separate entry
-        // point only so the failure names the hit rather than the ticket.
-        [[nodiscard]] auto requireOpenOrdinal(uint64 ordinal) const -> Status;
+        // The same check for the ordinal carried by Host evidence.
+        [[nodiscard]] auto requireOpenEvidence(uint64 ordinal) const -> Status;
 
         // Opens the cycle over `observation` and returns the ticket that names it.
         // Precondition: requireClosed() has just succeeded -- a separate call so

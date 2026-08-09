@@ -64,32 +64,15 @@ namespace uf::task
     [[nodiscard]]
     auto frameworkScriptModules() -> std::vector<script::FrameworkModule>;
 
-    // The framework module names a project script may name, in the shape
-    // script::EngineConfig::frameworkProjectGlobals takes. Eleven of the
-    // bundle's modules are published here, `ctx` and `task` among them -- the
-    // context object a task uses while it runs, and the declaration surface it
-    // registers its interrupts through. The exclusions carry the meaning:
-    // `evidence`, `mint` and `jsonl` are compiled into the bundle and reach no
-    // environment at all.
-    //
-    // The names are spelled here rather than derived, because the generator takes
-    // them from file stems and a C++ constant cannot read one. A rename that
-    // missed this list fails VM creation with InternalInvariant naming the missing
-    // entry, so the two cannot drift apart silently.
+    // Business execution is closed until OperatorSession exists, so this list is
+    // deliberately empty. Loading trusted modules into a VM does not make their
+    // exports project-visible; publication remains an explicit whitelist.
     [[nodiscard]]
     auto frameworkProjectGlobals() -> std::vector<std::string>;
 
-    // The same list for an exploration VM, plus `explore`. The
-    // difference between the two lists IS the isolation: a project environment is
-    // an explicit whitelist with no metatable, and publishing a framework export
-    // copies the value rather than opening a chain, so a run environment does not
-    // merely refuse `explore.click_point` -- it has no `explore` at all and no
-    // path from anything it does have to the module's table
-    // (docs/plans/2026-07-29-three-layer-task-system.md 7).
-    //
-    // `explore` loads in EVERY VM, because the bundle is one bundle. What it
-    // reaches differs: it forwards primitives that are absent from a run VM's
-    // private surface, so on such a VM its verbs raise instead of acting.
+    // The privileged authoring VM publishes only `explore`. The module owns its
+    // cycle bracket and confined project I/O; no raw native table or direct input
+    // primitive enters the project environment.
     [[nodiscard]]
     auto explorationProjectGlobals() -> std::vector<std::string>;
 
