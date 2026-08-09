@@ -14,8 +14,8 @@ Read in this order:
 2. [migration report](plans/2026-08-09-runtime-migration-report.md);
 3. checked-in schemas named by that report.
 
-The read-only consumer bundle is v1.8; its root is
-`099feae33aac10f1d3ef6973ed1dbcc7b7cb934b13f43c1fe594333818e8c132`.
+The read-only consumer bundle is v1.9; its root is
+`c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`.
 No game entity, tool name, state field, Journal event, or content schema belongs
 in this repository's generic core.
 

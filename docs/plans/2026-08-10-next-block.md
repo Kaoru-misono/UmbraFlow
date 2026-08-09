@@ -4,18 +4,24 @@ Status: proposed; no code changed on its account
 Date: 2026-08-10
 Scope: `umbraflow-cpp` only. No consumer-project writes.
 
-## 0. The bundle moved, and is already re-pinned
+## 0. The bundle moved twice, and is re-pinned
 
-The consumer bundle went to 1.8 during this session: the project-layer document
-had put C0-C1 behind a gate upstream §15 marks as parallel work, and §13's four
-validation levels had no mapping onto the project's C0-C4 axis. The upstream
-design changed only its version string — its contract text is byte-identical at
-unchanged line numbers, which is what shows the bump replaced text in place.
+The consumer bundle went 1.7 to 1.8 and then to 1.9 during this session. Every
+correction was to the project-layer document; the upstream design changed only
+its version string, and its contract text is byte-identical at unchanged line
+numbers at all three versions, which is what shows each bump replaced text in
+place rather than moving anything.
 
-Re-pinned in `53cc48e`. New root
-`099feae33aac10f1d3ef6973ed1dbcc7b7cb934b13f43c1fe594333818e8c132`. The
-requirement diff the handoff demands on a hash change was done, not assumed.
-This plan therefore assumes 1.7 phase semantics and that assumption survives:
+1.8 corrected the two divergences the consumer session had found: C0-C1 were
+behind a gate upstream §15 marks as parallel work, and §13's four validation
+levels had no mapping onto the project's C0-C4 axis. 1.9 corrected six more
+found while making those, the load-bearing one being that §11 C3 had dropped
+upstream Phase 4's precondition — a reader following the project document alone
+would open the first real mutation without the dual-game gate.
+
+Current root `c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`.
+The requirement diff the handoff demands on a hash change was done at each bump,
+not assumed. This plan assumes 1.7 phase semantics and that assumption survives:
 only the label moved.
 
 ## 1. What is genuinely finished
@@ -48,12 +54,19 @@ the requirement does not have. See decision 4.
 macOS, clang-tidy, ASan, UBSan and TSan have never seen this tree. Billing is
 not the question on this branch; the branch simply never left the machine.
 
+CI is deliberately restricted to `master`, and this repository is a topic branch
+that merges back. So there is no pre-merge CI at all: the first time eight
+configurations see this work is on `master`, after the merge. That makes a red
+`master` the default outcome unless the packaging below is fixed first, and it
+makes local non-Windows verification the only pre-merge signal there is.
+
 **A dependency this session introduced is undeclared.** `jsonschema` is
 imported by `tools/annotate/contracts.py` and the annotation tests, the
 repository has no `requirements.txt`, `pyproject.toml` or `setup.py`, and
-`ci.yml` never installs it. `test-annotate-backend` now carries the `CI` label,
-so the first CI run of this branch fails in every job that runs `ctest -L CI`.
-Fixing the packaging before pushing is cheaper than reading eight red jobs.
+`ci.yml` never installed it. `test-annotate-backend` now carries the `CI` label,
+so the first run would have failed in every job that runs `ctest -L CI` — caused
+by a change made to close a fake-green finding. Fixed here: `requirements.txt`
+declares it and every job installs it after `setup-python`.
 
 ## 3. The next phase boundary
 
@@ -141,7 +154,7 @@ reason, and that is worth telling the owner today rather than later.
 
 | # | Item | Why it matters | Depends on | Cost |
 |---|---|---|---|---|
-| D1 | Declare `jsonschema`, install it in CI, push the branch, open a draft PR | Eight CI configurations have never compiled this tree; `-Werror` on GCC already caught one dead reader the Windows-only gate could not see | none | 1 day plus the first red CI |
+| D1 | ~~Declare `jsonschema` and install it in CI~~ done. What remains: verify Linux, macOS and clang-tidy locally before merging, because CI runs only on `master` and therefore only after the merge | Eight configurations have never compiled this tree; `-Werror` on GCC already caught one dead reader the Windows-only gate could not see, and `linux-analysis` is the only checker for parts of the ownership rules | none | 1 day |
 | D2 | **EffectivePlan authority**: mint it from a plugin `PlanProposal` bound to registration, command fingerprint and decision basis; derive the frozen plan, step intent and effect envelope hashes from it; `reserveDispatch` takes the minted plan instead of three caller hashes | Effect, risk, scope and workflow bounds are caller assertions today. Closes the Phase 2A effect-downgrade gate | none | 3-5 days, the largest item |
 | D3 | **Reconcile input assembled by the Operator** | `plugin.reconcile` has no trusted caller, so its input is whatever the caller built. The disposition is protected; the question it answers is not | D2 — the observation and plan data it lacks arrives there | 2 days after D2 |
 | D4 | **Snapshot Coordinator**: compose UI observation, `plugin.derive` and current ProjectState atomically, and derive the identity hash rather than accept one | S-01/S-02 are asserted by shape only; also unblocks consumer C2 | D2 | 3 days |
@@ -152,23 +165,23 @@ reason, and that is worth telling the owner today rather than later.
 
 ## 7. Decisions for the owner
 
-1. **Push the branch, or stay local?** Recommend pushing after D1. Seven of
-   eight CI configurations have never compiled this tree, and the Windows-only
-   local gate demonstrably cannot see `-Werror` breakage.
-2. **`jsonschema` declared, or an optional import that skips?** Recommend
-   declaring. A skip recreates exactly the fake-green the re-review just closed.
-3. **Do the schema-shape gates keep their requirement IDs?** Recommend renaming
-   them `schema-*` and reserving `contract-*` for behaviour. The migration
-   report promises owner, schema and test per requirement; today the third
-   column overstates. This edits the report's ID list and the CMake enforcement
-   list.
-4. **Does `OperatorCoordinator` grow to hold observation and plan data, or does
-   a separate Session Coordinator hold it?** Recommend growing it. A second
-   trusted object is a second place authority can leak from.
-5. **Artifact GC by database refcount, or mark-and-sweep at startup?**
-   Recommend refcount. A sweep has to decide what "orphan" means while a
-   concurrent publisher is mid-install, which is the hazard behind accepted
-   finding A-F8.
+Decisions 3, 4 and 5 below were ruled by the owner on 2026-08-10 and are
+recorded as settled. 1 and 2 resolved themselves.
+
+1. Settled: `jsonschema` is declared in `requirements.txt` and installed by
+   every job.
+2. Settled by the CI policy: CI runs on `master` only, so the branch is
+   verified locally and then merged. There is no pre-merge CI to push for.
+3. **Ruled: rename the schema-shape gates `schema-*`** and reserve `contract-*`
+   for behaviour. The migration report promises owner, schema and test per
+   requirement; today the third column overstates. This edits the report's ID
+   list and the CMake enforcement list.
+4. **Ruled: `OperatorCoordinator` grows** to hold observation and plan data
+   rather than a separate Session Coordinator. A second trusted object is a
+   second place authority can leak from.
+5. **Ruled: artifact GC by database refcount**, not mark-and-sweep. A sweep has
+   to decide what "orphan" means while a concurrent publisher is mid-install,
+   which is the hazard behind accepted finding A-F8.
 6. **Third review round now, or after the block?** Recommend after.
 
 ## 8. Deliberately not in this plan

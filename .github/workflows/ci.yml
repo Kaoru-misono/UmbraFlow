@@ -30,6 +30,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - name: Install Python test dependencies
+        run: python -m pip install --requirement requirements.txt
       - name: Check source normalization
         run: python scripts/fix_format.py --check
       - name: Check C++ formatting
@@ -73,6 +75,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - name: Install Python test dependencies
+        run: python -m pip install --requirement requirements.txt
       - name: Configure
         run: ${{ matrix.configure }}
       - name: Build
@@ -93,6 +97,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - name: Install Python test dependencies
+        run: python -m pip install --requirement requirements.txt
       - name: Configure
         run: cmake --preset macos-debug
       - name: Build
@@ -110,6 +116,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - name: Install Python test dependencies
+        run: python -m pip install --requirement requirements.txt
       - name: Install pinned LLVM toolchain
         run: |
           wget --quiet https://apt.llvm.org/llvm.sh --output-document="${RUNNER_TEMP}/llvm.sh"
@@ -146,6 +154,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - name: Install Python test dependencies
+        run: python -m pip install --requirement requirements.txt
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build

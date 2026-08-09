@@ -4,8 +4,8 @@ Status: G0 execution map
 Date: 2026-08-09
 Scope: `umbraflow-cpp` only; no consumer-project writes
 
-This report binds the v1.8 spec root
-`099feae33aac10f1d3ef6973ed1dbcc7b7cb934b13f43c1fe594333818e8c132`
+This report binds the v1.9 spec root
+`c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`
 to the inherited upstream baseline rooted at
 `55444b02a8ace9fe7493e5175618ef0a67d87402087874b7972187ac71ed8ac7`.
 The executable conformance resolutions derived from the product bundle are

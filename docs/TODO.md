@@ -14,7 +14,7 @@
 ## G0 — contract and inherited baseline
 
 - [x] Pin the four-document consumer bundle at root
-      `099feae33aac10f1d3ef6973ed1dbcc7b7cb934b13f43c1fe594333818e8c132`.
+      `c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`.
 - [x] Record base commit, rejected stash and the 101-entry dirty baseline
       manifest.
 - [x] Assign exactly one disposition to all 101 inherited dirty paths
