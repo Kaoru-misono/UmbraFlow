@@ -2578,11 +2578,10 @@ namespace uf::task
             lua_setfield(state, surface, fieldName);
         }
 
-        // Assembles the frozen global uf table: the error kinds and nothing
-        // else. Every entry is data that can neither observe nor act, which is
-        // what makes it safe as a project global. Its `elements` and `pages`
-        // tables went with the C++ page model; the pre-VM pass still resolves
-        // uf.elements.<name> against the project file (task/script-validator.hpp).
+        // Assembles the frozen global uf table: the host error vocabulary and
+        // no observation or action primitive. Runtime target and surface IDs are
+        // checked before VM creation by task/script-validator.hpp; they are not
+        // mirrored here as a second model catalog.
         [[nodiscard]]
         auto buildUfData(lua_State* state) -> Status
         {

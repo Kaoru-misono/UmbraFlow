@@ -20,7 +20,7 @@ namespace uf::task
         // and one surface, written the way a project file writes them. Which names
         // a script may spell is a fact about that file
         // may spell is a fact about that file
-        // (docs/plans/2026-07-31-script-owned-page-model.md 6), so the fixture is
+        // (docs/plans/2026-08-09-runtime-model-contract.md 7), so the fixture is
         // the text rather than a compiled catalog. `home_marker` is here because
         // a target that only identifies is still a name a script may write.
         constexpr auto k_pageModel = std::string_view{R"toml(
@@ -62,9 +62,9 @@ polarity = "required"
 locator = "battle.default"
 )toml"};
 
-        auto buildModel() -> PageModelFacts
+        auto buildModel() -> RuntimeModelEnvelope
         {
-            auto model = parsePageModelFacts(k_pageModel);
+            auto model = parseRuntimeModelEnvelope(k_pageModel);
             REQUIRE(model.has_value());
             return *std::move(model);
         }
@@ -73,7 +73,7 @@ locator = "battle.default"
         // message contains every `needle` -- pinning the failure to the offending
         // resource access, so a change that rejects for the wrong reason is caught.
         auto expectRejected(
-            PageModelFacts const& model,
+            RuntimeModelEnvelope const& model,
             std::string_view source,
             std::vector<std::string_view> needles
         ) -> void
@@ -93,14 +93,14 @@ locator = "battle.default"
             }
         }
 
-        TEST_CASE("A page model that names one thing twice is refused")
+        TEST_CASE("A runtime model that names one thing twice is refused")
         {
             // A duplicate leaves a literal resolving against two different rows,
             // a model with no single answer about its own pixels. The refusal
             // names the offender, because the file is hand-edited.
             auto const duplicated = std::string{k_pageModel}
                 + "\n[[target]]\nid = \"battle\"\n";
-            auto const refused = parsePageModelFacts(duplicated);
+            auto const refused = parseRuntimeModelEnvelope(duplicated);
             REQUIRE_FALSE(refused.has_value());
             CHECK(
                 automationErrorKind(refused.error())
@@ -109,11 +109,11 @@ locator = "battle.default"
             CHECK(std::string{refused.error().message()}.contains("battle"));
 
             // The control: the same file without the extra section loads.
-            CHECK(parsePageModelFacts(k_pageModel).has_value());
+            CHECK(parseRuntimeModelEnvelope(k_pageModel).has_value());
 
             auto const duplicatedSurface = std::string{k_pageModel}
                 + "\n[[surface]]\nid = \"home\"\n";
-            auto const refusedSurface = parsePageModelFacts(duplicatedSurface);
+            auto const refusedSurface = parseRuntimeModelEnvelope(duplicatedSurface);
             REQUIRE_FALSE(refusedSurface.has_value());
             CHECK(
                 std::string{refusedSurface.error().message()}.contains("home")
@@ -127,14 +127,14 @@ locator = "battle.default"
             REQUIRE(at != std::string::npos);
             without.erase(at, without.find('\n', at) - at);
 
-            auto const refused = parsePageModelFacts(without);
+            auto const refused = parseRuntimeModelEnvelope(without);
             REQUIRE_FALSE(refused.has_value());
             CHECK(
                 std::string{refused.error().message()}.contains("schema_version")
             );
         }
 
-        TEST_CASE("A page model that states no geometry is refused")
+        TEST_CASE("A runtime model that states no geometry is refused")
         {
             // The fingerprint is what the engine's compatibility check compares
             // a live measurement against, so guessing one would defeat the check
@@ -144,7 +144,7 @@ locator = "battle.default"
             REQUIRE(at != std::string::npos);
             without.erase(at, without.find('\n', at) - at);
 
-            auto const refused = parsePageModelFacts(without);
+            auto const refused = parseRuntimeModelEnvelope(without);
             REQUIRE_FALSE(refused.has_value());
             CHECK(
                 automationErrorKind(refused.error())
@@ -156,7 +156,7 @@ locator = "battle.default"
 
             // And the geometry it does state is the geometry it reports, rather
             // than one this reader chose.
-            auto const model = parsePageModelFacts(k_pageModel);
+            auto const model = parseRuntimeModelEnvelope(k_pageModel);
             REQUIRE(model.has_value());
             CHECK(model->schemaVersion == 1);
             CHECK(model->fingerprint.width() == 4);
@@ -164,14 +164,14 @@ locator = "battle.default"
             CHECK(model->fingerprint.dpiX() == 96);
         }
 
-        TEST_CASE("A page model is identified by its bytes and not by this reading")
+        TEST_CASE("A runtime model is identified by its bytes and not by this reading")
         {
             // `run.started` stamps this hash, and a replay checker refuses a trace
             // whose model is no longer the one on disk. That refusal is only worth
             // anything if the hash covers the whole file: nearly everything in a
-            // page model -- thresholds, references, edges, the falsification
+            // runtime model -- thresholds, bindings, transitions, the offline
             // claims -- is layer two's and skipped entirely by the scan above.
-            auto const model = parsePageModelFacts(k_pageModel);
+            auto const model = parseRuntimeModelEnvelope(k_pageModel);
             REQUIRE(model.has_value());
 
             auto const expected = sha256(std::as_bytes(std::span{k_pageModel}));
@@ -184,11 +184,11 @@ locator = "battle.default"
             auto const edited = std::string{k_pageModel}
                 + "\n[[edge]]\nfrom = \"home\"\nto = [\"home\"]\n"
                   "via = \"key\"\nvia_key = \"E\"\nkind = \"navigate\"\n";
-            auto const after = parsePageModelFacts(edited);
+            auto const after = parseRuntimeModelEnvelope(edited);
             REQUIRE(after.has_value());
 
-            CHECK(after->targetNames == model->targetNames);
-            CHECK(after->surfaceNames == model->surfaceNames);
+            CHECK(after->targetIds == model->targetIds);
+            CHECK(after->surfaceIds == model->surfaceIds);
             CHECK(after->fingerprint == model->fingerprint);
             CHECK(after->contentHash != model->contentHash);
         }
@@ -206,13 +206,13 @@ locator = "battle.default"
                         ctx:step("daily", function()
                             ctx:retry({ attempts = 2 }, function()
                                 observe.wait_until(ctx, {
-                                    page = uf.pages.home,
-                                    element = uf.elements.daily_button,
+                                    surface = uf.surfaces.home,
+                                    target = uf.targets.daily_button,
                                     consecutive = 2,
                                     timeout_ms = 1000,
                                     interval_ms = 100,
                                 })
-                                local other = uf.elements.battle
+                                local other = uf.targets.battle
                                 return other
                             end)
                         end)
@@ -223,10 +223,10 @@ locator = "battle.default"
             auto const report = validateScriptResources(source, "daily", model);
             REQUIRE(report.has_value());
             CHECK(
-                report->elements
+                report->targets
                 == std::vector<std::string>{"battle", "daily_button"}
             );
-            CHECK(report->pages == std::vector<std::string>{"home"});
+            CHECK(report->surfaces == std::vector<std::string>{"home"});
         }
 
         TEST_CASE("A script touching no resources validates with an empty report")
@@ -236,8 +236,8 @@ locator = "battle.default"
             auto const report =
                 validateScriptResources("local x = 1 + 2\nreturn x", "noop", model);
             REQUIRE(report.has_value());
-            CHECK(report->elements.empty());
-            CHECK(report->pages.empty());
+            CHECK(report->targets.empty());
+            CHECK(report->surfaces.empty());
         }
 
         TEST_CASE("The retired root spelling resolves nothing and policing follows uf")
@@ -250,21 +250,37 @@ locator = "battle.default"
             // reddens this case. What the installer registers as the global is
             // pinned separately by the binding suite's retired-root case.
             auto const retired = validateScriptResources(
-                "return uf.pages.home ~= nil and umbra.elements.battle",
+                "return uf.surfaces.home ~= nil and umbra.targets.battle",
                 "retired-root",
                 model
             );
             REQUIRE(retired.has_value());
-            CHECK(retired->elements.empty());
-            CHECK(retired->pages == std::vector<std::string>{"home"});
+            CHECK(retired->targets.empty());
+            CHECK(retired->surfaces == std::vector<std::string>{"home"});
 
             auto const current = validateScriptResources(
-                "return uf.elements.battle",
+                "return uf.targets.battle",
                 "current-root",
                 model
             );
             REQUIRE(current.has_value());
-            CHECK(current->elements == std::vector<std::string>{"battle"});
+            CHECK(current->targets == std::vector<std::string>{"battle"});
+        }
+
+        TEST_CASE("Retired resource namespaces are rejected before the VM")
+        {
+            auto const model = buildModel();
+
+            expectRejected(
+                model,
+                "return uf.elements.battle",
+                {"uf.elements", "namespace"}
+            );
+            expectRejected(
+                model,
+                "return uf.pages.home",
+                {"uf.pages", "namespace"}
+            );
         }
 
         TEST_CASE("A method call on the uf root is rejected: there are no verbs")
@@ -302,14 +318,14 @@ locator = "battle.default"
             auto const report = validateScriptResources(
                 "local d = ctx:deadline(1000)\n"
                 "local r = ctx:random(1, 6)\n"
-                "observe.wait_until(ctx, { page = uf.pages.home })\n"
+                "observe.wait_until(ctx, { surface = uf.surfaces.home })\n"
                 "return r",
                 "context-calls",
                 model
             );
             REQUIRE(report.has_value());
-            CHECK(report->elements.empty());
-            CHECK(report->pages == std::vector<std::string>{"home"});
+            CHECK(report->targets.empty());
+            CHECK(report->surfaces == std::vector<std::string>{"home"});
         }
 
         TEST_CASE("An error-kind literal validates and enumerates no resource")
@@ -329,8 +345,8 @@ locator = "battle.default"
                 model
             );
             REQUIRE(report.has_value());
-            CHECK(report->elements.empty());
-            CHECK(report->pages.empty());
+            CHECK(report->targets.empty());
+            CHECK(report->surfaces.empty());
         }
 
         TEST_CASE("A misspelled error kind is rejected before the VM exists")
@@ -338,7 +354,7 @@ locator = "battle.default"
             auto const model = buildModel();
             // Left as a runtime nil this makes every comparison against it
             // silently false, the failure the pre-VM pass closes for a missing
-            // element.
+            // target.
             expectRejected(
                 model,
                 "return uf.errors.time_out",
@@ -346,49 +362,49 @@ locator = "battle.default"
             );
         }
 
-        TEST_CASE("A reference to a missing element is rejected by name")
+        TEST_CASE("A reference to a missing target is rejected by ID")
         {
             auto const model = buildModel();
             expectRejected(
                 model,
-                "return uf.elements.does_not_exist",
-                {"does_not_exist", "element"}
+                "return uf.targets.does_not_exist",
+                {"does_not_exist", "target"}
             );
         }
 
-        TEST_CASE("A reference to a missing page is rejected by name")
+        TEST_CASE("A reference to a missing surface is rejected by ID")
         {
             auto const model = buildModel();
             expectRejected(
                 model,
-                "local p = uf.pages.does_not_exist\nreturn p",
-                {"does_not_exist", "page"}
+                "local s = uf.surfaces.does_not_exist\nreturn s",
+                {"does_not_exist", "surface"}
             );
         }
 
-        TEST_CASE("Every element the project file declares is a name a script may write")
+        TEST_CASE("Every target the project file declares is an ID a script may write")
         {
             auto const model = buildModel();
 
             // home_marker only identifies, and the project file draws no line
-            // between that and an interactive element, so it is a name a script
+            // between that and an interactive target, so it is an ID a script
             // may write.
             auto const report = validateScriptResources(
-                "return uf.elements.home_marker",
+                "return uf.targets.home_marker",
                 "anchor",
                 model
             );
             REQUIRE(report.has_value());
-            CHECK(report->elements == std::vector<std::string>{"home_marker"});
+            CHECK(report->targets == std::vector<std::string>{"home_marker"});
 
             // A project's own field under `extra` is never a resource, however
-            // exactly it copies a key this layer owns: the fixture's element
+            // exactly it copies a key this layer owns: the fixture's target
             // carries `name = "extra_alias"` there, and the reader must not have
-            // read it as the element's own name.
+            // read it as the target's own ID.
             expectRejected(
                 model,
-                "return uf.elements.extra_alias",
-                {"extra_alias", "declares no element"}
+                "return uf.targets.extra_alias",
+                {"extra_alias", "declares no target"}
             );
         }
 
@@ -400,7 +416,7 @@ locator = "battle.default"
             {
                 expectRejected(
                     model,
-                    "local u = uf\nreturn u.elements.battle",
+                    "local u = uf\nreturn u.targets.battle",
                     {"uf"}
                 );
             }
@@ -408,7 +424,7 @@ locator = "battle.default"
             {
                 expectRejected(
                     model,
-                    "local r = uf.elements\nreturn r.battle",
+                    "local r = uf.targets\nreturn r.battle",
                     {"uf"}
                 );
             }
@@ -439,13 +455,13 @@ locator = "battle.default"
             // pass.
             SUBCASE("indexing the namespace through the _G alias")
             {
-                expectRejected(model, "return _G.uf.pages.home", {"_G"});
+                expectRejected(model, "return _G.uf.surfaces.home", {"_G"});
             }
             SUBCASE("aliasing the namespace off _G")
             {
                 expectRejected(
                     model,
-                    "local u = _G.uf\nreturn u.elements.battle",
+                    "local u = _G.uf\nreturn u.targets.battle",
                     {"_G"}
                 );
             }
@@ -453,7 +469,7 @@ locator = "battle.default"
             {
                 expectRejected(
                     model,
-                    "local n = 'bat' .. 'tle'\nreturn _G.uf.elements[n]",
+                    "local n = 'bat' .. 'tle'\nreturn _G.uf.targets[n]",
                     {"_G"}
                 );
             }
@@ -461,7 +477,7 @@ locator = "battle.default"
             {
                 expectRejected(
                     model,
-                    "for k in pairs(_G.uf.elements) do end\nreturn 0",
+                    "for k in pairs(_G.uf.targets) do end\nreturn 0",
                     {"_G"}
                 );
             }
@@ -480,7 +496,7 @@ locator = "battle.default"
                 // promise.
                 expectRejected(
                     model,
-                    "return _G.uf.elements.does_not_exist",
+                    "return _G.uf.targets.does_not_exist",
                     {"_G"}
                 );
             }
@@ -491,7 +507,7 @@ locator = "battle.default"
             auto const model = buildModel();
             expectRejected(
                 model,
-                "local name = 'battle'\nreturn uf.elements[name]",
+                "local name = 'battle'\nreturn uf.targets[name]",
                 {"uf", "two-level"}
             );
         }
@@ -499,12 +515,12 @@ locator = "battle.default"
         TEST_CASE("Indexing past a two-level handle literal is rejected")
         {
             auto const model = buildModel();
-            // uf.elements.battle is a valid handle, but the only permitted
+            // uf.targets.battle is a valid resource ID, but the only permitted
             // spelling is the two-level literal itself; a field read off it is a
             // deeper chain and rejected as the wrong shape.
             expectRejected(
                 model,
-                "return uf.elements.battle.foo",
+                "return uf.targets.battle.foo",
                 {"uf", "two-level"}
             );
         }
@@ -522,11 +538,11 @@ locator = "battle.default"
         TEST_CASE("Calling a one-level field of the namespace is rejected")
         {
             auto const model = buildModel();
-            // uf.elements as a value is a one-level field access, and it is
+            // uf.targets as a value is a one-level field access, and it is
             // rejected whether it is called, aliased, or returned.
             expectRejected(
                 model,
-                "return uf.elements(uf)",
+                "return uf.targets(uf)",
                 {"uf"}
             );
         }

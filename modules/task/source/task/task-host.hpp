@@ -123,7 +123,7 @@ namespace uf::task
         // The VM's hard memory ceiling, or zero for the script layer's own
         // default. Here rather than left to that default because one caller's
         // need is a property of the FILE and not of a policy: the falsification
-        // matrix accumulates one row per element per screen and renders every
+        // matrix accumulates one row per target per capture and renders every
         // one, so a corpus that grows walks into a ceiling sized for a business
         // task. Luau throws the instant the accounting allocator refuses and
         // never collects and retries, so the ceiling is measured against live
@@ -133,7 +133,7 @@ namespace uf::task
         // budgeting the rows alone.
         uint64 memoryQuotaBytes{};
 
-        // There is no page-wait budget here: how long a task waits for a page and
+        // There is no surface-wait budget here: how long a task waits for a surface and
         // how often it re-observes are decided in Luau, where the wait loop lives.
 
         // Where this run's umbraflow-trace/v4 stream is written. One run writes
@@ -284,9 +284,9 @@ namespace uf::task
 
         ~TaskHost();
 
-        // Reads <projectRoot>/page-model.toml for the two things the host needs
+        // Reads <projectRoot>/page-model.toml for the envelope facts the host needs
         // before a VM exists -- the geometry the model was authored at, and the
-        // element and page names a script may spell -- and registers them as one
+        // target and surface IDs a script may spell -- and registers them as one
         // generation. Nothing observable happens here: a bad project fails before
         // any target is bound and before any trace file is opened.
         //
@@ -313,7 +313,7 @@ namespace uf::task
             TaskRunConfig config
         ) -> Result<TaskRunReport>;
 
-        // The geometry `generation`'s project was authored at, as its page model
+        // The geometry `generation`'s project was authored at, as its runtime model
         // states it. A live front-end measures this from the window it bound and
         // hands it back as TaskRunConfig::liveFingerprint, which is what makes the
         // engine's compatibility check mean something. A front-end whose frames
@@ -325,18 +325,19 @@ namespace uf::task
             GenerationId generation
         ) -> Result<ProjectFingerprint>;
 
-        // How many elements `generation`'s project declares, as its page model
-        // lists them. Here for the one caller that must size a run bound from the
-        // FILE rather than from a policy constant: the falsification matrix holds
-        // a row per measured cell, and this count times the screen count is the
+        // How many targets `generation`'s project declares. Here for the one
+        // caller that must size a run bound from the FILE rather than from a
+        // policy constant: the falsification matrix holds a row per measured
+        // target/capture cell, and this count times the capture count is the
         // lower bound it sizes the VM's memory from (entry/cli/check.cpp, where
-        // the gap between that bound and the true row count is stated). The
-        // pre-VM resource pass already reads the names, so this asks the flat
-        // line scan nothing new.
+        // the gap between that bound and the true row count is stated).
         [[nodiscard]]
-        auto projectElementCount(GenerationId generation) -> Result<std::size_t>;
+        auto projectTargetCount(GenerationId generation) -> Result<std::size_t>;
 
-        // The content address of `generation`'s page model, as the hex this host
+        [[nodiscard]]
+        auto projectSurfaceCount(GenerationId generation) -> Result<std::size_t>;
+
+        // The content address of `generation`'s runtime model, as the hex this host
         // stamps on `run.started`. It is here for the replay verb, which has to
         // compare the model a recorded run read against the one on disk now
         // BEFORE a VM boots -- the hash never reaches the script layer, so the
@@ -357,9 +358,9 @@ namespace uf::task
         //
         // It claims the CHECK front-end, so its stream is attributed to a run
         // that measures and delivers nothing, and a generation is never shared
-        // with a task run: a check tries every page against one frame, and a
-        // reader taking that for the sequence of pages a run walked would report
-        // transitions no page graph covers (trace::FrontEnd, and
+        // with a task run: a check tries every surface against one capture, and a
+        // reader taking that for the sequence of surfaces a run walked would report
+        // transitions no runtime graph covers (trace::FrontEnd, and
         // docs/plans/2026-08-04-state-layer-and-policy-slots.md 4.2). Two
         // routines may still share one generation in sequence.
         [[nodiscard]]

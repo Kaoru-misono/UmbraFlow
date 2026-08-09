@@ -18,8 +18,9 @@ namespace uf::task
         // the host installs after the bundle has already loaded.
         constexpr auto k_contextModule     = "ctx";
         constexpr auto k_declarationModule = "task";
-        // The script-owned page model: nouns, verbs and persistence live in
-        // trusted Luau and project scripts consume them by name.
+        // Runtime model construction, observation policy and offline analysis
+        // live in trusted Luau; project scripts consume only the published
+        // module surface below.
         constexpr auto k_modelModule   = "model";
         constexpr auto k_observeModule = "observe";
         constexpr auto k_projectModule = "project";
@@ -35,19 +36,18 @@ namespace uf::task
         // `evidence` is not here either, and for a stronger reason than mint's:
         // it is the ledger saying which hits and receipts this framework minted
         // and on which frame, so a project that could name it could mint a hit
-        // claiming interact on an element no page ever authorised and
+        // claiming an action for a target no surface ever authorised and
         // observe.click would accept it.
         constexpr auto k_navigationModule = "navigation";
-        // The falsification matrix. All four are published for `model`'s reason --
+        // The falsification matrix. These are published for `model`'s reason --
         // a project that grows its own screens or reads a verdict names them --
         // and the routine `umbra-flow check` runs reaches them through this list
         // rather than through a private route.
         //
-        // `reading` and `recognition` mint nothing -- their verbs read a region or
-        // resolve a page through the caller's own ctx and compare claims already
-        // in the file -- which is why they are published where `mint` is not.
+        // `recognition` mints nothing -- its verbs resolve a surface through the
+        // caller's own ctx and compare evidence in the file -- which is why it is
+        // published where `mint` is not.
         constexpr auto k_oracleModule      = "oracle";
-        constexpr auto k_readingModule     = "reading";
         constexpr auto k_recognitionModule = "recognition";
         constexpr auto k_regressModule     = "regress";
         // The trace library's checker, published for the same reason: the
@@ -57,16 +57,14 @@ namespace uf::task
         // capture -- so publishing it confers nothing a file could not already
         // compute.
         constexpr auto k_replayModule      = "replay";
-        // The two modules ONLY the exploration environment publishes. `explore`
-        // is the forwards for the privileged primitives -- the bare-coordinate
-        // click, the crop and the probe -- and `scribe` is the measure-and-author
-        // loop built on top of them. Neither is in the run list, which is the
+        // The module ONLY the exploration environment publishes. `explore` is
+        // the forwards for the privileged primitives -- the bare-coordinate
+        // click, the crop and the probe. It is not in the run list, which is the
         // whole of how a business script is kept from naming a bare click: the
         // project environment is a whitelist with no metatable, so a name that is
         // not published is not reachable by any route
         // (docs/plans/2026-07-29-three-layer-task-system.md 7).
         constexpr auto k_exploreModule = "explore";
-        constexpr auto k_scribeModule  = "scribe";
     }
 
     auto frameworkScriptModules() -> std::vector<script::FrameworkModule>
@@ -98,7 +96,6 @@ namespace uf::task
             std::string{k_hitsModule},
             std::string{k_navigationModule},
             std::string{k_oracleModule},
-            std::string{k_readingModule},
             std::string{k_recognitionModule},
             std::string{k_regressModule},
             std::string{k_replayModule},
@@ -109,7 +106,6 @@ namespace uf::task
     {
         auto names = frameworkProjectGlobals();
         names.emplace_back(k_exploreModule);
-        names.emplace_back(k_scribeModule);
         return names;
     }
 }

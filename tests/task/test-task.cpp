@@ -164,16 +164,16 @@ namespace uf::task
             }
         }
 
-        TEST_CASE("The retired element and page tables are absent rather than empty")
+        TEST_CASE("The retired target and surface tables are absent rather than empty")
         {
             auto engine = engineWithUfRoot();
             REQUIRE(engine.has_value());
 
-            // An empty table would let `uf.elements.whatever` read as nil and a
+            // An empty table would let `uf.targets.whatever` read as nil and a
             // script go on believing the surface exists. The tables are gone, so
             // the ROOT itself answers nil for them.
-            CHECK(truthy(*engine, "uf.elements == nil") == doctest::Approx(1.0));
-            CHECK(truthy(*engine, "uf.pages == nil") == doctest::Approx(1.0));
+            CHECK(truthy(*engine, "uf.targets == nil") == doctest::Approx(1.0));
+            CHECK(truthy(*engine, "uf.surfaces == nil") == doctest::Approx(1.0));
         }
 
         TEST_CASE("uf.errors holds exactly one constant per automation error kind")

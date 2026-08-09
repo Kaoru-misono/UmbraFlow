@@ -34,8 +34,8 @@ namespace uf::task
     //
     // The second environment lives here. The VM this owns is booted with the
     // Exploration private surface -- the run surface plus `cycle_crop` and `probe`
-    // -- and publishes two framework modules a run VM does not, `explore` and
-    // `scribe`. That pair of differences is the whole of the trust split (see
+    // -- and publishes the `explore` framework module a run VM does not. That
+    // difference is the whole of the trust split (see
     // task/script-bindings.hpp and task/framework-bundle.hpp); everything else
     // about the VM is identical to a task's, so an agent measures the system the
     // product actually ships.
@@ -85,9 +85,8 @@ namespace uf::task
 
             // The directory project_read and project_write are confined to. An
             // exploration session needs it where an operator session did not:
-            // `scribe` writes template assets and rewrites the model file, and
-            // both are project_write calls that must not be able to name the rest
-            // of the disk.
+            // exploration project I/O must not be able to name the rest of the
+            // disk.
             std::filesystem::path projectRoot{};
 
             // This session's RNG seed, drawn by the host and recorded in

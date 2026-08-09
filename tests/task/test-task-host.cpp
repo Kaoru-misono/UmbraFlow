@@ -55,24 +55,16 @@ namespace uf::task
 
     namespace
     {
-        constexpr auto k_sourceId = "00000000-0000-0000-0000-000000000301";
-        constexpr auto k_anchorId = "00000000-0000-0000-0000-000000000021";
-        constexpr auto k_actionId = "00000000-0000-0000-0000-000000000022";
-        constexpr auto k_pageId   = "00000000-0000-0000-0000-000000000121";
-
-        constexpr auto k_projectId = std::string_view{"personal.task_host"};
-
         // The task every run in this file drives: load a template, observe once,
-        // match it, click it. It also NAMES a page and an element, so the
+        // match it, click it. It also names a surface and a target, so the
         // run.resources_validated line carries a non-empty closure of each,
-        // resolved against page-model.toml by the pre-VM pass.
+        // resolved against the runtime model by the pre-VM pass.
         constexpr auto k_taskSource = std::string_view{
             // The two literals sit in a function the run never calls: the pre-VM
             // pass reads them off the AST, and the `uf` root carries no name
-            // tables to evaluate them against any more
-            // (docs/plans/2026-07-31-script-owned-page-model.md 9).
+            // tables to evaluate them against any more.
             "local function names()\n"
-            "    return uf.pages.home, uf.elements.daily_button\n"
+            "    return uf.surfaces.home, uf.targets.daily_button\n"
             "end\n"
             "local template = ctx:template_load(ctx:project_read(\"assets/daily.png\"))\n"
             "local cycle = ctx:cycle_open()\n"
@@ -82,40 +74,22 @@ namespace uf::task
             "return 1\n"
         };
 
-        // The page model the host reads, and the whole of what it reads out of
-        // it: the geometry rectangles were measured at, and the names a script
-        // may spell. Everything else in the file is layer two's.
-        constexpr auto k_pageModel = std::string_view{R"toml(
-schema = "umbraflow-project/l2-v2"
+        // The runtime model envelope the host reads, and the whole of what it
+        // reads out of it: geometry plus target and surface IDs. Everything else
+        // in the file is Luau's semantic authority.
+        constexpr auto k_runtimeModel = std::string_view{R"toml(
+schema_version = 1
 base_resolution = [3, 2]
 base_dpi = [96, 96]
 
-[[element]]
-name = "home_marker"
-form = "fixed"
-capabilities = ["identify"]
-rect = [0, 0, 3, 2]
+[[target]]
+id = "home_marker"
 
-[[element]]
-name = "daily_button"
-form = "fixed"
-capabilities = ["interact"]
-rect = [0, 0, 3, 2]
+[[target]]
+id = "daily_button"
 
-[[appearance]]
-element = "daily_button"
-name = "default"
-source = "assets/daily.png"
-threshold = 10000
-
-[[page]]
-name = "home"
-
-[[reference]]
-page = "home"
-element = "daily_button"
-holding = "owned"
-exercised = ["interact"]
+[[surface]]
+id = "home"
 )toml"};
 
         class TemporaryDir final
@@ -212,7 +186,7 @@ exercised = ["interact"]
             return test::fingerprint(3, 2, 96, 96);
         }
 
-        // Publishes a project at `root`: the page model, the one template the
+        // Publishes a project at `root`: the runtime model, the one template the
         // task searches for, and `tasks/<name>.luau`. TaskHost never executes a
         // loose-path script and reads no generated/annotations.runtime.toml any
         // more (docs/plans/2026-07-31-script-owned-page-model.md 9).
@@ -222,7 +196,7 @@ exercised = ["interact"]
             std::string_view taskSource
         ) -> void
         {
-            writeText(root / "page-model.toml", k_pageModel);
+            writeText(root / "page-model.toml", k_runtimeModel);
 
             // A one-by-one template of the source frame's first pixel, so a match
             // over the whole frame lands at a known position.
@@ -455,7 +429,8 @@ exercised = ["interact"]
         refuses(host.cancel(unknown), "cancel");
         refuses(host.queryTask(unknown), "queryTask");
         refuses(host.projectFingerprint(unknown), "projectFingerprint");
-        refuses(host.projectElementCount(unknown), "projectElementCount");
+        refuses(host.projectTargetCount(unknown), "projectTargetCount");
+        refuses(host.projectSurfaceCount(unknown), "projectSurfaceCount");
         refuses(
             host.startTask(unknown, "daily", runConfig(tracePath)),
             "startTask"
@@ -612,8 +587,8 @@ exercised = ["interact"]
 
         SUBCASE("a framework routine drives the check front-end, not the task one")
         {
-            // A run that only measures resolves every page it cares about
-            // against one frame, so a reader rebuilding the pages a run walked
+            // A run that only measures resolves every surface it cares about
+            // against one capture, so a reader rebuilding the surfaces a run walked
             // has to tell it from a task by something no script can reach or
             // spell. The stamp is that thing; the routine's NAME is not, which
             // is why the routine below is named like a task.
@@ -765,25 +740,24 @@ exercised = ["interact"]
 
         // Every constructor records what it minted so a look-alike can be
         // refused later. Recording it is not the same as keeping it: a project
-        // model is minted once per load and dropped, and holding those entries
+        // model is minted once per load and dropped, and retaining those entries
         // strongly is what let one exploration session walk into the VM's
         // memory ceiling after roughly 150 loads.
         constexpr auto k_mintFiveHundred = std::string_view{
             R"lua(
                 for index = 1, 500 do
-                    model.Element.new({
-                        name          = 'element' .. index,
-                        form          = "fixed",
-                        capabilities  = { 'read' },
-                        rect          = { x = 0, y = 0, width = 10, height = 10 },
-                        expected_text = 'text',
+                    model.Target.new({
+                        id       = 'target' .. index,
+                        kind     = "region",
+                        locators = {},
+                        readers  = {},
                     })
                 end
                 return 1
             )lua"
         };
 
-        // The first round pays costs that are one-time rather than per-element
+        // The first round pays costs that are one-time rather than per-target
         // -- the allocator's own growth, the strings this chunk interns -- so
         // the baseline is taken after it and not before.
         REQUIRE((*session)->evaluate(k_mintFiveHundred, "warm").has_value());
@@ -795,7 +769,7 @@ exercised = ["interact"]
         }
         auto const settled = (*session)->heapUsage().usedBytes;
 
-        // Two thousand further elements. Measured at about a kilobyte each when
+        // Two thousand further targets. Measured at about a kilobyte each when
         // the registries held them, which is some two megabytes; released, the
         // reading moves only by the allocator's page granularity, and moves
         // DOWN as often as up.
@@ -992,7 +966,7 @@ exercised = ["interact"]
         // it sits under -- a line inside the framework -- and the author reads a
         // traceback into code they cannot edit.
         auto const refused = (*session)->evaluate(
-            "observe.resolve_page(nil, nil, nil)",
+            "observe.resolve(nil, nil, nil)",
             "callersfault"
         );
         REQUIRE_FALSE(refused.has_value());
@@ -1301,7 +1275,7 @@ exercised = ["interact"]
         REQUIRE(loaded.has_value());
         CHECK(report->sourceHash == loaded->hash.hex());
 
-        auto const hashed = sha256(std::as_bytes(std::span{k_pageModel}));
+        auto const hashed = sha256(std::as_bytes(std::span{k_runtimeModel}));
         REQUIRE(hashed.has_value());
         auto const& modelHash = *hashed;
 
@@ -1347,7 +1321,7 @@ exercised = ["interact"]
                 // (docs/plans/2026-07-31-script-owned-page-model.md 9).
                 temp.path().filename().string(),
                 report->sourceHash,
-                // The page model this run stood on, by content. Hashed here from
+                // The runtime model this run stood on, by content. Hashed here from
                 // the fixture's own text, so the line is checked against the file
                 // rather than against whatever the host happened to record.
                 modelHash.hex(),
@@ -1361,7 +1335,7 @@ exercised = ["interact"]
             lines[1]
             == R"({"schema":"umbraflow-trace/v4","kind":"run.resources_validated")"
                R"(,"seq":2,"runId":1,"generationId":1,"frontEnd":"task")"
-               R"(,"elements":["daily_button"],"pages":["home"]})"
+               R"(,"targets":["daily_button"],"surfaces":["home"]})"
         );
         CHECK(
             lines.back()

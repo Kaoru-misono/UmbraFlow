@@ -139,13 +139,11 @@ if(TARGET ${PROJECT_NAME}_task)
             task/test-task-host.cpp
             task/test-determinism-harness.cpp
             task/test-exploration.cpp
-            task/test-annotation-routines.cpp
             task/test-colour-key-crop.cpp
             task/test-framework-bundle.cpp
             task/test-framework-context.cpp
             task/test-framework-surface.cpp
             task/test-script-owned-primitives.cpp
-            task/test-script-owned-model.cpp
             task/test-semantic-events.cpp
             task/test-veto-blocking.cpp
             task/test-task-loader.cpp

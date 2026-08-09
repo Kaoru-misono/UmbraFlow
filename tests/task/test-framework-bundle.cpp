@@ -46,7 +46,6 @@ namespace uf::task
                 std::string{"hits"},
                 std::string{"navigation"},
                 std::string{"oracle"},
-                std::string{"reading"},
                 std::string{"recognition"},
                 std::string{"regress"},
                 std::string{"replay"},

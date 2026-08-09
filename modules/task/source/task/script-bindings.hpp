@@ -36,11 +36,12 @@ namespace uf::task
     //
     // The PUBLIC one is data: the frozen global `uf`, carrying the error-kind
     // constants and nothing else. A project script may name it because none of it
-    // can act. Its `elements` and `pages` name tables are gone -- layer two reads
-    // the project file and hands a script its own element and page objects
+    // can act. Its target and surface name tables are gone -- layer two reads
+    // the project file and hands a script its own target and surface objects
     // (docs/plans/2026-07-31-script-owned-page-model.md 9) -- and what survives of
     // them is the pre-VM check in task/script-validator.hpp, which resolves a
-    // `uf.elements.<name>` literal against the project file instead.
+    // `uf.targets.<id>` or `uf.surfaces.<id>` literal against the project file
+    // instead.
     //
     // The PRIVATE one is capability: the observation-cycle primitives, the time
     // primitives, raise and random. It is never registered as a global and never

@@ -37,7 +37,7 @@ namespace uf::trace
     inline constexpr auto k_nonGoldenMember = std::string_view{"meta"};
 
     // An audit log, not a replay log: nothing here records a frame's pixels, a
-    // page's anchor evidence, or the arguments of a project call. Replay rests on
+    // surface's anchor evidence, or the arguments of a project call. Replay rests on
     // the seed in run.started plus the observation sequence a test hands its fake
     // frame source.
     //
@@ -76,15 +76,15 @@ namespace uf::trace
         // (docs/plans/2026-08-01-agent-front-end-and-exploration.md).
         Annotation,
 
-        // A run that measures screens and delivers no input at all: the
+        // A run that measures captures and delivers no input at all: the
         // falsification matrix `umbra-flow check` walks, and the offline
         // trace-replay checker planned beside it. Delivering nothing is the
         // whole boundary against the other two, which both act on a target, and
         // it is why one name covers both of those runs.
         //
-        // A measuring run tries every page it cares about against one frame, so
-        // it stands on no page in the sense a task does. A reader rebuilding the
-        // pages a run walked out of framework.page_resolved therefore excludes
+        // A measuring run tries every surface it cares about against one capture,
+        // so it stands on no surface in the sense a task does. A reader rebuilding
+        // the surfaces a run walked out of framework.page_resolved therefore excludes
         // this front-end
         // (docs/plans/2026-08-04-state-layer-and-policy-slots.md 4.2).
         Check,
@@ -149,37 +149,37 @@ namespace uf::trace
         FrameworkInterruptExhausted,
         FrameworkSettled,
 
-        // Which page one resolution concluded the frame was on, carried in
+        // Which surface one resolution concluded the frame was on, carried in
         // Framework::label. Additive, and written only where a resolution
-        // SUCCEEDS: a caller tries every page it cares about against one frame,
-        // so recording the refusals would give one line per page tried rather
-        // than the sequence of pages the run believed it walked. That sequence
+        // SUCCEEDS: a caller tries every surface it cares about against one capture,
+        // so recording the refusals would give one line per surface tried rather
+        // than the sequence of surfaces the run believed it walked. That sequence
         // is what an offline trace-replay check reads
         // (docs/plans/2026-08-04-state-layer-and-policy-slots.md 4.2).
         //
         // The one framework.* kind admitted on every stream, because it claims
         // no framework structure and the exploration front-end resolves against
-        // the same page model; see stream-validator.hpp.
+        // the same runtime model; see stream-validator.hpp.
         FrameworkPageResolved,
 
-        // Which element a click was authorised against, written by the framework
+        // Which target a click was authorised against, written by the framework
         // where it authorises one and never by the engine, which does not know:
-        // the page model is the script's and `engine.action_delivered` carries
+        // the runtime model is the script's and `engine.action_delivered` carries
         // the frame identity and the client point alone. Without it a replay can
         // attribute a keystroke to an edge -- `engine.key_delivered` names the
         // key -- and cannot attribute a click to any
         // (docs/plans/2026-08-04-state-layer-and-policy-slots.md 4.2).
         //
-        // It names the element and NOT the page. The page that authorises a
-        // click is the page whose receipt was passed, and `requireAuthorisedHit`
+        // It names the target and NOT the surface. The surface that authorises a
+        // click is the surface whose receipt was passed, and `requireAuthorisedHit`
         // already refuses a receipt minted on another cycle or belonging to
-        // another page -- so the authorising page is the last one resolved on
+        // another surface -- so the authorising surface is the last one resolved on
         // this observation, and writing it again would be one more thing that
         // can disagree rather than one more fact.
         FrameworkElementClicked,
 
         // The two verbs the exploration front-end has and no other does,
-        // spelled `annotation.*` because neither names an element or a page
+        // spelled `annotation.*` because neither names a target or a surface
         // (docs/plans/2026-08-01-agent-front-end-and-exploration.md 1).
         AnnotationClickDelivered,
         AnnotationRegionSaved,
@@ -294,10 +294,10 @@ namespace uf::trace
             std::string projectId{};
             std::string taskName{};
             std::string sourceHash{};
-            // The page model this run read, by content. It answers a question
+            // The runtime model this run read, by content. It answers a question
             // `sourceHash` cannot: two runs of one task against two edits of the
             // model are the same script over different facts, and a replay
-            // checker comparing a trace's page transitions against today's edges
+            // checker comparing a trace's surface transitions against today's edges
             // has to refuse when this is not today's model.
             std::string modelHash{};
             std::string frameworkVersion{};
@@ -306,13 +306,13 @@ namespace uf::trace
             uint64      seed{};
         };
 
-        // The validated resource closure of the run. Both lists are sorted before
-        // emission, so an unordered container's iteration order can never reach
-        // the wire.
+        // The validated target/surface closure of the run. Both lists are sorted
+        // before emission, so an unordered container's iteration order can never
+        // reach the wire.
         struct Resources final
         {
-            std::vector<std::string> elements{};
-            std::vector<std::string> pages{};
+            std::vector<std::string> targets{};
+            std::vector<std::string> surfaces{};
         };
 
         // One call from the script layer into the host capability surface, with
@@ -367,7 +367,7 @@ namespace uf::trace
         // silently empty line.
         struct Framework final
         {
-            // A step's name, an interrupt's id, or the page a resolution
+            // A step's name, an interrupt's id, or the surface a resolution
             // concluded on. Length, character set and the total open-step budget
             // are enforced before the event is admitted; an over-budget label is
             // rejected, never truncated, because a truncated name silently
@@ -422,7 +422,7 @@ namespace uf::trace
 
         // Fields that cut across the groups above. A template is named by the
         // SHA-256 of the bytes the script layer loaded, because that is the only
-        // name it has: it belongs to no catalog element, and no element identity
+        // name it has: it belongs to no catalog target, and no target identity
         // reaches this wire at all.
         std::optional<std::string> templateHash{};
 

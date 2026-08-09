@@ -218,8 +218,6 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 if ctx.cycle_click_point ~= nil then return 0 end
                 if explore ~= nil then return 0 end
-                if scribe ~= nil then return 0 end
-
                 -- The control: the environment is otherwise the real one, and
                 -- the verbs a task IS meant to have are still here.
                 if type(ctx.cycle_open) ~= "function" then return 0 end
@@ -257,7 +255,7 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
         }
 
-        TEST_CASE("The exploration surface carries all three privileged verbs")
+        TEST_CASE("The exploration surface carries its privileged verbs")
         {
             auto harness = buildColourHarness(
                 trace::FrontEnd::Annotation,
@@ -270,7 +268,6 @@ namespace uf::task
                 if not explore.has("cycle_crop") then return 0 end
                 if not explore.has("probe") then return 0 end
                 if not explore.has("cycle_click_point") then return 0 end
-                if type(scribe.measure) ~= "function" then return 0 end
                 return 1
             )lua";
 

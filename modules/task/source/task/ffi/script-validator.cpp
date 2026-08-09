@@ -53,17 +53,17 @@ namespace uf::task
         // The canonical script-visible root. It carries data alone, so every
         // reference must be one of the approved two-level literal accesses and
         // any other contact is rejected (annotation-design 4). There is no verb
-        // form: the capability surface lives in the trusted framework's closure,
+        // form: the native surface lives in the trusted framework's closure,
         // so `uf:anything(...)` names nothing and is rejected here rather than
         // left to fail as a runtime nil call.
         constexpr auto k_namespace = "uf";
 
-        // The resource sub-namespaces that carry named handles, plus the
+        // The resource sub-namespaces that carry named IDs, plus the
         // error-kind constants. errors is validated the same way but is host
         // vocabulary, so a reference to it never enters the resource report.
-        constexpr auto k_elementsTable = "elements";
-        constexpr auto k_pagesTable       = "pages";
-        constexpr auto k_errorsTable      = "errors";
+        constexpr auto k_targetsTable  = "targets";
+        constexpr auto k_surfacesTable = "surfaces";
+        constexpr auto k_errorsTable   = "errors";
 
         // `_G` is the reflexive handle to the whole global environment, so any
         // chain rooted at it (_G.uf, rawget(_G, 'uf')) reaches the uf namespace
@@ -104,8 +104,8 @@ namespace uf::task
 
         // Whether a pure dot/colon member-access chain from `expr` bottoms out at
         // the global uf. Any other link -- a parenthesised group, a call, a
-        // computed index -- breaks the chain, which is what makes (uf).elements.x
-        // and uf.elements[x].y fall through to their own rejections rather than
+        // computed index -- breaks the chain, which is what makes (uf).targets.x
+        // and uf.targets[x].y fall through to their own rejections rather than
         // being mistaken for an approved access.
         [[nodiscard]]
         auto rootsAtNamespace(Luau::AstExpr* expr) -> bool
@@ -126,26 +126,26 @@ namespace uf::task
         // parse; never reused across scripts.
         class ResourceVisitor final : public Luau::AstVisitor
         {
-            std::unordered_set<std::string_view> m_elementNames{};
-            std::unordered_set<std::string_view> m_pageNames{};
+            std::unordered_set<std::string_view> m_targetIds{};
+            std::unordered_set<std::string_view> m_surfaceIds{};
 
-            std::unordered_set<std::string> m_referencedElements{};
-            std::unordered_set<std::string> m_referencedPages{};
+            std::unordered_set<std::string> m_referencedTargets{};
+            std::unordered_set<std::string> m_referencedSurfaces{};
 
             std::optional<std::string> m_failure{};
 
         public:
             // The views borrow `model`'s strings; the visitor is built, used and
             // dropped inside validateScriptResources, which keeps them alive.
-            explicit ResourceVisitor(PageModelFacts const& model)
+            explicit ResourceVisitor(RuntimeModelEnvelope const& model)
             {
-                for (auto const& name : model.elementNames)
+                for (auto const& id : model.targetIds)
                 {
-                    m_elementNames.insert(name);
+                    m_targetIds.insert(id);
                 }
-                for (auto const& name : model.pageNames)
+                for (auto const& id : model.surfaceIds)
                 {
-                    m_pageNames.insert(name);
+                    m_surfaceIds.insert(id);
                 }
             }
 
@@ -161,16 +161,16 @@ namespace uf::task
             auto takeReport() -> ScriptResourceReport
             {
                 auto report = ScriptResourceReport{};
-                report.elements.assign(
-                    std::make_move_iterator(m_referencedElements.begin()),
-                    std::make_move_iterator(m_referencedElements.end())
+                report.targets.assign(
+                    std::make_move_iterator(m_referencedTargets.begin()),
+                    std::make_move_iterator(m_referencedTargets.end())
                 );
-                report.pages.assign(
-                    std::make_move_iterator(m_referencedPages.begin()),
-                    std::make_move_iterator(m_referencedPages.end())
+                report.surfaces.assign(
+                    std::make_move_iterator(m_referencedSurfaces.begin()),
+                    std::make_move_iterator(m_referencedSurfaces.end())
                 );
-                std::sort(report.elements.begin(), report.elements.end());
-                std::sort(report.pages.begin(), report.pages.end());
+                std::sort(report.targets.begin(), report.targets.end());
+                std::sort(report.surfaces.begin(), report.surfaces.end());
                 return report;
             }
 
@@ -188,7 +188,7 @@ namespace uf::task
                     recordFailure(
                         node->location,
                         "the uf namespace may be used only as "
-                        "uf.elements.<name>, uf.pages.<name> or "
+                        "uf.targets.<id>, uf.surfaces.<id> or "
                         "uf.errors.<kind>; it cannot be aliased, indexed "
                         "dynamically, iterated, passed, or returned"
                     );
@@ -203,7 +203,7 @@ namespace uf::task
                         "the raw global environment '_G' is not accessible from a "
                         "task script; it is an alias door to the uf namespace and "
                         "every other global, so reach the named resources only "
-                        "through uf.elements.<name>, uf.pages.<name> and "
+                        "through uf.targets.<id>, uf.surfaces.<id> and "
                         "uf.errors.<kind>"
                     );
                     return false;
@@ -219,7 +219,7 @@ namespace uf::task
                 }
                 if (!rootsAtNamespace(node))
                 {
-                    // Not uf-rooted (e.g. frame:find, page.field on a local):
+                    // Not uf-rooted (e.g. frame:find, local.field on a local):
                     // keep walking so nested uf references are still checked.
                     return true;
                 }
@@ -241,7 +241,7 @@ namespace uf::task
             }
 
             // Classifies a uf-rooted member-access chain. The only approved
-            // shape is exactly two dot levels, uf.(elements|pages|errors).<name>;
+            // shape is exactly two dot levels, uf.(targets|surfaces|errors).<id>;
             // a one-level field, a deeper chain, a colon index and an unknown
             // sub-namespace are all rejected.
             void classifyResourceAccess(Luau::AstExprIndexName* node)
@@ -256,14 +256,14 @@ namespace uf::task
                         {
                             std::string_view const table = nameView(mid->index);
                             std::string_view const leaf  = nameView(node->index);
-                            if (table == k_elementsTable)
+                            if (table == k_targetsTable)
                             {
-                                resolveElement(leaf, node->location);
+                                resolveTarget(leaf, node->location);
                                 return;
                             }
-                            if (table == k_pagesTable)
+                            if (table == k_surfacesTable)
                             {
-                                resolvePage(leaf, node->location);
+                                resolveSurface(leaf, node->location);
                                 return;
                             }
                             if (table == k_errorsTable)
@@ -274,8 +274,8 @@ namespace uf::task
                             recordFailure(
                                 mid->location,
                                 "'uf." + std::string{table}
-                                    + "' is not a capability namespace; only "
-                                      "uf.elements, uf.pages and uf.errors "
+                                    + "' is not a resource namespace; only "
+                                      "uf.targets, uf.surfaces and uf.errors "
                                       "exist"
                             );
                             return;
@@ -286,38 +286,38 @@ namespace uf::task
                     node->location,
                     "'" + std::string{k_namespace}
                         + "' is only accessible as the two-level literals "
-                          "uf.elements.<name>, uf.pages.<name> and "
+                          "uf.targets.<id>, uf.surfaces.<id> and "
                           "uf.errors.<kind>; this access has the wrong shape"
                 );
             }
 
-            // Resolves an element leaf against the set the project file
+            // Resolves a target ID against the set the project file
             // declares, recording the reference or a missing-resource failure.
-            void resolveElement(std::string_view name, Luau::Location const& location)
+            void resolveTarget(std::string_view id, Luau::Location const& location)
             {
-                if (m_elementNames.contains(name))
+                if (m_targetIds.contains(id))
                 {
-                    m_referencedElements.insert(std::string{name});
+                    m_referencedTargets.insert(std::string{id});
                     return;
                 }
                 recordFailure(
                     location,
-                    "this project's page model declares no element named '"
-                        + std::string{name} + "'"
+                    "this runtime model declares no target with id '"
+                        + std::string{id} + "'"
                 );
             }
 
-            void resolvePage(std::string_view name, Luau::Location const& location)
+            void resolveSurface(std::string_view id, Luau::Location const& location)
             {
-                if (m_pageNames.contains(name))
+                if (m_surfaceIds.contains(id))
                 {
-                    m_referencedPages.insert(std::string{name});
+                    m_referencedSurfaces.insert(std::string{id});
                     return;
                 }
                 recordFailure(
                     location,
-                    "this project's page model declares no page named '"
-                        + std::string{name} + "'"
+                    "this runtime model declares no surface with id '"
+                        + std::string{id} + "'"
                 );
             }
 
@@ -346,7 +346,7 @@ namespace uf::task
     auto validateScriptResources(
         std::string_view source,
         std::string_view chunkName,
-        PageModelFacts const& model
+        RuntimeModelEnvelope const& model
     ) -> Result<ScriptResourceReport>
     {
         auto const chunk = std::string{chunkName};

@@ -182,7 +182,7 @@ namespace uf::trace
 
     TEST_CASE("serializeTraceEvent emits every populated group in schema order")
     {
-        // Deliberately synthetic: no real event carries a page group, an action
+        // Deliberately synthetic: no real event carries a surface group, an action
         // group and a click at once. It pins the field order the golden lines
         // below depend on, so a reordering breaks here once rather than everywhere.
         auto event = TraceEvent{
@@ -209,8 +209,8 @@ namespace uf::trace
                 .seed             = uint64{42},
             },
             .resources = TraceEvent::Resources{
-                .elements = {"accept"},
-                .pages    = {"home"},
+                .targets  = {"accept"},
+                .surfaces = {"home"},
             },
             .nativeCall = TraceEvent::NativeCall{
                 .verb            = "click",
@@ -236,7 +236,7 @@ namespace uf::trace
             ",\"sourceHash\":\"abc123\",\"modelHash\":\"m0d3l\""
             ",\"frameworkVersion\":\"0.1.0\""
             ",\"frameworkHash\":\"def456\",\"luauVersion\":\"6\",\"seed\":42"
-            ",\"elements\":[\"accept\"],\"pages\":[\"home\"]"
+            ",\"targets\":[\"accept\"],\"surfaces\":[\"home\"]"
             ",\"verb\":\"click\",\"cycleOrdinal\":4,\"hitCycleOrdinal\":5"
             ",\"outcome\":\"Succeeded\""
             ",\"templateHash\":\"sha256:abcdef\""
@@ -381,16 +381,16 @@ namespace uf::trace
         auto const event = TraceEvent{
             .kind      = TraceEventKind::RunResourcesValidated,
             .resources = TraceEvent::Resources{
-                .elements = {"battle", "accept", "daily"},
-                .pages    = {"main", "home"},
+                .targets  = {"battle", "accept", "daily"},
+                .surfaces = {"main", "home"},
             },
         };
 
         auto constexpr expected = std::string_view{
             "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.resources_validated\""
             ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-            ",\"elements\":[\"accept\",\"battle\",\"daily\"]"
-            ",\"pages\":[\"home\",\"main\"]}"
+            ",\"targets\":[\"accept\",\"battle\",\"daily\"]"
+            ",\"surfaces\":[\"home\",\"main\"]}"
         };
 
         CHECK(goldenLine(event) == expected);
@@ -406,7 +406,7 @@ namespace uf::trace
         auto constexpr expected = std::string_view{
             "{\"schema\":\"umbraflow-trace/v4\",\"kind\":\"run.resources_validated\""
             ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
-            ",\"elements\":[],\"pages\":[]}"
+            ",\"targets\":[],\"surfaces\":[]}"
         };
 
         CHECK(goldenLine(event) == expected);
@@ -895,7 +895,7 @@ namespace uf::trace
                     .has_value()
             );
 
-            // A page, a keystroke, a page, a click, a page: the shape a walk
+            // A surface, a keystroke, a surface, a click, a surface: the shape a walk
             // leaves behind. The observation event between them is a kind this
             // projection does not carry and must not choke on.
             auto const page = [&](std::string_view name) -> void
@@ -1021,7 +1021,7 @@ namespace uf::trace
         CHECK(run->steps[6].label == "node_reward");
 
         // The two halves of one click, in the order the framework writes them:
-        // which element the page authorised, then whether it reached the target.
+        // which target the surface authorised, then whether it reached the target.
         // The authorisation is what a replay attributes an edge to; a delivery
         // names nothing of its own.
         CHECK(run->steps[3].kind == ReplayStepKind::ElementClicked);
@@ -1039,11 +1039,11 @@ namespace uf::trace
         std::filesystem::remove(path);
     }
 
-    TEST_CASE("A page name outside ASCII survives the projection whole")
+    TEST_CASE("A surface name outside ASCII survives the projection whole")
     {
-        // Page names are bounded at the host's label ceiling in BYTES precisely
+        // Surface names are bounded at the host's label ceiling in BYTES precisely
         // because they are written to this stream, and a project may name its
-        // pages in its own script. `escapeJsonString` passes every byte above
+        // surfaces in its own script. `escapeJsonString` passes every byte above
         // 0x1F through unchanged, so the only way this breaks is a reader that
         // decodes what the writer never encoded.
         auto lines    = std::vector<std::string>{};
@@ -1130,8 +1130,8 @@ namespace uf::trace
     TEST_CASE("A check's own trace projects as a check")
     {
         // The one fact the replay checker gates on: `umbra-flow check` drives the
-        // same page resolution and so writes the same steps, and a checker that
-        // read one as a run would report a task that stood on dozens of pages
+        // same surface resolution and so writes the same steps, and a checker that
+        // read one as a run would report a task that stood on dozens of surfaces
         // without delivering anything
         // (docs/plans/2026-08-04-state-layer-and-policy-slots.md 4.2).
         auto const path =
@@ -1174,9 +1174,9 @@ namespace uf::trace
 
             // And the boundary that makes the exclusion structural rather than a
             // convention: a check delivers no input, so the line naming the
-            // element a click was authorised against cannot reach this stream at
-            // all. The page resolution above can, because a run that only
-            // measures resolves against the same page model a task does.
+            // target a click was authorised against cannot reach this stream at
+            // all. The surface resolution above can, because a run that only
+            // measures resolves against the same runtime model a task does.
             CHECK_FALSE(
                 recorder
                     .emit(
@@ -1200,9 +1200,9 @@ namespace uf::trace
         std::filesystem::remove(path);
     }
 
-    TEST_CASE("A stream that names no page model is refused")
+    TEST_CASE("A stream that names no runtime model is refused")
     {
-        // A replay is a check of one run against one model. A stream that does
+        // A replay is a check of one run against one runtime model. A stream that does
         // not say which model it read cannot be checked against any -- every
         // finding would be about edges that may never have been in the file --
         // so it is refused here rather than handed on as an empty hash for

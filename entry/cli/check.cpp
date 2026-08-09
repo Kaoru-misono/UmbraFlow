@@ -265,12 +265,12 @@ return #verdict.findings
 
         [[nodiscard]]
         auto memoryQuotaForCheck(
-            std::size_t declaredElements,
+            std::size_t declaredTargets,
             std::size_t screensOnDisk
         ) noexcept -> uint64
         {
             return k_baseCheckMemoryBytes
-                + uint64{declaredElements} * uint64{screensOnDisk}
+                + uint64{declaredTargets} * uint64{screensOnDisk}
                 * k_memoryPerMatrixCellBytes;
         }
     }
@@ -280,7 +280,7 @@ return #verdict.findings
         auto host = task::TaskHost{};
         UF_TRY_VALUE(generation, host.loadProject(args.project));
         UF_TRY_VALUE(fingerprint, host.projectFingerprint(generation));
-        UF_TRY_VALUE(declaredElements, host.projectElementCount(generation));
+        UF_TRY_VALUE(declaredTargets, host.projectTargetCount(generation));
 
         // The same binding `run` and `explore` use, so a cell the matrix
         // reads is read by the engine a run would have used. Built before the
@@ -320,7 +320,7 @@ return #verdict.findings
                     .maximumReadsPerCycle = k_uncappedReadsPerCycle,
                     // See memoryQuotaForCheck.
                     .memoryQuotaBytes = memoryQuotaForCheck(
-                        declaredElements,
+                        declaredTargets,
                         screensOnDisk
                     ),
                     .tracePath = args.trace,

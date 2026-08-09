@@ -19,16 +19,16 @@ namespace uf::task
     // the ffi boundary and are reached only through validateScriptResources.
     struct ScriptResourceReport final
     {
-        std::vector<std::string> elements{};
-        std::vector<std::string> pages{};
+        std::vector<std::string> targets{};
+        std::vector<std::string> surfaces{};
     };
 
     // Proves, before any Luau VM is created, that `source` (compiled under chunk
     // name `chunkName`) reaches the uf namespace only through the canonical
-    // literal spellings -- uf.elements.<name>, uf.pages.<name> and
+    // literal spellings -- uf.targets.<id>, uf.surfaces.<id> and
     // uf.errors.<kind> direct member access -- and that every named resource is
     // one `model` declares. Every reference is enumerated and closed here, so a
-    // script naming a page or an element the project file does not declare fails
+    // script naming a target or a surface the project file does not declare fails
     // before the VM exists (docs/plans/2026-07-31-script-owned-page-model.md 6).
     //
     // An error-kind leaf is resolved against AutomationErrorKind's wire spellings,
@@ -37,8 +37,8 @@ namespace uf::task
     // vocabulary fixed for the binary, not project resources.
     //
     // Every other contact with the uf global is rejected: a namespace or handle
-    // alias (local r = uf, local r = uf.elements), a computed index
-    // (uf.elements[name]), dynamic traversal (pairs(uf)), passing or returning it,
+    // alias (local r = uf, local r = uf.targets), a computed index
+    // (uf.targets[name]), dynamic traversal (pairs(uf)), passing or returning it,
     // and a method call (uf:anything(...)) -- the root carries data alone, so
     // there is no verb form to approve. A syntax error is likewise rejected. Every
     // failure is AutomationErrorKind::InvalidResource and names the offending
@@ -49,6 +49,6 @@ namespace uf::task
     auto validateScriptResources(
         std::string_view source,
         std::string_view chunkName,
-        PageModelFacts const& model
+        RuntimeModelEnvelope const& model
     ) -> Result<ScriptResourceReport>;
 }

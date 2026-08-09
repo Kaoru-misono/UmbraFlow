@@ -463,10 +463,13 @@ namespace uf::trace
         if (event.resources.has_value())
         {
             builder.addStringArray(
-                "elements",
-                sortedCopy(event.resources->elements)
+                "targets",
+                sortedCopy(event.resources->targets)
             );
-            builder.addStringArray("pages", sortedCopy(event.resources->pages));
+            builder.addStringArray(
+                "surfaces",
+                sortedCopy(event.resources->surfaces)
+            );
         }
 
         if (event.nativeCall.has_value())

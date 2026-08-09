@@ -65,7 +65,7 @@ namespace uf::task
     auto frameworkScriptModules() -> std::vector<script::FrameworkModule>;
 
     // The framework module names a project script may name, in the shape
-    // script::EngineConfig::frameworkProjectGlobals takes. Twelve of the
+    // script::EngineConfig::frameworkProjectGlobals takes. Eleven of the
     // bundle's modules are published here, `ctx` and `task` among them -- the
     // context object a task uses while it runs, and the declaration surface it
     // registers its interrupts through. The exclusions carry the meaning:
@@ -79,7 +79,7 @@ namespace uf::task
     [[nodiscard]]
     auto frameworkProjectGlobals() -> std::vector<std::string>;
 
-    // The same list for an exploration VM, plus `explore` and `scribe`. The
+    // The same list for an exploration VM, plus `explore`. The
     // difference between the two lists IS the isolation: a project environment is
     // an explicit whitelist with no metatable, and publishing a framework export
     // copies the value rather than opening a chain, so a run environment does not
@@ -87,8 +87,8 @@ namespace uf::task
     // path from anything it does have to the module's table
     // (docs/plans/2026-07-29-three-layer-task-system.md 7).
     //
-    // Both modules load in EVERY VM, because the bundle is one bundle. What they
-    // reach differs: `explore` forwards primitives that are absent from a run VM's
+    // `explore` loads in EVERY VM, because the bundle is one bundle. What it
+    // reaches differs: it forwards primitives that are absent from a run VM's
     // private surface, so on such a VM its verbs raise instead of acting.
     [[nodiscard]]
     auto explorationProjectGlobals() -> std::vector<std::string>;

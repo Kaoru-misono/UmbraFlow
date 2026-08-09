@@ -213,42 +213,94 @@ namespace uf::task
         }
 
         [[nodiscard]]
-        auto recordName(
+        auto isIdentifier(std::string_view value) noexcept -> bool
+        {
+            if (value.empty() || value.size() > 128U)
+            {
+                return false;
+            }
+
+            auto const isAlpha = [](char character) noexcept -> bool
+            {
+                return character >= 'a' && character <= 'z';
+            };
+            auto const isDigit = [](char character) noexcept -> bool
+            {
+                return character >= '0' && character <= '9';
+            };
+            if (!isAlpha(value.front()))
+            {
+                return false;
+            }
+
+            auto needsSegmentStart = false;
+            for (auto const character : value.substr(1))
+            {
+                if (isAlpha(character) || isDigit(character))
+                {
+                    needsSegmentStart = false;
+                    continue;
+                }
+                if (
+                    character == '.' || character == '_' || character == '-'
+                )
+                {
+                    if (needsSegmentStart)
+                    {
+                        return false;
+                    }
+                    needsSegmentStart = true;
+                    continue;
+                }
+                return false;
+            }
+            return !needsSegmentStart;
+        }
+
+        auto recordId(
             std::vector<std::string>& names,
             std::string_view kind,
-            std::string_view name
+            std::string_view id
         ) -> Status
         {
-            if (name.empty())
+            if (!isIdentifier(id))
             {
                 return invalidModel(
-                    std::format("this runtime model declares an empty {} id", kind)
+                    std::format(
+                        "this runtime model declares {} id '{}' with an invalid "
+                        "identifier; ids must start with a lowercase letter and "
+                        "contain only lowercase letters, digits, '.', '_' or '-' "
+                        "between non-empty segments, up to 128 characters",
+                        kind,
+                        id
+                    )
                 );
             }
-            if (std::ranges::contains(names, name))
+            if (std::ranges::contains(names, id))
             {
                 return invalidModel(
                     std::format(
                         "this runtime model declares {} '{}' twice, so a resource "
                         "naming it would resolve against two different rows",
                         kind,
-                        name
+                        id
                     )
                 );
             }
-            names.emplace_back(name);
+            names.emplace_back(id);
             return ok();
         }
     }
 
-    auto parsePageModelFacts(std::string_view text) -> Result<PageModelFacts>
+    auto parseRuntimeModelEnvelope(std::string_view text)
+        -> Result<RuntimeModelEnvelope>
     {
         auto schemaVersion = std::optional<uint32>{};
         auto resolution = std::optional<std::array<uint32, 2>>{};
         auto dpi        = std::optional<std::array<uint32, 2>>{};
 
-        auto targetNames  = std::vector<std::string>{};
-        auto surfaceNames = std::vector<std::string>{};
+        auto targetIds  = std::vector<std::string>{};
+        auto surfaceIds = std::vector<std::string>{};
 
         // Which table the scan is inside, and the `[[kind]]` it opened. `section`
         // carries a name only in Scan::ArraySection; which keys a line may set is
@@ -350,8 +402,8 @@ namespace uf::task
             }
             named = true;
             UF_TRY(
-                recordName(
-                    section == k_targetSection ? targetNames : surfaceNames,
+                recordId(
+                    section == k_targetSection ? targetIds : surfaceIds,
                     section,
                     *name
                 )
@@ -392,6 +444,14 @@ namespace uf::task
             );
         }
 
+        if (targetIds.empty() || surfaceIds.empty())
+        {
+            return invalidModel(
+                "this runtime model must declare at least one target and one "
+                "surface"
+            );
+        }
+
         UF_TRY_VALUE(
             fingerprint,
             ProjectFingerprint::create(
@@ -409,26 +469,26 @@ namespace uf::task
             sha256(std::as_bytes(std::span{text.data(), text.size()}))
         );
 
-        return PageModelFacts{
+        return RuntimeModelEnvelope{
             .schemaVersion = *schemaVersion,
             .fingerprint   = fingerprint,
             .contentHash   = contentHash,
-            .targetNames   = std::move(targetNames),
-            .surfaceNames  = std::move(surfaceNames),
+            .targetIds     = std::move(targetIds),
+            .surfaceIds    = std::move(surfaceIds),
         };
     }
 
-    auto readPageModelFacts(
+    auto readRuntimeModelEnvelope(
         std::filesystem::path const& projectRoot
-    ) -> Result<PageModelFacts>
+    ) -> Result<RuntimeModelEnvelope>
     {
-        auto const path = projectRoot / k_pageModelFileName;
+        auto const path = projectRoot / k_runtimeModelFileName;
         UF_TRY_VALUE(
             text,
-            readCappedFile(path, k_maximumPageModelBytes, "page model")
+            readCappedFile(path, k_maximumRuntimeModelBytes, "runtime model")
         );
 
-        auto facts = parsePageModelFacts(text);
+        auto facts = parseRuntimeModelEnvelope(text);
         if (!facts)
         {
             return invalidModel(

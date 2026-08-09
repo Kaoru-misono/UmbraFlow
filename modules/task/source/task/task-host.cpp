@@ -105,8 +105,8 @@ namespace uf::task
             return trace::TraceEvent{
                 .kind      = trace::TraceEventKind::RunResourcesValidated,
                 .resources = trace::TraceEvent::Resources{
-                    .elements = report.elements,
-                    .pages    = report.pages,
+                    .targets  = report.targets,
+                    .surfaces = report.surfaces,
                 },
             };
         }
@@ -203,7 +203,7 @@ namespace uf::task
     }
 
     // One loaded project instance. It owns everything a run of that project
-    // needs and nothing a single run owns: the facts read out of the page model
+    // needs and nothing a single run owns: the facts read out of the runtime model
     // survive every run, while the trace recorder, the engine session, the task
     // context and the VM are built and destroyed inside one startTask call.
     //
@@ -237,7 +237,7 @@ namespace uf::task
         GenerationId          m_id;
         std::filesystem::path m_projectRoot;
         std::string           m_projectId;
-        PageModelFacts        m_model;
+        RuntimeModelEnvelope  m_model;
 
         std::stop_source                       m_stop{};
         std::stop_callback<ExternalStopBridge> m_externalStop;
@@ -253,7 +253,7 @@ namespace uf::task
             GenerationId id,
             std::filesystem::path projectRoot,
             std::string projectId,
-            PageModelFacts model,
+            RuntimeModelEnvelope model,
             std::stop_token externalCancellation
         )
             : m_id{id}
@@ -293,7 +293,8 @@ namespace uf::task
         }
 
         [[nodiscard]]
-        auto model() const noexcept UF_LIFETIME_BOUND -> PageModelFacts const&
+        auto model() const noexcept UF_LIFETIME_BOUND
+            -> RuntimeModelEnvelope const&
         {
             return m_model;
         }
@@ -412,7 +413,7 @@ namespace uf::task
             // later event is attributable to this exact build -- including the
             // framework version and bundle hash, which runStartedEvent reads
             // from this binary rather than taking from here. The model hash is
-            // the generation's, taken over the page model's bytes when the
+            // the generation's, taken over the runtime model's bytes when the
             // project loaded, so what the run stands on is named as precisely as
             // what it runs.
             UF_TRY(
@@ -430,7 +431,7 @@ namespace uf::task
             );
             UF_TRY(recorder->emit(runResourcesValidatedEvent(resources)));
 
-            // The project fingerprint is the generation's, read out of the page
+            // The project fingerprint is the generation's, read out of the runtime
             // model when the project loaded; the live one is the front-end's
             // measurement of the bound target. The engine compares the two and
             // never learns where either came from.
@@ -640,11 +641,11 @@ namespace uf::task
         TaskHostConfig const& config
     ) -> Result<GenerationId>
     {
-        UF_TRY_VALUE(model, readPageModelFacts(projectRoot));
+        UF_TRY_VALUE(model, readRuntimeModelEnvelope(projectRoot));
 
         // The project's name in the trace is its directory's: the v3 manifest that
         // used to carry a project id is not read at runtime any more, and inventing
-        // a second identity in the page model would be a fact nobody maintains. An
+        // a second identity in the runtime model would be a fact nobody maintains. An
         // empty filename (a root path, a trailing separator) falls back to the path
         // itself rather than to an unattributed run.
         auto projectId = projectRoot.filename().string();
@@ -681,9 +682,9 @@ namespace uf::task
         // never run.
         UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Task));
 
-        // Source the task from its owning project and validate every uf reference
+        // Source the task from its owning project and validate every uf resource ID
         // before anything observable exists: a missing or unsafe task name, or a
-        // reference the page model does not declare, must fail before a VM is
+        // reference the runtime model does not declare, must fail before a VM is
         // created and before a trace file is opened.
         UF_TRY_VALUE(loadedTask, loadTask(p_generation->projectRoot(), taskName));
         UF_TRY_VALUE(
@@ -720,12 +721,20 @@ namespace uf::task
         return p_generation->model().fingerprint;
     }
 
-    auto TaskHost::projectElementCount(
+    auto TaskHost::projectTargetCount(
         GenerationId generation
     ) -> Result<std::size_t>
     {
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
-        return p_generation->model().elementNames.size();
+        return p_generation->model().targetIds.size();
+    }
+
+    auto TaskHost::projectSurfaceCount(
+        GenerationId generation
+    ) -> Result<std::size_t>
+    {
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
+        return p_generation->model().surfaceIds.size();
     }
 
     auto TaskHost::projectModelHash(

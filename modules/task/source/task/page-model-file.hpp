@@ -18,13 +18,13 @@ namespace uf::task
     // before any VM exists. The trusted framework spells the same name on its own
     // side as `project.file_name`, and every case that loads a project fails
     // outright if the two disagree.
-    inline constexpr auto k_pageModelFileName = std::string_view{"page-model.toml"};
+    inline constexpr auto k_runtimeModelFileName = std::string_view{"page-model.toml"};
 
     // The runtime model is a line-oriented text file whose deployment envelope
     // names the targets and surfaces available to the trusted Luau layer. The
     // largest one authored so far is fifteen kilobytes; this ceiling refuses a
     // file that is not one at all before any of it is read into memory.
-    inline constexpr auto k_maximumPageModelBytes = std::size_t{4} * 1024U * 1024U;
+    inline constexpr auto k_maximumRuntimeModelBytes = std::size_t{4} * 1024U * 1024U;
 
     // The only five things C++ reads out of the runtime model, each needed BEFORE
     // a VM exists: the schema version selects the envelope contract; the
@@ -40,7 +40,7 @@ namespace uf::task
     // The hash is the one fact here that does not depend on that reading at all:
     // it is over the bytes, so it identifies the whole file including everything
     // this parse skips.
-    struct PageModelFacts final
+    struct RuntimeModelEnvelope final
     {
         // The envelope contract selected by the file. This host currently
         // understands one version and still records it for diagnostics.
@@ -51,14 +51,14 @@ namespace uf::task
         ProjectFingerprint fingerprint;
         ContentHash        contentHash;
 
-        // In declaration order, and each name distinct within its own list. The
-        // pass below only ever asks whether a name is present, so order carries no
+        // In declaration order, and each ID distinct within its own list. The
+        // pass below only ever asks whether an ID is present, so order carries no
         // meaning; it is kept so a diagnostic that lists them reads like the file.
-        std::vector<std::string> targetNames{};
-        std::vector<std::string> surfaceNames{};
+        std::vector<std::string> targetIds{};
+        std::vector<std::string> surfaceIds{};
     };
 
-    // Reads `text` as a page model and reports the facts above.
+    // Reads `text` as the runtime model file and reports the envelope facts above.
     //
     // It is a FLAT LINE SCAN and deliberately not a parser: every line is either a
     // section header, a `key = value` line of the section it is inside, or ignored.
@@ -71,13 +71,13 @@ namespace uf::task
     //
     // Exposed separately from the file read so it can be exercised on text.
     [[nodiscard]]
-    auto parsePageModelFacts(std::string_view text) -> Result<PageModelFacts>;
+    auto parseRuntimeModelEnvelope(std::string_view text) -> Result<RuntimeModelEnvelope>;
 
     // Reads <projectRoot>/page-model.toml and parses it. The file is size-capped
     // before any bytes are read, so a project that is not one cannot force an
     // unbounded allocation.
     [[nodiscard]]
-    auto readPageModelFacts(
+    auto readRuntimeModelEnvelope(
         std::filesystem::path const& projectRoot
-    ) -> Result<PageModelFacts>;
+    ) -> Result<RuntimeModelEnvelope>;
 }
