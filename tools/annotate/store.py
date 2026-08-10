@@ -54,14 +54,40 @@ _MAX_BLOB_STORE_BYTES = 4 * 1024 * 1024 * 1024
 # workspace database irreversibly.
 _MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
 _MAX_DOCUMENT_STORE_BYTES = 512 * 1024 * 1024
-_ANNOTATION_SCHEMA_PATH = (
-    Path(__file__).resolve().parents[2] / "schema" / "umbraflow-annotation-workspace-v2.schema.json"
-)
+# The schema bounds every Replay Bundle list at 65536 entries; these are the
+# same ceilings expressed where the rows are written.
+_MAX_BUNDLE_ENTRIES = 65536
+_MAX_EVENT_ID_LENGTH = 128
+# Frames are the only part of a Replay Bundle the design keeps under a
+# retention window, so a bundle may not claim to hold them indefinitely.
+_MAX_FRAME_RETENTION_SECONDS = 30 * 24 * 60 * 60
+_ANNOTATION_SCHEMA = "umbraflow-annotation-workspace-v2.schema.json"
+_ANNOTATION_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schema" / _ANNOTATION_SCHEMA
 _SEAL = object()
 
 
 def _now() -> str:
     return _datetime.datetime.now(_datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _timestamp(value: Any, name: str) -> _datetime.datetime:
+    """One UTC RFC 3339 instant. `format` is annotation-only in Draft 2020-12."""
+
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise StoreError(f"{name} must be one UTC RFC 3339 timestamp ending in Z")
+    try:
+        parsed = _datetime.datetime.fromisoformat(value[:-1])
+    except ValueError as error:
+        raise StoreError(f"{name} must be one UTC RFC 3339 timestamp ending in Z") from error
+    if parsed.tzinfo is not None:
+        raise StoreError(f"{name} must be one UTC RFC 3339 timestamp ending in Z")
+    return parsed.replace(tzinfo=_datetime.timezone.utc)
+
+
+def _now_instant() -> _datetime.datetime:
+    """The workspace clock as an instant, so retention reads the same clock the rows are stamped with."""
+
+    return _timestamp(_now(), "workspace clock")
 
 
 def _sha256(content: bytes) -> str:
@@ -252,6 +278,57 @@ _SCHEMA_OBJECTS: tuple[tuple[str, str], ...] = (
         ) STRICT""",
     ),
     (
+        "replay_bundles",
+        f"""CREATE TABLE replay_bundles(
+            bundle_id TEXT PRIMARY KEY CHECK({_hash_check('bundle_id')}),
+            baseline_event_id TEXT NOT NULL CHECK(length(baseline_event_id) > 0
+                AND length(baseline_event_id) <= {_MAX_EVENT_ID_LENGTH}),
+            session_manifest_hash TEXT NOT NULL CHECK({_hash_check('session_manifest_hash')}),
+            journal_prefix_length INTEGER NOT NULL CHECK(journal_prefix_length > 0
+                AND journal_prefix_length <= {_MAX_BUNDLE_ENTRIES}),
+            frame_count INTEGER NOT NULL CHECK(frame_count >= 0
+                AND frame_count <= {_MAX_BUNDLE_ENTRIES}),
+            frame_retention_expires_at TEXT,
+            document TEXT NOT NULL CHECK(length(document) > 1
+                AND length(document) <= {_MAX_DOCUMENT_BYTES}),
+            runner_principal TEXT NOT NULL CHECK(length(runner_principal) > 0),
+            capability_hash TEXT NOT NULL CHECK({_hash_check('capability_hash')}),
+            created_at TEXT NOT NULL,
+            CHECK((frame_count = 0) = (frame_retention_expires_at IS NULL))
+        ) STRICT""",
+    ),
+    (
+        "replay_bundle_blob_refs",
+        """CREATE TABLE replay_bundle_blob_refs(
+            bundle_id TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('observation','frame')),
+            PRIMARY KEY(bundle_id, sha256, role),
+            FOREIGN KEY(bundle_id) REFERENCES replay_bundles(bundle_id),
+            FOREIGN KEY(sha256) REFERENCES blobs(sha256)
+        ) STRICT""",
+    ),
+    (
+        "project_operation_replay_intents",
+        f"""CREATE TABLE project_operation_replay_intents(
+            result_id TEXT PRIMARY KEY CHECK({_hash_check('result_id')}),
+            replay_bundle_id TEXT NOT NULL,
+            candidate_id TEXT NOT NULL,
+            candidate_revision INTEGER NOT NULL CHECK(candidate_revision > 0),
+            replay_policy_hash TEXT NOT NULL CHECK({_hash_check('replay_policy_hash')}),
+            passed INTEGER NOT NULL CHECK(passed = 1),
+            report_hash TEXT NOT NULL CHECK({_hash_check('report_hash')}),
+            report TEXT NOT NULL CHECK(length(report) > 1),
+            runner_principal TEXT NOT NULL CHECK(length(runner_principal) > 0),
+            capability_hash TEXT NOT NULL CHECK({_hash_check('capability_hash')}),
+            created_at TEXT NOT NULL,
+            UNIQUE(candidate_id, candidate_revision, replay_bundle_id, report_hash),
+            FOREIGN KEY(replay_bundle_id) REFERENCES replay_bundles(bundle_id),
+            FOREIGN KEY(candidate_id, candidate_revision)
+                REFERENCES candidate_revisions(candidate_id, revision)
+        ) STRICT""",
+    ),
+    (
         "publications",
         f"""CREATE TABLE publications(
             publication_id TEXT PRIMARY KEY CHECK({_hash_check('publication_id')}),
@@ -295,6 +372,29 @@ _SCHEMA_OBJECTS: tuple[tuple[str, str], ...] = (
             UNIQUE(publication_id, kind),
             FOREIGN KEY(replay_result_id) REFERENCES replay_result_intents(result_id),
             FOREIGN KEY(publication_id) REFERENCES publications(publication_id),
+            FOREIGN KEY(candidate_id, candidate_revision)
+                REFERENCES candidate_revisions(candidate_id, revision)
+        ) STRICT""",
+    ),
+    (
+        "project_operation_attestations",
+        f"""CREATE TABLE project_operation_attestations(
+            attestation_id TEXT PRIMARY KEY CHECK({_hash_check('attestation_id')}),
+            replay_result_id TEXT NOT NULL UNIQUE,
+            publication_id TEXT NOT NULL UNIQUE,
+            replay_bundle_id TEXT NOT NULL,
+            candidate_id TEXT NOT NULL,
+            candidate_revision INTEGER NOT NULL CHECK(candidate_revision > 0),
+            replay_policy_hash TEXT NOT NULL CHECK({_hash_check('replay_policy_hash')}),
+            passed INTEGER NOT NULL CHECK(passed = 1),
+            report_hash TEXT NOT NULL CHECK({_hash_check('report_hash')}),
+            runner_principal TEXT NOT NULL CHECK(length(runner_principal) > 0),
+            capability_hash TEXT NOT NULL CHECK({_hash_check('capability_hash')}),
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(replay_result_id)
+                REFERENCES project_operation_replay_intents(result_id),
+            FOREIGN KEY(publication_id) REFERENCES publications(publication_id),
+            FOREIGN KEY(replay_bundle_id) REFERENCES replay_bundles(bundle_id),
             FOREIGN KEY(candidate_id, candidate_revision)
                 REFERENCES candidate_revisions(candidate_id, revision)
         ) STRICT""",
@@ -345,8 +445,12 @@ _SCHEMA_OBJECTS += tuple(
         "candidate_blob_refs",
         "review_decisions",
         "replay_result_intents",
+        "replay_bundles",
+        "replay_bundle_blob_refs",
+        "project_operation_replay_intents",
         "publications",
         "replay_attestations",
+        "project_operation_attestations",
     )
     for item in _immutable_triggers(table)
 )
@@ -391,19 +495,20 @@ def _require_document_budget(connection: sqlite3.Connection, encoded: str) -> No
     """Refuse a document that would push the workspace past its total ceiling.
 
     The per-row CHECK bounds one document; this bounds how many there can be.
-    Both are needed because candidate revisions are immutable and checkpoints
-    cannot be deleted, so anything the untrusted Agent writes here is permanent.
+    Both are needed because candidate revisions, agent checkpoints and replay
+    bundles are all permanent once written, so nothing here can be reclaimed.
     """
     if len(encoded.encode()) > _MAX_DOCUMENT_BYTES:
         raise StoreError("document exceeds its size ceiling")
     # length() counts characters; the ceiling is in bytes. Casting to blob
     # measures what the ceiling is about, so a document of multi-byte text
     # cannot be four times its accounted size.
-    total = connection.execute(
-        "SELECT coalesce(sum(length(cast(document as blob))), 0) FROM candidate_revisions"
-    ).fetchone()[0] + connection.execute(
-        "SELECT coalesce(sum(length(cast(document as blob))), 0) FROM agent_checkpoints"
-    ).fetchone()[0]
+    total = sum(
+        connection.execute(
+            f"SELECT coalesce(sum(length(cast(document as blob))), 0) FROM {table}"
+        ).fetchone()[0]
+        for table in ("candidate_revisions", "agent_checkpoints", "replay_bundles")
+    )
     if total + len(encoded.encode()) > _MAX_DOCUMENT_STORE_BYTES:
         raise StoreError("workspace document quota is exhausted")
 
@@ -468,11 +573,7 @@ class AuthoringCapabilityRoot:
         # Validated, not merely shaped to match. Every release manifest stamps
         # this schema's hash, so a root that no longer satisfies it would be
         # published under a claim nothing checked.
-        require_valid(
-            "umbraflow-annotation-workspace-v2.schema.json",
-            value,
-            "authoring capability root",
-        )
+        require_valid(_ANNOTATION_SCHEMA, value, "authoring capability root")
         return value
 
 
@@ -757,6 +858,7 @@ class AnnotationStore:
         self.evidence_blobs = self.root / "blobs" / "evidence"
         self.runtime_blobs = self.root / "blobs" / "runtime-assets"
         self.objects = self.root / "objects" / "runtime-artifacts"
+        self.replay_bundles = self.root / AUTHORING_ROOTS["replay_bundle_root"]
         self.staging = self.root / ".staging"
         self._root_identity = identity(require_plain_directory(self.root))
         self._lock_state = threading.local()
@@ -765,6 +867,7 @@ class AnnotationStore:
             self.runtime_blobs,
             *(self.runtime_blobs / value for value in sorted(_ASSET_TYPES)),
             self.objects,
+            self.replay_bundles,
             self.staging,
         ):
             require_plain_directory(directory)
@@ -1679,6 +1782,352 @@ class AnnotationStore:
             document["report"] = _object(document["report"])
         return document
 
+    def _bundle_path(self, bundle_id: str) -> Path:
+        return self.replay_bundles / bundle_id[:2] / bundle_id
+
+    @staticmethod
+    def _bundle_identity(document: Mapping[str, Any]) -> str:
+        """The bundle id is the content address of its closure, minus the id itself."""
+
+        return _sha256(jcs_bytes({key: value for key, value in document.items() if key != "bundle_id"}))
+
+    @classmethod
+    def _bundle_document(cls, value: Mapping[str, Any]) -> dict[str, Any]:
+        """Mint the identity, then validate the whole closure.
+
+        Shape, field set, bounds and the frames/retention pairing are the
+        checked-in contract's job and are checked by the official validator
+        against it. Only what a JSON Schema cannot say is checked here: that the
+        Journal prefix follows the baseline rather than repeating it, that no
+        list repeats an entry, and that a retained frame window is real.
+        """
+
+        if "bundle_id" in value:
+            raise StoreError("replay bundle identity is minted here, not supplied")
+        content = _object(_canonical_document(dict(value)))
+        document = {**content, "bundle_id": cls._bundle_identity(content)}
+        try:
+            require_valid(_ANNOTATION_SCHEMA, document, "replay bundle")
+        except ValueError as error:
+            raise StoreError(str(error)) from error
+        for name in ("journal_prefix", "operation_rows", "observations", "frames"):
+            if len(set(document[name])) != len(document[name]):
+                raise StoreError(f"replay bundle {name} repeats one entry")
+        if document["baseline_event_id"] in document["journal_prefix"]:
+            raise StoreError("replay bundle journal_prefix must follow its baseline, not repeat it")
+        if document["frames"]:
+            deadline = _timestamp(
+                document["frame_retention_expires_at"], "replay bundle frame retention"
+            )
+            now = _now_instant()
+            if deadline <= now:
+                raise StoreError("replay bundle frame retention has already expired")
+            if deadline - now > _datetime.timedelta(seconds=_MAX_FRAME_RETENTION_SECONDS):
+                raise StoreError("replay bundle frame retention exceeds the workspace ceiling")
+        return document
+
+    def _verify_bundle_file(self, bundle_id: str, row_document: str) -> dict[str, Any]:
+        path = self._bundle_path(bundle_id)
+        try:
+            content = read_plain_file(path, maximum=_MAX_DOCUMENT_BYTES)
+        except UnsafePath as error:
+            raise StoreError(f"replay bundle {bundle_id} is unavailable") from error
+        if content != row_document.encode("utf-8"):
+            raise StoreError(f"replay bundle {bundle_id} file does not match its immutable row")
+        try:
+            document = load_exact_jcs(content)
+        except CanonicalJsonError as error:
+            raise StoreError(f"replay bundle {bundle_id} is not exact JCS") from error
+        if not isinstance(document, dict) or document.get("bundle_id") != bundle_id:
+            raise StoreError(f"replay bundle {bundle_id} does not name itself")
+        if self._bundle_identity(document) != bundle_id:
+            raise StoreError(f"replay bundle {bundle_id} has a false content address")
+        return document
+
+    def record_replay_bundle(
+        self,
+        replay_capability: ReplayRunnerCapability,
+        bundle: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Assemble one offline replay closure the trusted runner may later replay.
+
+        The runner supplies the closure; the identity is minted here, so a
+        bundle cannot claim a content address it does not have.
+        """
+
+        self.verify_replay_runner_capability(replay_capability)
+        document = self._bundle_document(bundle)
+        bundle_id = document["bundle_id"]
+        encoded = jcs_bytes(document)
+        with self.exclusive():
+            self.verify_replay_runner_capability(replay_capability)
+            path = self._bundle_path(bundle_id)
+            make_plain_directories(path.parent)
+            if os.path.lexists(path):
+                try:
+                    if read_plain_file(path, maximum=_MAX_DOCUMENT_BYTES) != encoded:
+                        raise Conflict(f"replay bundle {bundle_id} already holds other bytes")
+                except UnsafePath as error:
+                    raise StoreError(f"replay bundle {bundle_id} is unavailable") from error
+            else:
+                try:
+                    write_new_file(path, encoded)
+                except (OSError, UnsafePath) as error:
+                    raise StoreError("replay bundle file could not be materialized") from error
+            with self._transaction() as connection:
+                if connection.execute(
+                    "SELECT 1 FROM replay_bundles WHERE bundle_id = ?", (bundle_id,)
+                ).fetchone() is None:
+                    _require_document_budget(connection, encoded.decode("utf-8"))
+                    for role, digests in (
+                        ("observation", document["observations"]),
+                        ("frame", document["frames"]),
+                    ):
+                        for digest in digests:
+                            row = connection.execute(
+                                "SELECT kind, asset_type FROM blobs WHERE sha256 = ?", (digest,)
+                            ).fetchone()
+                            if row is None or row["kind"] != "evidence" or row["asset_type"] is not None:
+                                raise NotFound(
+                                    f"replay bundle {role} evidence blob {digest} was not found"
+                                )
+                    connection.execute(
+                        """INSERT INTO replay_bundles(
+                               bundle_id, baseline_event_id, session_manifest_hash,
+                               journal_prefix_length, frame_count, frame_retention_expires_at,
+                               document, runner_principal, capability_hash, created_at
+                           ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            bundle_id,
+                            document["baseline_event_id"],
+                            document["session_manifest_hash"],
+                            len(document["journal_prefix"]),
+                            len(document["frames"]),
+                            document["frame_retention_expires_at"],
+                            encoded.decode("utf-8"),
+                            replay_capability.principal,
+                            replay_capability.sha256,
+                            _now(),
+                        ),
+                    )
+                    for role, digests in (
+                        ("observation", document["observations"]),
+                        ("frame", document["frames"]),
+                    ):
+                        for digest in digests:
+                            connection.execute(
+                                """INSERT INTO replay_bundle_blob_refs(bundle_id, sha256, role)
+                                   VALUES(?, ?, ?)""",
+                                (bundle_id, digest, role),
+                            )
+        return self.replay_bundle(bundle_id)
+
+    def replay_bundle(self, bundle_id: str) -> dict[str, Any]:
+        """Read one bundle for audit. An expired frame window still reads."""
+
+        _hash(bundle_id, "replay bundle id")
+        with contextlib.closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT bundle_id, baseline_event_id, session_manifest_hash,
+                          journal_prefix_length, frame_count, frame_retention_expires_at,
+                          document, runner_principal, capability_hash, created_at
+                   FROM replay_bundles WHERE bundle_id = ?""",
+                (bundle_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFound(f"replay bundle {bundle_id} was not found")
+        return {**dict(row), "document": self._verify_bundle_file(bundle_id, row["document"])}
+
+    def _require_publishable_bundle(
+        self,
+        connection: sqlite3.Connection,
+        bundle_id: str,
+    ) -> dict[str, Any]:
+        row = connection.execute(
+            "SELECT document, frame_retention_expires_at FROM replay_bundles WHERE bundle_id = ?",
+            (bundle_id,),
+        ).fetchone()
+        if row is None:
+            raise NotFound(f"replay bundle {bundle_id} was not found")
+        document = self._verify_bundle_file(bundle_id, row["document"])
+        expiry = row["frame_retention_expires_at"]
+        if expiry is not None and _timestamp(expiry, "replay bundle frame retention") <= _now_instant():
+            raise Conflict(f"replay bundle {bundle_id} frames are past their retention window")
+        return document
+
+    def record_project_operation_replay_result(
+        self,
+        replay_capability: ReplayRunnerCapability,
+        replay_policy: ReplayPolicy,
+        result: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """The project/operation gate's evidence: one bundle replayed by the trusted runner."""
+
+        self.verify_replay_runner_capability(replay_capability)
+        self.verify_replay_policy(replay_policy)
+        fields = {"candidate_id", "candidate_revision", "replay_bundle_id", "passed", "report"}
+        if set(result) != fields:
+            raise StoreError(
+                f"project/operation replay result fields must be exactly {sorted(fields)!r}"
+            )
+        document = _object(_canonical_document(dict(result)))
+        if not isinstance(document["candidate_id"], str) or not document["candidate_id"]:
+            raise StoreError("project/operation replay candidate_id is required")
+        _positive_integer(document["candidate_revision"], "project/operation candidate revision")
+        _hash(document["replay_bundle_id"], "project/operation replay bundle id")
+        if document["passed"] is not True or not isinstance(document["report"], dict):
+            raise Conflict(
+                "only a passing project/operation replay with an object report can be attested"
+            )
+        current = self.get_candidate(document["candidate_id"])
+        if current["revision"] != document["candidate_revision"]:
+            raise Conflict("project/operation replay can only attest the current candidate head")
+        report = _canonical_document(document["report"])
+        report_hash = _sha256(report.encode("utf-8"))
+        identity_document = {
+            "candidate_id": document["candidate_id"],
+            "candidate_revision": document["candidate_revision"],
+            "capability_hash": replay_capability.sha256,
+            "passed": True,
+            "replay_bundle_id": document["replay_bundle_id"],
+            "replay_policy_hash": replay_policy.exact_hash,
+            "report_hash": report_hash,
+            "runner_principal": replay_capability.principal,
+        }
+        result_id = _sha256(jcs_bytes(identity_document))
+        with self.exclusive(), self._transaction() as connection:
+            self.verify_replay_runner_capability(replay_capability)
+            self.verify_replay_policy(replay_policy)
+            self._require_publishable_bundle(connection, document["replay_bundle_id"])
+            head = connection.execute(
+                "SELECT revision FROM candidate_heads WHERE candidate_id = ?",
+                (document["candidate_id"],),
+            ).fetchone()
+            if head is None or head["revision"] != document["candidate_revision"]:
+                raise Conflict("candidate changed before the project/operation result was recorded")
+            try:
+                connection.execute(
+                    """INSERT INTO project_operation_replay_intents(
+                           result_id, replay_bundle_id, candidate_id, candidate_revision,
+                           replay_policy_hash, passed, report_hash, report,
+                           runner_principal, capability_hash, created_at
+                       ) VALUES(?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)""",
+                    (
+                        result_id,
+                        document["replay_bundle_id"],
+                        document["candidate_id"],
+                        document["candidate_revision"],
+                        replay_policy.exact_hash,
+                        report_hash,
+                        report,
+                        replay_capability.principal,
+                        replay_capability.sha256,
+                        _now(),
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                existing = connection.execute(
+                    "SELECT 1 FROM project_operation_replay_intents WHERE result_id = ?",
+                    (result_id,),
+                ).fetchone()
+                if existing is None:
+                    raise Conflict(
+                        "a different project/operation replay result already owns this identity"
+                    )
+        return self.project_operation_replay_result(result_id, include_report=True)
+
+    def project_operation_replay_result(
+        self,
+        result_id: str,
+        *,
+        include_report: bool = False,
+    ) -> dict[str, Any]:
+        _hash(result_id, "project/operation replay result id")
+        columns = (
+            "*"
+            if include_report
+            else "result_id, replay_bundle_id, candidate_id, candidate_revision,"
+            " replay_policy_hash, passed, report_hash, runner_principal, capability_hash, created_at"
+        )
+        with contextlib.closing(self._connect()) as connection:
+            row = connection.execute(
+                f"SELECT {columns} FROM project_operation_replay_intents WHERE result_id = ?",
+                (result_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFound(f"project/operation replay result {result_id} was not found")
+        document = dict(row)
+        document["passed"] = bool(document["passed"])
+        if include_report:
+            document["report"] = _object(document["report"])
+        return document
+
+    def _project_operation_row(
+        self,
+        connection: sqlite3.Connection,
+        candidate_id: str,
+        candidate_revision: int,
+        replay_policy: ReplayPolicy,
+        result_id: Any,
+        *,
+        require_unconsumed: bool,
+    ) -> sqlite3.Row:
+        """Fail closed: an absent or ill-formed project/operation gate is not a warning."""
+
+        if not isinstance(result_id, str) or _SHA256.fullmatch(result_id) is None:
+            raise Conflict("publication requires one passing project/operation replay result id")
+        row = connection.execute(
+            "SELECT * FROM project_operation_replay_intents WHERE result_id = ?", (result_id,)
+        ).fetchone()
+        if row is None:
+            raise NotFound(f"project/operation replay result {result_id} was not found")
+        if (
+            row["candidate_id"] != candidate_id
+            or row["candidate_revision"] != candidate_revision
+            or row["replay_policy_hash"] != replay_policy.exact_hash
+            or row["passed"] != 1
+        ):
+            raise Conflict(
+                "project/operation replay result identity does not match this publication"
+            )
+        if require_unconsumed and connection.execute(
+            "SELECT 1 FROM project_operation_attestations WHERE replay_result_id = ?", (result_id,)
+        ).fetchone() is not None:
+            raise Conflict("project/operation replay result was already consumed")
+        self._require_publishable_bundle(connection, row["replay_bundle_id"])
+        return row
+
+    @staticmethod
+    def _gate_document(
+        replay_policy: ReplayPolicy,
+        ui_rows: Sequence[sqlite3.Row],
+        project_row: sqlite3.Row,
+    ) -> dict[str, Any]:
+        """The checked-in two-gate shape: UI model replay and project/operation replay, inlined.
+
+        Both are built here from their own table, so neither gate can ever be
+        filled in from the other's evidence.
+        """
+
+        gate = {
+            "project_operation_replay": {
+                "attestation_id": project_row["result_id"],
+                "passed": True,
+                "replay_bundle_id": project_row["replay_bundle_id"],
+            },
+            "replay_policy_hash": replay_policy.exact_hash,
+            "ui_model_replay": {
+                "frame_attestation_id": ui_rows[0]["result_id"],
+                "passed": True,
+                "transition_attestation_id": ui_rows[1]["result_id"],
+            },
+        }
+        try:
+            require_valid(_ANNOTATION_SCHEMA, gate, "replay gate")
+        except ValueError as error:
+            raise StoreError(str(error)) from error
+        return gate
+
     @staticmethod
     def _replay_rows(
         connection: sqlite3.Connection,
@@ -1730,6 +2179,7 @@ class AnnotationStore:
         candidate_revision: int,
         runtime_model_hash: str,
         replay_result_ids: Sequence[str],
+        project_operation_result_id: Any,
     ) -> dict[str, Any]:
         self.verify_replay_policy(replay_policy)
         with contextlib.closing(self._connect()) as connection:
@@ -1742,11 +2192,15 @@ class AnnotationStore:
                 replay_result_ids,
                 require_unconsumed=True,
             )
-        return {
-            "frame_attestation_id": rows[0]["result_id"],
-            "replay_policy_hash": replay_policy.exact_hash,
-            "transition_attestation_id": rows[1]["result_id"],
-        }
+            project = self._project_operation_row(
+                connection,
+                candidate_id,
+                candidate_revision,
+                replay_policy,
+                project_operation_result_id,
+                require_unconsumed=True,
+            )
+        return self._gate_document(replay_policy, rows, project)
 
     def publication_head(self) -> dict[str, Any]:
         with contextlib.closing(self._connect()) as connection:
@@ -1812,8 +2266,9 @@ class AnnotationStore:
         runtime_manifest_bytes: bytes,
         release_manifest: Mapping[str, Any],
         replay_result_ids: Sequence[str],
+        project_operation_result_id: Any,
     ) -> dict[str, Any]:
-        """Final short transaction: all CAS, replay attestations, publication, and head."""
+        """Final short transaction: all CAS, both replay gates, publication, and head."""
 
         if getattr(self._lock_state, "depth", 0) <= 0:
             raise StoreError("publication commit requires the workspace cross-process lock")
@@ -1925,11 +2380,15 @@ class AnnotationStore:
                 replay_result_ids,
                 require_unconsumed=True,
             )
-            gate = {
-                "frame_attestation_id": replay_rows[0]["result_id"],
-                "replay_policy_hash": replay_policy.exact_hash,
-                "transition_attestation_id": replay_rows[1]["result_id"],
-            }
+            project_row = self._project_operation_row(
+                connection,
+                candidate_id,
+                candidate_revision,
+                replay_policy,
+                project_operation_result_id,
+                require_unconsumed=True,
+            )
+            gate = self._gate_document(replay_policy, replay_rows, project_row)
             gate_hash = _sha256(jcs_bytes(gate))
             if release_manifest["replay_gate_hash"] != gate_hash:
                 raise Conflict("release manifest references another replay gate")
@@ -1984,6 +2443,26 @@ class AnnotationStore:
                         created_at,
                     ),
                 )
+            connection.execute(
+                """INSERT INTO project_operation_attestations(
+                       attestation_id, replay_result_id, publication_id, replay_bundle_id,
+                       candidate_id, candidate_revision, replay_policy_hash, passed,
+                       report_hash, runner_principal, capability_hash, created_at
+                   ) VALUES(?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
+                (
+                    project_row["result_id"],
+                    project_row["result_id"],
+                    publication_id,
+                    project_row["replay_bundle_id"],
+                    candidate_id,
+                    candidate_revision,
+                    project_row["replay_policy_hash"],
+                    project_row["report_hash"],
+                    project_row["runner_principal"],
+                    project_row["capability_hash"],
+                    created_at,
+                ),
+            )
             changed = connection.execute(
                 """UPDATE published_head SET publication_id = ?, generation = ?
                    WHERE singleton = 1 AND generation = ?
@@ -2068,6 +2547,8 @@ class AnnotationStore:
                            SELECT 1 FROM candidate_blob_refs WHERE sha256 = blobs.sha256
                        ) AND NOT EXISTS(
                            SELECT 1 FROM agent_checkpoint_blob_refs WHERE sha256 = blobs.sha256
+                       ) AND NOT EXISTS(
+                           SELECT 1 FROM replay_bundle_blob_refs WHERE sha256 = blobs.sha256
                        )"""
                 ).fetchall()
                 connection.executemany(

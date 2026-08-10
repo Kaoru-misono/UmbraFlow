@@ -9,6 +9,7 @@ The private workspace is exact and non-migrating:
 annotation-workspace.sqlite
 blobs/<prefix>/<sha256>
 objects/runtime-artifacts/<runtime-artifact-root>/
+replay-bundles/<prefix>/<bundle-id>
 .staging/
 ```
 
@@ -67,19 +68,58 @@ those requests and must already be referenced by that candidate/checkpoint:
 python -m tools.annotate.serve --store E:\annotation-private --port 8765
 ```
 
-It has no human-review, replay-attestation, publication, or activation route.
-Human review uses `tools.annotate.trusted review`. Publication uses
-`tools.annotate.trusted publish` under both the pinned replay-runner and
-publication file capabilities.
+It has no human-review, replay-bundle, replay-attestation, publication, or
+activation route. Human review uses `tools.annotate.trusted review`.
+Publication uses `tools.annotate.trusted publish` under both the pinned
+replay-runner and publication file capabilities.
+
+## Replay Bundle
+
+A Replay Bundle is the offline closure a project/operation replay runs from:
+one baseline event, the Journal prefix after it, the structured observations,
+the Operation rows, and the session manifest they happened under. Frames are
+optional; when a bundle keeps them it must name the window it keeps them for,
+which the workspace bounds at 30 days. A frameless bundle still supports audit
+and can never stand in for a frame replay.
+
+```powershell
+python -m tools.annotate.trusted record-bundle --store E:\annotation-private `
+  --replay-capability E:\authorities\replay.jcs --bundle E:\runner\bundle.jcs
+```
+
+The runner supplies the closure; the workspace mints the `bundle_id` as the
+content address of that closure, validates the whole document against
+`schema/umbraflow-annotation-workspace-v2.schema.json` through the official
+Draft 2020-12 validator, and writes it under `replay-bundles/`. Every
+observation and frame must already be an evidence blob, and those blobs are
+then held against collection for as long as the bundle exists.
+
+## The two publication gates
+
+They do not substitute for each other, and each is built only from its own
+table, so neither can be filled in from the other's evidence:
+
+- **UI model replay** gates the RuntimeModel: one `frame` and one `transition`
+  trusted replay result over the pinned corpora, recorded with
+  `trusted record-replay`.
+- **Project/operation replay** gates the ProjectPlugin: one passing replay of
+  one Replay Bundle, recorded with `trusted record-project-replay`.
+
+`publish` therefore takes `--frame-result-id`, `--transition-result-id` and
+`--project-operation-result-id`. A gate that is absent, malformed, already
+consumed, bound to another candidate revision, or backed by a bundle whose
+frame retention has run out fails the publication closed; nothing is exported.
+Both halves are inlined into one `ReplayGate` document whose hash is the
+release manifest's `replay_gate_hash`.
 
 Publication compiles canonical `page-model.toml`, closes over every referenced
-asset, runs the fixed frame/transition replay gate, stages a RuntimeArtifact,
-then performs one short SQLite transaction. That transaction checks the
-candidate head and predecessor, inserts both replay attestations and the
-publication, and advances `published_head`. Only after commit is the handoff
-directory made visible. Startup recovery deletes stale staging/unreferenced
-objects and recreates any committed handoff interrupted after the database
-commit.
+asset, builds the two-gate `ReplayGate`, stages a RuntimeArtifact, then
+performs one short SQLite transaction. That transaction checks the candidate
+head and predecessor, inserts the two UI replay attestations, the
+project/operation attestation and the publication, and advances
+`published_head`. Only after commit is the handoff directory made visible.
+Startup recovery deletes stale staging/unreferenced objects and recreates any
+committed handoff interrupted after the database commit.
 
 The RuntimeArtifact manifest has only the v1 fields
 `manifest_schema_hash`, `runtime_model_schema_hash`, `page_model`, and

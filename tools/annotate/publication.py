@@ -448,6 +448,7 @@ class Publisher:
         candidate_revision: int,
         expected_predecessor_publication_id: str | None,
         replay_result_ids: Sequence[str],
+        project_operation_result_id: Any,
     ) -> dict[str, Any]:
         with self.store.exclusive():
             self.store.verify_publication_capability(self.publication_capability)
@@ -478,6 +479,7 @@ class Publisher:
                 candidate_revision=candidate_revision,
                 runtime_model_hash=model_hash,
                 replay_result_ids=replay_result_ids,
+                project_operation_result_id=project_operation_result_id,
             )
             gate_hash = _sha256(jcs_bytes(gate))
             runtime_manifest, runtime_manifest_bytes, artifact_root = (
@@ -507,6 +509,7 @@ class Publisher:
                 runtime_manifest_bytes=runtime_manifest_bytes,
                 release_manifest=release_manifest,
                 replay_result_ids=replay_result_ids,
+                project_operation_result_id=project_operation_result_id,
             )
             self._export(publication)
             self._validate_handoff_root(allow_missing_committed=False)

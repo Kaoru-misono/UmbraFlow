@@ -123,6 +123,23 @@ def _record_replay(arguments: argparse.Namespace) -> dict[str, Any]:
             return store.record_trusted_replay_result(capability, policy, result)
 
 
+def _record_bundle(arguments: argparse.Namespace) -> dict[str, Any]:
+    store = AnnotationStore(arguments.store)
+    _outside_workspace(store.root, arguments.bundle, "replay bundle input")
+    bundle = _load_exact_object(arguments.bundle, "replay bundle")
+    with open_replay_runner_capability(arguments.replay_capability) as capability:
+        return store.record_replay_bundle(capability, bundle)
+
+
+def _record_project_replay(arguments: argparse.Namespace) -> dict[str, Any]:
+    store = AnnotationStore(arguments.store)
+    _outside_workspace(store.root, arguments.result, "project/operation replay result input")
+    result = _load_exact_object(arguments.result, "project/operation replay result")
+    with open_replay_runner_capability(arguments.replay_capability) as capability:
+        with open_replay_policy(arguments.replay_policy) as policy:
+            return store.record_project_operation_replay_result(capability, policy, result)
+
+
 def _publisher(
     arguments: argparse.Namespace,
 ) -> tuple[Publisher, PublicationCapability, ReplayPolicy]:
@@ -161,6 +178,7 @@ def _publish(arguments: argparse.Namespace) -> dict[str, Any]:
             arguments.candidate_revision,
             arguments.expected_predecessor,
             (arguments.frame_result_id, arguments.transition_result_id),
+            arguments.project_operation_result_id,
         )
     finally:
         publication.close()
@@ -216,6 +234,24 @@ def main(argv: list[str] | None = None) -> int:
     replay.add_argument("--result", required=True, type=Path)
     replay.set_defaults(callback=_record_replay)
 
+    bundle = commands.add_parser(
+        "record-bundle", help="assemble one offline Replay Bundle closure under the runner capability"
+    )
+    bundle.add_argument("--store", required=True, type=Path)
+    bundle.add_argument("--replay-capability", required=True, type=Path)
+    bundle.add_argument("--bundle", required=True, type=Path)
+    bundle.set_defaults(callback=_record_bundle)
+
+    project_replay = commands.add_parser(
+        "record-project-replay",
+        help="trusted runner fixes one project/operation replay result over one bundle",
+    )
+    project_replay.add_argument("--store", required=True, type=Path)
+    project_replay.add_argument("--replay-capability", required=True, type=Path)
+    project_replay.add_argument("--replay-policy", required=True, type=Path)
+    project_replay.add_argument("--result", required=True, type=Path)
+    project_replay.set_defaults(callback=_record_project_replay)
+
     publish = commands.add_parser("publish", help="consume replay intents and commit a release")
     _add_publisher_arguments(publish)
     publish.add_argument("--candidate-id", required=True)
@@ -223,6 +259,7 @@ def main(argv: list[str] | None = None) -> int:
     publish.add_argument("--expected-predecessor")
     publish.add_argument("--frame-result-id", required=True)
     publish.add_argument("--transition-result-id", required=True)
+    publish.add_argument("--project-operation-result-id", required=True)
     publish.set_defaults(callback=_publish)
 
     recover = commands.add_parser("recover", help="recover orphans under the publication lock")
