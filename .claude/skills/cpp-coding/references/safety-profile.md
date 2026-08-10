@@ -175,7 +175,8 @@ Every project target receives the generic safety profile from
 - Clang unsafe-buffer and thread-safety diagnostics when supported.
 - Clang high-confidence lifetime diagnostics, required by the pinned analysis
   preset and CI job.
-- clang-tidy analysis in the required CI analysis job.
+- clang-tidy analysis in the required CI analysis job — configured, but not
+  enforcing as of 2026-08-10; see the amendment opening `coding-standard.md`.
 - Address, undefined-behavior, and thread sanitizer configurations.
 
 The repository checks are:

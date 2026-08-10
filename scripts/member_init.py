@@ -27,8 +27,16 @@ nested, qualified, or template-qualified name, member-initializer lists broken
 by a preprocessor directive, and classes that inherit constructors. Whether an
 arbitrary member *could* be brace-initialized is a question only the compiler
 can answer, so `missing` is further restricted to an allowlist of types whose
-default constructor is guaranteed; `cppcoreguidelines-pro-type-member-init` in
-the analysis lane covers the indeterminate cases.
+default constructor is guaranteed.
+
+`cppcoreguidelines-pro-type-member-init` in the `clang-analysis` CI job is meant
+to cover the indeterminate cases this misses. It can only do so once two
+properties hold: that job compiles, and `.clang-tidy`'s `HeaderFilterRegex`
+matches first-party headers — class definitions here live in headers, so the
+check reports at the constructor in the `.hpp`. As of 2026-08-10 neither held,
+and the check had caught nothing to date; see
+`docs/pitfalls/checks-that-cannot-fail.md`. Until both hold, every member this
+recognizer stays silent on is reader-enforced.
 """
 
 from __future__ import annotations

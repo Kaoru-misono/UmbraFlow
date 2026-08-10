@@ -6,6 +6,17 @@ toolchain. Each is a resource with single-writer semantics that nothing in the
 build system enforces, so a collision does not produce a clear error. It
 produces a stall, and a stall reads exactly like slow work.
 
+A fourth shared resource joined the list on 2026-08-10: the repository's own
+repo-wide tooling. `scripts/fix_format.py` and
+`scripts/check_cpp_format.py --fix` write across the whole tree by default, so
+one agent's format pass edits files another agent owns. That one is in
+[Running the repository's own tooling](repository-tooling-invocation.md),
+because it bites a single writer too.
+
+The per-agent build directories prescribed below were in use throughout the
+2026-08-10 parallel run — five of them — and no collision of the kind described
+here occurred.
+
 ## Concurrent builds into one build directory deadlock every compiler
 
 ### Symptom

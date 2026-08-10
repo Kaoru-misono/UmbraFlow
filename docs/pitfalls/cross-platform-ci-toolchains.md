@@ -155,3 +155,57 @@ use `value()` as a cosmetic workaround.
 Run the pinned Clang lifetime, bounds, thread-safety, and tidy CI job. Ensure its
 analysis build and tests both complete, because parallel compilation may stop at
 the first few optional diagnostics and hide later occurrences.
+
+## doctest includes `<ciso646>` under Clang, which libstdc++ 15 warns about
+
+This one is not a current failure. It is written down so that whoever meets it
+recognises it in a minute instead of a day.
+
+### Symptom
+
+Roughly two dozen doctest translation units stop compiling at once, under Clang
+only, with a `#warning` from `<ciso646>` promoted to an error by `-Werror`. The
+same commit builds under GCC, and built under Clang on the previous runner
+image. No project source mentions `<ciso646>`.
+
+### Root cause
+
+`tests/external/doctest/doctest/doctest.h` (2.4.11) does this at line 498:
+
+```cpp
+#if DOCTEST_CLANG
+#include <ciso646>
+#endif // clang
+```
+
+It is deliberate — doctest wants `_LIBCPP_VERSION` before deciding whether to
+forward-declare standard types. `<ciso646>` was deprecated in C++17 and removed
+in C++20, and libstdc++ 15 added a `#warning` to its remaining copy. Under
+`-Werror` that warning is fatal, and it lands in every TU that includes
+doctest.
+
+The include is guarded on `DOCTEST_CLANG`, so GCC never reaches it regardless of
+which libstdc++ is installed. Clang plus libstdc++ 15 is the only combination
+that fails. libstdc++ 13 and 14 carry no such warning, and GitHub's
+`ubuntu-latest` is 24.04 with libstdc++ 14 — which is the whole reason CI is
+green today.
+
+### Trigger condition
+
+The moment `ubuntu-latest` rolls forward to an image whose default libstdc++ is
+15 or newer, every Clang job that compiles doctest breaks at once, with no
+project change. A local Clang build on a newer distribution hits it earlier.
+
+### Fix
+
+Do not silence `-Werror` for the test targets. The include already sits in
+vendored third-party code, which the build treats as a system include
+elsewhere; reaching doctest through `SYSTEM` include directories is what
+suppresses the warning without weakening the project's own diagnostics.
+Upgrading doctest past the release that drops the include also removes it.
+
+### Regression check
+
+Build one doctest translation unit with Clang against a libstdc++ 15 or newer
+toolchain and `-Werror`. Before the fix it fails on `<ciso646>`; after it, it
+compiles, and a deliberate warning in project code must still fail the build.

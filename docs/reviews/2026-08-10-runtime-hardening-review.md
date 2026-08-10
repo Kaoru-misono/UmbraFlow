@@ -46,6 +46,35 @@ the prefix moving, and it equally stops a `rename`. The confined root over a
 staging tree is therefore scoped to the writes and released before the tree is
 published.
 
+### A-F8 — the artifact directory a failed CAS leaves behind
+
+Closed 2026-08-10 by work item W8 of
+[the next block](../plans/2026-08-10-next-block.md), which was ordered on the
+strength of this finding's acceptance.
+
+The acceptance below was right and is still the reason nothing is deleted on
+failure: the directory is content-addressed, a concurrent publisher may have
+put the identical bytes there, and removing it on our own failure would break
+their installation to tidy ours. That reasoning ruled out deletion at the call
+site. It did not rule out reclaiming the directory later, once the whole
+reference set can be read at one time — which is what the finding actually
+asked for and what was missing.
+
+The reference set is now a set of foreign keys rather than a counter:
+`runtime_installations` rows, a new `runtime_publications` table for an
+installation in flight, and `runtime_state.active_runtime_artifact_root_hash`.
+`reclaimUnreferencedRuntimeArtifacts` removes exactly the artifact directories
+no row in those three names, inside a `BEGIN IMMEDIATE` that a publisher's own
+claim must either precede or follow. A failed CAS therefore still leaves the
+directory alone; what it leaves is a row nothing names, and that row is
+reclaimable.
+
+The Operator ledger DDL fingerprint moved with the new tables, to
+`5738e6f98534efbdfc3114413de70c032b64e2cbaa84d4c152ec6cbb512120a4`. An existing
+operator database no longer opens. Nothing is released, so those databases are
+recreated rather than migrated, and there is exactly one fingerprint in the
+tree.
+
 ## Accepted, with reasons
 
 **A-F8 — a failed installed-generation CAS leaves the published artifact
@@ -54,6 +83,9 @@ directory is content-addressed and re-verified on every open, and one of the
 ways the CAS fails is a concurrent publisher having already put the identical
 bytes there. Removing it on our own failure would break their installation to
 tidy ours. Stated at the call site.
+
+> Superseded 2026-08-10: this reasoning stands, but the finding no longer
+> stands accepted — see A-F8 under Closed above.
 
 **B-F4 — the three authority-bearing values are copyable and carry no
 consumption marker.** A holder can stash and replay one. Replay is bounded a

@@ -7,7 +7,13 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
 
 ## Entries
 
+- [Checks that cannot fail](checks-that-cannot-fail.md) — a gate whose
+  configuration makes it unable to report; read this before trusting any lint
+  job's green.
 - [Concurrent agent builds in one worktree](concurrent-agent-builds.md)
+- [Running the repository's own tooling](repository-tooling-invocation.md) — a
+  repo-wide formatter rewrites files another agent owns, and the documented
+  MSVC activation command runs nothing when invoked from the Bash tool.
 - [Cross-platform CI toolchain diagnostics](cross-platform-ci-toolchains.md)
 - [Capture and target selection](capture-and-target-selection.md)
 - [Page modeling and multi-step flows](page-modeling-and-multi-step.md)

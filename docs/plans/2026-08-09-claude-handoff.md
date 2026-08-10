@@ -148,6 +148,15 @@ d445c811b9469a58ff116df4763d4e7f1acd80b6a3392639d7eb257321916753
 
 任何 DDL/trigger/index 修改后都必须重新计算，不能保留双 fingerprint。
 
+> 2026-08-10：上面是接管时的记录，保持原样。W8 的 runtime artifact 回收往 DDL 里
+> 加了 `runtime_publications` 表和 `runtime_state.active_runtime_artifact_root_hash`，
+> fingerprint 现为
+> `5738e6f98534efbdfc3114413de70c032b64e2cbaa84d4c152ec6cbb512120a4`，全树只出现
+> 一次，在 `modules/operator/source/operator/ledger.cpp`。旧 Operator 数据库在 open
+> 时被拒绝，不迁移而是重建。缘由见
+> [next block](2026-08-10-next-block.md) 第三节与
+> [review](../reviews/2026-08-10-runtime-hardening-review.md) 的 A-F8。
+
 ### 4.5 ProjectPlugin
 
 - 只支持 startup-time registry `(plugin_id, project_registration_hash)` exact lookup，无 latest/fallback。
@@ -211,6 +220,14 @@ modules/operator/source/operator/journal-entry.hpp/.cpp
 ```
 
 `modules/operator/source/operator/runtime-installation.cpp` 仍嵌入旧值 `d3b67...`，所以 surface test 正确失败。完成 annotation 审计、确认 schema 不再变化后，只保留新值。
+
+> 2026-08-10：上面两个值都是接管时的记录，保持原样。schema 后续还改过，当前
+> checked-in 字节的 SHA-256 是
+> `a6fc31b5e0ee49f5368d66fae3f2abf38e0e58f57d799e3d2cd8da583f508a29`，
+> `k_annotationWorkspaceSchemaHash` 已同步，`tests/test-runtime-surface.py` 盯住
+> 两者。W5 的 Replay Bundle 只改了 Python 侧 workspace SQLite schema root hash
+> （现为 `72fa0c39964397921007665e2f4f3f7936bd46f476a3adf589d32bd59ce9d873`，
+> 新增四张表），C++ 不 pin 这个值。
 
 ## 6. 必须先修的已知问题
 
@@ -390,6 +407,11 @@ ctest --test-dir build -N
 ```
 
 实际 build directory 以 skill/script 输出为准。`ctest -N` 必须能列出全部 43 个 contract gates；不要只数普通 test executable。
+
+> 2026-08-10：43 仍然是 42 个需求 gate 加 `contract-repository-surface`，这条保持
+> 原样。P-05 的可消费契约套件落地后，`ctest -N` 另外列出
+> `contract-suite-umbraflow` 和 `contract-suite-arcana`（label `CONTRACT-SUITE`），
+> 所以列表长于 43 不是回归。见 [next block](2026-08-10-next-block.md) 第五节。
 
 ## 9. 最终交付口径
 

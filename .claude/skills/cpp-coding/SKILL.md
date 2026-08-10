@@ -93,8 +93,11 @@ Between them they enforce byte-level normalization, the module dependency graph,
 in full. They enforce alignment and data member initialization only in part:
 both are conservative recognizers that stay silent on declarations they cannot
 parse, so their residue is on the list below. The required `clang-analysis` CI
-job adds clang-tidy lifetime, bounds, and member-init checks that do not run on
-Windows.
+job is meant to add clang-tidy lifetime, bounds, and member-init checks. As of
+2026-08-10 it does not compile, and its header diagnostics were discarded by an
+unusable header filter, so treat those checks as intent and the list below as
+reader-enforced until both are fixed — see the amendment opening
+`references/coding-standard.md`.
 
 Nothing checks the items below. They are the ones that reach review unnoticed,
 so verify each one deliberately:

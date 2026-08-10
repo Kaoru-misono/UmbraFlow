@@ -30,8 +30,18 @@ child command inherits the activated environment:
 cmd /c "call .claude\skills\build-project\script\windows\build-env.bat && cmake --build --preset x64-debug"
 ```
 
-Run that form from PowerShell, not from Git Bash, which rewrites the `/c`
-argument into a path and opens an interactive shell instead.
+From Git Bash or the Bash tool, double the switch. MSYS path conversion rewrites
+a lone `/c` into a path, so `cmd.exe` never gets a switch: it prints its banner,
+runs nothing, and exits 0, which looks like success:
+
+```bash
+cmd //c "call .claude\skills\build-project\script\windows\build-env.bat && cmake --build --preset x64-debug"
+```
+
+`MSYS_NO_PATHCONV=1` in front of the single-`/c` form does the same. Probe an
+unfamiliar shell with `cmd /c "echo probe"` against `cmd //c "echo probe"`; only
+the converting shell swallows the first. Verified 2026-08-10 —
+`docs/pitfalls/repository-tooling-invocation.md`.
 
 Select the preset for the current host:
 
@@ -60,9 +70,12 @@ Run tests after a successful build:
 ctest --test-dir build/<host-debug-preset> -L CI --output-on-failure
 ```
 
-When a source file is added or renamed, rerun
-`cmake --preset <host-debug-preset>` before building because module sources are
-discovered during configuration.
+Adding or renaming a source needs no manual reconfigure. `cmake/build.cmake`
+globs module sources with `CONFIGURE_DEPENDS`, so `cmake --build` re-evaluates
+the glob and reconfigures itself when the file set changes; `entry/` and
+`tests/` list sources explicitly, and editing their `CMakeLists.txt` triggers
+the same reconfigure. Rerun `cmake --preset <host-debug-preset>` only when a
+preset, toolchain or cache variable changes.
 
 ## The whole gate in one command
 
@@ -76,3 +89,5 @@ MSVC session:
 ```powershell
 cmd /c "call .claude\skills\build-project\script\windows\build-env.bat && pwsh -NoProfile -File scripts\ci-local.ps1"
 ```
+
+`//c` here too when the shell is Bash-like.

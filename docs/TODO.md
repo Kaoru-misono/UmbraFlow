@@ -10,6 +10,26 @@
 > Both independent reviews returned FAIL; their closed and open findings are in
 > [the review outcome](reviews/2026-08-10-runtime-hardening-review.md), which is
 > what the two unticked review boxes now wait on.
+>
+> Amended 2026-08-10, later the same day: this checklist covers the rewrite, not
+> what follows it. The remaining work is enumerated per requirement in
+> [the next block](plans/2026-08-10-next-block.md), of which W1 (behavioural
+> cases for `c02 c04 s03 s06 a04 a06`), W5 (Replay Bundle and both publication
+> gates), W8 (runtime-artifact reclamation by database refcount, which closed
+> A-F8) and the exported contract suite landed on this date. Two consequences
+> reach the boxes below: the Operator ledger DDL fingerprint changed, so an
+> operator database written before this date is refused at open and recreated
+> rather than migrated; and `ctest -N` now also lists
+> `contract-suite-umbraflow` and `contract-suite-arcana`. Every tick below
+> predates those changes and has not been re-run against them.
+>
+> The same day, W0's merge-readiness run found that the ticked Windows gate is
+> not the whole picture. The three sanitizer presets pass 62/62 with the
+> sanitizers proved active, but the required `linux-analysis` CI job does not
+> compile: `-Wunsafe-buffer-usage` and clang-tidy under `WarningsAsErrors: '*'`
+> produce well over a hundred fatal diagnostics. That is tracked as W11 in
+> [the next block](plans/2026-08-10-next-block.md) and blocks merging this
+> branch regardless of anything below.
 
 ## G0 — contract and inherited baseline
 
@@ -71,7 +91,10 @@
 - [x] Implement lease/fence, opaque snapshots, idempotent commands, EffectivePlan,
       single-use approval, Operation transitions and reconciliation transaction.
 - [x] Run one contract suite over two structurally different fixture plugins;
-      core must contain no game symbol or branch.
+      core must contain no game symbol or branch. Since 2026-08-10 that suite is
+      also the one a consumer runs: `cmake/operator-contract-suite.cmake` exports
+      `uf_add_operator_contract_suite()` and the two fixtures under
+      `contract-suite/fixtures/` reach it exactly as an outside repository would.
 - [x] Pass all local `contract-product-*`,
       `contract-state-*`, `contract-control-*` and `contract-agent-*`.
 

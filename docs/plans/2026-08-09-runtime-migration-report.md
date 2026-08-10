@@ -108,6 +108,13 @@ local CTest IDs prevent a complete-looking contract suite from hiding deleted
 regressions or forbidden compatibility surface:
 
 - CTEST `contract-repository-surface`
+- CTEST `contract-suite-umbraflow` and CTEST `contract-suite-arcana` — added
+  2026-08-10 with the exported Operator contract suite (see
+  [the next block](2026-08-10-next-block.md) §5). They run the same cases
+  through the public entry point a consumer uses, so a change that keeps the
+  in-tree fixtures green but breaks the exported surface is visible. Registered
+  under the `CONTRACT-SUITE` label; recorded here because stop condition 2
+  requires this report to carry every local CTest ID.
 - CTEST `test-core`
 - CTEST `test-domain`
 - CTEST `test-engine`

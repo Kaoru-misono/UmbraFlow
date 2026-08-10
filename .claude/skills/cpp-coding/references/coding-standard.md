@@ -8,12 +8,34 @@ covers, because a rule that only *looks* enforced is worse than one openly left
 to the reader.
 
 Two enforcement layers exist. The `scripts/*.py` gates run on every host. The
-required `clang-analysis` CI job builds the `linux-analysis` preset with
-clang-tidy under `WarningsAsErrors: '*'`, which adds
+required `clang-analysis` CI job is meant to build the `linux-analysis` preset
+with clang-tidy under `WarningsAsErrors: '*'`, adding
 `cppcoreguidelines-pro-type-member-init`, `bugprone-dangling-handle`,
 `bugprone-use-after-move`, `cppcoreguidelines-owning-memory`, and the bounds and
-cast checks in `.clang-tidy`. That job is the only thing checking parts of
-`## Ownership`, and it does not run locally on Windows.
+cast checks in `.clang-tidy`. It is the only intended check for parts of
+`## Ownership`. The same `.clang-tidy` runs locally through the `x64-analysis`,
+`linux-analysis`, and `macos-analysis` presets; the Windows one uses whatever
+clang-tidy is on `PATH`, in clang-cl mode, rather than the clang-23 CI pins.
+
+> **Amended 2026-08-10: the paragraph above states intent, not enforcement.**
+> Two independent defects, each owned by separate work in progress:
+>
+> - The job does not compile. About 14 `-Werror` failures from the project's own
+>   `-Wunsafe-buffer-usage`, plus roughly 90 fatal clang-tidy diagnostics under
+>   `WarningsAsErrors: '*'` — W11 in `docs/plans/2026-08-10-next-block.md`. A job
+>   that does not build enforces nothing, whatever `.clang-tidy` says.
+> - `HeaderFilterRegex` in `.clang-tidy` must be POSIX ERE. The PCRE negative
+>   lookahead it carried on 2026-08-10 matches nothing under `llvm::Regex`, so
+>   every diagnostic located in a header was discarded with no error at all —
+>   `docs/pitfalls/checks-that-cannot-fail.md`. Class definitions here live in
+>   headers, so the header-located checks, `cppcoreguidelines-pro-type-member-init`
+>   above all, had never fired on anything.
+>
+> Neither fix restores enforcement alone. Before relying on any clang-tidy claim
+> in this document, confirm both: that the filter reports against the probe in
+> that pitfall entry, and that a green `clang-analysis` run states how many
+> objects it analyzed — the first failing library kills every downstream BMI, so
+> a partial run's silence means nothing.
 
 Everything else — most of this document, including all of line wrapping, type
 aliases, parameter direction, and class body order — has no automated check on
@@ -407,14 +429,17 @@ Do not interleave stored state and methods.
 ## Ownership
 
 > `python scripts/check_safety.py` rejects `.detach(`, `std::unreachable`, and
-> the ADR-011 Win32 input APIs *everywhere, including inside a boundary*. It
-> rejects raw `new`/`delete`, `malloc`/`free`, `reinterpret_cast`, and
-> `const_cast` outside an `unsafe/`, `platform/`, or `ffi/` directory, and
-> inside one still requires a `// SAFETY:` comment within the preceding three
-> lines. The `clang-analysis` CI job additionally covers part of the lifetime
+> the Win32 input APIs the `background_only` capability contract forbids
+> *everywhere, including inside a boundary*. It rejects raw `new`/`delete`,
+> `malloc`/`free`, `reinterpret_cast`, and `const_cast` outside an `unsafe/`,
+> `platform/`, or `ffi/` directory, and inside one still requires a
+> `// SAFETY:` comment within the preceding three
+> lines. The `clang-analysis` CI job is meant to cover part of the lifetime
 > rules through `bugprone-dangling-handle`, `bugprone-use-after-move`, and
-> `cppcoreguidelines-owning-memory`. Nothing checks the ownership vocabulary or
-> the construction order, which are the substance of this section.
+> `cppcoreguidelines-owning-memory`; check the amendment at the top of this
+> document before counting that as enforcement (2026-08-10). Nothing checks the
+> ownership vocabulary or the construction order, which are the substance of
+> this section.
 
 Ownership is expressed by values, members, and function signatures. Do not make
 types inherit a common base class solely to participate in an ownership model.
@@ -486,8 +511,13 @@ Construction follows a fixed decision order:
 > silent on any class it cannot parse with confidence, including class
 > templates and classes whose name appears more than once. The sentinel,
 > ambiguity, and aggregate rules below are not checked at all.
-> `cppcoreguidelines-pro-type-member-init` in the `clang-analysis` CI job
-> covers the indeterminate cases this misses.
+> `cppcoreguidelines-pro-type-member-init` in the `clang-analysis` CI job is
+> meant to cover the indeterminate cases this misses. Amended 2026-08-10: it
+> reports at the constructor in the `.hpp`, and the header filter that decides
+> whether a header diagnostic survives had never matched anything, so that check
+> has caught nothing to date — `docs/pitfalls/checks-that-cannot-fail.md`. Until
+> both conditions in this document's opening amendment hold, the rules below are
+> reader-enforced beyond what `check_safety.py` covers.
 
 Avoid two-phase initialization: a successfully constructed object must already
 satisfy its invariant. That applies at member granularity, and it does not
