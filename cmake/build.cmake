@@ -23,7 +23,12 @@ function(cpp_embed_luau_sources TARGET_NAME LUAU_SOURCE_DIR GENERATED_DIR VERSIO
         )
     endif()
 
-    set(EMBED_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/embed_luau.py")
+    # This repository's own script, resolved against this file rather than
+    # CMAKE_SOURCE_DIR: under add_subdirectory the latter is the consuming
+    # project's root, which cannot answer for it.
+    cmake_path(SET EMBED_SCRIPT NORMALIZE
+        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../scripts/embed_luau.py"
+    )
     set(GENERATED_FILE "${GENERATED_DIR}/luau-bundle.generated.cpp")
     set(INPUT_LIST_FILE "${GENERATED_DIR}/luau-bundle.inputs.txt")
 
@@ -136,6 +141,13 @@ function(cpp_define_module MODULE_ROOT_DIR DIR_NAME)
     endif()
 
     add_library(${MODULE_NAME} ${MODULE_KIND} ${SRC_FILES} ${HDR_FILES})
+
+    # The name anything outside this repository spells. ${MODULE_NAME} carries
+    # ${PROJECT_NAME}, which is this repository's only while this repository is
+    # the top-level project; under add_subdirectory it is the consuming
+    # project's, so the real target name is not something a consumer can write.
+    add_library(uf::${MODULE_SHORT_NAME} ALIAS ${MODULE_NAME})
+
     cpp_apply_safety_profile(${MODULE_NAME})
 
     set_target_properties(${MODULE_NAME} PROPERTIES
@@ -177,9 +189,12 @@ function(cpp_define_module MODULE_ROOT_DIR DIR_NAME)
     if(NOT MANIFEST_EMBED_LUAU_DIRECTORY STREQUAL "")
         set(EMBED_LUAU_DIR "${MODULE_PATH}/${MANIFEST_EMBED_LUAU_DIRECTORY}")
         # The label is the only path that reaches the generated file's text.
-        # Making it repository-relative is what keeps the output byte-identical
-        # across machines with different checkout locations.
-        file(RELATIVE_PATH EMBED_LUAU_LABEL "${CMAKE_SOURCE_DIR}" "${EMBED_LUAU_DIR}")
+        # Making it relative to this repository's root is what keeps the output
+        # byte-identical across machines with different checkout locations --
+        # and CMAKE_SOURCE_DIR is not that root under add_subdirectory, where
+        # the same label would become an absolute or ../-prefixed path.
+        cmake_path(SET EMBED_LUAU_BASE NORMALIZE "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/..")
+        file(RELATIVE_PATH EMBED_LUAU_LABEL "${EMBED_LUAU_BASE}" "${EMBED_LUAU_DIR}")
         cpp_embed_luau_sources(
             "${MODULE_NAME}"
             "${EMBED_LUAU_DIR}"

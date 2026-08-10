@@ -18,9 +18,15 @@ function(cpp_apply_static_analysis TARGET_NAME)
         return()
     endif()
 
+    # This repository's own configuration, resolved against this file rather
+    # than CMAKE_SOURCE_DIR: under add_subdirectory the latter is the consuming
+    # project's root, which carries its own .clang-tidy or none at all.
+    cmake_path(SET CPP_CLANG_TIDY_CONFIG NORMALIZE
+        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../.clang-tidy"
+    )
     set(CPP_CLANG_TIDY_COMMAND
         "${CPP_CLANG_TIDY_EXECUTABLE}"
-        "--config-file=${CMAKE_SOURCE_DIR}/.clang-tidy"
+        "--config-file=${CPP_CLANG_TIDY_CONFIG}"
     )
 
     # CMake invokes clang-tidy in clang-cl mode for MSVC compilation databases.

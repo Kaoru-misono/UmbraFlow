@@ -86,10 +86,9 @@ endif()
 add_executable(${PROJECT_NAME}
     cli/main.cpp
     "${APPLICATION_INFO_HEADER}"
-    ${CPP_UTF8_RC}
 )
 cpp_apply_safety_profile(${PROJECT_NAME})
-cpp_apply_utf8_manifest(${PROJECT_NAME})
+cpp_apply_utf8_encoding(${PROJECT_NAME})
 
 set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "umbra-flow")
 target_include_directories(${PROJECT_NAME} PRIVATE "${APPLICATION_INFO_DIRECTORY}")
@@ -124,8 +123,11 @@ if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
         set(OCR_PAYLOAD_DIRECTORY
             "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/models/${OCR_MODEL_NAME}"
         )
+        # PROJECT_SOURCE_DIR, not CMAKE_SOURCE_DIR: the payload is this
+        # repository's, and under add_subdirectory the latter names a consumer's
+        # root, where the build would ask for a file nothing can produce.
         set(OCR_MODEL_ROOT
-            "${CMAKE_SOURCE_DIR}/modules/ocr/external/models/${OCR_MODEL_NAME}"
+            "${PROJECT_SOURCE_DIR}/modules/ocr/external/models/${OCR_MODEL_NAME}"
         )
 
         set(OCR_MODEL_SOURCES "")

@@ -8,78 +8,36 @@
 # uf::operator_runtime::contract::projectUnderTest, and calls the function
 # below.
 #
+# A consuming repository never includes this file. It adds this repository with
+# add_subdirectory, which defines uf_add_operator_contract_suite for every
+# directory in the build, and calls it. Nothing here is left in a directory
+# scope for that reason: a variable set while this file is read reaches this
+# repository's own directories and no consumer's, and include_guard(GLOBAL)
+# would then make a consumer's own include of it a silent no-op with an empty
+# source list. Every path and target the function needs is resolved inside it.
+#
 # The suite's translation units are compiled into the consumer's executable
-# rather than shipped as a library. A test binary must be built with the
-# consumer's own safety profile and sanitizers to mean anything, and this
-# repository installs nothing today -- the Operator's public headers reach
-# task, engine and ocr, so a binary package would have to carry a vendored
-# ONNX runtime payload before it carried a single contract.
+# rather than shipped as a library, because this repository installs nothing and
+# every module is type = static -- the Operator's private dependencies propagate
+# as link-only, so a binary package would carry SQLite, stb, Luau and a vendored
+# ONNX runtime payload before it carried a single contract. The binary is
+# compiled with this repository's safety profile as the surrounding build
+# configures it (CPP_WARNINGS_AS_ERRORS, CPP_ENABLE_HARDENING and the sanitizer
+# options are cache entries of that build); the target belongs to the consumer,
+# so anything beyond that is theirs to add to it afterwards.
 
 include_guard(GLOBAL)
 
 include("${CMAKE_CURRENT_LIST_DIR}/doctest-gate.cmake")
-
-set(UF_CONTRACT_SUITE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../contract-suite")
-set(UF_CONTRACT_SUITE_INCLUDE_DIR "${UF_CONTRACT_SUITE_ROOT}/include")
-set(UF_CONTRACT_SUITE_SOURCE_DIR "${UF_CONTRACT_SUITE_ROOT}/source")
-set(UF_CONTRACT_SUITE_DOCTEST_DIR "${CMAKE_CURRENT_LIST_DIR}/../tests/external/doctest")
-set(UF_CONTRACT_SUITE_OPERATOR_TARGET "${PROJECT_NAME}_operator")
-
-# Every case the suite runs. Concrete paths, never a glob: a case that stops
-# being compiled must be a visible deletion here rather than a file that
-# quietly left the build.
-set(UF_CONTRACT_SUITE_SOURCES
-    "${UF_CONTRACT_SUITE_SOURCE_DIR}/suite-main.cpp"
-    "${UF_CONTRACT_SUITE_SOURCE_DIR}/harness.cpp"
-    "${UF_CONTRACT_SUITE_SOURCE_DIR}/suite-control-ledger.cpp"
-    "${UF_CONTRACT_SUITE_SOURCE_DIR}/suite-project-authority.cpp"
-)
-foreach(UF_CONTRACT_SUITE_SOURCE IN LISTS UF_CONTRACT_SUITE_SOURCES)
-    if(NOT EXISTS "${UF_CONTRACT_SUITE_SOURCE}")
-        message(FATAL_ERROR
-            "the Operator contract suite is missing a source: ${UF_CONTRACT_SUITE_SOURCE}"
-        )
-    endif()
-endforeach()
-
-# Every contract ID the suite's own sources declare, read out of the source
-# text. That text is what a preprocessor has not seen yet, so this set answers
-# "is the name spelled the same in both places" and nothing about whether the
-# case is compiled; uf_require_executed_assertions below answers the second
-# question on the run.
-set(UF_CONTRACT_SUITE_DECLARED_CASES "")
-foreach(UF_CONTRACT_SUITE_SOURCE IN LISTS UF_CONTRACT_SUITE_SOURCES)
-    file(READ "${UF_CONTRACT_SUITE_SOURCE}" UF_CONTRACT_SUITE_TEXT)
-    string(REGEX MATCHALL
-        "TEST_CASE[ \t\r\n]*\\([ \t\r\n]*\"(contract|schema)-[a-z0-9-]+\"[ \t\r\n]*\\)"
-        UF_CONTRACT_SUITE_DECLARATIONS
-        "${UF_CONTRACT_SUITE_TEXT}"
-    )
-    foreach(UF_CONTRACT_SUITE_DECLARATION IN LISTS UF_CONTRACT_SUITE_DECLARATIONS)
-        string(REGEX MATCH
-            "(contract|schema)-[a-z0-9-]+"
-            UF_CONTRACT_SUITE_DECLARED_CASE
-            "${UF_CONTRACT_SUITE_DECLARATION}"
-        )
-        list(APPEND UF_CONTRACT_SUITE_DECLARED_CASES "${UF_CONTRACT_SUITE_DECLARED_CASE}")
-    endforeach()
-endforeach()
-set(UF_CONTRACT_SUITE_UNIQUE_DECLARED_CASES ${UF_CONTRACT_SUITE_DECLARED_CASES})
-list(REMOVE_DUPLICATES UF_CONTRACT_SUITE_UNIQUE_DECLARED_CASES)
-list(LENGTH UF_CONTRACT_SUITE_DECLARED_CASES UF_CONTRACT_SUITE_DECLARED_CASE_COUNT)
-list(LENGTH UF_CONTRACT_SUITE_UNIQUE_DECLARED_CASES UF_CONTRACT_SUITE_UNIQUE_DECLARED_CASE_COUNT)
-if(NOT UF_CONTRACT_SUITE_DECLARED_CASE_COUNT EQUAL UF_CONTRACT_SUITE_UNIQUE_DECLARED_CASE_COUNT)
-    message(FATAL_ERROR
-        "the Operator contract suite declares duplicate contract TEST_CASE names: "
-        "[${UF_CONTRACT_SUITE_DECLARED_CASES}]"
-    )
-endif()
+include("${CMAKE_CURRENT_LIST_DIR}/platform.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/runtime-payload.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/safety-profile.cmake")
 
 # One run of the suite against one project.
 #
 #   PROJECT  names the run and its CTest gate: contract-suite-<PROJECT>.
 #   SOURCES  the consumer's provider translation units.
-#   LIBS     anything the provider needs beyond the Operator.
+#   LIBS     anything the provider needs beyond what the suite already links.
 #   CASES    contract IDs this run also registers one CTest each for, on top of
 #            the aggregate gate. A run claims either every ID the suite declares
 #            or none of them: at most one run may claim, because two projects
@@ -110,10 +68,70 @@ function(uf_add_operator_contract_suite)
             "that define uf::operator_runtime::contract::projectUnderTest"
         )
     endif()
-    if(NOT TARGET ${UF_CONTRACT_SUITE_OPERATOR_TARGET})
+    if(NOT TARGET uf::operator)
         message(FATAL_ERROR
-            "uf_add_operator_contract_suite(${ARG_TARGET}) needs "
-            "${UF_CONTRACT_SUITE_OPERATOR_TARGET}, which this build does not define"
+            "uf_add_operator_contract_suite(${ARG_TARGET}) needs uf::operator, which "
+            "this build does not define. Add this repository with add_subdirectory "
+            "before calling it."
+        )
+    endif()
+
+    cmake_path(SET SUITE_ROOT NORMALIZE
+        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../contract-suite"
+    )
+    cmake_path(SET SUITE_DOCTEST_DIR NORMALIZE
+        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../tests/external/doctest"
+    )
+    set(SUITE_INCLUDE_DIR "${SUITE_ROOT}/include")
+    set(SUITE_SOURCE_DIR "${SUITE_ROOT}/source")
+
+    # Every case the suite runs. Concrete paths, never a glob: a case that stops
+    # being compiled must be a visible deletion here rather than a file that
+    # quietly left the build.
+    set(SUITE_SOURCES
+        "${SUITE_SOURCE_DIR}/suite-main.cpp"
+        "${SUITE_SOURCE_DIR}/harness.cpp"
+        "${SUITE_SOURCE_DIR}/suite-control-ledger.cpp"
+        "${SUITE_SOURCE_DIR}/suite-project-authority.cpp"
+    )
+    foreach(SUITE_SOURCE IN LISTS SUITE_SOURCES)
+        if(NOT EXISTS "${SUITE_SOURCE}")
+            message(FATAL_ERROR
+                "the Operator contract suite is missing a source: ${SUITE_SOURCE}"
+            )
+        endif()
+    endforeach()
+
+    # Every contract ID the suite's own sources declare, read out of the source
+    # text. That text is what a preprocessor has not seen yet, so this set
+    # answers "is the name spelled the same in both places" and nothing about
+    # whether the case is compiled; uf_require_executed_assertions below answers
+    # the second question on the run.
+    set(SUITE_DECLARED_CASES "")
+    foreach(SUITE_SOURCE IN LISTS SUITE_SOURCES)
+        file(READ "${SUITE_SOURCE}" SUITE_SOURCE_TEXT)
+        string(REGEX MATCHALL
+            "TEST_CASE[ \t\r\n]*\\([ \t\r\n]*\"(contract|schema)-[a-z0-9-]+\"[ \t\r\n]*\\)"
+            SUITE_DECLARATIONS
+            "${SUITE_SOURCE_TEXT}"
+        )
+        foreach(SUITE_DECLARATION IN LISTS SUITE_DECLARATIONS)
+            string(REGEX MATCH
+                "(contract|schema)-[a-z0-9-]+"
+                SUITE_DECLARED_CASE
+                "${SUITE_DECLARATION}"
+            )
+            list(APPEND SUITE_DECLARED_CASES "${SUITE_DECLARED_CASE}")
+        endforeach()
+    endforeach()
+    set(UNIQUE_SUITE_DECLARED_CASES ${SUITE_DECLARED_CASES})
+    list(REMOVE_DUPLICATES UNIQUE_SUITE_DECLARED_CASES)
+    list(LENGTH SUITE_DECLARED_CASES SUITE_DECLARED_CASE_COUNT)
+    list(LENGTH UNIQUE_SUITE_DECLARED_CASES UNIQUE_SUITE_DECLARED_CASE_COUNT)
+    if(NOT SUITE_DECLARED_CASE_COUNT EQUAL UNIQUE_SUITE_DECLARED_CASE_COUNT)
+        message(FATAL_ERROR
+            "the Operator contract suite declares duplicate contract TEST_CASE names: "
+            "[${SUITE_DECLARED_CASES}]"
         )
     endif()
 
@@ -129,7 +147,7 @@ function(uf_add_operator_contract_suite)
 
     if(ARG_CASES)
         set(SORTED_SUITE_CASES ${ARG_CASES})
-        set(SORTED_SUITE_DECLARED_CASES ${UF_CONTRACT_SUITE_DECLARED_CASES})
+        set(SORTED_SUITE_DECLARED_CASES ${SUITE_DECLARED_CASES})
         list(SORT SORTED_SUITE_CASES)
         list(SORT SORTED_SUITE_DECLARED_CASES)
         if(NOT SORTED_SUITE_CASES STREQUAL SORTED_SUITE_DECLARED_CASES)
@@ -179,31 +197,48 @@ function(uf_add_operator_contract_suite)
     endforeach()
 
     add_executable(${ARG_TARGET}
-        ${UF_CONTRACT_SUITE_SOURCES}
+        ${SUITE_SOURCES}
         ${ARG_SOURCES}
-        ${CPP_UTF8_RC}
     )
     cpp_apply_safety_profile(${ARG_TARGET})
-    cpp_apply_utf8_manifest(${ARG_TARGET})
+    cpp_apply_utf8_encoding(${ARG_TARGET})
+
+    # The compile definitions this repository's own directories carry. They do
+    # not reach a target declared in a consumer's directory, and the suite's
+    # translation units are this repository's sources wherever they compile.
+    if(WIN32)
+        target_compile_definitions(${ARG_TARGET} PRIVATE
+            NOMINMAX
+            WIN32_LEAN_AND_MEAN
+            UNICODE
+            _UNICODE
+        )
+    endif()
+
     target_compile_definitions(${ARG_TARGET} PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
     target_include_directories(${ARG_TARGET} PRIVATE
-        "${UF_CONTRACT_SUITE_INCLUDE_DIR}"
-        "${UF_CONTRACT_SUITE_SOURCE_DIR}"
+        "${SUITE_INCLUDE_DIR}"
+        "${SUITE_SOURCE_DIR}"
     )
     target_include_directories(${ARG_TARGET} SYSTEM PRIVATE
-        "${UF_CONTRACT_SUITE_DOCTEST_DIR}"
+        "${SUITE_DOCTEST_DIR}"
     )
+    # uf::image is the suite's own dependency, not the provider's: harness.cpp
+    # reaches observation-fixture.hpp, which encodes the fixture's template
+    # assets with <image/png.hpp>, and the Operator does not link image.
     target_link_libraries(${ARG_TARGET} PRIVATE
-        ${UF_CONTRACT_SUITE_OPERATOR_TARGET}
+        uf::operator
+        uf::image
         ${ARG_LIBS}
     )
     target_compile_features(${ARG_TARGET} PRIVATE cxx_std_23)
 
     # The Operator links task publicly, which links engine and ocr publicly, and
-    # onnxruntime resolves beside the executable rather than from PATH.
-    if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
-        cpp_stage_runtime_libraries(${ARG_TARGET} ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
-    endif()
+    # onnxruntime resolves beside the executable rather than from PATH. The list
+    # is empty exactly when the ocr module declared no payload, and staging then
+    # does nothing -- so there is no condition here that could be false for the
+    # caller the staging exists for.
+    cpp_stage_runtime_libraries(${ARG_TARGET} ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
 
     # The aggregate runs every case, including the ones named in prose that no
     # migration report ID covers, so it stays even when CASES names some of them

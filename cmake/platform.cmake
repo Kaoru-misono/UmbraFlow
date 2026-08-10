@@ -12,12 +12,24 @@ function(cpp_get_platform_key OUT_VAR)
     set(${OUT_VAR} "${PLATFORM_KEY}" PARENT_SCOPE)
 endfunction()
 
-function(cpp_apply_utf8_manifest TARGET_NAME)
-    if(NOT MSVC OR NOT CPP_UTF8_MANIFEST)
+# Makes TARGET_NAME's executable run under the UTF-8 code page. Both files are
+# this repository's own, so they resolve against this file's directory rather
+# than against CMAKE_SOURCE_DIR, which is the consuming project's root whenever
+# this repository is added with add_subdirectory.
+function(cpp_apply_utf8_encoding TARGET_NAME)
+    if(NOT WIN32)
         return()
     endif()
 
-    target_sources(${TARGET_NAME} PRIVATE "${CPP_UTF8_MANIFEST}")
+    if(MSVC)
+        target_sources(${TARGET_NAME} PRIVATE
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/utf8.manifest"
+        )
+    else()
+        target_sources(${TARGET_NAME} PRIVATE
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/utf8.rc"
+        )
+    endif()
 endfunction()
 
 function(cpp_platform_select_list OUT_VAR WINDOWS_LIST LINUX_LIST MACOS_LIST)

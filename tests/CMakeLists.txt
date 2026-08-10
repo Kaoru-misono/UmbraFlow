@@ -1,4 +1,4 @@
-include("${CMAKE_SOURCE_DIR}/cmake/doctest-gate.cmake")
+include("${PROJECT_SOURCE_DIR}/cmake/doctest-gate.cmake")
 
 function(cpp_add_test)
     cmake_parse_arguments(ARG "NO_CTEST" "NAME" "SOURCES;LIBS" ${ARGN})
@@ -24,10 +24,9 @@ function(cpp_add_test)
     add_executable(${ARG_NAME}
         test-main.cpp
         ${ARG_SOURCES}
-        ${CPP_UTF8_RC}
     )
     cpp_apply_safety_profile(${ARG_NAME})
-    cpp_apply_utf8_manifest(${ARG_NAME})
+    cpp_apply_utf8_encoding(${ARG_NAME})
     target_compile_definitions(${ARG_NAME} PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
     target_include_directories(${ARG_NAME} SYSTEM PRIVATE external/doctest)
     target_link_libraries(${ARG_NAME} PRIVATE ${ARG_LIBS})
@@ -427,7 +426,7 @@ cpp_add_test(
 # directory keeps the dependency running from tests/ into the exported suite and
 # leaves every #include "project-fixture.hpp" spelled the same way.
 set(UF_OPERATOR_FIXTURE_DIR
-    "${CMAKE_SOURCE_DIR}/contract-suite/fixtures/umbraflow"
+    "${PROJECT_SOURCE_DIR}/contract-suite/fixtures/umbraflow"
 )
 if(NOT EXISTS "${UF_OPERATOR_FIXTURE_DIR}/project-fixture.hpp")
     message(FATAL_ERROR
@@ -442,7 +441,7 @@ endif()
 # template assets as PNG, which is the one library the Operator does not already
 # link publicly.
 set(UF_OPERATOR_CONTRACT_INCLUDE_DIR
-    "${CMAKE_SOURCE_DIR}/contract-suite/include"
+    "${PROJECT_SOURCE_DIR}/contract-suite/include"
 )
 if(NOT EXISTS "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}/operator-contract/observation-fixture.hpp")
     message(FATAL_ERROR
@@ -720,10 +719,9 @@ auto main(int argc, char** argv) -> int
 
     add_executable(test-task-luau-runner
         "${TASK_LUAU_RUNNER_SOURCE}"
-        ${CPP_UTF8_RC}
     )
     cpp_apply_safety_profile(test-task-luau-runner)
-    cpp_apply_utf8_manifest(test-task-luau-runner)
+    cpp_apply_utf8_encoding(test-task-luau-runner)
     target_link_libraries(test-task-luau-runner PRIVATE ${PROJECT_NAME}_task)
     target_compile_features(test-task-luau-runner PRIVATE cxx_std_23)
     if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
@@ -813,7 +811,7 @@ endif()
 # tests/assets/real-regression for it to appear. It sat inside the workbench
 # block until the annotation front-ends were retired, which was only ever where
 # the fixture directory happened to be first tested for.
-if(EXISTS ${CMAKE_SOURCE_DIR}/tests/assets/real-regression)
+if(EXISTS ${PROJECT_SOURCE_DIR}/tests/assets/real-regression)
     cpp_add_test(
         NAME test-ocr-real
         SOURCES
@@ -824,8 +822,8 @@ if(EXISTS ${CMAKE_SOURCE_DIR}/tests/assets/real-regression)
             ${PROJECT_NAME}_vision
     )
     target_compile_definitions(test-ocr-real PRIVATE
-        UF_REAL_REGRESSION_ROOT="${CMAKE_SOURCE_DIR}/tests/assets/real-regression"
-        UF_OCR_MODEL_ROOT="${CMAKE_SOURCE_DIR}/modules/ocr/external/models"
+        UF_REAL_REGRESSION_ROOT="${PROJECT_SOURCE_DIR}/tests/assets/real-regression"
+        UF_OCR_MODEL_ROOT="${PROJECT_SOURCE_DIR}/modules/ocr/external/models"
     )
     # onnxruntime resolves beside the executable, so the runtime DLLs are copied
     # rather than assumed to be on PATH; see cmake/runtime-payload.cmake.
@@ -843,25 +841,35 @@ add_test(
     NAME contract-repository-surface
     COMMAND
         ${Python3_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/tests/test-runtime-surface.py
-        --root ${CMAKE_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/tests/test-runtime-surface.py
+        --root ${PROJECT_SOURCE_DIR}
 )
 add_test(
     NAME check-modules
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_modules.py
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/check_modules.py
 )
 add_test(
     NAME check-safety
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_safety.py
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/check_safety.py
 )
 add_test(
     NAME test-check-safety
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test-check-safety.py
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/test-check-safety.py
+)
+# Pins only. The full run reads the frozen bundle out of the consumer repository
+# at an absolute path no CI runner has, and a form of the check that tolerated
+# its absence would pass whether or not the bundle agreed. The name says what
+# this gate delivers: agreement between the pinned hashes this repository states
+# in prose and the ones its own script carries.
+add_test(
+    NAME check-spec-pins
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/check_spec_bundle.py --pins-only
 )
 set_tests_properties(
     contract-repository-surface
     check-modules
     check-safety
+    check-spec-pins
     test-check-safety
     PROPERTIES
     TIMEOUT 30
@@ -875,7 +883,7 @@ set_tests_properties(
 add_test(
     NAME test-annotate-backend
     COMMAND ${Python3_EXECUTABLE} -m unittest tools.annotate.tests.test_backend
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
 )
 set_tests_properties(
     test-annotate-backend
