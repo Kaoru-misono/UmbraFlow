@@ -21,6 +21,17 @@ namespace uf::operator_runtime::detail
         "a6fc31b5e0ee49f5368d66fae3f2abf38e0e58f57d799e3d2cd8da583f508a29"
     };
 
+    // tools/annotate/store.py's SCHEMA_ROOT_HASH: sha256 over the JCS document
+    // naming the workspace application id, its user_version, and every schema
+    // object's normalized SQL. Unlike the hash above it covers no checked-in
+    // file, so nothing can recompute it here -- it is a value the authoring
+    // side publishes and the deployment principal accepts or refuses. Accepting
+    // any well-formed hash instead would leave the Python gate comparing Python
+    // against itself, which proves nothing about this side.
+    inline constexpr auto k_workspaceSqliteSchemaHash = std::string_view{
+        "72fa0c39964397921007665e2f4f3f7936bd46f476a3adf589d32bd59ce9d873"
+    };
+
     // The one child of the production root that is not a content hash. It is
     // named here because the installer stages into it and reclamation sweeps
     // it, and a second spelling would let those two disagree.

@@ -352,7 +352,7 @@ return {
             std::shared_ptr<std::string> observedReduceInput
         ) -> ProjectDocumentValidator
         {
-            return [observedReduceInput](
+            return [observedReduceInput = std::move(observedReduceInput)](
                        ProjectPluginFunction function,
                        ProjectDocumentDirection direction,
                        std::string_view candidateJcs

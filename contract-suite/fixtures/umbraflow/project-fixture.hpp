@@ -632,7 +632,7 @@ namespace uf::operator_runtime::test_support
             detail::k_annotationWorkspaceSchemaHash,
             hashOf("replay-gate").hex(),
             artifactRootHash.hex(),
-            hashOf("workspace-schema").hex()
+            detail::k_workspaceSqliteSchemaHash
         );
         writeFile(handoff / "release.manifest.json", releaseManifest);
         return RuntimeRelease{

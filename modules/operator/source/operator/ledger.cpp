@@ -2,6 +2,7 @@
 #include "runtime-installation.hpp"
 
 #include <core/error/contracts.hpp>
+#include <core/safety/annotations.hpp>
 #include <core/text/json-text.hpp>
 #include <core/text/utf8.hpp>
 
@@ -243,17 +244,29 @@ namespace uf::operator_runtime
             int index
         ) -> std::string
         {
-            auto const* bytes = sqlite3_column_text(statement, index);
+            auto const* const bytes = sqlite3_column_text(statement, index);
             auto const size = sqlite3_column_bytes(statement, index);
             if (bytes == nullptr || size <= 0)
             {
                 return {};
             }
+            // SAFETY: sqlite3_column_bytes reports the length of the very
+            // buffer sqlite3_column_text returned for the same statement and
+            // column, and both stay valid until the next step, reset or
+            // finalize. The count arrives beside the pointer rather than within
+            // it, so no expression can restate the bound; every read below is
+            // bounded by the span this one statement builds.
+            UF_UNSAFE_BUFFER_BEGIN
+            auto const text = std::span<unsigned char const>{
+                bytes,
+                static_cast<std::size_t>(size)
+            };
+            UF_UNSAFE_BUFFER_END
             auto value = std::string{};
-            value.reserve(static_cast<std::size_t>(size));
-            for (auto byteIndex = 0; byteIndex < size; ++byteIndex)
+            value.reserve(text.size());
+            for (auto const byte : text)
             {
-                value.push_back(static_cast<char>(bytes[byteIndex]));
+                value.push_back(static_cast<char>(byte));
             }
             return value;
         }
@@ -904,21 +917,60 @@ namespace uf::operator_runtime
             "AND lease.session_id=o.session_id "
         };
 
+        // Reports through sqlite's return codes and allocates nothing of its
+        // own, so ~PublicationHold can release its row on a path that provably
+        // cannot throw. Every helper that builds an Error formats a message,
+        // and a formatting allocation that fails inside an implicitly noexcept
+        // destructor terminates the process.
+        [[nodiscard]]
+        auto discardPublicationRow(
+            sqlite3* database,
+            std::string_view stagingToken
+        ) noexcept -> bool
+        {
+            constexpr auto sql = std::string_view{
+                "DELETE FROM runtime_publications WHERE staging_token=?1"
+            };
+            auto* prepared = static_cast<sqlite3_stmt*>(nullptr);
+            auto const prepareCode = sqlite3_prepare_v3(
+                database,
+                sql.data(),
+                static_cast<int>(sql.size()),
+                SQLITE_PREPARE_PERSISTENT,
+                &prepared,
+                nullptr
+            );
+            auto const statement = Statement{prepared};
+            if (prepareCode != SQLITE_OK)
+            {
+                return false;
+            }
+            auto const bindCode = sqlite3_bind_text64(
+                statement.get(),
+                1,
+                stagingToken.data(),
+                static_cast<sqlite3_uint64>(stagingToken.size()),
+                SQLITE_TRANSIENT,
+                SQLITE_UTF8
+            );
+            if (bindCode != SQLITE_OK)
+            {
+                return false;
+            }
+            return sqlite3_step(statement.get()) == SQLITE_DONE;
+        }
+
         [[nodiscard]]
         auto discardPublication(
             sqlite3* database,
             std::string_view stagingToken
         ) -> Status
         {
-            UF_TRY_VALUE(
-                statement,
-                prepare(
-                    database,
-                    "DELETE FROM runtime_publications WHERE staging_token=?1"
-                )
-            );
-            UF_TRY(bindText(database, statement.get(), 1, stagingToken));
-            return expectDone(database, statement.get());
+            if (!discardPublicationRow(database, stagingToken))
+            {
+                return databaseFailure(database, "could not discard publication");
+            }
+            return ok();
         }
 
         // A row in runtime_publications for the whole of one installation. It
@@ -928,7 +980,9 @@ namespace uf::operator_runtime
         //
         // The destructor drops the row best-effort: a failure there costs a
         // directory that stays until the next open, because beginSessionEpoch
-        // clears the table.
+        // clears the table. It releases through discardPublicationRow, whose
+        // only failure signal is a return code, because a destructor that
+        // formats a diagnostic can throw and a throwing destructor terminates.
         class PublicationHold final
         {
             sqlite3*    m_database;
@@ -957,7 +1011,9 @@ namespace uf::operator_runtime
             {
                 if (m_held)
                 {
-                    static_cast<void>(discardPublication(m_database, m_stagingToken));
+                    static_cast<void>(
+                        discardPublicationRow(m_database, m_stagingToken)
+                    );
                 }
             }
 
@@ -999,6 +1055,41 @@ namespace uf::operator_runtime
             // together rather than leaving a window between them.
             auto markReleased() noexcept -> void { m_held = false; }
         };
+
+        // One coordinator owns a runtime directory at a time, and this is what
+        // makes that true rather than assumed. beginSessionEpoch below clears
+        // every control lease, deactivates every session and drops every
+        // publication claim on the reading that whatever those rows describe
+        // died with the process that wrote them. Without an exclusive lock a
+        // second open performs those three clears against a coordinator that is
+        // still running: it strips live leases and drops a claim protecting a
+        // directory that is mid-materialization. sqlite holds the lock for the
+        // connection's lifetime under this locking mode, so the refusal below is
+        // the whole of the enforcement.
+        [[nodiscard]]
+        auto claimExclusiveOwnership(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, "PRAGMA locking_mode=EXCLUSIVE"));
+            auto const code = sqlite3_exec(
+                database,
+                "BEGIN EXCLUSIVE",
+                nullptr,
+                nullptr,
+                nullptr
+            );
+            if ((code & 0xFF) == SQLITE_BUSY)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Another Operator coordinator holds this runtime directory"
+                );
+            }
+            if (code != SQLITE_OK)
+            {
+                return databaseFailure(database, "could not claim the runtime directory");
+            }
+            return execute(database, "COMMIT");
+        }
 
         [[nodiscard]]
         auto beginSessionEpoch(sqlite3* database) -> Result<uint64>
@@ -1045,10 +1136,11 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, "DELETE FROM control_leases"));
             UF_TRY(execute(database, "UPDATE sessions SET active=0 WHERE active=1"));
 
-            // A publication claim outlives its process only after a crash, and
-            // the epoch bump above has just fenced that process out. Dropping
-            // the claims here is what keeps a crash from pinning an artifact
-            // directory against reclamation forever.
+            // A publication claim outlives its process only after a crash:
+            // claimExclusiveOwnership has already refused this open if any
+            // other coordinator is live, so every row here belongs to a process
+            // that is gone. Dropping the claims is what keeps a crash from
+            // pinning an artifact directory against reclamation forever.
             UF_TRY(execute(database, "DELETE FROM runtime_publications"));
             UF_TRY(transaction.commit());
             return next;
@@ -1210,6 +1302,9 @@ namespace uf::operator_runtime
             );
         }
 
+        // Before the schema is touched, so a second coordinator is refused by
+        // name rather than by whichever statement happens to hit the lock.
+        UF_TRY(claimExclusiveOwnership(database.get()));
         UF_TRY(initialize(database.get()));
         UF_TRY_VALUE(sessionEpoch, beginSessionEpoch(database.get()));
         auto coordinator = OperatorCoordinator{std::make_unique<Impl>(
@@ -1384,16 +1479,24 @@ namespace uf::operator_runtime
     auto OperatorCoordinator::reclaimUnreferencedRuntimeArtifacts()
         -> Result<ReclaimedRuntimeArtifacts>
     {
-        // The removals happen INSIDE the write transaction, and that is the
-        // whole defence against a concurrent publisher: PublicationHold::take
-        // is itself a BEGIN IMMEDIATE, so a claim on one of these hashes either
-        // lands before this transaction opens -- and the query below sees it --
-        // or after this one commits, by which point the directory is gone and
-        // the publisher materializes it again.
+        // The removals happen INSIDE the write transaction, so the whole
+        // reference set is read against one consistent state rather than
+        // row by row while it moves.
         //
         // Rolling back after a directory has been removed is safe in the one
         // direction it can happen: a runtime_artifacts row whose directory is
         // missing is still unreferenced, so the next pass finishes the job.
+        //
+        // TODO(cpp-debt): the runtime_publications clause below and the staging
+        // `claimed` skip defend against a publisher running concurrently with
+        // this sweep. No such publisher can exist: claimExclusiveOwnership
+        // refuses a second coordinator, and OperatorCoordinator carries no
+        // synchronization of its own, so a claim is never live when this runs.
+        // Both are therefore unreachable, and removing either leaves every gate
+        // green (verified by mutation, 2026-08-10). Deleting the table is the
+        // honest end state; it moves the DDL fingerprint and the table list
+        // that four unstarted work-item plans pin, so it needs the owner of
+        // docs/plans to order it rather than a drive-by removal here.
         UF_TRY_VALUE(
             artifactDirectory,
             task_platform::ConfinedRoot::open(m_impl->runtimeArtifactRoot)

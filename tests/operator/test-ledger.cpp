@@ -277,6 +277,53 @@ return {
         // test_support::runtimeRelease always writes the same page model, so
         // every release it builds has the same content hash and shares one
         // production directory. Reclamation needs two that do not.
+        // Builds a handoff whose release manifest names the two schema hashes
+        // given, so a case can move exactly one of them off the value this
+        // deployment principal accepts.
+        [[nodiscard]]
+        auto releaseWithSchemaHashes(
+            std::filesystem::path const& root,
+            std::string_view annotationWorkspaceSchemaHash,
+            std::string_view workspaceSqliteSchemaHash
+        ) -> test_support::RuntimeRelease
+        {
+            auto const handoff  = root / "release";
+            auto const artifact = handoff / "runtime-artifact";
+            auto const model    = std::string_view{"a page model\r\n"};
+            test_support::writeFile(artifact / task::k_runtimeModelFileName, model);
+            auto const manifest = std::format(
+                "{{\"assets\":[],\"manifest_schema_hash\":\"{}\","
+                "\"page_model\":{{\"path\":\"page-model.toml\",\"sha256\":\"{}\","
+                "\"size\":{}}},\"runtime_model_schema_hash\":\"{}\"}}",
+                task::k_runtimeArtifactSchemaHash,
+                hashOf(model).hex(),
+                model.size(),
+                task::k_runtimeModelSchemaHash
+            );
+            test_support::writeFile(
+                artifact / task::k_runtimeArtifactManifestFileName,
+                manifest
+            );
+            auto const artifactRootHash = hashOf(manifest);
+            auto const releaseManifest = std::format(
+                "{{\"annotation_workspace_schema_hash\":\"{}\","
+                "\"candidate_id\":\"candidate-1\",\"candidate_revision\":1,"
+                "\"generation\":1,\"predecessor_publication_id\":null,"
+                "\"replay_gate_hash\":\"{}\",\"runtime_artifact_root_hash\":\"{}\","
+                "\"workspace_sqlite_schema_hash\":\"{}\"}}",
+                annotationWorkspaceSchemaHash,
+                hashOf("replay-gate").hex(),
+                artifactRootHash.hex(),
+                workspaceSqliteSchemaHash
+            );
+            test_support::writeFile(handoff / "release.manifest.json", releaseManifest);
+            return test_support::RuntimeRelease{
+                .handoffRoot         = handoff,
+                .releaseManifestHash = hashOf(releaseManifest),
+                .artifactRootHash    = artifactRootHash,
+            };
+        }
+
         [[nodiscard]]
         auto releaseWithModel(
             std::filesystem::path const& root,
@@ -309,7 +356,7 @@ return {
                 detail::k_annotationWorkspaceSchemaHash,
                 hashOf("replay-gate").hex(),
                 artifactRootHash.hex(),
-                hashOf("workspace-schema").hex()
+                detail::k_workspaceSqliteSchemaHash
             );
             test_support::writeFile(handoff / "release.manifest.json", releaseManifest);
             return test_support::RuntimeRelease{
@@ -391,6 +438,82 @@ return {
             canonical(project.schemaOwner, "{\"value\":1}"),
             canonical(project.schemaOwner, "{\"kind\":\"forged\"}")
         ).has_value());
+    }
+
+    TEST_CASE("installation refuses a release manifest naming another schema")
+    {
+        // Both hashes are the deployment principal's half of a cross-boundary
+        // agreement: the authoring side publishes them and this side decides
+        // whether it can read what they describe. A pin only checked on the
+        // publishing side compares that side against itself.
+        auto temporary = TemporaryDirectory{};
+        auto const production = temporary.path() / "production";
+        auto coordinator = OperatorCoordinator::open(production);
+        REQUIRE(coordinator.has_value());
+
+        auto const foreign = hashOf("some other schema").hex();
+
+        SUBCASE("the workspace SQLite schema hash must be the one this build reads")
+        {
+            auto const release = releaseWithSchemaHashes(
+                temporary.path() / "wrong-sqlite",
+                detail::k_annotationWorkspaceSchemaHash,
+                foreign
+            );
+            CHECK_FALSE(
+                coordinator->installRuntimeArtifact(installRequest(release, 0U))
+                    .has_value()
+            );
+        }
+
+        SUBCASE("the annotation workspace schema hash must be too")
+        {
+            auto const release = releaseWithSchemaHashes(
+                temporary.path() / "wrong-annotation",
+                foreign,
+                detail::k_workspaceSqliteSchemaHash
+            );
+            CHECK_FALSE(
+                coordinator->installRuntimeArtifact(installRequest(release, 0U))
+                    .has_value()
+            );
+        }
+
+        SUBCASE("both at the pinned values install")
+        {
+            auto const release = releaseWithSchemaHashes(
+                temporary.path() / "correct",
+                detail::k_annotationWorkspaceSchemaHash,
+                detail::k_workspaceSqliteSchemaHash
+            );
+            CHECK(
+                coordinator->installRuntimeArtifact(installRequest(release, 0U))
+                    .has_value()
+            );
+        }
+    }
+
+    TEST_CASE("a second coordinator is refused while the first holds the directory")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto const production = temporary.path() / "production";
+
+        // Opening clears every control lease, deactivates every session and
+        // drops every publication claim, on the reading that whatever those
+        // rows describe died with its process. A second open against a live
+        // coordinator would perform those three clears against state that is
+        // still in use, so it has to be refused rather than serialized.
+        auto first = OperatorCoordinator::open(production);
+        REQUIRE(first.has_value());
+
+        auto const second = OperatorCoordinator::open(production);
+        CHECK_FALSE(second.has_value());
+
+        // The refusal is ownership, not a permanent property of the directory:
+        // closing the first coordinator releases it.
+        first = fail(AutomationErrorKind::Cancelled, "closed");
+        auto const reopened = OperatorCoordinator::open(production);
+        CHECK(reopened.has_value());
     }
 
     TEST_CASE("ProjectInstance provisioning rejects Journal data from another registration")
@@ -778,15 +901,15 @@ return {
         [[nodiscard]]
         auto reconcilingOperation(
             PreparedStore& prepared,
-            std::string clientRequestId,
+            std::string_view clientRequestId,
             std::string_view toolName
         ) -> StoredOperation
         {
             // Every dispatch needs its own authority decision id, so it is
             // derived from the request rather than fixed.
-            auto const authority = "authority-" + clientRequestId;
+            auto const authority = std::format("authority-{}", clientRequestId);
             auto operation = prepared.store.createOrLoadOperation(
-                command(prepared.snapshot, clientRequestId),
+                command(prepared.snapshot, std::string{clientRequestId}),
                 toolInvocation(prepared.project, std::string{toolName})
             );
             REQUIRE(operation.has_value());

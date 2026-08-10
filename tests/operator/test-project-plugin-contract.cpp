@@ -138,7 +138,8 @@ return {
             auto const schemaHash = hashOf("registration-schema");
             auto const pluginHash = hashOf(pluginBytes);
             auto claims =
-                registrationClaims(pluginId, pluginHash, schemaHash, std::move(artifactRoots));
+                registrationClaims(std::move(pluginId), pluginHash, schemaHash,
+                                   std::move(artifactRoots));
             auto const exactJcs = registrationJcs(claims);
             auto const rootHash = hashOf(exactJcs);
             auto ownerResult = ProjectRegistrationSchemaOwner::create(
@@ -714,7 +715,7 @@ return {
 
         SUBCASE("total artifact bytes are bounded")
         {
-            auto const bytes = std::string(4U * 1024U * 1024U, 'x');
+            auto const bytes = std::string(std::size_t{4U} * 1024U * 1024U, 'x');
             auto roots = std::vector<NamedArtifactRoot>{};
             auto blobs = std::vector<ProjectPluginRegistrar::ArtifactBlob>{};
             for (auto index = std::size_t{0}; index < 5U; ++index)
@@ -758,7 +759,8 @@ return {
             for (auto index = std::size_t{0}; index < 4U; ++index)
             {
                 auto const name = std::string{"root-"} + static_cast<char>('a' + index);
-                auto bytes = std::string(4U * 1024U * 1024U, static_cast<char>('a' + index));
+                auto bytes = std::string(std::size_t{4U} * 1024U * 1024U,
+                                         static_cast<char>('a' + index));
                 roots.push_back(artifactRoot(name, bytes));
                 blobs.push_back(artifactBlob(name, std::move(bytes)));
             }

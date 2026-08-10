@@ -17,7 +17,7 @@ namespace uf::operator_runtime
 {
     namespace
     {
-        constexpr auto k_maximumRegistrationBytes = std::size_t{1024U * 1024U};
+        constexpr auto k_maximumRegistrationBytes = std::size_t{1024U} * 1024U;
 
         auto appendHash(
             std::string& output,
@@ -140,9 +140,19 @@ namespace uf::operator_runtime
                     "project artifact root name",
                     false
                 ));
+                // JCS orders by UTF-16 code unit, which is not byte order.
+                // Comparing the names directly is right only while
+                // validateDottedName above keeps them inside [a-z0-9._-],
+                // where the two orders happen to coincide -- a property of the
+                // validator rather than of the comparison. jsonMemberNameLess
+                // is the rule itself, so relaxing the validator cannot silently
+                // make this check wrong.
                 if (
                     index != 0U
-                    && claims.projectArtifactRoots[index - 1U].name >= root.name
+                    && !jsonMemberNameLess(
+                        claims.projectArtifactRoots[index - 1U].name,
+                        root.name
+                    )
                 )
                 {
                     return fail(
@@ -317,7 +327,7 @@ namespace uf::operator_runtime
         std::string canonicalBytes,
         ContentHash hash
     )
-        : m_spec{std::move(spec)}
+        : m_spec{spec}
         , m_canonicalBytes{std::move(canonicalBytes)}
         , m_hash{hash}
     {

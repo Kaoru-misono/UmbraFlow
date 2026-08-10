@@ -21,10 +21,10 @@ namespace uf::operator_runtime
 {
     namespace
     {
-        constexpr auto k_maximumCanonicalBytes = std::size_t{1024U * 1024U};
+        constexpr auto k_maximumCanonicalBytes = std::size_t{1024U} * 1024U;
         constexpr auto k_maximumArtifactCount = std::size_t{64U};
-        constexpr auto k_maximumArtifactBytes = std::size_t{4U * 1024U * 1024U};
-        constexpr auto k_maximumTotalArtifactBytes = std::size_t{16U * 1024U * 1024U};
+        constexpr auto k_maximumArtifactBytes = std::size_t{4U} * 1024U * 1024U;
+        constexpr auto k_maximumTotalArtifactBytes = std::size_t{16U} * 1024U * 1024U;
 
         constexpr auto k_functions = std::array{
             std::pair{ProjectPluginFunction::Derive, std::string_view{"derive"}},

@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <memory>
 #include <set>
 #include <span>
 #include <string>
@@ -28,7 +29,7 @@ namespace uf::operator_runtime::detail
     {
         constexpr auto k_releaseManifestName = std::string_view{"release.manifest.json"};
         constexpr auto k_runtimeDirectoryName = std::string_view{"runtime-artifact"};
-        constexpr auto k_maximumReleaseManifestBytes = std::size_t{64U * 1024U};
+        constexpr auto k_maximumReleaseManifestBytes = std::size_t{64U} * 1024U;
         constexpr auto k_maximumExactJsonInteger = uint64{9'007'199'254'740'991U};
 
         [[nodiscard]]
@@ -144,14 +145,12 @@ namespace uf::operator_runtime::detail
                     return failure("a canonical positive integer");
                 }
                 auto value = uint64{};
-                auto const parsed = std::from_chars(
-                    digits.data(),
-                    digits.data() + digits.size(),
-                    value
-                );
+                auto const* const begin = std::to_address(digits.begin());
+                auto const* const end   = std::to_address(digits.end());
+                auto const parsed       = std::from_chars(begin, end, value);
                 if (
                     parsed.ec != std::errc{}
-                    || parsed.ptr != digits.data() + digits.size()
+                    || parsed.ptr != end
                     || value == 0U
                     || value > k_maximumExactJsonInteger
                 )
@@ -205,12 +204,9 @@ namespace uf::operator_runtime::detail
                         }
                         auto const digits = m_source.substr(m_offset + 2U, 2U);
                         auto value = 0U;
-                        auto const parsed = std::from_chars(
-                            digits.data(),
-                            digits.data() + digits.size(),
-                            value,
-                            16
-                        );
+                        auto const* const begin = std::to_address(digits.begin());
+                        auto const* const end   = std::to_address(digits.end());
+                        auto const parsed = std::from_chars(begin, end, value, 16);
                         if (
                             parsed.ec != std::errc{}
                             || value >= 0x20U
@@ -279,7 +275,17 @@ namespace uf::operator_runtime::detail
             UF_TRY(reader.consume(",\"runtime_artifact_root_hash\":"));
             UF_TRY_VALUE(artifactRootHash, reader.hash());
             UF_TRY(reader.consume(",\"workspace_sqlite_schema_hash\":"));
-            UF_TRY(reader.hash());
+            UF_TRY_VALUE(workspaceSchemaHash, reader.hash());
+            auto encodedWorkspaceHash = std::string{"sha256:"};
+            encodedWorkspaceHash += k_workspaceSqliteSchemaHash;
+            UF_TRY_VALUE(
+                expectedWorkspaceSchemaHash,
+                ContentHash::parse(encodedWorkspaceHash)
+            );
+            if (workspaceSchemaHash != expectedWorkspaceSchemaHash)
+            {
+                return refuse("release manifest uses an unsupported workspace schema");
+            }
             UF_TRY(reader.consume("}"));
             if (!reader.atEnd())
             {
@@ -433,8 +439,12 @@ namespace uf::operator_runtime::detail
             {
             }
 
+            // The guard owns one directory for the length of one scope and
+            // never hands it on, so neither copying nor moving it is defined.
             StagingDirectory(StagingDirectory const&) = delete;
+            StagingDirectory(StagingDirectory&&) = delete;
             auto operator=(StagingDirectory const&) -> StagingDirectory& = delete;
+            auto operator=(StagingDirectory&&) -> StagingDirectory& = delete;
 
             ~StagingDirectory()
             {
@@ -455,9 +465,9 @@ namespace uf::operator_runtime::detail
             std::string_view stagingToken
         ) -> Result<std::filesystem::path>
         {
-            auto const destination = productionRoot / source.rootHash().hex();
-            auto error  = std::error_code{};
-            auto status = std::filesystem::symlink_status(destination, error);
+            auto destination = productionRoot / source.rootHash().hex();
+            auto error       = std::error_code{};
+            auto status      = std::filesystem::symlink_status(destination, error);
             if (!error && std::filesystem::exists(status))
             {
                 if (

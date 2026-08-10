@@ -7,12 +7,14 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace uf::operator_runtime
 {
@@ -264,6 +266,39 @@ namespace uf::operator_runtime
         REQUIRE(second.has_value());
         CHECK(first->canonicalBytes() == second->canonicalBytes());
         CHECK(first->hash() == second->hash());
+
+        // Determinism above says the two mints agree; it does not say what they
+        // agree about. S-05 requires the manifest to BIND these values, so each
+        // one is moved on its own and the identity has to move with it. A field
+        // that leaves the canonical form changes both mints identically and
+        // would pass every assertion above.
+        using SpecField = ContentHash SessionManifestSpec::*;
+        constexpr auto fields = std::array<std::pair<std::string_view, SpecField>, 8U>{{
+            {"agent_profile_hash", &SessionManifestSpec::agentProfileHash},
+            {"host_protocol_schema_hash", &SessionManifestSpec::hostProtocolSchemaHash},
+            {"journal_envelope_schema_hash", &SessionManifestSpec::journalEnvelopeSchemaHash},
+            {"operator_protocol_schema_hash", &SessionManifestSpec::operatorProtocolSchemaHash},
+            {"policy_artifact_hash", &SessionManifestSpec::policyArtifactHash},
+            {"project_registration_hash", &SessionManifestSpec::projectRegistrationHash},
+            {"runtime_model_artifact_root_hash",
+             &SessionManifestSpec::runtimeModelArtifactRootHash},
+            {"runtime_model_schema_hash", &SessionManifestSpec::runtimeModelSchemaHash},
+        }};
+
+        for (auto const& [name, field] : fields)
+        {
+            CAPTURE(name);
+            auto perturbed = manifestSpec();
+            perturbed.*field = hashOf(std::string{"moved-"} + std::string{name});
+            auto const moved = SessionManifest::create(perturbed);
+            REQUIRE(moved.has_value());
+            CHECK(moved->canonicalBytes() != first->canonicalBytes());
+            CHECK(moved->hash() != first->hash());
+            CHECK(
+                moved->canonicalBytes().find(std::string{"\""} + std::string{name} + "\"")
+                != std::string::npos
+            );
+        }
     }
 
     TEST_CASE("contract-state-s06")
