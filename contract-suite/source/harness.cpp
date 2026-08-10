@@ -212,7 +212,8 @@ namespace uf::operator_runtime::contract
                 .mode                      = SessionMode::Write,
                 .kind                      = ControllerKind::Script,
             },
-            manifest
+            manifest,
+            std::nullopt
         ).has_value());
 
         auto const controller = store.bindController("session-1");

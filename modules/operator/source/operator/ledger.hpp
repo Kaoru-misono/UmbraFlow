@@ -1,5 +1,6 @@
 #pragma once
 
+#include "agent-profile.hpp"
 #include "controller.hpp"
 #include "effective-plan.hpp"
 #include "journal-entry.hpp"
@@ -21,10 +22,12 @@
 #include <domain/content-hash.hpp>
 #include <domain/ids.hpp>
 
+#include <compare>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace uf::operator_runtime
@@ -77,6 +80,78 @@ namespace uf::operator_runtime
         ValidatedJournalEntryData entry;
     };
 
+    // The kinds of controller-visible fact appended to the ledger's one ordered
+    // event sequence. Every value has a producer; a value nothing writes would
+    // be a promise with no code, so the enumeration grows with its producer
+    // rather than ahead of it, and the DDL's CHECK lists exactly these.
+    enum class LedgerEventKind : uint8
+    {
+        OperationCreated,
+        ControlTransitioned,
+        ExternalInputDetected,
+    };
+
+    // How far a reader has got through that sequence: the sequence number of
+    // the last event it has consumed, and 0 before the first one.
+    //
+    // The subscription IS this integer. The Operator holds nothing per
+    // subscriber -- no callback, no registration, no per-reader row. A stored
+    // callback would be a borrow with no backing owner, it would run controller
+    // code inside the write transaction the fence and the mutation chain live
+    // in, and it would put a second piece of authority beside the coordinator.
+    struct SubscriptionCursor final
+    {
+        uint64 value{};
+
+        auto operator<=>(SubscriptionCursor const&) const = default;
+    };
+
+    // One controller-visible fact. It names no receipt, coordinate, fencing
+    // token, plan hash, tool name or canonical argument, so handing one to an
+    // online Agent cannot widen the p03 ceiling.
+    struct LedgerEvent final
+    {
+        SubscriptionCursor sequence{};
+        LedgerEventKind    kind{LedgerEventKind::OperationCreated};
+        std::string        controlledTargetKey{};
+        std::string        subjectId{};
+
+        auto operator==(LedgerEvent const&) const -> bool = default;
+    };
+
+    struct SubscriptionBatch final
+    {
+        std::vector<LedgerEvent> events{};
+
+        // What to pass as `after` next time: the sequence of the last event in
+        // `events`, or the requested cursor unchanged when there was nothing to
+        // deliver. It is deliberately not the head of the stream -- a batch
+        // truncated by maximumEvents whose cursor named the head would silently
+        // skip everything the truncation left behind.
+        SubscriptionCursor nextCursor{};
+
+        auto operator==(SubscriptionBatch const&) const -> bool = default;
+    };
+
+    // The read could not be served losslessly, so it is refused rather than
+    // truncated: a reader handed a gap has no way to tell that it has one.
+    //
+    // oldestAvailableCursor is read from the table rather than assumed. Nothing
+    // prunes ledger_events yet, so it is always 0 and the only cause a caller
+    // can produce today is a cursor from ahead of the head -- one minted
+    // against another database or another epoch. The branch that compares
+    // against it arrives with the pruning pass that makes it reachable.
+    struct ResyncRequired final
+    {
+        SubscriptionCursor requestedCursor{};
+        SubscriptionCursor oldestAvailableCursor{};
+        SubscriptionCursor currentCursor{};
+
+        auto operator==(ResyncRequired const&) const -> bool = default;
+    };
+
+    using SubscriptionRead = std::variant<SubscriptionBatch, ResyncRequired>;
+
     struct ControlLease final
     {
         std::string leaseId{};
@@ -110,6 +185,18 @@ namespace uf::operator_runtime
         uint64             projectStateRevision{};
         uint64             availabilityRevision{};
         ProjectObservation observation;
+
+        // The join point between a snapshot and the event stream: the head of
+        // ledger_events read inside the same BEGIN IMMEDIATE that composed this
+        // record, so nothing can have committed between the two. A controller
+        // that subscribes from here sees every event caused after the world it
+        // is looking at, exactly once and in order.
+        //
+        // It is deliberately not a snapshots column. Nothing reads it back --
+        // the snapshot's own staleness is decided by the revisions and the
+        // findings the token join already compares -- and a stored column no
+        // reader consumes is a fact with nothing keeping it true.
+        SubscriptionCursor eventCursor{};
     };
 
     // Everything about a command that is the caller's to say. The tool, its
@@ -384,10 +471,16 @@ namespace uf::operator_runtime
             ProjectInstanceBaseline const& baseline
         ) -> Status;
 
+        // The trusted setup door, and the only place an Agent's ceilings are
+        // established. agentProfile is required for exactly the kinds whose
+        // ControllerProfile says budgetsRequired and refused for the others,
+        // and it must be the profile this manifest pins -- so no path that
+        // takes a ControllerBinding can state, raise or refresh a budget.
         [[nodiscard]]
         auto pinSession(
             SessionPin const& pin,
-            SessionManifest const& manifest
+            SessionManifest const& manifest,
+            std::optional<AgentProfile> const& agentProfile
         ) -> Status;
 
         // The one door onto the Operation path. Everything below takes a
@@ -472,6 +565,32 @@ namespace uf::operator_runtime
             ControllerBinding const& reporter,
             ExternalInputReport const& report
         ) -> Result<RecordedExternalInput>;
+
+        // Reads forward from a cursor over everything that happened to this
+        // binding's controlled target, including what other controllers caused:
+        // a controller that could see only its own events could not notice the
+        // human takeover it most needs to notice.
+        //
+        // It is named subscribe because that is the requirement's word for the
+        // cursor protocol. It registers nothing, blocks on nothing and stores
+        // nothing, and it charges no budget: it reads facts the ledger already
+        // recorded, mints nothing and moves nothing, so a ceiling on it would
+        // be a ceiling on reading the audit trail.
+        [[nodiscard]]
+        auto subscribe(
+            ControllerBinding const& controller,
+            SubscriptionCursor after,
+            uint32 maximumEvents
+        ) -> Result<SubscriptionRead>;
+
+        // What this binding has left. It is the one reader of the stored
+        // counters, so a case that asserts a decrement happened is reading the
+        // database rather than a number the same call computed. A binding whose
+        // kind carries no budget has nothing to report and is refused.
+        [[nodiscard]]
+        auto remainingBudget(
+            ControllerBinding const& controller
+        ) -> Result<AgentBudgetRemaining>;
 
         [[nodiscard]]
         auto transitionOperation(

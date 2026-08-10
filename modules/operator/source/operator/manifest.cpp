@@ -373,4 +373,9 @@ namespace uf::operator_runtime
     {
         return m_spec.operatorProtocolSchemaHash;
     }
+
+    auto SessionManifest::agentProfileHash() const -> ContentHash
+    {
+        return m_spec.agentProfileHash;
+    }
 }

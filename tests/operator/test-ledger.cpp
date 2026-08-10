@@ -204,7 +204,8 @@ namespace uf::operator_runtime
             auto const project = makeProject("fixture.alpha", pluginSource);
             auto const manifest = sessionManifest(
                 project.registration,
-                installed->rootHash()
+                installed->rootHash(),
+                hashOf("agent")
             );
             auto const projectPlugin = loadPlugin(project, pluginSource);
             REQUIRE(store.registerProject(project.registration).has_value());
@@ -234,7 +235,8 @@ namespace uf::operator_runtime
                     .mode                      = SessionMode::Write,
                     .kind                      = ControllerKind::Script,
                 },
-                manifest
+                manifest,
+                std::nullopt
             ).has_value());
             auto controller = store.bindController("session-1");
             REQUIRE(controller.has_value());
@@ -641,7 +643,8 @@ namespace uf::operator_runtime
         auto const plugin = loadPlugin(project, k_pluginSource);
         auto const manifest = sessionManifest(
             project.registration,
-            installed->rootHash()
+            installed->rootHash(),
+            hashOf("agent")
         );
         REQUIRE(coordinator->registerProject(project.registration).has_value());
         CHECK_FALSE(coordinator->provisionProjectInstance(
@@ -1410,7 +1413,8 @@ namespace uf::operator_runtime
         auto const foreign         = makeProject("fixture.foreign", foreignSource);
         auto const foreignManifest = sessionManifest(
             foreign.registration,
-            hashOf("artifact-root")
+            hashOf("artifact-root"),
+            hashOf("agent")
         );
         auto foreignAuthority = contract::planAuthority(
             foreign.registration,

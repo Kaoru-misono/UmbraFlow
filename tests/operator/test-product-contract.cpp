@@ -330,7 +330,8 @@ namespace uf::operator_runtime
             SessionMode::Read,
             "session-3",
             "instance-3",
-            "target-3"
+            "target-3",
+            test_support::k_unconstrainedAgentBudget
         );
         auto const denied = prepared.store.acquireLease(observer);
         REQUIRE_FALSE(denied.has_value());
@@ -500,7 +501,8 @@ namespace uf::operator_runtime
             SessionMode::Write,
             "session-3",
             "instance-3",
-            "target-3"
+            "target-3",
+            test_support::k_unconstrainedAgentBudget
         );
         auto const agentLease = prepared.store.acquireLease(agent);
         REQUIRE(agentLease.has_value());

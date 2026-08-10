@@ -624,7 +624,8 @@ namespace uf::operator_runtime
                 .projectInstanceKey        = "instance-missing",
                 .mode                      = SessionMode::Write,
             },
-            prepared.manifest
+            prepared.manifest,
+            std::nullopt
         ).has_value());
 
         // Re-baselining is therefore always a NEW key, and a new key is its own

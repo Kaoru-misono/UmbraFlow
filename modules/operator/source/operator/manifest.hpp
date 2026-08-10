@@ -164,5 +164,11 @@ namespace uf::operator_runtime
         // exposed because OperatorPlanAuthority must satisfy it with exact
         // bytes: an authority that merely named a hash would be a convention.
         [[nodiscard]] auto operatorProtocolSchemaHash() const -> ContentHash;
+
+        // The AgentProfile this session is pinned to. Exposed for the same
+        // reason: AgentProfile::verifyExact must satisfy it with exact bytes,
+        // so that the ceilings an Agent binding runs under are the ones this
+        // manifest attests to and not ones a caller stated.
+        [[nodiscard]] auto agentProfileHash() const -> ContentHash;
     };
 }

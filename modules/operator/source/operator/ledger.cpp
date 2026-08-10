@@ -5,6 +5,7 @@
 #include <core/safety/annotations.hpp>
 #include <core/text/json-text.hpp>
 #include <core/text/utf8.hpp>
+#include <core/time/monotonic-time.hpp>
 
 #include <domain/error.hpp>
 
@@ -358,7 +359,7 @@ namespace uf::operator_runtime
         // database rather than by hand. initialize() verifies immediately after
         // creating the schema, so a forgotten recomputation cannot ship green.
         constexpr auto k_exactSchemaV1Fingerprint = std::string_view{
-            "sha256:c691f1d9bfb79cc4cc8c88bca126fa732d51a0760c59e0c768e8c49535031996"
+            "sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559"
         };
 
         [[nodiscard]]
@@ -497,13 +498,14 @@ namespace uf::operator_runtime
                     )
                 );
                 constexpr auto expectedTables = std::string_view{
-                    "approvals,authority_decisions,control_leases,control_transitions,"
-                    "dispatches,external_input_findings,fencing_high_water,"
-                    "journal_events,ledger_events,operation_plans,"
-                    "operation_steps,operations,project_instances,"
-                    "project_observations,project_registrations,project_state,"
-                    "reconciliations,runtime_artifacts,runtime_installations,"
-                    "runtime_state,sessions,snapshots"
+                    "agent_budgets,approvals,authority_decisions,control_leases,"
+                    "control_transitions,dispatches,external_input_findings,"
+                    "fencing_high_water,journal_events,ledger_events,"
+                    "operation_plans,operation_steps,operations,"
+                    "project_instances,project_observations,"
+                    "project_registrations,project_state,reconciliations,"
+                    "runtime_artifacts,runtime_installations,runtime_state,"
+                    "sessions,snapshots"
                 };
                 if (tables != expectedTables)
                 {
@@ -967,6 +969,47 @@ namespace uf::operator_runtime
                         reason TEXT NOT NULL
                     ) STRICT;
 
+                    -- What one online Agent binding has left to spend, and the
+                    -- marker the no-progress rule compares each step against.
+                    -- pinSession writes it from the exact AgentProfile bytes
+                    -- the session manifest's agent_profile_hash names, so there
+                    -- is no path from a ControllerBinding to any of these
+                    -- numbers except downwards.
+                    --
+                    -- Each CHECK is the enforcement of its own ceiling and not
+                    -- a second guard beside one in C++: a charge is an
+                    -- unconditional decrement and the constraint is what
+                    -- refuses it at zero. Relaxing a CHECK therefore lets one
+                    -- more command through, which is what makes the ceiling
+                    -- falsifiable.
+                    --
+                    -- The row is inert after a restart rather than reset: a new
+                    -- session epoch deactivates every session the previous one
+                    -- left behind, so no binding can be minted against this row
+                    -- again and a re-pinned session starts from a new one.
+                    -- There is deliberately no agent_profile_hash column. The
+                    -- session row already names the manifest this budget was
+                    -- pinned with, and that manifest names the profile, so a
+                    -- column here would be a second spelling of a fact the
+                    -- session already determines -- and one nothing reads.
+                    CREATE TABLE IF NOT EXISTS agent_budgets(
+                        session_id TEXT PRIMARY KEY REFERENCES sessions(session_id),
+                        deadline_steady_millis INTEGER NOT NULL
+                            CHECK(deadline_steady_millis > 0),
+                        remaining_tool_calls INTEGER NOT NULL
+                            CHECK(remaining_tool_calls >= 0),
+                        remaining_mutations INTEGER NOT NULL
+                            CHECK(remaining_mutations >= 0),
+                        remaining_observations INTEGER NOT NULL
+                            CHECK(remaining_observations >= 0),
+                        remaining_risk_units INTEGER NOT NULL
+                            CHECK(remaining_risk_units >= 0),
+                        last_state_fingerprint TEXT NOT NULL,
+                        last_command_fingerprint TEXT NOT NULL,
+                        consecutive_no_progress_steps INTEGER NOT NULL
+                            CHECK(consecutive_no_progress_steps >= 0)
+                    ) STRICT;
+
                     CREATE TABLE IF NOT EXISTS project_state(
                         plugin_id TEXT NOT NULL,
                         project_instance_key TEXT NOT NULL,
@@ -1121,15 +1164,6 @@ namespace uf::operator_runtime
             UF_UNREACHABLE_MSG("Unknown SessionMode value");
         }
 
-        // What ledger_events records. Every value here has a producer in this
-        // file; the DDL's CHECK lists exactly these three.
-        enum class LedgerEventKind : uint8
-        {
-            OperationCreated,
-            ControlTransitioned,
-            ExternalInputDetected,
-        };
-
         [[nodiscard]]
         auto ledgerEventWireName(LedgerEventKind kind) noexcept -> std::string_view
         {
@@ -1141,6 +1175,31 @@ namespace uf::operator_runtime
             }
 
             UF_UNREACHABLE_MSG("Unknown LedgerEventKind value");
+        }
+
+        [[nodiscard]]
+        auto parseLedgerEventKind(std::string_view value) -> Result<LedgerEventKind>
+        {
+            constexpr auto kinds = std::array{
+                LedgerEventKind::OperationCreated,
+                LedgerEventKind::ControlTransitioned,
+                LedgerEventKind::ExternalInputDetected,
+            };
+            auto const match = std::ranges::find_if(
+                kinds,
+                [value](LedgerEventKind candidate)
+                {
+                    return ledgerEventWireName(candidate) == value;
+                }
+            );
+            if (match == kinds.end())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format("Unknown ledger event kind: {}", value)
+                );
+            }
+            return *match;
         }
 
         [[nodiscard]]
@@ -1203,6 +1262,150 @@ namespace uf::operator_runtime
             UF_TRY(bindText(database, insert.get(), 3, ledgerEventWireName(kind)));
             UF_TRY(bindText(database, insert.get(), 4, subjectId));
             return expectDone(database, insert.get());
+        }
+
+        // The clock the Agent time budget is measured on, read by the Operator
+        // and never supplied by a caller: a controller that could state the
+        // current instant could state one before its own deadline, and the
+        // budget would be a suggestion.
+        //
+        // Steady rather than wall, because a budget a clock adjustment can
+        // widen is not a budget. The stored deadline is therefore meaningful
+        // only inside the process that wrote it -- which is exactly the
+        // lifetime of the session epoch it belongs to, and the same reason the
+        // budget does not survive a restart.
+        [[nodiscard]]
+        auto steadyMillisecondsNow() -> Result<uint64>
+        {
+            auto const elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                MonotonicInstant::now().timePoint().time_since_epoch()
+            ).count();
+            if (elapsed < 0)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "Steady clock reads before its own epoch"
+                );
+            }
+            return static_cast<uint64>(elapsed);
+        }
+
+        // One binding's remaining ceilings and its progress marker.
+        struct AgentBudgetState final
+        {
+            std::string lastStateFingerprint{};
+            std::string lastCommandFingerprint{};
+            uint64      deadlineSteadyMillis{};
+            uint64      remainingToolCalls{};
+            uint64      remainingMutations{};
+            uint64      remainingObservations{};
+            uint64      remainingRiskUnits{};
+            uint64      consecutiveNoProgressSteps{};
+        };
+
+        // Whether this session has budgets is ControllerProfile's answer, never
+        // an inference from the absence of a row: a missing row for a kind that
+        // requires one is a broken invariant, not a controller that happens to
+        // run without ceilings.
+        [[nodiscard]]
+        auto readAgentBudget(
+            sqlite3* database,
+            std::string_view sessionId,
+            ControllerKind kind
+        ) -> Result<std::optional<AgentBudgetState>>
+        {
+            UF_TRY_VALUE(
+                query,
+                prepare(
+                    database,
+                    "SELECT deadline_steady_millis, remaining_tool_calls, "
+                    "remaining_mutations, remaining_observations, "
+                    "remaining_risk_units, last_state_fingerprint, "
+                    "last_command_fingerprint, consecutive_no_progress_steps "
+                    "FROM agent_budgets WHERE session_id=?1"
+                )
+            );
+            UF_TRY(bindText(database, query.get(), 1, sessionId));
+            auto const present = sqlite3_step(query.get()) == SQLITE_ROW;
+            if (present != controllerProfile(kind).budgetsRequired)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "Agent budget row does not match what the controller kind requires"
+                );
+            }
+            if (!present)
+            {
+                return std::optional<AgentBudgetState>{};
+            }
+            return std::optional{AgentBudgetState{
+                .lastStateFingerprint   = columnText(query.get(), 5),
+                .lastCommandFingerprint = columnText(query.get(), 6),
+                .deadlineSteadyMillis   = static_cast<uint64>(
+                    sqlite3_column_int64(query.get(), 0)
+                ),
+                .remainingToolCalls     = static_cast<uint64>(
+                    sqlite3_column_int64(query.get(), 1)
+                ),
+                .remainingMutations     = static_cast<uint64>(
+                    sqlite3_column_int64(query.get(), 2)
+                ),
+                .remainingObservations  = static_cast<uint64>(
+                    sqlite3_column_int64(query.get(), 3)
+                ),
+                .remainingRiskUnits     = static_cast<uint64>(
+                    sqlite3_column_int64(query.get(), 4)
+                ),
+                .consecutiveNoProgressSteps = static_cast<uint64>(
+                    sqlite3_column_int64(query.get(), 7)
+                ),
+            }};
+        }
+
+        // Compared, never decremented: elapsed time is not a quantity the
+        // ledger hands out. Inclusive at the limit, so a step submitted at the
+        // deadline itself is still inside the budget and only one past it is
+        // not.
+        [[nodiscard]]
+        auto requireWithinAgentDeadline(AgentBudgetState const& budget) -> Status
+        {
+            UF_TRY_VALUE(now, steadyMillisecondsNow());
+            if (now > budget.deadlineSteadyMillis)
+            {
+                return fail(
+                    AutomationErrorKind::Timeout,
+                    "Agent time budget expired before this call"
+                );
+            }
+            return ok();
+        }
+
+        // Spends one column of one binding's budget. There is deliberately no
+        // comparison here: the column's own CHECK is what refuses the spend at
+        // zero, so the ceiling has exactly one spelling and relaxing that
+        // constraint lets one more call through.
+        [[nodiscard]]
+        auto chargeAgentBudget(
+            sqlite3* database,
+            std::string_view sessionId,
+            std::string_view sql,
+            uint64 amount,
+            std::string_view exhausted
+        ) -> Status
+        {
+            UF_TRY_VALUE(update, prepare(database, sql));
+            UF_TRY(bindText(database, update.get(), 1, sessionId));
+            UF_TRY(bindInteger(database, update.get(), 2, amount));
+            auto const step = sqlite3_step(update.get());
+            if (step == SQLITE_DONE)
+            {
+                return ok();
+            }
+            if ((step & 0xFF) == SQLITE_CONSTRAINT)
+            {
+                return fail(AutomationErrorKind::ActionRejected, std::string{exhausted});
+            }
+            return databaseFailure(database, "could not charge an agent budget");
         }
 
         [[nodiscard]]
@@ -2588,7 +2791,8 @@ namespace uf::operator_runtime
 
     auto OperatorCoordinator::pinSession(
         SessionPin const& pin,
-        SessionManifest const& manifest
+        SessionManifest const& manifest,
+        std::optional<AgentProfile> const& agentProfile
     ) -> Status
     {
         UF_TRY(requireName(pin.sessionId, "session_id"));
@@ -2601,6 +2805,23 @@ namespace uf::operator_runtime
             return fail(
                 AutomationErrorKind::InvalidResource,
                 "SessionManifest does not bind the selected ProjectRegistration"
+            );
+        }
+        if (agentProfile.has_value() != controllerProfile(pin.kind).budgetsRequired)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Session controller kind and AgentProfile presence disagree"
+            );
+        }
+        if (
+            agentProfile.has_value()
+            && agentProfile->sessionManifestHash() != manifest.hash()
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "AgentProfile was verified against a different SessionManifest"
             );
         }
         UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
@@ -2762,6 +2983,72 @@ namespace uf::operator_runtime
                 AutomationErrorKind::ActionRejected,
                 "session_id already names a different immutable session tuple"
             );
+        }
+
+        if (agentProfile.has_value())
+        {
+            auto const budget = agentProfile->budget();
+            UF_TRY_VALUE(now, steadyMillisecondsNow());
+            constexpr auto ceiling = static_cast<uint64>(
+                std::numeric_limits<sqlite3_int64>::max()
+            );
+            if (budget.maximumElapsedMillis > ceiling - now)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Agent time budget exhausted SQLite's integer range"
+                );
+            }
+
+            // OR IGNORE, so that re-pinning an existing session leaves its
+            // budget exactly as spent. A conflict rule that replaced the row
+            // would make pinning again the one way to refresh a spent budget,
+            // and an exhausted Agent would only have to ask for its own session
+            // twice.
+            UF_TRY_VALUE(
+                budgetInsert,
+                prepare(
+                    m_impl->database.get(),
+                    "INSERT OR IGNORE INTO agent_budgets(session_id, "
+                    "deadline_steady_millis, remaining_tool_calls, "
+                    "remaining_mutations, remaining_observations, "
+                    "remaining_risk_units, last_state_fingerprint, "
+                    "last_command_fingerprint, consecutive_no_progress_steps) "
+                    "VALUES(?1, ?2, ?3, ?4, ?5, ?6, '', '', 0)"
+                )
+            );
+            UF_TRY(bindText(m_impl->database.get(), budgetInsert.get(), 1, pin.sessionId));
+            UF_TRY(bindInteger(
+                m_impl->database.get(),
+                budgetInsert.get(),
+                2,
+                now + budget.maximumElapsedMillis
+            ));
+            UF_TRY(bindInteger(
+                m_impl->database.get(),
+                budgetInsert.get(),
+                3,
+                budget.maximumToolCalls
+            ));
+            UF_TRY(bindInteger(
+                m_impl->database.get(),
+                budgetInsert.get(),
+                4,
+                budget.maximumMutations
+            ));
+            UF_TRY(bindInteger(
+                m_impl->database.get(),
+                budgetInsert.get(),
+                5,
+                budget.maximumObservations
+            ));
+            UF_TRY(bindInteger(
+                m_impl->database.get(),
+                budgetInsert.get(),
+                6,
+                budget.maximumRiskUnits
+            ));
+            UF_TRY(expectDone(m_impl->database.get(), budgetInsert.get()));
         }
         return transaction.commit();
     }
@@ -3279,7 +3566,7 @@ namespace uf::operator_runtime
                 "SELECT session.project_instance_key, session.manifest_hash, "
                 "session.controlled_target_key, session.runtime_artifact_root_hash, "
                 "registration.plugin_id, registration.plugin_hash, "
-                "session.project_registration_hash "
+                "session.project_registration_hash, session.controller_kind "
                 "FROM sessions session JOIN project_registrations registration "
                 "ON registration.registration_hash=session.project_registration_hash "
                 "WHERE session.session_id=?1 AND session.active=1 "
@@ -3331,6 +3618,32 @@ namespace uf::operator_runtime
                 "UI observation was taken through a RuntimeArtifact this session "
                 "did not pin"
             );
+        }
+
+        // Charged here rather than after the composition, and inside the same
+        // BEGIN IMMEDIATE: a refused observation budget must not first pay for
+        // a plugin derive under the write lock. There is no ControllerBinding
+        // parameter and none is wanted -- the lease already names the session
+        // this observation is charged to, and a binding beside it would be a
+        // second spelling of one identity that would then have to be kept
+        // equal. There is no caller-supplied instant either, for the reason
+        // steadyMillisecondsNow states.
+        UF_TRY_VALUE(snapshotKind, parseControllerKind(columnText(sessionQuery.get(), 7)));
+        UF_TRY_VALUE(
+            snapshotBudget,
+            readAgentBudget(m_impl->database.get(), lease.sessionId, snapshotKind)
+        );
+        if (snapshotBudget)
+        {
+            UF_TRY(requireWithinAgentDeadline(*snapshotBudget));
+            UF_TRY(chargeAgentBudget(
+                m_impl->database.get(),
+                lease.sessionId,
+                "UPDATE agent_budgets SET remaining_observations = "
+                "remaining_observations - ?2 WHERE session_id=?1",
+                1U,
+                "Agent observation budget is exhausted"
+            ));
         }
 
         UF_TRY_VALUE(
@@ -3696,6 +4009,12 @@ namespace uf::operator_runtime
         UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 15, projectStateRevision));
         UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 16, availabilityRevision));
         UF_TRY(expectDone(m_impl->database.get(), insert.get()));
+
+        // The join point, read inside the transaction that published this
+        // record. Nothing can commit between the composition and this read, so
+        // a controller subscribing from here is handed exactly what happened
+        // after the world it is looking at.
+        UF_TRY_VALUE(eventCursor, currentEventCursor(m_impl->database.get()));
         UF_TRY(transaction.commit());
         return SnapshotRecord{
             .token                = std::move(token),
@@ -3711,6 +4030,7 @@ namespace uf::operator_runtime
             .projectStateRevision = projectStateRevision,
             .availabilityRevision = availabilityRevision,
             .observation          = std::move(projectObservation),
+            .eventCursor          = SubscriptionCursor{eventCursor},
         };
     }
 
@@ -3760,6 +4080,23 @@ namespace uf::operator_runtime
         );
         UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
         UF_TRY(requireLiveBinding(m_impl->database.get(), controller));
+
+        // Read before the idempotency lookup, so that an expired Agent is
+        // refused whichever branch its request would have taken. A replay of a
+        // request the ledger already accepted charges nothing further: the
+        // counters record what was accepted, and it was charged when it was.
+        UF_TRY_VALUE(
+            budget,
+            readAgentBudget(
+                m_impl->database.get(),
+                controller.sessionId(),
+                controller.kind()
+            )
+        );
+        if (budget)
+        {
+            UF_TRY(requireWithinAgentDeadline(*budget));
+        }
 
         UF_TRY_VALUE(
             sessionQuery,
@@ -3899,7 +4236,8 @@ namespace uf::operator_runtime
                 // revision is refused afterwards. The controller has to look
                 // again before it acts, which is the whole effect a finding is
                 // allowed to have.
-                "SELECT session.controlled_target_key FROM snapshots s JOIN sessions session "
+                "SELECT session.controlled_target_key, s.decision_basis_hash "
+                "FROM snapshots s JOIN sessions session "
                 "ON session.session_id=s.session_id JOIN control_leases lease "
                 "ON lease.controlled_target_key=session.controlled_target_key "
                 "JOIN project_state state ON state.plugin_id=s.plugin_id "
@@ -3941,6 +4279,7 @@ namespace uf::operator_runtime
                 "Session target changed while validating SnapshotToken"
             );
         }
+        auto const stateFingerprint = columnText(snapshotQuery.get(), 1);
 
         if (mutating)
         {
@@ -3996,6 +4335,93 @@ namespace uf::operator_runtime
                     "ProjectInstance already has a non-terminal mutating Operation"
                 );
             }
+        }
+
+        if (budget)
+        {
+            // Progress is "the world is different" or "I asked for something
+            // different". The state fingerprint IS the snapshot's
+            // decision_basis_hash, which the Operator composed; no second
+            // composition is defined here. The command fingerprint is the one
+            // above, which covers the tool, its version and its canonical
+            // arguments and NOT client_request_id -- so resubmitting the
+            // identical command under a fresh request id yields the identical
+            // fingerprint and correctly buys no progress.
+            //
+            // Either differing is enough. State alone would punish an Agent
+            // legitimately trying three tools against an unchanging screen;
+            // command alone would let it observe, observe, observe for ever.
+            // The Agent is stuck only when it asks the same thing of the same
+            // world.
+            auto const progressed = stateFingerprint != budget->lastStateFingerprint
+                || commandFingerprint.hex() != budget->lastCommandFingerprint;
+            auto const repetitions = progressed
+                ? uint64{0}
+                : budget->consecutiveNoProgressSteps + 1U;
+            if (repetitions > k_agentNoProgressCeiling)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Agent asked the same thing of the same world too many times"
+                );
+            }
+
+            UF_TRY(chargeAgentBudget(
+                m_impl->database.get(),
+                controller.sessionId(),
+                "UPDATE agent_budgets SET remaining_tool_calls = "
+                "remaining_tool_calls - ?2 WHERE session_id=?1",
+                1U,
+                "Agent tool-call budget is exhausted"
+            ));
+
+            // Sourced from the Tool Catalog descriptor, which is what
+            // operations.mutating and the mutation chain already run on, and
+            // deliberately not from the plan's declared risk: a plugin may
+            // under-declare its own effects, so risk cannot stand in for
+            // "changes something". Two differently sourced counts over a
+            // partly overlapping set are two facts.
+            if (mutating)
+            {
+                UF_TRY(chargeAgentBudget(
+                    m_impl->database.get(),
+                    controller.sessionId(),
+                    "UPDATE agent_budgets SET remaining_mutations = "
+                    "remaining_mutations - ?2 WHERE session_id=?1",
+                    1U,
+                    "Agent mutation budget is exhausted"
+                ));
+            }
+
+            UF_TRY_VALUE(
+                markerUpdate,
+                prepare(
+                    m_impl->database.get(),
+                    "UPDATE agent_budgets SET last_state_fingerprint=?2, "
+                    "last_command_fingerprint=?3, consecutive_no_progress_steps=?4 "
+                    "WHERE session_id=?1"
+                )
+            );
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                markerUpdate.get(),
+                1,
+                controller.sessionId()
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                markerUpdate.get(),
+                2,
+                stateFingerprint
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                markerUpdate.get(),
+                3,
+                commandFingerprint.hex()
+            ));
+            UF_TRY(bindInteger(m_impl->database.get(), markerUpdate.get(), 4, repetitions));
+            UF_TRY(expectDone(m_impl->database.get(), markerUpdate.get()));
         }
 
         UF_TRY_VALUE(operationId, randomToken(m_impl->database.get()));
@@ -4238,6 +4664,152 @@ namespace uf::operator_runtime
         };
     }
 
+    auto OperatorCoordinator::subscribe(
+        ControllerBinding const& controller,
+        SubscriptionCursor after,
+        uint32 maximumEvents
+    ) -> Result<SubscriptionRead>
+    {
+        if (maximumEvents == 0U)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "A subscription read must ask for at least one event"
+            );
+        }
+
+        // One transaction for the whole read, so the head, the oldest available
+        // sequence and the rows are one consistent view. It is BEGIN IMMEDIATE
+        // like every other path here rather than a lighter read transaction,
+        // because one writer at a time is what makes the sequence commit-ordered
+        // and a second kind of transaction would be a second set of rules.
+        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
+        UF_TRY(requireLiveBinding(m_impl->database.get(), controller));
+        UF_TRY_VALUE(currentCursor, currentEventCursor(m_impl->database.get()));
+
+        // Derived rather than assumed. Nothing prunes ledger_events, so this is
+        // 0 whenever the table is non-empty and the head when it is empty; the
+        // day a retention pass lands, this is already the value it moves.
+        UF_TRY_VALUE(
+            oldestQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT COALESCE(MIN(sequence) - 1, ?1) FROM ledger_events"
+            )
+        );
+        UF_TRY(bindInteger(m_impl->database.get(), oldestQuery.get(), 1, currentCursor));
+        if (sqlite3_step(oldestQuery.get()) != SQLITE_ROW)
+        {
+            return databaseFailure(
+                m_impl->database.get(),
+                "could not read the oldest available cursor"
+            );
+        }
+        auto const oldestCursor = static_cast<uint64>(
+            sqlite3_column_int64(oldestQuery.get(), 0)
+        );
+
+        // A cursor past the head is a cursor from another database or another
+        // epoch. It is refused rather than answered with an empty batch,
+        // because "nothing has happened yet" and "you are reading a stream that
+        // is not this one" are different answers and only one of them means
+        // keep waiting.
+        if (after.value > currentCursor)
+        {
+            UF_TRY(transaction.commit());
+            return SubscriptionRead{ResyncRequired{
+                .requestedCursor       = after,
+                .oldestAvailableCursor = SubscriptionCursor{oldestCursor},
+                .currentCursor         = SubscriptionCursor{currentCursor},
+            }};
+        }
+
+        // Scoped to the controlled target and not to the binding's own session:
+        // a controller that could see only its own events could not notice that
+        // a human took control away from it, which is the one thing it most
+        // needs to notice.
+        UF_TRY_VALUE(
+            events,
+            prepare(
+                m_impl->database.get(),
+                "SELECT sequence, kind, controlled_target_key, subject_id "
+                "FROM ledger_events WHERE controlled_target_key=?1 AND sequence>?2 "
+                "ORDER BY sequence LIMIT ?3"
+            )
+        );
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            events.get(),
+            1,
+            controller.controlledTargetKey()
+        ));
+        UF_TRY(bindInteger(m_impl->database.get(), events.get(), 2, after.value));
+        UF_TRY(bindInteger(m_impl->database.get(), events.get(), 3, maximumEvents));
+
+        auto batch = SubscriptionBatch{.events = {}, .nextCursor = after};
+        auto step  = sqlite3_step(events.get());
+        while (step == SQLITE_ROW)
+        {
+            UF_TRY_VALUE(kind, parseLedgerEventKind(columnText(events.get(), 1)));
+            auto const sequence = static_cast<uint64>(
+                sqlite3_column_int64(events.get(), 0)
+            );
+            batch.events.push_back(LedgerEvent{
+                .sequence            = SubscriptionCursor{sequence},
+                .kind                = kind,
+                .controlledTargetKey = columnText(events.get(), 2),
+                .subjectId           = columnText(events.get(), 3),
+            });
+
+            // The cursor follows what was delivered, never the head: a batch cut
+            // short by maximumEvents whose cursor named the head would silently
+            // skip every event the cut left behind.
+            batch.nextCursor = SubscriptionCursor{sequence};
+            step             = sqlite3_step(events.get());
+        }
+        if (step != SQLITE_DONE)
+        {
+            return databaseFailure(m_impl->database.get(), "could not read the event stream");
+        }
+        UF_TRY(transaction.commit());
+        return SubscriptionRead{std::move(batch)};
+    }
+
+    auto OperatorCoordinator::remainingBudget(
+        ControllerBinding const& controller
+    ) -> Result<AgentBudgetRemaining>
+    {
+        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
+        UF_TRY(requireLiveBinding(m_impl->database.get(), controller));
+        UF_TRY_VALUE(
+            budget,
+            readAgentBudget(
+                m_impl->database.get(),
+                controller.sessionId(),
+                controller.kind()
+            )
+        );
+        if (!budget)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "This controller kind carries no budget to report"
+            );
+        }
+        UF_TRY_VALUE(now, steadyMillisecondsNow());
+        UF_TRY(transaction.commit());
+        return AgentBudgetRemaining{
+            .toolCalls                  = budget->remainingToolCalls,
+            .mutations                  = budget->remainingMutations,
+            .observations               = budget->remainingObservations,
+            .riskUnits                  = budget->remainingRiskUnits,
+            .elapsedMillisRemaining     = now > budget->deadlineSteadyMillis
+                ? uint64{0}
+                : budget->deadlineSteadyMillis - now,
+            .consecutiveNoProgressSteps = budget->consecutiveNoProgressSteps,
+        };
+    }
+
     auto OperatorCoordinator::transitionOperation(
         std::string const& operationId,
         uint64 expectedRevision,
@@ -4337,7 +4909,7 @@ namespace uf::operator_runtime
                 "o.controlled_target_key, o.plugin_id, "
                 "session.project_registration_hash, registration.plugin_hash, "
                 "snapshot.decision_basis_hash, observation.canonical_observation, "
-                "state.canonical_state FROM operations o "
+                "state.canonical_state, session.controller_kind FROM operations o "
                 + std::string{k_liveControllerJoin}
                 + "JOIN project_registrations registration "
                 "ON registration.registration_hash=session.project_registration_hash "
@@ -4396,6 +4968,16 @@ namespace uf::operator_runtime
         }
         UF_TRY(requireLiveLease(m_impl->database.get(), lease, "Plan lease is stale"));
 
+        UF_TRY_VALUE(planKind, parseControllerKind(columnText(query.get(), 15)));
+        UF_TRY_VALUE(
+            planBudget,
+            readAgentBudget(m_impl->database.get(), lease.sessionId, planKind)
+        );
+        if (planBudget)
+        {
+            UF_TRY(requireWithinAgentDeadline(*planBudget));
+        }
+
         auto const registrationHex = columnText(query.get(), 10);
         if (
             plugin.pluginId() != columnText(query.get(), 9)
@@ -4445,6 +5027,23 @@ namespace uf::operator_runtime
                 .decisionBasisHash       = decisionBasisHash,
             })
         );
+
+        // Charged here and nowhere earlier, because risk does not exist before
+        // the plan is minted: it is derived from the effects the plugin
+        // declared for this command against this world. The charge precedes the
+        // operation_plans insert, so a refused risk budget leaves the Operation
+        // proposed with no plan row at all.
+        if (planBudget)
+        {
+            UF_TRY(chargeAgentBudget(
+                m_impl->database.get(),
+                lease.sessionId,
+                "UPDATE agent_budgets SET remaining_risk_units = "
+                "remaining_risk_units - ?2 WHERE session_id=?1",
+                riskUnits(plan.risk()),
+                "Agent risk budget is exhausted"
+            ));
+        }
 
         // The Operation's own edge is decided here, from the derived risk. The
         // caller has no signal for either of these two events for exactly that

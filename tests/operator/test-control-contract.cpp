@@ -216,7 +216,9 @@ namespace uf::operator_runtime
                 .kind                      = ControllerKind::Script,
             };
         };
-        CHECK_FALSE(restarted->pinSession(pin("session-1"), *manifest).has_value());
+        CHECK_FALSE(
+            restarted->pinSession(pin("session-1"), *manifest, std::nullopt).has_value()
+        );
 
         // There is no binding to present either: the epoch check now lives at
         // the one door onto the path, so a controller from the previous epoch
@@ -246,7 +248,9 @@ namespace uf::operator_runtime
                 .has_value()
         );
 
-        REQUIRE(restarted->pinSession(pin("session-2"), *manifest).has_value());
+        REQUIRE(
+            restarted->pinSession(pin("session-2"), *manifest, std::nullopt).has_value()
+        );
         auto const rebound = restarted->bindController("session-2");
         REQUIRE(rebound.has_value());
         auto const fresh = restarted->acquireLease(*rebound);

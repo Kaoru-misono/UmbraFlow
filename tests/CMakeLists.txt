@@ -115,6 +115,8 @@ set(UF_REQUIRED_DOCTEST_CONTRACTS
     schema-control-c11
     schema-control-c12
     schema-control-c13
+    contract-agent-a01
+    contract-agent-a02
     contract-agent-a04
     contract-agent-a06
     contract-agent-a07
@@ -189,8 +191,6 @@ endif()
 # prefix can be held to account from here -- it makes a reclassification, which
 # is one keystroke on a name, an explicit edit to this list.
 set(UF_SCHEMA_ONLY_REQUIREMENTS
-    agent-a01
-    agent-a02
     agent-a03
     agent-a05
 )
@@ -515,6 +515,8 @@ if(TARGET ${PROJECT_NAME}_operator)
             schema-control-c11
             schema-control-c12
             schema-control-c13
+            contract-agent-a01
+            contract-agent-a02
             contract-agent-a04
             contract-agent-a06
             contract-agent-a07

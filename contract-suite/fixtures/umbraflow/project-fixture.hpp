@@ -3,6 +3,7 @@
 #include <operator-contract/observation-fixture.hpp>
 #include <operator-contract/operator-protocol.hpp>
 
+#include <operator/agent-profile.hpp>
 #include <operator/effective-plan.hpp>
 #include <operator/journal-entry.hpp>
 #include <operator/ledger.hpp>
@@ -25,6 +26,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -797,10 +799,100 @@ namespace uf::operator_runtime::test_support
         return *result;
     }
 
+    // The exact bytes an AgentProfile is, in the frozen AgentBudget's member
+    // order. A budget is a document the deployment writes and the manifest
+    // attests to, so the fixture produces bytes and derives the hash from them
+    // rather than the other way round.
+    [[nodiscard]]
+    inline auto agentProfileBytes(AgentBudget const& budget) -> std::string
+    {
+        return std::format(
+            "{{\"maximum_elapsed_ms\":{},\"maximum_mutations\":{},"
+            "\"maximum_observations\":{},\"maximum_risk_units\":{},"
+            "\"maximum_tool_calls\":{}}}",
+            budget.maximumElapsedMillis,
+            budget.maximumMutations,
+            budget.maximumObservations,
+            budget.maximumRiskUnits,
+            budget.maximumToolCalls
+        );
+    }
+
+    // Wide enough that a case which is not about budgets never reaches one. A
+    // case that IS about a budget states its own numbers, so no case is ever
+    // testing a ceiling it did not choose.
+    inline constexpr auto k_unconstrainedAgentBudget = AgentBudget{
+        .maximumToolCalls     = 1'000U,
+        .maximumMutations     = 1'000U,
+        .maximumObservations  = 1'000U,
+        .maximumElapsedMillis = 3'600'000U,
+        .maximumRiskUnits     = 1'000'000U,
+    };
+
+    [[nodiscard]]
+    inline auto readProfileMember(
+        std::string_view exactJcs,
+        std::string_view member
+    ) -> std::optional<uint64>
+    {
+        auto const key = std::format("\"{}\":", member);
+        auto const at  = exactJcs.find(key);
+        if (at == std::string_view::npos)
+        {
+            return std::nullopt;
+        }
+        auto const rest  = exactJcs.substr(at + key.size());
+        auto       value = uint64{};
+        auto const read  = std::from_chars(
+            rest.data(),
+            rest.data() + rest.size(),
+            value
+        );
+        if (read.ec != std::errc{})
+        {
+            return std::nullopt;
+        }
+        return value;
+    }
+
+    // Stands in for a deployment's AgentProfile schema owner. It reads the five
+    // ceilings out of the exact bytes rather than being handed a struct,
+    // because the bytes are what agent_profile_hash attests to and a validator
+    // that ignored them would let any budget answer for any manifest.
+    [[nodiscard]]
+    inline auto agentProfileValidator() -> AgentProfileValidator
+    {
+        return [](std::string_view exactJcs) -> Result<AgentBudget>
+        {
+            auto const toolCalls    = readProfileMember(exactJcs, "maximum_tool_calls");
+            auto const mutations    = readProfileMember(exactJcs, "maximum_mutations");
+            auto const observations = readProfileMember(exactJcs, "maximum_observations");
+            auto const elapsed      = readProfileMember(exactJcs, "maximum_elapsed_ms");
+            auto const riskUnits    = readProfileMember(exactJcs, "maximum_risk_units");
+            if (
+                !toolCalls || !mutations || !observations || !elapsed || !riskUnits
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "AgentProfile bytes are not a complete budget document"
+                );
+            }
+            return AgentBudget{
+                .maximumToolCalls     = *toolCalls,
+                .maximumMutations     = *mutations,
+                .maximumObservations  = *observations,
+                .maximumElapsedMillis = *elapsed,
+                .maximumRiskUnits     = *riskUnits,
+            };
+        };
+    }
+
     [[nodiscard]]
     inline auto sessionManifest(
         VerifiedProjectRegistration const& project,
-        ContentHash const& runtimeArtifactRootHash
+        ContentHash const& runtimeArtifactRootHash,
+        ContentHash const& agentProfileHash
     ) -> SessionManifest
     {
         auto const result = SessionManifest::create(
@@ -812,7 +904,7 @@ namespace uf::operator_runtime::test_support
                 .projectRegistrationHash      = project.hash(),
                 .policyArtifactHash           = hashOf("policy"),
                 .journalEnvelopeSchemaHash    = hashOf("journal-envelope"),
-                .agentProfileHash             = hashOf("agent"),
+                .agentProfileHash             = agentProfileHash,
             }
         );
         REQUIRE(result.has_value());
@@ -1024,6 +1116,45 @@ namespace uf::operator_runtime::test_support
         uint64      installedGeneration{};
     };
 
+    struct PinnedAgentProfile final
+    {
+        SessionManifest manifest;
+        AgentProfile    profile;
+    };
+
+    // An Agent session pins a manifest of its own, because the ceilings it runs
+    // under are exactly the bytes that manifest attests to: another budget is
+    // another agent_profile_hash and therefore another session identity, and
+    // that is what makes a permissive budget attributable rather than deniable.
+    //
+    // The pair is derived from the budget alone, so asking twice for the same
+    // budget yields the same manifest and the same profile -- which is what
+    // lets a case re-pin an existing Agent session and see whether pinning
+    // again refreshes what it already spent.
+    [[nodiscard]]
+    inline auto agentProfileFor(
+        PreparedStore const& prepared,
+        AgentBudget const& budget
+    ) -> PinnedAgentProfile
+    {
+        auto const bytes    = agentProfileBytes(budget);
+        auto const manifest = sessionManifest(
+            prepared.project.registration,
+            prepared.runtimeArtifactRootHash,
+            hashOf(bytes)
+        );
+        auto profile = AgentProfile::verifyExact(
+            manifest,
+            bytes,
+            agentProfileValidator()
+        );
+        REQUIRE(profile.has_value());
+        return PinnedAgentProfile{
+            .manifest = manifest,
+            .profile  = *std::move(profile),
+        };
+    }
+
     // A Host that can act under the store's current lease. It is a separate
     // Host per call on purpose; see contract::DeliveringHost.
     [[nodiscard]]
@@ -1113,7 +1244,8 @@ namespace uf::operator_runtime::test_support
         auto const project = makeProject(pluginId, source);
         auto const manifest = sessionManifest(
             project.registration,
-            installed->rootHash()
+            installed->rootHash(),
+            hashOf("agent")
         );
         auto const projectPlugin = loadPlugin(project, source);
         REQUIRE(store.registerProject(project.registration).has_value());
@@ -1143,7 +1275,8 @@ namespace uf::operator_runtime::test_support
                 .mode                      = SessionMode::Write,
                 .kind                      = ControllerKind::Script,
             },
-            manifest
+            manifest,
+            std::nullopt
         ).has_value());
         auto controller = store.bindController("session-1");
         REQUIRE(controller.has_value());
@@ -1206,6 +1339,10 @@ namespace uf::operator_runtime::test_support
     // It returns a binding and nothing else: taking the lease and composing a
     // snapshot are the case's own steps, because whether the second controller
     // acquires a free target or seizes a held one is the property under test.
+    //
+    // budget is stated for exactly the kinds whose ControllerProfile requires
+    // one, which is the same rule pinSession enforces: the fixture cannot mint
+    // an Agent without ceilings or a Script with them.
     [[nodiscard]]
     inline auto addController(
         PreparedStore& prepared,
@@ -1213,7 +1350,8 @@ namespace uf::operator_runtime::test_support
         SessionMode mode,
         std::string const& sessionId,
         std::string const& projectInstanceKey,
-        std::string const& controlledTargetKey
+        std::string const& controlledTargetKey,
+        std::optional<AgentBudget> const& budget = std::nullopt
     ) -> ControllerBinding
     {
         REQUIRE(prepared.store.provisionProjectInstance(
@@ -1230,6 +1368,15 @@ namespace uf::operator_runtime::test_support
                 ),
             }
         ).has_value());
+
+        auto profile  = std::optional<AgentProfile>{};
+        auto manifest = prepared.manifest;
+        if (budget)
+        {
+            auto const pinned = agentProfileFor(prepared, *budget);
+            manifest = pinned.manifest;
+            profile  = pinned.profile;
+        }
         REQUIRE(prepared.store.pinSession(
             SessionPin{
                 .sessionId                 = sessionId,
@@ -1242,7 +1389,8 @@ namespace uf::operator_runtime::test_support
                 .mode                      = mode,
                 .kind                      = kind,
             },
-            prepared.manifest
+            manifest,
+            profile
         ).has_value());
         auto binding = prepared.store.bindController(sessionId);
         REQUIRE(binding.has_value());
