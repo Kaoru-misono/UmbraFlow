@@ -19,9 +19,25 @@ Reading order: target form, then layer ownership, then the model semantics.
   reproducible inherited baseline, KEEP/REWRITE/DELETE dispositions, and the exact
   requirement-to-owner/schema/CTest map.
 - [The next block after runtime hardening](2026-08-10-next-block.md) --
-  proposed, nothing built on its account. Establishes that the tree is mid Phase
-  2A rather than past it, that this branch has never been pushed and so has
-  never been through CI, and orders the deferred work by dependency.
+  **in execution since 2026-08-10**; it was proposed earlier that day. Establishes
+  that the tree is mid Phase 2A rather than past it, that this branch has never
+  been pushed and so has never been through CI, and orders the deferred work by
+  dependency. W1, W5, W8 and the contract suite it raised as unowned have
+  landed; W0 ran and returned half a pass; W2-W4, W6, W7, W9 and W11 have not.
+- Four of that plan's work items were written out in full on 2026-08-10, each
+  specification only, none started. They do not open rulings of their own; they
+  are the next block's rows at implementation depth, and they are superseded by
+  it wherever they disagree.
+  [W2 EffectivePlan authority](2026-08-10-w2-effective-plan.md) --
+  [W3 Snapshot Coordinator](2026-08-10-w3-snapshot-coordinator.md) --
+  [W4 delivery join](2026-08-10-w4-delivery-join.md) --
+  [W6 and W7 controller and Agent](2026-08-10-w6-w7-controller-and-agent.md).
+- [W2-W7 reconciliation](2026-08-10-w2-w7-reconciliation.md) — the four above
+  were written in parallel by agents who could not see each other. This resolves
+  every conflict between them, lists the cross-assumptions one makes that another
+  does not satisfy, fixes the landing order, and unions their `ledger.cpp` DDL
+  changes so the schema fingerprint is recomputed once per landing. **Read it
+  before any of the four**; where one of them disagrees with it, it wins.
 
 ## Retained predecessor references
 
