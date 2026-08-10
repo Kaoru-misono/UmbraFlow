@@ -1,6 +1,7 @@
 #pragma once
 
 #include <operator-contract/observation-fixture.hpp>
+#include <operator-contract/operator-protocol.hpp>
 #include <operator-contract/project-under-test.hpp>
 
 #include <operator/ledger.hpp>
@@ -93,13 +94,20 @@ namespace uf::operator_runtime::contract
         OperatorCoordinator store;
         ProjectPluginHandle plugin;
         ProjectUnderTest    project;
-        ControlLease        lease;
-        SnapshotRecord      snapshot;
+        SessionManifest     manifest;
+
+        // The sole mint for an EffectivePlan. It is part of the prepared state
+        // because a deployment builds one from the exact operator protocol
+        // bytes its session manifest pins, and the suite must be unable to
+        // freeze a plan any other way.
+        OperatorPlanAuthority planAuthority;
+        ControlLease          lease;
+        SnapshotRecord        snapshot;
 
         // The Host whose observations this store composes snapshots from. Only
         // TaskHost can mint one, so the suite carries a live Host rather than a
         // recorded value.
-        ObservationHost     observation;
+        ObservationHost       observation;
     };
 
     // One further observation cycle on the prepared Host: a new capture, a new
@@ -124,12 +132,26 @@ namespace uf::operator_runtime::contract
         std::string clientRequestId
     ) -> CommandRequest;
 
+    // One Operation the Operator itself froze a plan for and minted the first
+    // step of, which is the whole state a dispatch may be reserved from.
     [[nodiscard]]
     auto readyOperation(
         PreparedStore& prepared,
         std::string clientRequestId,
         std::string toolName
     ) -> StoredOperation;
+
+    [[nodiscard]]
+    auto frozenPlan(
+        PreparedStore& prepared,
+        StoredOperation const& operation
+    ) -> Result<FrozenPlan>;
+
+    [[nodiscard]]
+    auto plannedStep(
+        PreparedStore& prepared,
+        StoredOperation const& operation
+    ) -> Result<PlannedStep>;
 
     // A Ready operation carried through one dispatch and one Host outcome, so
     // that it is reconciling and a commit can be tested against it.

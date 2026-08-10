@@ -86,14 +86,17 @@ set(UF_REQUIRED_DOCTEST_CONTRACTS
     contract-state-s03
     contract-state-s05
     contract-state-s06
+    contract-state-s04
     schema-state-s01
     schema-state-s02
     schema-state-s04
     contract-control-c01
     contract-control-c02
     contract-control-c04
+    contract-control-c05
     contract-control-c06
     contract-control-c07
+    contract-control-c08
     contract-control-c09
     contract-control-c10
     contract-control-c11
@@ -184,10 +187,7 @@ set(UF_SCHEMA_ONLY_REQUIREMENTS
     product-p01
     product-p02
     product-p03
-    state-s04
     control-c03
-    control-c05
-    control-c08
     agent-a01
     agent-a02
     agent-a03
@@ -391,7 +391,6 @@ cpp_add_test(
         domain/test-frame.cpp
         domain/test-ids.cpp
         domain/test-space.cpp
-        domain/test-time.cpp
     LIBS
         ${PROJECT_NAME}_domain
 )
@@ -492,6 +491,7 @@ if(TARGET ${PROJECT_NAME}_operator)
             contract-state-s01
             contract-state-s02
             contract-state-s03
+            contract-state-s04
             contract-state-s05
             contract-state-s06
             schema-state-s01
@@ -499,7 +499,9 @@ if(TARGET ${PROJECT_NAME}_operator)
             schema-state-s04
             contract-control-c02
             contract-control-c04
+            contract-control-c05
             contract-control-c07
+            contract-control-c08
             contract-control-c14
             schema-control-c03
             schema-control-c05

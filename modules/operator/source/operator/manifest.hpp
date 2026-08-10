@@ -159,5 +159,10 @@ namespace uf::operator_runtime
         [[nodiscard]] auto hash() const -> ContentHash;
         [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
         [[nodiscard]] auto runtimeModelArtifactRootHash() const -> ContentHash;
+
+        // The operator protocol schema this session is pinned to. It is
+        // exposed because OperatorPlanAuthority must satisfy it with exact
+        // bytes: an authority that merely named a hash would be a convention.
+        [[nodiscard]] auto operatorProtocolSchemaHash() const -> ContentHash;
     };
 }

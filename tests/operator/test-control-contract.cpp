@@ -22,6 +22,7 @@
 #include <doctest/doctest.h>
 
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <optional>
@@ -440,5 +441,127 @@ namespace uf::operator_runtime
         CHECK(machine.mutationLocked());
         CHECK_FALSE(machine.transition(OperationEvent::Cancelled).has_value());
         CHECK_FALSE(machine.transition(OperationEvent::DeadlineExpired).has_value());
+    }
+    // The plugin describes and the Operator decides. Every EffectivePlan member
+    // the Operator derives is computed from bytes the ledger already held, and
+    // an ordinary caller submits a tool and arguments and nothing else.
+    TEST_CASE("contract-control-c05")
+    {
+        auto temporary = test_support::TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+
+        // The proposal must be about the command the Operation was created for.
+        // This plugin answers `mismatched-plan` with a plan naming another tool.
+        auto const mismatched = test_support::proposedOperation(
+            prepared,
+            "request-mismatch",
+            "mismatched-plan"
+        );
+        CHECK_FALSE(test_support::freezePlanFor(prepared, mismatched).has_value());
+        REQUIRE(prepared.store.transitionOperation(
+            mismatched.operationId,
+            mismatched.revision,
+            OperationSignal::Cancelled
+        ).has_value());
+
+        prepared.snapshot   = test_support::freshSnapshot(prepared);
+        auto const proposed = test_support::proposedOperation(
+            prepared,
+            "request-1",
+            "command-1"
+        );
+        auto const frozen = test_support::freezePlanFor(prepared, proposed);
+        REQUIRE(frozen.has_value());
+
+        // Derived, not echoed: the decision basis comes from the snapshot row
+        // the Operation names, and the risk is the maximum of the declared
+        // effects rather than anything the proposal stated about itself.
+        CHECK(frozen->decisionBasisHash == prepared.snapshot.decisionBasisHash);
+        CHECK(frozen->risk == Risk::Medium);
+        CHECK_FALSE(frozen->approvalRequired);
+        CHECK(frozen->operation.state == OperationState::Ready);
+
+        // A plan freezes once. operation_plans is keyed by operation_id, so the
+        // second attempt is a constraint violation and not a policy check.
+        CHECK_FALSE(test_support::freezePlanFor(prepared, frozen->operation).has_value());
+
+        // A read-only Operation declares no effect and authorises no dispatch,
+        // so it carries no plan at all.
+        auto const readOnly = test_support::proposedOperation(
+            prepared,
+            "request-read",
+            "observe-1"
+        );
+        CHECK_FALSE(test_support::freezePlanFor(prepared, readOnly).has_value());
+    }
+
+    // One Operation runs a bounded multi-step workflow: the number of steps is
+    // fixed when the plan freezes, running out stops the workflow, and stopping
+    // never terminates the Operation or releases the mutation chain.
+    TEST_CASE("contract-control-c08")
+    {
+        auto temporary = test_support::TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+
+        auto const proposed = test_support::proposedOperation(
+            prepared,
+            "request-1",
+            "two-step-plan"
+        );
+        auto const frozen = test_support::freezePlanFor(prepared, proposed);
+        REQUIRE(frozen.has_value());
+        CHECK(frozen->limits.maximumSteps == 2U);
+
+        auto current         = frozen->operation;
+        auto lastStepIntent  = std::optional<ContentHash>{};
+        for (auto index = uint64{1}; index <= 2U; ++index)
+        {
+            auto const step = test_support::mintStepFor(prepared, current);
+            REQUIRE(step.has_value());
+            CHECK(step->stepIndex == index);
+            if (lastStepIntent.has_value())
+            {
+                // Identity carries the index, so the same document minted at
+                // another position is another step.
+                CHECK(step->stepIntentHash != *lastStepIntent);
+            }
+            lastStepIntent = step->stepIntentHash;
+
+            // A second step while this one still awaits its dispatch is refused.
+            CHECK_FALSE(test_support::mintStepFor(prepared, step->operation).has_value());
+
+            auto const dispatch = prepared.store.reserveDispatch(
+                current.operationId,
+                step->operation.revision,
+                prepared.lease,
+                AuthorityDecisionId{std::format("authority-{}", index)},
+                std::nullopt
+            );
+            REQUIRE(dispatch.has_value());
+            CHECK(dispatch->stepIntentHash == step->stepIntentHash);
+            CHECK(dispatch->stepIndex == index);
+
+            auto const reconciling = prepared.store.recordDeliveryOutcome(
+                current.operationId,
+                dispatch->dispatchSequence,
+                dispatch->operationRevision,
+                DeliveryOutcome::Delivered
+            );
+            REQUIRE(reconciling.has_value());
+            REQUIRE(reconciling->state == OperationState::Reconciling);
+            current = *reconciling;
+        }
+
+        // The third step is past the frozen bound.
+        CHECK_FALSE(test_support::mintStepFor(prepared, current).has_value());
+
+        // And the refusal left everything where it was: still reconciling, plan
+        // still frozen, mutation chain still held against a second command.
+        CHECK(current.state == OperationState::Reconciling);
+        CHECK(current.planFrozen);
+        CHECK_FALSE(prepared.store.createOrLoadOperation(
+            test_support::command(prepared.snapshot, "request-2"),
+            test_support::toolInvocation(prepared.project, "command-1")
+        ).has_value());
     }
 }

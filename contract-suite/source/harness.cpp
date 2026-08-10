@@ -221,13 +221,21 @@ namespace uf::operator_runtime::contract
         );
         auto snapshot = store.createSnapshot(*lease, plugin, observeOnce(observation));
         REQUIRE(snapshot.has_value());
+
+        // "operator" is the exact operator protocol schema sessionManifest
+        // above pins. The authority hashes the bytes and compares, so a suite
+        // that named the wrong ones could not build one at all.
+        auto authority = planAuthority(project.registration, manifest, "operator");
+        REQUIRE(authority.has_value());
         return PreparedStore{
-            .store       = std::move(store),
-            .plugin      = plugin,
-            .project     = project,
-            .lease       = *lease,
-            .snapshot    = *std::move(snapshot),
-            .observation = std::move(observation),
+            .store         = std::move(store),
+            .plugin        = plugin,
+            .project       = project,
+            .manifest      = manifest,
+            .planAuthority = *std::move(authority),
+            .lease         = *lease,
+            .snapshot      = *std::move(snapshot),
+            .observation   = std::move(observation),
         };
     }
 
@@ -260,6 +268,34 @@ namespace uf::operator_runtime::contract
         };
     }
 
+    auto frozenPlan(
+        PreparedStore& prepared,
+        StoredOperation const& operation
+    ) -> Result<FrozenPlan>
+    {
+        return prepared.store.freezePlan(
+            operation.operationId,
+            operation.revision,
+            prepared.lease,
+            prepared.plugin,
+            prepared.planAuthority
+        );
+    }
+
+    auto plannedStep(
+        PreparedStore& prepared,
+        StoredOperation const& operation
+    ) -> Result<PlannedStep>
+    {
+        return prepared.store.mintNextStep(
+            operation.operationId,
+            operation.revision,
+            prepared.lease,
+            prepared.plugin,
+            prepared.planAuthority
+        );
+    }
+
     auto readyOperation(
         PreparedStore& prepared,
         std::string clientRequestId,
@@ -271,13 +307,11 @@ namespace uf::operator_runtime::contract
             toolInvocation(prepared.project, std::move(toolName))
         );
         REQUIRE(operation.has_value());
-        operation = prepared.store.transitionOperation(
-            operation->operationId,
-            operation->revision,
-            OperationEvent::ReadyWithoutApproval
-        );
-        REQUIRE(operation.has_value());
-        return *operation;
+        auto const frozen = frozenPlan(prepared, *operation);
+        REQUIRE(frozen.has_value());
+        auto const step = plannedStep(prepared, frozen->operation);
+        REQUIRE(step.has_value());
+        return step->operation;
     }
 
     auto reconcilingOperation(
@@ -289,7 +323,7 @@ namespace uf::operator_runtime::contract
         // Every dispatch needs its own authority decision id, so it is derived
         // from the request rather than fixed: two Operations in one store
         // otherwise collide on the second one's reservation.
-        auto const authority = "authority-" + clientRequestId;
+        auto const authority = AuthorityDecisionId{"authority-" + clientRequestId};
         auto const ready     = readyOperation(
             prepared,
             std::move(clientRequestId),
@@ -299,9 +333,6 @@ namespace uf::operator_runtime::contract
             ready.operationId,
             ready.revision,
             prepared.lease,
-            hashOf("decision"),
-            hashOf("plan"),
-            hashOf("step"),
             authority,
             std::nullopt
         );

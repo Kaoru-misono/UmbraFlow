@@ -11,6 +11,7 @@
 // header, build the five authorities out of the deployment's own validators,
 // and define projectUnderTest.
 
+#include <operator-contract/operator-protocol.hpp>
 #include <operator-contract/project-under-test.hpp>
 
 #include <operator/journal-entry.hpp>
@@ -53,11 +54,54 @@ namespace uf::operator_runtime::contract
         };
 
         constexpr auto k_expeditionPlugin = std::string_view{R"LUAU(
+-- The operator protocol documents this project answers with. plan reads the
+-- tool name out of the envelope the Operator assembled, so one registration
+-- reaches the clamp, the bound, the approval edge and the tool mismatch
+-- without a second plugin_hash.
+local schema = "00000000000000000000000000000000000000000000000000000000000000a1"
+local function effect(risk, camp)
+    return '{"namespaced_type":"expedition.march","opaque_project_payload":{"turn":0}'
+        .. ',"payload_schema_hash":"' .. schema .. '","risk":"' .. risk
+        .. '","scope_key":"' .. camp .. '","scope_kind":"camp"}'
+end
+local ordinary = '[' .. effect("low", "north") .. ',' .. effect("medium", "south") .. ']'
+local reordered = '[' .. effect("medium", "south") .. ',' .. effect("low", "north") .. ']'
+local risky = '[' .. effect("high", "north") .. ']'
+local function proposal(tool, effects, steps, dispatches)
+    return '{"allowed_ui_actions":["expedition.step"],"canonical_args":{"steps":2}'
+        .. ',"effects":' .. effects
+        .. ',"tool_name":"' .. tool .. '","tool_version":"3"'
+        .. ',"workflow_limits":{"maximum_dispatches":' .. dispatches
+        .. ',"maximum_elapsed_ms":60000,"maximum_observations":16,"maximum_steps":'
+        .. steps .. ',"maximum_waits":4}}'
+end
+local plans = {
+    ["expedition.move"] = proposal("expedition.move", ordinary, "8", "8"),
+    ["expedition.trade"] = proposal("expedition.trade", ordinary, "8", "8"),
+    ["expedition.mismatch"] = proposal("expedition.move", ordinary, "8", "8"),
+    ["expedition.oversized"] = proposal("expedition.oversized", ordinary, "4096", "4096"),
+    ["expedition.twostep"] = proposal("expedition.twostep", ordinary, "2", "2"),
+    ["expedition.approval"] = proposal("expedition.approval", risky, "8", "8"),
+    ["expedition.reorder"] = proposal("expedition.reorder", reordered, "8", "8"),
+}
+local step_intent = '{"action":{"action_id":"expedition.press"'
+    .. ',"canonical_parameters":{"steps":2},"surface_id":"expedition.surface"'
+    .. ',"ui_target_id":"expedition.target"},"binding_variant_constraints":[]'
+    .. ',"delivery_class":"delivery_safe","expected_ui_postconditions":[]'
+    .. ',"required_ui_preconditions":[],"step_key":"expedition.step"'
+    .. ',"timeout_policy":{"maximum_elapsed_ms":5000,"on_timeout":"reobserve"}}'
 return {
     plugin_id = "arcana.expedition",
     derive = function(_input) return '{"visible":true}' end,
-    plan = function(_input) return '{"visible":true}' end,
-    next_step = function(_input) return '{"visible":true}' end,
+    plan = function(input)
+        local tool = string.match(input, '"tool_name":"([^"]*)"')
+        local answer = plans[tool]
+        if answer == nil then
+            error("expedition has no plan for " .. tostring(tool))
+        end
+        return answer
+    end,
+    next_step = function(_input) return step_intent end,
     reconcile = function(input)
         if input == '{"observed":"advanced"}' then return '{"verdict":"underway"}' end
         if input == '{"observed":"arrived"}' then return '{"verdict":"settled"}' end
@@ -69,11 +113,54 @@ return {
 )LUAU"};
 
         constexpr auto k_rivalPlugin = std::string_view{R"LUAU(
+-- The operator protocol documents this project answers with. plan reads the
+-- tool name out of the envelope the Operator assembled, so one registration
+-- reaches the clamp, the bound, the approval edge and the tool mismatch
+-- without a second plugin_hash.
+local schema = "00000000000000000000000000000000000000000000000000000000000000a1"
+local function effect(risk, camp)
+    return '{"namespaced_type":"expedition.march","opaque_project_payload":{"turn":0}'
+        .. ',"payload_schema_hash":"' .. schema .. '","risk":"' .. risk
+        .. '","scope_key":"' .. camp .. '","scope_kind":"camp"}'
+end
+local ordinary = '[' .. effect("low", "north") .. ',' .. effect("medium", "south") .. ']'
+local reordered = '[' .. effect("medium", "south") .. ',' .. effect("low", "north") .. ']'
+local risky = '[' .. effect("high", "north") .. ']'
+local function proposal(tool, effects, steps, dispatches)
+    return '{"allowed_ui_actions":["expedition.step"],"canonical_args":{"steps":2}'
+        .. ',"effects":' .. effects
+        .. ',"tool_name":"' .. tool .. '","tool_version":"3"'
+        .. ',"workflow_limits":{"maximum_dispatches":' .. dispatches
+        .. ',"maximum_elapsed_ms":60000,"maximum_observations":16,"maximum_steps":'
+        .. steps .. ',"maximum_waits":4}}'
+end
+local plans = {
+    ["expedition.move"] = proposal("expedition.move", ordinary, "8", "8"),
+    ["expedition.trade"] = proposal("expedition.trade", ordinary, "8", "8"),
+    ["expedition.mismatch"] = proposal("expedition.move", ordinary, "8", "8"),
+    ["expedition.oversized"] = proposal("expedition.oversized", ordinary, "4096", "4096"),
+    ["expedition.twostep"] = proposal("expedition.twostep", ordinary, "2", "2"),
+    ["expedition.approval"] = proposal("expedition.approval", risky, "8", "8"),
+    ["expedition.reorder"] = proposal("expedition.reorder", reordered, "8", "8"),
+}
+local step_intent = '{"action":{"action_id":"expedition.press"'
+    .. ',"canonical_parameters":{"steps":2},"surface_id":"expedition.surface"'
+    .. ',"ui_target_id":"expedition.target"},"binding_variant_constraints":[]'
+    .. ',"delivery_class":"delivery_safe","expected_ui_postconditions":[]'
+    .. ',"required_ui_preconditions":[],"step_key":"expedition.step"'
+    .. ',"timeout_policy":{"maximum_elapsed_ms":5000,"on_timeout":"reobserve"}}'
 return {
     plugin_id = "arcana.rival",
     derive = function(_input) return '{"visible":true}' end,
-    plan = function(_input) return '{"visible":true}' end,
-    next_step = function(_input) return '{"visible":true}' end,
+    plan = function(input)
+        local tool = string.match(input, '"tool_name":"([^"]*)"')
+        local answer = plans[tool]
+        if answer == nil then
+            error("expedition has no plan for " .. tostring(tool))
+        end
+        return answer
+    end,
+    next_step = function(_input) return step_intent end,
     reconcile = function(input)
         if input == '{"observed":"advanced"}' then return '{"verdict":"underway"}' end
         if input == '{"observed":"arrived"}' then return '{"verdict":"settled"}' end
@@ -198,6 +285,56 @@ return {
             return true;
         }
 
+        // The plan and next_step envelopes are the Operator's shape too, and
+        // are recognized structurally for looksLikeDeriveEnvelope's reason.
+        [[nodiscard]]
+        auto looksLikeOrderedMembers(
+            std::string_view exactJcs,
+            std::span<std::string_view const> members
+        ) -> bool
+        {
+            if (!exactJcs.starts_with(members.front()) || !exactJcs.ends_with('}'))
+            {
+                return false;
+            }
+            auto at = std::size_t{0};
+            for (auto const member : members)
+            {
+                auto const found = exactJcs.find(member, at);
+                if (found == std::string_view::npos)
+                {
+                    return false;
+                }
+                at = found + member.size();
+            }
+            return true;
+        }
+
+        [[nodiscard]]
+        auto looksLikePlanEnvelope(std::string_view exactJcs) -> bool
+        {
+            constexpr auto members = std::array{
+                std::string_view{"{\"canonical_args\":"},
+                std::string_view{",\"project_observation\":"},
+                std::string_view{",\"project_state\":"},
+                std::string_view{",\"tool_name\":"},
+                std::string_view{",\"tool_version\":"},
+            };
+            return looksLikeOrderedMembers(exactJcs, members);
+        }
+
+        [[nodiscard]]
+        auto looksLikeStepEnvelope(std::string_view exactJcs) -> bool
+        {
+            constexpr auto members = std::array{
+                std::string_view{"{\"frozen_plan_hash\":"},
+                std::string_view{",\"project_observation\":"},
+                std::string_view{",\"project_state\":"},
+                std::string_view{",\"step_index\":"},
+            };
+            return looksLikeOrderedMembers(exactJcs, members);
+        }
+
         [[nodiscard]]
         auto vocabularyOf(ProjectIdentity const& identity) -> ProjectVocabulary
         {
@@ -229,6 +366,14 @@ return {
                 .confirmedInput = "{\"observed\":\"arrived\"}",
                 .rejectedInput  = "{\"observed\":\"blocked\"}",
                 .ambiguousInput = "{\"observed\":\"nothing\"}",
+
+                // Five more mutating tools, told apart by the plan this
+                // project's plugin answers each of them with.
+                .mismatchedPlanTool       = "expedition.mismatch",
+                .oversizedPlanTool        = "expedition.oversized",
+                .twoStepPlanTool          = "expedition.twostep",
+                .approvalRequiredPlanTool = "expedition.approval",
+                .reorderedEffectsTool     = "expedition.reorder",
             };
         }
 
@@ -371,6 +516,10 @@ return {
                     std::ranges::find(accepted, candidateJcs) == accepted.end()
                     && !looksLikeReduceEnvelope(candidateJcs)
                     && !looksLikeDeriveEnvelope(candidateJcs)
+                    && !looksLikePlanEnvelope(candidateJcs)
+                    && !looksLikeStepEnvelope(candidateJcs)
+                    && !readPlanProposal(candidateJcs).has_value()
+                    && !readStepIntent(candidateJcs).has_value()
                 )
                 {
                     return refuse("expedition canonical validator rejected bytes");
@@ -410,8 +559,10 @@ return {
                         valid = looksLikeDeriveEnvelope(candidateJcs);
                         break;
                     case ProjectPluginFunction::Plan:
+                        valid = looksLikePlanEnvelope(candidateJcs);
+                        break;
                     case ProjectPluginFunction::NextStep:
-                        valid = candidateJcs == k_visible;
+                        valid = looksLikeStepEnvelope(candidateJcs);
                         break;
                     }
                 }
@@ -427,9 +578,13 @@ return {
                             && candidateJcs.ends_with("\"}");
                         break;
                     case ProjectPluginFunction::Derive:
-                    case ProjectPluginFunction::Plan:
-                    case ProjectPluginFunction::NextStep:
                         valid = candidateJcs == k_visible;
+                        break;
+                    case ProjectPluginFunction::Plan:
+                        valid = readPlanProposal(candidateJcs).has_value();
+                        break;
+                    case ProjectPluginFunction::NextStep:
+                        valid = readStepIntent(candidateJcs).has_value();
                         break;
                     }
                 }
@@ -519,6 +674,31 @@ return {
                     },
                     ToolCase{
                         .name       = "expedition.trade",
+                        .version    = "3",
+                        .mutability = ToolMutability::Mutating,
+                    },
+                    ToolCase{
+                        .name       = "expedition.mismatch",
+                        .version    = "3",
+                        .mutability = ToolMutability::Mutating,
+                    },
+                    ToolCase{
+                        .name       = "expedition.oversized",
+                        .version    = "3",
+                        .mutability = ToolMutability::Mutating,
+                    },
+                    ToolCase{
+                        .name       = "expedition.twostep",
+                        .version    = "3",
+                        .mutability = ToolMutability::Mutating,
+                    },
+                    ToolCase{
+                        .name       = "expedition.approval",
+                        .version    = "3",
+                        .mutability = ToolMutability::Mutating,
+                    },
+                    ToolCase{
+                        .name       = "expedition.reorder",
                         .version    = "3",
                         .mutability = ToolMutability::Mutating,
                     },

@@ -31,37 +31,26 @@ namespace uf::operator_runtime
 {
     namespace
     {
-        constexpr auto k_pluginSource = std::string_view{R"LUAU(
-return {
-    plugin_id = "fixture.alpha",
-    derive = function(_input) return '{}' end,
-    plan = function(_input) return '{}' end,
-    next_step = function(_input) return '{}' end,
-    reconcile = function(input) return input end,
-    reduce = function(_input) return '{"revision":0}' end,
-}
-)LUAU"};
+        // The one plugin every case here registers. It comes from the shared
+        // fixture because plan and next_step now answer with real operator
+        // protocol documents, and a second spelling of them would be a second
+        // plugin_hash for one project.
+        inline auto const k_pluginSource = test_support::pluginSource("fixture.alpha");
 
-        // Identical to k_pluginSource except that reduce answers with a
-        // document the pinned ProjectState schema refuses -- but only once a
-        // prior state exists, so provisioning still succeeds and the failure
-        // lands inside the reconciliation transaction, which is where the
-        // no-write-on-failure test needs it.
-        constexpr auto k_rejectedReducePluginSource = std::string_view{R"LUAU(
-return {
-    plugin_id = "fixture.alpha",
-    derive = function(_input) return '{}' end,
-    plan = function(_input) return '{}' end,
-    next_step = function(_input) return '{}' end,
-    reconcile = function(input) return input end,
-    reduce = function(input)
-        if string.find(input, '"prior_project_state":null', 1, true) ~= nil then
-            return '{"revision":0}'
-        end
-        return '{"value":99}'
-    end,
-}
-)LUAU"};
+        // The same plugin except that reduce answers with a document the
+        // pinned ProjectState schema refuses -- but only once a prior state
+        // exists, so provisioning still succeeds and the failure lands inside
+        // the reconciliation transaction, which is where the no-write-on-failure
+        // test needs it.
+        [[nodiscard]]
+        inline auto rejectedReducePluginSource() -> std::string
+        {
+            auto source        = test_support::pluginSource("fixture.alpha");
+            auto const accepted = std::string{"return '{\"revision\":1}'"};
+            auto const at      = source.find(accepted);
+            REQUIRE(at != std::string::npos);
+            return source.replace(at, accepted.size(), "return '{\"value\":99}'");
+        }
 
         class TemporaryDirectory final
         {
@@ -176,6 +165,7 @@ return {
             OperatorCoordinator          store;
             ProjectPluginHandle          plugin;
             test_support::ProjectFixture project;
+            OperatorPlanAuthority        planAuthority;
             ControlLease                 lease;
             SnapshotRecord               snapshot;
             contract::ObservationHost    observation;
@@ -246,13 +236,20 @@ return {
                 contract::observeOnce(observation)
             );
             REQUIRE(snapshot.has_value());
+            auto planAuthority = contract::planAuthority(
+                project.registration,
+                manifest,
+                "operator"
+            );
+            REQUIRE(planAuthority.has_value());
             return PreparedStore{
-                .store       = std::move(store),
-                .plugin      = projectPlugin,
-                .project     = project,
-                .lease       = *lease,
-                .snapshot    = *std::move(snapshot),
-                .observation = std::move(observation),
+                .store         = std::move(store),
+                .plugin        = projectPlugin,
+                .project       = project,
+                .planAuthority = *std::move(planAuthority),
+                .lease         = *lease,
+                .snapshot      = *std::move(snapshot),
+                .observation   = std::move(observation),
             };
         }
 
@@ -283,6 +280,72 @@ return {
                 .idempotencyNamespace = "controller-1",
                 .clientRequestId      = std::move(clientRequestId),
             };
+        }
+
+        [[nodiscard]]
+        auto proposedOperation(
+            PreparedStore& prepared,
+            std::string clientRequestId,
+            std::string_view toolName
+        ) -> StoredOperation
+        {
+            auto operation = prepared.store.createOrLoadOperation(
+                command(prepared.snapshot, std::move(clientRequestId)),
+                toolInvocation(prepared.project, std::string{toolName})
+            );
+            REQUIRE(operation.has_value());
+            return *operation;
+        }
+
+        [[nodiscard]]
+        auto freezePlanFor(
+            PreparedStore& prepared,
+            StoredOperation const& operation
+        ) -> Result<FrozenPlan>
+        {
+            return prepared.store.freezePlan(
+                operation.operationId,
+                operation.revision,
+                prepared.lease,
+                prepared.plugin,
+                prepared.planAuthority
+            );
+        }
+
+        [[nodiscard]]
+        auto mintStepFor(
+            PreparedStore& prepared,
+            StoredOperation const& operation
+        ) -> Result<PlannedStep>
+        {
+            return prepared.store.mintNextStep(
+                operation.operationId,
+                operation.revision,
+                prepared.lease,
+                prepared.plugin,
+                prepared.planAuthority
+            );
+        }
+
+        // Proposed, plan frozen by the Operator, first step minted from the
+        // plugin's own next_step: everything a dispatch may be reserved from.
+        [[nodiscard]]
+        auto createReadyOperation(
+            PreparedStore& prepared,
+            std::string clientRequestId,
+            std::string_view toolName
+        ) -> StoredOperation
+        {
+            auto const proposed = proposedOperation(
+                prepared,
+                std::move(clientRequestId),
+                toolName
+            );
+            auto const frozen = freezePlanFor(prepared, proposed);
+            REQUIRE(frozen.has_value());
+            auto const step = mintStepFor(prepared, frozen->operation);
+            REQUIRE(step.has_value());
+            return step->operation;
         }
 
         // test_support::runtimeRelease always writes the same page model, so
@@ -794,7 +857,7 @@ return {
         auto const cancelled = prepared.store.transitionOperation(
             first->operationId,
             first->revision,
-            OperationEvent::Cancelled
+            OperationSignal::Cancelled
         );
         REQUIRE(cancelled.has_value());
         CHECK(cancelled->state == OperationState::Cancelled);
@@ -808,43 +871,35 @@ return {
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
-        auto operation = prepared.store.createOrLoadOperation(
-            command(prepared.snapshot, "request-1"),
-            toolInvocation(prepared.project, "command-1")
-        );
-        REQUIRE(operation.has_value());
-        operation = prepared.store.transitionOperation(
-            operation->operationId,
-            operation->revision,
-            OperationEvent::ReadyWithoutApproval
-        );
-        REQUIRE(operation.has_value());
+        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+        auto const frozen   = freezePlanFor(prepared, proposed);
+        REQUIRE(frozen.has_value());
+        auto const step = mintStepFor(prepared, frozen->operation);
+        REQUIRE(step.has_value());
+        auto const operation = step->operation;
 
-        auto const planHash = hashOf("frozen-plan");
         auto const dispatch = prepared.store.reserveDispatch(
-            operation->operationId,
-            operation->revision,
+            operation.operationId,
+            operation.revision,
             prepared.lease,
-            hashOf("decision-basis"),
-            planHash,
-            hashOf("step-1"),
-            "authority-1",
+            AuthorityDecisionId{"authority-1"},
             std::nullopt
         );
         REQUIRE(dispatch.has_value());
+        CHECK(dispatch->frozenPlanHash == frozen->planHash);
+
+        // The one pending step is now linked to that dispatch, so a second
+        // reservation finds none and refuses rather than freezing again.
         CHECK_FALSE(prepared.store.reserveDispatch(
-            operation->operationId,
+            operation.operationId,
             dispatch->operationRevision,
             prepared.lease,
-            hashOf("decision-basis"),
-            planHash,
-            hashOf("step-1"),
-            "authority-2",
+            AuthorityDecisionId{"authority-2"},
             std::nullopt
         ).has_value());
 
         auto const reconciles = prepared.store.recordDeliveryOutcome(
-            operation->operationId,
+            operation.operationId,
             dispatch->dispatchSequence,
             dispatch->operationRevision,
             DeliveryOutcome::TransportUnknown
@@ -853,7 +908,7 @@ return {
         CHECK(reconciles->state == OperationState::Reconciling);
         CHECK(reconciles->planFrozen);
         CHECK_FALSE(prepared.store.recordDeliveryOutcome(
-            operation->operationId,
+            operation.operationId,
             dispatch->dispatchSequence,
             reconciles->revision,
             DeliveryOutcome::Delivered
@@ -866,10 +921,10 @@ return {
         CHECK_FALSE(prepared.store.commitReconciliation(
             prepared.plugin,
             ReconciliationCommit{
-                .operationId = operation->operationId,
+                .operationId = operation.operationId,
                 .expectedOperationRevision = reconciles->revision,
                 .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(prepared, operation->operationId, "{\"disposition\":\"confirmed\"}"),
+                .outcome                      = reconciliationOutcome(prepared, operation.operationId, "{\"disposition\":\"confirmed\"}"),
                 .journalEvents = {
                     JournalAppend{
                         .eventId = "event-foreign",
@@ -886,10 +941,10 @@ return {
         auto const committed = prepared.store.commitReconciliation(
             prepared.plugin,
             ReconciliationCommit{
-                .operationId = operation->operationId,
+                .operationId = operation.operationId,
                 .expectedOperationRevision = reconciles->revision,
                 .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(prepared, operation->operationId, "{\"disposition\":\"confirmed\"}"),
+                .outcome                      = reconciliationOutcome(prepared, operation.operationId, "{\"disposition\":\"confirmed\"}"),
                 .journalEvents = {
                     JournalAppend{
                         .eventId = "event-1",
@@ -919,31 +974,24 @@ return {
         {
             // Every dispatch needs its own authority decision id, so it is
             // derived from the request rather than fixed.
-            auto const authority = std::format("authority-{}", clientRequestId);
-            auto operation = prepared.store.createOrLoadOperation(
-                command(prepared.snapshot, std::string{clientRequestId}),
-                toolInvocation(prepared.project, std::string{toolName})
+            auto const authority = AuthorityDecisionId{
+                std::format("authority-{}", clientRequestId),
+            };
+            auto const operation = createReadyOperation(
+                prepared,
+                std::string{clientRequestId},
+                toolName
             );
-            REQUIRE(operation.has_value());
-            operation = prepared.store.transitionOperation(
-                operation->operationId,
-                operation->revision,
-                OperationEvent::ReadyWithoutApproval
-            );
-            REQUIRE(operation.has_value());
             auto const dispatch = prepared.store.reserveDispatch(
-                operation->operationId,
-                operation->revision,
+                operation.operationId,
+                operation.revision,
                 prepared.lease,
-                hashOf("decision-basis"),
-                hashOf("frozen-plan"),
-                hashOf("step-1"),
                 authority,
                 std::nullopt
             );
             REQUIRE(dispatch.has_value());
             auto reconciles = prepared.store.recordDeliveryOutcome(
-                operation->operationId,
+                operation.operationId,
                 dispatch->dispatchSequence,
                 dispatch->operationRevision,
                 DeliveryOutcome::Delivered
@@ -1016,7 +1064,7 @@ return {
     TEST_CASE("a reconciliation that fails after opening its transaction writes nothing")
     {
         auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path(), k_rejectedReducePluginSource);
+        auto prepared  = prepareStore(temporary.path(), rejectedReducePluginSource());
         auto const operation = reconcilingOperation(prepared, "request-1", "command-1");
 
         // The reducer runs inside the transaction, so this fails after the
@@ -1077,69 +1125,275 @@ return {
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
-        auto operation = prepared.store.createOrLoadOperation(
-            command(prepared.snapshot, "request-1"),
-            toolInvocation(prepared.project, "command-1")
-        );
-        REQUIRE(operation.has_value());
-        operation = prepared.store.transitionOperation(
-            operation->operationId,
-            operation->revision,
-            OperationEvent::ApprovalRequired
-        );
-        REQUIRE(operation.has_value());
 
-        auto const planHash = hashOf("plan");
-        auto const stepHash = hashOf("step");
+        // The awaiting state is reached by freezing a plan whose derived risk
+        // requires an approval; no caller can ask for it.
+        auto const proposed = proposedOperation(prepared, "request-1", "approval-plan");
+        auto const frozen   = freezePlanFor(prepared, proposed);
+        REQUIRE(frozen.has_value());
+        REQUIRE(frozen->approvalRequired);
+        auto const step = mintStepFor(prepared, frozen->operation);
+        REQUIRE(step.has_value());
+
+        auto const request = ApprovalRequest{
+            .operationId            = proposed.operationId,
+            .lease                  = prepared.lease,
+            .policyHash             = hashOf("policy"),
+            .approverPrincipal      = "human-1",
+            .approverCapabilityHash = hashOf("approval-capability"),
+            .expiresAtUnixMillis    = 4'000'000'000'000U,
+        };
         auto const approval = prepared.store.issueApproval(
-            ApprovalRequest{
-                .operationId = operation->operationId,
-                .lease                  = prepared.lease,
-                .frozenPlanHash         = planHash,
-                .stepIntentHash         = stepHash,
-                .decisionBasisHash      = hashOf("decision-basis"),
-                .effectEnvelopeHash     = hashOf("effects"),
-                .policyHash             = hashOf("policy"),
-                .approverPrincipal      = "human-1",
-                .approverCapabilityHash = hashOf("approval-capability"),
-                .expiresAtUnixMillis    = 4'000'000'000'000U,
-            },
-            "human-decision-1"
+            request,
+            AuthorityDecisionId{"human-decision-1"}
         );
         REQUIRE(approval.has_value());
         auto const dispatch = prepared.store.reserveDispatch(
-            operation->operationId,
-            operation->revision,
+            proposed.operationId,
+            step->operation.revision,
             prepared.lease,
-            hashOf("decision-basis"),
-            planHash,
-            stepHash,
-            "dispatch-authority-1",
+            AuthorityDecisionId{"dispatch-authority-1"},
             *approval
         );
         REQUIRE(dispatch.has_value());
         auto reconciles = prepared.store.recordDeliveryOutcome(
-            operation->operationId,
+            proposed.operationId,
             dispatch->dispatchSequence,
             dispatch->operationRevision,
             DeliveryOutcome::NotDelivered
         );
         REQUIRE(reconciles.has_value());
-        auto waiting = prepared.store.transitionOperation(
-            operation->operationId,
-            reconciles->revision,
-            OperationEvent::NextStepApprovalRequired
-        );
+        auto const waiting = mintStepFor(prepared, *reconciles);
         REQUIRE(waiting.has_value());
+        REQUIRE(waiting->operation.state == OperationState::AwaitingApproval);
+
+        // Single use: the token the first dispatch consumed does not answer for
+        // the step that replaced it.
         CHECK_FALSE(prepared.store.reserveDispatch(
-            operation->operationId,
-            waiting->revision,
+            proposed.operationId,
+            waiting->operation.revision,
             prepared.lease,
-            hashOf("decision-basis"),
-            planHash,
-            stepHash,
-            "dispatch-authority-2",
+            AuthorityDecisionId{"dispatch-authority-2"},
             *approval
+        ).has_value());
+    }
+    TEST_CASE("plan authority is bound to its registration")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        // A second registration of the same shape, complete enough to build an
+        // authority of its own. Authority is per registration, so this one must
+        // not be able to freeze the first one's Operation.
+        auto const foreignSource   = test_support::pluginSource("fixture.foreign");
+        auto const foreign         = makeProject("fixture.foreign", foreignSource);
+        auto const foreignManifest = sessionManifest(
+            foreign.registration,
+            hashOf("artifact-root")
+        );
+        auto foreignAuthority = contract::planAuthority(
+            foreign.registration,
+            foreignManifest,
+            "operator"
+        );
+        REQUIRE(foreignAuthority.has_value());
+
+        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+        CHECK_FALSE(prepared.store.freezePlan(
+            proposed.operationId,
+            proposed.revision,
+            prepared.lease,
+            prepared.plugin,
+            *foreignAuthority
+        ).has_value());
+        CHECK(freezePlanFor(prepared, proposed).has_value());
+    }
+
+    TEST_CASE("the plugin cannot widen the workflow bound")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const proposed = proposedOperation(prepared, "request-1", "oversized-plan");
+        auto const frozen   = freezePlanFor(prepared, proposed);
+        REQUIRE(frozen.has_value());
+
+        // Every bound is a minimum against the ceiling, so widening is
+        // arithmetically impossible rather than policy-checked.
+        CHECK(frozen->limits.maximumSteps == k_workflowCeiling.maximumSteps);
+        CHECK(frozen->limits.maximumDispatches == k_workflowCeiling.maximumDispatches);
+        CHECK(frozen->limits.maximumObservations <= k_workflowCeiling.maximumObservations);
+        CHECK(frozen->limits.maximumWaits <= k_workflowCeiling.maximumWaits);
+        CHECK(frozen->limits.maximumElapsedMillis <= k_workflowCeiling.maximumElapsedMillis);
+    }
+
+    TEST_CASE("a step cannot be replayed at another index")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        // The plugin answers next_step with the identical document every time,
+        // so the two steps differ in nothing except the position they were
+        // minted at.
+        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+        auto const frozen   = freezePlanFor(prepared, proposed);
+        REQUIRE(frozen.has_value());
+        auto const first = mintStepFor(prepared, frozen->operation);
+        REQUIRE(first.has_value());
+
+        auto const dispatch = prepared.store.reserveDispatch(
+            proposed.operationId,
+            first->operation.revision,
+            prepared.lease,
+            AuthorityDecisionId{"authority-1"},
+            std::nullopt
+        );
+        REQUIRE(dispatch.has_value());
+        auto const reconciling = prepared.store.recordDeliveryOutcome(
+            proposed.operationId,
+            dispatch->dispatchSequence,
+            dispatch->operationRevision,
+            DeliveryOutcome::Delivered
+        );
+        REQUIRE(reconciling.has_value());
+
+        auto const second = mintStepFor(prepared, *reconciling);
+        REQUIRE(second.has_value());
+        CHECK(second->stepKey == first->stepKey);
+        CHECK(second->stepIndex == first->stepIndex + 1U);
+        CHECK(second->stepIntentHash != first->stepIntentHash);
+    }
+
+    TEST_CASE("only one step may await dispatch")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+        auto const frozen   = freezePlanFor(prepared, proposed);
+        REQUIRE(frozen.has_value());
+        auto const first = mintStepFor(prepared, frozen->operation);
+        REQUIRE(first.has_value());
+
+        // The check lives in mintNextStep alone. A partial unique index saying
+        // the same thing would keep this green after the check was deleted.
+        CHECK_FALSE(mintStepFor(prepared, first->operation).has_value());
+    }
+
+    TEST_CASE("a plan freezes once")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+        auto const frozen   = freezePlanFor(prepared, proposed);
+        REQUIRE(frozen.has_value());
+        CHECK_FALSE(freezePlanFor(prepared, frozen->operation).has_value());
+
+        // The stored plan is the first one: the dispatch still reports its
+        // hash, so a second freeze did not replace the row underneath it.
+        auto const step = mintStepFor(prepared, frozen->operation);
+        REQUIRE(step.has_value());
+        auto const dispatch = prepared.store.reserveDispatch(
+            proposed.operationId,
+            step->operation.revision,
+            prepared.lease,
+            AuthorityDecisionId{"authority-1"},
+            std::nullopt
+        );
+        REQUIRE(dispatch.has_value());
+        CHECK(dispatch->frozenPlanHash == frozen->planHash);
+    }
+
+    TEST_CASE("read-only Operations get no plan")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const readOnly = proposedOperation(prepared, "request-1", "observe-1");
+        CHECK_FALSE(freezePlanFor(prepared, readOnly).has_value());
+    }
+
+    TEST_CASE("the effect envelope is order-independent")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const first = proposedOperation(prepared, "request-1", "command-1");
+        auto const one   = freezePlanFor(prepared, first);
+        REQUIRE(one.has_value());
+
+        // The mutation chain is per target, so the first Operation is retired
+        // before the second is opened. `reordered-effects` declares the same
+        // effect set in the opposite order and nothing else different.
+        REQUIRE(prepared.store.transitionOperation(
+            first.operationId,
+            one->operation.revision,
+            OperationSignal::Cancelled
+        ).has_value());
+
+        auto const second = proposedOperation(prepared, "request-2", "reordered-effects");
+        auto const other  = freezePlanFor(prepared, second);
+        REQUIRE(other.has_value());
+
+        CHECK(other->effectEnvelopeHash == one->effectEnvelopeHash);
+        CHECK(other->risk == one->risk);
+
+        // The plans themselves still differ: the command is part of the plan.
+        CHECK(other->planHash != one->planHash);
+    }
+
+    TEST_CASE("the dispatch records the frozen basis")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+        auto const frozen   = freezePlanFor(prepared, proposed);
+        REQUIRE(frozen.has_value());
+        auto const step = mintStepFor(prepared, frozen->operation);
+        REQUIRE(step.has_value());
+
+        auto const dispatch = prepared.store.reserveDispatch(
+            proposed.operationId,
+            step->operation.revision,
+            prepared.lease,
+            AuthorityDecisionId{"authority-1"},
+            std::nullopt
+        );
+        REQUIRE(dispatch.has_value());
+
+        // None of the three was the caller's to say, and each is the value the
+        // ledger derived rather than any other hash it holds.
+        CHECK(dispatch->decisionBasisHash == frozen->decisionBasisHash);
+        CHECK(dispatch->frozenPlanHash == frozen->planHash);
+        CHECK(dispatch->stepIntentHash == step->stepIntentHash);
+        CHECK(dispatch->decisionBasisHash != frozen->planHash);
+    }
+
+    TEST_CASE("the caller cannot choose approval")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const proposed = proposedOperation(prepared, "request-1", "approval-plan");
+        auto const frozen   = freezePlanFor(prepared, proposed);
+        REQUIRE(frozen.has_value());
+
+        // The derived risk decided the edge. OperationSignal carries no
+        // ReadyWithoutApproval, so no caller could have taken the other one.
+        CHECK(frozen->risk == Risk::High);
+        CHECK(frozen->approvalRequired);
+        CHECK(frozen->operation.state == OperationState::AwaitingApproval);
+
+        auto const step = mintStepFor(prepared, frozen->operation);
+        REQUIRE(step.has_value());
+        CHECK_FALSE(prepared.store.reserveDispatch(
+            proposed.operationId,
+            step->operation.revision,
+            prepared.lease,
+            AuthorityDecisionId{"authority-1"},
+            std::nullopt
         ).has_value());
     }
 }

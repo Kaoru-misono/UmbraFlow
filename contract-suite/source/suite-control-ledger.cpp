@@ -85,10 +85,7 @@ namespace uf::operator_runtime::contract
             operation.operationId,
             operation.revision,
             prepared.lease,
-            hashOf("decision"),
-            hashOf("plan"),
-            hashOf("step"),
-            "authority-1",
+            AuthorityDecisionId{"authority-1"},
             std::nullopt
         );
         REQUIRE(dispatch.has_value());
@@ -120,10 +117,7 @@ namespace uf::operator_runtime::contract
             operation.operationId,
             operation.revision,
             prepared.lease,
-            hashOf("decision"),
-            hashOf("plan"),
-            hashOf("step"),
-            "authority-1",
+            AuthorityDecisionId{"authority-1"},
             std::nullopt
         );
         REQUIRE(dispatch.has_value());
@@ -131,10 +125,7 @@ namespace uf::operator_runtime::contract
             operation.operationId,
             dispatch->operationRevision,
             prepared.lease,
-            hashOf("decision"),
-            hashOf("plan"),
-            hashOf("step"),
-            "authority-2",
+            AuthorityDecisionId{"authority-2"},
             std::nullopt
         ).has_value() == false);
     }
@@ -233,89 +224,91 @@ namespace uf::operator_runtime::contract
 
     TEST_CASE("contract-control-c12")
     {
-        auto const root = TemporaryDirectory{"c12"};
-        auto prepared   = prepareStore(root.path());
+        auto const root   = TemporaryDirectory{"c12"};
+        auto prepared     = prepareStore(root.path());
+        auto const& words = prepared.project.vocabulary;
 
-        auto operation = prepared.store.createOrLoadOperation(
+        // The approval edge is reached by freezing a plan whose derived risk
+        // demands one, never by asking for it: no caller can name the event.
+        auto const proposed = prepared.store.createOrLoadOperation(
             command(prepared.snapshot, "request-1"),
-            toolInvocation(prepared.project, prepared.project.vocabulary.mutatingTool)
+            toolInvocation(prepared.project, words.approvalRequiredPlanTool)
         );
-        REQUIRE(operation.has_value());
-        operation = prepared.store.transitionOperation(
-            operation->operationId,
-            operation->revision,
-            OperationEvent::ApprovalRequired
-        );
-        REQUIRE(operation.has_value());
+        REQUIRE(proposed.has_value());
+        auto const frozen = frozenPlan(prepared, *proposed);
+        REQUIRE(frozen.has_value());
+        CHECK(frozen->approvalRequired);
+        CHECK(frozen->operation.state == OperationState::AwaitingApproval);
 
-        auto const planHash = hashOf("plan");
-        auto const stepHash = hashOf("step");
-        auto const approval = prepared.store.issueApproval(
-            ApprovalRequest{
-                .operationId            = operation->operationId,
-                .lease                  = prepared.lease,
-                .frozenPlanHash         = planHash,
-                .stepIntentHash         = stepHash,
-                .decisionBasisHash      = hashOf("decision"),
-                .effectEnvelopeHash     = hashOf("effects"),
-                .policyHash             = hashOf("policy"),
-                .approverPrincipal      = "human-1",
-                .approverCapabilityHash = hashOf("approval-capability"),
-                .expiresAtUnixMillis    = 4'000'000'000'000U,
-            },
-            "approval-authority-1"
-        );
-        REQUIRE(approval.has_value());
+        auto const first = plannedStep(prepared, frozen->operation);
+        REQUIRE(first.has_value());
 
-        // The token names the step it approved, so it does not carry over to a
-        // different one.
+        auto const approvalRequest = ApprovalRequest{
+            .operationId            = proposed->operationId,
+            .lease                  = prepared.lease,
+            .policyHash             = hashOf("policy"),
+            .approverPrincipal      = "human-1",
+            .approverCapabilityHash = hashOf("approval-capability"),
+            .expiresAtUnixMillis    = 4'000'000'000'000U,
+        };
+        // Two approvals over the same pending step. The second is never
+        // consumed, which is what lets the check below isolate the step binding
+        // from single use: an approval that is merely spent would be refused by
+        // the consumed=0 clause instead, and the case would pass with the step
+        // binding removed.
+        auto const spent = prepared.store.issueApproval(
+            approvalRequest,
+            AuthorityDecisionId{"approval-authority-1"}
+        );
+        auto const spare = prepared.store.issueApproval(
+            approvalRequest,
+            AuthorityDecisionId{"approval-authority-2"}
+        );
+        REQUIRE(spent.has_value());
+        REQUIRE(spare.has_value());
+
+        // An awaiting Operation is not dispatchable without one.
         CHECK_FALSE(prepared.store.reserveDispatch(
-            operation->operationId,
-            operation->revision,
+            proposed->operationId,
+            first->operation.revision,
             prepared.lease,
-            hashOf("decision"),
-            planHash,
-            hashOf("a-different-step"),
-            "dispatch-authority-invalid",
-            *approval
+            AuthorityDecisionId{"dispatch-authority-unapproved"},
+            std::nullopt
         ).has_value());
 
         auto const dispatch = prepared.store.reserveDispatch(
-            operation->operationId,
-            operation->revision,
+            proposed->operationId,
+            first->operation.revision,
             prepared.lease,
-            hashOf("decision"),
-            planHash,
-            stepHash,
-            "dispatch-authority-1",
-            *approval
+            AuthorityDecisionId{"dispatch-authority-1"},
+            *spent
         );
         REQUIRE(dispatch.has_value());
+        CHECK(dispatch->stepIntentHash == first->stepIntentHash);
+        CHECK(dispatch->frozenPlanHash == frozen->planHash);
+        CHECK(dispatch->decisionBasisHash == frozen->decisionBasisHash);
+
         auto const reconciling = prepared.store.recordDeliveryOutcome(
-            operation->operationId,
+            proposed->operationId,
             dispatch->dispatchSequence,
             dispatch->operationRevision,
             DeliveryOutcome::NotDelivered
         );
         REQUIRE(reconciling.has_value());
 
-        // Single use: the next step of the same Operation needs its own
-        // approval, and the spent token does not answer for it.
-        auto const awaiting = prepared.store.transitionOperation(
-            operation->operationId,
-            reconciling->revision,
-            OperationEvent::NextStepApprovalRequired
-        );
-        REQUIRE(awaiting.has_value());
+        auto const second = plannedStep(prepared, *reconciling);
+        REQUIRE(second.has_value());
+        CHECK(second->stepIntentHash != first->stepIntentHash);
+        CHECK(second->operation.state == OperationState::AwaitingApproval);
+
+        // The unconsumed approval names the step it was issued for, so it does
+        // not carry over to the one that replaced it.
         CHECK_FALSE(prepared.store.reserveDispatch(
-            operation->operationId,
-            awaiting->revision,
+            proposed->operationId,
+            second->operation.revision,
             prepared.lease,
-            hashOf("decision"),
-            planHash,
-            stepHash,
-            "dispatch-authority-2",
-            *approval
+            AuthorityDecisionId{"dispatch-authority-2"},
+            *spare
         ).has_value());
     }
 
@@ -341,7 +334,7 @@ namespace uf::operator_runtime::contract
         first = prepared.store.transitionOperation(
             first->operationId,
             first->revision,
-            OperationEvent::Cancelled
+            OperationSignal::Cancelled
         );
         REQUIRE(first.has_value());
         CHECK(prepared.store.createOrLoadOperation(

@@ -368,4 +368,9 @@ namespace uf::operator_runtime
     {
         return m_spec.runtimeModelArtifactRootHash;
     }
+
+    auto SessionManifest::operatorProtocolSchemaHash() const -> ContentHash
+    {
+        return m_spec.operatorProtocolSchemaHash;
+    }
 }

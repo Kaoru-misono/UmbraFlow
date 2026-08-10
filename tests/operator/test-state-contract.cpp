@@ -691,4 +691,89 @@ namespace uf::operator_runtime
         REQUIRE(confirmed.has_value());
         CHECK(confirmed->state == OperationState::Confirmed);
     }
+    // The decision basis is a property of the observed world, not of the
+    // request and not of the authority holding it. T4, T5 and T6 of the W2
+    // specification are one case on purpose: an empty or constant derivation
+    // satisfies the first two alone, and the third is what proves the
+    // derivation can produce a different value at all.
+    TEST_CASE("contract-state-s04")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const before = prepared.snapshot;
+
+        // A takeover replaces the lease id, the fencing token, the lease
+        // revision and the control availability revision -- everything the
+        // identity carries about authority and nothing about content.
+        auto const takeover = prepared.store.takeoverLease("session-1", "human");
+        REQUIRE(takeover.has_value());
+        CHECK(takeover->fencingToken > prepared.lease.fencingToken);
+        prepared.lease = *takeover;
+
+        auto const after = prepared.store.createSnapshot(
+            prepared.lease,
+            prepared.plugin,
+            test_support::observeAgain(prepared)
+        );
+        REQUIRE(after.has_value());
+
+        // Same world, different authority: the same decision, a different
+        // snapshot.
+        CHECK(after->decisionBasisHash == before.decisionBasisHash);
+        CHECK(after->identityHash != before.identityHash);
+        CHECK(after->availabilityRevision > before.availabilityRevision);
+
+        // The positive control. A committed reconciliation moves ProjectState,
+        // which is one of the four inputs, so the basis must move with it --
+        // without this a derivation returning a constant passes the two checks
+        // above.
+        prepared.snapshot    = *after;
+        auto const operation = reconcilingOperation(
+            prepared,
+            "request-1",
+            DeliveryOutcome::Delivered
+        );
+        REQUIRE(prepared.store.commitReconciliation(
+            prepared.plugin,
+            ReconciliationCommit{
+                .operationId                  = operation.operationId,
+                .expectedOperationRevision    = operation.revision,
+                .expectedProjectStateRevision = 0U,
+                .outcome                      = reconciliationOutcome(
+                    prepared,
+                    operation.operationId,
+                    "{\"disposition\":\"confirmed\"}"
+                ),
+                .journalEvents                = {
+                    JournalAppend{
+                        .eventId = "event-1",
+                        .entry   = journalEntry(
+                            prepared.project,
+                            "fixture.confirmed",
+                            "{\"value\":1}"
+                        ),
+                    },
+                },
+            }
+        ).has_value());
+
+        auto const moved = prepared.store.createSnapshot(
+            prepared.lease,
+            prepared.plugin,
+            test_support::observeAgain(prepared)
+        );
+        REQUIRE(moved.has_value());
+        CHECK(moved->projectStateHash != after->projectStateHash);
+        CHECK(moved->decisionBasisHash != after->decisionBasisHash);
+
+        // And the basis is recomputable from the row: canonical_parts carries
+        // the same value the record does, so a test can falsify the derivation
+        // rather than only compare it against itself.
+        CHECK(
+            moved->canonicalParts.find(
+                "\"decision_basis_hash\":\"" + moved->decisionBasisHash.hex() + "\""
+            ) != std::string::npos
+        );
+    }
 }

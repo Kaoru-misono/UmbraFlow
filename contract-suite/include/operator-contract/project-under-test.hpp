@@ -57,6 +57,32 @@ namespace uf::operator_runtime::contract
         std::string confirmedInput{};
         std::string rejectedInput{};
         std::string ambiguousInput{};
+
+        // Five more mutating tools, told apart by the OP:`PlanProposal` this
+        // project's plugin returns for each. The proposals themselves are not
+        // listed here and must not be: freezePlan calls plugin.plan itself, so
+        // a document the suite carried would be a document nothing produced.
+        // What the suite needs is a name it can invoke to reach each shape.
+        //
+        //   mismatchedPlanTool       proposes a plan naming a different tool,
+        //                            so the mint's command check has a fixture
+        //   oversizedPlanTool        proposes workflow_limits above the
+        //                            Operator ceiling
+        //   twoStepPlanTool          proposes maximum_steps = 2
+        //   approvalRequiredPlanTool declares an effect whose risk requires a
+        //                            human approval before the first dispatch
+        //   reorderedEffectsTool     declares mutatingTool's effect set in a
+        //                            different order and nothing else different
+        //
+        // Every one of them must be Mutating in this project's Tool Catalog,
+        // and every proposal but the first must echo the tool it was invoked
+        // for; otherwise the case reaches the tool check instead of the
+        // property it is about.
+        std::string mismatchedPlanTool{};
+        std::string oversizedPlanTool{};
+        std::string twoStepPlanTool{};
+        std::string approvalRequiredPlanTool{};
+        std::string reorderedEffectsTool{};
     };
 
     // Everything the suite needs from one project's trusted deployment. The

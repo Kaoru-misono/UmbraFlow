@@ -1,7 +1,9 @@
 #pragma once
 
 #include <operator-contract/observation-fixture.hpp>
+#include <operator-contract/operator-protocol.hpp>
 
+#include <operator/effective-plan.hpp>
 #include <operator/journal-entry.hpp>
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
@@ -83,6 +85,79 @@ namespace uf::operator_runtime::test_support
         return true;
     }
 
+    // The one payload schema identity every fixture effect names. It is a
+    // literal rather than a hashOf(...) because it travels inside a plugin
+    // document, and a plugin document is bytes rather than a value.
+    inline constexpr auto k_effectPayloadSchemaHex = std::string_view{
+        "00000000000000000000000000000000000000000000000000000000000000a1"
+    };
+
+    // The OP:`PlanProposal` the fixture plugin returns for each mutating tool,
+    // and the OP:`UIActionIntent` it returns for every next_step. They are
+    // plugin bytes -- the plugin is what produces them, and prepareStore
+    // installs the plugin -- so they are spelled once here and read nowhere
+    // else in C++ except by the validator that must accept them.
+    [[nodiscard]]
+    inline auto fixturePlanProposal(
+        std::string_view toolName,
+        std::string_view effects,
+        std::string_view limits
+    ) -> std::string
+    {
+        auto proposal = std::string{"{\"allowed_ui_actions\":[\"fixture.step\"],"};
+        proposal += "\"canonical_args\":{\"value\":1},\"effects\":";
+        proposal += effects;
+        proposal += ",\"tool_name\":\"";
+        proposal += toolName;
+        proposal += "\",\"tool_version\":\"1\",\"workflow_limits\":";
+        proposal += limits;
+        proposal.push_back('}');
+        return proposal;
+    }
+
+    [[nodiscard]]
+    inline auto fixtureEffect(
+        std::string_view scopeKey,
+        std::string_view risk
+    ) -> std::string
+    {
+        auto effect = std::string{"{\"namespaced_type\":\"fixture.write\","};
+        effect += "\"opaque_project_payload\":{\"value\":1},";
+        effect += "\"payload_schema_hash\":\"";
+        effect += k_effectPayloadSchemaHex;
+        effect += "\",\"risk\":\"";
+        effect += risk;
+        effect += "\",\"scope_key\":\"";
+        effect += scopeKey;
+        effect += "\",\"scope_kind\":\"instance\"}";
+        return effect;
+    }
+
+    [[nodiscard]]
+    inline auto fixtureWorkflowLimits(
+        std::string_view maximumSteps,
+        std::string_view maximumDispatches
+    ) -> std::string
+    {
+        auto limits = std::string{"{\"maximum_dispatches\":"};
+        limits += maximumDispatches;
+        limits += ",\"maximum_elapsed_ms\":60000,\"maximum_observations\":16,";
+        limits += "\"maximum_steps\":";
+        limits += maximumSteps;
+        limits += ",\"maximum_waits\":4}";
+        return limits;
+    }
+
+    inline auto const k_fixtureUiActionIntent = std::string{
+        "{\"action\":{\"action_id\":\"fixture.press\","
+        "\"canonical_parameters\":{\"value\":1},"
+        "\"surface_id\":\"fixture.surface\",\"ui_target_id\":\"fixture.target\"},"
+        "\"binding_variant_constraints\":[],\"delivery_class\":\"delivery_safe\","
+        "\"expected_ui_postconditions\":[],\"required_ui_preconditions\":[],"
+        "\"step_key\":\"fixture.step\","
+        "\"timeout_policy\":{\"maximum_elapsed_ms\":5000,\"on_timeout\":\"reobserve\"}}"
+    };
+
     // Stands in for a project's reduce-input JSON Schema. It is structural
     // rather than an exact-bytes allowlist because the Operator now builds this
     // envelope from however many events a commit appends, and a real project's
@@ -107,7 +182,11 @@ namespace uf::operator_runtime::test_support
             middleAt + middle.size(),
             exactJcs.size() - middleAt - middle.size() - 1U
         );
-        if (priorState != "null" && priorState != "{\"revision\":0}")
+        if (
+            priorState != "null"
+            && priorState != "{\"revision\":0}"
+            && priorState != "{\"revision\":1}"
+        )
         {
             return false;
         }
@@ -145,6 +224,57 @@ namespace uf::operator_runtime::test_support
             }
         }
         return true;
+    }
+
+    // Stands in for a project's plan-input and next_step-input JSON Schemas.
+    // Structural for looksLikeDeriveEnvelope's reason: the Operator assembles
+    // both envelopes from whatever the world currently holds.
+    [[nodiscard]]
+    inline auto looksLikeOrderedMembers(
+        std::string_view exactJcs,
+        std::span<std::string_view const> members
+    ) -> bool
+    {
+        if (!exactJcs.starts_with(members.front()) || !exactJcs.ends_with('}'))
+        {
+            return false;
+        }
+        auto at = std::size_t{0};
+        for (auto const member : members)
+        {
+            auto const found = exactJcs.find(member, at);
+            if (found == std::string_view::npos)
+            {
+                return false;
+            }
+            at = found + member.size();
+        }
+        return true;
+    }
+
+    [[nodiscard]]
+    inline auto looksLikePlanEnvelope(std::string_view exactJcs) -> bool
+    {
+        constexpr auto members = std::array{
+            std::string_view{"{\"canonical_args\":"},
+            std::string_view{",\"project_observation\":"},
+            std::string_view{",\"project_state\":"},
+            std::string_view{",\"tool_name\":"},
+            std::string_view{",\"tool_version\":"},
+        };
+        return looksLikeOrderedMembers(exactJcs, members);
+    }
+
+    [[nodiscard]]
+    inline auto looksLikeStepEnvelope(std::string_view exactJcs) -> bool
+    {
+        constexpr auto members = std::array{
+            std::string_view{"{\"frozen_plan_hash\":"},
+            std::string_view{",\"project_observation\":"},
+            std::string_view{",\"project_state\":"},
+            std::string_view{",\"step_index\":"},
+        };
+        return looksLikeOrderedMembers(exactJcs, members);
     }
 
     [[nodiscard]]
@@ -249,6 +379,7 @@ namespace uf::operator_runtime::test_support
                     std::string_view{"{\"kind\":\"forged\"}"},
                     std::string_view{"{\"kind\":\"fixture\"}"},
                     std::string_view{"{\"revision\":0}"},
+                    std::string_view{"{\"revision\":1}"},
                     std::string_view{"{\"value\":1}"},
                     std::string_view{"{\"value\":2}"},
                     std::string_view{"{\"value\":3}"},
@@ -258,6 +389,10 @@ namespace uf::operator_runtime::test_support
                     std::ranges::find(accepted, candidateJcs) == accepted.end()
                     && !looksLikeReduceEnvelope(candidateJcs)
                     && !looksLikeDeriveEnvelope(candidateJcs)
+                    && !looksLikePlanEnvelope(candidateJcs)
+                    && !looksLikeStepEnvelope(candidateJcs)
+                    && !contract::readPlanProposal(candidateJcs).has_value()
+                    && !contract::readStepIntent(candidateJcs).has_value()
                 )
                 {
                     return fail(
@@ -289,8 +424,10 @@ namespace uf::operator_runtime::test_support
                         valid = looksLikeDeriveEnvelope(candidateJcs);
                         break;
                     case ProjectPluginFunction::Plan:
+                        valid = looksLikePlanEnvelope(candidateJcs);
+                        break;
                     case ProjectPluginFunction::NextStep:
-                        valid = candidateJcs == "{}";
+                        valid = looksLikeStepEnvelope(candidateJcs);
                         break;
                     }
                 }
@@ -299,16 +436,21 @@ namespace uf::operator_runtime::test_support
                     switch (function)
                     {
                     case ProjectPluginFunction::Reduce:
-                        valid = candidateJcs == "{\"revision\":0}";
+                        valid = candidateJcs == "{\"revision\":0}"
+                            || candidateJcs == "{\"revision\":1}";
                         break;
                     case ProjectPluginFunction::Reconcile:
                         valid = candidateJcs.starts_with("{\"disposition\":\"")
                             && candidateJcs.ends_with("\"}");
                         break;
                     case ProjectPluginFunction::Derive:
-                    case ProjectPluginFunction::Plan:
-                    case ProjectPluginFunction::NextStep:
                         valid = candidateJcs == "{}";
+                        break;
+                    case ProjectPluginFunction::Plan:
+                        valid = contract::readPlanProposal(candidateJcs).has_value();
+                        break;
+                    case ProjectPluginFunction::NextStep:
+                        valid = contract::readStepIntent(candidateJcs).has_value();
                         break;
                     }
                 }
@@ -424,6 +566,34 @@ namespace uf::operator_runtime::test_support
                     },
                     ToolCase{
                         .name       = "different-command",
+                        .version    = "1",
+                        .mutability = ToolMutability::Mutating,
+                    },
+                    // The five tools whose plans differ. The plugin decides
+                    // which proposal each one gets; the catalog only says they
+                    // all mutate.
+                    ToolCase{
+                        .name       = "mismatched-plan",
+                        .version    = "1",
+                        .mutability = ToolMutability::Mutating,
+                    },
+                    ToolCase{
+                        .name       = "oversized-plan",
+                        .version    = "1",
+                        .mutability = ToolMutability::Mutating,
+                    },
+                    ToolCase{
+                        .name       = "two-step-plan",
+                        .version    = "1",
+                        .mutability = ToolMutability::Mutating,
+                    },
+                    ToolCase{
+                        .name       = "approval-plan",
+                        .version    = "1",
+                        .mutability = ToolMutability::Mutating,
+                    },
+                    ToolCase{
+                        .name       = "reordered-effects",
                         .version    = "1",
                         .mutability = ToolMutability::Mutating,
                     },
@@ -653,17 +823,104 @@ namespace uf::operator_runtime::test_support
 
     // The trusted plugin a prepared store registers. plugin_id must equal the
     // registration's, so the id is inserted rather than fixed.
+    //
+    // `plan` reads the tool name out of the envelope the Operator assembled and
+    // answers with a different proposal for each one. That is what lets one
+    // registration -- one plugin_hash, one session -- reach the clamp, the
+    // bound, the approval edge and the tool mismatch: a proposal chosen by the
+    // suite instead would be a proposal no plugin produced.
     [[nodiscard]]
     inline auto pluginSource(std::string_view pluginId) -> std::string
     {
-        auto source = std::string{"return {\n    plugin_id = \""};
+        auto const ordinaryEffects = "[" + fixtureEffect("alpha", "low") + ","
+            + fixtureEffect("beta", "medium") + "]";
+        auto const reorderedEffects = "[" + fixtureEffect("beta", "medium") + ","
+            + fixtureEffect("alpha", "low") + "]";
+        auto const highRiskEffects = "[" + fixtureEffect("alpha", "high") + "]";
+        auto const ordinaryLimits  = fixtureWorkflowLimits("8", "8");
+
+        // The proposals are a module-local table rather than a field of the
+        // returned module: a pure data module may export plugin_id and its
+        // declared entry points and nothing else.
+        auto source = std::string{"local proposals = {\n"};
+        struct ProposalCase final
+        {
+            std::string_view invokedTool{};
+            std::string_view proposedTool{};
+            std::string_view effects{};
+            std::string_view limits{};
+        };
+        auto const oversizedLimits = fixtureWorkflowLimits("4096", "4096");
+        auto const twoStepLimits   = fixtureWorkflowLimits("2", "2");
+        auto const cases           = std::array{
+            ProposalCase{"command-1", "command-1", ordinaryEffects, ordinaryLimits},
+            ProposalCase{"command-2", "command-2", ordinaryEffects, ordinaryLimits},
+            ProposalCase{
+                "different-command",
+                "different-command",
+                ordinaryEffects,
+                ordinaryLimits,
+            },
+            // The proposal names the tool the Operation was NOT created for.
+            ProposalCase{"mismatched-plan", "command-1", ordinaryEffects, ordinaryLimits},
+            ProposalCase{
+                "oversized-plan",
+                "oversized-plan",
+                ordinaryEffects,
+                oversizedLimits,
+            },
+            ProposalCase{"two-step-plan", "two-step-plan", ordinaryEffects, twoStepLimits},
+            ProposalCase{
+                "approval-plan",
+                "approval-plan",
+                highRiskEffects,
+                ordinaryLimits,
+            },
+            ProposalCase{
+                "reordered-effects",
+                "reordered-effects",
+                reorderedEffects,
+                ordinaryLimits,
+            },
+            // The read-only tool has a plan too. Without it the plugin refuses
+            // for want of an entry, and "read-only Operations carry no plan"
+            // would be proved by the fixture rather than by the Operator.
+            ProposalCase{"observe-1", "observe-1", ordinaryEffects, ordinaryLimits},
+        };
+        for (auto const& proposal : cases)
+        {
+            source += "        [\"";
+            source += proposal.invokedTool;
+            source += "\"] = '";
+            source += fixturePlanProposal(
+                proposal.proposedTool,
+                proposal.effects,
+                proposal.limits
+            );
+            source += "',\n";
+        }
+        source += "}\n\nreturn {\n    plugin_id = \"";
         source += pluginId;
         source += R"LUAU(",
     derive = function(_input) return '{}' end,
-    plan = function(_input) return '{}' end,
-    next_step = function(_input) return '{}' end,
+    plan = function(input)
+        local tool = string.match(input, '"tool_name":"([^"]*)"')
+        local proposal = proposals[tool]
+        if proposal == nil then
+            error("fixture plugin has no plan for " .. tostring(tool))
+        end
+        return proposal
+    end,
+    next_step = function(_input) return ')LUAU";
+        source += k_fixtureUiActionIntent;
+        source += R"LUAU(' end,
     reconcile = function(input) return input end,
-    reduce = function(_input) return '{"revision":0}' end,
+    reduce = function(input)
+        if string.find(input, 'fixture.confirmed', 1, true) ~= nil then
+            return '{"revision":1}'
+        end
+        return '{"revision":0}'
+    end,
 }
 )LUAU";
         return source;
@@ -713,12 +970,13 @@ namespace uf::operator_runtime::test_support
     // same one.
     struct PreparedStore final
     {
-        OperatorCoordinator store;
-        ProjectPluginHandle plugin;
-        ProjectFixture      project;
-        SessionManifest     manifest;
-        ControlLease        lease;
-        SnapshotRecord      snapshot;
+        OperatorCoordinator   store;
+        ProjectPluginHandle   plugin;
+        ProjectFixture        project;
+        SessionManifest       manifest;
+        OperatorPlanAuthority planAuthority;
+        ControlLease          lease;
+        SnapshotRecord        snapshot;
 
         // The Host whose observations this store composes snapshots from. It is
         // part of the prepared state rather than built per case because
@@ -844,14 +1102,24 @@ namespace uf::operator_runtime::test_support
             contract::observeOnce(observation)
         );
         REQUIRE(snapshot.has_value());
+        // "operator" is the exact operator protocol schema this fixture's
+        // session manifest pins; the authority verifies the bytes rather than
+        // the name.
+        auto planAuthority = contract::planAuthority(
+            project.registration,
+            manifest,
+            "operator"
+        );
+        REQUIRE(planAuthority.has_value());
         return PreparedStore{
-            .store       = std::move(store),
-            .plugin      = projectPlugin,
-            .project     = project,
-            .manifest    = manifest,
-            .lease       = *lease,
-            .snapshot    = *std::move(snapshot),
-            .observation = std::move(observation),
+            .store         = std::move(store),
+            .plugin        = projectPlugin,
+            .project       = project,
+            .manifest      = manifest,
+            .planAuthority = *std::move(planAuthority),
+            .lease         = *lease,
+            .snapshot      = *std::move(snapshot),
+            .observation   = std::move(observation),
         };
     }
 
@@ -885,7 +1153,7 @@ namespace uf::operator_runtime::test_support
     }
 
     [[nodiscard]]
-    inline auto createReadyOperation(
+    inline auto proposedOperation(
         PreparedStore& prepared,
         std::string clientRequestId,
         std::string_view toolName
@@ -896,13 +1164,59 @@ namespace uf::operator_runtime::test_support
             toolInvocation(prepared.project, std::string{toolName})
         );
         REQUIRE(operation.has_value());
-        operation = prepared.store.transitionOperation(
-            operation->operationId,
-            operation->revision,
-            OperationEvent::ReadyWithoutApproval
-        );
-        REQUIRE(operation.has_value());
         return *operation;
+    }
+
+    [[nodiscard]]
+    inline auto freezePlanFor(
+        PreparedStore& prepared,
+        StoredOperation const& operation
+    ) -> Result<FrozenPlan>
+    {
+        return prepared.store.freezePlan(
+            operation.operationId,
+            operation.revision,
+            prepared.lease,
+            prepared.plugin,
+            prepared.planAuthority
+        );
+    }
+
+    [[nodiscard]]
+    inline auto mintStepFor(
+        PreparedStore& prepared,
+        StoredOperation const& operation
+    ) -> Result<PlannedStep>
+    {
+        return prepared.store.mintNextStep(
+            operation.operationId,
+            operation.revision,
+            prepared.lease,
+            prepared.plugin,
+            prepared.planAuthority
+        );
+    }
+
+    // One Operation carried to the point a dispatch may be reserved: proposed,
+    // plan frozen by the Operator, first step minted from the plugin's own
+    // next_step. No caller states a hash anywhere along it.
+    [[nodiscard]]
+    inline auto createReadyOperation(
+        PreparedStore& prepared,
+        std::string clientRequestId,
+        std::string_view toolName
+    ) -> StoredOperation
+    {
+        auto const proposed = proposedOperation(
+            prepared,
+            std::move(clientRequestId),
+            toolName
+        );
+        auto const frozen = freezePlanFor(prepared, proposed);
+        REQUIRE(frozen.has_value());
+        auto const step = mintStepFor(prepared, frozen->operation);
+        REQUIRE(step.has_value());
+        return step->operation;
     }
 
     // Drives one mutating Operation through a real dispatch to the reconciling
@@ -914,7 +1228,8 @@ namespace uf::operator_runtime::test_support
         DeliveryOutcome outcome
     ) -> StoredOperation
     {
-        auto const ready = createReadyOperation(
+        auto const authority = AuthorityDecisionId{"authority-" + clientRequestId};
+        auto const ready     = createReadyOperation(
             prepared,
             std::move(clientRequestId),
             "command-1"
@@ -923,10 +1238,7 @@ namespace uf::operator_runtime::test_support
             ready.operationId,
             ready.revision,
             prepared.lease,
-            hashOf("decision"),
-            hashOf("plan"),
-            hashOf("step"),
-            "authority-1",
+            authority,
             std::nullopt
         );
         REQUIRE(dispatch.has_value());

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "effective-plan.hpp"
 #include "journal-entry.hpp"
 #include "manifest.hpp"
 #include "operation.hpp"
@@ -13,6 +14,7 @@
 
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
+#include <core/types/strong-value.hpp>
 
 #include <domain/content-hash.hpp>
 
@@ -130,10 +132,61 @@ namespace uf::operator_runtime
         bool           hasDispatched{};
     };
 
+    // What one frozen plan settled. Every member is derived inside freezePlan's
+    // transaction from bytes the ledger already held, so a caller reads them
+    // here and can no longer state them anywhere.
+    struct FrozenPlan final
+    {
+        StoredOperation operation;
+        ContentHash     planHash;
+        ContentHash     decisionBasisHash;
+        ContentHash     effectEnvelopeHash;
+        WorkflowLimits  limits{};
+        Risk            risk{Risk::Critical};
+        bool            approvalRequired{};
+    };
+
+    // One minted workflow step. stepIntentHash covers the frozen plan hash and
+    // the decimal index, so the same document at another index is another step.
+    struct PlannedStep final
+    {
+        StoredOperation operation;
+        ContentHash     stepIntentHash;
+        std::string     stepKey{};
+        uint64          stepIndex{};
+        StepKind        kind{StepKind::Wait};
+    };
+
+    // What the dispatch was authorised against. The three hashes were caller
+    // parameters until W2 and are now results: the Operation has at most one
+    // pending UI-action step, so a dispatch names nothing and either finds that
+    // step or fails.
     struct DispatchReservation final
     {
-        uint64 dispatchSequence{};
-        uint64 operationRevision{};
+        ContentHash frozenPlanHash;
+        ContentHash decisionBasisHash;
+        ContentHash stepIntentHash;
+        uint64      dispatchSequence{};
+        uint64      operationRevision{};
+        uint64      stepIndex{};
+    };
+
+    // The transitions a controller may ask for by name. The four plan-lifecycle
+    // events are absent because the Operator decides them: a caller that could
+    // say ReadyWithoutApproval could skip an approval the derived risk
+    // required, and one that could say NextStepReady could advance a workflow
+    // no plugin proposed a step for.
+    enum class OperationSignal : uint8
+    {
+        ReadCompleted,
+        DecisionInputsChanged,
+        Revalidated,
+        Invalidated,
+        Denied,
+        Cancelled,
+        DeadlineExpired,
+        NewEvidence,
+        PostDispatchAbort,
     };
 
     enum class DeliveryOutcome : uint8
@@ -143,20 +196,32 @@ namespace uf::operator_runtime
         TransportUnknown,
     };
 
+    // The identity of one authority decision. It is a strong type and not a
+    // std::string because it travels beside operationId through reserveDispatch
+    // and issueApproval: two interchangeable strings in an authorization path
+    // swap silently at a call site, and neither the compiler nor a test that
+    // asserts on the result can tell afterwards.
+    struct AuthorityDecisionIdTag;
+    using AuthorityDecisionId = StrongValue<AuthorityDecisionIdTag, std::string>;
+
     struct ApprovalGrant final
     {
-        std::string token{};
-        std::string authorityDecisionId{};
+        std::string         token{};
+        AuthorityDecisionId authorityDecisionId;
     };
 
+    // What a human approver states, and nothing else. The plan hash, the step
+    // intent, the decision basis and the effect envelope are read from
+    // operation_plans and the pending operation_steps row, because an approver
+    // who could name them could issue an approval for a plan nobody froze.
+    //
+    // policyHash is still a caller field and is the one remaining hole: no code
+    // parses a PolicyArtifact, so there is nothing to derive it from. It
+    // belongs to c12 rather than to this change.
     struct ApprovalRequest final
     {
         std::string  operationId{};
         ControlLease lease;
-        ContentHash  frozenPlanHash;
-        ContentHash  stepIntentHash;
-        ContentHash  decisionBasisHash;
-        ContentHash  effectEnvelopeHash;
         ContentHash  policyHash;
         std::string  approverPrincipal{};
         ContentHash  approverCapabilityHash;
@@ -295,18 +360,42 @@ namespace uf::operator_runtime
         auto transitionOperation(
             std::string const& operationId,
             uint64 expectedRevision,
-            OperationEvent event
+            OperationSignal signal
         ) -> Result<StoredOperation>;
+
+        // The plan is minted here rather than by the caller because the command
+        // fingerprint and the decision basis are the ledger's: they come from
+        // the operations row and the snapshot row it names, and a plan that
+        // stated its own would be a plan about a world nobody observed. The
+        // Operation's own state moves to Ready or AwaitingApproval according to
+        // the derived risk, so no caller chooses which.
+        [[nodiscard]]
+        auto freezePlan(
+            std::string const& operationId,
+            uint64 expectedRevision,
+            ControlLease const& lease,
+            ProjectPluginHandle const& plugin,
+            OperatorPlanAuthority const& planAuthority
+        ) -> Result<FrozenPlan>;
+
+        // The next step of a frozen plan, at MAX(step_index) + 1 read inside the
+        // same transaction that inserts it. It refuses past the frozen step
+        // bound and while a UI-action step is still awaiting its dispatch.
+        [[nodiscard]]
+        auto mintNextStep(
+            std::string const& operationId,
+            uint64 expectedRevision,
+            ControlLease const& lease,
+            ProjectPluginHandle const& plugin,
+            OperatorPlanAuthority const& planAuthority
+        ) -> Result<PlannedStep>;
 
         [[nodiscard]]
         auto reserveDispatch(
             std::string const& operationId,
             uint64 expectedRevision,
             ControlLease const& lease,
-            ContentHash const& decisionBasisHash,
-            ContentHash const& frozenPlanHash,
-            ContentHash const& stepIntentHash,
-            std::string const& authorityDecisionId,
+            AuthorityDecisionId const& authorityDecisionId,
             std::optional<ApprovalGrant> const& approval
         ) -> Result<DispatchReservation>;
 
@@ -321,7 +410,7 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto issueApproval(
             ApprovalRequest const& request,
-            std::string const& authorityDecisionId
+            AuthorityDecisionId const& authorityDecisionId
         ) -> Result<ApprovalGrant>;
 
         [[nodiscard]]
