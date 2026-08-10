@@ -1,6 +1,7 @@
 #pragma once
 
 #include <task/cycle-ledger.hpp>
+#include <task/host-delivery.hpp>
 #include <task/page-model-file.hpp>
 #include <task/ui-observation.hpp>
 
@@ -124,12 +125,6 @@ namespace uf::task
             Annotation,
         };
 
-        struct DeliveryAuthority final
-        {
-            uint64 hostNonce{};
-            uint64 fence{};
-        };
-
         // Private nested type: ordinary C++ and every script/plugin value can
         // neither name nor construct a Receipt. A copy carries only an opaque
         // lookup token; all proof remains in Host-owned storage.
@@ -192,7 +187,7 @@ namespace uf::task
             TrustedReceiptIntent       intent;
             MonotonicInstant           mintedAt;
             MonotonicInstant::Duration maximumAge{};
-            uint64                     fence{};
+            uint64                     fencingToken{};
         };
 
         friend struct TaskHostTestAccess;
@@ -208,7 +203,12 @@ namespace uf::task
         uint64 m_nextReceiptOrdinal{1};
         uint64 m_nextObservationOrdinal{1};
         uint64 m_hostNonce;
-        uint64 m_fence{1};
+
+        // fencingToken stays 0 until a ledger fence is adopted, and minting is
+        // refused until it moves. A Host the Operator has never authorized can
+        // therefore mint nothing, which is a second reason production cannot
+        // act, independent of deliver() being private.
+        ControlFence m_fence{};
 
         [[nodiscard]] auto findGeneration(GenerationId id) noexcept -> Generation*;
         [[nodiscard]] auto requireGeneration(GenerationId id) -> Result<Generation*>;
@@ -251,8 +251,6 @@ namespace uf::task
             TrustedReceiptIntent intent
         ) -> Result<Receipt>;
 
-        [[nodiscard]] auto deliveryAuthority() const noexcept -> DeliveryAuthority;
-
         [[nodiscard]]
         // The context is supplied at delivery rather than remembered from
         // minting: a Receipt that stored a TaskContext* would be a borrow of
@@ -260,13 +258,29 @@ namespace uf::task
         // lost by asking, because requireReceiptCycle already proves the
         // supplied context is the one that minted this Receipt -- no other
         // context holds that cycle.
+        //
+        // Err means nothing was consumed and there is nothing to record. Once
+        // the Receipt is consumed the call cannot fail any more: a refusal past
+        // that point is a fact about the world, and the ledger can record only
+        // what it is told.
         auto deliver(
-            DeliveryAuthority authority,
+            DispatchAuthority authority,
             Receipt const& receipt,
             TaskContext& context
-        ) -> Result<engine::ActReceipt>;
+        ) -> Result<HostDeliveryReport>;
 
-        [[nodiscard]] auto takeover() -> Status;
+        // Raises this Host's control fence to the one the ledger now holds.
+        // Strictly monotone: a fence at or below the current one is refused, so
+        // a stale lease cannot re-arm a Host a takeover already fenced out. The
+        // first adoption also binds this Host to one controlled target; a later
+        // fence naming a different target is refused.
+        //
+        // Pending Receipts are deliberately left in place rather than dropped.
+        // They carry the fence they were minted under, so delivering one after
+        // a takeover consumes it and reports NotDelivered -- which is proof of
+        // absence. Dropping them would turn the same schedule into an Err, and
+        // an Err proves nothing.
+        [[nodiscard]] auto adoptControlFence(ControlFence fence) -> Status;
 
     public:
         TaskHost();

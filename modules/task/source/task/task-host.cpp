@@ -575,6 +575,14 @@ namespace uf::task
         TrustedReceiptIntent intent
     ) -> Result<Receipt>
     {
+        if (m_fence.fencingToken == 0)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Host has no control fence to mint against"
+            );
+        }
+
         UF_TRY_VALUE(p_generation, requireGeneration(generation));
         auto const& binding = p_generation->binding();
         if (p_generation->kind() != GenerationKind::Runtime || !binding)
@@ -614,7 +622,7 @@ namespace uf::task
             m_receipts,
             [this, now](PendingReceipt const& pending) noexcept
             {
-                return pending.fence != m_fence
+                return pending.fencingToken != m_fence.fencingToken
                     || now.saturatingDurationSince(pending.mintedAt) > pending.maximumAge;
             }
         );
@@ -646,27 +654,23 @@ namespace uf::task
                 .intent               = std::move(intent),
                 .mintedAt             = MonotonicInstant::now(),
                 .maximumAge             = p_generation->maximumReceiptAge(),
-                .fence                  = m_fence,
+                .fencingToken           = m_fence.fencingToken,
             }
         );
         return receipt;
     }
 
-    auto TaskHost::deliveryAuthority() const noexcept -> DeliveryAuthority
-    {
-        return DeliveryAuthority{.hostNonce = m_hostNonce, .fence = m_fence};
-    }
-
     auto TaskHost::deliver(
-        DeliveryAuthority authority,
+        DispatchAuthority authority,
         Receipt const& receipt,
         TaskContext& context
-    ) -> Result<engine::ActReceipt>
+    ) -> Result<HostDeliveryReport>
     {
         if (
-            authority.hostNonce != m_hostNonce
-            || authority.fence != m_fence
-            || receipt.m_hostNonce != m_hostNonce
+            receipt.m_hostNonce != m_hostNonce
+            || authority.controlledTargetKey != m_fence.controlledTargetKey
+            || authority.sessionEpoch != m_fence.sessionEpoch
+            || authority.fencingToken != m_fence.fencingToken
         )
         {
             return fail(
@@ -683,25 +687,53 @@ namespace uf::task
                 "Host Receipt is unknown, stale, or already consumed"
             );
         }
+        if (authority.runtimeGeneration != found->generation)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "delivery authority names another runtime generation"
+            );
+        }
 
         // Linearization point: once valid Host authority presents a known token,
         // no later failure can make the same authorization deliverable again.
+        // Everything above refuses without consuming; everything below reports.
         auto pending = std::move(*found);
         m_receipts.erase(found);
 
-        UF_TRY_VALUE(p_generation, requireGeneration(pending.generation));
-        auto const& binding = p_generation->binding();
+        // Synchronous and non-escaping: every use returns the value it builds,
+        // so the captured authority is moved from at most once.
+        auto report = [&authority, ordinal = pending.ordinal](
+            DeliveryOutcome outcome,
+            std::string reason,
+            std::optional<engine::ActReceipt> act
+        ) -> HostDeliveryReport
+        {
+            return HostDeliveryReport{
+                std::move(authority),
+                outcome,
+                std::move(reason),
+                ordinal,
+                act
+            };
+        };
+
+        auto const p_generation = findGeneration(pending.generation);
+        auto const* p_binding = p_generation == nullptr
+            ? nullptr
+            : p_generation->binding().get();
         if (
-            pending.fence != m_fence
-            || !binding
-            || binding->generation() != pending.generation
-            || binding->artifactRootHash() != pending.artifactRootHash
-            || binding->semanticHash() != pending.semanticHash
+            pending.fencingToken != m_fence.fencingToken
+            || p_binding == nullptr
+            || p_binding->generation() != pending.generation
+            || p_binding->artifactRootHash() != pending.artifactRootHash
+            || p_binding->semanticHash() != pending.semanticHash
         )
         {
-            return fail(
-                AutomationErrorKind::StaleObservation,
-                "Host Receipt no longer matches its generation, binding, or fence"
+            return report(
+                DeliveryOutcome::NotDelivered,
+                "Host Receipt no longer matches its generation, binding, or fence",
+                std::nullopt
             );
         }
         if (
@@ -709,30 +741,76 @@ namespace uf::task
             > pending.maximumAge
         )
         {
-            return fail(
-                AutomationErrorKind::StaleObservation,
-                "Host Receipt exceeded its freshness bound"
+            return report(
+                DeliveryOutcome::NotDelivered,
+                "Host Receipt exceeded its freshness bound",
+                std::nullopt
             );
         }
-        UF_TRY(
-            context.requireReceiptCycle(
-                pending.cycle,
-                pending.evidenceCycleOrdinal
-            )
+
+        auto const cycle = context.requireReceiptCycle(
+            pending.cycle,
+            pending.evidenceCycleOrdinal
         );
-        return context.deliverReceiptClick(pending.cycle, pending.intent.point);
+        if (!cycle.has_value())
+        {
+            return report(
+                DeliveryOutcome::NotDelivered,
+                std::format(
+                    "Host Receipt cycle is not the one this context holds: {}",
+                    cycle.error().message()
+                ),
+                std::nullopt
+            );
+        }
+
+        // Past this call the click may already have reached the target, and the
+        // engine's Result cannot say whether it did: clickPoint fails before the
+        // sink, at the sink, and after the click landed. TransportUnknown is the
+        // only honest answer, and it deliberately does not prove absence.
+        auto act = context.deliverReceiptClick(pending.cycle, pending.intent.point);
+        if (!act.has_value())
+        {
+            return report(
+                DeliveryOutcome::TransportUnknown,
+                std::format(
+                    "Host delivery reached the engine and did not complete: {}",
+                    act.error().message()
+                ),
+                std::nullopt
+            );
+        }
+        return report(DeliveryOutcome::Delivered, {}, *std::move(act));
     }
 
-    auto TaskHost::takeover() -> Status
+    auto TaskHost::adoptControlFence(ControlFence fence) -> Status
     {
-        if (m_fence == std::numeric_limits<uint64>::max())
+        if (fence.controlledTargetKey.empty())
         {
             return fail(
-                AutomationErrorKind::InternalInvariant,
-                "Host delivery fence space is exhausted"
+                AutomationErrorKind::InvalidResource,
+                "a control fence must name the target it fences"
             );
         }
-        ++m_fence;
+        if (fence.fencingToken <= m_fence.fencingToken)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "a control fence at or below the adopted one cannot re-arm this Host"
+            );
+        }
+        if (
+            m_fence.fencingToken != 0
+            && fence.controlledTargetKey != m_fence.controlledTargetKey
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "this Host is already fenced to another controlled target"
+            );
+        }
+
+        m_fence = std::move(fence);
         return ok();
     }
 

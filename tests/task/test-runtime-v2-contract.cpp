@@ -1,15 +1,20 @@
 #include "../support/runtime-v2-fixture.hpp"
 
 #include <task/exploration-session.hpp>
+#include <task/host-delivery.hpp>
 #include <task/page-model-file.hpp>
 #include <task/task-context.hpp>
 #include <task/task-host.hpp>
 #include <task/ui-observation.hpp>
 
+#include <core/types/integer.hpp>
+
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
 #include <domain/ids.hpp>
+
+#include <engine/session.hpp>
 
 #include <script/engine.hpp>
 
@@ -211,6 +216,9 @@ namespace uf::task
         auto const directory = TemporaryDirectory{};
         auto host = TaskHost{};
         auto const generation = loadedRuntime(host, directory);
+        auto const fence = controlFence(7);
+        REQUIRE(TaskHostTestAccess::adoptControlFence(host, fence).has_value());
+        auto const authority = dispatchAuthority(fence, generation);
         auto runtime = RuntimeContext{
             frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{14}),
             1'000
@@ -227,15 +235,47 @@ namespace uf::task
         CHECK(TaskHostTestAccess::pendingSemanticHash(host) != hash(runtimeModel()));
 
         auto const receipt = TaskHostTestAccess::pendingReceipt(host);
-        REQUIRE(TaskHostTestAccess::deliver(host, receipt, runtime.context()).has_value());
+        auto const delivered = TaskHostTestAccess::deliver(
+            host,
+            authority,
+            receipt,
+            runtime.context()
+        );
+        REQUIRE(delivered.has_value());
+        CHECK(delivered->outcome() == DeliveryOutcome::Delivered);
+        CHECK(delivered->reason().empty());
+        REQUIRE(delivered->act().has_value());
         CHECK(runtime.actions().clicks() == 1U);
-        CHECK_FALSE(TaskHostTestAccess::deliver(host, receipt, runtime.context()).has_value());
+
+        // The reservation comes back untouched, which is what lets the ledger
+        // recognise its own row instead of taking the Host's word for it.
+        CHECK(delivered->authority().operationId == authority.operationId);
+        CHECK(delivered->authority().dispatchSequence == authority.dispatchSequence);
+        CHECK(
+            delivered->authority().authorityDecisionId
+            == authority.authorityDecisionId
+        );
+        CHECK(delivered->authority().leaseId == authority.leaseId);
+        CHECK(delivered->authority().frozenPlanHash == authority.frozenPlanHash);
+        CHECK(delivered->authority().targetGeneration == authority.targetGeneration);
+
+        // A second presentation is an ERROR rather than a report: nothing was
+        // consumed, so there is no fact for the ledger to record.
+        CHECK_FALSE(
+            TaskHostTestAccess::deliver(
+                host,
+                authority,
+                receipt,
+                runtime.context()
+            ).has_value()
+        );
         CHECK(runtime.actions().clicks() == 1U);
 
         // A Receipt authorizes one delivery against the cycle it was minted in,
-        // so presenting a fresh one with a different context is refused before
-        // any click: no other context holds that cycle. That is what lets the
-        // Host stop remembering a pointer to the context that minted it.
+        // so presenting a fresh one with a different context posts no click: no
+        // other context holds that cycle. That is what lets the Host stop
+        // remembering a pointer to the context that minted it. The refusal is a
+        // NotDelivered report rather than an error, because the Receipt is gone.
         auto const reminted = TaskHostTestAccess::run(
             host,
             generation,
@@ -260,15 +300,279 @@ namespace uf::task
         );
         REQUIRE(otherCycle.has_value());
         CHECK(otherCycle->boolean() == std::optional<bool>{true});
+        auto const refused = TaskHostTestAccess::deliver(
+            host,
+            authority,
+            TaskHostTestAccess::pendingReceipt(host),
+            other.context()
+        );
+        REQUIRE(refused.has_value());
+        CHECK(refused->outcome() == DeliveryOutcome::NotDelivered);
+        CHECK_FALSE(refused->reason().empty());
+        CHECK_FALSE(refused->act().has_value());
+        CHECK(refused->receiptId() != delivered->receiptId());
+        CHECK(other.actions().clicks() == 0U);
+        CHECK(runtime.actions().clicks() == 1U);
+    }
+
+    // One friend, and it is TaskHost. TaskHostTestAccess reaches the Host's
+    // privates and can therefore call deliver, but it cannot assemble what
+    // deliver returns -- without which every case above would be asserting on a
+    // value the test itself could have written.
+    static_assert(!std::is_default_constructible_v<HostDeliveryReport>);
+    static_assert(
+        !std::is_constructible_v<
+            HostDeliveryReport,
+            DispatchAuthority,
+            DeliveryOutcome,
+            std::string,
+            uint64,
+            std::optional<engine::ActReceipt>
+        >
+    );
+    static_assert(std::is_copy_constructible_v<HostDeliveryReport>);
+
+    TEST_CASE("TaskHost::deliver refuses an authority the adopted fence does not name")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const generation = loadedRuntime(host, directory);
+        auto const fence = controlFence(7);
+        REQUIRE(TaskHostTestAccess::adoptControlFence(host, fence).has_value());
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{26}),
+            1'000
+        };
+        REQUIRE(
+            TaskHostTestAccess::run(
+                host,
+                generation,
+                runtime.context(),
+                k_authorizeSource
+            ).has_value()
+        );
+        auto const receipt = TaskHostTestAccess::pendingReceipt(host);
+        auto const authority = dispatchAuthority(fence, generation);
+
+        // One forgery per checked field: a Host that compared only three of the
+        // four would still refuse a value that broke all four at once.
+        auto const forgeries = std::vector<DispatchAuthority>{
+            dispatchAuthority(controlFenceOn("another-target", 7), generation),
+            dispatchAuthority(
+                ControlFence{
+                    .controlledTargetKey = fence.controlledTargetKey,
+                    .sessionEpoch        = fence.sessionEpoch + 1,
+                    .fencingToken        = fence.fencingToken,
+                },
+                generation
+            ),
+            dispatchAuthority(controlFence(fence.fencingToken + 1), generation),
+            dispatchAuthority(fence, GenerationId{generation.value() + 1}),
+        };
+        for (auto const& forged : forgeries)
+        {
+            auto const rejected = TaskHostTestAccess::deliver(
+                host,
+                forged,
+                receipt,
+                runtime.context()
+            );
+            CHECK_FALSE(rejected.has_value());
+        }
+        CHECK(runtime.actions().clicks() == 0U);
+
+        // An Err has to mean the Receipt was never spent, or "refused" would be
+        // indistinguishable from "consumed and lost".
+        auto const delivered = TaskHostTestAccess::deliver(
+            host,
+            authority,
+            receipt,
+            runtime.context()
+        );
+        REQUIRE(delivered.has_value());
+        CHECK(delivered->outcome() == DeliveryOutcome::Delivered);
+        CHECK(runtime.actions().clicks() == 1U);
+    }
+
+    TEST_CASE("A Host with no adopted control fence can mint no Receipt")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const generation = loadedRuntime(host, directory);
+        auto unfenced = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{27}),
+            1'000
+        };
+        CHECK_FALSE(
+            TaskHostTestAccess::run(
+                host,
+                generation,
+                unfenced.context(),
+                k_authorizeSource
+            ).has_value()
+        );
+        CHECK(unfenced.actions().clicks() == 0U);
+
+        // The positive control: the same artifact and the same chunk mint as
+        // soon as a fence exists, so the refusal above is the fence and not the
+        // world the chunk observed. It needs its own Host because a Runtime
+        // generation caches its template handles against the context that
+        // measured them, so a second context on one Host resolves nothing --
+        // measured, and independent of anything W4 changed.
+        auto const fencedDirectory = TemporaryDirectory{};
+        auto fencedHost = TaskHost{};
+        auto const fencedGeneration = loadedRuntime(fencedHost, fencedDirectory);
+        REQUIRE(
+            TaskHostTestAccess::adoptControlFence(
+                fencedHost,
+                controlFence(7)
+            ).has_value()
+        );
+        auto fenced = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{28}),
+            1'000
+        };
+        CHECK(
+            TaskHostTestAccess::run(
+                fencedHost,
+                fencedGeneration,
+                fenced.context(),
+                k_authorizeSource
+            ).has_value()
+        );
+    }
+
+    TEST_CASE("TaskHost::adoptControlFence is strictly monotone and binds one target")
+    {
+        auto host = TaskHost{};
+        CHECK_FALSE(
+            TaskHostTestAccess::adoptControlFence(
+                host,
+                controlFenceOn("", 1)
+            ).has_value()
+        );
+        CHECK(TaskHostTestAccess::fence(host).fencingToken == 0U);
+
+        REQUIRE(
+            TaskHostTestAccess::adoptControlFence(host, controlFence(7)).has_value()
+        );
+        CHECK(TaskHostTestAccess::fence(host).fencingToken == 7U);
+        CHECK(
+            TaskHostTestAccess::fence(host).controlledTargetKey == k_controlledTarget
+        );
+
+        // At or below is refused, so a lease a takeover already superseded
+        // cannot re-arm the Host it fenced out.
+        CHECK_FALSE(
+            TaskHostTestAccess::adoptControlFence(host, controlFence(7)).has_value()
+        );
+        CHECK_FALSE(
+            TaskHostTestAccess::adoptControlFence(host, controlFence(6)).has_value()
+        );
+        CHECK(TaskHostTestAccess::fence(host).fencingToken == 7U);
+
+        CHECK_FALSE(
+            TaskHostTestAccess::adoptControlFence(
+                host,
+                controlFenceOn("another-target", 8)
+            ).has_value()
+        );
+        CHECK(
+            TaskHostTestAccess::fence(host).controlledTargetKey == k_controlledTarget
+        );
+
+        REQUIRE(
+            TaskHostTestAccess::adoptControlFence(host, controlFence(8)).has_value()
+        );
+        CHECK(TaskHostTestAccess::fence(host).fencingToken == 8U);
+    }
+
+    TEST_CASE("A takeover fence turns an outstanding Receipt into proof of absence")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const generation = loadedRuntime(host, directory);
+        REQUIRE(
+            TaskHostTestAccess::adoptControlFence(host, controlFence(7)).has_value()
+        );
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{29}),
+            1'000
+        };
+        REQUIRE(
+            TaskHostTestAccess::run(
+                host,
+                generation,
+                runtime.context(),
+                k_authorizeSource
+            ).has_value()
+        );
+        auto const receipt = TaskHostTestAccess::pendingReceipt(host);
+
+        auto const seized = controlFence(8);
+        REQUIRE(TaskHostTestAccess::adoptControlFence(host, seized).has_value());
+
+        // The Receipt is still consumed, and the report is what makes the
+        // in-flight case recordable: an Err here would leave the ledger unable
+        // to state that this dispatch posted nothing.
+        auto const report = TaskHostTestAccess::deliver(
+            host,
+            dispatchAuthority(seized, generation),
+            receipt,
+            runtime.context()
+        );
+        REQUIRE(report.has_value());
+        CHECK(report->outcome() == DeliveryOutcome::NotDelivered);
+        CHECK_FALSE(report->reason().empty());
+        CHECK_FALSE(report->act().has_value());
+        CHECK(runtime.actions().clicks() == 0U);
         CHECK_FALSE(
             TaskHostTestAccess::deliver(
                 host,
-                TaskHostTestAccess::pendingReceipt(host),
-                other.context()
+                dispatchAuthority(seized, generation),
+                receipt,
+                runtime.context()
             ).has_value()
         );
-        CHECK(other.actions().clicks() == 0U);
-        CHECK(runtime.actions().clicks() == 1U);
+    }
+
+    TEST_CASE("A refused click is transport unknown and never proof of absence")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const generation = loadedRuntime(host, directory);
+        auto const fence = controlFence(7);
+        REQUIRE(TaskHostTestAccess::adoptControlFence(host, fence).has_value());
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{30}),
+            1'000
+        };
+        REQUIRE(
+            TaskHostTestAccess::run(
+                host,
+                generation,
+                runtime.context(),
+                k_authorizeSource
+            ).has_value()
+        );
+
+        runtime.actions().refuseClicks();
+        auto const report = TaskHostTestAccess::deliver(
+            host,
+            dispatchAuthority(fence, generation),
+            TaskHostTestAccess::pendingReceipt(host),
+            runtime.context()
+        );
+        REQUIRE(report.has_value());
+
+        // Nothing reached the target here, and the Host still may not say so:
+        // clickPoint returns one Err whether it failed before the sink, at it,
+        // or after the click had already landed. Only NotDelivered proves
+        // absence, so a click-path failure must never spell it.
+        CHECK(report->outcome() == DeliveryOutcome::TransportUnknown);
+        CHECK_FALSE(report->reason().empty());
+        CHECK_FALSE(report->act().has_value());
+        CHECK(runtime.actions().clicks() == 0U);
     }
 
     TEST_CASE("contract-runtime-u07")

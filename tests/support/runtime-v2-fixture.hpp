@@ -1,5 +1,6 @@
 #pragma once
 
+#include <task/host-delivery.hpp>
 #include <task/page-model-file.hpp>
 #include <task/task-context.hpp>
 #include <task/task-host.hpp>
@@ -9,6 +10,7 @@
 #include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
+#include <domain/error.hpp>
 #include <domain/frame.hpp>
 #include <domain/ids.hpp>
 #include <domain/key.hpp>
@@ -115,14 +117,30 @@ namespace uf::task
             return host.m_receipts.front().semanticHash;
         }
 
+        // The authority is the caller's, never the Host's: a harness that could
+        // ask the Host what to present would prove only that the Host agrees
+        // with itself. It still cannot fabricate the RESULT -- TaskHostTestAccess
+        // is deliberately not a friend of HostDeliveryReport.
         [[nodiscard]]
         static auto deliver(
             TaskHost& host,
+            DispatchAuthority authority,
             TaskHost::Receipt const& receipt,
             TaskContext& context
-        ) -> Result<engine::ActReceipt>
+        ) -> Result<HostDeliveryReport>
         {
-            return host.deliver(host.deliveryAuthority(), receipt, context);
+            return host.deliver(std::move(authority), receipt, context);
+        }
+
+        [[nodiscard]]
+        static auto adoptControlFence(TaskHost& host, ControlFence fence) -> Status
+        {
+            return host.adoptControlFence(std::move(fence));
+        }
+
+        [[nodiscard]] static auto fence(TaskHost const& host) -> ControlFence
+        {
+            return host.m_fence;
         }
     };
 
@@ -436,11 +454,23 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
     class ActionSink final : public engine::IActionSink
     {
         uint32 m_clicks{};
+        bool   m_refuseClicks{};
 
     public:
+        // A refused click is what a real sink cannot describe: the post may have
+        // reached the target before the failure. EngineSession::clickPoint
+        // reports one Err for every phase, so this is the only way a test can
+        // reach the outcome that under-claims deliberately.
         [[nodiscard]]
         auto click(Point<ClientSpace>, ObservationLease const&) -> Status override
         {
+            if (m_refuseClicks)
+            {
+                return fail(
+                    AutomationErrorKind::TargetUnavailable,
+                    "the action sink refused this click"
+                );
+            }
             ++m_clicks;
             return ok();
         }
@@ -483,6 +513,8 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         }
 
         [[nodiscard]] auto clicks() const noexcept -> uint32 { return m_clicks; }
+
+        auto refuseClicks() noexcept -> void { m_refuseClicks = true; }
     };
 
     class TraceSink final : public trace::ITraceSink
@@ -536,6 +568,47 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         [[nodiscard]] auto context() noexcept -> TaskContext& { return *m_context; }
         [[nodiscard]] auto actions() noexcept -> ActionSink& { return *m_pActions; }
     };
+
+    inline constexpr auto k_controlledTarget = std::string_view{"controlled-target"};
+    inline constexpr auto k_controlSessionEpoch = uint64{4};
+
+    [[nodiscard]]
+    inline auto controlFenceOn(std::string_view target, uint64 fencingToken)
+        -> ControlFence
+    {
+        return ControlFence{
+            .controlledTargetKey = std::string{target},
+            .sessionEpoch        = k_controlSessionEpoch,
+            .fencingToken        = fencingToken,
+        };
+    }
+
+    [[nodiscard]] inline auto controlFence(uint64 fencingToken) -> ControlFence
+    {
+        return controlFenceOn(k_controlledTarget, fencingToken);
+    }
+
+    // A reservation the ledger would have written for `generation` under
+    // `fence`. It is plain data on purpose: presenting a forged one can only
+    // make the Host refuse, because acting still needs a Receipt the Host
+    // itself minted.
+    [[nodiscard]]
+    inline auto dispatchAuthority(ControlFence const& fence, GenerationId generation)
+        -> DispatchAuthority
+    {
+        return DispatchAuthority{
+            .controlledTargetKey = fence.controlledTargetKey,
+            .leaseId             = "lease-1",
+            .operationId         = "operation-1",
+            .authorityDecisionId = "authority-decision-1",
+            .frozenPlanHash      = hash("frozen-plan"),
+            .runtimeGeneration   = generation,
+            .targetGeneration    = TargetGeneration::fromValue(3),
+            .sessionEpoch        = fence.sessionEpoch,
+            .fencingToken        = fence.fencingToken,
+            .dispatchSequence    = 1,
+        };
+    }
 
     [[nodiscard]] inline auto loadedRuntime(
         TaskHost& host,
