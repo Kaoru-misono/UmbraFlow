@@ -32,6 +32,14 @@ Reading order: target form, then layer ownership, then the model semantics.
   [W3 Snapshot Coordinator](2026-08-10-w3-snapshot-coordinator.md) --
   [W4 delivery join](2026-08-10-w4-delivery-join.md) --
   [W6 and W7 controller and Agent](2026-08-10-w6-w7-controller-and-agent.md).
+- [Consumer attestation](2026-08-11-consumer-attestation.md) — **specification
+  proposal, nothing implemented.** What `attest-consumer-d01`-`d09` are, what
+  each of the nine requirements must attest, who signs and what that does and
+  does not prove, where a set is recorded and how it is refused, and how it
+  relates to `attest-dual-game-p05` and the exported contract suite. It changes
+  no schema and no compiled hash here; six questions in its §10 need a ruling.
+  It also carries the 2026-08-11 correction that `D-09` is `PHASED` and that
+  `C-11` and `A-04` carry `PROJECT_CONTRACT`.
 - [W2-W7 reconciliation](2026-08-10-w2-w7-reconciliation.md) — the four above
   were written in parallel by agents who could not see each other. This resolves
   every conflict between them, lists the cross-assumptions one makes that another

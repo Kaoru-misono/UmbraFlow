@@ -52,6 +52,21 @@ fixtures cannot satisfy them.
 > lists in `tests/CMakeLists.txt` and
 > `contract-suite/fixtures/umbraflow/CMakeLists.txt`.
 
+> **Amended 2026-08-11: the nine `attest-consumer-dNN` IDs now have a
+> specification.** Until that date the `D-01`-`D-09` rows below were the only
+> occurrence of those strings anywhere in the tree, and nothing said what a
+> consumer produces, who signs it, where it is recorded, or what refuses it.
+> [Consumer attestation](2026-08-11-consumer-attestation.md) settles all four:
+> one exact JCS `ProjectAttestationSet` inlining nine content-addressed
+> attestations, carried as the `attestations` entry of
+> `project_artifact_roots` — which is why the `Schema location` column of those
+> rows is correct as written and needs no change. The rows stay `EXTERNAL`, and
+> that document deliberately adds no upstream gate, because a local fixture
+> could satisfy any gate it added. It also records two matrix facts this report
+> does not carry: `D-09` is `PHASED` rather than `PROJECT_CONTRACT`, and `C-11`
+> and `A-04` carry `PROJECT_CONTRACT` beside `REQUIRED_CORE`, so the consumer's
+> obligation list is eleven requirements rather than these nine.
+
 ## Requirement ownership and test map
 
 | ID | Owner | Schema location | Verification |

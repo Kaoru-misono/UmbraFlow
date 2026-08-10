@@ -20,6 +20,10 @@ the four same-day specifications conflict.
 - [The next block after runtime hardening](plans/2026-08-10-next-block.md) —
   the requirement-by-requirement map of what is still owed and which work item
   closes it. W1, W5, W8 and the contract suite landed 2026-08-10.
+- [Consumer attestation](plans/2026-08-11-consumer-attestation.md) — the nine
+  `EXTERNAL attest-consumer-dNN` IDs, specified 2026-08-11: what a consumer
+  produces, what binds it, and what upstream may and may not refuse. Proposal
+  only; six questions await a ruling.
 - [Historical pre-rewrite work queue](WORKLIST.md) — retained evidence only,
   not an implementation queue.
 

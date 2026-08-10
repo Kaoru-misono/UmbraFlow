@@ -27,9 +27,23 @@ implementer reads before any of the four.
 
 ## 1. What the matrix says we owe
 
-51 requirements. `D-01`-`D-09` are `PROJECT_CONTRACT` — the Chaos content
-pipeline, owned by the consumer repository, correctly ungated here. The other
-**42 are `REQUIRED_CORE` and every one is ours.**
+51 requirements. `D-01`-`D-09` are the Chaos content pipeline, owned by the
+consumer repository and correctly ungated here. The other **42 are
+`REQUIRED_CORE` and every one is ours.**
+
+> **Corrected 2026-08-11: two markings, not one, and the `PROJECT_CONTRACT` set
+> is not the `D-*` block.** This paragraph said "`D-01`-`D-09` are
+> `PROJECT_CONTRACT`". The deciding artifact is the v1.9 requirements matrix,
+> `requirements-traceability.md` §4, under the bundle root above: `D-01`-`D-08`
+> carry `PROJECT_CONTRACT` and **`D-09` carries `PHASED`**, the only row in the
+> matrix that does. `C-11` and `A-04` carry `REQUIRED_CORE` **and**
+> `PROJECT_CONTRACT`, so the consumer owes a half of each and its obligation
+> list is eleven requirements rather than nine. The 42 / 51 arithmetic below is
+> unaffected: 42 `REQUIRED_CORE` including those two, 8 `PROJECT_CONTRACT`-only,
+> 1 `PHASED`. What the marking changes is what a consumer attests — a `PHASED`
+> requirement attests a declared scope boundary, a `PROJECT_CONTRACT`
+> requirement attests a property — which is specified in
+> [consumer attestation](2026-08-11-consumer-attestation.md) §3 and §8.
 
 All 42 have at least one registered CTest gate. But a gate is not a proof, so
 since W10's rename landed on 2026-08-10 the gates carry two prefixes and say
@@ -348,6 +362,14 @@ What the three landed items actually left behind:
   registrations.
 - Phases 2B, 2C, 3, 4 and anything in a consumer repository.
 - The real dual-game attestation: `EXTERNAL / NOT_RUN`, unmovable by fixtures.
+  Since 2026-08-11 the nine consumer attestations `attest-consumer-d01`-`d09`
+  have a specified shape and recording location —
+  [consumer attestation](2026-08-11-consumer-attestation.md) — which rules them
+  **independent of this gate in both directions**: a complete attestation set
+  does not move `NOT_RUN`, and `NOT_RUN` does not block eight of the nine. That
+  document leaves `attest-dual-game-p05` itself unspecified and says why: it is
+  a fact about two independently owned consumers, which no single consumer can
+  attest.
 - Production `click`, `key`, `drag`, `run`: closed by design, and still closed
   by construction — nothing outside a test calls `Host::deliver`.
 - Accepted finding B-F4, which stays accepted. A-F8 was also accepted when this
