@@ -57,7 +57,7 @@ Classes:
 | Lines | Span | Block | P | F | A | D | N |
 |---|---|---|---:|---:|---:|---:|---:|
 | 1–13 | 13 | file comment | | | | | 13 |
-| 14–39 | 26 | 12 `#include`s | | 26 | | | |
+| 14–39 | 26 | 20 `#include`s | | 26 | | | |
 | 40–43 | 4 | namespace open | | | | | 4 |
 | 44–54 | 11 | `ProjectIdentity` — carries the two roles | | 11 | | | |
 | 56–113 | 58 | `k_expeditionPlugin` — the five functions | 58 | | | | |
@@ -369,8 +369,9 @@ preference. **The generated lines would be validators, and a validator the
 consumer owns but did not think about is exactly the failure this repository
 spent a day cataloguing.** `docs/pitfalls/checks-that-cannot-fail.md` records
 eight instances of "a name exists, the name promises something, and nothing
-verifies the promise" — including two where a generated-then-forgotten CMake
-helper meant seven compiled cases ran in no gate. A generated
+verifies the promise" — including one where a CMake helper named
+`cpp_add_contract_suite` built its binary `NO_CTEST`, so seven compiled cases in
+`tests/operator/test-project-plugin-contract.cpp` executed in no gate. A generated
 `canonicalValidator` that returns `ok()` for everything is that defect,
 pre-installed, in every consumer, with the consumer's name on it. When the
 framework later tightens what canonical means, nothing tells the consumer which
