@@ -5,6 +5,7 @@
 #include "page-model-file.hpp"
 #include "script-bindings.hpp"
 #include "task-context.hpp"
+#include "ui-observation.hpp"
 
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
@@ -35,6 +36,46 @@ namespace uf::task
 {
     namespace
     {
+        // The whole of TaskHost::observe that runs inside the VM. It resolves
+        // one state and canonicalizes it; the Host receives an opaque document
+        // and interprets no member of it.
+        //
+        // What it serializes is the resolution's CONTENT, never its occasion.
+        // `resolution.resolve_state` stamps each resolved state with an id drawn
+        // from a module-level counter, so a document carrying that id would put
+        // the number of preceding resolutions inside state_resolution_hash,
+        // inside decision_basis_hash, and inside every frozen plan -- and two
+        // identical readings of one unchanged world would then demand separate
+        // approvals. The projection is therefore the kind, the ordered surface
+        // stack a resolved state carries, and the reason the other kinds
+        // failed; `candidates`, `conflicts` and `evidence` are excluded with it,
+        // because evidence ids are drawn from the same kind of counter.
+        //
+        // `kind` is always present, which is what keeps the document an object:
+        // jcs encodes an empty table as `[]`, so an envelope that could be empty
+        // would sometimes be an array. Absent members are nil rather than null,
+        // which Lua drops, so an unresolved stack and a resolved reason simply
+        // do not appear.
+        //
+        // The cycle is deliberately left open. The Host reads the frame identity
+        // the resolution was taken against straight off the ledger and sweeps
+        // the cycle itself; closing here would release the frame before the one
+        // fact the snapshot still needs from it could be read.
+        constexpr auto k_observeSource = std::string_view{R"lua(
+            local cycle = observe.open(project.load_project())
+            local state = cycle:resolve_state()
+            local reason = state.reason
+            if reason == nil and type(state.conflicts) == "table" then
+                local conflict = state.conflicts[1]
+                if conflict ~= nil then reason = conflict.kind end
+            end
+            return jcs.encode({
+                kind = state.kind,
+                ordered_surface_stack = state.ordered_surface_stack,
+                reason = reason,
+            })
+        )lua"};
+
         [[nodiscard]] auto traceSchemaHash() -> ContentHash
         {
             auto const parsed = ContentHash::parse(
@@ -501,6 +542,7 @@ namespace uf::task
                 .installPrivateCapabilities = runtimePrivateCapabilities(generation),
                 .projectGlobals             = scriptProjectGlobals(),
                 .frameworkProjectGlobals = {
+                    std::string{"jcs"},
                     std::string{"observe"},
                     std::string{"project"},
                 },
@@ -790,6 +832,74 @@ namespace uf::task
         }
         auto const bytes = artifact->modelBytes();
         return std::vector<std::byte>{bytes.begin(), bytes.end()};
+    }
+
+    auto TaskHost::observe(
+        GenerationId generation,
+        TaskContext& context
+    ) -> Result<UiObservationSnapshot>
+    {
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
+        auto const& binding = p_generation->binding();
+        if (p_generation->kind() != GenerationKind::Runtime || !binding)
+        {
+            return fail(
+                AutomationErrorKind::UnsupportedCapability,
+                "UI observation requires a privately finalized Runtime generation"
+            );
+        }
+        if (m_nextObservationOrdinal == std::numeric_limits<uint64>::max())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Host observation ordinal space is exhausted"
+            );
+        }
+
+        // k_observeSource leaves its cycle open on every path, including a
+        // raise, so the sweep is unconditional and outranks the chunk's result.
+        auto sweep = scopeExit(
+            [&context]() noexcept
+            {
+                static_cast<void>(context.sweepOpenCycle());
+            }
+        );
+        UF_TRY_VALUE(
+            resolved,
+            runTrustedRuntime(generation, context, k_observeSource, "runtime-observe")
+        );
+        auto const* const p_document = resolved.text();
+        if (p_document == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "the trusted observation chunk returned no canonical document"
+            );
+        }
+        auto const targetGeneration = context.openCycleTargetGeneration();
+        if (!targetGeneration.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "the trusted observation chunk released its cycle before the "
+                "Host could read the capture it resolved"
+            );
+        }
+
+        auto observationId = std::format(
+            "observation-{}-{}",
+            m_hostNonce,
+            m_nextObservationOrdinal
+        );
+        ++m_nextObservationOrdinal;
+        return UiObservationSnapshot{
+            std::move(observationId),
+            generation,
+            *targetGeneration,
+            binding->artifactRootHash(),
+            binding->semanticHash(),
+            *p_document,
+        };
     }
 
     auto TaskHost::startExplorationSession(

@@ -653,6 +653,16 @@ namespace uf::task
         return m_cycles.closeOpen();
     }
 
+    auto TaskContext::openCycleTargetGeneration() const noexcept
+        -> std::optional<TargetGeneration>
+    {
+        if (!m_cycles.isOpen())
+        {
+            return std::nullopt;
+        }
+        return m_cycles.observation().frameIdentity().targetGeneration();
+    }
+
     auto TaskContext::loadTemplate(
         std::span<std::byte const> pngBytes
     ) -> Result<LoadedTemplate>

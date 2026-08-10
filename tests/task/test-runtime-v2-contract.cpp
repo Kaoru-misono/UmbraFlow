@@ -2,6 +2,7 @@
 #include <task/page-model-file.hpp>
 #include <task/task-context.hpp>
 #include <task/task-host.hpp>
+#include <task/ui-observation.hpp>
 
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
@@ -39,6 +40,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -272,6 +274,30 @@ id = "screen"
 kind = "scene"
 covers = []
 identity = { all = ["screen.anchor"], any = [], none = [] }
+)toml";
+        }
+
+        // The same model with a second scene the same frame also satisfies, so
+        // resolve_state has two scene candidates and reports an ambiguous
+        // state. It reuses the confirm mark rather than a third asset because
+        // the asset closure is verified against the manifest.
+        [[nodiscard]] auto twoSceneRuntimeModel() -> std::string
+        {
+            return runtimeModel() + R"toml(
+[[binding]]
+id = "panel.anchor"
+surface = "panel"
+ui_target = "screen-marker"
+variant = "primary"
+placement = { kind = "fixed", rect = [1, 0, 1, 1] }
+detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] }
+actions = []
+
+[[surface]]
+id = "panel"
+kind = "scene"
+covers = []
+identity = { all = ["panel.anchor"], any = [], none = [] }
 )toml";
         }
 
@@ -809,5 +835,164 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
             directory.path(),
             rootHash
         ).has_value());
+    }
+
+    // resolve_state stamps every resolved state with an id drawn from a
+    // module-level counter, and the trusted VM outlives one observation, so two
+    // readings of ONE unchanged screen carry two different ids. Comparing the
+    // two canonical documents is therefore what proves the id is outside them:
+    // a single observation's bytes could not tell the difference.
+    TEST_CASE("TaskHost::observe keeps the resolver's counter out of the document")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const rootHash = publish(
+            directory.path(),
+            runtimeModel(),
+            runtimeAssets()
+        );
+        auto const generation = TaskHostTestAccess::activate(
+            host,
+            directory.path(),
+            rootHash
+        );
+        REQUIRE(generation.has_value());
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{21}),
+            1'000
+        };
+
+        // One friend, and it is the Host. A caller holding every field still
+        // cannot assemble a snapshot, so there is no second producer to
+        // disagree with the one the resolver fed.
+        CHECK_FALSE(
+            (std::is_constructible_v<
+                UiObservationSnapshot,
+                std::string,
+                GenerationId,
+                TargetGeneration,
+                ContentHash,
+                ContentHash,
+                std::string
+            >)
+        );
+        CHECK(std::is_copy_constructible_v<UiObservationSnapshot>);
+
+        auto const first = host.observe(*generation, runtime.context());
+        REQUIRE(first.has_value());
+        auto const second = host.observe(*generation, runtime.context());
+        REQUIRE(second.has_value());
+
+        CHECK(first->canonicalJcs() == second->canonicalJcs());
+        CHECK(first->stateResolutionHash() == second->stateResolutionHash());
+        CHECK(first->observationId() != second->observationId());
+
+        CHECK(
+            first->canonicalJcs()
+            == R"({"kind":"resolved_state","ordered_surface_stack":["screen"]})"
+        );
+        CHECK(first->stateResolutionHash() == hash(first->canonicalJcs()));
+        CHECK(first->generation() == *generation);
+        CHECK(first->targetGeneration() == TargetGeneration::fromValue(3));
+        CHECK(first->artifactRootHash() == rootHash);
+        CHECK(first->semanticHash() != rootHash);
+        CHECK(first->semanticHash() != hash(runtimeModel()));
+
+        // The chunk leaves its cycle open for the Host to read the capture off;
+        // the Host closing it again is what lets a second observation open one.
+        CHECK_FALSE(runtime.context().hasOpenCycle());
+    }
+
+    TEST_CASE("TaskHost::observe canonicalizes an unresolved state and its reason")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const generation = loadedRuntime(host, directory);
+        auto runtime = RuntimeContext{
+            frame({std::byte{0}, std::byte{k_actionGray}, std::byte{0}}, FrameId{22}),
+            1'000
+        };
+        auto const unresolved = host.observe(generation, runtime.context());
+        REQUIRE(unresolved.has_value());
+        CHECK(
+            unresolved->canonicalJcs()
+            == R"({"kind":"unknown_state","reason":"no_scene_candidate"})"
+        );
+        CHECK(unresolved->stateResolutionHash() == hash(unresolved->canonicalJcs()));
+
+        auto const resolvedDirectory = TemporaryDirectory{};
+        auto resolvedHost = TaskHost{};
+        auto const resolvedGeneration = loadedRuntime(resolvedHost, resolvedDirectory);
+        auto resolvedRuntime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{23}),
+            1'000
+        };
+        auto const resolved = resolvedHost.observe(
+            resolvedGeneration,
+            resolvedRuntime.context()
+        );
+        REQUIRE(resolved.has_value());
+
+        // Two worlds, two documents, two digests: the hash follows the bytes
+        // rather than the occasion that produced them.
+        CHECK(unresolved->canonicalJcs() != resolved->canonicalJcs());
+        CHECK(unresolved->stateResolutionHash() != resolved->stateResolutionHash());
+    }
+
+    TEST_CASE("TaskHost::observe canonicalizes an ambiguous state through its conflict")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const rootHash = publish(
+            directory.path(),
+            twoSceneRuntimeModel(),
+            runtimeAssets()
+        );
+        auto const generation = TaskHostTestAccess::activate(
+            host,
+            directory.path(),
+            rootHash
+        );
+        REQUIRE(generation.has_value());
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{24}),
+            1'000
+        };
+        auto const ambiguous = host.observe(*generation, runtime.context());
+        REQUIRE(ambiguous.has_value());
+        CHECK(
+            ambiguous->canonicalJcs()
+            == R"({"kind":"ambiguous_state","reason":"multiple_scenes"})"
+        );
+    }
+
+    TEST_CASE("TaskHost::observe refuses an Annotation generation before the VM")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const generation = loadedRuntime(host, directory);
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{25}),
+            1'000
+        };
+        auto const authoringDirectory = TemporaryDirectory{};
+        auto const annotation = host.openAnnotationProject(authoringDirectory.path());
+        REQUIRE(annotation.has_value());
+
+        auto const refused = host.observe(*annotation, runtime.context());
+        REQUIRE_FALSE(refused.has_value());
+
+        // UnsupportedCapability and not InvalidResource: the kind gate refuses
+        // before any VM is reached. bindRuntimeContext would refuse the same
+        // call afterwards and would say InvalidResource, so the kind is what
+        // says WHICH gate held.
+        CHECK(
+            automationErrorKind(refused.error())
+            == std::optional<AutomationErrorKind>{
+                AutomationErrorKind::UnsupportedCapability
+            }
+        );
+        CHECK_FALSE(runtime.context().hasOpenCycle());
+        CHECK(host.observe(generation, runtime.context()).has_value());
     }
 }

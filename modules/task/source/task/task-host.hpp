@@ -2,6 +2,7 @@
 
 #include <task/cycle-ledger.hpp>
 #include <task/page-model-file.hpp>
+#include <task/ui-observation.hpp>
 
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
@@ -201,6 +202,7 @@ namespace uf::task
         uint64 m_nextGenerationValue{1};
         uint64 m_nextRunValue{1};
         uint64 m_nextReceiptOrdinal{1};
+        uint64 m_nextObservationOrdinal{1};
         uint64 m_hostNonce;
         uint64 m_fence{1};
 
@@ -292,6 +294,26 @@ namespace uf::task
         [[nodiscard]]
         auto runtimeModelBytes(GenerationId generation)
             -> Result<std::vector<std::byte>>;
+
+        // Runs one observation cycle on a Runtime generation and returns what
+        // the trusted resolver concluded. Annotation generations are refused:
+        // the kinds never convert, and a production snapshot must not be able
+        // to reach authoring files.
+        //
+        // The context is supplied rather than remembered, for deliver()'s
+        // reason: a Host that stored a TaskContext* would be holding a borrow of
+        // caller-owned state with no contract keeping it alive, and
+        // activeRuntimeContext answers only while a trusted chunk is already
+        // running -- which is inside this call, not before it. Nothing is lost
+        // by asking, because the observation is minted from what the chunk
+        // measured through THIS context and no other context holds that cycle.
+        //
+        // The generation observed is deliberately not a parameter: a snapshot
+        // whose target generation the caller named would certify a world the
+        // Host never saw.
+        [[nodiscard]]
+        auto observe(GenerationId generation, TaskContext& context)
+            -> Result<UiObservationSnapshot>;
 
         [[nodiscard]]
         auto startExplorationSession(

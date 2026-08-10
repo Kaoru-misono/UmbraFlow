@@ -168,6 +168,13 @@ namespace uf::engine
 
         ~Observation() = default;
 
+        // Which capture this handle holds: the only fact about the frame that
+        // leaves the engine without spending the observation. It names the
+        // frame rather than describing it, so no caller can read a pixel or a
+        // measurement through it -- and a caller that has to record WHICH
+        // target generation an authorization was taken against, as the Operator
+        // snapshot does, has no other source for it.
+        [[nodiscard]] auto frameIdentity() const noexcept -> FrameIdentity;
     };
 
     // One rectangle of one frame's pixels, copied out of the observation that

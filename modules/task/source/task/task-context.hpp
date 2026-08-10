@@ -14,6 +14,7 @@
 #include <domain/content-hash.hpp>
 
 #include <domain/error.hpp>
+#include <domain/ids.hpp>
 #include <domain/space.hpp>
 
 #include <engine/session.hpp>
@@ -417,9 +418,23 @@ namespace uf::task
 
         // Releases whatever cycle is open and reports whether there was one. NOT
         // a script verb and never installed as a primitive: see
-        // CycleLedger::closeOpen for who may call it, which is the exploration
-        // session between two agent-supplied chunks and nothing else.
+        // CycleLedger::closeOpen for who may call it, which is a host closing a
+        // bracket it owns -- the exploration session between two agent-supplied
+        // chunks, and TaskHost::observe after it has read the frame identity its
+        // own trusted chunk left open.
         auto sweepOpenCycle() noexcept -> bool;
+
+        // Which target generation the open cycle's frame was captured on, or
+        // nothing when no cycle is open.
+        //
+        // The one fact about a retained frame that leaves this context without
+        // a ticket, because it is the one an Operator snapshot has to record: a
+        // plan frozen against a UI observation must be able to say which
+        // generation of the target that observation described. Everything else
+        // about the frame stays behind a CycleTicket.
+        [[nodiscard]]
+        auto openCycleTargetGeneration() const noexcept
+            -> std::optional<TargetGeneration>;
 
         // Decodes one template PNG into this generation's template store and
         // returns the ticket naming it, with the content hash of the blob for

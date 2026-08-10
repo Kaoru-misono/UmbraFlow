@@ -222,6 +222,11 @@ namespace uf::engine
         return *this;
     }
 
+    auto Observation::frameIdentity() const noexcept -> FrameIdentity
+    {
+        return m_frameIdentity;
+    }
+
     EngineSession::EngineSession(
         std::shared_ptr<detail::EngineSessionIdentity const> identity,
         std::unique_ptr<IFrameSource> frameSource,
