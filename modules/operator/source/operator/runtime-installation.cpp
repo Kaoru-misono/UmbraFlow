@@ -474,12 +474,10 @@ namespace uf::operator_runtime::detail
                 return ioFailure("inspect", destination, error);
             }
 
-            auto const stagingRoot = productionRoot / ".staging";
-            std::filesystem::create_directories(stagingRoot, error);
-            if (error)
-            {
-                return ioFailure("create", stagingRoot, error);
-            }
+            // The staging root belongs to the production layout, which
+            // OperatorCoordinator::open creates and verifies; creating it here
+            // as well would leave two owners of one directory.
+            auto const stagingRoot = productionRoot / k_stagingDirectoryName;
             UF_TRY(requirePlainDirectory(stagingRoot));
             auto const staging = stagingRoot / std::string{stagingToken};
             if (!std::filesystem::create_directory(staging, error) || error)
@@ -537,12 +535,11 @@ namespace uf::operator_runtime::detail
         }
     }
 
-    auto prepareRuntimeInstallation(
+    auto readRuntimeRelease(
         std::filesystem::path const& productionRoot,
         std::filesystem::path const& handoffRoot,
-        ContentHash const& expectedReleaseManifestHash,
-        std::string_view stagingToken
-    ) -> Result<PreparedRuntimeInstallation>
+        ContentHash const& expectedReleaseManifestHash
+    ) -> Result<VerifiedRuntimeRelease>
     {
         UF_TRY(requirePlainDirectory(productionRoot));
         UF_TRY(verifyHandoffTopLevel(handoffRoot));
@@ -592,22 +589,30 @@ namespace uf::operator_runtime::detail
                 release.artifactRootHash
             )
         );
+        return VerifiedRuntimeRelease{
+            .handoffArtifact     = std::move(source),
+            .releaseManifestHash = releaseHash,
+            .artifactRootHash    = release.artifactRootHash,
+        };
+    }
+
+    auto publishRuntimeArtifact(
+        std::filesystem::path const& productionRoot,
+        VerifiedRuntimeRelease const& release,
+        std::string_view stagingToken
+    ) -> Result<std::shared_ptr<task::RuntimeArtifactHandle const>>
+    {
         UF_TRY_VALUE(
             productionPath,
-            materialize(productionRoot, source, stagingToken)
+            materialize(productionRoot, release.handoffArtifact, stagingToken)
         );
         UF_TRY_VALUE(
             installed,
             task::loadRuntimeArtifact(productionPath, release.artifactRootHash)
         );
-        return PreparedRuntimeInstallation{
-            .artifact = std::make_shared<task::RuntimeArtifactHandle const>(
-                std::move(installed)
-            ),
-            .releaseManifestHash = releaseHash,
-            .artifactRootHash    = release.artifactRootHash,
-            .productionPath      = std::move(productionPath),
-        };
+        return std::make_shared<task::RuntimeArtifactHandle const>(
+            std::move(installed)
+        );
     }
 
     auto openProductionRuntimeArtifact(

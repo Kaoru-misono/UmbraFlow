@@ -1,4 +1,7 @@
+#include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
+
+#include "project-fixture.hpp"
 
 #include <domain/content-hash.hpp>
 
@@ -135,6 +138,14 @@ namespace uf::operator_runtime
             return *hash;
         }
 
+        using test_support::command;
+        using test_support::journalEntry;
+        using test_support::prepareStore;
+        using test_support::reconciliationOutcome;
+        using test_support::reconcilingOperation;
+        using test_support::TemporaryDirectory;
+        using test_support::toolInvocation;
+
         [[nodiscard]]
         auto manifestSpec() -> SessionManifestSpec
         {
@@ -151,7 +162,7 @@ namespace uf::operator_runtime
         }
     }
 
-    TEST_CASE("contract-state-s01")
+    TEST_CASE("schema-state-s01")
     {
         auto const operatorSchema = readSchema("umbraflow-operator-v1.schema.json");
         auto const journalSchema  = readSchema("umbraflow-journal-v1.schema.json");
@@ -166,7 +177,7 @@ namespace uf::operator_runtime
         CHECK(state.find("\"canonical_opaque_payload\"") != std::string::npos);
     }
 
-    TEST_CASE("contract-state-s02")
+    TEST_CASE("schema-state-s02")
     {
         auto const schema   = readSchema("umbraflow-operator-v1.schema.json");
         auto const snapshot = definition(schema, "ProjectSnapshot");
@@ -188,9 +199,44 @@ namespace uf::operator_runtime
         CHECK(token.find("receipt") == std::string::npos);
         CHECK(token.find("fencing") == std::string::npos);
         CHECK(token.find("project_state") == std::string::npos);
+
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        // Opaque: the Operator mints the token, so a string shaped like one is
+        // worth nothing. Business code has no field to construct.
+        auto forged          = command(prepared.snapshot, "request-forged");
+        forged.snapshotToken = std::string(prepared.snapshot.token.size(), 'a');
+        CHECK(forged.snapshotToken != prepared.snapshot.token);
+        CHECK_FALSE(prepared.store.createOrLoadOperation(
+            forged,
+            toolInvocation(prepared.project, "command-1")
+        ).has_value());
+
+        // Not a live Receipt: presenting it does not consume it. One token
+        // opens as many Operations as the session asks for.
+        REQUIRE(prepared.store.createOrLoadOperation(
+            command(prepared.snapshot, "request-1"),
+            toolInvocation(prepared.project, "command-1")
+        ).has_value());
+        REQUIRE(prepared.store.createOrLoadOperation(
+            command(prepared.snapshot, "request-2"),
+            toolInvocation(prepared.project, "observe-1")
+        ).has_value());
+
+        // Not a permission either: it is a compare-and-swap reference into the
+        // session that made it, so a human takeover ends it without anything
+        // about the token itself changing.
+        REQUIRE(
+            prepared.store.takeoverLease("session-1", "human takeover").has_value()
+        );
+        CHECK_FALSE(prepared.store.createOrLoadOperation(
+            command(prepared.snapshot, "request-3"),
+            toolInvocation(prepared.project, "observe-1")
+        ).has_value());
     }
 
-    TEST_CASE("contract-state-s04")
+    TEST_CASE("schema-state-s04")
     {
         auto const schema = readSchema("umbraflow-operator-v1.schema.json");
         auto const basis  = definition(schema, "DecisionBasis");
@@ -233,5 +279,119 @@ namespace uf::operator_runtime
         CHECK(instance.find("\"mutation_chain_operation_id\"") != std::string::npos);
         CHECK(state.find("\"project_registration_hash\"") != std::string::npos);
         CHECK(state.find("\"state_hash\"") != std::string::npos);
+
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto const& registration = prepared.project.registration;
+        auto const baseline = [&prepared, &registration](
+            std::string instanceKey,
+            std::string eventId
+        )
+        {
+            return ProjectInstanceBaseline{
+                .projectInstanceKey  = std::move(instanceKey),
+                .eventId             = std::move(eventId),
+                .sessionManifestHash = prepared.manifest.hash(),
+                .entry               = journalEntry(
+                    prepared.project,
+                    registration.baselineEventType(),
+                    "{\"kind\":\"baseline\"}"
+                ),
+            };
+        };
+
+        // The key is immutable, so no second baseline can restart the revision
+        // line of a key that snapshots and Operations already name.
+        CHECK_FALSE(prepared.store.provisionProjectInstance(
+            registration,
+            prepared.plugin,
+            baseline("instance-1", "baseline-again")
+        ).has_value());
+
+        // A session may only pin a provisioned key, so naming a fresh one is
+        // not a way to reach revision zero either.
+        CHECK_FALSE(prepared.store.pinSession(
+            SessionPin{
+                .sessionId                 = "session-missing-instance",
+                .authenticatedControllerId = "controller-1",
+                .idempotencyNamespace      = "controller-1",
+                .projectRegistrationHash   = registration.hash(),
+                .capabilityProfileHash     = hashOf("capability"),
+                .controlledTargetKey       = "target-2",
+                .projectInstanceKey        = "instance-missing",
+                .mode                      = SessionMode::Write,
+            },
+            prepared.manifest
+        ).has_value());
+
+        // Re-baselining is therefore always a NEW key, and a new key is its own
+        // revision line starting at zero, side by side with the old one.
+        REQUIRE(prepared.store.provisionProjectInstance(
+            registration,
+            prepared.plugin,
+            baseline("instance-0", "baseline-0")
+        ).has_value());
+
+        auto const operation = reconcilingOperation(
+            prepared,
+            "request-1",
+            DeliveryOutcome::Delivered
+        );
+        auto const progressed = prepared.store.commitReconciliation(
+            prepared.plugin,
+            ReconciliationCommit{
+                .operationId                  = operation.operationId,
+                .expectedOperationRevision    = operation.revision,
+                .expectedProjectStateRevision = 0U,
+                .outcome                      = reconciliationOutcome(
+                    prepared,
+                    operation.operationId,
+                    "{\"disposition\":\"continue\"}"
+                ),
+                .journalEvents                = {
+                    JournalAppend{
+                        .eventId = "event-1",
+                        .entry = journalEntry(
+                            prepared.project,
+                            "fixture.progress",
+                            "{\"value\":1}"
+                        ),
+                    },
+                },
+            }
+        );
+        REQUIRE(progressed.has_value());
+
+        // The ABA itself: instance-0 really is at revision 0, and that does not
+        // make revision 0 current for the instance this session is pinned to.
+        CHECK_FALSE(prepared.store.commitReconciliation(
+            prepared.plugin,
+            ReconciliationCommit{
+                .operationId                  = operation.operationId,
+                .expectedOperationRevision    = progressed->revision,
+                .expectedProjectStateRevision = 0U,
+                .outcome                      = reconciliationOutcome(
+                    prepared,
+                    operation.operationId,
+                    "{\"disposition\":\"confirmed\"}"
+                ),
+            }
+        ).has_value());
+
+        auto const confirmed = prepared.store.commitReconciliation(
+            prepared.plugin,
+            ReconciliationCommit{
+                .operationId                  = operation.operationId,
+                .expectedOperationRevision    = progressed->revision,
+                .expectedProjectStateRevision = 1U,
+                .outcome                      = reconciliationOutcome(
+                    prepared,
+                    operation.operationId,
+                    "{\"disposition\":\"confirmed\"}"
+                ),
+            }
+        );
+        REQUIRE(confirmed.has_value());
+        CHECK(confirmed->state == OperationState::Confirmed);
     }
 }

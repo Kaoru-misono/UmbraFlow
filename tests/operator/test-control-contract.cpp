@@ -1,3 +1,16 @@
+// The half of the Operator control contracts this repository owns outright: the
+// shape its own schema documents must have, and the transitions OperationMachine
+// decides on its own. The project-parameterised half of C-01, C-06 and C-09
+// through C-13 belongs to the exported contract suite, which a consuming
+// repository runs against its own registration; see
+// contract-suite/source/suite-control-ledger.cpp. No property is asserted in
+// both places.
+//
+// A case named schema-* below asserts only that a schema definition exists with
+// certain members. It cannot go red when the behaviour it describes is removed,
+// so it does not carry the contract- name; for C-09 through C-13 that name is
+// registered against the suite's cases instead.
+
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
 #include <operator/operation.hpp>
@@ -8,71 +21,19 @@
 
 #include <doctest/doctest.h>
 
-#include <atomic>
-#include <chrono>
 #include <filesystem>
-#include <format>
 #include <fstream>
 #include <iterator>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 
 namespace uf::operator_runtime
 {
     namespace
     {
-        constexpr auto k_pluginSource = std::string_view{R"LUAU(
-return {
-    plugin_id = "fixture.control",
-    derive = function(_input) return '{}' end,
-    plan = function(_input) return '{}' end,
-    next_step = function(_input) return '{}' end,
-    reconcile = function(input) return input end,
-    reduce = function(_input) return '{"revision":0}' end,
-}
-)LUAU"};
-
-        class TemporaryDirectory final
-        {
-            std::filesystem::path m_path{};
-
-        public:
-            TemporaryDirectory()
-            {
-                static auto s_sequence = std::atomic<uint64>{1};
-                m_path = std::filesystem::temp_directory_path()
-                    / std::format(
-                        "umbraflow-control-contract-{}-{}",
-                        std::chrono::steady_clock::now().time_since_epoch().count(),
-                        s_sequence.fetch_add(1, std::memory_order_relaxed)
-                    );
-                auto error         = std::error_code{};
-                auto const created = std::filesystem::create_directory(m_path, error);
-                REQUIRE(created);
-                REQUIRE_FALSE(error);
-            }
-
-            TemporaryDirectory(TemporaryDirectory const&) = delete;
-            TemporaryDirectory(TemporaryDirectory&&) = delete;
-            auto operator=(TemporaryDirectory const&) -> TemporaryDirectory& = delete;
-            auto operator=(TemporaryDirectory&&) -> TemporaryDirectory& = delete;
-
-            ~TemporaryDirectory() noexcept
-            {
-                auto error = std::error_code{};
-                static_cast<void>(std::filesystem::remove_all(m_path, error));
-            }
-
-            [[nodiscard]] auto path() const -> std::filesystem::path const&
-            {
-                return m_path;
-            }
-        };
-
         [[nodiscard]]
         auto repositoryRoot() -> std::filesystem::path
         {
@@ -186,146 +147,12 @@ return {
         }
 
         using test_support::canonical;
+        using test_support::command;
         using test_support::hashOf;
-        using test_support::journalEntry;
-        using test_support::loadPlugin;
         using test_support::makeProject;
-        using test_support::sessionManifest;
+        using test_support::prepareStore;
+        using test_support::TemporaryDirectory;
         using test_support::toolInvocation;
-
-        struct PreparedStore final
-        {
-            OperatorCoordinator          store;
-            ProjectPluginHandle          plugin;
-            test_support::ProjectFixture project;
-            ControlLease                 lease;
-            SnapshotRecord               snapshot;
-        };
-
-        [[nodiscard]]
-        auto prepareStore(std::filesystem::path const& path) -> PreparedStore
-        {
-            auto const release = test_support::runtimeRelease(path / "session-handoff");
-            auto storeResult = OperatorCoordinator::open(path / "production");
-            REQUIRE(storeResult.has_value());
-            auto store = *std::move(storeResult);
-            auto installed = store.installRuntimeArtifact(
-                RuntimeArtifactInstallRequest{
-                    .handoffRoot                 = release.handoffRoot,
-                    .expectedReleaseManifestHash = release.releaseManifestHash,
-                    .expectedInstalledGeneration = 0U,
-                }
-            );
-            REQUIRE(installed.has_value());
-            auto const project = makeProject("fixture.control", k_pluginSource);
-            auto const manifest = sessionManifest(
-                project.registration,
-                installed->rootHash()
-            );
-            auto const projectPlugin = loadPlugin(project, k_pluginSource);
-            REQUIRE(store.registerProject(project.registration).has_value());
-            REQUIRE(store.provisionProjectInstance(
-                project.registration,
-                projectPlugin,
-                ProjectInstanceBaseline{
-                    .projectInstanceKey  = "instance-1",
-                    .eventId             = "baseline-1",
-                    .sessionManifestHash = manifest.hash(),
-                    .entry = journalEntry(
-                        project,
-                        project.registration.baselineEventType(),
-                        "{\"kind\":\"baseline\"}"
-                    ),
-                }
-            ).has_value());
-            REQUIRE(store.pinSession(
-                SessionPin{
-                    .sessionId                 = "session-1",
-                    .authenticatedControllerId = "controller-1",
-                    .idempotencyNamespace      = "controller-1",
-                    .projectRegistrationHash   = project.registration.hash(),
-                    .capabilityProfileHash     = hashOf("capability"),
-                    .controlledTargetKey       = "target-1",
-                    .projectInstanceKey        = "instance-1",
-                    .mode                      = SessionMode::Write,
-                },
-                manifest
-            ).has_value());
-            auto lease = store.acquireLease("session-1");
-            REQUIRE(lease.has_value());
-            auto snapshot = store.createSnapshot(*lease, hashOf("snapshot-1"));
-            REQUIRE(snapshot.has_value());
-            return PreparedStore{
-                .store    = std::move(store),
-                .plugin   = projectPlugin,
-                .project  = project,
-                .lease    = *lease,
-                .snapshot = *snapshot,
-            };
-        }
-
-        [[nodiscard]]
-        auto reconciliationOutcome(
-            PreparedStore const& prepared,
-            std::string operationId,
-            std::string document
-        ) -> ValidatedReconcileOutcome
-        {
-            return test_support::reconcileOutcome(
-                prepared.project,
-                prepared.plugin,
-                std::move(operationId),
-                std::move(document)
-            );
-        }
-
-        [[nodiscard]]
-        auto command(
-            SnapshotRecord const& snapshot,
-            std::string clientRequestId
-        ) -> CommandRequest
-        {
-            return CommandRequest{
-                .sessionId            = snapshot.sessionId,
-                .snapshotToken        = snapshot.token,
-                .idempotencyNamespace = "controller-1",
-                .clientRequestId      = std::move(clientRequestId),
-            };
-        }
-
-        [[nodiscard]]
-        auto createReadyOperation(
-            PreparedStore& prepared,
-            std::string clientRequestId,
-            std::string_view toolName
-        ) -> StoredOperation
-        {
-            auto operation = prepared.store.createOrLoadOperation(
-                command(prepared.snapshot, std::move(clientRequestId)),
-                toolInvocation(prepared.project, std::string{toolName})
-            );
-            REQUIRE(operation.has_value());
-            operation = prepared.store.transitionOperation(
-                operation->operationId,
-                operation->revision,
-                OperationEvent::ReadyWithoutApproval
-            );
-            REQUIRE(operation.has_value());
-            return *operation;
-        }
-    }
-
-    TEST_CASE("contract-control-c01")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const takeover = prepared.store.takeoverLease("session-1", "human takeover");
-        REQUIRE(takeover.has_value());
-        CHECK(takeover->fencingToken > prepared.lease.fencingToken);
-        CHECK_FALSE(prepared.store.createSnapshot(
-            prepared.lease,
-            hashOf("stale-snapshot")
-        ).has_value());
     }
 
     TEST_CASE("contract-control-c02")
@@ -339,9 +166,62 @@ return {
         CHECK(lease.find("\"fencing_token\"") != std::string::npos);
         CHECK(lease.find("expiry") == std::string::npos);
         CHECK(lease.find("renew") == std::string::npos);
+
+        auto temporary = TemporaryDirectory{};
+        auto heldLease = std::optional<ControlLease>{};
+        auto manifest  = std::optional<SessionManifest>{};
+        auto project   = std::optional<test_support::ProjectFixture>{};
+        {
+            auto prepared = prepareStore(temporary.path());
+            // No renewal call exists, and none is needed: the same lease keeps
+            // working for as long as the process holds it.
+            CHECK(prepared.store.createSnapshot(
+                prepared.lease,
+                hashOf("second-snapshot")
+            ).has_value());
+            heldLease = prepared.lease;
+            manifest  = prepared.manifest;
+            project   = prepared.project;
+        }
+
+        // Dropping the coordinator closes the database; reopening it is the
+        // restart. Everything below is what the new session epoch does to what
+        // the previous one left behind.
+        auto restarted = OperatorCoordinator::open(temporary.path() / "production");
+        REQUIRE(restarted.has_value());
+        auto const registrationHash = project->registration.hash();
+        auto const pin = [&registrationHash](std::string sessionId)
+        {
+            return SessionPin{
+                .sessionId                 = std::move(sessionId),
+                .authenticatedControllerId = "controller-1",
+                .idempotencyNamespace      = "controller-1",
+                .projectRegistrationHash   = registrationHash,
+                .capabilityProfileHash     = hashOf("capability"),
+                .controlledTargetKey       = "target-1",
+                .projectInstanceKey        = "instance-1",
+                .mode                      = SessionMode::Write,
+            };
+        };
+        CHECK_FALSE(restarted->pinSession(pin("session-1"), *manifest).has_value());
+        CHECK_FALSE(restarted->acquireLease("session-1").has_value());
+        CHECK_FALSE(restarted->createSnapshot(
+            *heldLease,
+            hashOf("after-restart")
+        ).has_value());
+
+        REQUIRE(restarted->pinSession(pin("session-2"), *manifest).has_value());
+        auto const fresh = restarted->acquireLease("session-2");
+        REQUIRE(fresh.has_value());
+        CHECK(fresh->sessionEpoch > heldLease->sessionEpoch);
+
+        // The fencing high-water outlives the epoch it was reached in, so the
+        // new epoch's first token cannot collide with a token the old one may
+        // still be presenting somewhere.
+        CHECK(fresh->fencingToken > heldLease->fencingToken);
     }
 
-    TEST_CASE("contract-control-c03")
+    TEST_CASE("schema-control-c03")
     {
         // HOST_VALIDATION_TEST(DeliveryAuthority.controlled_target_id)
         // HOST_VALIDATION_TEST(DeliveryAuthority.target_generation)
@@ -378,9 +258,48 @@ return {
         CHECK(commandRecord.find("\"authenticated_session_id\"") != std::string::npos);
         CHECK(commandRecord.find("\"authenticated_controller_id\"") != std::string::npos);
         CHECK(commandRecord.find("\"command_fingerprint\"") != std::string::npos);
+
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        // The caller names a tool and its arguments, and nothing else. The
+        // version and the mutability that decides the mutation chain are read
+        // out of the Tool Catalog descriptor: the same argument bytes reach a
+        // mutating and a read-only tool, and the caller stated neither.
+        auto const mutating = toolInvocation(prepared.project, "command-1");
+        auto const readOnly = toolInvocation(prepared.project, "observe-1");
+        CHECK(mutating.canonicalArgs() == readOnly.canonicalArgs());
+        CHECK(mutating.mutability() == ToolMutability::Mutating);
+        CHECK(readOnly.mutability() == ToolMutability::ReadOnly);
+        CHECK(mutating.toolVersion() == "1");
+        CHECK(readOnly.toolVersion() == "1");
+
+        // A tool the catalog does not describe cannot be minted at all, so an
+        // effect has no spelling that skips the descriptor.
+        CHECK_FALSE(prepared.project.toolCatalogSchemaOwner.validate(
+            "unlisted-command",
+            canonical(prepared.project.schemaOwner, "{\"value\":1}")
+        ).has_value());
+
+        // Binding is derived too: the Operator takes the registration from the
+        // authenticated session, so an invocation another project's catalog
+        // owner minted is refused rather than reconciled.
+        auto const foreignId = std::string{"fixture.foreign"};
+        auto const foreign   = makeProject(
+            foreignId,
+            test_support::pluginSource(foreignId)
+        );
+        CHECK(
+            foreign.registration.hash()
+            != prepared.project.registration.hash()
+        );
+        CHECK_FALSE(prepared.store.createOrLoadOperation(
+            command(prepared.snapshot, "request-foreign"),
+            toolInvocation(foreign, "command-1")
+        ).has_value());
     }
 
-    TEST_CASE("contract-control-c05")
+    TEST_CASE("schema-control-c05")
     {
         auto const schema    = readSchema("umbraflow-operator-v1.schema.json");
         auto const proposal  = definition(schema, "PlanProposal");
@@ -393,31 +312,6 @@ return {
         CHECK(effective.find("\"project_registration_hash\"") != std::string::npos);
         CHECK(effective.find("\"decision_basis_hash\"") != std::string::npos);
         CHECK(effective.find("\"required_approvals\"") != std::string::npos);
-    }
-
-    TEST_CASE("contract-control-c06")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const request  = command(prepared.snapshot, "request-1");
-        auto const first    = prepared.store.createOrLoadOperation(
-            request,
-            toolInvocation(prepared.project, "command-1")
-        );
-        auto const repeated = prepared.store.createOrLoadOperation(
-            request,
-            toolInvocation(prepared.project, "command-1")
-        );
-        REQUIRE(first.has_value());
-        REQUIRE(repeated.has_value());
-        CHECK(first->lookup == CommandLookup::Created);
-        CHECK(repeated->lookup == CommandLookup::Existing);
-        CHECK(first->operationId == repeated->operationId);
-
-        CHECK_FALSE(prepared.store.createOrLoadOperation(
-            request,
-            toolInvocation(prepared.project, "different-command")
-        ).has_value());
     }
 
     TEST_CASE("contract-control-c07")
@@ -444,7 +338,7 @@ return {
         CHECK(planVersion.find("\"superseded\"") != std::string::npos);
     }
 
-    TEST_CASE("contract-control-c08")
+    TEST_CASE("schema-control-c08")
     {
         auto const schema = readSchema("umbraflow-operator-v1.schema.json");
         auto const plan   = definition(schema, "EffectivePlan");
@@ -461,31 +355,8 @@ return {
         CHECK(limits.find("\"maximum_observations\"") != std::string::npos);
     }
 
-    TEST_CASE("contract-control-c09")
+    TEST_CASE("schema-control-c09")
     {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const operation = createReadyOperation(prepared, "request-1", "command-1");
-        auto const dispatch  = prepared.store.reserveDispatch(
-            operation.operationId,
-            operation.revision,
-            prepared.lease,
-            hashOf("decision"),
-            hashOf("plan"),
-            hashOf("step"),
-            "authority-1",
-            std::nullopt
-        );
-        REQUIRE(dispatch.has_value());
-        auto const reconciles = prepared.store.recordDeliveryOutcome(
-            operation.operationId,
-            dispatch->dispatchSequence,
-            dispatch->operationRevision,
-            DeliveryOutcome::TransportUnknown
-        );
-        REQUIRE(reconciles.has_value());
-        CHECK(reconciles->state == OperationState::Reconciling);
-
         auto const schema = readSchema("umbraflow-operator-v1.schema.json");
         checkStrictObject(definition(schema, "DispatchOutcome"));
         auto const result = definition(schema, "ToolResult");
@@ -495,33 +366,8 @@ return {
         CHECK(result.find("\"success\"") == std::string::npos);
     }
 
-    TEST_CASE("contract-control-c10")
+    TEST_CASE("schema-control-c10")
     {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const operation = createReadyOperation(prepared, "request-1", "command-1");
-        auto const dispatch  = prepared.store.reserveDispatch(
-            operation.operationId,
-            operation.revision,
-            prepared.lease,
-            hashOf("decision"),
-            hashOf("plan"),
-            hashOf("step"),
-            "authority-1",
-            std::nullopt
-        );
-        REQUIRE(dispatch.has_value());
-        CHECK_FALSE(prepared.store.reserveDispatch(
-            operation.operationId,
-            dispatch->operationRevision,
-            prepared.lease,
-            hashOf("decision"),
-            hashOf("plan"),
-            hashOf("step"),
-            "authority-2",
-            std::nullopt
-        ).has_value());
-
         auto const schema  = readSchema("umbraflow-operator-v1.schema.json");
         auto const record  = definition(schema, "DispatchRecord");
         auto const outcome = definition(schema, "DeliveryOutcome");
@@ -532,123 +378,8 @@ return {
         CHECK(outcome.find("\"transport_unknown\"") != std::string::npos);
     }
 
-    TEST_CASE("contract-control-c11")
+    TEST_CASE("schema-control-c11")
     {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const operation = createReadyOperation(prepared, "request-1", "command-1");
-        auto const dispatch  = prepared.store.reserveDispatch(
-            operation.operationId,
-            operation.revision,
-            prepared.lease,
-            hashOf("decision"),
-            hashOf("plan"),
-            hashOf("step"),
-            "authority-1",
-            std::nullopt
-        );
-        REQUIRE(dispatch.has_value());
-        auto const reconciling = prepared.store.recordDeliveryOutcome(
-            operation.operationId,
-            dispatch->dispatchSequence,
-            dispatch->operationRevision,
-            DeliveryOutcome::Delivered
-        );
-        REQUIRE(reconciling.has_value());
-
-        auto const progress = prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId                  = operation.operationId,
-                .expectedOperationRevision    = reconciling->revision,
-                .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(prepared, operation.operationId, "{\"disposition\":\"continue\"}"),
-                .journalEvents                = {
-                    JournalAppend{
-                        .eventId = "event-1",
-                        .entry = journalEntry(
-                            prepared.project,
-                            "fixture.progress",
-                            "{\"value\":1}"
-                        ),
-                    },
-                },
-            }
-        );
-        REQUIRE(progress.has_value());
-        CHECK(progress->state == OperationState::Reconciling);
-
-        CHECK_FALSE(prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId                  = operation.operationId,
-                .expectedOperationRevision    = progress->revision,
-                .expectedProjectStateRevision = 0U,
-                .outcome                      = reconciliationOutcome(prepared, operation.operationId, "{\"disposition\":\"confirmed\"}"),
-                .journalEvents                = {
-                    JournalAppend{
-                        .eventId = "event-stale",
-                        .entry = journalEntry(
-                            prepared.project,
-                            "fixture.stale",
-                            "{\"value\":2}"
-                        ),
-                    },
-                },
-            }
-        ).has_value());
-
-        CHECK_FALSE(prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId                  = operation.operationId,
-                .expectedOperationRevision    = progress->revision,
-                .expectedProjectStateRevision = 1U,
-                .outcome                      = reconciliationOutcome(prepared, operation.operationId, "{\"disposition\":\"confirmed\"}"),
-                .journalEvents                = {
-                    JournalAppend{
-                        .eventId = "event-2",
-                        .entry = journalEntry(
-                            prepared.project,
-                            "fixture.confirmed",
-                            "{\"value\":2}"
-                        ),
-                    },
-                    JournalAppend{
-                        .eventId = "event-1",
-                        .entry = journalEntry(
-                            prepared.project,
-                            "fixture.duplicate",
-                            "{\"value\":3}"
-                        ),
-                    },
-                },
-            }
-        ).has_value());
-
-        auto const confirmed = prepared.store.commitReconciliation(
-            prepared.plugin,
-            ReconciliationCommit{
-                .operationId                  = operation.operationId,
-                .expectedOperationRevision    = progress->revision,
-                .expectedProjectStateRevision = 1U,
-                .outcome                      = reconciliationOutcome(prepared, operation.operationId, "{\"disposition\":\"confirmed\"}"),
-                .journalEvents                = {
-                    JournalAppend{
-                        .eventId = "event-2",
-                        .entry = journalEntry(
-                            prepared.project,
-                            "fixture.confirmed",
-                            "{\"value\":2}"
-                        ),
-                    },
-                },
-            }
-        );
-        REQUIRE(confirmed.has_value());
-        CHECK(confirmed->state == OperationState::Confirmed);
-        CHECK(confirmed->revision > progress->revision);
-
         auto const schema    = readSchema("umbraflow-operator-v1.schema.json");
         auto const reconcile = definition(schema, "ReconcileProposal");
         checkStrictObject(reconcile);
@@ -658,7 +389,7 @@ return {
         CHECK(reconcile.find("\"diverged\"") != std::string::npos);
     }
 
-    TEST_CASE("contract-control-c12")
+    TEST_CASE("schema-control-c12")
     {
         auto const policySchema   = readSchema("umbraflow-policy-v1.schema.json");
         auto const operatorSchema = readSchema("umbraflow-operator-v1.schema.json");
@@ -677,108 +408,10 @@ return {
         CHECK(approvalToken.find("\"effect_envelope_hash\"") != std::string::npos);
         CHECK(approvalToken.find("\"lease_id\"") != std::string::npos);
         CHECK(authority.find("\"approval_token_ids\"") != std::string::npos);
-
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto operation = prepared.store.createOrLoadOperation(
-            command(prepared.snapshot, "request-1"),
-            toolInvocation(prepared.project, "command-1")
-        );
-        REQUIRE(operation.has_value());
-        operation = prepared.store.transitionOperation(
-            operation->operationId,
-            operation->revision,
-            OperationEvent::ApprovalRequired
-        );
-        REQUIRE(operation.has_value());
-        auto const planHash = hashOf("plan");
-        auto const stepHash = hashOf("step");
-        auto const approval = prepared.store.issueApproval(
-            ApprovalRequest{
-                .operationId            = operation->operationId,
-                .lease                  = prepared.lease,
-                .frozenPlanHash         = planHash,
-                .stepIntentHash         = stepHash,
-                .decisionBasisHash      = hashOf("decision"),
-                .effectEnvelopeHash     = hashOf("effects"),
-                .policyHash             = hashOf("policy"),
-                .approverPrincipal      = "human-1",
-                .approverCapabilityHash = hashOf("approval-capability"),
-                .expiresAtUnixMillis    = 4'000'000'000'000U,
-            },
-            "approval-authority-1"
-        );
-        REQUIRE(approval.has_value());
-        CHECK_FALSE(prepared.store.reserveDispatch(
-            operation->operationId,
-            operation->revision,
-            prepared.lease,
-            hashOf("decision"),
-            planHash,
-            hashOf("wrong-step"),
-            "dispatch-authority-invalid",
-            *approval
-        ).has_value());
-        auto const dispatch = prepared.store.reserveDispatch(
-            operation->operationId,
-            operation->revision,
-            prepared.lease,
-            hashOf("decision"),
-            planHash,
-            stepHash,
-            "dispatch-authority-1",
-            *approval
-        );
-        REQUIRE(dispatch.has_value());
-        auto const reconciling = prepared.store.recordDeliveryOutcome(
-            operation->operationId,
-            dispatch->dispatchSequence,
-            dispatch->operationRevision,
-            DeliveryOutcome::NotDelivered
-        );
-        REQUIRE(reconciling.has_value());
-        auto const awaitingApproval = prepared.store.transitionOperation(
-            operation->operationId,
-            reconciling->revision,
-            OperationEvent::NextStepApprovalRequired
-        );
-        REQUIRE(awaitingApproval.has_value());
-        CHECK_FALSE(prepared.store.reserveDispatch(
-            operation->operationId,
-            awaitingApproval->revision,
-            prepared.lease,
-            hashOf("decision"),
-            planHash,
-            stepHash,
-            "dispatch-authority-2",
-            *approval
-        ).has_value());
     }
 
-    TEST_CASE("contract-control-c13")
+    TEST_CASE("schema-control-c13")
     {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto first     = prepared.store.createOrLoadOperation(
-            command(prepared.snapshot, "request-1"),
-            toolInvocation(prepared.project, "command-1")
-        );
-        REQUIRE(first.has_value());
-        CHECK_FALSE(prepared.store.createOrLoadOperation(
-            command(prepared.snapshot, "request-2"),
-            toolInvocation(prepared.project, "command-2")
-        ).has_value());
-        first = prepared.store.transitionOperation(
-            first->operationId,
-            first->revision,
-            OperationEvent::Cancelled
-        );
-        REQUIRE(first.has_value());
-        CHECK(prepared.store.createOrLoadOperation(
-            command(prepared.snapshot, "request-2"),
-            toolInvocation(prepared.project, "command-2")
-        ).has_value());
-
         auto const schema = readSchema("umbraflow-operator-v1.schema.json");
         auto const chain  = definition(schema, "MutationChain");
         checkStrictObject(chain);

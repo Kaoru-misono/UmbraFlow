@@ -7,8 +7,11 @@
 
 #include <domain/error.hpp>
 
+#include <task/platform/confined-file.hpp>
+
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <filesystem>
@@ -21,6 +24,7 @@
 #include <system_error>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace uf::operator_runtime
 {
@@ -330,6 +334,19 @@ namespace uf::operator_runtime
             }
         };
 
+        // sha256 over the canonicalization verifyExactDatabaseSchema builds:
+        // every sqlite_schema row ordered by (type, name), each of its four
+        // columns written as <byte length>:<value>. It therefore covers the
+        // STORED DDL TEXT -- reindenting the R"sql(...)" block below changes it
+        // even when the schema is identical, and so does adding a comment
+        // inside it. Any change to that block recomputes this value and the
+        // expectedTables list in the same change, from a freshly created
+        // database rather than by hand. initialize() verifies immediately after
+        // creating the schema, so a forgotten recomputation cannot ship green.
+        constexpr auto k_exactSchemaV1Fingerprint = std::string_view{
+            "sha256:5738e6f98534efbdfc3114413de70c032b64e2cbaa84d4c152ec6cbb512120a4"
+        };
+
         [[nodiscard]]
         auto verifyExactDatabaseSchema(sqlite3* database) -> Status
         {
@@ -362,12 +379,7 @@ namespace uf::operator_runtime
                 actual,
                 sha256(std::as_bytes(std::span{canonical}))
             );
-            UF_TRY_VALUE(
-                expected,
-                ContentHash::parse(
-                    "sha256:d445c811b9469a58ff116df4763d4e7f1acd80b6a3392639d7eb257321916753"
-                )
-            );
+            UF_TRY_VALUE(expected, ContentHash::parse(k_exactSchemaV1Fingerprint));
             if (actual != expected)
             {
                 return fail(
@@ -474,7 +486,8 @@ namespace uf::operator_runtime
                     "approvals,authority_decisions,control_leases,control_transitions,"
                     "dispatches,fencing_high_water,journal_events,operations,"
                     "project_instances,project_registrations,project_state,reconciliations,"
-                    "runtime_artifacts,runtime_installations,runtime_state,sessions,snapshots"
+                    "runtime_artifacts,runtime_installations,runtime_publications,"
+                    "runtime_state,sessions,snapshots"
                 };
                 if (tables != expectedTables)
                 {
@@ -499,6 +512,10 @@ namespace uf::operator_runtime
                 database,
                 R"sql(
                     BEGIN IMMEDIATE;
+                    CREATE TABLE IF NOT EXISTS runtime_artifacts(
+                        artifact_root_hash TEXT PRIMARY KEY
+                    ) STRICT;
+
                     CREATE TABLE IF NOT EXISTS runtime_state(
                         singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
                         current_session_epoch INTEGER NOT NULL
@@ -506,6 +523,7 @@ namespace uf::operator_runtime
                         installed_generation INTEGER NOT NULL
                             CHECK(installed_generation >= 0),
                         active_runtime_artifact_root_hash TEXT
+                            REFERENCES runtime_artifacts(artifact_root_hash)
                     ) STRICT;
                     INSERT INTO runtime_state(
                         singleton,
@@ -514,10 +532,6 @@ namespace uf::operator_runtime
                         active_runtime_artifact_root_hash
                     ) VALUES(1, 0, 0, NULL);
 
-                    CREATE TABLE IF NOT EXISTS runtime_artifacts(
-                        artifact_root_hash TEXT PRIMARY KEY
-                    ) STRICT;
-
                     CREATE TABLE IF NOT EXISTS runtime_installations(
                         installed_generation INTEGER PRIMARY KEY
                             CHECK(installed_generation > 0),
@@ -525,6 +539,18 @@ namespace uf::operator_runtime
                             REFERENCES runtime_artifacts(artifact_root_hash),
                         release_manifest_hash TEXT NOT NULL,
                         UNIQUE(installed_generation, artifact_root_hash)
+                    ) STRICT;
+
+                    -- One row per publication in flight: taken before anything
+                    -- is written under the production root and gone before the
+                    -- installing call returns. Together with the two foreign
+                    -- keys above it is the whole reference count on an artifact
+                    -- directory, and SQLite refuses to delete a runtime_artifacts
+                    -- row while any of the three still points at it.
+                    CREATE TABLE IF NOT EXISTS runtime_publications(
+                        staging_token TEXT PRIMARY KEY,
+                        artifact_root_hash TEXT NOT NULL
+                            REFERENCES runtime_artifacts(artifact_root_hash)
                     ) STRICT;
 
                     CREATE TABLE IF NOT EXISTS project_registrations(
@@ -879,6 +905,102 @@ namespace uf::operator_runtime
         };
 
         [[nodiscard]]
+        auto discardPublication(
+            sqlite3* database,
+            std::string_view stagingToken
+        ) -> Status
+        {
+            UF_TRY_VALUE(
+                statement,
+                prepare(
+                    database,
+                    "DELETE FROM runtime_publications WHERE staging_token=?1"
+                )
+            );
+            UF_TRY(bindText(database, statement.get(), 1, stagingToken));
+            return expectDone(database, statement.get());
+        }
+
+        // A row in runtime_publications for the whole of one installation. It
+        // is taken before anything is written under the production root, so a
+        // reclamation transaction that runs while the directory is being filled
+        // sees the hash as referenced and leaves it alone.
+        //
+        // The destructor drops the row best-effort: a failure there costs a
+        // directory that stays until the next open, because beginSessionEpoch
+        // clears the table.
+        class PublicationHold final
+        {
+            sqlite3*    m_database;
+            std::string m_stagingToken;
+            bool        m_held{true};
+
+            PublicationHold(sqlite3* database, std::string stagingToken) noexcept
+                : m_database{database}
+                , m_stagingToken{std::move(stagingToken)}
+            {
+            }
+
+        public:
+            PublicationHold(PublicationHold&& other) noexcept
+                : m_database{other.m_database}
+                , m_stagingToken{std::move(other.m_stagingToken)}
+                , m_held{std::exchange(other.m_held, false)}
+            {
+            }
+
+            PublicationHold(PublicationHold const&) = delete;
+            auto operator=(PublicationHold const&) -> PublicationHold& = delete;
+            auto operator=(PublicationHold&&) -> PublicationHold& = delete;
+
+            ~PublicationHold()
+            {
+                if (m_held)
+                {
+                    static_cast<void>(discardPublication(m_database, m_stagingToken));
+                }
+            }
+
+            [[nodiscard]]
+            static auto take(
+                sqlite3* database,
+                std::string_view stagingToken,
+                std::string_view artifactRootHash
+            ) -> Result<PublicationHold>
+            {
+                UF_TRY_VALUE(transaction, Transaction::begin(database));
+                UF_TRY_VALUE(
+                    artifactInsert,
+                    prepare(
+                        database,
+                        "INSERT OR IGNORE INTO runtime_artifacts(artifact_root_hash) "
+                        "VALUES(?1)"
+                    )
+                );
+                UF_TRY(bindText(database, artifactInsert.get(), 1, artifactRootHash));
+                UF_TRY(expectDone(database, artifactInsert.get()));
+                UF_TRY_VALUE(
+                    publicationInsert,
+                    prepare(
+                        database,
+                        "INSERT INTO runtime_publications(staging_token, "
+                        "artifact_root_hash) VALUES(?1, ?2)"
+                    )
+                );
+                UF_TRY(bindText(database, publicationInsert.get(), 1, stagingToken));
+                UF_TRY(bindText(database, publicationInsert.get(), 2, artifactRootHash));
+                UF_TRY(expectDone(database, publicationInsert.get()));
+                UF_TRY(transaction.commit());
+                return PublicationHold{database, std::string{stagingToken}};
+            }
+
+            // The installing transaction deletes the row itself, so that the
+            // hold and the installation row that takes over from it commit
+            // together rather than leaving a window between them.
+            auto markReleased() noexcept -> void { m_held = false; }
+        };
+
+        [[nodiscard]]
         auto beginSessionEpoch(sqlite3* database) -> Result<uint64>
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
@@ -922,6 +1044,12 @@ namespace uf::operator_runtime
             }
             UF_TRY(execute(database, "DELETE FROM control_leases"));
             UF_TRY(execute(database, "UPDATE sessions SET active=0 WHERE active=1"));
+
+            // A publication claim outlives its process only after a crash, and
+            // the epoch bump above has just fenced that process out. Dropping
+            // the claims here is what keeps a crash from pinning an artifact
+            // directory against reclamation forever.
+            UF_TRY(execute(database, "DELETE FROM runtime_publications"));
             UF_TRY(transaction.commit());
             return next;
         }
@@ -1009,6 +1137,34 @@ namespace uf::operator_runtime
                 error
             );
         }
+
+        // The staging directory is part of the production layout rather than
+        // something an installation creates on its way past, because
+        // reclamation sweeps it and both need one owner for the name.
+        auto const stagingRoot = runtimeArtifactRoot
+            / std::string{detail::k_stagingDirectoryName};
+        std::filesystem::create_directories(stagingRoot, error);
+        if (error)
+        {
+            return fail(
+                AutomationErrorKind::IoFailure,
+                "Could not create production RuntimeArtifact staging root",
+                error
+            );
+        }
+        auto const stagingRootStatus = std::filesystem::symlink_status(stagingRoot, error);
+        if (
+            error
+            || !std::filesystem::is_directory(stagingRootStatus)
+            || std::filesystem::is_symlink(stagingRootStatus)
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Production RuntimeArtifact staging root must be a plain directory",
+                error
+            );
+        }
         auto const databaseStatus = std::filesystem::symlink_status(databasePath, error);
         if (!error && std::filesystem::exists(databaseStatus))
         {
@@ -1083,13 +1239,36 @@ namespace uf::operator_runtime
         // publisher may have put the identical bytes there first -- which is
         // one of the ways the CAS fails. Deleting it on our own failure would
         // break their installation to tidy ours.
+        //
+        // What the failure leaves behind instead is a runtime_artifacts row no
+        // installation names, which reclaimUnreferencedRuntimeArtifacts is free
+        // to remove once nothing else does either.
         UF_TRY_VALUE(stagingToken, randomToken(m_impl->database.get()));
         UF_TRY_VALUE(
-            prepared,
-            detail::prepareRuntimeInstallation(
+            release,
+            detail::readRuntimeRelease(
                 m_impl->runtimeArtifactRoot,
                 request.handoffRoot,
-                request.expectedReleaseManifestHash,
+                request.expectedReleaseManifestHash
+            )
+        );
+
+        // The hold goes in before the first byte is written under the
+        // production root, so there is no instant in which the directory exists
+        // and the database says nothing references it.
+        UF_TRY_VALUE(
+            hold,
+            PublicationHold::take(
+                m_impl->database.get(),
+                stagingToken,
+                release.artifactRootHash.hex()
+            )
+        );
+        UF_TRY_VALUE(
+            artifact,
+            detail::publishRuntimeArtifact(
+                m_impl->runtimeArtifactRoot,
+                release,
                 stagingToken
             )
         );
@@ -1120,7 +1299,7 @@ namespace uf::operator_runtime
                 "RuntimeArtifact installed-generation compare-and-swap failed"
             );
         }
-        if (currentRoot == prepared.artifactRootHash.hex())
+        if (currentRoot == release.artifactRootHash.hex())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
@@ -1131,21 +1310,6 @@ namespace uf::operator_runtime
             nextGeneration,
             checkedSqlIncrement(currentGeneration, "installed RuntimeArtifact generation")
         );
-
-        UF_TRY_VALUE(
-            artifactInsert,
-            prepare(
-                m_impl->database.get(),
-                "INSERT OR IGNORE INTO runtime_artifacts(artifact_root_hash) VALUES(?1)"
-            )
-        );
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            artifactInsert.get(),
-            1,
-            prepared.artifactRootHash.hex()
-        ));
-        UF_TRY(expectDone(m_impl->database.get(), artifactInsert.get()));
 
         UF_TRY_VALUE(
             installationInsert,
@@ -1165,13 +1329,13 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             installationInsert.get(),
             2,
-            prepared.artifactRootHash.hex()
+            release.artifactRootHash.hex()
         ));
         UF_TRY(bindText(
             m_impl->database.get(),
             installationInsert.get(),
             3,
-            prepared.releaseManifestHash.hex()
+            release.releaseManifestHash.hex()
         ));
         UF_TRY(expectDone(m_impl->database.get(), installationInsert.get()));
 
@@ -1189,7 +1353,7 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             update.get(),
             2,
-            prepared.artifactRootHash.hex()
+            release.artifactRootHash.hex()
         ));
         UF_TRY(bindInteger(
             m_impl->database.get(),
@@ -1205,10 +1369,127 @@ namespace uf::operator_runtime
                 "RuntimeArtifact installed-generation compare-and-swap lost its transaction"
             );
         }
+
+        // The installation row now references the hash, so the hold has nothing
+        // left to protect; both facts commit at once.
+        UF_TRY(discardPublication(m_impl->database.get(), stagingToken));
         UF_TRY(transaction.commit());
+        hold.markReleased();
         return task::InstalledRuntimeArtifact{
-            std::move(prepared.artifact),
+            std::move(artifact),
             nextGeneration,
+        };
+    }
+
+    auto OperatorCoordinator::reclaimUnreferencedRuntimeArtifacts()
+        -> Result<ReclaimedRuntimeArtifacts>
+    {
+        // The removals happen INSIDE the write transaction, and that is the
+        // whole defence against a concurrent publisher: PublicationHold::take
+        // is itself a BEGIN IMMEDIATE, so a claim on one of these hashes either
+        // lands before this transaction opens -- and the query below sees it --
+        // or after this one commits, by which point the directory is gone and
+        // the publisher materializes it again.
+        //
+        // Rolling back after a directory has been removed is safe in the one
+        // direction it can happen: a runtime_artifacts row whose directory is
+        // missing is still unreferenced, so the next pass finishes the job.
+        UF_TRY_VALUE(
+            artifactDirectory,
+            task_platform::ConfinedRoot::open(m_impl->runtimeArtifactRoot)
+        );
+        UF_TRY_VALUE(
+            stagingDirectory,
+            task_platform::ConfinedRoot::open(
+                m_impl->runtimeArtifactRoot / std::string{detail::k_stagingDirectoryName}
+            )
+        );
+        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
+
+        // Every row is read before the first write, because a statement that is
+        // still stepping does not see its own transaction's later changes.
+        UF_TRY_VALUE(
+            orphanQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT artifact_root_hash FROM runtime_artifacts WHERE "
+                "artifact_root_hash NOT IN "
+                "(SELECT artifact_root_hash FROM runtime_installations) AND "
+                "artifact_root_hash NOT IN "
+                "(SELECT artifact_root_hash FROM runtime_publications) AND "
+                "artifact_root_hash NOT IN "
+                "(SELECT active_runtime_artifact_root_hash FROM runtime_state "
+                "WHERE singleton=1 AND active_runtime_artifact_root_hash IS NOT NULL) "
+                "ORDER BY artifact_root_hash"
+            )
+        );
+        auto orphans    = std::vector<std::string>{};
+        auto orphanStep = sqlite3_step(orphanQuery.get());
+        while (orphanStep == SQLITE_ROW)
+        {
+            orphans.emplace_back(columnText(orphanQuery.get(), 0));
+            orphanStep = sqlite3_step(orphanQuery.get());
+        }
+        if (orphanStep != SQLITE_DONE)
+        {
+            return databaseFailure(
+                m_impl->database.get(),
+                "could not scan unreferenced RuntimeArtifacts"
+            );
+        }
+
+        UF_TRY_VALUE(
+            claimedQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT staging_token FROM runtime_publications"
+            )
+        );
+        auto claimed     = std::vector<std::string>{};
+        auto claimedStep = sqlite3_step(claimedQuery.get());
+        while (claimedStep == SQLITE_ROW)
+        {
+            claimed.emplace_back(columnText(claimedQuery.get(), 0));
+            claimedStep = sqlite3_step(claimedQuery.get());
+        }
+        if (claimedStep != SQLITE_DONE)
+        {
+            return databaseFailure(
+                m_impl->database.get(),
+                "could not scan in-flight RuntimeArtifact publications"
+            );
+        }
+
+        for (auto const& hash : orphans)
+        {
+            UF_TRY(artifactDirectory.removeTree(hash));
+            UF_TRY_VALUE(
+                deletion,
+                prepare(
+                    m_impl->database.get(),
+                    "DELETE FROM runtime_artifacts WHERE artifact_root_hash=?1"
+                )
+            );
+            UF_TRY(bindText(m_impl->database.get(), deletion.get(), 1, hash));
+            UF_TRY(expectDone(m_impl->database.get(), deletion.get()));
+        }
+
+        UF_TRY_VALUE(stagingNames, stagingDirectory.childNames());
+        auto reclaimedStagings = uint64{};
+        for (auto const& name : stagingNames)
+        {
+            if (std::ranges::contains(claimed, name))
+            {
+                continue;
+            }
+            UF_TRY(stagingDirectory.removeTree(name));
+            ++reclaimedStagings;
+        }
+
+        UF_TRY(transaction.commit());
+        return ReclaimedRuntimeArtifacts{
+            .artifactDirectories = static_cast<uint64>(orphans.size()),
+            .stagingDirectories  = reclaimedStagings,
         };
     }
 

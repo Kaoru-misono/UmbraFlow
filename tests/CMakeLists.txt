@@ -40,13 +40,27 @@ function(cpp_add_test)
     endif()
 endfunction()
 
+# Every gate a requirement owns, spelled exactly. Two prefixes, one vocabulary:
+#
+#   contract-<area>-<id>  exercises the code and goes red when the behaviour is
+#                         removed.
+#   schema-<area>-<id>    only reads schema/*.json and asserts that a definition
+#                         exists with certain members. It passes whether or not
+#                         the behaviour exists, which is why it may not wear the
+#                         contract- name.
+#
+# One requirement may own one gate of each kind. C-09 through C-13 do: their
+# store behaviour lives in the exported suite, which registers the contract-
+# name, while their schema shape stayed in tests/operator and takes the schema-
+# name. What this list forbids is the case the ruling was written against -- a
+# contract- gate whose assertions only read a schema file.
 set(UF_REQUIRED_DOCTEST_CONTRACTS
-    contract-product-p01
-    contract-product-p02
-    contract-product-p03
     contract-product-p04
     contract-product-p05-fixtures
     contract-product-p06
+    schema-product-p01
+    schema-product-p02
+    schema-product-p03
     contract-runtime-u01
     contract-runtime-u02
     contract-runtime-u03
@@ -55,35 +69,96 @@ set(UF_REQUIRED_DOCTEST_CONTRACTS
     contract-runtime-u06
     contract-runtime-u07
     contract-runtime-u08
-    contract-state-s01
-    contract-state-s02
     contract-state-s03
-    contract-state-s04
     contract-state-s05
     contract-state-s06
+    schema-state-s01
+    schema-state-s02
+    schema-state-s04
     contract-control-c01
     contract-control-c02
-    contract-control-c03
     contract-control-c04
-    contract-control-c05
     contract-control-c06
     contract-control-c07
-    contract-control-c08
     contract-control-c09
     contract-control-c10
     contract-control-c11
     contract-control-c12
     contract-control-c13
     contract-control-c14
-    contract-agent-a01
-    contract-agent-a02
-    contract-agent-a03
+    schema-control-c03
+    schema-control-c05
+    schema-control-c08
+    schema-control-c09
+    schema-control-c10
+    schema-control-c11
+    schema-control-c12
+    schema-control-c13
     contract-agent-a04
-    contract-agent-a05
     contract-agent-a06
-    contract-agent-a07
     contract-agent-a08
+    schema-agent-a01
+    schema-agent-a02
+    schema-agent-a03
+    schema-agent-a05
+    schema-agent-a07
 )
+
+# The 42 REQUIRED_CORE requirements, prefix stripped. The list above says which
+# kind of gate each one owns; this one says that none of them lost every gate.
+# Deriving it from the list above would make it unfalsifiable, so it is written
+# out: dropping both of a requirement's gates has to fail here.
+set(UF_REQUIRED_CORE_REQUIREMENTS
+    product-p01
+    product-p02
+    product-p03
+    product-p04
+    product-p05-fixtures
+    product-p06
+    runtime-u01
+    runtime-u02
+    runtime-u03
+    runtime-u04
+    runtime-u05
+    runtime-u06
+    runtime-u07
+    runtime-u08
+    state-s01
+    state-s02
+    state-s03
+    state-s04
+    state-s05
+    state-s06
+    control-c01
+    control-c02
+    control-c03
+    control-c04
+    control-c05
+    control-c06
+    control-c07
+    control-c08
+    control-c09
+    control-c10
+    control-c11
+    control-c12
+    control-c13
+    control-c14
+    agent-a01
+    agent-a02
+    agent-a03
+    agent-a04
+    agent-a05
+    agent-a06
+    agent-a07
+    agent-a08
+)
+list(LENGTH UF_REQUIRED_CORE_REQUIREMENTS UF_REQUIRED_CORE_REQUIREMENT_COUNT)
+if(NOT UF_REQUIRED_CORE_REQUIREMENT_COUNT EQUAL 42)
+    message(FATAL_ERROR
+        "the requirement matrix has 42 REQUIRED_CORE entries; this list has "
+        "${UF_REQUIRED_CORE_REQUIREMENT_COUNT}"
+    )
+endif()
 
 # A suite is valid only when its requested IDs and concrete doctest declarations
 # are the same set. The global registry also rejects placeholders, cross-suite
@@ -156,14 +231,14 @@ function(cpp_add_contract_suite)
     endif()
 
     string(REGEX MATCHALL
-        "TEST_CASE[ \t\r\n]*\\([ \t\r\n]*\"contract-[a-z0-9-]+\"[ \t\r\n]*\\)"
+        "TEST_CASE[ \t\r\n]*\\([ \t\r\n]*\"(contract|schema)-[a-z0-9-]+\"[ \t\r\n]*\\)"
         CONTRACT_CASE_DECLARATIONS
         "${CONTRACT_SOURCE_TEXT}"
     )
     set(DECLARED_CONTRACT_CASES "")
     foreach(CONTRACT_CASE_DECLARATION IN LISTS CONTRACT_CASE_DECLARATIONS)
         string(REGEX MATCH
-            "contract-[a-z0-9-]+"
+            "(contract|schema)-[a-z0-9-]+"
             DECLARED_CONTRACT_CASE
             "${CONTRACT_CASE_DECLARATION}"
         )
@@ -193,6 +268,12 @@ function(cpp_add_contract_suite)
 
     get_property(REGISTERED_CONTRACT_CASES GLOBAL PROPERTY UF_REGISTERED_CONTRACT_CASES)
     foreach(CONTRACT_CASE IN LISTS ARG_CASES)
+        if(NOT CONTRACT_CASE MATCHES "^(contract|schema)-")
+            message(FATAL_ERROR
+                "cpp_add_contract_suite(${ARG_TARGET}) rejects a gate outside the "
+                "contract-/schema- vocabulary: ${CONTRACT_CASE}"
+            )
+        endif()
         list(FIND UF_REQUIRED_DOCTEST_CONTRACTS "${CONTRACT_CASE}" REQUIRED_CASE_INDEX)
         if(REQUIRED_CASE_INDEX EQUAL -1)
             message(FATAL_ERROR
@@ -219,14 +300,33 @@ function(cpp_add_contract_suite)
         LIBS ${ARG_LIBS}
     )
 
+    # The aggregate runs every compiled case, including the ones no migration
+    # report ID names. Without it the per-CASE gates are the only execution, and
+    # a TEST_CASE outside CASES is compiled, linked, and run by nothing --
+    # test-contract-operator carried seven such cases and 416 assertions until
+    # 2026-08-10. uf_add_operator_contract_suite already registers the same gate
+    # for the exported suite; this is the sibling that was missing it.
+    add_test(NAME ${ARG_TARGET} COMMAND ${ARG_TARGET})
+    set_tests_properties(${ARG_TARGET} PROPERTIES
+        TIMEOUT 120
+        LABELS "CI;CONTRACT-SUITE"
+    )
+
     foreach(CONTRACT_CASE IN LISTS ARG_CASES)
         add_test(
             NAME ${CONTRACT_CASE}
             COMMAND ${ARG_TARGET} "--test-case=${CONTRACT_CASE}"
         )
+        # The label follows the name, so `ctest -L CONTRACT` selects the gates
+        # that would go red without the behaviour and nothing else.
+        if(CONTRACT_CASE MATCHES "^schema-")
+            set(CONTRACT_CASE_LABELS "CI;SCHEMA")
+        else()
+            set(CONTRACT_CASE_LABELS "CI;CONTRACT")
+        endif()
         set_tests_properties(${CONTRACT_CASE} PROPERTIES
             TIMEOUT 60
-            LABELS "CI;CONTRACT"
+            LABELS "${CONTRACT_CASE_LABELS}"
         )
         set_property(GLOBAL APPEND PROPERTY UF_REGISTERED_CONTRACT_CASES "${CONTRACT_CASE}")
     endforeach()
@@ -286,6 +386,20 @@ cpp_add_test(
         ${PROJECT_NAME}_trace
 )
 
+# The project registration every Operator test builds on lives beside the
+# contract suite's umbraflow provider, which adapts the same header. Adding its
+# directory keeps the dependency running from tests/ into the exported suite and
+# leaves every #include "project-fixture.hpp" spelled the same way.
+set(UF_OPERATOR_FIXTURE_DIR
+    "${CMAKE_SOURCE_DIR}/contract-suite/fixtures/umbraflow"
+)
+if(NOT EXISTS "${UF_OPERATOR_FIXTURE_DIR}/project-fixture.hpp")
+    message(FATAL_ERROR
+        "the Operator test project fixture is missing: "
+        "${UF_OPERATOR_FIXTURE_DIR}/project-fixture.hpp"
+    )
+endif()
+
 if(TARGET ${PROJECT_NAME}_operator)
     cpp_add_test(
         NAME test-operator
@@ -296,6 +410,7 @@ if(TARGET ${PROJECT_NAME}_operator)
         LIBS
             ${PROJECT_NAME}_operator
     )
+    target_include_directories(test-operator PRIVATE "${UF_OPERATOR_FIXTURE_DIR}")
 
     cpp_add_contract_suite(
         TARGET test-contract-operator
@@ -308,40 +423,41 @@ if(TARGET ${PROJECT_NAME}_operator)
         LIBS
             ${PROJECT_NAME}_operator
         CASES
-            contract-product-p01
-            contract-product-p02
-            contract-product-p03
             contract-product-p04
             contract-product-p05-fixtures
             contract-product-p06
-            contract-state-s01
-            contract-state-s02
+            schema-product-p01
+            schema-product-p02
+            schema-product-p03
             contract-state-s03
-            contract-state-s04
             contract-state-s05
             contract-state-s06
-            contract-control-c01
+            schema-state-s01
+            schema-state-s02
+            schema-state-s04
             contract-control-c02
-            contract-control-c03
             contract-control-c04
-            contract-control-c05
-            contract-control-c06
             contract-control-c07
-            contract-control-c08
-            contract-control-c09
-            contract-control-c10
-            contract-control-c11
-            contract-control-c12
-            contract-control-c13
             contract-control-c14
-            contract-agent-a01
-            contract-agent-a02
-            contract-agent-a03
+            schema-control-c03
+            schema-control-c05
+            schema-control-c08
+            schema-control-c09
+            schema-control-c10
+            schema-control-c11
+            schema-control-c12
+            schema-control-c13
             contract-agent-a04
-            contract-agent-a05
             contract-agent-a06
-            contract-agent-a07
             contract-agent-a08
+            schema-agent-a01
+            schema-agent-a02
+            schema-agent-a03
+            schema-agent-a05
+            schema-agent-a07
+    )
+    target_include_directories(
+        test-contract-operator PRIVATE "${UF_OPERATOR_FIXTURE_DIR}"
     )
 endif()
 
@@ -483,6 +599,7 @@ auto main(int argc, char** argv) -> int
             .frameworkModules = uf::task::frameworkScriptModules(),
             .frameworkProjectGlobals = {
                 "evidence",
+                "jcs",
                 "model",
                 "observe",
                 "project",
@@ -531,11 +648,36 @@ auto main(int argc, char** argv) -> int
         )
     endif()
 
+    # Concrete paths, never a glob, for the same reason the contract suite uses
+    # concrete sources: a contract that stops running must be a visible deletion
+    # here. The coverage check below is the other half of that -- a hand-written
+    # list silently stops covering the directory the moment somebody adds a file
+    # to it, which is how tests/task/test-jcs.luau ran in no gate on 2026-08-10.
     set(TASK_LUAU_TESTS
+        "test-jcs-luau|task/test-jcs.luau"
         "test-runtime-model-v2-luau|task/test-runtime-model-v2.luau"
         "test-resolution-v2-luau|task/test-resolution-v2.luau"
         "test-receipt-request-v2-luau|task/test-receipt-request-v2.luau"
     )
+    file(GLOB TASK_LUAU_PRESENT
+        RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/task/*.luau"
+    )
+    set(TASK_LUAU_REGISTERED "")
+    foreach(TASK_LUAU_TEST IN LISTS TASK_LUAU_TESTS)
+        string(REPLACE "|" ";" TASK_LUAU_TEST_PARTS "${TASK_LUAU_TEST}")
+        list(GET TASK_LUAU_TEST_PARTS 1 TASK_LUAU_REGISTERED_SOURCE)
+        list(APPEND TASK_LUAU_REGISTERED "${TASK_LUAU_REGISTERED_SOURCE}")
+    endforeach()
+    foreach(TASK_LUAU_SOURCE IN LISTS TASK_LUAU_PRESENT)
+        list(FIND TASK_LUAU_REGISTERED "${TASK_LUAU_SOURCE}" TASK_LUAU_INDEX)
+        if(TASK_LUAU_INDEX EQUAL -1)
+            message(FATAL_ERROR
+                "a Luau contract under tests/task/ runs in no CTest: "
+                "${TASK_LUAU_SOURCE}. Add it to TASK_LUAU_TESTS, or delete it."
+            )
+        endif()
+    endforeach()
     foreach(TASK_LUAU_TEST IN LISTS TASK_LUAU_TESTS)
         string(REPLACE "|" ";" TASK_LUAU_TEST_PARTS "${TASK_LUAU_TEST}")
         list(GET TASK_LUAU_TEST_PARTS 0 TASK_LUAU_TEST_NAME)
@@ -667,6 +809,31 @@ if(NOT SORTED_REQUIRED_CONTRACT_CASES STREQUAL SORTED_REGISTERED_CONTRACT_CASES)
         "Named contract CTest registration does not match the migration report; "
         "required=[${SORTED_REQUIRED_CONTRACT_CASES}], "
         "registered=[${SORTED_REGISTERED_CONTRACT_CASES}]"
+    )
+endif()
+
+# The list above pins which gate each requirement owns. This pins that no
+# requirement lost every gate it had, which a rename is exactly the way to do by
+# accident.
+set(COVERED_REQUIREMENTS "")
+foreach(REGISTERED_GATE IN LISTS SORTED_REGISTERED_CONTRACT_CASES)
+    string(REGEX REPLACE "^(contract|schema)-" "" COVERED_REQUIREMENT "${REGISTERED_GATE}")
+    if(COVERED_REQUIREMENT STREQUAL REGISTERED_GATE)
+        message(FATAL_ERROR
+            "registered gate is outside the contract-/schema- vocabulary: ${REGISTERED_GATE}"
+        )
+    endif()
+    list(APPEND COVERED_REQUIREMENTS "${COVERED_REQUIREMENT}")
+endforeach()
+list(REMOVE_DUPLICATES COVERED_REQUIREMENTS)
+list(SORT COVERED_REQUIREMENTS)
+set(SORTED_REQUIRED_CORE_REQUIREMENTS ${UF_REQUIRED_CORE_REQUIREMENTS})
+list(SORT SORTED_REQUIRED_CORE_REQUIREMENTS)
+if(NOT COVERED_REQUIREMENTS STREQUAL SORTED_REQUIRED_CORE_REQUIREMENTS)
+    message(FATAL_ERROR
+        "Gate registration does not cover the REQUIRED_CORE requirements exactly; "
+        "required=[${SORTED_REQUIRED_CORE_REQUIREMENTS}], "
+        "covered=[${COVERED_REQUIREMENTS}]"
     )
 endif()
 if(NOT TEST contract-repository-surface)

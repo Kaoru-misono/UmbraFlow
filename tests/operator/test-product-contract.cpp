@@ -153,7 +153,7 @@ namespace uf::operator_runtime
         }
     }
 
-    TEST_CASE("contract-product-p01")
+    TEST_CASE("schema-product-p01")
     {
         auto const schema     = readSchema("umbraflow-operator-v1.schema.json");
         auto const invocation = definition(schema, "ToolInvocation");
@@ -171,7 +171,7 @@ namespace uf::operator_runtime
         CHECK(operation.find("\"dispatches\"") != std::string::npos);
     }
 
-    TEST_CASE("contract-product-p02")
+    TEST_CASE("schema-product-p02")
     {
         auto const schema        = readSchema("umbraflow-operator-v1.schema.json");
         auto const transition    = definition(schema, "ControlTransition");
@@ -184,7 +184,7 @@ namespace uf::operator_runtime
         CHECK(externalInput.find("\"freeze_and_reconcile\"") != std::string::npos);
     }
 
-    TEST_CASE("contract-product-p03")
+    TEST_CASE("schema-product-p03")
     {
         auto const schema     = readSchema("umbraflow-operator-v1.schema.json");
         auto const capability = definition(schema, "ControllerCapability");

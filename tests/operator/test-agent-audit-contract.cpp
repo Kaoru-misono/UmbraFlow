@@ -1,12 +1,21 @@
+#include <operator/ledger.hpp>
 #include <operator/operation.hpp>
+
+#include "project-fixture.hpp"
+
+#include <domain/content-hash.hpp>
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
+#include <vector>
 
 namespace uf::operator_runtime
 {
@@ -123,9 +132,17 @@ namespace uf::operator_runtime
             CHECK(value.find("\"required\": [") != std::string::npos);
             CHECK(value.find("\"properties\": {") != std::string::npos);
         }
+
+        using test_support::canonical;
+        using test_support::hashOf;
+        using test_support::journalEntry;
+        using test_support::prepareStore;
+        using test_support::reconciliationOutcome;
+        using test_support::reconcilingOperation;
+        using test_support::TemporaryDirectory;
     }
 
-    TEST_CASE("contract-agent-a01")
+    TEST_CASE("schema-agent-a01")
     {
         auto const schema = readSchema("umbraflow-operator-v1.schema.json");
         auto const cursor = definition(schema, "SubscriptionCursor");
@@ -138,7 +155,7 @@ namespace uf::operator_runtime
         CHECK(resync.find("\"current_cursor\"") != std::string::npos);
     }
 
-    TEST_CASE("contract-agent-a02")
+    TEST_CASE("schema-agent-a02")
     {
         auto const schema   = readSchema("umbraflow-operator-v1.schema.json");
         auto const budget   = definition(schema, "AgentBudget");
@@ -153,7 +170,7 @@ namespace uf::operator_runtime
         CHECK(progress.find("\"elapsed_without_progress_ms\"") != std::string::npos);
     }
 
-    TEST_CASE("contract-agent-a03")
+    TEST_CASE("schema-agent-a03")
     {
         auto const operatorSchema  = readSchema("umbraflow-operator-v1.schema.json");
         auto const journalSchema   = readSchema("umbraflow-journal-v1.schema.json");
@@ -192,9 +209,84 @@ namespace uf::operator_runtime
         CHECK(event.find("\"opaque_project_payload\"") != std::string::npos);
         CHECK(event.find("\"const\": 0") != std::string::npos);
         CHECK(event.find("\"type\": \"null\"") != std::string::npos);
+
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        // Provenance is neither optional nor the caller's to invent: an entry
+        // whose provenance is not the pinned JournalProvenance document cannot
+        // be minted, so no Journal row can lack one.
+        CHECK_FALSE(prepared.project.journalSchemaOwner.validate(
+            "fixture.progress",
+            canonical(prepared.project.schemaOwner, "{\"value\":1}"),
+            canonical(prepared.project.schemaOwner, "{\"kind\":\"forged\"}")
+        ).has_value());
+
+        // A payload the event's own schema does not accept cannot be minted
+        // either, so a guessed or expected outcome has no spelling as a fact.
+        CHECK_FALSE(prepared.project.journalSchemaOwner.validate(
+            "fixture.progress",
+            canonical(prepared.project.schemaOwner, "{\"value\":99}"),
+            canonical(prepared.project.schemaOwner, "{\"kind\":\"fixture\"}")
+        ).has_value());
+
+        auto const operation = reconcilingOperation(
+            prepared,
+            "request-1",
+            DeliveryOutcome::Delivered
+        );
+        auto const progressEvent = [&prepared]
+        {
+            auto events = std::vector<JournalAppend>{};
+            events.emplace_back(
+                JournalAppend{
+                    .eventId = "event-1",
+                    .entry = journalEntry(
+                        prepared.project,
+                        "fixture.progress",
+                        "{\"value\":1}"
+                    ),
+                }
+            );
+            return events;
+        };
+        auto attempt = [&prepared, &operation](
+            std::string document,
+            std::vector<JournalAppend> events
+        )
+        {
+            return prepared.store.commitReconciliation(
+                prepared.plugin,
+                ReconciliationCommit{
+                    .operationId                  = operation.operationId,
+                    .expectedOperationRevision    = operation.revision,
+                    .expectedProjectStateRevision = 0U,
+                    .outcome                      = reconciliationOutcome(
+                        prepared,
+                        operation.operationId,
+                        std::move(document)
+                    ),
+                    .journalEvents                = std::move(events),
+                }
+            ).has_value();
+        };
+
+        // Rejected asserts the world did not change, and a delivered dispatch
+        // is standing proof that it may have.
+        CHECK_FALSE(attempt("{\"disposition\":\"rejected\"}", {}));
+
+        // Ambiguous never established an outcome, so it may not write one.
+        CHECK_FALSE(attempt("{\"disposition\":\"ambiguous\"}", progressEvent()));
+
+        // Diverged must carry the correction that proves the divergence.
+        CHECK_FALSE(attempt("{\"disposition\":\"diverged\"}", {}));
+
+        // Continue is the one that proved something, and it is the one that
+        // reaches the Journal.
+        CHECK(attempt("{\"disposition\":\"continue\"}", progressEvent()));
     }
 
-    TEST_CASE("contract-agent-a05")
+    TEST_CASE("schema-agent-a05")
     {
         auto const workspaceSchema    = readSchema("umbraflow-annotation-workspace-v2.schema.json");
         auto const registrationSchema = readSchema("umbraflow-project-registration-v1.schema.json");
@@ -220,9 +312,79 @@ namespace uf::operator_runtime
         CHECK(artifactSchema.find("\"assets\"") != std::string::npos);
         CHECK(artifactSchema.find("screenshot") == std::string::npos);
         CHECK(artifactSchema.find("annotation_workspace") == std::string::npos);
+
+        auto temporary = TemporaryDirectory{};
+        auto const release = test_support::runtimeRelease(
+            temporary.path() / "session-handoff"
+        );
+        auto store = OperatorCoordinator::open(temporary.path() / "production");
+        REQUIRE(store.has_value());
+        auto const install = [&release](ContentHash const& expected)
+        {
+            return RuntimeArtifactInstallRequest{
+                .handoffRoot                 = release.handoffRoot,
+                .expectedReleaseManifestHash = expected,
+                .expectedInstalledGeneration = 0U,
+            };
+        };
+
+        // The deployment principal re-verifies the release against trusted
+        // metadata; it does not take the handoff's word for what it is.
+        CHECK_FALSE(
+            store->installRuntimeArtifact(install(hashOf("other-release"))).has_value()
+        );
+
+        // None of the three authoring capability roots may travel with a
+        // release, so production never has a path to the workspace database,
+        // the evidence blobs or the replay bundles.
+        auto const authoringRoots = std::array{
+            std::filesystem::path{"workspace.sqlite"},
+            std::filesystem::path{"evidence"} / "blob-1.png",
+            std::filesystem::path{"replay"} / "bundle-1.jsonl",
+        };
+        for (auto const& authoringPath : authoringRoots)
+        {
+            test_support::writeFile(
+                release.handoffRoot / authoringPath,
+                "authoring bytes"
+            );
+            CHECK_FALSE(
+                store->installRuntimeArtifact(
+                    install(release.releaseManifestHash)
+                ).has_value()
+            );
+            auto error = std::error_code{};
+            static_cast<void>(std::filesystem::remove_all(
+                release.handoffRoot / *authoringPath.begin(),
+                error
+            ));
+            REQUIRE_FALSE(error);
+        }
+
+        // With nothing but the manifest-listed runtime files left, the same
+        // handoff installs.
+        auto const installed = store->installRuntimeArtifact(
+            install(release.releaseManifestHash)
+        );
+        REQUIRE(installed.has_value());
+        CHECK(installed->rootHash() == release.artifactRootHash);
+
+        // The authoring side and the production side are also separate stores:
+        // a handoff that sits inside the production root is refused rather than
+        // read across the boundary.
+        auto const nested = test_support::runtimeRelease(
+            temporary.path() / "production" / "nested-handoff"
+        );
+        CHECK_FALSE(store->installRuntimeArtifact(
+            RuntimeArtifactInstallRequest{
+                .handoffRoot                 = nested.handoffRoot,
+                .expectedReleaseManifestHash = nested.releaseManifestHash,
+                .expectedInstalledGeneration = 1U,
+            }
+        ).has_value());
     }
 
-    TEST_CASE("contract-agent-a07")
+    TEST_CASE("schema-agent-a07")
     {
         auto const schema     = readSchema("umbraflow-operator-v1.schema.json");
         auto const transition = definition(schema, "ControlTransition");

@@ -184,11 +184,11 @@ class Store final
 
         self.assertEqual(actual, [6])
 
-    def test_adr_011_forbidden_identifier_list(self) -> None:
+    def test_background_only_forbidden_identifier_list(self) -> None:
         actual = tuple(
             rule.pattern.pattern
             for rule in check_safety.RULES
-            if rule.name.startswith("ADR-011 forbidden ")
+            if rule.name.startswith("background_only forbidden ")
         )
         expected = (
             r"\bSetForegroundWindow\b",
@@ -204,6 +204,21 @@ class Store final
         )
 
         self.assertEqual(actual, expected)
+
+    def test_a_vendored_directory_is_never_a_boundary_directory(self) -> None:
+        # `external` sat in both sets and could never be reached in the second:
+        # source_files drops every vendored path before is_unsafe_boundary sees
+        # it, so the entry advertised a fourth boundary the gate does not have,
+        # and one the violation message never named. Put `external` back into
+        # UNSAFE_DIRECTORY_NAMES and this goes red.
+        self.assertEqual(
+            check_safety.UNSAFE_DIRECTORY_NAMES & check_safety.VENDORED_DIRECTORY_NAMES,
+            set(),
+        )
+        self.assertEqual(
+            check_safety.UNSAFE_DIRECTORY_NAMES,
+            {"ffi", "platform", "unsafe"},
+        )
 
     def test_source_files_include_first_party_h_and_exclude_vendored_headers(
         self,

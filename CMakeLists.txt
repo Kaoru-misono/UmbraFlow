@@ -62,8 +62,21 @@ cpp_scan_and_load_modules(${CPP_MODULE_ROOTS})
 
 add_subdirectory(entry)
 
+enable_testing()
+
+# The exported Operator contract suite. It is not part of tests/: a consuming
+# repository builds it from its own tree against its own project, and this
+# repository is one of its runs. It is therefore registered here rather than
+# under CPP_BUILD_TESTS, and before tests/, because tests/CMakeLists.txt ends by
+# checking that every migration-report contract ID has a CTest and some of them
+# are registered by the suite. See cmake/operator-contract-suite.cmake for what
+# a consumer writes.
+include(cmake/operator-contract-suite.cmake)
+if(TARGET ${PROJECT_NAME}_operator)
+    add_subdirectory(contract-suite)
+endif()
+
 if(CPP_BUILD_TESTS)
-    enable_testing()
     add_subdirectory(tests)
 endif()
 

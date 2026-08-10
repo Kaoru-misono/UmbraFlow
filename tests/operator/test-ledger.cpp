@@ -1,3 +1,10 @@
+// What the Operator's own ledger owns: the production database, RuntimeArtifact
+// installation and reclamation, and the exact reduce envelope its journal
+// builds. The properties a project's registration decides -- catalog
+// mutability, schema-owner binding, who owns a disposition -- are the exported
+// contract suite's, because a consuming repository proves them against its own
+// project; see contract-suite/source/. No property is asserted in both places.
+
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
 
@@ -9,6 +16,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <optional>
@@ -52,19 +60,6 @@ return {
         end
         return '{"value":99}'
     end,
-}
-)LUAU"};
-
-        // Same shape, different plugin_id, so it can be both registered and
-        // loaded under fixture.foreign.
-        constexpr auto k_foreignPluginSource = std::string_view{R"LUAU(
-return {
-    plugin_id = "fixture.foreign",
-    derive = function(_input) return '{}' end,
-    plan = function(_input) return '{}' end,
-    next_step = function(_input) return '{}' end,
-    reconcile = function(input) return input end,
-    reduce = function(_input) return '{"revision":0}' end,
 }
 )LUAU"};
 
@@ -278,6 +273,87 @@ return {
                 .clientRequestId      = std::move(clientRequestId),
             };
         }
+
+        // test_support::runtimeRelease always writes the same page model, so
+        // every release it builds has the same content hash and shares one
+        // production directory. Reclamation needs two that do not.
+        [[nodiscard]]
+        auto releaseWithModel(
+            std::filesystem::path const& root,
+            std::string_view model
+        ) -> test_support::RuntimeRelease
+        {
+            auto const handoff  = root / "release";
+            auto const artifact = handoff / "runtime-artifact";
+            test_support::writeFile(artifact / task::k_runtimeModelFileName, model);
+            auto const manifest = std::format(
+                "{{\"assets\":[],\"manifest_schema_hash\":\"{}\","
+                "\"page_model\":{{\"path\":\"page-model.toml\",\"sha256\":\"{}\","
+                "\"size\":{}}},\"runtime_model_schema_hash\":\"{}\"}}",
+                task::k_runtimeArtifactSchemaHash,
+                hashOf(model).hex(),
+                model.size(),
+                task::k_runtimeModelSchemaHash
+            );
+            test_support::writeFile(
+                artifact / task::k_runtimeArtifactManifestFileName,
+                manifest
+            );
+            auto const artifactRootHash = hashOf(manifest);
+            auto const releaseManifest = std::format(
+                "{{\"annotation_workspace_schema_hash\":\"{}\","
+                "\"candidate_id\":\"candidate-1\",\"candidate_revision\":1,"
+                "\"generation\":1,\"predecessor_publication_id\":null,"
+                "\"replay_gate_hash\":\"{}\",\"runtime_artifact_root_hash\":\"{}\","
+                "\"workspace_sqlite_schema_hash\":\"{}\"}}",
+                detail::k_annotationWorkspaceSchemaHash,
+                hashOf("replay-gate").hex(),
+                artifactRootHash.hex(),
+                hashOf("workspace-schema").hex()
+            );
+            test_support::writeFile(handoff / "release.manifest.json", releaseManifest);
+            return test_support::RuntimeRelease{
+                .handoffRoot         = handoff,
+                .releaseManifestHash = hashOf(releaseManifest),
+                .artifactRootHash    = artifactRootHash,
+            };
+        }
+
+        [[nodiscard]]
+        auto installRequest(
+            test_support::RuntimeRelease const& release,
+            uint64 expectedInstalledGeneration
+        ) -> RuntimeArtifactInstallRequest
+        {
+            return RuntimeArtifactInstallRequest{
+                .handoffRoot                 = release.handoffRoot,
+                .expectedReleaseManifestHash = release.releaseManifestHash,
+                .expectedInstalledGeneration = expectedInstalledGeneration,
+            };
+        }
+
+        // A directory link that needs no privilege on Windows and that the
+        // portable inspection functions report as a plain directory, which is
+        // what makes it the shape worth planting.
+        [[nodiscard]]
+        auto linkDirectory(
+            std::filesystem::path const& link,
+            std::filesystem::path const& target
+        ) -> bool
+        {
+#if defined(_WIN32)
+            auto const command = std::format(
+                "cmd /c mklink /J \"{}\" \"{}\" >nul 2>&1",
+                link.string(),
+                target.string()
+            );
+            return std::system(command.c_str()) == 0;
+#else
+            auto error = std::error_code{};
+            std::filesystem::create_directory_symlink(target, link, error);
+            return !error;
+#endif
+        }
     }
 
     TEST_CASE("OperatorCoordinator creates only the production database name")
@@ -394,6 +470,141 @@ return {
         CHECK(reopened->rootHash() == release.artifactRootHash);
     }
 
+    TEST_CASE("reclamation removes a RuntimeArtifact directory nothing references")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const artifactRoot = production / "runtime-artifacts";
+        auto const installed = test_support::runtimeRelease(temporary.path() / "first");
+        auto const orphan = releaseWithModel(
+            temporary.path() / "second",
+            "a different page model\r\n"
+        );
+        REQUIRE(installed.artifactRootHash != orphan.artifactRootHash);
+
+        auto coordinator = OperatorCoordinator::open(production);
+        REQUIRE(coordinator.has_value());
+        REQUIRE(coordinator->installRuntimeArtifact(installRequest(installed, 0U)).has_value());
+
+        // A-F8: the directory is published before the transaction, so losing
+        // the generation CAS leaves it behind with nothing pointing at it.
+        CHECK_FALSE(coordinator->installRuntimeArtifact(installRequest(orphan, 0U)).has_value());
+        auto const orphanPath = artifactRoot / orphan.artifactRootHash.hex();
+        REQUIRE(std::filesystem::is_directory(orphanPath));
+
+        auto const reclaimed = coordinator->reclaimUnreferencedRuntimeArtifacts();
+        REQUIRE(reclaimed.has_value());
+        CHECK(reclaimed->artifactDirectories == 1U);
+        CHECK_FALSE(std::filesystem::exists(orphanPath));
+        CHECK(std::filesystem::is_directory(
+            artifactRoot / installed.artifactRootHash.hex()
+        ));
+        CHECK(coordinator->openInstalledRuntimeArtifact(
+            1U,
+            installed.artifactRootHash
+        ).has_value());
+
+        // The reference set is the database's, so a second pass has nothing
+        // left to decide about.
+        auto const again = coordinator->reclaimUnreferencedRuntimeArtifacts();
+        REQUIRE(again.has_value());
+        CHECK(again->artifactDirectories == 0U);
+    }
+
+    TEST_CASE("reclamation keeps a RuntimeArtifact another publisher installed")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const artifactRoot = production / "runtime-artifacts";
+        auto const first = test_support::runtimeRelease(temporary.path() / "first");
+        auto const second = releaseWithModel(
+            temporary.path() / "second",
+            "a different page model\r\n"
+        );
+
+        auto coordinator = OperatorCoordinator::open(production);
+        REQUIRE(coordinator.has_value());
+        REQUIRE(coordinator->installRuntimeArtifact(installRequest(first, 0U)).has_value());
+        REQUIRE(coordinator->installRuntimeArtifact(installRequest(second, 1U)).has_value());
+
+        // The A-F8 case: these bytes are already in place because another
+        // publisher's installation won, so our own failed attempt is not
+        // permission to remove their directory. The generation it belongs to is
+        // no longer the active one, which is what keeps this case from being
+        // decided by the active-root clause instead.
+        CHECK_FALSE(coordinator->installRuntimeArtifact(installRequest(first, 0U)).has_value());
+
+        auto const reclaimed = coordinator->reclaimUnreferencedRuntimeArtifacts();
+        REQUIRE(reclaimed.has_value());
+        CHECK(reclaimed->artifactDirectories == 0U);
+        CHECK(std::filesystem::is_directory(artifactRoot / first.artifactRootHash.hex()));
+        CHECK(std::filesystem::is_directory(artifactRoot / second.artifactRootHash.hex()));
+        CHECK(coordinator->openInstalledRuntimeArtifact(1U, first.artifactRootHash).has_value());
+        CHECK(coordinator->openInstalledRuntimeArtifact(2U, second.artifactRootHash).has_value());
+    }
+
+    TEST_CASE("reclamation removes staging directories no publication claims")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto const production = temporary.path() / "production";
+        auto coordinator = OperatorCoordinator::open(production);
+        REQUIRE(coordinator.has_value());
+
+        // What a publisher that died between create_directory and rename leaves
+        // behind. Nothing ever removed it before, because the staging token is
+        // in no row and the filesystem cannot say whose it is.
+        auto const staging = production / "runtime-artifacts" / ".staging" / "0123abcd";
+        test_support::writeFile(staging / "page-model.toml", "half a deployment");
+
+        auto const reclaimed = coordinator->reclaimUnreferencedRuntimeArtifacts();
+        REQUIRE(reclaimed.has_value());
+        CHECK(reclaimed->stagingDirectories == 1U);
+        CHECK_FALSE(std::filesystem::exists(staging));
+        CHECK(std::filesystem::is_directory(
+            production / "runtime-artifacts" / ".staging"
+        ));
+    }
+
+    TEST_CASE("reclamation refuses a tree with a link planted in it")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const artifactRoot = production / "runtime-artifacts";
+        auto const installed = test_support::runtimeRelease(temporary.path() / "first");
+        auto const orphan = releaseWithModel(
+            temporary.path() / "second",
+            "a different page model\r\n"
+        );
+
+        auto coordinator = OperatorCoordinator::open(production);
+        REQUIRE(coordinator.has_value());
+        REQUIRE(coordinator->installRuntimeArtifact(installRequest(installed, 0U)).has_value());
+        CHECK_FALSE(coordinator->installRuntimeArtifact(installRequest(orphan, 0U)).has_value());
+
+        auto const outside = temporary.path() / "outside";
+        std::filesystem::create_directories(outside);
+        test_support::writeFile(outside / "canary.txt", "must survive");
+
+        auto const orphanPath = artifactRoot / orphan.artifactRootHash.hex();
+        auto const linked = linkDirectory(orphanPath / "assets", outside);
+#if defined(_WIN32)
+        // A junction needs no privilege here, so a failure is a broken test
+        // rather than an unavailable feature.
+        REQUIRE(linked);
+#else
+        if (!linked)
+        {
+            MESSAGE("this account cannot create a directory symlink");
+            return;
+        }
+#endif
+
+        // Everything about the row still says reclaimable; only the walk
+        // refuses, and it refuses rather than unlinking through the link.
+        CHECK_FALSE(coordinator->reclaimUnreferencedRuntimeArtifacts().has_value());
+        CHECK(std::filesystem::is_regular_file(outside / "canary.txt"));
+    }
+
     TEST_CASE("lease takeover advances fencing and invalidates stale snapshot creation")
     {
         auto temporary = TemporaryDirectory{};
@@ -455,45 +666,6 @@ return {
         CHECK(prepared.store.createOrLoadOperation(
             command(prepared.snapshot, "request-2"),
             toolInvocation(prepared.project, "command-2")
-        ).has_value());
-    }
-
-    TEST_CASE("a tool invocation cannot cross ProjectRegistrations")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const foreign = makeProject("fixture.foreign", "foreign-plugin-bytes");
-
-        // The catalog owner is bound to its registration root, and that root
-        // hashes the registration JCS the tool_catalog_hash sits in.
-        CHECK_FALSE(prepared.store.createOrLoadOperation(
-            command(prepared.snapshot, "request-1"),
-            toolInvocation(foreign, "command-1")
-        ).has_value());
-    }
-
-    TEST_CASE("the Tool Catalog owns mutability and tool version")
-    {
-        auto const project = makeProject("fixture.alpha", k_pluginSource);
-        auto const mutating = toolInvocation(project, "command-1");
-        CHECK(mutating.mutability() == ToolMutability::Mutating);
-        CHECK(mutating.toolVersion() == "1");
-        CHECK(mutating.projectRegistrationHash() == project.registration.hash());
-        CHECK(mutating.toolCatalogHash() == project.registration.toolCatalogHash());
-
-        CHECK(
-            toolInvocation(project, "observe-1").mutability()
-            == ToolMutability::ReadOnly
-        );
-
-        // No tool, and arguments the descriptor's schema refuses.
-        CHECK_FALSE(project.toolCatalogSchemaOwner.validate(
-            "not-in-the-catalog",
-            canonical(project.schemaOwner, "{\"value\":1}")
-        ).has_value());
-        CHECK_FALSE(project.toolCatalogSchemaOwner.validate(
-            "command-1",
-            canonical(project.schemaOwner, "{\"value\":2}")
         ).has_value());
     }
 
@@ -764,108 +936,6 @@ return {
         );
         empty.journalEvents = {};
         CHECK_FALSE(prepared.store.commitReconciliation(prepared.plugin, empty).has_value());
-    }
-
-    TEST_CASE("the reconciler owns the disposition, not the requester")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const operation = reconcilingOperation(prepared, "request-1", "command-1");
-
-        // A proposal that concluded Rejected cannot be committed as anything
-        // else, because the disposition is read out of that document rather
-        // than supplied beside it.
-        auto rejected    = confirmedCommit(prepared, operation, 0U, "event-1", "{\"value\":1}");
-        rejected.outcome = reconciliationOutcome(
-            prepared,
-            operation.operationId,
-            "{\"disposition\":\"rejected\"}"
-        );
-        CHECK_FALSE(
-            prepared.store.commitReconciliation(prepared.plugin, rejected).has_value()
-        );
-
-        // An outcome minted against another registration is refused even though
-        // its document would be byte-identical.
-        auto const foreign = makeProject("fixture.foreign", k_foreignPluginSource);
-        auto foreignCommit = confirmedCommit(prepared, operation, 0U, "event-2", "{\"value\":1}");
-        foreignCommit.outcome = test_support::reconcileOutcome(
-            foreign,
-            loadPlugin(foreign, k_foreignPluginSource),
-            operation.operationId,
-            "{\"disposition\":\"confirmed\"}"
-        );
-        CHECK_FALSE(
-            prepared.store.commitReconciliation(prepared.plugin, foreignCommit).has_value()
-        );
-    }
-
-    TEST_CASE("a reconcile outcome cannot be moved to another Operation")
-    {
-        auto temporary = TemporaryDirectory{};
-        auto prepared  = prepareStore(temporary.path());
-        auto const first = reconcilingOperation(prepared, "request-1", "command-1");
-        auto const stolen = reconciliationOutcome(
-            prepared,
-            first.operationId,
-            "{\"disposition\":\"confirmed\"}"
-        );
-        REQUIRE(prepared.store.commitReconciliation(
-            prepared.plugin,
-            confirmedCommit(prepared, first, 0U, "event-1", "{\"value\":1}")
-        ).has_value());
-
-        // The first Operation is terminal now, so the mutation chain is free
-        // for a second one. Same registration, same schema, same disposition
-        // document -- only the Operation the conclusion was reached about
-        // separates them.
-        auto const second = reconcilingOperation(prepared, "request-2", "command-2");
-        auto transplanted    = confirmedCommit(prepared, second, 1U, "event-2", "{\"value\":1}");
-        transplanted.outcome = stolen;
-        CHECK_FALSE(
-            prepared.store.commitReconciliation(prepared.plugin, transplanted).has_value()
-        );
-    }
-
-    TEST_CASE("a schema owner cannot answer for a schema its registration never named")
-    {
-        auto const project = makeProject("fixture.alpha", k_pluginSource);
-        auto const anything = [](std::string_view, std::string_view) -> Result<ToolDescriptor>
-        {
-            return ToolDescriptor{.toolVersion = "1", .mutability = ToolMutability::ReadOnly};
-        };
-
-        // Every authority takes the exact bytes it answers for; the hash in the
-        // registration is what decides, so a validator for some other catalog,
-        // journal or reconcile schema has nowhere to attach.
-        CHECK_FALSE(
-            ProjectToolCatalogSchemaOwner::create(
-                project.registration,
-                "not-the-catalogue",
-                anything
-            ).has_value()
-        );
-        CHECK_FALSE(
-            ProjectReconcileSchemaOwner::create(
-                project.registration,
-                "not-the-reconcile-manifest",
-                [](std::string_view) -> Result<ReconcileDisposition>
-                {
-                    return ReconcileDisposition::Confirmed;
-                }
-            ).has_value()
-        );
-        CHECK_FALSE(
-            ProjectJournalSchemaOwner::create(
-                project.registration,
-                "not-the-journal-manifest",
-                [](std::string_view, std::string_view) -> Result<ContentHash>
-                {
-                    return hashOf("anything");
-                },
-                [](std::string_view) -> Status { return ok(); }
-            ).has_value()
-        );
     }
 
     TEST_CASE("ApprovalToken is operation-bound and single-use")

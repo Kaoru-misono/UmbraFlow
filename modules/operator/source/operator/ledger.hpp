@@ -47,6 +47,15 @@ namespace uf::operator_runtime
         uint64                expectedInstalledGeneration{};
     };
 
+    // What one reclamation pass removed from the production RuntimeArtifact
+    // root: content-addressed object directories no installation still names,
+    // and staging directories no in-flight publication still names.
+    struct ReclaimedRuntimeArtifacts final
+    {
+        uint64 artifactDirectories{};
+        uint64 stagingDirectories{};
+    };
+
     struct ProjectInstanceBaseline final
     {
         std::string               projectInstanceKey{};
@@ -200,6 +209,14 @@ namespace uf::operator_runtime
             uint64 installedGeneration,
             ContentHash const& artifactRootHash
         ) -> Result<task::InstalledRuntimeArtifact>;
+
+        // Removes every production RuntimeArtifact directory the database no
+        // longer references. It is explicit because a failed installation is
+        // not proof that its directory is unwanted -- a concurrent publisher
+        // may have put the identical bytes there -- so only a pass that reads
+        // the whole reference set at once may decide.
+        [[nodiscard]]
+        auto reclaimUnreferencedRuntimeArtifacts() -> Result<ReclaimedRuntimeArtifacts>;
 
         [[nodiscard]]
         auto registerProject(VerifiedProjectRegistration const& registration) -> Status;

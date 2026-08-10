@@ -13,8 +13,13 @@ import member_init
 
 
 SOURCE_EXTENSIONS = {".c", ".cc", ".cpp", ".cxx", ".h", ".hpp"}
-SOURCE_ROOTS = ("modules", "entry", "tests")
-UNSAFE_DIRECTORY_NAMES = {"external", "ffi", "platform", "unsafe"}
+# contract-suite is first-party C++ that ships to consumers, so it is held to
+# the same boundary rules as everything under modules, entry and tests.
+SOURCE_ROOTS = ("modules", "entry", "tests", "contract-suite")
+# Exactly the three boundary directories the coding standard names. A vendored
+# directory is never one of them: it is dropped from the scan below, so a
+# vendored name here would advertise a boundary the gate can never reach.
+UNSAFE_DIRECTORY_NAMES = {"ffi", "platform", "unsafe"}
 VENDORED_DIRECTORY_NAMES = {"external", "third_party"}
 SAFETY_COMMENT = "// SAFETY:"
 
@@ -37,33 +42,54 @@ RULES = (
     ),
     Rule("direct unreachable UB", re.compile(r"\bstd::unreachable\s*\("), False),
     Rule("detached thread", re.compile(r"\.detach\s*\("), False),
+    # Foreground activation, global input injection and real cursor movement
+    # are absent from the capability surface, not a fallback: once a task
+    # declares `background_only`, an incompatible target is an explicit failure
+    # and never a silent degradation to one of these. Deciding artifact:
+    # decision 1 of docs/plans/2026-07-21-product-form-and-roadmap.md.
     Rule(
-        "ADR-011 forbidden SetForegroundWindow use",
+        "background_only forbidden SetForegroundWindow use",
         re.compile(r"\bSetForegroundWindow\b"),
         False,
     ),
-    Rule("ADR-011 forbidden SetFocus use", re.compile(r"\bSetFocus\b"), False),
-    Rule("ADR-011 forbidden SendInput use", re.compile(r"\bSendInput\b"), False),
-    Rule("ADR-011 forbidden mouse_event use", re.compile(r"\bmouse_event\b"), False),
-    Rule("ADR-011 forbidden keybd_event use", re.compile(r"\bkeybd_event\b"), False),
-    Rule("ADR-011 forbidden SetCursorPos use", re.compile(r"\bSetCursorPos\b"), False),
+    Rule("background_only forbidden SetFocus use", re.compile(r"\bSetFocus\b"), False),
     Rule(
-        "ADR-011 forbidden BringWindowToTop use",
+        "background_only forbidden SendInput use",
+        re.compile(r"\bSendInput\b"),
+        False,
+    ),
+    Rule(
+        "background_only forbidden mouse_event use",
+        re.compile(r"\bmouse_event\b"),
+        False,
+    ),
+    Rule(
+        "background_only forbidden keybd_event use",
+        re.compile(r"\bkeybd_event\b"),
+        False,
+    ),
+    Rule(
+        "background_only forbidden SetCursorPos use",
+        re.compile(r"\bSetCursorPos\b"),
+        False,
+    ),
+    Rule(
+        "background_only forbidden BringWindowToTop use",
         re.compile(r"\bBringWindowToTop\b"),
         False,
     ),
     Rule(
-        "ADR-011 forbidden SwitchToThisWindow use",
+        "background_only forbidden SwitchToThisWindow use",
         re.compile(r"\bSwitchToThisWindow\b"),
         False,
     ),
     Rule(
-        "ADR-011 forbidden AttachThreadInput use",
+        "background_only forbidden AttachThreadInput use",
         re.compile(r"\bAttachThreadInput\b"),
         False,
     ),
     Rule(
-        "ADR-011 forbidden SetActiveWindow use",
+        "background_only forbidden SetActiveWindow use",
         re.compile(r"\bSetActiveWindow\b"),
         False,
     ),

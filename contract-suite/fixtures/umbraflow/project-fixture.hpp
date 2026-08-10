@@ -1,6 +1,7 @@
 #pragma once
 
 #include <operator/journal-entry.hpp>
+#include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
 #include <operator/project-plugin.hpp>
 #include <operator/reconcile-outcome.hpp>
@@ -9,6 +10,8 @@
 
 #include <task/page-model-file.hpp>
 
+#include <core/types/integer.hpp>
+
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
@@ -16,13 +19,17 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
 namespace uf::operator_runtime::test_support
@@ -633,5 +640,228 @@ namespace uf::operator_runtime::test_support
             .releaseManifestHash = hashOf(releaseManifest),
             .artifactRootHash    = artifactRootHash,
         };
+    }
+
+    // The trusted plugin a prepared store registers. plugin_id must equal the
+    // registration's, so the id is inserted rather than fixed.
+    [[nodiscard]]
+    inline auto pluginSource(std::string_view pluginId) -> std::string
+    {
+        auto source = std::string{"return {\n    plugin_id = \""};
+        source += pluginId;
+        source += R"LUAU(",
+    derive = function(_input) return '{}' end,
+    plan = function(_input) return '{}' end,
+    next_step = function(_input) return '{}' end,
+    reconcile = function(input) return input end,
+    reduce = function(_input) return '{"revision":0}' end,
+}
+)LUAU";
+        return source;
+    }
+
+    class TemporaryDirectory final
+    {
+        std::filesystem::path m_path{};
+
+    public:
+        TemporaryDirectory()
+        {
+            static auto s_sequence = std::atomic<uint64>{1};
+            m_path = std::filesystem::temp_directory_path()
+                / std::format(
+                    "umbraflow-contract-{}-{}",
+                    std::chrono::steady_clock::now().time_since_epoch().count(),
+                    s_sequence.fetch_add(1, std::memory_order_relaxed)
+                );
+            auto error         = std::error_code{};
+            auto const created = std::filesystem::create_directory(m_path, error);
+            REQUIRE(created);
+            REQUIRE_FALSE(error);
+        }
+
+        TemporaryDirectory(TemporaryDirectory const&) = delete;
+        TemporaryDirectory(TemporaryDirectory&&) = delete;
+        auto operator=(TemporaryDirectory const&) -> TemporaryDirectory& = delete;
+        auto operator=(TemporaryDirectory&&) -> TemporaryDirectory& = delete;
+
+        ~TemporaryDirectory() noexcept
+        {
+            auto error = std::error_code{};
+            static_cast<void>(std::filesystem::remove_all(m_path, error));
+        }
+
+        [[nodiscard]] auto path() const -> std::filesystem::path const&
+        {
+            return m_path;
+        }
+    };
+
+    // An opened Operator carrying an installed RuntimeArtifact, a registered
+    // project, one provisioned ProjectInstance, a pinned write session, the
+    // lease that session holds and one snapshot taken under it. The manifest
+    // travels with it because a restart has to re-pin a session against the
+    // same one.
+    struct PreparedStore final
+    {
+        OperatorCoordinator store;
+        ProjectPluginHandle plugin;
+        ProjectFixture      project;
+        SessionManifest     manifest;
+        ControlLease        lease;
+        SnapshotRecord      snapshot;
+    };
+
+    [[nodiscard]]
+    inline auto prepareStore(
+        std::filesystem::path const& path,
+        std::string const& pluginId = "fixture.control"
+    ) -> PreparedStore
+    {
+        auto const release = runtimeRelease(path / "session-handoff");
+        auto storeResult = OperatorCoordinator::open(path / "production");
+        REQUIRE(storeResult.has_value());
+        auto store = *std::move(storeResult);
+        auto installed = store.installRuntimeArtifact(
+            RuntimeArtifactInstallRequest{
+                .handoffRoot                 = release.handoffRoot,
+                .expectedReleaseManifestHash = release.releaseManifestHash,
+                .expectedInstalledGeneration = 0U,
+            }
+        );
+        REQUIRE(installed.has_value());
+        auto const source = pluginSource(pluginId);
+        auto const project = makeProject(pluginId, source);
+        auto const manifest = sessionManifest(
+            project.registration,
+            installed->rootHash()
+        );
+        auto const projectPlugin = loadPlugin(project, source);
+        REQUIRE(store.registerProject(project.registration).has_value());
+        REQUIRE(store.provisionProjectInstance(
+            project.registration,
+            projectPlugin,
+            ProjectInstanceBaseline{
+                .projectInstanceKey  = "instance-1",
+                .eventId             = "baseline-1",
+                .sessionManifestHash = manifest.hash(),
+                .entry = journalEntry(
+                    project,
+                    project.registration.baselineEventType(),
+                    "{\"kind\":\"baseline\"}"
+                ),
+            }
+        ).has_value());
+        REQUIRE(store.pinSession(
+            SessionPin{
+                .sessionId                 = "session-1",
+                .authenticatedControllerId = "controller-1",
+                .idempotencyNamespace      = "controller-1",
+                .projectRegistrationHash   = project.registration.hash(),
+                .capabilityProfileHash     = hashOf("capability"),
+                .controlledTargetKey       = "target-1",
+                .projectInstanceKey        = "instance-1",
+                .mode                      = SessionMode::Write,
+            },
+            manifest
+        ).has_value());
+        auto lease = store.acquireLease("session-1");
+        REQUIRE(lease.has_value());
+        auto snapshot = store.createSnapshot(*lease, hashOf("snapshot-1"));
+        REQUIRE(snapshot.has_value());
+        return PreparedStore{
+            .store    = std::move(store),
+            .plugin   = projectPlugin,
+            .project  = project,
+            .manifest = manifest,
+            .lease    = *lease,
+            .snapshot = *snapshot,
+        };
+    }
+
+    [[nodiscard]]
+    inline auto command(
+        SnapshotRecord const& snapshot,
+        std::string clientRequestId
+    ) -> CommandRequest
+    {
+        return CommandRequest{
+            .sessionId            = snapshot.sessionId,
+            .snapshotToken        = snapshot.token,
+            .idempotencyNamespace = "controller-1",
+            .clientRequestId      = std::move(clientRequestId),
+        };
+    }
+
+    [[nodiscard]]
+    inline auto reconciliationOutcome(
+        PreparedStore const& prepared,
+        std::string operationId,
+        std::string document
+    ) -> ValidatedReconcileOutcome
+    {
+        return reconcileOutcome(
+            prepared.project,
+            prepared.plugin,
+            std::move(operationId),
+            std::move(document)
+        );
+    }
+
+    [[nodiscard]]
+    inline auto createReadyOperation(
+        PreparedStore& prepared,
+        std::string clientRequestId,
+        std::string_view toolName
+    ) -> StoredOperation
+    {
+        auto operation = prepared.store.createOrLoadOperation(
+            command(prepared.snapshot, std::move(clientRequestId)),
+            toolInvocation(prepared.project, std::string{toolName})
+        );
+        REQUIRE(operation.has_value());
+        operation = prepared.store.transitionOperation(
+            operation->operationId,
+            operation->revision,
+            OperationEvent::ReadyWithoutApproval
+        );
+        REQUIRE(operation.has_value());
+        return *operation;
+    }
+
+    // Drives one mutating Operation through a real dispatch to the reconciling
+    // state, so a reconciliation contract starts where a reconciliation starts.
+    [[nodiscard]]
+    inline auto reconcilingOperation(
+        PreparedStore& prepared,
+        std::string clientRequestId,
+        DeliveryOutcome outcome
+    ) -> StoredOperation
+    {
+        auto const ready = createReadyOperation(
+            prepared,
+            std::move(clientRequestId),
+            "command-1"
+        );
+        auto const dispatch = prepared.store.reserveDispatch(
+            ready.operationId,
+            ready.revision,
+            prepared.lease,
+            hashOf("decision"),
+            hashOf("plan"),
+            hashOf("step"),
+            "authority-1",
+            std::nullopt
+        );
+        REQUIRE(dispatch.has_value());
+        auto const reconciling = prepared.store.recordDeliveryOutcome(
+            ready.operationId,
+            dispatch->dispatchSequence,
+            dispatch->operationRevision,
+            outcome
+        );
+        REQUIRE(reconciling.has_value());
+        REQUIRE(reconciling->state == OperationState::Reconciling);
+        return *reconciling;
     }
 }
