@@ -2,6 +2,7 @@
 #include <operator/operation.hpp>
 
 #include "project-fixture.hpp"
+#include "schema-binding.hpp"
 
 #include <domain/content-hash.hpp>
 
@@ -140,6 +141,8 @@ namespace uf::operator_runtime
         using test_support::canonical;
         using test_support::hashOf;
         using test_support::journalEntry;
+        using test_support::k_fixtureProvenance;
+        using test_support::k_fixtureProvenanceViolations;
         using test_support::prepareStore;
         using test_support::reconciliationOutcome;
         using test_support::reconcilingOperation;
@@ -1060,13 +1063,42 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
 
-        // Provenance is neither optional nor the caller's to invent: an entry
-        // whose provenance is not the pinned JournalProvenance document cannot
-        // be minted, so no Journal row can lack one.
-        CHECK_FALSE(prepared.project.journalSchemaOwner.validate(
+        // The journal_events row IS this record, member for member, so the
+        // schema's required list and the columns the Operator's own DDL created
+        // are the same set. Everything above this line reads schema text and
+        // passes whether or not the store agrees; this is the assertion that
+        // ties the two together, and a column renamed on either side is red.
+        auto schemaProbe = TemporaryDirectory{};
+        CHECK(
+            test_support::operatorTableColumns(schemaProbe.path(), "journal_events")
+            == test_support::requiredMembers(event)
+        );
+
+        // Provenance is neither optional nor the caller's to invent, and the
+        // schema that judges it is the framework's: JR:`JournalProvenance` is
+        // fixed, so no ProjectRegistrationClaims member pins it and no project
+        // supplies a validator for it. Each document below is exact JCS the
+        // project's canonical validator accepts, and each violates exactly one
+        // of that schema's rules -- enum, required, additionalProperties, the
+        // Hash pattern, uniqueItems, the Identifier pattern. A framework check
+        // that merely compared bytes against the conforming document would pass
+        // these too, so the conforming document is asserted separately below.
+        for (auto const violation : k_fixtureProvenanceViolations)
+        {
+            CAPTURE(violation);
+            CHECK_FALSE(prepared.project.journalSchemaOwner.validate(
+                "fixture.progress",
+                canonical(prepared.project.schemaOwner, "{\"value\":1}"),
+                canonical(
+                    prepared.project.schemaOwner,
+                    std::string{violation}
+                )
+            ).has_value());
+        }
+        CHECK(prepared.project.journalSchemaOwner.validate(
             "fixture.progress",
             canonical(prepared.project.schemaOwner, "{\"value\":1}"),
-            canonical(prepared.project.schemaOwner, "{\"kind\":\"forged\"}")
+            canonical(prepared.project.schemaOwner, std::string{k_fixtureProvenance})
         ).has_value());
 
         // A payload the event's own schema does not accept cannot be minted
@@ -1074,7 +1106,7 @@ namespace uf::operator_runtime
         CHECK_FALSE(prepared.project.journalSchemaOwner.validate(
             "fixture.progress",
             canonical(prepared.project.schemaOwner, "{\"value\":99}"),
-            canonical(prepared.project.schemaOwner, "{\"kind\":\"fixture\"}")
+            canonical(prepared.project.schemaOwner, std::string{k_fixtureProvenance})
         ).has_value());
 
         auto const operation = reconcilingOperation(

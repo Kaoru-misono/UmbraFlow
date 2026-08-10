@@ -52,30 +52,31 @@ namespace uf::operator_runtime
         auto provenance() const noexcept UF_LIFETIME_BOUND -> CanonicalJson const&;
     };
 
-    // Trusted deployment callbacks. The payload validator selects the complete
-    // schema by namespaced event type, validates the payload, and returns that
-    // schema's real content hash. The provenance validator enforces the one
-    // fixed JournalProvenance schema.
+    // Trusted deployment callback. It selects the complete schema by namespaced
+    // event type, validates the payload, and returns that schema's real content
+    // hash.
+    //
+    // There is deliberately no provenance counterpart. JR:`JournalProvenance`
+    // is fixed and framework-owned -- no member of ProjectRegistrationClaims
+    // pins a provenance schema, because nothing about its shape is a project's
+    // to decide -- so validate() enforces
+    // schema/umbraflow-journal-v1.schema.json itself. A project supplies
+    // provenance VALUES; it never supplies the schema that judges them.
     using JournalPayloadSchemaValidator = std::function<
         Result<ContentHash>(
             std::string_view namespacedEventType,
             std::string_view exactPayloadJcs
         )
     >;
-    using JournalProvenanceValidator = std::function<
-        Status(std::string_view exactProvenanceJcs)
-    >;
 
     class ProjectJournalSchemaOwner final
     {
         ContentHash                   m_projectRegistrationHash;
         JournalPayloadSchemaValidator m_validatePayload;
-        JournalProvenanceValidator    m_validateProvenance;
 
         ProjectJournalSchemaOwner(
             ContentHash projectRegistrationHash,
-            JournalPayloadSchemaValidator validatePayload,
-            JournalProvenanceValidator validateProvenance
+            JournalPayloadSchemaValidator validatePayload
         );
 
     public:
@@ -87,8 +88,7 @@ namespace uf::operator_runtime
         static auto create(
             VerifiedProjectRegistration const& registration,
             std::string_view exactJournalSchemaManifestBytes,
-            JournalPayloadSchemaValidator validatePayload,
-            JournalProvenanceValidator validateProvenance
+            JournalPayloadSchemaValidator validatePayload
         ) -> Result<ProjectJournalSchemaOwner>;
 
         [[nodiscard]]

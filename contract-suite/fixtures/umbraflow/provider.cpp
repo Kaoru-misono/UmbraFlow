@@ -49,7 +49,7 @@ namespace uf::operator_runtime::contract
                     .eventType = "fixture.duplicate",
                     .payload   = "{\"value\":3}",
                 },
-                .provenance     = "{\"kind\":\"fixture\"}",
+                .provenance     = std::string{test_support::k_fixtureProvenance},
                 .continueInput  = "{\"disposition\":\"continue\"}",
                 .confirmedInput = "{\"disposition\":\"confirmed\"}",
                 .rejectedInput  = "{\"disposition\":\"rejected\"}",

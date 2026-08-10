@@ -57,6 +57,50 @@ namespace uf::operator_runtime::test_support
         std::shared_ptr<std::string> lastDeriveInput;
     };
 
+    // The one conforming JR:`JournalProvenance` this fixture project mints, and
+    // six documents that each violate exactly one of that schema's rules. All
+    // seven are exact JCS, so the canonical validator admits every one of them
+    // and the framework's fixed-schema check is the only thing that can tell
+    // them apart. A project supplies these VALUES; the schema that judges them
+    // is the framework's and is not delegated.
+    inline constexpr auto k_fixtureProvenance = std::string_view{
+        "{\"kind\":\"observation\","
+        "\"observation_ids\":[\"fixture-observation-1\"],"
+        "\"principal_id\":null,\"source_hashes\":[]}"
+    };
+    inline constexpr auto k_fixtureProvenanceViolations = std::array{
+        // kind outside the five-value enum.
+        std::string_view{
+            "{\"kind\":\"forged\",\"observation_ids\":[],"
+            "\"principal_id\":null,\"source_hashes\":[]}"
+        },
+        // source_hashes missing, so three of four required members are present.
+        std::string_view{
+            "{\"kind\":\"observation\",\"observation_ids\":[],"
+            "\"principal_id\":null}"
+        },
+        // A fifth member, against additionalProperties: false.
+        std::string_view{
+            "{\"kind\":\"observation\",\"observation_ids\":[],"
+            "\"principal_id\":null,\"source_hashes\":[],\"witness\":\"suite\"}"
+        },
+        // An element that is not a 64-character lowercase hex Hash.
+        std::string_view{
+            "{\"kind\":\"observation\",\"observation_ids\":[],"
+            "\"principal_id\":null,\"source_hashes\":[\"not-a-hash\"]}"
+        },
+        // A repeated element, against uniqueItems.
+        std::string_view{
+            "{\"kind\":\"observation\",\"observation_ids\":[\"a\",\"a\"],"
+            "\"principal_id\":null,\"source_hashes\":[]}"
+        },
+        // An empty principal_id, which the Identifier pattern refuses.
+        std::string_view{
+            "{\"kind\":\"observation\",\"observation_ids\":[],"
+            "\"principal_id\":\"\",\"source_hashes\":[]}"
+        },
+    };
+
     // Stands in for a project's derive-input JSON Schema. Structural for
     // looksLikeReduceEnvelope's reason: the Operator builds this envelope from
     // whatever the world currently holds, and a real project's schema would be
@@ -194,13 +238,14 @@ namespace uf::operator_runtime::test_support
             return false;
         }
 
+        constexpr auto eventPrefix =
+            std::string_view{"{\"namespaced_event_type\":\""};
+        auto const eventSuffix = std::string{",\"provenance\":"}
+            + std::string{k_fixtureProvenance} + "}";
+
         auto events = exactJcs.substr(prefix.size(), middleAt - prefix.size());
         while (!events.empty())
         {
-            constexpr auto eventPrefix =
-                std::string_view{"{\"namespaced_event_type\":\""};
-            constexpr auto eventSuffix =
-                std::string_view{",\"provenance\":{\"kind\":\"fixture\"}}"};
             if (!events.starts_with(eventPrefix))
             {
                 return false;
@@ -379,8 +424,6 @@ namespace uf::operator_runtime::test_support
                     std::string_view{"{\"journal_events\":[],\"prior_project_state\":null}"},
                     std::string_view{"{\"journal_events\":[],\"prior_project_state\":{\"revision\":0}}"},
                     std::string_view{"{\"kind\":\"baseline\"}"},
-                    std::string_view{"{\"kind\":\"forged\"}"},
-                    std::string_view{"{\"kind\":\"fixture\"}"},
                     std::string_view{"{\"revision\":0}"},
                     std::string_view{"{\"revision\":1}"},
                     std::string_view{"{\"value\":1}"},
@@ -390,6 +433,11 @@ namespace uf::operator_runtime::test_support
                 };
                 if (
                     std::ranges::find(accepted, candidateJcs) == accepted.end()
+                    && candidateJcs != k_fixtureProvenance
+                    && !std::ranges::contains(
+                        k_fixtureProvenanceViolations,
+                        candidateJcs
+                    )
                     && !looksLikeReduceEnvelope(candidateJcs)
                     && !looksLikeDeriveEnvelope(candidateJcs)
                     && !looksLikePlanEnvelope(candidateJcs)
@@ -529,17 +577,6 @@ namespace uf::operator_runtime::test_support
                     );
                 }
                 return hashOf(found->schemaIdentity);
-            },
-            [](std::string_view provenance) -> Status
-            {
-                if (provenance != "{\"kind\":\"fixture\"}")
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "fixture JournalProvenance schema rejected document"
-                    );
-                }
-                return ok();
             }
         );
         REQUIRE(journalSchemaOwner.has_value());
@@ -733,7 +770,7 @@ namespace uf::operator_runtime::test_support
         ProjectFixture const& project,
         std::string eventType,
         std::string payload,
-        std::string provenance = "{\"kind\":\"fixture\"}"
+        std::string provenance = std::string{k_fixtureProvenance}
     ) -> ValidatedJournalEntryData
     {
         auto result = project.journalSchemaOwner.validate(

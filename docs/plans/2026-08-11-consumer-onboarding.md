@@ -603,6 +603,26 @@ to a validator instead of a default. Recorded as the ninth instance in
 the generalisable form: delegating a check gives away the enforcement and keeps
 the promise.
 
+> **Applied 2026-08-11, the first branch.** `JournalProvenanceValidator` is
+> deleted and `ProjectJournalSchemaOwner::validate` enforces
+> `$defs.JournalProvenance` itself, so `create` takes one validator rather than
+> two and this seam costs a consumer nothing. Both fixtures now mint conforming
+> documents and exercise different branches of the schema — a null
+> `principal_id` with a populated `observation_ids` on one side, a named
+> principal with a populated `source_hashes` on the other. D2 was not needed,
+> because nothing is delegated any more. Two things this recommendation did not
+> have to predict and a later reader needs: the check can be a positional reader
+> rather than a JSON parser, because the bytes are exact RFC 8785 JCS and the
+> member order is therefore fixed, which is also what enforces `required` and
+> `additionalProperties: false`; and the falsification had to be six documents
+> violating one rule each, since a framework check that compared bytes against
+> the one conforming document would refuse all six and read as a fix. See
+> [the journal record binding](2026-08-11-journal-record-binding.md) §5.
+>
+> §6.4's other half — the JCS canonicaliser in `core`, Q3 — is untouched and
+> still open. `CanonicalJsonValidator` remains delegated, and both fixtures
+> still fake it with an allowlist of literals.
+
 ### 6.5 How you would know the line was being crossed
 
 Three detectors, in increasing order of cost. All three are things this

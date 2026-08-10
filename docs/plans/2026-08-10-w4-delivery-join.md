@@ -73,7 +73,12 @@ and §4 rules that `OperatorCoordinator` grows rather than gaining a sibling.
 > `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1` over
 > the same 23 tables, renaming eight DDL columns to `controlled_target_id`. Read
 > every `controlled_target_key` below as that spelling: the C++ one is gone and
-> the bridge that carried both was deleted rather than relocated.)*
+> the bridge that carried both was deleted rather than relocated. This block
+> moved it once more, to
+> `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`,
+> over the same 23 tables, renaming four DDL columns in `journal_events` and
+> `project_state` to the journal schema's member names. See
+> [journal record binding](2026-08-11-journal-record-binding.md).)*
 >
 > **What this document specified and the implementation refused.**
 >

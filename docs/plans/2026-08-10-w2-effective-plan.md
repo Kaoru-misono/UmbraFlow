@@ -33,10 +33,13 @@ Ordering and requirement state: [`2026-08-10-next-block.md`](2026-08-10-next-blo
 > `sha256:12f64bfff305c30c716fbd5bdc9934a17140dfe4e127b5bce2ec7a10ecd309e4`
 > over 20 tables. (Superseded three landings later on the same day, and once
 > more after that: the tree now carries
-> `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
+> `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`
 > over 23 tables — `bda31e4b18…` stood between W7 and `07abc3e`, which renamed
-> eight DDL columns to `controlled_target_id` without changing a table name.
-> Nothing else in this note moves with it.)
+> eight DDL columns to `controlled_target_id`, and `be80aca714…` stood between
+> that and this block, which renamed four more to the journal record schema's
+> member names. Nothing else in this note moves with it.) *(Corrected
+> 2026-08-11: this read `be80aca714…` as current. See
+> [journal record binding](2026-08-11-journal-record-binding.md).)*
 >
 > **All 15 mutations in §9 were run — the first time any of this block's 23
 > were.** Eleven turn their case red. `T4` is not applicable as written, and
@@ -739,8 +742,9 @@ existing formatting exactly — see the fingerprint warning below.
 ```
 
 `canonical_parts` holds the exact `SnapshotParts` JCS, following
-`journal_events.canonical_event` and `project_state.canonical_state`. Both
-hashes are recomputable from it, which is what lets §9 falsify the derivation.
+`journal_events.opaque_project_payload` and
+`project_state.canonical_opaque_payload`. Both hashes are recomputable from
+it, which is what lets §9 falsify the derivation.
 
 ```sql
                     CREATE TABLE IF NOT EXISTS operation_plans(

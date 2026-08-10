@@ -42,13 +42,17 @@ rows `P-01`, `P-02`, `P-03`, `A-01`, `A-02`. The frozen authority is
 > landed tree" note below was written against `848e390` and predates these two
 > landings; where one states a current value, read it as of that commit. The
 > tree carries
-> `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1` over
-> 23 tables, reached in three steps rather than the one §6.3 plans: W6 added
+> `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a` over
+> 23 tables, reached in four steps rather than the one §6.3 plans: W6 added
 > `external_input_findings` and `ledger_events` (22 tables,
-> `c691f1d9bf…`), W7 added `agent_budgets` (23 tables, `bda31e4b18…`), and
+> `c691f1d9bf…`), W7 added `agent_budgets` (23 tables, `bda31e4b18…`),
 > `07abc3e` renamed eight DDL columns to `controlled_target_id` without touching
-> a table name. *(Corrected 2026-08-11: this named `bda31e4b18…` as the tree's
-> value and two steps.)*
+> a table name, and this block renamed four more DDL columns to the journal
+> record schema's member names, also without touching a table name.
+> *(Corrected 2026-08-11: this named `bda31e4b18…` as the tree's value and two
+> steps.)* *(Corrected 2026-08-11, again: this named `be80aca714…` as the
+> tree's value and three steps. See
+> [journal record binding](2026-08-11-journal-record-binding.md).)*
 >
 > **§6.1's three schema changes were all declined, which is what the
 > reconciliation §7.1 recommended and is worth stating as an outcome rather than

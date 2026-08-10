@@ -657,7 +657,7 @@ and `docs/plans/` — `2026-08-09-claude-handoff.md`, `2026-08-10-next-block.md`
 `2026-08-10-w3-snapshot-coordinator.md`, `2026-08-10-w4-delivery-join.md`,
 `2026-08-10-w6-w7-controller-and-agent.md`. The pre-window value `5738e6f9…`
 survives in six. The current value is
-`sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
+`sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`
 (`modules/operator/source/operator/ledger.cpp`:362).
 
 > **Corrected 2026-08-11 (`07abc3e`).** This paragraph named
@@ -668,6 +668,15 @@ survives in six. The current value is
 > subject: `bda31e4b18…` reached ten documents as a live value before it was
 > superseded, and correcting them was a second sweep. The nine and six counts
 > above are re-verified as of this correction and unchanged.
+
+> **Corrected 2026-08-11, again.** This paragraph named `be80aca714…` at
+> `:362` as current. This block renamed four DDL columns — two in
+> `journal_events`, two in `project_state` — to the journal schema's member
+> names, which moves the canonicalized DDL text without moving a table name,
+> so the count stays at 23 and the constant still occurs exactly once, at
+> `:362`. The nine and six counts above are unaffected by this change;
+> `be80aca714…` now joins the superseded set. See
+> [journal record binding](2026-08-11-journal-record-binding.md).
 
 **Consumer-side check performed:** uf-chaos pins **no** framework fingerprint
 anywhere, so this breadth does not extend across the boundary. VERIFIED —

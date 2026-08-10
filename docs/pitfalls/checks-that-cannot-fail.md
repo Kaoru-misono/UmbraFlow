@@ -15,9 +15,10 @@ gate.
 ## They are one family, not a run of coincidences
 
 Four separate instances were found on 2026-08-10, in four unrelated files, and
-five more on 2026-08-11 — one in a database column, three in the harness that
-was running the mutations meant to catch the rest, and one in the exported
-contract suite itself. They are the same defect wearing nine costumes: **a name
+six more on 2026-08-11 — one in a database column, three in the harness that
+was running the mutations meant to catch the rest, one in the exported
+contract suite itself, and one between a schema file and the DDL that stores
+what it describes. They are the same defect wearing ten costumes: **a name
 exists, the name promises something, and nothing verifies the promise.**
 
 | Instance | The name that promised | What verified it |
@@ -30,10 +31,11 @@ exists, the name promises something, and nothing verifies the promise.**
 | `ctest -R <name>` in a mutation harness (found 2026-08-11) | "the case this mutation targets ran and passed" | nothing — `ctest -R` exits 0 when the filter matches no test, so a prose-named case, a typo or a renamed gate reads exactly like a pass. Four results were falsely green on one campaign's first pass |
 | restoring the mutated file (found 2026-08-11) | "the tree is back to its original state" | nothing — the restore preserved the file's original modification time, so Ninja saw nothing newer than its output and skipped the rebuild. Every run after the first tested a mutation that had supposedly been reverted |
 | three refusal assertions in one new case (found 2026-08-11) | "the budget refuses this" | nothing — the fixture named an instance that already had an active write session, so a unique index refused all three regardless, and the mutation they existed to catch came back green |
-| `JournalProvenanceValidator` (found 2026-08-11) | "this document conforms to the fixed `JournalProvenance` schema" — the type's own comment, the call site's `UF_TRY_CONTEXT` string, and both fixtures' refusal messages all say so | nothing — the framework hands the check to the project and never cross-checks it against `schema/umbraflow-journal-v1.schema.json`. Both shipped validators compare bytes to the one literal they ship, and **both literals violate that schema**: `{"kind":"fixture"}` fails the `kind` enum and omits three required members, `{"witness":"suite"}` omits all four and breaks `additionalProperties: false`. A suite run is green either way |
+| `JournalProvenanceValidator` (found 2026-08-11, **closed 2026-08-11**) | "this document conforms to the fixed `JournalProvenance` schema" — the type's own comment, the call site's `UF_TRY_CONTEXT` string, and both fixtures' refusal messages all say so | nothing — the framework hands the check to the project and never cross-checks it against `schema/umbraflow-journal-v1.schema.json`. Both shipped validators compare bytes to the one literal they ship, and **both literals violate that schema**: `{"kind":"fixture"}` fails the `kind` enum and omits three required members, `{"witness":"suite"}` omits all four and breaks `additionalProperties: false`. A suite run is green either way |
+| The record-shape half of `contract-state-s06` and `contract-agent-a04` (found 2026-08-11, **closed 2026-08-11**) | "JR:`ProjectState` and JR:`JournalEvent` are the shapes the store holds" | nothing — both gates asserted the shape by searching the schema *text* for member names, and nothing anywhere compared the schema with the DDL that stores those records. Four of the nineteen column names had drifted from their member names, one of them (`journal_events.canonical_event`) naming bytes that are not an event, and every gate was green throughout |
 
 Note what they are *not*. None is a bug in a check's logic; every one of the
-eight works correctly on the inputs it receives. The defect is upstream of the
+ten works correctly on the inputs it receives. The defect is upstream of the
 logic, in what reaches it — an unmatchable filter, a missing root, an
 unregistered binary, an un-run case, a stale object file, a fixture nothing can
 succeed against — or downstream of it, in a result nothing consumes. That
@@ -178,6 +180,34 @@ probing the delegate with an input it must reject. A callback typed
 Recorded 2026-08-11. The consumer-cost side of the same finding is in
 [consumer onboarding](../plans/2026-08-11-consumer-onboarding.md) §6.4, beside
 the canonical-validator instance it rhymes with.
+
+> **Closed 2026-08-11.** `JournalProvenanceValidator` is deleted;
+> `ProjectJournalSchemaOwner::validate` enforces `$defs.JournalProvenance` in
+> the framework. The one thing worth carrying forward is what the repair had to
+> prove: `contract-agent-a04` now drives six documents that each violate exactly
+> one rule of that schema and one that violates none, because a framework check
+> that merely compared bytes against the conforming document would have refused
+> all six for the wrong reason and read as a fix. See
+> [the journal record binding](../plans/2026-08-11-journal-record-binding.md).
+
+### A schema file nothing compares against is the same shape
+
+The tenth row is the family applied to a *contract document* rather than to a
+check. `schema/umbraflow-journal-v1.schema.json` is pinned by
+`journal_envelope_schema_hash` and names two records this framework stores as
+SQLite rows; `contract-state-s06` and `contract-agent-a04` both assert those
+shapes by searching the schema text for member names. Every assertion passed for
+as long as the file existed, whatever the DDL said — and the DDL said
+`canonical_event` for a column bound to the event's payload and nothing else.
+
+The generalisable form is one question, and it is cheap: **for every schema this
+repository ships, name the code that produces or consumes the shape, and the
+assertion that compares the two.** Where the answer is "a test greps the schema
+file", the shape is documented and unenforced, and the two are indistinguishable
+from the gate's name. The repair here was to read the columns back from a
+database the Operator created and compare the set with the schema's own
+`required` list — which also made the reverse true for the first time: an edit
+to the schema file alone can now turn a behavioural gate red.
 
 ## Properties no mutation can reach
 

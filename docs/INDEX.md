@@ -32,6 +32,13 @@ the four same-day specifications conflict.
   `EXTERNAL attest-consumer-dNN` IDs, specified 2026-08-11: what a consumer
   produces, what binds it, and what upstream may and may not refuse. Proposal
   only; six questions await a ruling.
+- [The journal record binding](plans/2026-08-11-journal-record-binding.md) —
+  landed 2026-08-11. The `journal_events` and `project_state` rows now carry the
+  member names of the journal records they store, the framework validates
+  `JR:JournalProvenance` itself instead of delegating it, and `contract-state-s06`
+  and `contract-agent-a04` bind each stored row to the schema's `required` list.
+  Read it before touching either table or that schema file: the Operator DDL
+  fingerprint moved and databases from before it are refused at open.
 - [Historical pre-rewrite work queue](WORKLIST.md) — retained evidence only,
   not an implementation queue.
 

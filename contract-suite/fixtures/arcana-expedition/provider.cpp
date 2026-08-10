@@ -161,7 +161,14 @@ return {
 
         constexpr auto k_artifactRootName = std::string_view{"map"};
         constexpr auto k_artifactBytes = std::string_view{"expedition-map-bytes"};
-        constexpr auto k_provenance = std::string_view{"{\"witness\":\"suite\"}"};
+        // JR:`JournalProvenance`, whose schema is the framework's and fixed.
+        // This project exercises the branches the umbraflow fixture does not:
+        // a named principal and a non-empty source_hashes.
+        constexpr auto k_provenance = std::string_view{
+            "{\"kind\":\"human_correction\",\"observation_ids\":[],"
+            "\"principal_id\":\"expedition.witness\",\"source_hashes\":"
+            "[\"7d4f3b2a19c8e6d5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1\"]}"
+        };
         constexpr auto k_projectState = std::string_view{"{\"turn\":0}"};
         constexpr auto k_visible = std::string_view{"{\"visible\":true}"};
 
@@ -239,8 +246,8 @@ return {
 
             constexpr auto eventPrefix =
                 std::string_view{"{\"namespaced_event_type\":\""};
-            constexpr auto eventSuffix =
-                std::string_view{",\"provenance\":{\"witness\":\"suite\"}}"};
+            auto const eventSuffix = std::string{",\"provenance\":"}
+                + std::string{k_provenance} + "}";
 
             auto events = exactJcs.substr(prefix.size(), middleAt - prefix.size());
             while (!events.empty())
@@ -776,15 +783,7 @@ return {
             auto journalSchemaOwner = ProjectJournalSchemaOwner::create(
                 registration,
                 schemas.journalManifest,
-                journalPayloadValidator(identity.eventNamespace),
-                [](std::string_view provenance) -> Status
-                {
-                    if (provenance != k_provenance)
-                    {
-                        return refuse("expedition provenance schema rejected a document");
-                    }
-                    return ok();
-                }
+                journalPayloadValidator(identity.eventNamespace)
             );
             REQUIRE(journalSchemaOwner.has_value());
 

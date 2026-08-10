@@ -92,6 +92,8 @@ namespace uf::operator_runtime
         using test_support::canonical;
         using test_support::hashOf;
         using test_support::journalEntry;
+        using test_support::k_fixtureProvenance;
+        using test_support::k_fixtureProvenanceViolations;
         using test_support::loadPlugin;
         using test_support::makeProject;
         using test_support::sessionManifest;
@@ -520,11 +522,12 @@ namespace uf::operator_runtime
 
     TEST_CASE("Journal schema owner prevents caller-attached payload and provenance labels")
     {
-        auto const project = makeProject("fixture.alpha", k_pluginSource);
+        auto const project    = makeProject("fixture.alpha", k_pluginSource);
+        auto const provenance = std::string{k_fixtureProvenance};
         auto const accepted = project.journalSchemaOwner.validate(
             "fixture.progress",
             canonical(project.schemaOwner, "{\"value\":1}"),
-            canonical(project.schemaOwner, "{\"kind\":\"fixture\"}")
+            canonical(project.schemaOwner, provenance)
         );
         REQUIRE(accepted.has_value());
         CHECK(accepted->projectRegistrationHash() == project.registration.hash());
@@ -533,17 +536,20 @@ namespace uf::operator_runtime
         CHECK_FALSE(project.journalSchemaOwner.validate(
             "fixture.progress",
             canonical(project.schemaOwner, "{\"value\":2}"),
-            canonical(project.schemaOwner, "{\"kind\":\"fixture\"}")
+            canonical(project.schemaOwner, provenance)
         ).has_value());
         CHECK_FALSE(project.journalSchemaOwner.validate(
             "fixture.unknown",
             canonical(project.schemaOwner, "{\"value\":99}"),
-            canonical(project.schemaOwner, "{\"kind\":\"fixture\"}")
+            canonical(project.schemaOwner, provenance)
         ).has_value());
         CHECK_FALSE(project.journalSchemaOwner.validate(
             "fixture.progress",
             canonical(project.schemaOwner, "{\"value\":1}"),
-            canonical(project.schemaOwner, "{\"kind\":\"forged\"}")
+            canonical(
+                project.schemaOwner,
+                std::string{k_fixtureProvenanceViolations.front()}
+            )
         ).has_value());
     }
 
@@ -1255,7 +1261,7 @@ namespace uf::operator_runtime
             *prepared.project.lastReduceInput
             == "{\"journal_events\":[{\"namespaced_event_type\":\"fixture.baseline\","
                "\"opaque_project_payload\":{\"kind\":\"baseline\"},"
-               "\"provenance\":{\"kind\":\"fixture\"}}],"
+               "\"provenance\":" + std::string{k_fixtureProvenance} + "}],"
                "\"prior_project_state\":null}"
         );
 
@@ -1272,7 +1278,7 @@ namespace uf::operator_runtime
             *prepared.project.lastReduceInput
             == "{\"journal_events\":[{\"namespaced_event_type\":\"fixture.confirmed\","
                "\"opaque_project_payload\":{\"value\":1},"
-               "\"provenance\":{\"kind\":\"fixture\"}}],"
+               "\"provenance\":" + std::string{k_fixtureProvenance} + "}],"
                "\"prior_project_state\":{\"revision\":0}}"
         );
     }

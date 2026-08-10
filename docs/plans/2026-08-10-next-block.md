@@ -583,13 +583,19 @@ What the three landed items actually left behind:
   > reference set at one time, not the number of legs in it.
   >
   > **Current:**
-  > `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
+  > `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`
   > over 23 tables, still occurring exactly once in the tree, at
   > `modules/operator/source/operator/ledger.cpp:362`. *(Corrected 2026-08-11:
   > this read `bda31e4b18…` and was labelled current as of the block's close.
   > `07abc3e` renamed eight DDL columns to `controlled_target_id`, which changes
   > the stored DDL text the fingerprint canonicalizes without changing a table
-  > name, so `expectedTables` stays at 23.)* It moved three times before that —
+  > name, so `expectedTables` stays at 23.)*
+  > *(Corrected 2026-08-11, again: this read `be80aca714…` as current. This
+  > block renamed four DDL columns in `journal_events` and `project_state` to
+  > the journal schema's member names, again changing the stored DDL text
+  > without changing a table name. See
+  > [journal record binding](2026-08-11-journal-record-binding.md).)* It moved
+  > three times before that —
   > `937773366f…` with W4's `dispatches` DDL, `c691f1d9bf…` with W6's two new
   > tables, then this with W7's `agent_budgets` — and W4's move is the one worth
   > remembering, because it changed no table at all. The reference set is
@@ -766,7 +772,11 @@ unfalsifiable properties rather than counting them as coverage (§2).
    controlledTargetKey` bridge rather than relocating it, and moved the Operator
    DDL fingerprint to
    `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
-   over the same 23 tables.)*
+   over the same 23 tables.)* *(Corrected 2026-08-11, again: this block moved
+   it once more, to
+   `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`,
+   over the same 23 tables. See
+   [journal record binding](2026-08-11-journal-record-binding.md).)*
 
 **Not this repository's to close, and a different stage.** The consumer-side
 work is specified in

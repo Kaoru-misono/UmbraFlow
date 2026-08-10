@@ -53,8 +53,8 @@
 > registered tests. `a03` and `a05` are the only requirements without a
 > per-requirement behavioural ID; both are implemented and both run under the
 > aggregate `test-annotate-backend`, so that is a naming gap and not a coverage
-> gap. The Operator DDL fingerprint moved three more times and is now
-> `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
+> gap. The Operator DDL fingerprint moved four more times and is now
+> `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`
 > over 23 tables, so every G2/G4 tick predates seven schema breaks; an operator
 > database from any earlier date is refused at open and deleted, never migrated.
 > And the migration report drifted a third, fourth and fifth time for the same
@@ -75,6 +75,16 @@
 > `07abc3e` renamed eight DDL columns to `controlled_target_id`, the only
 > spelling now, which changes the canonicalized DDL text without changing a table
 > name — hence the same 23 tables.
+>
+> Corrected 2026-08-11, once more: the fingerprint above also read
+> `be80aca714…` before this block. Four DDL columns were renamed so that
+> `journal_events` and `project_state` — both journal records — carry
+> `$defs.JournalEvent` and `$defs.ProjectState`'s member names:
+> `canonical_event` to `opaque_project_payload`, `canonical_provenance` to
+> `provenance`, `state_schema_hash` to `project_state_schema_hash` and
+> `canonical_state` to `canonical_opaque_payload`. No table added or dropped,
+> hence the same 23 tables. See
+> [journal record binding](plans/2026-08-11-journal-record-binding.md).
 >
 > Amended 2026-08-10, after the third adversarial round. It returned FAIL with
 > 17 findings — [the record](reviews/2026-08-10-third-round-review.md) — so the

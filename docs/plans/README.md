@@ -47,6 +47,18 @@ Reading order: target form, then layer ownership, then the model semantics.
   `25f57f9` --
   [W6 and W7 controller and Agent](2026-08-10-w6-w7-controller-and-agent.md) —
   landed `93698b4` + `c23efd3`.
+- [The journal record binding](2026-08-11-journal-record-binding.md) — **landed
+  record.** A consuming project read `schema/umbraflow-journal-v1.schema.json`
+  and `ledger.cpp` side by side and reported five disagreements. Two were real:
+  four DDL columns of the two tables that ARE journal records had drifted from
+  those records' schema member names, `journal_events.canonical_event` worst of
+  all because it named bytes that are not an event. Two were misreadings and the
+  document says why. The fifth, `JournalProvenanceValidator`, is deleted and the
+  framework now enforces `JR:JournalProvenance` itself. `contract-state-s06` and
+  `contract-agent-a04` gained the assertion that binds each stored row to the
+  schema's `required` list, which is what makes a schema-only edit able to turn
+  a behavioural gate red. Fingerprint moved to `sha256:500c07b10e…`,
+  still 23 tables; existing databases stop opening.
 - [Consumer attestation](2026-08-11-consumer-attestation.md) — **specification
   proposal, nothing implemented.** What `attest-consumer-d01`-`d09` are, what
   each of the nine requirements must attest, who signs and what that does and

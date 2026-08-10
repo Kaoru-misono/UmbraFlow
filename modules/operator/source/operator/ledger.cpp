@@ -359,7 +359,7 @@ namespace uf::operator_runtime
         // database rather than by hand. initialize() verifies immediately after
         // creating the schema, so a forgotten recomputation cannot ship green.
         constexpr auto k_exactSchemaV1Fingerprint = std::string_view{
-            "sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1"
+            "sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a"
         };
 
         [[nodiscard]]
@@ -913,6 +913,13 @@ namespace uf::operator_runtime
                         UNIQUE(authority_decision_id)
                     ) STRICT;
 
+                    -- This row IS JR:`JournalEvent`, member for member, so its
+                    -- columns carry that record's member names and no storage
+                    -- vocabulary of their own. opaque_project_payload holds the
+                    -- project's payload alone and never a serialized event.
+                    -- contract-agent-a04 binds this column set to the schema's
+                    -- required list, so a divergence here is a failing gate
+                    -- rather than a name only a cross-repository read finds.
                     CREATE TABLE IF NOT EXISTS journal_events(
                         event_id TEXT PRIMARY KEY,
                         plugin_id TEXT NOT NULL,
@@ -923,8 +930,8 @@ namespace uf::operator_runtime
                         operation_id TEXT REFERENCES operations(operation_id),
                         namespaced_event_type TEXT NOT NULL,
                         payload_schema_hash TEXT NOT NULL,
-                        canonical_event TEXT NOT NULL,
-                        canonical_provenance TEXT NOT NULL,
+                        opaque_project_payload TEXT NOT NULL,
+                        provenance TEXT NOT NULL,
                         FOREIGN KEY(plugin_id, project_instance_key)
                             REFERENCES project_instances(plugin_id, project_instance_key),
                         UNIQUE(plugin_id, project_instance_key, sequence)
@@ -1010,14 +1017,19 @@ namespace uf::operator_runtime
                             CHECK(consecutive_no_progress_steps >= 0)
                     ) STRICT;
 
+                    -- This row IS JR:`ProjectState`, member for member, for the
+                    -- reason journal_events carries, and project_registrations
+                    -- spells project_state_schema_hash the same way.
+                    -- contract-state-s06 binds this column set to the schema's
+                    -- required list.
                     CREATE TABLE IF NOT EXISTS project_state(
                         plugin_id TEXT NOT NULL,
                         project_instance_key TEXT NOT NULL,
                         revision INTEGER NOT NULL CHECK(revision >= 0),
                         project_registration_hash TEXT NOT NULL,
-                        state_schema_hash TEXT NOT NULL,
+                        project_state_schema_hash TEXT NOT NULL,
                         last_journal_sequence INTEGER NOT NULL CHECK(last_journal_sequence >= 0),
-                        canonical_state TEXT NOT NULL,
+                        canonical_opaque_payload TEXT NOT NULL,
                         state_hash TEXT NOT NULL,
                         FOREIGN KEY(plugin_id, project_instance_key)
                             REFERENCES project_instances(plugin_id, project_instance_key),
@@ -2689,8 +2701,8 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "INSERT INTO journal_events(event_id, plugin_id, project_instance_key, "
                 "sequence, prior_project_state_revision, session_manifest_hash, operation_id, "
-                "namespaced_event_type, payload_schema_hash, canonical_event, "
-                "canonical_provenance) "
+                "namespaced_event_type, payload_schema_hash, opaque_project_payload, "
+                "provenance) "
                 "VALUES(?1, ?2, ?3, 0, NULL, ?4, NULL, ?5, ?6, ?7, ?8)"
             )
         );
@@ -2744,8 +2756,8 @@ namespace uf::operator_runtime
             prepare(
                 m_impl->database.get(),
                 "INSERT INTO project_state(plugin_id, project_instance_key, revision, "
-                "project_registration_hash, state_schema_hash, last_journal_sequence, "
-                "canonical_state, state_hash) VALUES(?1, ?2, 0, ?3, ?4, 0, ?5, ?6)"
+                "project_registration_hash, project_state_schema_hash, last_journal_sequence, "
+                "canonical_opaque_payload, state_hash) VALUES(?1, ?2, 0, ?3, ?4, 0, ?5, ?6)"
             )
         );
         UF_TRY(bindText(
@@ -3650,7 +3662,7 @@ namespace uf::operator_runtime
             stateQuery,
             prepare(
                 m_impl->database.get(),
-                "SELECT revision, state_hash, canonical_state, project_registration_hash "
+                "SELECT revision, state_hash, canonical_opaque_payload, project_registration_hash "
                 "FROM project_state WHERE plugin_id=?1 AND project_instance_key=?2"
             )
         );
@@ -4909,7 +4921,7 @@ namespace uf::operator_runtime
                 "o.controlled_target_id, o.plugin_id, "
                 "session.project_registration_hash, registration.plugin_hash, "
                 "snapshot.decision_basis_hash, observation.canonical_observation, "
-                "state.canonical_state, session.controller_kind FROM operations o "
+                "state.canonical_opaque_payload, session.controller_kind FROM operations o "
                 + std::string{k_liveControllerJoin}
                 + "JOIN project_registrations registration "
                 "ON registration.registration_hash=session.project_registration_hash "
@@ -5176,7 +5188,7 @@ namespace uf::operator_runtime
                 "EXISTS(SELECT 1 FROM operation_steps step "
                 "WHERE step.operation_id=o.operation_id AND step.step_kind='ui_action' "
                 "AND step.dispatch_sequence IS NULL), "
-                "observation.canonical_observation, state.canonical_state, "
+                "observation.canonical_observation, state.canonical_opaque_payload, "
                 "o.frozen_plan_hash, EXISTS(SELECT 1 FROM dispatches d "
                 "WHERE d.operation_id=o.operation_id) FROM operations o "
                 + std::string{k_liveControllerJoin}
@@ -6206,8 +6218,8 @@ namespace uf::operator_runtime
             stateQuery,
             prepare(
                 m_impl->database.get(),
-                "SELECT revision, project_registration_hash, state_schema_hash, "
-                "last_journal_sequence, canonical_state FROM project_state "
+                "SELECT revision, project_registration_hash, project_state_schema_hash, "
+                "last_journal_sequence, canonical_opaque_payload FROM project_state "
                 "WHERE plugin_id=?1 AND project_instance_key=?2"
             )
         );
@@ -6339,8 +6351,8 @@ namespace uf::operator_runtime
                     m_impl->database.get(),
                     "INSERT INTO journal_events(event_id, plugin_id, project_instance_key, "
                     "sequence, prior_project_state_revision, session_manifest_hash, operation_id, "
-                    "namespaced_event_type, payload_schema_hash, canonical_event, "
-                    "canonical_provenance) "
+                    "namespaced_event_type, payload_schema_hash, opaque_project_payload, "
+                    "provenance) "
                     "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
                 )
             );
@@ -6402,9 +6414,9 @@ namespace uf::operator_runtime
                 stateUpdate,
                 prepare(
                     m_impl->database.get(),
-                    "UPDATE project_state SET revision=?1, canonical_state=?2, state_hash=?3, "
+                    "UPDATE project_state SET revision=?1, canonical_opaque_payload=?2, state_hash=?3, "
                     "last_journal_sequence=?4 WHERE plugin_id=?5 AND project_instance_key=?6 "
-                    "AND project_registration_hash=?7 AND state_schema_hash=?8 AND revision=?9"
+                    "AND project_registration_hash=?7 AND project_state_schema_hash=?8 AND revision=?9"
                 )
             );
             UF_TRY(bindInteger(m_impl->database.get(), stateUpdate.get(), 1, nextStateRevision));

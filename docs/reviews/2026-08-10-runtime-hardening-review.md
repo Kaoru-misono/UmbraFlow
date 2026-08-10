@@ -94,6 +94,11 @@ tree.
 > no table added or dropped. None of the four touched the reference set, so A-F8
 > is unaffected; the value is corrected here only because a stale fingerprint in
 > a live document is what a later reader copies.
+>
+> **Corrected 2026-08-11**: this block moved it a fifth, to
+> `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`,
+> over the same 23 tables. See
+> [journal record binding](../plans/2026-08-11-journal-record-binding.md).
 
 ## Accepted, with reasons
 

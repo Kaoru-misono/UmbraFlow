@@ -55,10 +55,13 @@ identity, composes nothing).
 > landing itself computed, `3a406b9d…`, was superseded the same day and reached
 > no document. (That value was superseded four more times later the same day;
 > the tree now carries
-> `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
+> `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`
 > over 23 tables — `bda31e4b18…` stood between W7 and `07abc3e`, which renamed
-> eight DDL columns to `controlled_target_id`. `project_observations` is still
-> among them.)
+> eight DDL columns to `controlled_target_id`, and `be80aca714…` stood between
+> that and this block, which renamed four more to the journal record schema's
+> member names. `project_observations` is still among them.) *(Corrected
+> 2026-08-11: this read `be80aca714…` as current. See
+> [journal record binding](2026-08-11-journal-record-binding.md).)*
 >
 > **Every mutation in this document was run, and three of its rows did not
 > survive contact.** `T6a` and `T6b` are each green and only `T6c`, deleting
@@ -466,8 +469,8 @@ revisions it records are re-checked by the extended join in §3.4.
    pinned, and `session_manifest_hash` would attest to a model that produced
    none of the evidence.
 6. Read `project_state` for `(plugin_id, project_instance_key)`: `revision`,
-   `state_hash`, `canonical_state`, `project_registration_hash`,
-   `state_schema_hash`. Refuse if absent — the row is created by
+   `state_hash`, `canonical_opaque_payload`, `project_registration_hash`,
+   `project_state_schema_hash`. Refuse if absent — the row is created by
    `provisionProjectInstance`, so its absence is an invariant failure, not a
    caller error.
 7. Read the latest `project_observations` row for the same key, ordered by
@@ -486,7 +489,7 @@ revisions it records are re-checked by the extended join in §3.4.
    {"pending_operation_transition":<null | {"operation_id":…,"revision":…,"state":…}>,
     "pinned_project_artifact_identities":[<root hash>, …],
     "prior_project_observation":<null | canonical observation payload>,
-    "project_state":<project_state.canonical_state bytes>,
+    "project_state":<project_state.canonical_opaque_payload bytes>,
     "ui_snapshot":<observation.canonicalJcs()>}
    ```
 
@@ -850,7 +853,7 @@ Property: the derive envelope carries the Host's observation in `ui_snapshot`
 and the database's ProjectState in `project_state`, in separate members, and no
 caller supplies either. Assert on the recorded derive input that `ui_snapshot`
 equals `observation.canonicalJcs()` and `project_state` equals the
-`canonical_state` bytes the row holds.
+`canonical_opaque_payload` bytes the row holds.
 Mutation: in the envelope builder, change
 `envelope += observation.canonicalJcs();` to
 `envelope += projectStateJcs;`.
@@ -996,8 +999,9 @@ list. None of them is settled here.
    `project_state_revision`, `availability_revision` and the composite foreign
    key. `decision_basis_hash` is common to both. Assumption 6 above applies.
 3. **Keep `canonical_parts` and the join columns.** W2's `canonical_parts` — the
-   exact `SnapshotParts` JCS, following `journal_events.canonical_event` — is
-   the better way to falsify the derivation, and this specification adopts it.
+   exact `SnapshotParts` JCS, following
+   `journal_events.opaque_project_payload` — is the better way to falsify the
+   derivation, and this specification adopts it.
    It does not replace the scalar columns: §3.4 joins the token against
    `project_state.revision` and `project_observations.revision`, and SQL cannot
    join through a JSON text column. Both are needed, and the invariant that
@@ -1035,7 +1039,11 @@ list. None of them is settled here.
    > deleted rather than relocated. The Operator DDL fingerprint moved to
    > `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
    > over the same 23 tables. `CONTEXT.md` carries the term and the retired
-   > spellings.
+   > spellings. *(Corrected 2026-08-11: this block moved the fingerprint
+   > again, to
+   > `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`,
+   > over the same 23 tables. See
+   > [journal record binding](2026-08-11-journal-record-binding.md).)*
 3. **`ui_snapshot` versus `ui_observation`.** The frozen design names the derive
    input member `ui_snapshot` and the `ProjectSnapshot` member `ui_observation`.
    They are different objects, so both are the authority's; a reader will still

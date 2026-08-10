@@ -118,8 +118,7 @@ namespace uf::operator_runtime::contract
                 [](std::string_view, std::string_view) -> Result<ContentHash>
                 {
                     return hashOf("anything");
-                },
-                [](std::string_view) -> Status { return ok(); }
+                }
             ).has_value()
         );
     }

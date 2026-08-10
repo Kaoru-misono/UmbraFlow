@@ -2,6 +2,7 @@
 #include <operator/manifest.hpp>
 
 #include "project-fixture.hpp"
+#include "schema-binding.hpp"
 
 #include <domain/content-hash.hpp>
 
@@ -585,6 +586,28 @@ namespace uf::operator_runtime
 
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
+
+        // Everything above reads schema text and passes whether or not the
+        // store agrees. JR:`ProjectState` is not a shape nothing produces: the
+        // project_state row IS that record, member for member, so the schema's
+        // required list and the columns the Operator's own DDL created are the
+        // same set. A column renamed on either side is red here.
+        auto schemaProbe = TemporaryDirectory{};
+        CHECK(
+            test_support::operatorTableColumns(schemaProbe.path(), "project_state")
+            == test_support::requiredMembers(state)
+        );
+
+        // The same check on a record that is assembled rather than stored is
+        // the positive control: JR:`ProjectInstance` names nine members and the
+        // project_instances row carries four, the rest coming from
+        // project_registrations and project_state. Without it, a comparison that
+        // could never fail would read the same as one that pins something.
+        CHECK(
+            test_support::operatorTableColumns(schemaProbe.path(), "project_instances")
+            != test_support::requiredMembers(instance)
+        );
+
         auto const& registration = prepared.project.registration;
         auto const baseline = [&prepared, &registration](
             std::string instanceKey,

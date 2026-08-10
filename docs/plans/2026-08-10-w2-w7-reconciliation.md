@@ -814,7 +814,8 @@ change and says so in the commit message (R5).
 | W4, **landed** `25f57f9` | 20 | unchanged as predicted — no new table, but the `dispatches` DDL gains the three-value outcome vocabulary and `delivery_reason`, so the text moved. Fingerprint `sha256:937773366fcfe4f8…` |
 | W6, **landed** `93698b4` | 22 | adds `external_input_findings` and `ledger_events`. Fingerprint `sha256:c691f1d9bfb79cc4…` |
 | W7, **landed** `c23efd3` | 23 | adds `agent_budgets`. Fingerprint `sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559` |
-| `07abc3e`, **landed** | 23 | no table added or dropped. Eight DDL columns are renamed to `controlled_target_id`, which is the whole of the change to the canonicalized text. Fingerprint `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1` — **the current value** |
+| `07abc3e`, **landed** | 23 | no table added or dropped. Eight DDL columns are renamed to `controlled_target_id`, which is the whole of the change to the canonicalized text. Fingerprint `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1` |
+| this block, **landed** | 23 | no table added or dropped. Four journal-record columns are renamed to their schema member names, which is the whole of the change to the canonicalized text. Fingerprint `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a` — **the current value** |
 
 > **Corrected again 2026-08-11, after the last three landings.** The three-row
 > plan above became four rows in the tree: W6 and W7 landed separately, so
@@ -826,7 +827,12 @@ change and says so in the commit message (R5).
 > `be80aca714…` is now the current value. `bda31e4b18…` joins the truncated set
 > for the same reason, and the point below about which edits move a fingerprint
 > gains its cleanest case — a column rename moves the canonicalized text and no
-> table name.)* Each landing recomputed from a freshly created database and
+> table name.)* *(Corrected 2026-08-11, again: this block added a sixth row
+> and `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`
+> is now the current value. `be80aca714…` joins the truncated set for the same
+> reason. See
+> [journal record binding](2026-08-11-journal-record-binding.md).)* Each
+> landing recomputed from a freshly created database and
 > positive-controlled the recipe against the previous `ledger.cpp` before
 > trusting the new value, which is R5 discharged rather than asserted.
 >
@@ -1035,7 +1041,11 @@ for one literal is a merge conflict on the thing R5 exists to protect.
   > `.controlledTargetId = controlledTargetKey`, was deleted rather than
   > relocated. Fingerprint
   > `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
-  > over the same 23 tables; see the table in §6 and `CONTEXT.md`.
+  > over the same 23 tables; see the table in §6 and `CONTEXT.md`. *(Corrected
+  > 2026-08-11: this block moved the fingerprint again, to
+  > `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`,
+  > over the same 23 tables. See
+  > [journal record binding](2026-08-11-journal-record-binding.md).)*
 - **W4's `Host::deliver` line anchors** (`task-host.hpp:126-130, 190, 205, 248,
   257, 263`) were checked and match. Its `ledger.cpp` anchors were spot-checked
   and are within a line or two. The `contract-suite/fixtures/arcana-expedition/provider.cpp`

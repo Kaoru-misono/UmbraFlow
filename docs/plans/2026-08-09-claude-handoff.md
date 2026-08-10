@@ -182,6 +182,13 @@ d445c811b9469a58ff116df4763d4e7f1acd80b6a3392639d7eb257321916753
 > 同一线性化序列）无任何实现——takeover 事务与 `TaskHost` 的 fence 之间，生产和测试
 > 里都没有调用边。**以行为 gate 关闭的是 39 条，不是 40 条**，`a07` 重新打开，详见
 > [next block](2026-08-10-next-block.md) §2。
+>
+> 2026-08-11 再更正：fingerprint 又动了一次，现为
+> `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`，
+> 仍是 23 张表——`journal_events` 和 `project_state` 的四个列改用了
+> `$defs.JournalEvent`/`$defs.ProjectState` 已经在用的成员名，此前建好的
+> 数据库打开时会被拒绝并删除，不做迁移。详见
+> [journal record binding](2026-08-11-journal-record-binding.md)。
 
 ### 4.5 ProjectPlugin
 

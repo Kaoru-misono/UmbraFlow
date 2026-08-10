@@ -480,6 +480,12 @@ if(TARGET ${PROJECT_NAME}_operator)
         LIBS
             ${PROJECT_NAME}_operator
             ${PROJECT_NAME}_image
+            # tests/operator/schema-binding.hpp opens the database the store
+            # created and reads its columns back. The Operator keeps SQLite
+            # private, as it must -- its public headers expose no sqlite3
+            # handle -- so the gate that binds a stored row to the schema that
+            # declares it links the amalgamation itself.
+            ${PROJECT_NAME}_operator_sqlite3
         CASES
             contract-product-p01
             contract-product-p02

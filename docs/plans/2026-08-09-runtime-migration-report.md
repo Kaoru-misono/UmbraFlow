@@ -159,7 +159,7 @@ fixtures cannot satisfy them.
 | S-03 | Snapshot coordinator | OP:`SnapshotToken` | CTEST `contract-state-s03` |
 | S-04 | Operator planner | OP:`DecisionBasis` | CTEST `contract-state-s04` and CTEST `schema-state-s04` |
 | S-05 | Session coordinator | OP:`SessionManifest` + PR | CTEST `contract-state-s05` |
-| S-06 | Project state store | JR:`ProjectInstance/ProjectState` | CTEST `contract-state-s06` |
+| S-06 | Project state store | JR:`ProjectInstance/ProjectState` | CTEST `contract-state-s06` — since 2026-08-11 it also binds the `project_state` column set to `JR:ProjectState`'s `required` list, with `project_instances` versus `JR:ProjectInstance` as the positive control that the comparison can fail; see [the journal record binding](2026-08-11-journal-record-binding.md) |
 | C-01 | Host control ledger | OP:`ControlLease/FencingToken` | CTEST `contract-control-c01` |
 | C-02 | Host control ledger | OP:`SessionEpoch/ControlLease` | CTEST `contract-control-c02` |
 | C-03 | Host delivery | OP:`DeliveryAuthority/ReceiptRef` | CTEST `contract-control-c03` and CTEST `schema-control-c03` |
@@ -177,7 +177,7 @@ fixtures cannot satisfy them.
 | A-01 | Agent event facade | OP:`SubscriptionCursor/ResyncRequired` | CTEST `contract-agent-a01` and CTEST `schema-agent-a01` |
 | A-02 | Agent runtime | OP:`AgentBudget/ProgressMarker` | CTEST `contract-agent-a02` and CTEST `schema-agent-a02` |
 | A-03 | Audit owners | TR + OP + JR + AW:`ReplayBundle` | CTEST `schema-agent-a03`; behaviour under the aggregate CTEST `test-annotate-backend`, with no per-requirement ID |
-| A-04 | Reconciliation coordinator | JR:`JournalEvent` | CTEST `contract-agent-a04` |
+| A-04 | Reconciliation coordinator | JR:`JournalEvent` | CTEST `contract-agent-a04` — since 2026-08-11 it also binds the `journal_events` column set to `JR:JournalEvent`'s `required` list and drives six provenance documents that each violate one rule of the fixed `JR:JournalProvenance`, which the framework now enforces itself; see [the journal record binding](2026-08-11-journal-record-binding.md) |
 | A-05 | Publication gates | AW:`ReplayGate` + PR:`plugin_hash` | CTEST `schema-agent-a05`; behaviour under the aggregate CTEST `test-annotate-backend`, with no per-requirement ID |
 | A-06 | Deployment boundary | AW:`AuthoringCapabilityRoot` + RA | CTEST `contract-agent-a06` |
 | A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `contract-agent-a07` and CTEST `schema-agent-a07` — **both gates exist and the requirement is reopened**: `contract-agent-a07` proves the second acceptance clause (an in-flight dispatch is explicitly reported) and nothing implements the first (takeover and Host delivery share one target serialization). See [the next block](2026-08-10-next-block.md) §2, 2026-08-11 (`07abc3e`) |
