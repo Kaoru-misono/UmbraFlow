@@ -46,6 +46,8 @@ namespace uf
         Synchronized(Synchronized&&) = delete;
         auto operator=(Synchronized&&) -> Synchronized& = delete;
 
+        ~Synchronized() = default;
+
         template <typename Function>
             requires std::invocable<Function, Value&>
         auto withLock(Function&& function) -> std::invoke_result_t<Function, Value&>

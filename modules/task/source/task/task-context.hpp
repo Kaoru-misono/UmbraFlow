@@ -159,6 +159,9 @@ namespace uf::task
         // content hash of the blob it came from. The hash comes back rather than
         // being recomputed because the caller's trace line needs it and the store
         // already has it.
+        //
+        // No in-class initializer for the hash: ContentHash has no default state.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
         struct LoadedTemplate final
         {
             TemplateTicket ticket{};

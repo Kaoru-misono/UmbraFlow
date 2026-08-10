@@ -33,13 +33,16 @@ namespace uf::task
         "44be8ecf11eccc707a1a30cd04e69b612eae249f0aae837d95c40bfbcc316b3a"
     };
 
-    inline constexpr auto k_maximumRuntimeManifestBytes = std::size_t{1024U * 1024U};
-    inline constexpr auto k_maximumRuntimeModelBytes = std::size_t{4U * 1024U * 1024U};
-    inline constexpr auto k_maximumRuntimeAssetCount = std::size_t{4096U};
+    // Each ceiling multiplies in std::size_t rather than widening a 32-bit
+    // product: an unsigned product wraps silently, so a larger factor here would
+    // otherwise pass as a much smaller limit.
+    inline constexpr auto k_maximumRuntimeManifestBytes = std::size_t{1024} * 1024;
+    inline constexpr auto k_maximumRuntimeModelBytes = std::size_t{4} * 1024 * 1024;
+    inline constexpr auto k_maximumRuntimeAssetCount = std::size_t{4096};
     inline constexpr auto k_maximumRuntimeAssetBytes =
-        std::size_t{256U * 1024U * 1024U};
+        std::size_t{256} * 1024 * 1024;
     inline constexpr auto k_maximumRuntimeArtifactBytes =
-        std::size_t{256U * 1024U * 1024U};
+        std::size_t{256} * 1024 * 1024;
 
     class TaskHost;
 

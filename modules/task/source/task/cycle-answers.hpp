@@ -53,6 +53,8 @@ namespace uf::task
     // NOT thread-safe: every method runs on the VM's owning thread.
     class CycleAnswers final
     {
+        // No in-class initializer for the rect: PixelRect has no default state.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
         struct TextEntry final
         {
             PixelRect rect;
@@ -67,6 +69,8 @@ namespace uf::task
             std::vector<engine::TextReading> lines{};
         };
 
+        // No in-class initializer for the ROI: PixelRect has no default state.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
         struct MatchEntry final
         {
             TemplateTicket templateTicket{};

@@ -84,10 +84,10 @@ namespace uf
                     remainingNames = {};
                 }
 
-                entries[index] = EnumEntry<Enum>{
-                    values[index],
-                    trimEnumToken(token)
-                };
+                // Both subscripts are below Size, and this runs only under
+                // constant evaluation, where a stray index is a compile error.
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+                entries[index] = EnumEntry<Enum>{values[index], trimEnumToken(token)};
             }
 
             return entries;
@@ -118,16 +118,23 @@ namespace uf
 
             for (auto index = std::size_t{0}; index < entries.size(); ++index)
             {
-                if (entries[index].name.empty())
+                // Both subscripts below stay under entries.size(), and this runs
+                // only under constant evaluation, where a stray index is a
+                // compile error.
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+                auto const& entry = entries[index];
+                if (entry.name.empty())
                 {
                     return false;
                 }
 
                 for (auto previous = std::size_t{0}; previous < index; ++previous)
                 {
+                    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+                    auto const& earlier = entries[previous];
                     if (
-                        entries[index].value == entries[previous].value
-                        || entries[index].name == entries[previous].name
+                        entry.value == earlier.value
+                        || entry.name == earlier.name
                     )
                     {
                         return false;

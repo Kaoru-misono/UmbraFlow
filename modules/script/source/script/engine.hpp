@@ -274,6 +274,8 @@ namespace uf::script
         explicit Engine(std::unique_ptr<Impl> p_impl) noexcept;
 
     public:
+        Engine(Engine const&) = delete;
+        auto operator=(Engine const&) -> Engine& = delete;
         Engine(Engine&&) noexcept;
         auto operator=(Engine&&) noexcept -> Engine&;
         ~Engine();

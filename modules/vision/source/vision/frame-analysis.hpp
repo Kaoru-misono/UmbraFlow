@@ -52,6 +52,8 @@ namespace uf
 
     // A rectangle of pixels that held still across every analysed frame, in the
     // coordinates of the frames rather than of the analysed rect.
+    //
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init): see `bounds` below.
     struct StableRegion final
     {
         // No in-class initializer: PixelRect has no default state, so every
@@ -66,6 +68,7 @@ namespace uf
         auto operator==(StableRegion const&) const -> bool = default;
     };
 
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init): see `rect` below.
     struct StabilitySpec final
     {
         // The rectangle analysed inside every frame. Every frame must be large
@@ -142,6 +145,7 @@ namespace uf
         SadSearchPoll const& poll
     ) -> Result<StabilityScan>;
 
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init): see `rect` below.
     struct ColourProbeSpec final
     {
         // No in-class initializer: PixelRect has no default state.
@@ -227,6 +231,7 @@ namespace uf
     // layout question a downsampled census answers.
     inline constexpr auto k_maximumColourGridCells = uint32{32768};
 
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init): see `rect` below.
     struct ColourGridSpec final
     {
         // No in-class initializer: PixelRect has no default state.
@@ -358,6 +363,7 @@ namespace uf
         auto operator==(ColourCount const&) const -> bool = default;
     };
 
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init): see `rect` below.
     struct ColourCensusSpec final
     {
         // No in-class initializer: PixelRect has no default state.

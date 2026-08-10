@@ -61,6 +61,9 @@ namespace uf::task
         // is the store's rather than the image's because vision decodes and hashes
         // nothing: identical bytes must return the same ticket, and this is what
         // answers "have I already decoded these".
+        //
+        // No in-class initializer for the hash: ContentHash has no default state.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
         struct Entry final
         {
             uint64            ordinal{};

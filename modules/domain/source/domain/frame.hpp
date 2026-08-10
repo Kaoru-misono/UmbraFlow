@@ -47,6 +47,8 @@ namespace uf
         auto operator=(FrameBuffer&&) -> FrameBuffer& = delete;
         auto operator==(FrameBuffer const&) const -> bool = default;
 
+        ~FrameBuffer() = default;
+
         [[nodiscard]]
         auto bytes() const noexcept UF_LIFETIME_BOUND -> std::span<std::byte const>;
 

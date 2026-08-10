@@ -107,6 +107,10 @@ namespace uf::engine
     // template loaded by the script layer belongs to neither. Whether the score
     // counts as a hit is the caller's judgement and deliberately not decided
     // here.
+    //
+    // No in-class initializers: PixelRect and PixelPoint have no default state,
+    // so every construction site supplies both.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct MatchFound final
     {
         PixelRect  matchedRect;
@@ -207,6 +211,9 @@ namespace uf::engine
     // The record of one delivered wheel scroll: the frame whose observation it
     // spent and the detent count posted to the sink. No point, for KeyReceipt's
     // reason; signed, because direction is half of what was delivered.
+    //
+    // No in-class initializer for the frame: FrameId has no default state.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct ScrollReceipt final
     {
         FrameId frameId;
