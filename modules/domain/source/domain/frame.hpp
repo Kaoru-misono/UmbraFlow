@@ -2,11 +2,10 @@
 
 #include "ids.hpp"
 #include "space.hpp"
-#include "time.hpp"
 
 #include <core/error/contracts.hpp>
 #include <core/safety/annotations.hpp>
-#include <core/types/enum-reflection.hpp>
+#include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
 #include <cstddef>
@@ -156,9 +155,3 @@ namespace uf
         [[nodiscard]] auto frameId() const noexcept -> FrameId;
     };
 }
-
-UF_REFLECT_ENUM(
-    uf::PixelFormat,
-    uf::PixelFormat::Bgra8,
-    uf::PixelFormat::Gray8
-);

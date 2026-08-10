@@ -269,12 +269,6 @@ return {
             return std::string{p_bytecode, bytecodeSize};
         }
 
-        auto armRun(InterruptState& control) -> void
-        {
-            control.runStartedAt = std::chrono::steady_clock::now();
-            control.deadline     = control.runStartedAt + k_maximumRuntime;
-        }
-
         [[nodiscard]]
         auto topError(lua_State* thread) -> std::string
         {
@@ -439,7 +433,7 @@ return {
             nilLibraryField(vm.state, "string", "dump");
             installInterrupt(vm.state, &vm.control);
             luaL_sandbox(vm.state);
-            armRun(vm.control);
+            vm.control.beginUnitOfScript(k_maximumRuntime);
 
             UF_TRY(loadModule(vm.state,
                               bridgeBytecode,

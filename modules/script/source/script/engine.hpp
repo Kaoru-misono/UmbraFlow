@@ -2,6 +2,7 @@
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
+#include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
@@ -177,7 +178,7 @@ namespace uf::script
     // host restates it in its own run config, and two spellings of thirty minutes
     // would be free to drift; see EngineConfig::maxRuntime for what one unit is.
     inline constexpr auto k_defaultMaxRuntime =
-        std::chrono::steady_clock::duration{std::chrono::minutes{30}};
+        MonotonicInstant::Duration{std::chrono::minutes{30}};
 
     // Tunables for one VM generation. Every field is live, the numeric defaults
     // are conservative placeholders to be calibrated against the first real
@@ -203,14 +204,18 @@ namespace uf::script
         uint64 interruptBudgetTicks{uint64{100'000'000}};
 
         // Wall-clock ceiling on ONE unit of script -- one runNumber or runValue
-        // call -- measured on steady_clock by the interrupt callback. The
+        // call -- measured on the monotonic clock by the interrupt callback. The
         // framework boot runs under its own window of the same length.
         //
         // Per unit of script and NOT per VM: an exploration session answers an
         // agent chunk by chunk with the agent's own thinking time in between,
         // and a chunk that will not finish is still stopped by this clock,
         // whether it is the VM's first or its fortieth.
-        std::chrono::steady_clock::duration maxRuntime{k_defaultMaxRuntime};
+        //
+        // A ceiling the clock cannot represent saturates to the farthest instant
+        // it can name rather than wrapping into the past; one below zero expires
+        // at once.
+        MonotonicInstant::Duration maxRuntime{k_defaultMaxRuntime};
 
         // The trusted Luau framework, loaded in order under the framework
         // environment during create(). Empty boots a VM whose framework

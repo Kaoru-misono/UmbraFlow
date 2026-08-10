@@ -7,8 +7,6 @@
 #include <core/types/strong-value.hpp>
 
 #include <compare>
-#include <cstddef>
-#include <functional>
 #include <string>
 
 namespace uf
@@ -100,14 +98,5 @@ namespace uf
         }
 
         [[nodiscard]] auto next() const -> Result<TargetGeneration>;
-    };
-
-    struct TargetGenerationHash final
-    {
-        [[nodiscard]]
-        auto operator()(TargetGeneration generation) const noexcept -> std::size_t
-        {
-            return std::hash<uint64>{}(generation.value());
-        }
     };
 }

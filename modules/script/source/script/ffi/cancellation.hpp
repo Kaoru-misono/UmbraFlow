@@ -1,8 +1,8 @@
 #pragma once
 
+#include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
-#include <chrono>
 #include <stop_token>
 #include <string>
 
@@ -12,6 +12,12 @@ struct lua_State;
 
 namespace uf::script
 {
+    // The farthest instant the monotonic clock can name. As a deadline it is
+    // never reached, so it is both the disabled ceiling and where a ceiling
+    // longer than the clock's range saturates.
+    inline constexpr auto k_maximumInstant =
+        MonotonicInstant::fromTimePoint(MonotonicInstant::TimePoint::max());
+
     // Cancellation and budget state the VM interrupt reads. Lives in the
     // heap-pinned Engine::Impl because lua_callbacks->userdata holds its address
     // for the life of the VM. Only `cancellation` is touched off-thread, so no
@@ -42,26 +48,21 @@ namespace uf::script
         // across every runNumber call on the owning Engine).
         uint64 ticks{0};
 
-        // Ceiling for the unit of script running now; time_point::max() disables
+        // Ceiling for the unit of script running now; k_maximumInstant disables
         // it. The Engine re-anchors it per run, so it never measures the VM's
         // age -- see EngineConfig::maxRuntime.
-        std::chrono::steady_clock::time_point deadline{
-            std::chrono::steady_clock::time_point::max()
-        };
+        MonotonicInstant deadline{k_maximumInstant};
 
         // Read only to describe a break.
-        std::chrono::steady_clock::time_point vmStartedAt{
-            std::chrono::steady_clock::now()
-        };
+        MonotonicInstant vmStartedAt{MonotonicInstant::now()};
 
-        std::chrono::steady_clock::time_point runStartedAt{
-            std::chrono::steady_clock::now()
-        };
+        MonotonicInstant runStartedAt{MonotonicInstant::now()};
 
         // Stamped at the break rather than read from the clock later, because a
         // spent generation reports the same sentence on every call it refuses
-        // and a fresh now() would grow between them.
-        std::chrono::steady_clock::time_point brokenAt{};
+        // and a fresh now() would grow between them. `cause` says whether it has
+        // been stamped, so an unbroken state needs no sentinel here.
+        MonotonicInstant brokenAt{MonotonicInstant::now()};
 
         // Never returns to None: a break spends the whole VM generation.
         BreakCause cause{BreakCause::None};
@@ -70,6 +71,11 @@ namespace uf::script
         {
             return cause != BreakCause::None;
         }
+
+        // Anchor the unit of script about to run and arm its ceiling from
+        // `runtimeCeiling`. Every deadline in this module is set here, so the
+        // overflow policy is stated once: see the definition.
+        auto beginUnitOfScript(MonotonicInstant::Duration runtimeCeiling) noexcept -> void;
     };
 
     // Install the yield-and-abandon interrupt callback on `state`'s VM and point

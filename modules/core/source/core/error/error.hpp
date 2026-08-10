@@ -78,6 +78,4 @@ namespace uf
 
         auto addContext(std::string context) UF_LIFETIME_BOUND -> Error&;
     };
-
-    [[nodiscard]] auto toString(Error const& error) -> std::string;
 }

@@ -650,7 +650,7 @@ own header with quotes.
 - Use `UF_TRY*` for linear propagation and `std::expected` monadic
   operations when they express composition more clearly. Value-extracting
   macros are standalone statements inside a braced block.
-- Use `std::optional`, `bool`, a domain enum, `std::variant`, or `ControlFlow`
+- Use `std::optional`, `bool`, a domain enum, or `std::variant`
   instead of `Result<T>` for ordinary absence and normal control flow.
 - Broken internal invariants use `UF_ASSERT`.
 - Mandatory release-active invariants use `UF_CHECK`.

@@ -5,7 +5,7 @@
 | Recoverable failure with a value | `Result<T>` |
 | Recoverable failure without a value | `Status` |
 | Ordinary absence, lookup miss, or optional data | `std::optional<T>` |
-| Normal branching or traversal state | `bool`, an enum, a variant, or `ControlFlow` |
+| Normal branching or traversal state | `bool`, an enum, or a variant |
 | Programmer error or broken invariant | `UF_ASSERT` |
 | Release-active mandatory invariant | `UF_CHECK` |
 | Impossible control flow | `UF_UNREACHABLE` |
@@ -108,7 +108,7 @@ useful subsystem boundary. Do not duplicate the same context at adjacent layers.
 that lacks a value. Do not use it for ordinary cache misses, predicates,
 optional configuration, loop termination, state-machine transitions, or
 per-frame hot-path signaling. Prefer `std::optional`, `bool`, a domain enum,
-`std::variant`, or `ControlFlow` as appropriate.
+or `std::variant` as appropriate.
 
 Do not introduce another `Outcome`, `ErrorOr`, exception wrapper, or custom
 expected container. Add domain-specific error detail to `Error` or create a

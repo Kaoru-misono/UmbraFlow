@@ -8,6 +8,7 @@
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/time/poll-sleep.hpp>
 
 #include <domain/error.hpp>
 
@@ -21,7 +22,6 @@
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <thread>
 #include <utility>
 
 namespace uf::cli
@@ -29,8 +29,13 @@ namespace uf::cli
     namespace
     {
         // How often the session looks for newly appended chunks: it bounds latency
-        // and nothing else, and is session plumbing rather than agent policy.
-        inline constexpr auto k_queuePollInterval = std::chrono::milliseconds{25};
+        // and nothing else, and is session plumbing rather than agent policy. It is
+        // below k_maxPollSleepSlice, so one poll is one uninterrupted slice.
+        inline constexpr auto k_queuePollInterval = (
+            std::chrono::duration_cast<MonotonicInstant::Duration>(
+                std::chrono::milliseconds{25}
+            )
+        );
 
         // What this front-end calls its queue and itself wherever the shared
         // reader refuses a line.
@@ -40,6 +45,22 @@ namespace uf::cli
         };
 
         inline constexpr auto k_exploreResultsLabel = std::string_view{"explore"};
+
+        // The instant an unanswered queue ends the session. An idle timeout the
+        // clock cannot be advanced by saturates to the furthest instant it has,
+        // which is the same answer the caller would get from the arithmetic
+        // anyway: no elapsed span the clock can express reaches such a timeout,
+        // so the session never idles out either way.
+        [[nodiscard]]
+        auto idleDeadlineFrom(
+            MonotonicInstant from,
+            MonotonicInstant::Duration idleTimeout
+        ) noexcept -> MonotonicInstant
+        {
+            return from.checkedAdd(idleTimeout).value_or(
+                MonotonicInstant::fromTimePoint(MonotonicInstant::TimePoint::max())
+            );
+        }
     }
 
     auto validateExploreIpcPaths(ExploreArgs const& args) -> Result<ExploreIpcPaths>
@@ -214,9 +235,15 @@ namespace uf::cli
             QueueCursor::open(paths.cursor, paths.queue, paths.start)
         );
 
-        auto failure      = std::optional<Error>{};
-        auto stopped      = false;
-        auto lastActivity = MonotonicInstant::now();
+        auto failure = std::optional<Error>{};
+        auto stopped = false;
+
+        // One deadline, so the pause and the decision to stop pausing read the
+        // same instant instead of recomputing an elapsed span against each other.
+        auto idleDeadline = idleDeadlineFrom(
+            MonotonicInstant::now(),
+            args.idleTimeout
+        );
         while (!stopped)
         {
             if (cancellation.stop_requested())
@@ -278,7 +305,10 @@ namespace uf::cli
                     break;
                 }
 
-                lastActivity = MonotonicInstant::now();
+                idleDeadline = idleDeadlineFrom(
+                    MonotonicInstant::now(),
+                    args.idleTimeout
+                );
                 if (execution.failure.has_value())
                 {
                     failure = std::move(execution.failure);
@@ -294,12 +324,17 @@ namespace uf::cli
                 break;
             }
 
-            auto const now = MonotonicInstant::now();
-            if (now.saturatingDurationSince(lastActivity) >= args.idleTimeout)
+            if (MonotonicInstant::now() >= idleDeadline)
             {
                 break;
             }
-            std::this_thread::sleep_for(k_queuePollInterval);
+
+            // core's sliced sleep rather than a second copy of the slicing here:
+            // it re-checks the stop token before each slice, and the interval is
+            // one slice, so a stop is observed exactly as promptly as the bare
+            // sleep this replaced -- and one slice sooner when the token was
+            // already stopped.
+            pollSleep(k_queuePollInterval, idleDeadline, cancellation);
         }
 
         return session.finish(std::move(failure));

@@ -127,3 +127,11 @@ UF_REFLECT_ENUM(
     uf::AutomationErrorKind::IoFailure,
     uf::AutomationErrorKind::ExternalFailure
 );
+
+UF_REFLECT_ENUM(
+    uf::FailureResponse,
+    uf::FailureResponse::Retry,
+    uf::FailureResponse::StepFailed,
+    uf::FailureResponse::Abort,
+    uf::FailureResponse::Cancelled
+);

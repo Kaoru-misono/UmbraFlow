@@ -5,10 +5,12 @@
 
 #include <domain/content-hash.hpp>
 
+#include <algorithm>
 #include <format>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace uf::trace
 {
@@ -146,6 +148,11 @@ namespace uf::trace
     auto TraceEvent::recordedAtUnixMillis() const noexcept -> int64
     {
         return m_recordedAtUnixMillis;
+    }
+
+    auto sortTraceFieldsCanonically(std::vector<TraceField>& fields) -> void
+    {
+        std::ranges::sort(fields, jsonMemberNameLess, &TraceField::name);
     }
 
     auto serializeTraceEvent(TraceEvent const& event) -> std::string

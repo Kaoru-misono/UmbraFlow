@@ -345,11 +345,7 @@ namespace uf::trace
                 }
                 UF_TRY(validateScalar(field.value));
             }
-            std::ranges::sort(
-                normalized.payload.fields,
-                {},
-                &TraceField::name
-            );
+            sortTraceFieldsCanonically(normalized.payload.fields);
             for (
                 auto index = std::size_t{1};
                 index < normalized.payload.fields.size();

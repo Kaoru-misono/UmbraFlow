@@ -70,7 +70,7 @@ namespace uf
             MonotonicInstant::Duration duration
         ) -> MonotonicInstant
         {
-            auto const result = checkedAddMonotonic(instant, duration);
+            auto const result = instant.checkedAdd(duration);
             REQUIRE(result.has_value());
             return *result;
         }

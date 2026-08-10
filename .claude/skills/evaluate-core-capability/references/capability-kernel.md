@@ -21,7 +21,7 @@ Surveyed 2026-08-11 against `55bd564`. It is load-bearing when reading the
 Core additions table below: **that table lists what is admitted, not what this
 gate evaluated.**
 
-19 of the 27 files under `modules/core/source/core/` arrived in the repository's
+15 of the 23 files under `modules/core/source/core/` arrived in the repository's
 first commit, `79e6b3d` (2026-07-20), as a template import. At that commit
 `modules/` held nothing but `core`, so no product code existed to demonstrate a
 need — and this skill did not exist either, having been written two days later
@@ -40,8 +40,22 @@ whenever it is actually run.
 Two consequences. A facility's presence in `core` is not a decision, so never
 cite the table below as the reason to keep one; find the evaluation that
 admitted it, or run one now. And the 2026-07-20 import has never been reviewed
-retroactively — one pass over the 19, not an open-ended re-litigation — which is
+retroactively — one pass over the 15, not an open-ended re-litigation — which is
 tracked as W12 in `docs/plans/2026-08-10-next-block.md`.
+
+Four of the imported facilities were run through this skill on 2026-08-11 and
+all four were **rejected**, then deleted with their capability tests:
+
+| Facility | Classification | Reason |
+| --- | --- | --- |
+| `Flags<E>` | reject — no possible caller | No first-party enum is bitmask-valued; no enumerator is defined with `1 <<` or a hex bit value. `ExploreFlag` in `entry/cli/args.cpp` is a sequential option identifier despite its name. |
+| `Synchronized<T>` | reject — cannot serve the call site that exists | It offers only `withLock` and cannot express waiting. The tree's one real mutex, `FrameSlot` in `controller/platform/windows-capture.cpp`, pairs its mutex with a `condition_variable_any` precisely so a waiter can honour a `stop_token`. Its aliasing contract moved to `cpp-coding`'s safety profile before deletion. |
+| `NonZero<T>` | reject — no candidate | No call site, and no invalid state it would remove. |
+| `ControlFlow` | reject — the one candidate does not fit | `vision/sad.hpp`'s `SadSearchControl`/`SadSearchStopReason` pair looked like its call site, but the poll vocabulary is deliberately narrower than the report vocabulary. Collapsing them would let a poll callback mint `ComparisonBudgetExhausted`, which only the matcher may produce — making an unrepresentable invalid state representable, which inverts admission rule 2. |
+
+The `ControlFlow` row is the one worth remembering: a facility that has a
+plausible-looking call site can still be wrong for it, and the deciding question
+was what the collapse would make *representable*, not how many lines it saved.
 
 ## Standard library first
 
@@ -72,20 +86,12 @@ These facilities fill a material C++23 gap without creating a parallel runtime:
 | --- | --- | --- |
 | `Result<T>`, `Status`, `fail`, and `UF_TRY*` | Structured errors, context, and value propagation | Aliases `std::expected`; `fail` only creates `std::unexpected<Error>`; no wrapper container |
 | `Overload` and `matchVariant` | Concise, compile-time-complete handling of `std::variant` alternatives | No attempt to parse or emulate language patterns |
-| `ControlFlow` | Named early exit with optional break/continue values | A closed sum type, not coroutine control flow |
-| `NonZero<T>` | Makes zero invalid after construction | No Rust-style niche-layout or ABI guarantee |
 | `ScopeExit` | Deterministic rollback and C-boundary cleanup | Cleanup must be non-throwing; no macro syntax |
-| `Flags<E>` | Type-safe flag sets without global enum operators | No complement operator or unchecked raw-bit constructor |
 | `EnumTraits<E>` and enum conversion helpers | Exact enum-to-name and name-to-enum mapping validated at compile time | C++23 registration is explicit; names are not an automatic wire-format contract |
-| `Synchronized<T>` | Couples mutable data to its mutex and scoped operation | Cannot prove that a callback does not hide an alias inside another object |
 | Safety annotations | Makes lifetime, no-escape, unsafe-buffer, and lock contracts visible to supported Clang analysis | Empty portability macros on compilers without the corresponding analysis |
 | `tryAt` and `checkedAt` | Checked access for spans and lvalue contiguous ranges without accepting temporary owners | Pointer result is still a non-owning call-scoped observation |
 | Strong values, checked numeric operations, monotonic time | Domain separation and explicit numeric/time failure | Remain small value facilities rather than a framework |
 
-Rust's standard library motivates the explicit early-exit, non-zero, and
-lock-coupled shapes: [`ControlFlow`](https://doc.rust-lang.org/std/ops/enum.ControlFlow.html),
-[`NonZero`](https://doc.rust-lang.org/std/num/struct.NonZero.html), and
-[`MutexGuard`](https://doc.rust-lang.org/std/sync/struct.MutexGuard.html).
 The C++ pattern-matching proposal also shows that C++23 still requires verbose
 visitor machinery for variants; `matchVariant` is a narrow bridge until the
 language gains a standard construct. See

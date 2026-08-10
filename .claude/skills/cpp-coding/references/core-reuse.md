@@ -18,14 +18,21 @@ When deciding whether a new generic facility belongs in `core`, use the
 The core capability kernel currently provides:
 
 - `core/error/error.hpp`, `result.hpp`, and `contracts.hpp`.
-- `core/concurrency/synchronized.hpp` and `core/control/control-flow.hpp`.
 - `core/numeric/checked-arithmetic.hpp` and `checked-cast.hpp`.
 - `core/safety/annotations.hpp` and `checked-access.hpp`.
-- `core/text/utf8.hpp`.
-- `core/types/integer.hpp`, `enum-reflection.hpp`, `flags.hpp`, `non-zero.hpp`,
-  `strong-value.hpp`, and `strong-id.hpp`.
-- `core/time/monotonic-time.hpp`.
+- `core/text/utf8.hpp` and `json-text.hpp`.
+- `core/types/integer.hpp`, `enum-reflection.hpp`, `strong-value.hpp`, and
+  `strong-id.hpp`.
+- `core/time/monotonic-time.hpp` and `poll-sleep.hpp`.
 - `core/utility/scope-exit.hpp` and `variant-match.hpp`.
+
+A facility belongs on that list only while something outside `core` calls it.
+`synchronized.hpp`, `flags.hpp`, `non-zero.hpp`, and `control-flow.hpp` were
+removed on 2026-08-11 after 391 commits with no production caller. Each was
+rejected on its own grounds rather than on the caller count alone; the four
+rulings are recorded in the `evaluate-core-capability` skill's
+[`capability-kernel.md`](../../evaluate-core-capability/references/capability-kernel.md).
+Do not reintroduce a facility here without a call site.
 
 Do not add an aggregate `core.hpp`. Include the exact facility needed. Custom
 containers, ownership types, callable views, and serialization helpers are not

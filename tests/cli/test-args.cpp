@@ -15,7 +15,7 @@
 #include <filesystem>
 #include <source_location>
 #include <string>
-#include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -79,6 +79,34 @@ namespace uf::cli
         origin += ':';
         origin += std::to_string(location.line());
         CHECK(rendered.find(origin) != std::string::npos);
+    }
+
+    // formatError is the only rendering of an Error in the tree, so every field
+    // one carries has to survive into it or the field reaches nobody. The
+    // classification it names is the automation kind rather than the detail
+    // code's category: that is the vocabulary an operator of this binary and its
+    // exit codes already read.
+    TEST_CASE("CLI error rendering carries every field the Error was given")
+    {
+        auto const native = std::error_code{5, std::system_category()};
+        auto failure = fail(
+            AutomationErrorKind::CaptureUnavailable,
+            "cannot open project",
+            native
+        );
+        failure.error().addContext("binding the target");
+
+        auto const rendered = formatError(failure.error());
+        CHECK(rendered.find("CaptureUnavailable") != std::string::npos);
+        CHECK(rendered.find("cannot open project") != std::string::npos);
+        CHECK(rendered.find("binding the target") != std::string::npos);
+
+        // The originating cause, category and value together: a bare number
+        // could be the source line the same text ends with.
+        auto cause = std::string{native.category().name()};
+        cause += ' ';
+        cause += std::to_string(native.value());
+        CHECK(rendered.find(cause) != std::string::npos);
     }
 
     TEST_CASE("parseExploreArguments accepts the complete privileged entry shape")

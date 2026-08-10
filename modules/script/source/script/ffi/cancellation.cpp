@@ -57,7 +57,7 @@ namespace uf::script
         }
 
         [[nodiscard]]
-        auto elapsedSeconds(std::chrono::steady_clock::duration span) -> double
+        auto elapsedSeconds(MonotonicInstant::Duration span) -> double
         {
             return std::chrono::duration<double>{span}.count();
         }
@@ -96,7 +96,7 @@ namespace uf::script
             bool const cancelled = control->cancellation.stop_requested();
             bool const overBudget =
                 control->budgetTicks != 0 && control->ticks >= control->budgetTicks;
-            auto const now      = std::chrono::steady_clock::now();
+            auto const now      = MonotonicInstant::now();
             bool const overTime = now >= control->deadline;
 
             auto const cause = reportedCause(cancelled, overBudget, overTime);
@@ -114,6 +114,22 @@ namespace uf::script
         }
     }
 
+    auto InterruptState::beginUnitOfScript(
+        MonotonicInstant::Duration runtimeCeiling
+    ) noexcept -> void
+    {
+        // A ceiling longer than the clock's whole range saturates to
+        // k_maximumInstant, the nearest instant the clock can name to the one
+        // asked for; wrapping would put the deadline in the past and break the
+        // VM at its first safepoint, so the longest ceiling a host can ask for
+        // would become the shortest. The add can only fail upward: the monotonic
+        // epoch is boot-relative, so now() is non-negative and no representable
+        // ceiling, negative ones included, can underflow it. A negative ceiling
+        // therefore stays what it reads as -- a deadline already past.
+        runStartedAt = MonotonicInstant::now();
+        deadline     = runStartedAt.checkedAdd(runtimeCeiling).value_or(k_maximumInstant);
+    }
+
     auto installInterrupt(lua_State* state, InterruptState* control) -> void
     {
         lua_Callbacks* callbacks = lua_callbacks(state);
@@ -123,8 +139,10 @@ namespace uf::script
 
     auto describeBreak(InterruptState const& control) -> std::string
     {
-        auto const ranFor = elapsedSeconds(control.brokenAt - control.runStartedAt);
-        auto const vmAge  = elapsedSeconds(control.brokenAt - control.vmStartedAt);
+        auto const ranFor =
+            elapsedSeconds(control.brokenAt.saturatingDurationSince(control.runStartedAt));
+        auto const vmAge =
+            elapsedSeconds(control.brokenAt.saturatingDurationSince(control.vmStartedAt));
 
         switch (control.cause)
         {
@@ -149,7 +167,7 @@ namespace uf::script
                 "the wall-clock ceiling expired: this unit of script ran "
                 "{:.1f}s of its {:.1f}s ceiling, {:.1f}s into the VM's life",
                 ranFor,
-                elapsedSeconds(control.deadline - control.runStartedAt),
+                elapsedSeconds(control.deadline.saturatingDurationSince(control.runStartedAt)),
                 vmAge
             );
         case InterruptState::BreakCause::None:

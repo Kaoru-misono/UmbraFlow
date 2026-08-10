@@ -1,7 +1,6 @@
 #include "cli-result.hpp"
 
 #include <core/types/enum-reflection.hpp>
-#include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
 

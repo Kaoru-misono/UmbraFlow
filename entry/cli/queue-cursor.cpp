@@ -381,11 +381,6 @@ namespace uf::cli
         return cursor;
     }
 
-    auto QueueCursor::position() const noexcept -> QueuePosition
-    {
-        return m_position;
-    }
-
     auto QueueCursor::advance(uintmax consumedBytes) -> Status
     {
         if (consumedBytes > m_position.consumedBytes)

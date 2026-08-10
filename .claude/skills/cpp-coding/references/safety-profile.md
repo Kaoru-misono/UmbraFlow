@@ -5,10 +5,9 @@ make C++ clearer and easier to use. It does not attempt to turn C++ into Rust or
 reject normal idiomatic C++ merely because Rust would express it differently.
 
 The capability kernel currently adds structured results and value propagation,
-variant matching, explicit traversal control flow, non-zero values, strong domain
-values, type-safe flags, validated enum names, non-wrapping generations, checked
-arithmetic, deterministic scope cleanup, lock-coupled state, and process-local
-monotonic time.
+variant matching, strong domain values, validated enum names, non-wrapping
+generations, checked arithmetic, checked access, deterministic scope cleanup,
+canonical JSON text, and process-local monotonic time.
 New facilities must compose with the standard library and remove real boilerplate
 or misuse rather than imitate another language. The full selection matrix lives
 in the `evaluate-core-capability` skill's
@@ -97,7 +96,7 @@ and require a braced block. Result-returning functions are `[[nodiscard]]`.
 
 Do not use a result as an ordinary branch signal, optional value, lookup miss,
 loop exit, or per-frame hot-path state. Use `std::optional`, `bool`, a domain
-enum, `std::variant`, or `ControlFlow` instead.
+enum, or `std::variant` instead.
 
 External input is validated before it reaches unchecked standard-library APIs.
 An assertion must never be the only guard before a memory access. Low-level code
@@ -135,8 +134,13 @@ message passing:
 - Prefer `std::shared_ptr<T const>` over shared mutable state.
 - Bind unavoidable mutable shared state to its lock and never leak references
   outside the protected scope.
-- Prefer `Synchronized<T>::withLock` when one value is always governed by one
-  mutex; return owned results rather than pointers or references to its storage.
+- An operation performed under a lock must not return a pointer or reference to
+  the storage that lock protects: return an owned value or an immutable copy.
+  The reader cannot see the lock in the returned type, so a borrow that escapes
+  the scope reads as safe at every later use.
+- Pair a mutex with `std::condition_variable_any` when a waiter must honour a
+  `std::stop_token`; a lock wrapper that offers only a scoped-access callback
+  cannot express waiting.
 - Do not call unknown callbacks while holding a lock.
 
 Run ThreadSanitizer on a supported Clang or GCC platform. It supplements this

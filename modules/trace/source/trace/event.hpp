@@ -118,6 +118,15 @@ namespace uf::trace
         [[nodiscard]] auto recordedAtUnixMillis() const noexcept -> int64;
     };
 
+    // Puts payload fields into the member order serializeTraceEvent then emits
+    // verbatim. RFC 8785 section 3.2.3 orders JSON member names by UTF-16 code
+    // unit, which is neither UTF-8 byte order nor code-point order, so a
+    // default string comparison computes a different order for any name a
+    // supplementary code point can reach. Sorting the caller's vector in place
+    // is the whole operation. Equal names come out adjacent, which is what the
+    // recorder's duplicate-name check reads.
+    auto sortTraceFieldsCanonically(std::vector<TraceField>& fields) -> void;
+
     // Stable single-line JSON. The payload remains typed and schema-addressed;
     // this function is an encoder only and no Trace JSON reader exists.
     [[nodiscard]]

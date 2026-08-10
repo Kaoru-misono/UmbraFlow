@@ -1,6 +1,7 @@
 #include <script/engine.hpp>
 #include <script/testing/cancel-probe.hpp>
 
+#include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
@@ -313,6 +314,57 @@ namespace uf::script
             );
             REQUIRE(harvest.has_value());
             CHECK(*harvest == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("A wall-clock ceiling wider than the monotonic clock still runs the script")
+        {
+            // EngineConfig::maxRuntime is an unbounded host tunable, so the
+            // deadline's `now() + ceiling` is a reachable overflow and not a
+            // theoretical one. Wrapping puts the deadline BEHIND the run's first
+            // safepoint, which inverts the request: the longest ceiling a host
+            // can name becomes the only one that cancels immediately.
+            constexpr std::string_view bounded =
+                "local total = 0\n"
+                "for i = 1, 100000 do total = total + i end\n"
+                "return total\n";
+            constexpr auto k_boundedSum = 5'000'050'000.0;
+
+            SUBCASE("the widest ceiling saturates instead of wrapping into the past")
+            {
+                auto config                 = EngineConfig{};
+                config.interruptBudgetTicks = 0;
+                config.maxRuntime           = MonotonicInstant::Duration::max();
+
+                auto engine = Engine::create(config);
+                REQUIRE(engine.has_value());
+
+                auto const result = engine->runNumber(bounded, "adversarial-widest-ceiling");
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(k_boundedSum));
+                CHECK_FALSE(engine->generationSpent());
+            }
+
+            SUBCASE("control: the deadline is the only live lever in this shape")
+            {
+                // Without this the case above would pass on an engine whose
+                // deadline never fires at all, which is the other way to make a
+                // saturated ceiling look right. Same config but for the ceiling,
+                // and no instruction budget, so nothing else can end the run.
+                auto config                 = EngineConfig{};
+                config.interruptBudgetTicks = 0;
+                config.maxRuntime           = std::chrono::milliseconds{50};
+
+                auto engine = Engine::create(config);
+                REQUIRE(engine.has_value());
+
+                auto const result =
+                    engine->runNumber("while true do end\n", "adversarial-narrow-ceiling");
+                REQUIRE_FALSE(result.has_value());
+                CHECK(
+                    automationErrorKind(result.error())
+                    == AutomationErrorKind::Cancelled
+                );
+            }
         }
     }
 }

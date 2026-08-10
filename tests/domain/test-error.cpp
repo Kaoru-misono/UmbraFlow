@@ -125,6 +125,7 @@ TEST_CASE("every unwind scope has one distinct spelling outside C++")
         uf::FailureResponse::Abort,
         uf::FailureResponse::Cancelled,
     };
+    CHECK(responses.size() == uf::enumEntries<uf::FailureResponse>().size());
 
     auto spellings = std::vector<std::string_view>{};
     for (auto const response : responses)
@@ -134,7 +135,6 @@ TEST_CASE("every unwind scope has one distinct spelling outside C++")
         CHECK_FALSE(std::ranges::contains(spellings, wire));
         spellings.emplace_back(wire);
     }
-    CHECK(spellings.size() == responses.size());
 
     // The distinction the JSON surface is there to carry: a search that never
     // finished and a step that was ruled out do not spell the same word, so a

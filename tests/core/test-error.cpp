@@ -39,7 +39,6 @@ namespace uf
         CHECK(error.detailCode() == invalidArgument());
         REQUIRE(error.context().size() == 1);
         CHECK(error.context().front() == "parsing project configuration");
-        CHECK(toString(error).find(invalidArgument().message()) != std::string::npos);
     }
 
     TEST_CASE("cloning an error copies its payload instead of sharing it")
@@ -137,18 +136,6 @@ namespace uf
         auto const missing = propagatePlainValue(false);
         REQUIRE_FALSE(missing.has_value());
         CHECK(missing.error().detailCode() == notFound());
-    }
-
-    TEST_CASE("error rendering names the detail category and the native cause")
-    {
-        auto const native = std::error_code{5, std::system_category()};
-        auto const error = Error{invalidArgument(), "cannot open project", native};
-        auto const rendered = toString(error);
-
-        CHECK(rendered.find(invalidArgument().category().name()) != std::string::npos);
-        CHECK(rendered.find(invalidArgument().message()) != std::string::npos);
-        CHECK(rendered.find(native.category().name()) != std::string::npos);
-        CHECK(rendered.find('5') != std::string::npos);
     }
 
     TEST_CASE("status propagation adds context without logging")

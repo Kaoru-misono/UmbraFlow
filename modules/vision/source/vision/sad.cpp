@@ -216,8 +216,6 @@ namespace uf
                             SadSearchStopReason::TimedOut,
                             completedPixelComparisons
                         };
-                    default:
-                        UF_UNREACHABLE_MSG("Unknown SadSearchControl value");
                     }
                 }
                 ++completedPixelComparisons;

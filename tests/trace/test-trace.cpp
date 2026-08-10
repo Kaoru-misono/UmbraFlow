@@ -367,6 +367,73 @@ namespace uf::trace
         CHECK_FALSE(recorder->emit(references).has_value());
     }
 
+    TEST_CASE("payload fields sort in JCS member order, not UTF-8 byte order")
+    {
+        // U+FFFD is EF BF BD in UTF-8 and the single UTF-16 unit FFFD; U+10000
+        // is F0 90 80 80 and the surrogate pair D800 DC00. Byte order puts
+        // U+FFFD first because EF < F0; UTF-16 code-unit order puts U+10000
+        // first because D800 < FFFD. This pair is where the default string
+        // comparison and the order RFC 8785 requires disagree, so it is the
+        // only kind of input that can hold the recorder to the right one.
+        auto const replacement   = std::string{"\xEF\xBF\xBD"};
+        auto const supplementary = std::string{"\xF0\x90\x80\x80"};
+
+        auto ascending = std::vector<TraceField>{
+            TraceField{.name = replacement, .value = uint64{1}},
+            TraceField{.name = supplementary, .value = uint64{2}},
+        };
+        sortTraceFieldsCanonically(ascending);
+        CHECK(ascending[0].name == supplementary);
+        CHECK(ascending[1].name == replacement);
+
+        auto descending = std::vector<TraceField>{
+            TraceField{.name = supplementary, .value = uint64{2}},
+            TraceField{.name = replacement, .value = uint64{1}},
+        };
+        sortTraceFieldsCanonically(descending);
+        CHECK(descending[0].name == supplementary);
+        CHECK(descending[1].name == replacement);
+
+        // The recorder rejects duplicates by reading adjacency after this
+        // sort, so equal names must still come out next to each other.
+        auto duplicates = std::vector<TraceField>{
+            TraceField{.name = "beta", .value = uint64{1}},
+            TraceField{.name = "alpha", .value = uint64{2}},
+            TraceField{.name = "beta", .value = uint64{3}},
+            TraceField{.name = "alpha", .value = uint64{4}},
+        };
+        sortTraceFieldsCanonically(duplicates);
+        CHECK(duplicates[0].name == "alpha");
+        CHECK(duplicates[1].name == "alpha");
+        CHECK(duplicates[2].name == "beta");
+        CHECK(duplicates[3].name == "beta");
+    }
+
+    TEST_CASE("no field name a recorder accepts can separate those two orders")
+    {
+        auto sink     = std::make_unique<CollectingSink>();
+        auto recorder = TraceRecorder::create(std::move(sink), streamSpec());
+        REQUIRE(recorder.has_value());
+
+        // The name validator admits [a-z] at each segment start, [a-z0-9_-]
+        // after it, and '.' between segments. Every byte it admits is ASCII,
+        // where UTF-8 byte order and UTF-16 code-unit order are one order, so
+        // the ordering above cannot be observed through emit(). That is a
+        // property of the validator, not of the sort: relaxing it here is what
+        // would make the sort's comparator start to matter end to end.
+        auto supplementary = eventSpec();
+        supplementary.payload.fields = {
+            TraceField{.name = "\xF0\x90\x80\x80", .value = uint64{1}},
+        };
+        CHECK_FALSE(recorder->emit(supplementary).has_value());
+
+        auto replacement = eventSpec();
+        replacement.payload.fields = {
+            TraceField{.name = "\xEF\xBF\xBD", .value = uint64{1}},
+        };
+        CHECK_FALSE(recorder->emit(replacement).has_value());
+    }
+
     TEST_CASE("sink uncertainty permanently faults a recorder")
     {
         auto sink         = std::make_unique<FailingSink>();

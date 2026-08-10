@@ -156,8 +156,6 @@ namespace uf
                                     .stop                 = SadSearchStopReason::TimedOut,
                                     .completedPixelVisits = visits,
                                 };
-                            default:
-                                UF_UNREACHABLE_MSG("Unknown SadSearchControl value");
                             }
                         }
                         ++visits;

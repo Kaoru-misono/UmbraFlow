@@ -6,10 +6,10 @@
 #include "sandbox.hpp"
 
 #include <core/numeric/checked-cast.hpp>
+#include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
-#include <chrono>
 #include <cstddef>
 #include <limits>
 #include <memory>
@@ -105,7 +105,7 @@ namespace uf::script
 
         // The configured ceiling on ONE unit of script, kept so every run can
         // re-anchor the deadline against it.
-        std::chrono::steady_clock::duration m_maxRuntime;
+        MonotonicInstant::Duration m_maxRuntime;
 
         // The host's decoder for a raised value nobody caught. Copied rather
         // than borrowed: create() takes the config by const reference and the
@@ -123,11 +123,13 @@ namespace uf::script
             , m_control{
                   .cancellation = config.cancellation,
                   .budgetTicks  = config.interruptBudgetTicks,
-                  .deadline     = std::chrono::steady_clock::now() + config.maxRuntime,
               }
             , m_maxRuntime{config.maxRuntime}
             , m_classifyRaisedError{config.classifyRaisedError}
         {
+            // The framework boot is the generation's first unit of script, so it
+            // answers to the same ceiling every later run does.
+            beginUnitOfScript();
         }
 
         Impl(Impl const&) = delete;
@@ -139,12 +141,11 @@ namespace uf::script
 
         // Anchor the wall clock at the unit of script about to run: the ceiling
         // bounds ONE chunk, not the VM's life (see EngineConfig::maxRuntime).
-        // The framework boot keeps the construction anchor above, so nothing is
+        // The construction call above covers the framework boot, so nothing is
         // left unguarded between create() and the first run.
         auto beginUnitOfScript() noexcept -> void
         {
-            m_control.runStartedAt = std::chrono::steady_clock::now();
-            m_control.deadline     = m_control.runStartedAt + m_maxRuntime;
+            m_control.beginUnitOfScript(m_maxRuntime);
         }
     };
 

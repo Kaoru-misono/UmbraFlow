@@ -121,8 +121,6 @@ namespace uf::cli
             QueuePosition start
         ) -> Result<QueueCursor>;
 
-        [[nodiscard]] auto position() const noexcept -> QueuePosition;
-
         // Records that the line ending at `consumedBytes` has run and been
         // answered. Callers advance AFTER writing the result line, so a hard kill
         // in between costs a replay of that one line instead of the whole queue.

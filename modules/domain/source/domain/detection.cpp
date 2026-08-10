@@ -53,19 +53,25 @@ namespace uf
             );
         }
 
-        UF_TRY_VALUE(
-            expiresAt,
-            checkedAddMonotonic(
-                frame.capturedAt(),
-                clampMaxActionFrameAge(maximumAge)
-            )
-        );
+        auto const age = clampMaxActionFrameAge(maximumAge);
+        auto const expiresAt = frame.capturedAt().checkedAdd(age);
+        if (!expiresAt)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                std::format(
+                    "observation deadline overflows the monotonic clock: capture {} plus age {}",
+                    frame.capturedAt().timePoint().time_since_epoch().count(),
+                    age.count()
+                )
+            );
+        }
 
         return ObservationLease{
             frame.sessionId(),
             frame.targetGeneration(),
             frame.id(),
-            expiresAt
+            *expiresAt
         };
     }
 

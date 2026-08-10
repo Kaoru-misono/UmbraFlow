@@ -49,18 +49,6 @@ namespace uf::controller_detail
 
         auto onFrameArrived(MonotonicInstant now) noexcept -> void;
 
-        [[nodiscard]]
-        constexpr auto lastArrival() const noexcept -> MonotonicInstant
-        {
-            return m_lastArrival;
-        }
-
-        [[nodiscard]]
-        constexpr auto timeout() const noexcept -> MonotonicInstant::Duration
-        {
-            return m_timeout;
-        }
-
         // The observation is a required argument rather than something the
         // tracker could look up: the tracker is portable and owns no window, and
         // making the caller supply it is what stops a stall from being reported
