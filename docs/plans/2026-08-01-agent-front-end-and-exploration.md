@@ -34,6 +34,15 @@ crop 有自己的事件形状(`annotation.click_delivered` / `annotation.region_
 
 ## 二、随后的删除清单(§九 收尾)
 
+> Executed 2026-08-01 in `a80ea07`, recorded 2026-08-11. Every item below
+> landed; read the list as a record, not as outstanding work. Item 4 in
+> particular is done — `umbraflow-authoring/v4` and `umbraflow-annotations/v3`
+> have no read or write path because neither id exists anywhere in `schema/`,
+> `modules/`, `entry/`, `tools/` or `tests/`, and the constants that carried
+> them (`k_authoringDocumentSchema`, `k_runtimeManifestSchema`) went with the
+> C++ model. The RuntimeModel is `umbraflow-runtime/v2` now; see the
+> **Schema ids** section of `CONTEXT.md`.
+
 新回路对 chaos-v14 完成一次「重标一个元素 + 全矩阵绿」验收后,按序删除:
 
 1. `entry/authoring` 的 page/element 绘制动词与 `check`(v4 版)

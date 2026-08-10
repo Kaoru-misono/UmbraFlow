@@ -257,6 +257,10 @@ WGC 在锁屏下仍能取到画面(这条 07-25 量过),但**点击到不了被�
 - 模型(2026-08-05):**87 页 331 元素 369 引用 27 模板 85 存档屏 31 条边 76 expect 格**,
   schema `umbraflow-project/l2-v2`。27 个模板里**只有 1 个带颜色键**,其余 26 个是整块
   矩形裸比——这是 1.1 那条的量纲,也是重新标注一轮价值的绝大部分。
+  (Corrected 2026-08-11: `umbraflow-project/l2-v2` was the id on 2026-08-05 and
+  is kept here because this line records a measurement taken that day. It was
+  replaced by `umbraflow-runtime/v2` in `8af22bc` (2026-08-09); see the
+  **Schema ids** section of `CONTEXT.md`.)
 
 ---
 

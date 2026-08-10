@@ -27,10 +27,68 @@ _Avoid as current contracts_: Context truth, Page, Element, Hit, UFR, direct
 `ctx` action methods, direct run/check/replay input, caller coordinates,
 caller effects and compatibility readers.
 
+## Schema ids
+
+Two ids travel in band — written into the payload as a `schema` field and
+re-read on load:
+
+- **`umbraflow-runtime/v2`**: the RuntimeModel, one `page-model.toml` per
+  project. Pinned as `project.schema` and `model.schema` in
+  `modules/task/runtime/{project,model}.luau`; field shapes in
+  `schema/umbraflow-runtime-v2.schema.json`.
+- **`umbraflow-trace/v2`**: the merged audit stream. Pinned as the `schema`
+  `const` in `schema/umbraflow-trace-v2.schema.json` and as
+  `trace::k_traceSchema` in `modules/trace/source/trace/event.hpp`.
+
+`umbraflow-external/v1` names an external-payload manifest
+(`scripts/fetch_external.py`, `modules/{ocr,operator}/external/manifest.toml`).
+Every other file in `schema/` is identified by its `$id` alone and carries no
+in-band id: annotation-workspace-v2, journal-v1, operator-v1, policy-v1,
+project-registration-v1, runtime-artifact-v1.
+
+A file name spells an id with a hyphen while the id itself carries a slash —
+`umbraflow-trace-v2.schema.json` holds `umbraflow-trace/v2`. A directory
+listing is therefore not evidence about which ids exist; read the `const` or
+the constant that pins the file.
+
+_Avoid as current contracts_: `umbraflow-authoring/v4`,
+`umbraflow-annotations/v3`, `umbraflow-project/l2-v2`, every earlier spelling
+of those three, and the constants that carried the first two,
+`k_authoringDocumentSchema` and `k_runtimeManifestSchema`.
+
+> Added 2026-08-11. The authoring and annotations lines went out with the C++
+> model in `a80ea07` (2026-08-01); `umbraflow-project/l2-v2` was replaced by
+> `umbraflow-runtime/v2` in `8af22bc` (2026-08-09). Design authority:
+> [runtime hardening rewrite](docs/plans/2026-08-09-runtime-hardening-rewrite.md).
+> `umbraflow-trace/v2` is untouched by either and remains live.
+
 ## Historical pre-v1.7 language
 
 The material below is retained as terminology history only. It cannot define a
 current API, schema or implementation when it differs from the authority above.
+
+> Checked 2026-08-11, so the next reader need not re-derive it. These named
+> things do not exist in the tree: `script-validator.hpp`, `scribe`, `FrontEnd`
+> (and so `FrontEnd::Annotation`), `mint_receipt`, `resolve_page`, `walk_edge`,
+> `stack_new`, `rect_override`, `cycle_match`, `isSubsetOf`,
+> `ElementCapabilities`, `ExercisedCapabilities`, `BindingResolution`,
+> `retry_attempt`, and the trace keys `steps`, `seq` and `elementId`.
+> `resolve_page`, `find_element` and `mint_hit` are further refused outright by
+> `RETIRED_RUNTIME_SYMBOL_PATTERN` in `tests/test-runtime-surface.py`. Four
+> entries are wrong in a subtler way, the capability being live under another
+> spelling: `frameworkProjectGlobals()` exists but returns an **empty**
+> whitelist, so it publishes no `task` global and no other; the
+> `umbra-flow check` verb is retired, the CLI dispatching only `explore` and
+> `targets`; an exploratory click is written as `annotation.click_delivered` on
+> the exploration stream rather than being an absence of
+> `engine.action_delivered`; and crop is `view:crop` on the frozen view inside
+> `explore.cycle`, not a top-level `explore.crop`.
+> What does still hold: `engine::EngineSession`, `CaptureSessionId`,
+> `TargetGeneration`, `FrameId`, `EngineRunId`, `trace::TraceStreamValidator`,
+> `TraceRecorder`, `cycle-ledger.hpp`, `stream-validator.hpp`,
+> `evidence.luau`, `observe.luau`, `project.load_project`, `explore.probe`,
+> `error_tag`, `engine.action_delivered`, `searchRoi` as a C++ parameter name,
+> and the retirement of the `drive` front-end in `eafc273`.
 
 ### Scripting
 
@@ -55,9 +113,11 @@ elements a script may CLICK and excludes the identify-only ones that do the
 recognising), `umbra` (the 2026-07-27 spelling of this root; renamed to `uf` on
 2026-07-29, see `docs/plans/2026-07-29-three-layer-task-system.md` §6 and §18 —
 the rename touches only this script root, never the product names `UmbraFlow`
-and `umbra-flow` or the schema ids `umbraflow-authoring/v4`,
-`umbraflow-annotations/v3`, and the merged trace schema `umbraflow-trace/v2`,
-which shipped on 2026-07-29 in `modules/trace`), `bot` (superseded draft
+and `umbra-flow` or any schema id; the ids current when that was written were
+`umbraflow-authoring/v4`, `umbraflow-annotations/v3` and the merged trace
+schema `umbraflow-trace/v2`, which shipped on 2026-07-29 in `modules/trace`,
+and only the last of the three still exists — see **Schema ids**
+above), `bot` (superseded draft
 wording in the grill decisions and the S0 annotation design)
 
 > Corrected 2026-07-31: the two annotation schema ids read
@@ -82,6 +142,25 @@ wording in the grill decisions and the S0 annotation design)
 > spelled the anchor/target/info taxonomy the capability model had already
 > retired, so a persisted key named a classification that no longer exists. It
 > moved inside the bump that was happening anyway rather than costing a v5.
+
+> Corrected 2026-08-11 (both notes above): read them as a record of what was
+> decided on 2026-07-31, not as a description of the tree. Two of the three
+> lines they track are gone — `umbraflow-authoring/v4` and
+> `umbraflow-annotations/v3` are in no file under `schema/`, `modules/`,
+> `entry/`, `tools/` or `tests/`, and so are the constants they cite,
+> `k_authoringDocumentSchema` and `k_runtimeManifestSchema`. They went out with
+> the C++ model in `a80ea07` (2026-08-01); the RuntimeModel is
+> `umbraflow-runtime/v2` now, whose vocabulary is Surface, Binding, `variant`,
+> `ui_target`, `locator` and `reader`. `k_traceSchema` and `umbraflow-trace/v2`
+> are the one part still true. Both notes name
+> `docs/plans/2026-07-31-annotation-model-capabilities.md` as the deciding
+> artifact; that plan was superseded on 2026-08-11 in `8be0b35`. The deciding
+> artifacts are now
+> [runtime hardening rewrite](docs/plans/2026-08-09-runtime-hardening-rewrite.md)
+> for design, [the next block](docs/plans/2026-08-10-next-block.md) for
+> requirement state, and
+> [the W2-W7 reconciliation](docs/plans/2026-08-10-w2-w7-reconciliation.md)
+> where the same-day specifications conflict.
 
 **Private capability surface**:
 The one host-built table of primitives that only the trusted Luau framework can
@@ -248,6 +327,20 @@ Element, page, reference, appearance and edge are **trusted-Luau types** now —
 `umbraflow-project/l2-v2` (`page-model.toml`, written by `project.luau`). C++
 keeps pixels, tickets and guarantees, and the `annotation::` spellings that
 appear below are history, not alternatives.
+
+> Corrected 2026-08-11: the paragraph above is history, and every entry under
+> this heading with it. Three of its specifics are false of the tree. The file
+> is written by `project.luau` under `umbraflow-runtime/v2`, not
+> `umbraflow-project/l2-v2` — that id was replaced in `8af22bc` (2026-08-09).
+> `navigation.luau` and `oracle.luau` do not exist; `modules/task/runtime/`
+> holds `evidence`, `explore`, `jcs`, `model`, `observe`, `project` and
+> `resolution`. And the nouns did not survive the rewrite: `Capabilities`,
+> `Holding`, `exercised`, `Appearance` and `ElementId` are types nowhere in the
+> tree, the RuntimeModel vocabulary being Surface, Binding, `variant`,
+> `ui_target`, `locator` and `reader` instead. Read the entries below for what
+> the words once meant, never for what exists. Deciding artifacts: `a80ea07`
+> (2026-08-01) and
+> [runtime hardening rewrite](docs/plans/2026-08-09-runtime-hardening-rewrite.md).
 
 **Element (`model.Element`)**:
 What an author draws: the set of uses one patch of the target's screen may be
