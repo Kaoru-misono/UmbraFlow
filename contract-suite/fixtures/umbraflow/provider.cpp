@@ -70,6 +70,7 @@ namespace uf::operator_runtime::contract
 
         auto fixture = test_support::makeProject(pluginId, pluginBytes);
         REQUIRE(fixture.lastReduceInput != nullptr);
+        REQUIRE(fixture.lastDeriveInput != nullptr);
         return ProjectUnderTest{
             .registration           = std::move(fixture.registration),
             .schemaOwner            = std::move(fixture.schemaOwner),
@@ -79,6 +80,7 @@ namespace uf::operator_runtime::contract
             .pluginBytes            = pluginBytes,
             .artifactBlobs          = {},
             .observedReduceInput    = std::move(fixture.lastReduceInput),
+            .observedDeriveInput    = std::move(fixture.lastDeriveInput),
             .vocabulary             = vocabulary(),
         };
     }

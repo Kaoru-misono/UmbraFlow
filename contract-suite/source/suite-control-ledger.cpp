@@ -36,7 +36,8 @@ namespace uf::operator_runtime::contract
         // the only difference that matters after a takeover.
         CHECK_FALSE(prepared.store.createSnapshot(
             prepared.lease,
-            hashOf("stale-snapshot")
+            prepared.plugin,
+            observeAgain(prepared)
         ).has_value());
     }
 
@@ -443,6 +444,9 @@ namespace uf::operator_runtime::contract
         // The first Operation is terminal, so the mutation chain is free for a
         // second. Same registration, same schema, same disposition document --
         // only the Operation the conclusion was reached about separates them.
+        // The commit above moved ProjectState, so the token that opened the
+        // first Operation no longer names the world and a fresh one is taken.
+        prepared.snapshot    = freshSnapshot(prepared);
         auto const second    = reconcilingOperation(
             prepared,
             "request-2",

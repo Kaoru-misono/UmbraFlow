@@ -3,11 +3,13 @@
 #include "journal-entry.hpp"
 #include "manifest.hpp"
 #include "operation.hpp"
+#include "project-observation.hpp"
 #include "project-plugin.hpp"
 #include "reconcile-outcome.hpp"
 #include "tool-invocation.hpp"
 
 #include <task/page-model-file.hpp>
+#include <task/ui-observation.hpp>
 
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
@@ -76,13 +78,27 @@ namespace uf::operator_runtime
         ContentHash capabilityProfileHash;
     };
 
+    // One published snapshot head. Every hash on it is derived inside the
+    // publishing transaction from what that transaction read, so nothing here
+    // is a value a caller could have named: identityHash answers "is this the
+    // same composed world", decisionBasisHash answers "is this the same
+    // decision input", and the two differ because a lease takeover moves the
+    // first and must not move the second.
     struct SnapshotRecord final
     {
-        std::string token{};
-        std::string sessionId{};
-        ContentHash identityHash;
-        uint64      sessionEpoch{};
-        uint64      leaseRevision{};
+        std::string        token{};
+        std::string        sessionId{};
+        ContentHash        identityHash;
+        ContentHash        decisionBasisHash;
+        ContentHash        stateResolutionHash;
+        ContentHash        projectStateHash;
+        std::string        canonicalParts{};
+        uint64             sessionEpoch{};
+        uint64             leaseRevision{};
+        uint64             snapshotRevision{};
+        uint64             projectStateRevision{};
+        uint64             availabilityRevision{};
+        ProjectObservation observation;
     };
 
     // Everything about a command that is the caller's to say. The tool, its
@@ -250,10 +266,20 @@ namespace uf::operator_runtime
             ControlLease const& lease
         ) -> Result<uint64>;
 
+        // The Snapshot Coordinator. It reads every owner's revision under one
+        // BEGIN IMMEDIATE, runs the project's derive against what it read, and
+        // publishes one complete record before returning a token.
+        //
+        // There is no identity parameter and nothing replaces it: a caller that
+        // supplied one could pin a snapshot to a world the ledger never held.
+        // The two values it does take cannot be fabricated either -- a
+        // ProjectPluginHandle comes only from ProjectPluginRegistrar::findExact,
+        // and a UiObservationSnapshot only from TaskHost.
         [[nodiscard]]
         auto createSnapshot(
             ControlLease const& lease,
-            ContentHash const& identityHash
+            ProjectPluginHandle const& plugin,
+            task::UiObservationSnapshot const& observation
         ) -> Result<SnapshotRecord>;
 
         // The invocation must be minted by the Tool Catalog owner bound to the

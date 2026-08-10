@@ -88,6 +88,12 @@ namespace uf::operator_runtime::contract
         // one thread, so no synchronization is implied or permitted.
         std::shared_ptr<std::string> observedReduceInput;
 
+        // The same, for the Derive input. The Snapshot Coordinator assembles
+        // that envelope rather than accepting one, so the only way to assert
+        // what the plugin was handed is to record what the deployment's own
+        // validator saw.
+        std::shared_ptr<std::string> observedDeriveInput;
+
         ProjectVocabulary vocabulary;
     };
 

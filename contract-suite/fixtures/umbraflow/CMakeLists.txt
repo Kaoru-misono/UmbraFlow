@@ -10,6 +10,7 @@ uf_add_operator_contract_suite(
     TARGET  contract-suite-umbraflow
     PROJECT umbraflow
     SOURCES provider.cpp
+    LIBS    ${PROJECT_NAME}_image
     CASES
         contract-control-c01
         contract-control-c06

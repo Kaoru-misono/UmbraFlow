@@ -297,6 +297,24 @@ namespace uf::operator_runtime
         return m_state->registration.pluginHash();
     }
 
+    auto ProjectPluginHandle::projectArtifactRootHashes() const
+        -> std::vector<ContentHash>
+    {
+        auto const& roots = m_state->registration.projectArtifactRoots();
+        auto hashes       = std::vector<ContentHash>{};
+        hashes.reserve(roots.size());
+        for (auto const& root : roots)
+        {
+            hashes.push_back(root.rootHash);
+        }
+        return hashes;
+    }
+
+    auto ProjectPluginHandle::projectObservationSchemaHash() const -> ContentHash
+    {
+        return m_state->registration.projectObservationSchemaHash();
+    }
+
     auto ProjectPluginHandle::canonicalize(std::string exactJcs) const
         -> Result<CanonicalJson>
     {

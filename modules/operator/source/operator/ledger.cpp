@@ -357,7 +357,7 @@ namespace uf::operator_runtime
         // database rather than by hand. initialize() verifies immediately after
         // creating the schema, so a forgotten recomputation cannot ship green.
         constexpr auto k_exactSchemaV1Fingerprint = std::string_view{
-            "sha256:5738e6f98534efbdfc3114413de70c032b64e2cbaa84d4c152ec6cbb512120a4"
+            "sha256:3a406b9d11827c52cbf32ab0cbafcbec75d240e41d2f80a03c2b38dda9e1b106"
         };
 
         [[nodiscard]]
@@ -498,9 +498,10 @@ namespace uf::operator_runtime
                 constexpr auto expectedTables = std::string_view{
                     "approvals,authority_decisions,control_leases,control_transitions,"
                     "dispatches,fencing_high_water,journal_events,operations,"
-                    "project_instances,project_registrations,project_state,reconciliations,"
-                    "runtime_artifacts,runtime_installations,runtime_publications,"
-                    "runtime_state,sessions,snapshots"
+                    "project_instances,project_observations,project_registrations,"
+                    "project_state,reconciliations,runtime_artifacts,"
+                    "runtime_installations,runtime_publications,runtime_state,"
+                    "sessions,snapshots"
                 };
                 if (tables != expectedTables)
                 {
@@ -584,6 +585,30 @@ namespace uf::operator_runtime
                         UNIQUE(project_registration_hash, project_instance_key)
                     ) STRICT;
 
+                    -- One row per distinct reading a ProjectPlugin.derive
+                    -- produced. Its revision is its own line: it advances when
+                    -- any input the derive fingerprint covers moved and stays
+                    -- put when the same world is observed again, so a snapshot
+                    -- can name a reading rather than an occasion.
+                    CREATE TABLE IF NOT EXISTS project_observations(
+                        plugin_id TEXT NOT NULL,
+                        project_instance_key TEXT NOT NULL,
+                        revision INTEGER NOT NULL CHECK(revision > 0),
+                        project_registration_hash TEXT NOT NULL
+                            REFERENCES project_registrations(registration_hash),
+                        plugin_hash TEXT NOT NULL,
+                        observation_schema_hash TEXT NOT NULL,
+                        state_resolution_hash TEXT NOT NULL,
+                        project_state_revision INTEGER NOT NULL
+                            CHECK(project_state_revision >= 0),
+                        project_state_hash TEXT NOT NULL,
+                        canonical_observation TEXT NOT NULL,
+                        observation_hash TEXT NOT NULL,
+                        FOREIGN KEY(plugin_id, project_instance_key)
+                            REFERENCES project_instances(plugin_id, project_instance_key),
+                        PRIMARY KEY(plugin_id, project_instance_key, revision)
+                    ) STRICT;
+
                     CREATE TABLE IF NOT EXISTS sessions(
                         session_id TEXT PRIMARY KEY,
                         authenticated_controller_id TEXT NOT NULL,
@@ -643,13 +668,59 @@ namespace uf::operator_runtime
                         transition TEXT NOT NULL,
                         reason TEXT NOT NULL
                     ) STRICT;
-
+)sql"
+                // One statement sequence, two literals: MSVC caps a single
+                // string literal and the schema outgrew it here. Adjacent
+                // literals concatenate before anything reads them, so the SQL
+                // text -- and therefore k_exactSchemaV1Fingerprint, which
+                // covers the STORED DDL -- is byte-identical to the unsplit
+                // block. The seam must add no character of its own: it sits
+                // between a newline and a newline.
+                R"sql(
+                    -- canonical_parts is the exact SnapshotParts JCS and is the
+                    -- only thing identity_hash and decision_basis_hash are
+                    -- recomputable from, which is what lets a test falsify the
+                    -- derivation. The scalar columns below it are not a second
+                    -- spelling of the same fact: they are the join keys, and
+                    -- SQL cannot join through JSON text. createOrLoadOperation
+                    -- compares project_state_revision and
+                    -- project_observation_revision against the live rows, so a
+                    -- token goes stale when the composed world moves and not
+                    -- only when the lease does. One test asserts each scalar
+                    -- equals its member in canonical_parts.
+                    --
+                    -- token and snapshot_revision are deliberately outside
+                    -- canonical_parts: they are record naming and not composed
+                    -- state, which is what makes two snapshots over an
+                    -- identical world share an identity_hash.
                     CREATE TABLE IF NOT EXISTS snapshots(
                         token TEXT PRIMARY KEY,
                         session_id TEXT NOT NULL REFERENCES sessions(session_id),
+                        snapshot_revision INTEGER NOT NULL
+                            CHECK(snapshot_revision > 0),
                         session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
                         identity_hash TEXT NOT NULL,
-                        lease_revision INTEGER NOT NULL CHECK(lease_revision > 0)
+                        decision_basis_hash TEXT NOT NULL,
+                        canonical_parts TEXT NOT NULL,
+                        lease_revision INTEGER NOT NULL CHECK(lease_revision > 0),
+                        plugin_id TEXT NOT NULL,
+                        project_instance_key TEXT NOT NULL,
+                        observation_id TEXT NOT NULL,
+                        target_generation INTEGER NOT NULL
+                            CHECK(target_generation > 0),
+                        state_resolution_hash TEXT NOT NULL,
+                        project_observation_revision INTEGER NOT NULL
+                            CHECK(project_observation_revision > 0),
+                        project_state_revision INTEGER NOT NULL
+                            CHECK(project_state_revision >= 0),
+                        availability_revision INTEGER NOT NULL
+                            CHECK(availability_revision >= 0),
+                        UNIQUE(session_id, snapshot_revision),
+                        FOREIGN KEY(plugin_id, project_instance_key,
+                                    project_observation_revision)
+                            REFERENCES project_observations(
+                                plugin_id, project_instance_key, revision
+                            )
                     ) STRICT;
 
                     CREATE TABLE IF NOT EXISTS operations(
@@ -902,6 +973,159 @@ namespace uf::operator_runtime
             envelope += priorProjectStateJcs;
             envelope += '}';
             return envelope;
+        }
+
+        auto appendHashMember(std::string& output, ContentHash const& hash) -> void
+        {
+            appendJsonString(output, hash.hex());
+        }
+
+        // The exact bytes ProjectPlugin.derive is called with, assembled here
+        // for reduceEnvelopeJcs's reason: a caller that supplied the derive
+        // input could have the snapshot record one world while the derivation
+        // saw another, and the recorded decision basis would then certify a
+        // world that was never true at any instant.
+        //
+        // JCS orders members by UTF-16 code unit, which is why
+        // pending_operation_transition precedes
+        // pinned_project_artifact_identities precedes
+        // prior_project_observation precedes project_state precedes ui_snapshot.
+        //
+        // The two optional members carry the literal `null` rather than being
+        // absent, for the reason reduceEnvelopeJcs already gives: a plugin must
+        // be able to tell "no prior reading" from "a prior reading I failed to
+        // read".
+        //
+        // ui_snapshot carries the canonical StateResolution document and never
+        // the observation id. That is what makes a semantically equivalent
+        // recapture produce an identical derive input, an identical
+        // project_observation_hash and an identical decision_basis_hash.
+        struct DeriveEnvelopeInputs final
+        {
+            std::string_view             pendingOperationJcs{};
+            std::span<ContentHash const> pinnedArtifactRoots{};
+            std::string_view             priorObservationJcs{};
+            std::string_view             projectStateJcs{};
+            std::string_view             uiSnapshotJcs{};
+        };
+
+        [[nodiscard]]
+        auto deriveEnvelopeJcs(DeriveEnvelopeInputs const& inputs) -> std::string
+        {
+            auto envelope = std::string{"{\"pending_operation_transition\":"};
+            envelope += inputs.pendingOperationJcs;
+            envelope += ",\"pinned_project_artifact_identities\":[";
+            auto first = true;
+            for (auto const& root : inputs.pinnedArtifactRoots)
+            {
+                if (!first)
+                {
+                    envelope.push_back(',');
+                }
+                first = false;
+                appendHashMember(envelope, root);
+            }
+            envelope += "],\"prior_project_observation\":";
+            envelope += inputs.priorObservationJcs;
+            envelope += ",\"project_state\":";
+            envelope += inputs.projectStateJcs;
+            envelope += ",\"ui_snapshot\":";
+            envelope += inputs.uiSnapshotJcs;
+            envelope.push_back('}');
+            return envelope;
+        }
+
+        // OP:`DecisionBasis`, whose fifth member is the digest over the other
+        // four and therefore cannot be inside it. Which four is the whole
+        // requirement: everything the snapshot identity carries and this does
+        // not -- lease, fencing token, epoch, token, every revision counter,
+        // every observation and target identifier, every wall clock -- is
+        // authority, naming or progress rather than decision input, and folding
+        // any of it in would make an identical world observed after a takeover
+        // read as a different decision.
+        struct DecisionBasisParts final
+        {
+            ContentHash projectObservationHash;
+            ContentHash projectStateHash;
+            ContentHash sessionManifestHash;
+            ContentHash stateResolutionHash;
+        };
+
+        [[nodiscard]]
+        auto deriveDecisionBasis(
+            DecisionBasisParts const& parts
+        ) -> Result<ContentHash>
+        {
+            auto material = std::string{"{\"project_observation_hash\":"};
+            appendHashMember(material, parts.projectObservationHash);
+            material += ",\"project_state_hash\":";
+            appendHashMember(material, parts.projectStateHash);
+            material += ",\"session_manifest_hash\":";
+            appendHashMember(material, parts.sessionManifestHash);
+            material += ",\"state_resolution_hash\":";
+            appendHashMember(material, parts.stateResolutionHash);
+            material.push_back('}');
+            return sha256(std::as_bytes(std::span{material}));
+        }
+
+        // OP:`SnapshotParts`, all fifteen members in JCS order. It is the exact
+        // text stored as snapshots.canonical_parts, so identity_hash is
+        // recomputable from the row and a test can falsify the derivation
+        // rather than only compare it against itself.
+        struct SnapshotPartsInputs final
+        {
+            ContentHash      decisionBasisHash;
+            ContentHash      projectObservationHash;
+            ContentHash      projectStateHash;
+            ContentHash      sessionManifestHash;
+            ContentHash      stateResolutionHash;
+            std::string_view controlledTargetId{};
+            std::string_view leaseId{};
+            std::string_view observationId{};
+            std::string_view projectInstanceKey{};
+            uint64           availabilityRevision{};
+            uint64           fencingToken{};
+            uint64           projectObservationRevision{};
+            uint64           projectStateRevision{};
+            uint64           sessionEpoch{};
+            uint64           targetGeneration{};
+        };
+
+        [[nodiscard]]
+        auto snapshotPartsJcs(SnapshotPartsInputs const& parts) -> std::string
+        {
+            auto output = std::string{"{\"availability_revision\":"};
+            output += std::to_string(parts.availabilityRevision);
+            output += ",\"controlled_target_id\":";
+            appendJsonString(output, parts.controlledTargetId);
+            output += ",\"decision_basis_hash\":";
+            appendHashMember(output, parts.decisionBasisHash);
+            output += ",\"fencing_token\":";
+            output += std::to_string(parts.fencingToken);
+            output += ",\"lease_id\":";
+            appendJsonString(output, parts.leaseId);
+            output += ",\"observation_id\":";
+            appendJsonString(output, parts.observationId);
+            output += ",\"project_instance_key\":";
+            appendJsonString(output, parts.projectInstanceKey);
+            output += ",\"project_observation_hash\":";
+            appendHashMember(output, parts.projectObservationHash);
+            output += ",\"project_observation_revision\":";
+            output += std::to_string(parts.projectObservationRevision);
+            output += ",\"project_state_hash\":";
+            appendHashMember(output, parts.projectStateHash);
+            output += ",\"project_state_revision\":";
+            output += std::to_string(parts.projectStateRevision);
+            output += ",\"session_epoch\":";
+            output += std::to_string(parts.sessionEpoch);
+            output += ",\"session_manifest_hash\":";
+            appendHashMember(output, parts.sessionManifestHash);
+            output += ",\"state_resolution_hash\":";
+            appendHashMember(output, parts.stateResolutionHash);
+            output += ",\"target_generation\":";
+            output += std::to_string(parts.targetGeneration);
+            output.push_back('}');
+            return output;
         }
 
         // An Operation may only be advanced by the session that owns it, while
@@ -2640,7 +2864,8 @@ namespace uf::operator_runtime
 
     auto OperatorCoordinator::createSnapshot(
         ControlLease const& lease,
-        ContentHash const& identityHash
+        ProjectPluginHandle const& plugin,
+        task::UiObservationSnapshot const& observation
     ) -> Result<SnapshotRecord>
     {
         UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
@@ -2682,28 +2907,445 @@ namespace uf::operator_runtime
             );
         }
 
+        UF_TRY_VALUE(
+            sessionQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT session.project_instance_key, session.manifest_hash, "
+                "session.controlled_target_key, session.runtime_artifact_root_hash, "
+                "registration.plugin_id, registration.plugin_hash, "
+                "session.project_registration_hash "
+                "FROM sessions session JOIN project_registrations registration "
+                "ON registration.registration_hash=session.project_registration_hash "
+                "WHERE session.session_id=?1 AND session.active=1 "
+                "AND session.session_epoch=?2"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), sessionQuery.get(), 1, lease.sessionId));
+        UF_TRY(bindInteger(
+            m_impl->database.get(),
+            sessionQuery.get(),
+            2,
+            m_impl->sessionEpoch
+        ));
+        if (sqlite3_step(sessionQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Snapshot session is not active in this epoch"
+            );
+        }
+        auto const projectInstanceKey  = columnText(sessionQuery.get(), 0);
+        auto const sessionManifestHex  = columnText(sessionQuery.get(), 1);
+        auto const controlledTargetKey = columnText(sessionQuery.get(), 2);
+        auto const sessionArtifactRoot = columnText(sessionQuery.get(), 3);
+        auto const pluginId            = columnText(sessionQuery.get(), 4);
+
+        // The same three-way check commitReconciliation makes: a handle for
+        // another registration is a different project reading this world.
+        if (
+            plugin.pluginId() != pluginId
+            || plugin.pluginHash().hex() != columnText(sessionQuery.get(), 5)
+            || plugin.projectRegistrationHash().hex() != columnText(sessionQuery.get(), 6)
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Snapshot ProjectPlugin does not match the pinned session registration"
+            );
+        }
+
+        // Without this a snapshot can be composed from a UI observation taken
+        // through a RuntimeArtifact the session never pinned, and
+        // session_manifest_hash would attest to a model that produced none of
+        // the evidence.
+        if (observation.artifactRootHash().hex() != sessionArtifactRoot)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "UI observation was taken through a RuntimeArtifact this session "
+                "did not pin"
+            );
+        }
+
+        UF_TRY_VALUE(
+            stateQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT revision, state_hash, canonical_state, project_registration_hash "
+                "FROM project_state WHERE plugin_id=?1 AND project_instance_key=?2"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), stateQuery.get(), 1, pluginId));
+        UF_TRY(bindText(m_impl->database.get(), stateQuery.get(), 2, projectInstanceKey));
+        if (sqlite3_step(stateQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Snapshot requires an existing provisioned ProjectState baseline"
+            );
+        }
+        auto const projectStateRevision = static_cast<uint64>(
+            sqlite3_column_int64(stateQuery.get(), 0)
+        );
+        auto const projectStateHex = columnText(stateQuery.get(), 1);
+        auto const projectStateJcs = columnText(stateQuery.get(), 2);
+
+        UF_TRY_VALUE(
+            priorQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT revision, canonical_observation, observation_hash, "
+                "state_resolution_hash, project_state_revision, project_state_hash, "
+                "plugin_hash, project_registration_hash FROM project_observations "
+                "WHERE plugin_id=?1 AND project_instance_key=?2 "
+                "ORDER BY revision DESC LIMIT 1"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), priorQuery.get(), 1, pluginId));
+        UF_TRY(bindText(m_impl->database.get(), priorQuery.get(), 2, projectInstanceKey));
+        auto priorRevision      = uint64{};
+        auto priorObservation   = std::string{"null"};
+        auto priorObservationId = std::string{};
+        auto priorFingerprint   = std::string{};
+        if (sqlite3_step(priorQuery.get()) == SQLITE_ROW)
+        {
+            priorRevision      = static_cast<uint64>(sqlite3_column_int64(priorQuery.get(), 0));
+            priorObservation   = columnText(priorQuery.get(), 1);
+            priorObservationId = columnText(priorQuery.get(), 2);
+            priorFingerprint   = columnText(priorQuery.get(), 3);
+            priorFingerprint += '\0';
+            priorFingerprint += std::to_string(
+                static_cast<uint64>(sqlite3_column_int64(priorQuery.get(), 4))
+            );
+            priorFingerprint += '\0';
+            priorFingerprint += columnText(priorQuery.get(), 5);
+            priorFingerprint += '\0';
+            priorFingerprint += columnText(priorQuery.get(), 6);
+            priorFingerprint += '\0';
+            priorFingerprint += columnText(priorQuery.get(), 7);
+            priorFingerprint += '\0';
+            priorFingerprint += priorObservationId;
+        }
+
+        // The design's pending_operation_transition: a read-only summary of the
+        // one non-terminal Operation this instance may have, so the project can
+        // read its own world without the Operator interpreting it.
+        UF_TRY_VALUE(
+            pendingQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT operation_id, state, revision FROM operations "
+                "WHERE plugin_id=?1 AND project_instance_key=?2 AND state IN "
+                "('proposed', 'awaiting_approval', 'ready', 'needs_revalidation', "
+                "'running', 'reconciling', 'ambiguous') "
+                "ORDER BY operation_id LIMIT 1"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), pendingQuery.get(), 1, pluginId));
+        UF_TRY(bindText(m_impl->database.get(), pendingQuery.get(), 2, projectInstanceKey));
+        auto pendingOperationJcs = std::string{"null"};
+        if (sqlite3_step(pendingQuery.get()) == SQLITE_ROW)
+        {
+            pendingOperationJcs = "{\"operation_id\":";
+            appendJsonString(pendingOperationJcs, columnText(pendingQuery.get(), 0));
+            pendingOperationJcs += ",\"revision\":";
+            pendingOperationJcs += std::to_string(
+                static_cast<uint64>(sqlite3_column_int64(pendingQuery.get(), 2))
+            );
+            pendingOperationJcs += ",\"state\":";
+            appendJsonString(pendingOperationJcs, columnText(pendingQuery.get(), 1));
+            pendingOperationJcs.push_back('}');
+        }
+
+        auto const pinnedRoots = plugin.projectArtifactRootHashes();
+
+        // The plugin runs inside the transaction, as reduce already does: the
+        // read of its inputs and the derivation from them must be one BEGIN
+        // IMMEDIATE, or a concurrent writer moves the state between the two.
+        // The plugin VM is quota-bound, so holding the write lock across it is
+        // bounded.
+        UF_TRY_VALUE(
+            deriveInput,
+            plugin.canonicalize(deriveEnvelopeJcs(DeriveEnvelopeInputs{
+                .pendingOperationJcs = pendingOperationJcs,
+                .pinnedArtifactRoots = pinnedRoots,
+                .priorObservationJcs = priorObservation,
+                .projectStateJcs     = projectStateJcs,
+                .uiSnapshotJcs       = observation.canonicalJcs(),
+            }))
+        );
+        UF_TRY_VALUE(derived, plugin.derive(deriveInput));
+        if (
+            derived.projectRegistrationHash() != plugin.projectRegistrationHash()
+            || derived.function() != ProjectPluginFunction::Derive
+            || derived.direction() != ProjectDocumentDirection::Output
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Derived ProjectObservation does not match the pinned observation schema"
+            );
+        }
+
+        auto const observationHex        = derived.contentHash().hex();
+        auto const stateResolutionHex    = observation.stateResolutionHash().hex();
+        auto const observationSchemaHex  = plugin.projectObservationSchemaHash().hex();
+        auto currentFingerprint          = stateResolutionHex;
+        currentFingerprint += '\0';
+        currentFingerprint += std::to_string(projectStateRevision);
+        currentFingerprint += '\0';
+        currentFingerprint += projectStateHex;
+        currentFingerprint += '\0';
+        currentFingerprint += plugin.pluginHash().hex();
+        currentFingerprint += '\0';
+        currentFingerprint += plugin.projectRegistrationHash().hex();
+        currentFingerprint += '\0';
+        currentFingerprint += observationHex;
+
+        // "任一 UI/artifact/plugin/project-state 输入变化" made executable: an
+        // identical reading of an identical world keeps its revision, so a
+        // re-observation does not invent a new state kind revision and does not
+        // move the snapshot identity.
+        auto observationRevision = priorRevision;
+        if (priorRevision == 0U || priorFingerprint != currentFingerprint)
+        {
+            UF_TRY_VALUE(
+                nextRevision,
+                checkedSqlIncrement(priorRevision, "ProjectObservation revision")
+            );
+            observationRevision = nextRevision;
+            UF_TRY_VALUE(
+                observationInsert,
+                prepare(
+                    m_impl->database.get(),
+                    "INSERT INTO project_observations(plugin_id, project_instance_key, "
+                    "revision, project_registration_hash, plugin_hash, "
+                    "observation_schema_hash, state_resolution_hash, "
+                    "project_state_revision, project_state_hash, canonical_observation, "
+                    "observation_hash) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+                )
+            );
+            UF_TRY(bindText(m_impl->database.get(), observationInsert.get(), 1, pluginId));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                observationInsert.get(),
+                2,
+                projectInstanceKey
+            ));
+            UF_TRY(bindInteger(
+                m_impl->database.get(),
+                observationInsert.get(),
+                3,
+                observationRevision
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                observationInsert.get(),
+                4,
+                plugin.projectRegistrationHash().hex()
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                observationInsert.get(),
+                5,
+                plugin.pluginHash().hex()
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                observationInsert.get(),
+                6,
+                observationSchemaHex
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                observationInsert.get(),
+                7,
+                stateResolutionHex
+            ));
+            UF_TRY(bindInteger(
+                m_impl->database.get(),
+                observationInsert.get(),
+                8,
+                projectStateRevision
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                observationInsert.get(),
+                9,
+                projectStateHex
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                observationInsert.get(),
+                10,
+                derived.bytes()
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                observationInsert.get(),
+                11,
+                observationHex
+            ));
+            UF_TRY(expectDone(m_impl->database.get(), observationInsert.get()));
+        }
+
+        UF_TRY_VALUE(projectStateHash, parseHashColumn(projectStateHex));
+        UF_TRY_VALUE(sessionManifestHash, parseHashColumn(sessionManifestHex));
+
+        // ProjectObservation is minted here, in the member function body: its
+        // single friend is OperatorCoordinator, which reaches its member
+        // functions and neither Impl nor the file-local helpers above.
+        auto projectObservation = ProjectObservation{
+            plugin.projectRegistrationHash(),
+            plugin.pluginHash(),
+            projectInstanceKey,
+            observation.stateResolutionHash(),
+            projectStateRevision,
+            projectStateHash,
+            observationRevision,
+            derived,
+        };
+
+        UF_TRY_VALUE(
+            decisionBasisHash,
+            deriveDecisionBasis(DecisionBasisParts{
+                .projectObservationHash = projectObservation.hash(),
+                .projectStateHash       = projectStateHash,
+                .sessionManifestHash    = sessionManifestHash,
+                .stateResolutionHash    = observation.stateResolutionHash(),
+            })
+        );
+
+        // Operator-owned, monotonic, and moved by acquire/takeover/release,
+        // which is three of the four triggers the design lists for ControlState.
+        // Policy is the fourth and has no store yet.
+        UF_TRY_VALUE(
+            availabilityQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT COALESCE(MAX(sequence), 0) FROM control_transitions "
+                "WHERE controlled_target_key=?1"
+            )
+        );
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            availabilityQuery.get(),
+            1,
+            controlledTargetKey
+        ));
+        if (sqlite3_step(availabilityQuery.get()) != SQLITE_ROW)
+        {
+            return databaseFailure(
+                m_impl->database.get(),
+                "could not read the control availability revision"
+            );
+        }
+        auto const availabilityRevision = static_cast<uint64>(
+            sqlite3_column_int64(availabilityQuery.get(), 0)
+        );
+
+        UF_TRY_VALUE(
+            revisionQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT COALESCE(MAX(snapshot_revision), 0) FROM snapshots "
+                "WHERE session_id=?1"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), revisionQuery.get(), 1, lease.sessionId));
+        if (sqlite3_step(revisionQuery.get()) != SQLITE_ROW)
+        {
+            return databaseFailure(
+                m_impl->database.get(),
+                "could not read the session snapshot revision"
+            );
+        }
+        UF_TRY_VALUE(
+            snapshotRevision,
+            checkedSqlIncrement(
+                static_cast<uint64>(sqlite3_column_int64(revisionQuery.get(), 0)),
+                "snapshot revision"
+            )
+        );
+
+        auto const canonicalParts = snapshotPartsJcs(SnapshotPartsInputs{
+            .decisionBasisHash          = decisionBasisHash,
+            .projectObservationHash     = projectObservation.hash(),
+            .projectStateHash           = projectStateHash,
+            .sessionManifestHash        = sessionManifestHash,
+            .stateResolutionHash        = observation.stateResolutionHash(),
+            .controlledTargetId         = controlledTargetKey,
+            .leaseId                    = lease.leaseId,
+            .observationId              = observation.observationId(),
+            .projectInstanceKey         = projectInstanceKey,
+            .availabilityRevision       = availabilityRevision,
+            .fencingToken               = lease.fencingToken,
+            .projectObservationRevision = observationRevision,
+            .projectStateRevision       = projectStateRevision,
+            .sessionEpoch               = lease.sessionEpoch,
+            .targetGeneration           = observation.targetGeneration().value(),
+        });
+        UF_TRY_VALUE(
+            identityHash,
+            sha256(std::as_bytes(std::span{canonicalParts}))
+        );
+
         UF_TRY_VALUE(token, randomToken(m_impl->database.get()));
         UF_TRY_VALUE(
             insert,
             prepare(
                 m_impl->database.get(),
-                "INSERT INTO snapshots(token, session_id, session_epoch, identity_hash, "
-                "lease_revision) VALUES(?1, ?2, ?3, ?4, ?5)"
+                "INSERT INTO snapshots(token, session_id, snapshot_revision, session_epoch, "
+                "identity_hash, decision_basis_hash, canonical_parts, lease_revision, "
+                "plugin_id, project_instance_key, observation_id, target_generation, "
+                "state_resolution_hash, project_observation_revision, "
+                "project_state_revision, availability_revision) "
+                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, token));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 2, lease.sessionId));
-        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 3, lease.sessionEpoch));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 4, identityHash.hex()));
-        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 5, lease.revision));
+        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 3, snapshotRevision));
+        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 4, lease.sessionEpoch));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 5, identityHash.hex()));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 6, decisionBasisHash.hex()));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 7, canonicalParts));
+        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 8, lease.revision));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 9, pluginId));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 10, projectInstanceKey));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            insert.get(),
+            11,
+            observation.observationId()
+        ));
+        UF_TRY(bindInteger(
+            m_impl->database.get(),
+            insert.get(),
+            12,
+            observation.targetGeneration().value()
+        ));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 13, stateResolutionHex));
+        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 14, observationRevision));
+        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 15, projectStateRevision));
+        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 16, availabilityRevision));
         UF_TRY(expectDone(m_impl->database.get(), insert.get()));
         UF_TRY(transaction.commit());
         return SnapshotRecord{
-            .token         = std::move(token),
-            .sessionId     = lease.sessionId,
-            .identityHash  = identityHash,
-            .sessionEpoch  = lease.sessionEpoch,
-            .leaseRevision = lease.revision,
+            .token                = std::move(token),
+            .sessionId            = lease.sessionId,
+            .identityHash         = identityHash,
+            .decisionBasisHash    = decisionBasisHash,
+            .stateResolutionHash  = observation.stateResolutionHash(),
+            .projectStateHash     = projectStateHash,
+            .canonicalParts       = canonicalParts,
+            .sessionEpoch         = lease.sessionEpoch,
+            .leaseRevision        = lease.revision,
+            .snapshotRevision     = snapshotRevision,
+            .projectStateRevision = projectStateRevision,
+            .availabilityRevision = availabilityRevision,
+            .observation          = std::move(projectObservation),
         };
     }
 
@@ -2855,11 +3497,26 @@ namespace uf::operator_runtime
             snapshotQuery,
             prepare(
                 m_impl->database.get(),
+                // The last two clauses are what make the token a reference to a
+                // COMPOSITION rather than to a lease: the snapshot goes stale
+                // when ProjectState moves under it, not only when control
+                // does. obs.project_state_revision=state.revision is not
+                // redundant with the clause above it -- it refuses a snapshot
+                // whose observation revision was reused from an earlier
+                // ProjectState, which is the only way the reuse rule in
+                // createSnapshot could otherwise carry a stale reading forward.
                 "SELECT session.controlled_target_key FROM snapshots s JOIN sessions session "
                 "ON session.session_id=s.session_id JOIN control_leases lease "
                 "ON lease.controlled_target_key=session.controlled_target_key "
+                "JOIN project_state state ON state.plugin_id=s.plugin_id "
+                "AND state.project_instance_key=s.project_instance_key "
+                "JOIN project_observations obs ON obs.plugin_id=s.plugin_id "
+                "AND obs.project_instance_key=s.project_instance_key "
+                "AND obs.revision=s.project_observation_revision "
                 "WHERE s.token=?1 AND s.session_id=?2 AND s.session_epoch=?3 AND "
-                "s.lease_revision=lease.revision AND lease.session_id=s.session_id"
+                "s.lease_revision=lease.revision AND lease.session_id=s.session_id "
+                "AND s.project_state_revision=state.revision "
+                "AND obs.project_state_revision=state.revision"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), snapshotQuery.get(), 1, request.snapshotToken));

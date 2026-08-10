@@ -8,6 +8,7 @@
 #include <doctest/doctest.h>
 
 #include <array>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -15,6 +16,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace uf::operator_runtime
 {
@@ -142,6 +144,7 @@ namespace uf::operator_runtime
 
         using test_support::command;
         using test_support::journalEntry;
+        using test_support::makeProject;
         using test_support::prepareStore;
         using test_support::reconciliationOutcome;
         using test_support::reconcilingOperation;
@@ -190,6 +193,265 @@ namespace uf::operator_runtime
         CHECK(snapshot.find("\"project_state\"") != std::string::npos);
         CHECK(snapshot.find("\"event_cursor\"") != std::string::npos);
         CHECK(snapshot.find("frame") == std::string::npos);
+    }
+
+    // s01: the five state kinds have separate owners. What was absent is
+    // ProjectObservation -- a kind whose only writer is ProjectPlugin.derive,
+    // invoked only by the Snapshot Coordinator, on an envelope the Operator
+    // assembled rather than accepted.
+    TEST_CASE("contract-state-s01")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        REQUIRE(prepared.project.lastDeriveInput != nullptr);
+
+        // The UI observation and the ProjectState reach the plugin as two
+        // separate members. Project state is not writable back as UI evidence
+        // because neither member is a caller's to supply.
+        auto const reading     = test_support::observeAgain(prepared);
+        auto const deriveInput = *prepared.project.lastDeriveInput;
+        CHECK(deriveInput.find("\"ui_snapshot\":" + reading.canonicalJcs()) != std::string::npos);
+        CHECK(deriveInput.find("\"project_state\":{\"revision\":0}") != std::string::npos);
+        CHECK(deriveInput.find("\"prior_project_observation\":null") != std::string::npos);
+        CHECK(deriveInput.find(reading.observationId()) == std::string::npos);
+
+        // Its own revision line: an identical reading of an identical world
+        // stays on one revision, so a recapture does not invent a state change.
+        auto const first = prepared.store.createSnapshot(
+            prepared.lease,
+            prepared.plugin,
+            test_support::observeAgain(prepared)
+        );
+        REQUIRE(first.has_value());
+        CHECK(first->observation.revision() == prepared.snapshot.observation.revision());
+        CHECK(first->observation.hash() == prepared.snapshot.observation.hash());
+        CHECK(first->observation.projectStateRevision() == 0U);
+        CHECK(first->observation.projectStateHash() == first->projectStateHash);
+
+        // A committed reconciliation moves ProjectState, which is one of the
+        // derive fingerprint's inputs, so the next reading is a new revision.
+        auto const operation = reconcilingOperation(
+            prepared,
+            "request-1",
+            DeliveryOutcome::Delivered
+        );
+        REQUIRE(prepared.store.commitReconciliation(
+            prepared.plugin,
+            ReconciliationCommit{
+                .operationId                  = operation.operationId,
+                .expectedOperationRevision    = operation.revision,
+                .expectedProjectStateRevision = 0U,
+                .outcome                      = reconciliationOutcome(
+                    prepared,
+                    operation.operationId,
+                    "{\"disposition\":\"confirmed\"}"
+                ),
+                .journalEvents                = {
+                    JournalAppend{
+                        .eventId = "event-1",
+                        .entry   = journalEntry(
+                            prepared.project,
+                            "fixture.progress",
+                            "{\"value\":1}"
+                        ),
+                    },
+                },
+            }
+        ).has_value());
+        auto const moved = prepared.store.createSnapshot(
+            prepared.lease,
+            prepared.plugin,
+            test_support::observeAgain(prepared)
+        );
+        REQUIRE(moved.has_value());
+        CHECK(moved->observation.revision() == first->observation.revision() + 1U);
+        CHECK(moved->observation.projectStateRevision() == 1U);
+
+        // The reading is bound to the registration that produced it. A handle
+        // for another registration is valid on its own and still refused here.
+        auto const foreignSource  = test_support::pluginSource("fixture.foreign");
+        auto const foreignProject = makeProject("fixture.foreign", foreignSource);
+        auto const foreignPlugin  = test_support::loadPlugin(foreignProject, foreignSource);
+        CHECK_FALSE(prepared.store.createSnapshot(
+            prepared.lease,
+            foreignPlugin,
+            test_support::observeAgain(prepared)
+        ).has_value());
+
+        // And the observation cannot come through another RuntimeArtifact: a
+        // second store installs a different model, and its Host resolves a
+        // world this session's manifest attests nothing about.
+        auto foreignTemporary = TemporaryDirectory{};
+        auto foreignPrepared  = prepareStore(
+            foreignTemporary.path(),
+            "fixture.other"
+        );
+        auto foreignReading = test_support::observeAgain(foreignPrepared);
+        CHECK(foreignReading.artifactRootHash() == reading.artifactRootHash());
+
+        auto const otherRelease = contract::observationRelease(
+            foreignTemporary.path() / "other-handoff",
+            contract::ambiguousRuntimeModel()
+        );
+        CHECK(otherRelease.artifactRootHash != reading.artifactRootHash());
+        auto otherInstalled = foreignPrepared.store.installRuntimeArtifact(
+            RuntimeArtifactInstallRequest{
+                .handoffRoot                 = otherRelease.handoffRoot,
+                .expectedReleaseManifestHash = otherRelease.releaseManifestHash,
+                .expectedInstalledGeneration = 1U,
+            }
+        );
+        REQUIRE(otherInstalled.has_value());
+        auto otherHost = contract::activateObservationHost(
+            *std::move(otherInstalled),
+            contract::resolvedFramePixels(),
+            FrameId{909}
+        );
+        auto const otherReading = contract::observeOnce(otherHost);
+        CHECK(otherReading.artifactRootHash() != reading.artifactRootHash());
+        CHECK_FALSE(prepared.store.createSnapshot(
+            prepared.lease,
+            prepared.plugin,
+            otherReading
+        ).has_value());
+    }
+
+    // s02: one complete record, published atomically, whose identity the
+    // publishing transaction derived from what it read.
+    TEST_CASE("contract-state-s02")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        // Recomputable: the identity is sha256 over the exact parts the row
+        // stores, so every member is falsifiable rather than merely compared
+        // against itself.
+        auto const& parts = prepared.snapshot.canonicalParts;
+        CHECK(hashOf(parts) == prepared.snapshot.identityHash);
+        CHECK(parts.find("\"decision_basis_hash\":\"" + prepared.snapshot.decisionBasisHash.hex() + "\"") != std::string::npos);
+        CHECK(parts.find("\"state_resolution_hash\":\"" + prepared.snapshot.stateResolutionHash.hex() + "\"") != std::string::npos);
+        CHECK(parts.find("\"project_state_hash\":\"" + prepared.snapshot.projectStateHash.hex() + "\"") != std::string::npos);
+        CHECK(parts.find("\"project_observation_hash\":\"" + prepared.snapshot.observation.hash().hex() + "\"") != std::string::npos);
+        CHECK(parts.find("\"session_manifest_hash\":\"" + prepared.manifest.hash().hex() + "\"") != std::string::npos);
+        CHECK(parts.find("\"lease_id\":\"" + prepared.lease.leaseId + "\"") != std::string::npos);
+        CHECK(parts.find("\"fencing_token\":" + std::to_string(prepared.lease.fencingToken)) != std::string::npos);
+        CHECK(parts.find("\"session_epoch\":" + std::to_string(prepared.lease.sessionEpoch)) != std::string::npos);
+        CHECK(parts.find("\"controlled_target_id\":\"target-1\"") != std::string::npos);
+        CHECK(parts.find("\"project_instance_key\":\"instance-1\"") != std::string::npos);
+        CHECK(parts.find("\"project_state_revision\":0") != std::string::npos);
+        CHECK(parts.find("\"project_observation_revision\":1") != std::string::npos);
+        CHECK(parts.find("\"availability_revision\":1") != std::string::npos);
+        CHECK(parts.find("\"target_generation\":3") != std::string::npos);
+
+        // Record naming is outside the parts, which is why re-observing an
+        // unchanged world does not re-decide it: the token and the revision
+        // move, the decision basis does not.
+        CHECK(parts.find("\"token\"") == std::string::npos);
+        CHECK(parts.find("\"snapshot_revision\"") == std::string::npos);
+
+        auto const again = prepared.store.createSnapshot(
+            prepared.lease,
+            prepared.plugin,
+            test_support::observeAgain(prepared)
+        );
+        REQUIRE(again.has_value());
+        CHECK(again->token != prepared.snapshot.token);
+        CHECK(again->snapshotRevision == prepared.snapshot.snapshotRevision + 1U);
+        CHECK(again->decisionBasisHash == prepared.snapshot.decisionBasisHash);
+        CHECK(again->stateResolutionHash == prepared.snapshot.stateResolutionHash);
+
+        // observation_id is a SnapshotParts member and is per capture, so two
+        // readings of one world are the same DECISION and not the same
+        // SNAPSHOT. Erasing that one member is what makes the rest equal.
+        auto const withoutObservationId = [](std::string value)
+        {
+            auto const at = value.find("\"observation_id\":");
+            REQUIRE(at != std::string::npos);
+            auto const end = value.find(',', at);
+            REQUIRE(end != std::string::npos);
+            return value.erase(at, end - at + 1U);
+        };
+        CHECK(again->identityHash != prepared.snapshot.identityHash);
+        CHECK(
+            withoutObservationId(again->canonicalParts)
+            == withoutObservationId(prepared.snapshot.canonicalParts)
+        );
+
+        // A different state resolution is a different world, so both hashes
+        // move even though nothing the Operator owns did.
+        auto unresolvedHost = test_support::secondObservationHost(
+            prepared,
+            contract::unresolvedFramePixels(),
+            FrameId{707}
+        );
+        auto const unresolved = contract::observeOnce(unresolvedHost);
+        CHECK(unresolved.stateResolutionHash() != prepared.snapshot.stateResolutionHash);
+        auto const different = prepared.store.createSnapshot(
+            prepared.lease,
+            prepared.plugin,
+            unresolved
+        );
+        REQUIRE(different.has_value());
+        CHECK(different->identityHash != prepared.snapshot.identityHash);
+        CHECK(different->decisionBasisHash != prepared.snapshot.decisionBasisHash);
+
+        // A token is a reference to a composition. A reconciliation that moved
+        // ProjectState therefore ends every token taken before it, and a token
+        // taken after it opens an Operation.
+        auto const operation = reconcilingOperation(
+            prepared,
+            "request-1",
+            DeliveryOutcome::Delivered
+        );
+        REQUIRE(prepared.store.commitReconciliation(
+            prepared.plugin,
+            ReconciliationCommit{
+                .operationId                  = operation.operationId,
+                .expectedOperationRevision    = operation.revision,
+                .expectedProjectStateRevision = 0U,
+                .outcome                      = reconciliationOutcome(
+                    prepared,
+                    operation.operationId,
+                    "{\"disposition\":\"confirmed\"}"
+                ),
+                .journalEvents                = {
+                    JournalAppend{
+                        .eventId = "event-1",
+                        .entry   = journalEntry(
+                            prepared.project,
+                            "fixture.progress",
+                            "{\"value\":1}"
+                        ),
+                    },
+                },
+            }
+        ).has_value());
+        CHECK_FALSE(prepared.store.createOrLoadOperation(
+            command(prepared.snapshot, "request-stale"),
+            toolInvocation(prepared.project, "observe-1")
+        ).has_value());
+
+        auto const afterCommit = prepared.store.createSnapshot(
+            prepared.lease,
+            prepared.plugin,
+            test_support::observeAgain(prepared)
+        );
+        REQUIRE(afterCommit.has_value());
+        CHECK(afterCommit->projectStateRevision == 1U);
+        CHECK(afterCommit->identityHash != prepared.snapshot.identityHash);
+
+        // The revision moved and the CONTENT did not -- this project's reducer
+        // answers with the same bytes -- so the decision basis is unchanged.
+        // That is the requirement rather than a gap: the basis covers the four
+        // content hashes and no counter, so a world that re-materialized
+        // identically does not force a re-plan or a re-approval. The unresolved
+        // reading above is the positive control that it can move at all.
+        CHECK(afterCommit->projectStateHash == prepared.snapshot.projectStateHash);
+        CHECK(afterCommit->decisionBasisHash == prepared.snapshot.decisionBasisHash);
+        CHECK(prepared.store.createOrLoadOperation(
+            command(*afterCommit, "request-fresh"),
+            toolInvocation(prepared.project, "observe-1")
+        ).has_value());
     }
 
     TEST_CASE("contract-state-s03")

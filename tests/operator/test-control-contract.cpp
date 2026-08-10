@@ -167,21 +167,26 @@ namespace uf::operator_runtime
         CHECK(lease.find("expiry") == std::string::npos);
         CHECK(lease.find("renew") == std::string::npos);
 
-        auto temporary = TemporaryDirectory{};
-        auto heldLease = std::optional<ControlLease>{};
-        auto manifest  = std::optional<SessionManifest>{};
-        auto project   = std::optional<test_support::ProjectFixture>{};
+        auto temporary   = TemporaryDirectory{};
+        auto heldLease   = std::optional<ControlLease>{};
+        auto manifest    = std::optional<SessionManifest>{};
+        auto project     = std::optional<test_support::ProjectFixture>{};
+        auto heldPlugin  = std::optional<ProjectPluginHandle>{};
+        auto heldReading = std::optional<task::UiObservationSnapshot>{};
         {
             auto prepared = prepareStore(temporary.path());
             // No renewal call exists, and none is needed: the same lease keeps
             // working for as long as the process holds it.
             CHECK(prepared.store.createSnapshot(
                 prepared.lease,
-                hashOf("second-snapshot")
+                prepared.plugin,
+                test_support::observeAgain(prepared)
             ).has_value());
-            heldLease = prepared.lease;
-            manifest  = prepared.manifest;
-            project   = prepared.project;
+            heldLease   = prepared.lease;
+            manifest    = prepared.manifest;
+            project     = prepared.project;
+            heldPlugin  = prepared.plugin;
+            heldReading = test_support::observeAgain(prepared);
         }
 
         // Dropping the coordinator closes the database; reopening it is the
@@ -207,7 +212,8 @@ namespace uf::operator_runtime
         CHECK_FALSE(restarted->acquireLease("session-1").has_value());
         CHECK_FALSE(restarted->createSnapshot(
             *heldLease,
-            hashOf("after-restart")
+            *heldPlugin,
+            *heldReading
         ).has_value());
 
         REQUIRE(restarted->pinSession(pin("session-2"), *manifest).has_value());

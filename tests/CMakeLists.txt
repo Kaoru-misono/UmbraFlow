@@ -81,6 +81,8 @@ set(UF_REQUIRED_DOCTEST_CONTRACTS
     contract-runtime-u06
     contract-runtime-u07
     contract-runtime-u08
+    contract-state-s01
+    contract-state-s02
     contract-state-s03
     contract-state-s05
     contract-state-s06
@@ -182,8 +184,6 @@ set(UF_SCHEMA_ONLY_REQUIREMENTS
     product-p01
     product-p02
     product-p03
-    state-s01
-    state-s02
     state-s04
     control-c03
     control-c05
@@ -437,6 +437,21 @@ if(NOT EXISTS "${UF_OPERATOR_FIXTURE_DIR}/project-fixture.hpp")
     )
 endif()
 
+# A snapshot is composed from an observation only TaskHost can mint, so every
+# Operator test drives a real Host over a real RuntimeArtifact. The fixture that
+# builds one lives beside the exported suite's own headers and encodes its
+# template assets as PNG, which is the one library the Operator does not already
+# link publicly.
+set(UF_OPERATOR_CONTRACT_INCLUDE_DIR
+    "${CMAKE_SOURCE_DIR}/contract-suite/include"
+)
+if(NOT EXISTS "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}/operator-contract/observation-fixture.hpp")
+    message(FATAL_ERROR
+        "the Operator observation fixture is missing: "
+        "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}/operator-contract/observation-fixture.hpp"
+    )
+endif()
+
 if(TARGET ${PROJECT_NAME}_operator)
     cpp_add_test(
         NAME test-operator
@@ -446,8 +461,15 @@ if(TARGET ${PROJECT_NAME}_operator)
             operator/test-operation.cpp
         LIBS
             ${PROJECT_NAME}_operator
+            ${PROJECT_NAME}_image
     )
-    target_include_directories(test-operator PRIVATE "${UF_OPERATOR_FIXTURE_DIR}")
+    target_include_directories(test-operator PRIVATE
+        "${UF_OPERATOR_FIXTURE_DIR}"
+        "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}"
+    )
+    if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
+        cpp_stage_runtime_libraries(test-operator ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
+    endif()
 
     cpp_add_contract_suite(
         TARGET test-contract-operator
@@ -459,6 +481,7 @@ if(TARGET ${PROJECT_NAME}_operator)
             operator/test-agent-audit-contract.cpp
         LIBS
             ${PROJECT_NAME}_operator
+            ${PROJECT_NAME}_image
         CASES
             contract-product-p04
             contract-product-p05-fixtures
@@ -466,6 +489,8 @@ if(TARGET ${PROJECT_NAME}_operator)
             schema-product-p01
             schema-product-p02
             schema-product-p03
+            contract-state-s01
+            contract-state-s02
             contract-state-s03
             contract-state-s05
             contract-state-s06
@@ -493,9 +518,16 @@ if(TARGET ${PROJECT_NAME}_operator)
             schema-agent-a05
             schema-agent-a07
     )
-    target_include_directories(
-        test-contract-operator PRIVATE "${UF_OPERATOR_FIXTURE_DIR}"
+    target_include_directories(test-contract-operator PRIVATE
+        "${UF_OPERATOR_FIXTURE_DIR}"
+        "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}"
     )
+    if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
+        cpp_stage_runtime_libraries(
+            test-contract-operator
+            ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES}
+        )
+    endif()
 endif()
 
 cpp_add_test(

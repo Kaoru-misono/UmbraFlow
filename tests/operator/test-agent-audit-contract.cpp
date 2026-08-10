@@ -334,9 +334,13 @@ namespace uf::operator_runtime
             store->installRuntimeArtifact(install(hashOf("other-release"))).has_value()
         );
 
-        // None of the three authoring capability roots may travel with a
-        // release, so production never has a path to the workspace database,
-        // the evidence blobs or the replay bundles.
+        // Three of the four authoring capability roots may never travel with a
+        // release, so production has no path to the workspace database, the
+        // evidence blobs or the replay bundles. The fourth is the exception the
+        // schema pins deliberately: publication copies the committed
+        // RuntimeArtifact out of candidate_workspace_root into the handoff file
+        // by file, so that root's contents travel as a verified copy while the
+        // root itself does not.
         auto const authoringRoots = std::array{
             std::filesystem::path{"workspace.sqlite"},
             std::filesystem::path{"evidence"} / "blob-1.png",

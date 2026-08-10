@@ -178,6 +178,7 @@ return {
             test_support::ProjectFixture project;
             ControlLease                 lease;
             SnapshotRecord               snapshot;
+            contract::ObservationHost    observation;
         };
 
         [[nodiscard]]
@@ -234,14 +235,24 @@ return {
             ).has_value());
             auto lease = store.acquireLease("session-1");
             REQUIRE(lease.has_value());
-            auto snapshot = store.createSnapshot(*lease, hashOf("snapshot-1"));
+            auto observation = contract::activateObservationHost(
+                *std::move(installed),
+                contract::resolvedFramePixels(),
+                FrameId{201}
+            );
+            auto snapshot = store.createSnapshot(
+                *lease,
+                projectPlugin,
+                contract::observeOnce(observation)
+            );
             REQUIRE(snapshot.has_value());
             return PreparedStore{
-                .store    = std::move(store),
-                .plugin   = projectPlugin,
-                .project  = project,
-                .lease    = *lease,
-                .snapshot = *snapshot,
+                .store       = std::move(store),
+                .plugin      = projectPlugin,
+                .project     = project,
+                .lease       = *lease,
+                .snapshot    = *std::move(snapshot),
+                .observation = std::move(observation),
             };
         }
 
@@ -737,7 +748,8 @@ return {
         CHECK(takeover->fencingToken > prepared.lease.fencingToken);
         CHECK_FALSE(prepared.store.createSnapshot(
             prepared.lease,
-            hashOf("stale")
+            prepared.plugin,
+            contract::observeOnce(prepared.observation)
         ).has_value());
     }
 

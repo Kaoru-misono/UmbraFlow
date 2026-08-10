@@ -176,6 +176,21 @@ namespace uf::operator_runtime
         [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
         [[nodiscard]] auto pluginHash() const -> ContentHash;
 
+        // The artifact-root identities this registration pinned, in the
+        // manifest's own order -- artifact-root names sorted by UTF-8 bytes, so
+        // the sequence is determined and a JCS array of it is too. Trusted
+        // Operator code needs them because it assembles the derive envelope
+        // itself rather than accepting one; they are already public in the
+        // registration this handle was built from.
+        [[nodiscard]]
+        auto projectArtifactRootHashes() const -> std::vector<ContentHash>;
+
+        // The observation schema this registration pinned. The Operator records
+        // it beside every derived reading so a stored observation names the
+        // schema that judged it; project_registrations carries no column for
+        // it, and the handle is already checked against that row.
+        [[nodiscard]] auto projectObservationSchemaHash() const -> ContentHash;
+
         // Mints canonical bytes through this plugin's pinned schema owner.
         // Trusted Operator code needs it because it assembles the reduce
         // envelope itself rather than accepting one from a caller; it grants no

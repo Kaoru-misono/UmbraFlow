@@ -28,16 +28,6 @@ namespace uf::operator_runtime::contract
 {
     namespace
     {
-        auto writeFile(
-            std::filesystem::path const& path,
-            std::string_view bytes
-        ) -> void
-        {
-            std::filesystem::create_directories(path.parent_path());
-            auto stream = std::ofstream{path, std::ios::binary | std::ios::trunc};
-            stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-            REQUIRE(stream.good());
-        }
     }
 
     TemporaryDirectory::TemporaryDirectory(std::string_view label)
@@ -164,38 +154,7 @@ namespace uf::operator_runtime::contract
 
     auto runtimeRelease(std::filesystem::path const& root) -> RuntimeRelease
     {
-        auto const handoff  = root / "release";
-        auto const artifact = handoff / "runtime-artifact";
-        auto const model    = std::string_view{"not TOML\r\n"};
-        writeFile(artifact / task::k_runtimeModelFileName, model);
-        auto const manifest = std::format(
-            "{{\"assets\":[],\"manifest_schema_hash\":\"{}\","
-            "\"page_model\":{{\"path\":\"page-model.toml\",\"sha256\":\"{}\","
-            "\"size\":{}}},\"runtime_model_schema_hash\":\"{}\"}}",
-            task::k_runtimeArtifactSchemaHash,
-            hashOf(model).hex(),
-            model.size(),
-            task::k_runtimeModelSchemaHash
-        );
-        writeFile(artifact / task::k_runtimeArtifactManifestFileName, manifest);
-        auto const artifactRootHash = hashOf(manifest);
-        auto const releaseManifest  = std::format(
-            "{{\"annotation_workspace_schema_hash\":\"{}\","
-            "\"candidate_id\":\"candidate-1\",\"candidate_revision\":1,"
-            "\"generation\":1,\"predecessor_publication_id\":null,"
-            "\"replay_gate_hash\":\"{}\",\"runtime_artifact_root_hash\":\"{}\","
-            "\"workspace_sqlite_schema_hash\":\"{}\"}}",
-            detail::k_annotationWorkspaceSchemaHash,
-            hashOf("replay-gate").hex(),
-            artifactRootHash.hex(),
-            detail::k_workspaceSqliteSchemaHash
-        );
-        writeFile(handoff / "release.manifest.json", releaseManifest);
-        return RuntimeRelease{
-            .handoffRoot         = handoff,
-            .releaseManifestHash = hashOf(releaseManifest),
-            .artifactRootHash    = artifactRootHash,
-        };
+        return observationRelease(root, observationRuntimeModel());
     }
 
     auto prepareStore(std::filesystem::path const& root) -> PreparedStore
@@ -213,8 +172,8 @@ namespace uf::operator_runtime::contract
         auto const release = runtimeRelease(root / "session-handoff");
         auto storeResult   = OperatorCoordinator::open(root / "production");
         REQUIRE(storeResult.has_value());
-        auto store           = *std::move(storeResult);
-        auto const installed = store.installRuntimeArtifact(
+        auto store     = *std::move(storeResult);
+        auto installed = store.installRuntimeArtifact(
             RuntimeArtifactInstallRequest{
                 .handoffRoot                 = release.handoffRoot,
                 .expectedReleaseManifestHash = release.releaseManifestHash,
@@ -255,15 +214,37 @@ namespace uf::operator_runtime::contract
 
         auto const lease = store.acquireLease("session-1");
         REQUIRE(lease.has_value());
-        auto const snapshot = store.createSnapshot(*lease, hashOf("snapshot-1"));
+        auto observation = activateObservationHost(
+            *std::move(installed),
+            resolvedFramePixels(),
+            FrameId{301}
+        );
+        auto snapshot = store.createSnapshot(*lease, plugin, observeOnce(observation));
         REQUIRE(snapshot.has_value());
         return PreparedStore{
-            .store    = std::move(store),
-            .plugin   = plugin,
-            .project  = project,
-            .lease    = *lease,
-            .snapshot = *snapshot,
+            .store       = std::move(store),
+            .plugin      = plugin,
+            .project     = project,
+            .lease       = *lease,
+            .snapshot    = *std::move(snapshot),
+            .observation = std::move(observation),
         };
+    }
+
+    auto observeAgain(PreparedStore& prepared) -> task::UiObservationSnapshot
+    {
+        return observeOnce(prepared.observation);
+    }
+
+    auto freshSnapshot(PreparedStore& prepared) -> SnapshotRecord
+    {
+        auto snapshot = prepared.store.createSnapshot(
+            prepared.lease,
+            prepared.plugin,
+            observeAgain(prepared)
+        );
+        REQUIRE(snapshot.has_value());
+        return *std::move(snapshot);
     }
 
     auto command(

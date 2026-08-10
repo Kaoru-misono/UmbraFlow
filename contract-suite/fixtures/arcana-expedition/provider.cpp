@@ -104,6 +104,37 @@ return {
             return fail(AutomationErrorKind::InvalidResource, std::move(message));
         }
 
+        // The derive envelope is the Operator's shape, not this project's, so
+        // the deployment recognizes it structurally: the Snapshot Coordinator
+        // composes it from whatever the world currently holds, and no caller
+        // supplies it.
+        [[nodiscard]]
+        auto looksLikeDeriveEnvelope(std::string_view exactJcs) -> bool
+        {
+            constexpr auto members = std::array{
+                std::string_view{"{\"pending_operation_transition\":"},
+                std::string_view{",\"pinned_project_artifact_identities\":["},
+                std::string_view{",\"prior_project_observation\":"},
+                std::string_view{",\"project_state\":"},
+                std::string_view{",\"ui_snapshot\":"},
+            };
+            if (!exactJcs.starts_with(members.front()) || !exactJcs.ends_with('}'))
+            {
+                return false;
+            }
+            auto at = std::size_t{0};
+            for (auto const member : members)
+            {
+                auto const found = exactJcs.find(member, at);
+                if (found == std::string_view::npos)
+                {
+                    return false;
+                }
+                at = found + member.size();
+            }
+            return true;
+        }
+
         // The reduce envelope is the Operator's shape, not this project's, so
         // the deployment recognizes it structurally: however many events a
         // commit appends, they arrive here and nowhere else.
@@ -339,6 +370,7 @@ return {
                 if (
                     std::ranges::find(accepted, candidateJcs) == accepted.end()
                     && !looksLikeReduceEnvelope(candidateJcs)
+                    && !looksLikeDeriveEnvelope(candidateJcs)
                 )
                 {
                     return refuse("expedition canonical validator rejected bytes");
@@ -349,10 +381,12 @@ return {
 
         [[nodiscard]]
         auto documentValidator(
-            std::shared_ptr<std::string> observedReduceInput
+            std::shared_ptr<std::string> observedReduceInput,
+            std::shared_ptr<std::string> observedDeriveInput
         ) -> ProjectDocumentValidator
         {
-            return [observedReduceInput = std::move(observedReduceInput)](
+            return [observedReduceInput = std::move(observedReduceInput),
+                    observedDeriveInput = std::move(observedDeriveInput)](
                        ProjectPluginFunction function,
                        ProjectDocumentDirection direction,
                        std::string_view candidateJcs
@@ -372,6 +406,9 @@ return {
                             && candidateJcs.ends_with("\"}");
                         break;
                     case ProjectPluginFunction::Derive:
+                        *observedDeriveInput = std::string{candidateJcs};
+                        valid = looksLikeDeriveEnvelope(candidateJcs);
+                        break;
                     case ProjectPluginFunction::Plan:
                     case ProjectPluginFunction::NextStep:
                         valid = candidateJcs == k_visible;
@@ -573,6 +610,7 @@ return {
             auto const schemas  = schemasOf(identity);
             auto registration   = verifiedRegistration(identity, schemas);
             auto observedReduce = std::make_shared<std::string>();
+            auto observedDerive = std::make_shared<std::string>();
 
             auto schemaOwner = ProjectSchemaOwner::create(
                 registration,
@@ -582,7 +620,7 @@ return {
                     .toolPrecondition   = schemas.precondition,
                 },
                 canonicalValidator(),
-                documentValidator(observedReduce)
+                documentValidator(observedReduce, observedDerive)
             );
             REQUIRE(schemaOwner.has_value());
 
@@ -630,6 +668,7 @@ return {
                 .pluginBytes            = std::string{identity.pluginSource},
                 .artifactBlobs          = std::move(artifactBlobs),
                 .observedReduceInput    = std::move(observedReduce),
+                .observedDeriveInput    = std::move(observedDerive),
                 .vocabulary             = vocabularyOf(identity),
             };
         }

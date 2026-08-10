@@ -205,6 +205,22 @@ LUAU_RUNTIME_PARSER_PATTERN = re.compile(
     r"\bfunction\s+[A-Za-z0-9_]*(?:runtime_model|RuntimeModel|toml)"
     r"[A-Za-z0-9_]*\s*\("
 )
+
+# The declaration of the Snapshot Coordinator's entry point, in the one header
+# that declares it. The rule below reads its parameter list.
+CREATE_SNAPSHOT_DECLARATION_PATTERN = re.compile(
+    r"auto\s+createSnapshot\s*\(([^)]*)\)",
+    re.DOTALL,
+)
+
+# A caller-supplied snapshot identity, by any of the spellings it has had. The
+# hash is derived inside the publishing transaction from what that transaction
+# read, so a parameter carrying one is the whole defect s02 exists to close and
+# it cannot come back under a different case.
+CALLER_SNAPSHOT_IDENTITY_PATTERN = re.compile(
+    r"[A-Za-z0-9_]*(?:identityHash|IdentityHash|identity_hash)"
+)
+
 HOST_VALIDATION_MARKER_PATTERN = re.compile(
     r"HOST_VALIDATION_TEST\(([A-Za-z_][A-Za-z0-9_]*\."
     r"[A-Za-z_][A-Za-z0-9_]*)\)"
@@ -420,6 +436,36 @@ def trusted_parser_errors(root: Path) -> list[str]:
     return errors
 
 
+def snapshot_identity_errors(root: Path) -> list[str]:
+    """createSnapshot must not accept a snapshot identity from its caller.
+
+    The gate reads a declaration rather than a call, because a caller that can
+    name the identity can pin a snapshot to a world the ledger never held, and
+    that is a property of the signature. It fails loudly when the declaration
+    cannot be found at all: a rule that silently matches nothing is the class of
+    check this repository has already shipped once.
+    """
+    header = root / "modules/operator/source/operator/ledger.hpp"
+    if not header.is_file():
+        return ["modules/operator/source/operator/ledger.hpp is missing"]
+
+    text = executable_text(header, read_text(header))
+    match = CREATE_SNAPSHOT_DECLARATION_PATTERN.search(text)
+    if match is None:
+        return [
+            "modules/operator/source/operator/ledger.hpp declares no "
+            "createSnapshot for the snapshot-identity rule to read"
+        ]
+
+    offender = CALLER_SNAPSHOT_IDENTITY_PATTERN.search(match.group(1))
+    if offender is not None:
+        return [
+            "modules/operator/source/operator/ledger.hpp: createSnapshot takes a "
+            f"caller-supplied snapshot identity {offender.group(0)!r}"
+        ]
+    return []
+
+
 def identifier_words(value: str) -> tuple[str, ...]:
     separated = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", value)
     return tuple(word.lower() for word in re.findall(r"[A-Za-z]+", separated))
@@ -606,6 +652,7 @@ def main() -> int:
             *business_global_errors(root),
             *retired_runtime_errors(root),
             *trusted_parser_errors(root),
+            *snapshot_identity_errors(root),
             *generic_schema_errors(root),
             *receipt_validation_errors(root),
             *schema_authority_errors(root),

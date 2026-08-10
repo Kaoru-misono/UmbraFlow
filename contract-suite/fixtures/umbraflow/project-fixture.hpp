@@ -1,5 +1,7 @@
 #pragma once
 
+#include <operator-contract/observation-fixture.hpp>
+
 #include <operator/journal-entry.hpp>
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
@@ -42,11 +44,44 @@ namespace uf::operator_runtime::test_support
         ProjectToolCatalogSchemaOwner toolCatalogSchemaOwner;
         ProjectReconcileSchemaOwner   reconcileSchemaOwner;
 
-        // The exact bytes the document validator last saw as a Reduce input.
-        // The fixture records them because the property under test is that the
-        // Operator decides those bytes and no caller can.
-        std::shared_ptr<std::string>  lastReduceInput;
+        // The exact bytes the document validator last saw as a Reduce input,
+        // and as a Derive input. The fixture records them because the property
+        // under test is that the Operator decides those bytes and no caller
+        // can.
+        std::shared_ptr<std::string> lastReduceInput;
+        std::shared_ptr<std::string> lastDeriveInput;
     };
+
+    // Stands in for a project's derive-input JSON Schema. Structural for
+    // looksLikeReduceEnvelope's reason: the Operator builds this envelope from
+    // whatever the world currently holds, and a real project's schema would be
+    // structural too.
+    [[nodiscard]]
+    inline auto looksLikeDeriveEnvelope(std::string_view exactJcs) -> bool
+    {
+        constexpr auto members = std::array{
+            std::string_view{"{\"pending_operation_transition\":"},
+            std::string_view{",\"pinned_project_artifact_identities\":["},
+            std::string_view{",\"prior_project_observation\":"},
+            std::string_view{",\"project_state\":"},
+            std::string_view{",\"ui_snapshot\":"},
+        };
+        if (!exactJcs.starts_with(members.front()) || !exactJcs.ends_with('}'))
+        {
+            return false;
+        }
+        auto at = std::size_t{0};
+        for (auto const member : members)
+        {
+            auto const found = exactJcs.find(member, at);
+            if (found == std::string_view::npos)
+            {
+                return false;
+            }
+            at = found + member.size();
+        }
+        return true;
+    }
 
     // Stands in for a project's reduce-input JSON Schema. It is structural
     // rather than an exact-bytes allowlist because the Operator now builds this
@@ -191,6 +226,7 @@ namespace uf::operator_runtime::test_support
         REQUIRE(registration.has_value());
 
         auto lastReduceInput = std::make_shared<std::string>();
+        auto lastDeriveInput = std::make_shared<std::string>();
         auto schemaOwner = ProjectSchemaOwner::create(
             *registration,
             ProjectDocumentSchemaBytes{
@@ -221,6 +257,7 @@ namespace uf::operator_runtime::test_support
                 if (
                     std::ranges::find(accepted, candidateJcs) == accepted.end()
                     && !looksLikeReduceEnvelope(candidateJcs)
+                    && !looksLikeDeriveEnvelope(candidateJcs)
                 )
                 {
                     return fail(
@@ -230,7 +267,7 @@ namespace uf::operator_runtime::test_support
                 }
                 return ok();
             },
-            [lastReduceInput](ProjectPluginFunction function,
+            [lastReduceInput, lastDeriveInput](ProjectPluginFunction function,
                ProjectDocumentDirection direction,
                std::string_view candidateJcs) -> Status
             {
@@ -248,6 +285,9 @@ namespace uf::operator_runtime::test_support
                             && candidateJcs.ends_with("\"}");
                         break;
                     case ProjectPluginFunction::Derive:
+                        *lastDeriveInput = std::string{candidateJcs};
+                        valid = looksLikeDeriveEnvelope(candidateJcs);
+                        break;
                     case ProjectPluginFunction::Plan:
                     case ProjectPluginFunction::NextStep:
                         valid = candidateJcs == "{}";
@@ -480,6 +520,7 @@ namespace uf::operator_runtime::test_support
             .toolCatalogSchemaOwner = *toolCatalogSchemaOwner,
             .reconcileSchemaOwner   = *reconcileSchemaOwner,
             .lastReduceInput        = std::move(lastReduceInput),
+            .lastDeriveInput        = std::move(lastDeriveInput),
         };
     }
 
@@ -598,48 +639,16 @@ namespace uf::operator_runtime::test_support
         REQUIRE(stream.good());
     }
 
-    struct RuntimeRelease final
-    {
-        std::filesystem::path handoffRoot;
-        ContentHash           releaseManifestHash;
-        ContentHash           artifactRootHash;
-    };
+    // The RuntimeArtifact every prepared store installs. It carries a real
+    // RuntimeModel and real template assets rather than a placeholder, because
+    // a snapshot is now composed from an observation the Host resolved through
+    // that model: a placeholder artifact installs, and then nothing observes.
+    using RuntimeRelease = contract::ObservationRelease;
 
     [[nodiscard]]
     inline auto runtimeRelease(std::filesystem::path const& root) -> RuntimeRelease
     {
-        auto const handoff = root / "release";
-        auto const artifact = handoff / "runtime-artifact";
-        auto const model = std::string_view{"not TOML\r\n"};
-        writeFile(artifact / task::k_runtimeModelFileName, model);
-        auto const manifest = std::format(
-            "{{\"assets\":[],\"manifest_schema_hash\":\"{}\","
-            "\"page_model\":{{\"path\":\"page-model.toml\",\"sha256\":\"{}\","
-            "\"size\":{}}},\"runtime_model_schema_hash\":\"{}\"}}",
-            task::k_runtimeArtifactSchemaHash,
-            hashOf(model).hex(),
-            model.size(),
-            task::k_runtimeModelSchemaHash
-        );
-        writeFile(artifact / task::k_runtimeArtifactManifestFileName, manifest);
-        auto const artifactRootHash = hashOf(manifest);
-        auto const releaseManifest = std::format(
-            "{{\"annotation_workspace_schema_hash\":\"{}\","
-            "\"candidate_id\":\"candidate-1\",\"candidate_revision\":1,"
-            "\"generation\":1,\"predecessor_publication_id\":null,"
-            "\"replay_gate_hash\":\"{}\",\"runtime_artifact_root_hash\":\"{}\","
-            "\"workspace_sqlite_schema_hash\":\"{}\"}}",
-            detail::k_annotationWorkspaceSchemaHash,
-            hashOf("replay-gate").hex(),
-            artifactRootHash.hex(),
-            detail::k_workspaceSqliteSchemaHash
-        );
-        writeFile(handoff / "release.manifest.json", releaseManifest);
-        return RuntimeRelease{
-            .handoffRoot         = handoff,
-            .releaseManifestHash = hashOf(releaseManifest),
-            .artifactRootHash    = artifactRootHash,
-        };
+        return contract::observationRelease(root, contract::observationRuntimeModel());
     }
 
     // The trusted plugin a prepared store registers. plugin_id must equal the
@@ -710,7 +719,64 @@ namespace uf::operator_runtime::test_support
         SessionManifest     manifest;
         ControlLease        lease;
         SnapshotRecord      snapshot;
+
+        // The Host whose observations this store composes snapshots from. It is
+        // part of the prepared state rather than built per case because
+        // TaskHost owns an activated generation, and a second Host over the
+        // same artifact would be a second observer of one world.
+        contract::ObservationHost  observation;
     };
+
+    // Runs one further observation cycle on the prepared Host. Each call is a
+    // new capture with a new observation id and, over an unchanged world, the
+    // same state resolution.
+    [[nodiscard]]
+    inline auto observeAgain(PreparedStore& prepared) -> task::UiObservationSnapshot
+    {
+        return contract::observeOnce(prepared.observation);
+    }
+
+    // A second Host over the SAME installed RuntimeArtifact, looking at a
+    // different frame. It is how a case reaches a different state resolution
+    // without reaching a different artifact: an observation taken through an
+    // artifact the session never pinned is refused before it is resolved, so
+    // the two refusals cannot be told apart from one fixture.
+    [[nodiscard]]
+    inline auto secondObservationHost(
+        PreparedStore& prepared,
+        std::vector<std::byte> framePixels,
+        FrameId frameId
+    ) -> contract::ObservationHost
+    {
+        auto const artifactRootHash =
+            contract::observeOnce(prepared.observation).artifactRootHash();
+        auto installed = prepared.store.openInstalledRuntimeArtifact(
+            1U,
+            artifactRootHash
+        );
+        REQUIRE(installed.has_value());
+        return contract::activateObservationHost(
+            *std::move(installed),
+            std::move(framePixels),
+            frameId
+        );
+    }
+
+    // A snapshot over the world as it now stands. A token references a
+    // composition rather than a lease, so a reconciliation that advanced
+    // ProjectState makes every earlier token stale, and a case that opens a
+    // second Operation after a commit has to re-observe first.
+    [[nodiscard]]
+    inline auto freshSnapshot(PreparedStore& prepared) -> SnapshotRecord
+    {
+        auto snapshot = prepared.store.createSnapshot(
+            prepared.lease,
+            prepared.plugin,
+            observeAgain(prepared)
+        );
+        REQUIRE(snapshot.has_value());
+        return *std::move(snapshot);
+    }
 
     [[nodiscard]]
     inline auto prepareStore(
@@ -767,15 +833,25 @@ namespace uf::operator_runtime::test_support
         ).has_value());
         auto lease = store.acquireLease("session-1");
         REQUIRE(lease.has_value());
-        auto snapshot = store.createSnapshot(*lease, hashOf("snapshot-1"));
+        auto observation = contract::activateObservationHost(
+            *std::move(installed),
+            contract::resolvedFramePixels(),
+            FrameId{101}
+        );
+        auto snapshot = store.createSnapshot(
+            *lease,
+            projectPlugin,
+            contract::observeOnce(observation)
+        );
         REQUIRE(snapshot.has_value());
         return PreparedStore{
-            .store    = std::move(store),
-            .plugin   = projectPlugin,
-            .project  = project,
-            .manifest = manifest,
-            .lease    = *lease,
-            .snapshot = *snapshot,
+            .store       = std::move(store),
+            .plugin      = projectPlugin,
+            .project     = project,
+            .manifest    = manifest,
+            .lease       = *lease,
+            .snapshot    = *std::move(snapshot),
+            .observation = std::move(observation),
         };
     }
 

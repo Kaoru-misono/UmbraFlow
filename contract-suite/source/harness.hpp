@@ -1,5 +1,6 @@
 #pragma once
 
+#include <operator-contract/observation-fixture.hpp>
 #include <operator-contract/project-under-test.hpp>
 
 #include <operator/ledger.hpp>
@@ -77,13 +78,9 @@ namespace uf::operator_runtime::contract
 
     // A RuntimeArtifact handoff on disk. Its shape is the Operator's, not the
     // project's, so the suite writes it rather than asking the deployment for
-    // one.
-    struct RuntimeRelease final
-    {
-        std::filesystem::path handoffRoot;
-        ContentHash           releaseManifestHash;
-        ContentHash           artifactRootHash;
-    };
+    // one. It carries a real RuntimeModel because a snapshot is composed from
+    // an observation the Host resolved through that model.
+    using RuntimeRelease = ObservationRelease;
 
     [[nodiscard]]
     auto runtimeRelease(std::filesystem::path const& root) -> RuntimeRelease;
@@ -98,7 +95,25 @@ namespace uf::operator_runtime::contract
         ProjectUnderTest    project;
         ControlLease        lease;
         SnapshotRecord      snapshot;
+
+        // The Host whose observations this store composes snapshots from. Only
+        // TaskHost can mint one, so the suite carries a live Host rather than a
+        // recorded value.
+        ObservationHost     observation;
     };
+
+    // One further observation cycle on the prepared Host: a new capture, a new
+    // observation id, and -- over an unchanged world -- the same resolution.
+    [[nodiscard]]
+    auto observeAgain(PreparedStore& prepared) -> task::UiObservationSnapshot;
+
+    // A snapshot over the world as it now stands. A token references a
+    // composition rather than a lease, so a reconciliation that advanced
+    // ProjectState makes every earlier token stale -- which is the property
+    // contract-state-s02 proves, and the reason a case that opens a second
+    // Operation after a commit has to re-observe first.
+    [[nodiscard]]
+    auto freshSnapshot(PreparedStore& prepared) -> SnapshotRecord;
 
     [[nodiscard]]
     auto prepareStore(std::filesystem::path const& root) -> PreparedStore;
