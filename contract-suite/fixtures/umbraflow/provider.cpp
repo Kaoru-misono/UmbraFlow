@@ -55,13 +55,9 @@ namespace uf::operator_runtime::contract
                 .rejectedInput  = "{\"disposition\":\"rejected\"}",
                 .ambiguousInput = "{\"disposition\":\"ambiguous\"}",
 
-                // Five more mutating tools, told apart by the plan this
-                // project's plugin answers each of them with.
-                .mismatchedPlanTool       = "mismatched-plan",
-                .oversizedPlanTool        = "oversized-plan",
-                .twoStepPlanTool          = "two-step-plan",
+                // One more mutating tool, told apart by the plan this project's
+                // plugin answers it with.
                 .approvalRequiredPlanTool = "approval-plan",
-                .reorderedEffectsTool     = "reordered-effects",
             };
         }
     }

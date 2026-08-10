@@ -360,9 +360,9 @@ namespace uf::task
             dispatchAuthority(controlFenceOn("another-target", 7), generation),
             dispatchAuthority(
                 ControlFence{
-                    .controlledTargetKey = fence.controlledTargetKey,
-                    .sessionEpoch        = fence.sessionEpoch + 1,
-                    .fencingToken        = fence.fencingToken,
+                    .controlledTargetId = fence.controlledTargetId,
+                    .sessionEpoch       = fence.sessionEpoch + 1,
+                    .fencingToken       = fence.fencingToken,
                 },
                 generation
             ),
@@ -458,7 +458,7 @@ namespace uf::task
         );
         CHECK(TaskHostTestAccess::fence(host).fencingToken == 7U);
         CHECK(
-            TaskHostTestAccess::fence(host).controlledTargetKey == k_controlledTarget
+            TaskHostTestAccess::fence(host).controlledTargetId == k_controlledTarget
         );
 
         // At or below is refused, so a lease a takeover already superseded
@@ -478,7 +478,7 @@ namespace uf::task
             ).has_value()
         );
         CHECK(
-            TaskHostTestAccess::fence(host).controlledTargetKey == k_controlledTarget
+            TaskHostTestAccess::fence(host).controlledTargetId == k_controlledTarget
         );
 
         REQUIRE(

@@ -668,7 +668,7 @@ namespace uf::task
     {
         if (
             receipt.m_hostNonce != m_hostNonce
-            || authority.controlledTargetKey != m_fence.controlledTargetKey
+            || authority.controlledTargetId != m_fence.controlledTargetId
             || authority.sessionEpoch != m_fence.sessionEpoch
             || authority.fencingToken != m_fence.fencingToken
         )
@@ -785,7 +785,7 @@ namespace uf::task
 
     auto TaskHost::adoptControlFence(ControlFence fence) -> Status
     {
-        if (fence.controlledTargetKey.empty())
+        if (fence.controlledTargetId.empty())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -801,7 +801,7 @@ namespace uf::task
         }
         if (
             m_fence.fencingToken != 0
-            && fence.controlledTargetKey != m_fence.controlledTargetKey
+            && fence.controlledTargetId != m_fence.controlledTargetId
         )
         {
             return fail(

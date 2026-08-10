@@ -496,9 +496,9 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         -> ControlFence
     {
         return ControlFence{
-            .controlledTargetKey = std::string{target},
-            .sessionEpoch        = k_controlSessionEpoch,
-            .fencingToken        = fencingToken,
+            .controlledTargetId = std::string{target},
+            .sessionEpoch       = k_controlSessionEpoch,
+            .fencingToken       = fencingToken,
         };
     }
 
@@ -516,7 +516,7 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         -> DispatchAuthority
     {
         return DispatchAuthority{
-            .controlledTargetKey = fence.controlledTargetKey,
+            .controlledTargetId  = fence.controlledTargetId,
             .leaseId             = "lease-1",
             .operationId         = "operation-1",
             .authorityDecisionId = "authority-decision-1",

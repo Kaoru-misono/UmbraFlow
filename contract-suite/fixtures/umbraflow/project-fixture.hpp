@@ -1270,7 +1270,7 @@ namespace uf::operator_runtime::test_support
                 .idempotencyNamespace      = "controller-1",
                 .projectRegistrationHash   = project.registration.hash(),
                 .capabilityProfileHash     = hashOf("capability"),
-                .controlledTargetKey       = "target-1",
+                .controlledTargetId        = "target-1",
                 .projectInstanceKey        = "instance-1",
                 .mode                      = SessionMode::Write,
                 .kind                      = ControllerKind::Script,
@@ -1350,7 +1350,7 @@ namespace uf::operator_runtime::test_support
         SessionMode mode,
         std::string const& sessionId,
         std::string const& projectInstanceKey,
-        std::string const& controlledTargetKey,
+        std::string const& controlledTargetId,
         std::optional<AgentBudget> const& budget = std::nullopt
     ) -> ControllerBinding
     {
@@ -1384,7 +1384,7 @@ namespace uf::operator_runtime::test_support
                 .idempotencyNamespace      = "controller-1",
                 .projectRegistrationHash   = prepared.project.registration.hash(),
                 .capabilityProfileHash     = hashOf("capability"),
-                .controlledTargetKey       = controlledTargetKey,
+                .controlledTargetId        = controlledTargetId,
                 .projectInstanceKey        = projectInstanceKey,
                 .mode                      = mode,
                 .kind                      = kind,

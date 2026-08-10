@@ -62,14 +62,14 @@ namespace uf::operator_runtime
     ControllerBinding::ControllerBinding(
         std::string sessionId,
         std::string controllerId,
-        std::string controlledTargetKey,
+        std::string controlledTargetId,
         ContentHash capabilityProfileHash,
         uint64 sessionEpoch,
         ControllerKind kind
     )
         : m_sessionId{std::move(sessionId)}
         , m_controllerId{std::move(controllerId)}
-        , m_controlledTargetKey{std::move(controlledTargetKey)}
+        , m_controlledTargetId{std::move(controlledTargetId)}
         , m_capabilityProfileHash{capabilityProfileHash}
         , m_sessionEpoch{sessionEpoch}
         , m_kind{kind}
@@ -86,10 +86,10 @@ namespace uf::operator_runtime
         return m_controllerId;
     }
 
-    auto ControllerBinding::controlledTargetKey() const noexcept
+    auto ControllerBinding::controlledTargetId() const noexcept
         -> std::string const&
     {
-        return m_controlledTargetKey;
+        return m_controlledTargetId;
     }
 
     auto ControllerBinding::capabilityProfileHash() const -> ContentHash

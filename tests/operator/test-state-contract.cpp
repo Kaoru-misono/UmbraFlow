@@ -620,7 +620,7 @@ namespace uf::operator_runtime
                 .idempotencyNamespace      = "controller-1",
                 .projectRegistrationHash   = registration.hash(),
                 .capabilityProfileHash     = hashOf("capability"),
-                .controlledTargetKey       = "target-2",
+                .controlledTargetId        = "target-2",
                 .projectInstanceKey        = "instance-missing",
                 .mode                      = SessionMode::Write,
             },

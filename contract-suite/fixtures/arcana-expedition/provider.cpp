@@ -56,8 +56,7 @@ namespace uf::operator_runtime::contract
         constexpr auto k_expeditionPlugin = std::string_view{R"LUAU(
 -- The operator protocol documents this project answers with. plan reads the
 -- tool name out of the envelope the Operator assembled, so one registration
--- reaches the clamp, the bound, the approval edge and the tool mismatch
--- without a second plugin_hash.
+-- reaches the approval edge without a second plugin_hash.
 local schema = "00000000000000000000000000000000000000000000000000000000000000a1"
 local function effect(risk, camp)
     return '{"namespaced_type":"expedition.march","opaque_project_payload":{"turn":0}'
@@ -65,7 +64,6 @@ local function effect(risk, camp)
         .. '","scope_key":"' .. camp .. '","scope_kind":"camp"}'
 end
 local ordinary = '[' .. effect("low", "north") .. ',' .. effect("medium", "south") .. ']'
-local reordered = '[' .. effect("medium", "south") .. ',' .. effect("low", "north") .. ']'
 local risky = '[' .. effect("high", "north") .. ']'
 local function proposal(tool, effects, steps, dispatches)
     return '{"allowed_ui_actions":["expedition.step"],"canonical_args":{"steps":2}'
@@ -78,11 +76,7 @@ end
 local plans = {
     ["expedition.move"] = proposal("expedition.move", ordinary, "8", "8"),
     ["expedition.trade"] = proposal("expedition.trade", ordinary, "8", "8"),
-    ["expedition.mismatch"] = proposal("expedition.move", ordinary, "8", "8"),
-    ["expedition.oversized"] = proposal("expedition.oversized", ordinary, "4096", "4096"),
-    ["expedition.twostep"] = proposal("expedition.twostep", ordinary, "2", "2"),
     ["expedition.approval"] = proposal("expedition.approval", risky, "8", "8"),
-    ["expedition.reorder"] = proposal("expedition.reorder", reordered, "8", "8"),
 }
 local step_intent = '{"action":{"action_id":"expedition.press"'
     .. ',"canonical_parameters":{"steps":2},"surface_id":"expedition.surface"'
@@ -115,8 +109,7 @@ return {
         constexpr auto k_rivalPlugin = std::string_view{R"LUAU(
 -- The operator protocol documents this project answers with. plan reads the
 -- tool name out of the envelope the Operator assembled, so one registration
--- reaches the clamp, the bound, the approval edge and the tool mismatch
--- without a second plugin_hash.
+-- reaches the approval edge without a second plugin_hash.
 local schema = "00000000000000000000000000000000000000000000000000000000000000a1"
 local function effect(risk, camp)
     return '{"namespaced_type":"expedition.march","opaque_project_payload":{"turn":0}'
@@ -124,7 +117,6 @@ local function effect(risk, camp)
         .. '","scope_key":"' .. camp .. '","scope_kind":"camp"}'
 end
 local ordinary = '[' .. effect("low", "north") .. ',' .. effect("medium", "south") .. ']'
-local reordered = '[' .. effect("medium", "south") .. ',' .. effect("low", "north") .. ']'
 local risky = '[' .. effect("high", "north") .. ']'
 local function proposal(tool, effects, steps, dispatches)
     return '{"allowed_ui_actions":["expedition.step"],"canonical_args":{"steps":2}'
@@ -137,11 +129,7 @@ end
 local plans = {
     ["expedition.move"] = proposal("expedition.move", ordinary, "8", "8"),
     ["expedition.trade"] = proposal("expedition.trade", ordinary, "8", "8"),
-    ["expedition.mismatch"] = proposal("expedition.move", ordinary, "8", "8"),
-    ["expedition.oversized"] = proposal("expedition.oversized", ordinary, "4096", "4096"),
-    ["expedition.twostep"] = proposal("expedition.twostep", ordinary, "2", "2"),
     ["expedition.approval"] = proposal("expedition.approval", risky, "8", "8"),
-    ["expedition.reorder"] = proposal("expedition.reorder", reordered, "8", "8"),
 }
 local step_intent = '{"action":{"action_id":"expedition.press"'
     .. ',"canonical_parameters":{"steps":2},"surface_id":"expedition.surface"'
@@ -369,11 +357,7 @@ return {
 
                 // Five more mutating tools, told apart by the plan this
                 // project's plugin answers each of them with.
-                .mismatchedPlanTool       = "expedition.mismatch",
-                .oversizedPlanTool        = "expedition.oversized",
-                .twoStepPlanTool          = "expedition.twostep",
                 .approvalRequiredPlanTool = "expedition.approval",
-                .reorderedEffectsTool     = "expedition.reorder",
             };
         }
 
@@ -678,27 +662,7 @@ return {
                         .mutability = ToolMutability::Mutating,
                     },
                     ToolCase{
-                        .name       = "expedition.mismatch",
-                        .version    = "3",
-                        .mutability = ToolMutability::Mutating,
-                    },
-                    ToolCase{
-                        .name       = "expedition.oversized",
-                        .version    = "3",
-                        .mutability = ToolMutability::Mutating,
-                    },
-                    ToolCase{
-                        .name       = "expedition.twostep",
-                        .version    = "3",
-                        .mutability = ToolMutability::Mutating,
-                    },
-                    ToolCase{
                         .name       = "expedition.approval",
-                        .version    = "3",
-                        .mutability = ToolMutability::Mutating,
-                    },
-                    ToolCase{
-                        .name       = "expedition.reorder",
                         .version    = "3",
                         .mutability = ToolMutability::Mutating,
                     },

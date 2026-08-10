@@ -90,7 +90,7 @@ namespace uf::operator_runtime
 
         std::string    m_sessionId;
         std::string    m_controllerId;
-        std::string    m_controlledTargetKey;
+        std::string    m_controlledTargetId;
         ContentHash    m_capabilityProfileHash;
         uint64         m_sessionEpoch;
         ControllerKind m_kind;
@@ -98,7 +98,7 @@ namespace uf::operator_runtime
         ControllerBinding(
             std::string sessionId,
             std::string controllerId,
-            std::string controlledTargetKey,
+            std::string controlledTargetId,
             ContentHash capabilityProfileHash,
             uint64 sessionEpoch,
             ControllerKind kind
@@ -113,7 +113,7 @@ namespace uf::operator_runtime
             -> std::string const&;
 
         [[nodiscard]]
-        auto controlledTargetKey() const noexcept UF_LIFETIME_BOUND
+        auto controlledTargetId() const noexcept UF_LIFETIME_BOUND
             -> std::string const&;
 
         [[nodiscard]] auto capabilityProfileHash() const -> ContentHash;

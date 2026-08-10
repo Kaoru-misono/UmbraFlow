@@ -359,7 +359,7 @@ namespace uf::operator_runtime
         // database rather than by hand. initialize() verifies immediately after
         // creating the schema, so a forgotten recomputation cannot ship green.
         constexpr auto k_exactSchemaV1Fingerprint = std::string_view{
-            "sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559"
+            "sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1"
         };
 
         [[nodiscard]]
@@ -613,7 +613,7 @@ namespace uf::operator_runtime
                             REFERENCES project_registrations(registration_hash),
                         capability_profile_hash TEXT NOT NULL,
                         session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
-                        controlled_target_key TEXT NOT NULL,
+                        controlled_target_id TEXT NOT NULL,
                         project_instance_key TEXT NOT NULL,
                         mode TEXT NOT NULL CHECK(mode IN ('read', 'write')),
                         -- Which of the three operators holds this session. It
@@ -641,12 +641,12 @@ namespace uf::operator_runtime
                     WHERE mode='write' AND active=1;
 
                     CREATE TABLE IF NOT EXISTS fencing_high_water(
-                        controlled_target_key TEXT PRIMARY KEY,
+                        controlled_target_id TEXT PRIMARY KEY,
                         fencing_token INTEGER NOT NULL CHECK(fencing_token > 0)
                     ) STRICT;
 
                     CREATE TABLE IF NOT EXISTS control_leases(
-                        controlled_target_key TEXT PRIMARY KEY,
+                        controlled_target_id TEXT PRIMARY KEY,
                         lease_id TEXT NOT NULL UNIQUE,
                         session_id TEXT NOT NULL REFERENCES sessions(session_id),
                         controller_id TEXT NOT NULL,
@@ -658,7 +658,7 @@ namespace uf::operator_runtime
 
                     CREATE TABLE IF NOT EXISTS control_transitions(
                         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-                        controlled_target_key TEXT NOT NULL,
+                        controlled_target_id TEXT NOT NULL,
                         session_id TEXT NOT NULL,
                         controller_id TEXT NOT NULL,
                         lease_id TEXT NOT NULL,
@@ -681,7 +681,7 @@ namespace uf::operator_runtime
                     CREATE TABLE IF NOT EXISTS ledger_events(
                         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                         session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
-                        controlled_target_key TEXT NOT NULL,
+                        controlled_target_id TEXT NOT NULL,
                         kind TEXT NOT NULL CHECK(kind IN (
                             'operation_created', 'control_transitioned',
                             'external_input_detected'
@@ -745,7 +745,7 @@ namespace uf::operator_runtime
                         tool_name TEXT NOT NULL,
                         tool_version TEXT NOT NULL,
                         canonical_args TEXT NOT NULL,
-                        controlled_target_key TEXT NOT NULL,
+                        controlled_target_id TEXT NOT NULL,
                         mutating INTEGER NOT NULL CHECK(mutating IN (0, 1)),
                         state TEXT NOT NULL,
                         frozen_plan_hash TEXT,
@@ -763,7 +763,7 @@ namespace uf::operator_runtime
                     ) STRICT;
 
                     CREATE UNIQUE INDEX IF NOT EXISTS one_active_mutation_per_target
-                    ON operations(controlled_target_key)
+                    ON operations(controlled_target_id)
                     WHERE mutating=1 AND state IN (
                         'proposed', 'awaiting_approval', 'ready', 'needs_revalidation',
                         'running', 'reconciling', 'ambiguous'
@@ -894,7 +894,7 @@ namespace uf::operator_runtime
                         operation_id TEXT NOT NULL REFERENCES operations(operation_id),
                         session_id TEXT NOT NULL REFERENCES sessions(session_id),
                         controller_id TEXT NOT NULL,
-                        controlled_target_key TEXT NOT NULL,
+                        controlled_target_id TEXT NOT NULL,
                         lease_id TEXT NOT NULL,
                         session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
                         fencing_token INTEGER NOT NULL CHECK(fencing_token > 0),
@@ -953,7 +953,7 @@ namespace uf::operator_runtime
                     -- a keystroke stops the automation without terminating it.
                     CREATE TABLE IF NOT EXISTS external_input_findings(
                         finding_id TEXT PRIMARY KEY,
-                        controlled_target_key TEXT NOT NULL,
+                        controlled_target_id TEXT NOT NULL,
                         session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
                         reporter_session_id TEXT NOT NULL
                             REFERENCES sessions(session_id),
@@ -1056,7 +1056,7 @@ namespace uf::operator_runtime
 
         // Drives every dispatch nobody has answered for to transport_unknown and
         // its Operation to reconciling, one checked-increment CAS per row. An
-        // empty controlledTargetKey means every target, which is what a restart
+        // empty controlledTargetId means every target, which is what a restart
         // sweeps; a takeover names the one target it seized. Never
         // not_delivered: a dispatch the Host may already have posted is exactly
         // what the third value exists for.
@@ -1067,7 +1067,7 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto resolveUnansweredDispatches(
             sqlite3* database,
-            std::string_view controlledTargetKey,
+            std::string_view controlledTargetId,
             std::string_view reason
         ) -> Result<uint64>
         {
@@ -1076,14 +1076,14 @@ namespace uf::operator_runtime
                 "FROM operations o JOIN dispatches d ON d.operation_id=o.operation_id "
                 "WHERE o.state='running' AND d.delivery_outcome IS NULL"
             };
-            if (!controlledTargetKey.empty())
+            if (!controlledTargetId.empty())
             {
-                scan += " AND o.controlled_target_key=?1";
+                scan += " AND o.controlled_target_id=?1";
             }
             UF_TRY_VALUE(query, prepare(database, scan));
-            if (!controlledTargetKey.empty())
+            if (!controlledTargetId.empty())
             {
-                UF_TRY(bindText(database, query.get(), 1, controlledTargetKey));
+                UF_TRY(bindText(database, query.get(), 1, controlledTargetId));
             }
 
             auto pending   = std::vector<std::tuple<std::string, uint64, uint64>>{};
@@ -1244,7 +1244,7 @@ namespace uf::operator_runtime
         auto appendLedgerEvent(
             sqlite3* database,
             uint64 sessionEpoch,
-            std::string_view controlledTargetKey,
+            std::string_view controlledTargetId,
             LedgerEventKind kind,
             std::string_view subjectId
         ) -> Status
@@ -1253,12 +1253,12 @@ namespace uf::operator_runtime
                 insert,
                 prepare(
                     database,
-                    "INSERT INTO ledger_events(session_epoch, controlled_target_key, "
+                    "INSERT INTO ledger_events(session_epoch, controlled_target_id, "
                     "kind, subject_id) VALUES(?1, ?2, ?3, ?4)"
                 )
             );
             UF_TRY(bindInteger(database, insert.get(), 1, sessionEpoch));
-            UF_TRY(bindText(database, insert.get(), 2, controlledTargetKey));
+            UF_TRY(bindText(database, insert.get(), 2, controlledTargetId));
             UF_TRY(bindText(database, insert.get(), 3, ledgerEventWireName(kind)));
             UF_TRY(bindText(database, insert.get(), 4, subjectId));
             return expectDone(database, insert.get());
@@ -1785,13 +1785,13 @@ namespace uf::operator_runtime
                 query,
                 prepare(
                     database,
-                    "SELECT 1 FROM control_leases WHERE controlled_target_key=?1 "
+                    "SELECT 1 FROM control_leases WHERE controlled_target_id=?1 "
                     "AND lease_id=?2 AND session_id=?3 AND controller_id=?4 "
                     "AND session_epoch=?5 AND fencing_token=?6 AND revision=?7 "
                     "AND capability_profile_hash=?8"
                 )
             );
-            UF_TRY(bindText(database, query.get(), 1, lease.controlledTargetKey));
+            UF_TRY(bindText(database, query.get(), 1, lease.controlledTargetId));
             UF_TRY(bindText(database, query.get(), 2, lease.leaseId));
             UF_TRY(bindText(database, query.get(), 3, lease.sessionId));
             UF_TRY(bindText(database, query.get(), 4, lease.controllerId));
@@ -1875,7 +1875,7 @@ namespace uf::operator_runtime
         constexpr auto k_liveControllerJoin = std::string_view{
             "JOIN sessions session ON session.session_id=o.session_id "
             "JOIN control_leases lease "
-            "ON lease.controlled_target_key=o.controlled_target_key "
+            "ON lease.controlled_target_id=o.controlled_target_id "
             "AND lease.session_id=o.session_id "
         };
 
@@ -2798,7 +2798,7 @@ namespace uf::operator_runtime
         UF_TRY(requireName(pin.sessionId, "session_id"));
         UF_TRY(requireName(pin.authenticatedControllerId, "authenticated_controller_id"));
         UF_TRY(requireName(pin.idempotencyNamespace, "idempotency_namespace"));
-        UF_TRY(requireName(pin.controlledTargetKey, "controlled_target_key"));
+        UF_TRY(requireName(pin.controlledTargetId, "controlled_target_id"));
         UF_TRY(requireName(pin.projectInstanceKey, "project_instance_key"));
         if (pin.projectRegistrationHash != manifest.projectRegistrationHash())
         {
@@ -2890,7 +2890,7 @@ namespace uf::operator_runtime
                 "(session_id, authenticated_controller_id, idempotency_namespace, "
                 "manifest_hash, runtime_artifact_root_hash, installed_generation, "
                 "project_registration_hash, capability_profile_hash, session_epoch, "
-                "controlled_target_key, project_instance_key, mode, controller_kind, "
+                "controlled_target_id, project_instance_key, mode, controller_kind, "
                 "active) "
                 "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 1)"
             )
@@ -2929,7 +2929,7 @@ namespace uf::operator_runtime
             pin.capabilityProfileHash.hex()
         ));
         UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 9, m_impl->sessionEpoch));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 10, pin.controlledTargetKey));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 10, pin.controlledTargetId));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 11, pin.projectInstanceKey));
         UF_TRY(bindText(
             m_impl->database.get(),
@@ -2952,7 +2952,7 @@ namespace uf::operator_runtime
                 "SELECT authenticated_controller_id, idempotency_namespace, manifest_hash, "
                 "runtime_artifact_root_hash, installed_generation, "
                 "project_registration_hash, capability_profile_hash, session_epoch, "
-                "controlled_target_key, project_instance_key, mode, controller_kind, "
+                "controlled_target_id, project_instance_key, mode, controller_kind, "
                 "active "
                 "FROM sessions WHERE session_id=?1"
             )
@@ -2972,7 +2972,7 @@ namespace uf::operator_runtime
             && columnText(query.get(), 6) == pin.capabilityProfileHash.hex()
             && static_cast<uint64>(sqlite3_column_int64(query.get(), 7))
                 == m_impl->sessionEpoch
-            && columnText(query.get(), 8) == pin.controlledTargetKey
+            && columnText(query.get(), 8) == pin.controlledTargetId
             && columnText(query.get(), 9) == pin.projectInstanceKey
             && columnText(query.get(), 10) == sessionModeWireName(pin.mode)
             && columnText(query.get(), 11) == controllerKindWireName(pin.kind)
@@ -3062,7 +3062,7 @@ namespace uf::operator_runtime
             query,
             prepare(
                 m_impl->database.get(),
-                "SELECT authenticated_controller_id, controlled_target_key, "
+                "SELECT authenticated_controller_id, controlled_target_id, "
                 "capability_profile_hash, session_epoch, controller_kind "
                 "FROM sessions WHERE session_id=?1 AND active=1 AND session_epoch=?2"
             )
@@ -3110,7 +3110,7 @@ namespace uf::operator_runtime
             );
         }
         auto const& sessionId = controller.sessionId();
-        auto const& target = controller.controlledTargetKey();
+        auto const& target = controller.controlledTargetId();
         auto const& controllerId = controller.controllerId();
         auto const capabilityProfileHash = controller.capabilityProfileHash().hex();
         auto const capabilityHash = controller.capabilityProfileHash();
@@ -3120,7 +3120,7 @@ namespace uf::operator_runtime
             activeQuery,
             prepare(
                 m_impl->database.get(),
-                "SELECT 1 FROM control_leases WHERE controlled_target_key=?1"
+                "SELECT 1 FROM control_leases WHERE controlled_target_id=?1"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), activeQuery.get(), 1, target));
@@ -3137,7 +3137,7 @@ namespace uf::operator_runtime
             highWaterQuery,
             prepare(
                 m_impl->database.get(),
-                "SELECT fencing_token FROM fencing_high_water WHERE controlled_target_key=?1"
+                "SELECT fencing_token FROM fencing_high_water WHERE controlled_target_id=?1"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), highWaterQuery.get(), 1, target));
@@ -3159,8 +3159,8 @@ namespace uf::operator_runtime
             highWaterWrite,
             prepare(
                 m_impl->database.get(),
-                "INSERT INTO fencing_high_water(controlled_target_key, fencing_token) "
-                "VALUES(?1, ?2) ON CONFLICT(controlled_target_key) DO UPDATE SET "
+                "INSERT INTO fencing_high_water(controlled_target_id, fencing_token) "
+                "VALUES(?1, ?2) ON CONFLICT(controlled_target_id) DO UPDATE SET "
                 "fencing_token=excluded.fencing_token"
             )
         );
@@ -3172,7 +3172,7 @@ namespace uf::operator_runtime
             leaseWrite,
             prepare(
                 m_impl->database.get(),
-                "INSERT INTO control_leases(controlled_target_key, lease_id, session_id, "
+                "INSERT INTO control_leases(controlled_target_id, lease_id, session_id, "
                 "controller_id, session_epoch, fencing_token, revision, "
                 "capability_profile_hash) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)"
             )
@@ -3195,7 +3195,7 @@ namespace uf::operator_runtime
             transitionWrite,
             prepare(
                 m_impl->database.get(),
-                "INSERT INTO control_transitions(controlled_target_key, session_id, controller_id, "
+                "INSERT INTO control_transitions(controlled_target_id, session_id, controller_id, "
                 "lease_id, session_epoch, fencing_token, transition, reason) "
                 "VALUES(?1, ?2, ?3, ?4, ?5, ?6, 'acquire', 'ordinary acquire')"
             )
@@ -3220,7 +3220,7 @@ namespace uf::operator_runtime
         return ControlLease{
             .leaseId               = std::move(leaseId),
             .sessionId             = sessionId,
-            .controlledTargetKey   = target,
+            .controlledTargetId    = target,
             .controllerId          = controllerId,
             .sessionEpoch          = sessionEpoch,
             .fencingToken          = nextFence,
@@ -3232,9 +3232,9 @@ namespace uf::operator_runtime
     auto controlFence(ControlLease const& lease) -> task::ControlFence
     {
         return task::ControlFence{
-            .controlledTargetKey = lease.controlledTargetKey,
-            .sessionEpoch        = lease.sessionEpoch,
-            .fencingToken        = lease.fencingToken,
+            .controlledTargetId = lease.controlledTargetId,
+            .sessionEpoch       = lease.sessionEpoch,
+            .fencingToken       = lease.fencingToken,
         };
     }
 
@@ -3257,7 +3257,7 @@ namespace uf::operator_runtime
             );
         }
         auto const& sessionId = controller.sessionId();
-        auto const& target = controller.controlledTargetKey();
+        auto const& target = controller.controlledTargetId();
         auto const& controllerId = controller.controllerId();
         auto const capabilityProfileHash = controller.capabilityProfileHash().hex();
         auto const capabilityHash = controller.capabilityProfileHash();
@@ -3268,7 +3268,7 @@ namespace uf::operator_runtime
             highWaterQuery,
             prepare(
                 m_impl->database.get(),
-                "SELECT fencing_token FROM fencing_high_water WHERE controlled_target_key=?1"
+                "SELECT fencing_token FROM fencing_high_water WHERE controlled_target_id=?1"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), highWaterQuery.get(), 1, target));
@@ -3292,8 +3292,8 @@ namespace uf::operator_runtime
             highWaterWrite,
             prepare(
                 m_impl->database.get(),
-                "INSERT INTO fencing_high_water(controlled_target_key, fencing_token) "
-                "VALUES(?1, ?2) ON CONFLICT(controlled_target_key) DO UPDATE SET "
+                "INSERT INTO fencing_high_water(controlled_target_id, fencing_token) "
+                "VALUES(?1, ?2) ON CONFLICT(controlled_target_id) DO UPDATE SET "
                 "fencing_token=excluded.fencing_token"
             )
         );
@@ -3305,10 +3305,10 @@ namespace uf::operator_runtime
             leaseWrite,
             prepare(
                 m_impl->database.get(),
-                "INSERT INTO control_leases(controlled_target_key, lease_id, session_id, "
+                "INSERT INTO control_leases(controlled_target_id, lease_id, session_id, "
                 "controller_id, session_epoch, fencing_token, revision, "
                 "capability_profile_hash) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7) "
-                "ON CONFLICT(controlled_target_key) DO UPDATE SET lease_id=excluded.lease_id, "
+                "ON CONFLICT(controlled_target_id) DO UPDATE SET lease_id=excluded.lease_id, "
                 "session_id=excluded.session_id, controller_id=excluded.controller_id, "
                 "session_epoch=excluded.session_epoch, fencing_token=excluded.fencing_token, "
                 "revision=excluded.revision, "
@@ -3333,7 +3333,7 @@ namespace uf::operator_runtime
             transitionWrite,
             prepare(
                 m_impl->database.get(),
-                "INSERT INTO control_transitions(controlled_target_key, session_id, controller_id, "
+                "INSERT INTO control_transitions(controlled_target_id, session_id, controller_id, "
                 "lease_id, session_epoch, fencing_token, transition, reason) "
                 "VALUES(?1, ?2, ?3, ?4, ?5, ?6, 'takeover', ?7)"
             )
@@ -3374,7 +3374,7 @@ namespace uf::operator_runtime
             .lease = ControlLease{
                 .leaseId               = std::move(leaseId),
                 .sessionId             = sessionId,
-                .controlledTargetKey   = target,
+                .controlledTargetId    = target,
                 .controllerId          = controllerId,
                 .sessionEpoch          = sessionEpoch,
                 .fencingToken          = nextFence,
@@ -3394,13 +3394,13 @@ namespace uf::operator_runtime
             leaseQuery,
             prepare(
                 m_impl->database.get(),
-                "SELECT 1 FROM control_leases WHERE controlled_target_key=?1 "
+                "SELECT 1 FROM control_leases WHERE controlled_target_id=?1 "
                 "AND lease_id=?2 AND session_id=?3 AND controller_id=?4 "
                 "AND session_epoch=?5 AND fencing_token=?6 AND revision=?7 "
                 "AND capability_profile_hash=?8"
             )
         );
-        UF_TRY(bindText(m_impl->database.get(), leaseQuery.get(), 1, lease.controlledTargetKey));
+        UF_TRY(bindText(m_impl->database.get(), leaseQuery.get(), 1, lease.controlledTargetId));
         UF_TRY(bindText(m_impl->database.get(), leaseQuery.get(), 2, lease.leaseId));
         UF_TRY(bindText(m_impl->database.get(), leaseQuery.get(), 3, lease.sessionId));
         UF_TRY(bindText(m_impl->database.get(), leaseQuery.get(), 4, lease.controllerId));
@@ -3435,7 +3435,7 @@ namespace uf::operator_runtime
             prepare(
                 m_impl->database.get(),
                 "UPDATE fencing_high_water SET fencing_token=?1 "
-                "WHERE controlled_target_key=?2 AND fencing_token=?3"
+                "WHERE controlled_target_id=?2 AND fencing_token=?3"
             )
         );
         UF_TRY(bindInteger(m_impl->database.get(), highWaterUpdate.get(), 1, nextFence));
@@ -3443,7 +3443,7 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             highWaterUpdate.get(),
             2,
-            lease.controlledTargetKey
+            lease.controlledTargetId
         ));
         UF_TRY(bindInteger(
             m_impl->database.get(),
@@ -3464,14 +3464,14 @@ namespace uf::operator_runtime
             leaseDelete,
             prepare(
                 m_impl->database.get(),
-                "DELETE FROM control_leases WHERE controlled_target_key=?1 AND lease_id=?2"
+                "DELETE FROM control_leases WHERE controlled_target_id=?1 AND lease_id=?2"
             )
         );
         UF_TRY(bindText(
             m_impl->database.get(),
             leaseDelete.get(),
             1,
-            lease.controlledTargetKey
+            lease.controlledTargetId
         ));
         UF_TRY(bindText(m_impl->database.get(), leaseDelete.get(), 2, lease.leaseId));
         UF_TRY(expectDone(m_impl->database.get(), leaseDelete.get()));
@@ -3484,7 +3484,7 @@ namespace uf::operator_runtime
             transitionWrite,
             prepare(
                 m_impl->database.get(),
-                "INSERT INTO control_transitions(controlled_target_key, session_id, controller_id, "
+                "INSERT INTO control_transitions(controlled_target_id, session_id, controller_id, "
                 "lease_id, session_epoch, fencing_token, transition, reason) "
                 "VALUES(?1, ?2, ?3, ?4, ?5, ?6, 'release', 'explicit release')"
             )
@@ -3493,7 +3493,7 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             transitionWrite.get(),
             1,
-            lease.controlledTargetKey
+            lease.controlledTargetId
         ));
         UF_TRY(bindText(m_impl->database.get(), transitionWrite.get(), 2, lease.sessionId));
         UF_TRY(bindText(m_impl->database.get(), transitionWrite.get(), 3, lease.controllerId));
@@ -3505,7 +3505,7 @@ namespace uf::operator_runtime
         UF_TRY(appendLedgerEvent(
             m_impl->database.get(),
             lease.sessionEpoch,
-            lease.controlledTargetKey,
+            lease.controlledTargetId,
             LedgerEventKind::ControlTransitioned,
             lease.leaseId
         ));
@@ -3527,14 +3527,14 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "SELECT lease_id, session_id, controller_id, session_epoch, fencing_token, "
                 "revision, capability_profile_hash FROM control_leases "
-                "WHERE controlled_target_key=?1"
+                "WHERE controlled_target_id=?1"
             )
         );
         UF_TRY(bindText(
             m_impl->database.get(),
             leaseQuery.get(),
             1,
-            lease.controlledTargetKey
+            lease.controlledTargetId
         ));
         if (sqlite3_step(leaseQuery.get()) != SQLITE_ROW)
         {
@@ -3564,7 +3564,7 @@ namespace uf::operator_runtime
             prepare(
                 m_impl->database.get(),
                 "SELECT session.project_instance_key, session.manifest_hash, "
-                "session.controlled_target_key, session.runtime_artifact_root_hash, "
+                "session.controlled_target_id, session.runtime_artifact_root_hash, "
                 "registration.plugin_id, registration.plugin_hash, "
                 "session.project_registration_hash, session.controller_kind "
                 "FROM sessions session JOIN project_registrations registration "
@@ -3589,7 +3589,7 @@ namespace uf::operator_runtime
         }
         auto const projectInstanceKey  = columnText(sessionQuery.get(), 0);
         auto const sessionManifestHex  = columnText(sessionQuery.get(), 1);
-        auto const controlledTargetKey = columnText(sessionQuery.get(), 2);
+        auto const controlledTargetId = columnText(sessionQuery.get(), 2);
         auto const sessionArtifactRoot = columnText(sessionQuery.get(), 3);
         auto const pluginId            = columnText(sessionQuery.get(), 4);
 
@@ -3903,14 +3903,14 @@ namespace uf::operator_runtime
             prepare(
                 m_impl->database.get(),
                 "SELECT COALESCE(MAX(sequence), 0) FROM control_transitions "
-                "WHERE controlled_target_key=?1"
+                "WHERE controlled_target_id=?1"
             )
         );
         UF_TRY(bindText(
             m_impl->database.get(),
             availabilityQuery.get(),
             1,
-            controlledTargetKey
+            controlledTargetId
         ));
         if (sqlite3_step(availabilityQuery.get()) != SQLITE_ROW)
         {
@@ -3953,7 +3953,7 @@ namespace uf::operator_runtime
             .projectStateHash           = projectStateHash,
             .sessionManifestHash        = sessionManifestHash,
             .stateResolutionHash        = observation.stateResolutionHash(),
-            .controlledTargetId         = controlledTargetKey,
+            .controlledTargetId         = controlledTargetId,
             .leaseId                    = lease.leaseId,
             .observationId              = observation.observationId(),
             .projectInstanceKey         = projectInstanceKey,
@@ -4102,7 +4102,7 @@ namespace uf::operator_runtime
             sessionQuery,
             prepare(
                 m_impl->database.get(),
-                "SELECT session.controlled_target_key, session.project_instance_key, "
+                "SELECT session.controlled_target_id, session.project_instance_key, "
                 "registration.plugin_id, session.idempotency_namespace, "
                 "session.project_registration_hash "
                 "FROM sessions session JOIN project_registrations "
@@ -4121,7 +4121,7 @@ namespace uf::operator_runtime
         {
             return fail(AutomationErrorKind::ActionRejected, "Unknown authenticated session");
         }
-        auto const controlledTargetKey = columnText(sessionQuery.get(), 0);
+        auto const controlledTargetId = columnText(sessionQuery.get(), 0);
         auto const projectInstanceKey = columnText(sessionQuery.get(), 1);
         auto const pluginId = columnText(sessionQuery.get(), 2);
         auto const idempotencyNamespace = columnText(sessionQuery.get(), 3);
@@ -4236,10 +4236,10 @@ namespace uf::operator_runtime
                 // revision is refused afterwards. The controller has to look
                 // again before it acts, which is the whole effect a finding is
                 // allowed to have.
-                "SELECT session.controlled_target_key, s.decision_basis_hash "
+                "SELECT session.controlled_target_id, s.decision_basis_hash "
                 "FROM snapshots s JOIN sessions session "
                 "ON session.session_id=s.session_id JOIN control_leases lease "
-                "ON lease.controlled_target_key=session.controlled_target_key "
+                "ON lease.controlled_target_id=session.controlled_target_id "
                 "JOIN project_state state ON state.plugin_id=s.plugin_id "
                 "AND state.project_instance_key=s.project_instance_key "
                 "JOIN project_observations obs ON obs.plugin_id=s.plugin_id "
@@ -4250,7 +4250,7 @@ namespace uf::operator_runtime
                 "AND s.project_state_revision=state.revision "
                 "AND obs.project_state_revision=state.revision "
                 "AND NOT EXISTS(SELECT 1 FROM external_input_findings finding "
-                "WHERE finding.controlled_target_key=session.controlled_target_key "
+                "WHERE finding.controlled_target_id=session.controlled_target_id "
                 "AND finding.session_epoch=s.session_epoch "
                 "AND finding.invalidated_snapshot_revision>=s.snapshot_revision)"
             )
@@ -4272,7 +4272,7 @@ namespace uf::operator_runtime
                 "SnapshotToken is unknown, belongs to another session, or is stale"
             );
         }
-        if (columnText(snapshotQuery.get(), 0) != controlledTargetKey)
+        if (columnText(snapshotQuery.get(), 0) != controlledTargetId)
         {
             return fail(
                 AutomationErrorKind::InternalInvariant,
@@ -4287,7 +4287,7 @@ namespace uf::operator_runtime
                 mutationQuery,
                 prepare(
                     m_impl->database.get(),
-                    "SELECT operation_id FROM operations WHERE controlled_target_key=?1 "
+                    "SELECT operation_id FROM operations WHERE controlled_target_id=?1 "
                     "AND mutating=1 AND state IN ('proposed', 'awaiting_approval', 'ready', "
                     "'needs_revalidation', 'running', 'reconciling', 'ambiguous') LIMIT 1"
                 )
@@ -4296,7 +4296,7 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 mutationQuery.get(),
                 1,
-                controlledTargetKey
+                controlledTargetId
             ));
             if (sqlite3_step(mutationQuery.get()) == SQLITE_ROW)
             {
@@ -4431,7 +4431,7 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "INSERT INTO operations(operation_id, session_id, snapshot_token, idempotency_namespace, "
                 "client_request_id, command_fingerprint, tool_name, tool_version, canonical_args, "
-                "controlled_target_key, mutating, state, revision, plugin_id, "
+                "controlled_target_id, mutating, state, revision, plugin_id, "
                 "project_instance_key) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, "
                 "?10, ?11, 'proposed', 1, ?12, ?13)"
             )
@@ -4445,7 +4445,7 @@ namespace uf::operator_runtime
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 7, toolName));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 8, toolVersion));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 9, canonicalArgs));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 10, controlledTargetKey));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 10, controlledTargetId));
         UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 11, mutating ? 1U : 0U));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 12, pluginId));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 13, projectInstanceKey));
@@ -4453,7 +4453,7 @@ namespace uf::operator_runtime
         UF_TRY(appendLedgerEvent(
             m_impl->database.get(),
             sessionEpoch,
-            controlledTargetKey,
+            controlledTargetId,
             LedgerEventKind::OperationCreated,
             operationId
         ));
@@ -4487,7 +4487,7 @@ namespace uf::operator_runtime
         UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
         UF_TRY(requireLiveBinding(m_impl->database.get(), reporter));
 
-        auto const& target = reporter.controlledTargetKey();
+        auto const& target = reporter.controlledTargetId();
         auto const epoch   = reporter.sessionEpoch();
 
         // Read before this finding's own append, so a finding never claims to
@@ -4500,7 +4500,7 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "SELECT COALESCE(MAX(s.snapshot_revision), 0) FROM snapshots s "
                 "JOIN sessions session ON session.session_id=s.session_id "
-                "WHERE session.controlled_target_key=?1 AND s.session_epoch=?2"
+                "WHERE session.controlled_target_id=?1 AND s.session_epoch=?2"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), revisionQuery.get(), 1, target));
@@ -4527,7 +4527,7 @@ namespace uf::operator_runtime
                 "SELECT operation_id, revision, state, frozen_plan_hash, "
                 "EXISTS(SELECT 1 FROM dispatches d WHERE "
                 "d.operation_id=operations.operation_id) FROM operations "
-                "WHERE controlled_target_key=?1 AND state IN "
+                "WHERE controlled_target_id=?1 AND state IN "
                 "('proposed', 'awaiting_approval', 'ready') LIMIT 1"
             )
         );
@@ -4585,7 +4585,7 @@ namespace uf::operator_runtime
             insert,
             prepare(
                 m_impl->database.get(),
-                "INSERT INTO external_input_findings(finding_id, controlled_target_key, "
+                "INSERT INTO external_input_findings(finding_id, controlled_target_id, "
                 "session_epoch, reporter_session_id, detected_after_cursor, "
                 "invalidated_snapshot_revision, operation_id, required_action, reason) "
                 "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
@@ -4732,8 +4732,8 @@ namespace uf::operator_runtime
             events,
             prepare(
                 m_impl->database.get(),
-                "SELECT sequence, kind, controlled_target_key, subject_id "
-                "FROM ledger_events WHERE controlled_target_key=?1 AND sequence>?2 "
+                "SELECT sequence, kind, controlled_target_id, subject_id "
+                "FROM ledger_events WHERE controlled_target_id=?1 AND sequence>?2 "
                 "ORDER BY sequence LIMIT ?3"
             )
         );
@@ -4741,7 +4741,7 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             events.get(),
             1,
-            controller.controlledTargetKey()
+            controller.controlledTargetId()
         ));
         UF_TRY(bindInteger(m_impl->database.get(), events.get(), 2, after.value));
         UF_TRY(bindInteger(m_impl->database.get(), events.get(), 3, maximumEvents));
@@ -4755,10 +4755,10 @@ namespace uf::operator_runtime
                 sqlite3_column_int64(events.get(), 0)
             );
             batch.events.push_back(LedgerEvent{
-                .sequence            = SubscriptionCursor{sequence},
-                .kind                = kind,
-                .controlledTargetKey = columnText(events.get(), 2),
-                .subjectId           = columnText(events.get(), 3),
+                .sequence           = SubscriptionCursor{sequence},
+                .kind               = kind,
+                .controlledTargetId = columnText(events.get(), 2),
+                .subjectId          = columnText(events.get(), 3),
             });
 
             // The cursor follows what was delivered, never the head: a batch cut
@@ -4906,7 +4906,7 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "SELECT o.state, o.revision, o.mutating, o.command_fingerprint, "
                 "o.tool_name, o.tool_version, o.canonical_args, o.session_id, "
-                "o.controlled_target_key, o.plugin_id, "
+                "o.controlled_target_id, o.plugin_id, "
                 "session.project_registration_hash, registration.plugin_hash, "
                 "snapshot.decision_basis_hash, observation.canonical_observation, "
                 "state.canonical_state, session.controller_kind FROM operations o "
@@ -4958,7 +4958,7 @@ namespace uf::operator_runtime
         }
         if (
             columnText(query.get(), 7) != lease.sessionId
-            || columnText(query.get(), 8) != lease.controlledTargetKey
+            || columnText(query.get(), 8) != lease.controlledTargetId
         )
         {
             return fail(
@@ -5167,7 +5167,7 @@ namespace uf::operator_runtime
             query,
             prepare(
                 m_impl->database.get(),
-                "SELECT o.state, o.revision, o.session_id, o.controlled_target_key, "
+                "SELECT o.state, o.revision, o.session_id, o.controlled_target_id, "
                 "o.plugin_id, session.project_registration_hash, "
                 "registration.plugin_hash, plan.plan_hash, plan.canonical_plan, "
                 "plan.maximum_steps, plan.required_approvals, "
@@ -5222,7 +5222,7 @@ namespace uf::operator_runtime
         }
         if (
             columnText(query.get(), 2) != lease.sessionId
-            || columnText(query.get(), 3) != lease.controlledTargetKey
+            || columnText(query.get(), 3) != lease.controlledTargetId
         )
         {
             return fail(
@@ -5420,7 +5420,7 @@ namespace uf::operator_runtime
                 "d.operation_id=o.operation_id), 0), "
                 "(SELECT delivery_outcome FROM dispatches d WHERE "
                 "d.operation_id=o.operation_id ORDER BY dispatch_sequence DESC LIMIT 1) "
-                ", o.session_id, o.controlled_target_key, o.mutating, "
+                ", o.session_id, o.controlled_target_id, o.mutating, "
                 "plan.plan_hash, plan.decision_basis_hash, plan.maximum_dispatches, "
                 "step.step_index, step.step_intent_hash, "
                 "(SELECT COUNT(*) FROM dispatches d WHERE d.operation_id=o.operation_id), "
@@ -5454,7 +5454,7 @@ namespace uf::operator_runtime
         UF_TRY_VALUE(state, parseOperationState(columnText(query.get(), 0)));
         if (
             columnText(query.get(), 5) != lease.sessionId
-            || columnText(query.get(), 6) != lease.controlledTargetKey
+            || columnText(query.get(), 6) != lease.controlledTargetId
         )
         {
             return fail(
@@ -5567,7 +5567,7 @@ namespace uf::operator_runtime
                     m_impl->database.get(),
                     "UPDATE approvals SET consumed=1, consumed_by_dispatch=?1 "
                     "WHERE token=?2 AND operation_id=?3 AND session_id=?4 "
-                    "AND controller_id=?5 AND controlled_target_key=?6 AND lease_id=?7 "
+                    "AND controller_id=?5 AND controlled_target_id=?6 AND lease_id=?7 "
                     "AND session_epoch=?8 AND fencing_token=?9 AND frozen_plan_hash=?10 "
                     "AND step_intent_hash=?11 AND decision_basis_hash=?12 "
                     "AND authority_decision_id=?13 AND expires_at_unix_millis>=?14 "
@@ -5583,7 +5583,7 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 approvalUpdate.get(),
                 6,
-                lease.controlledTargetKey
+                lease.controlledTargetId
             ));
             UF_TRY(bindText(m_impl->database.get(), approvalUpdate.get(), 7, lease.leaseId));
             UF_TRY(bindInteger(m_impl->database.get(), approvalUpdate.get(), 8, lease.sessionEpoch));
@@ -5713,7 +5713,7 @@ namespace uf::operator_runtime
         UF_TRY(transaction.commit());
         return DispatchReservation{
             .authority = task::DispatchAuthority{
-                .controlledTargetKey = lease.controlledTargetKey,
+                .controlledTargetId  = lease.controlledTargetId,
                 .leaseId             = lease.leaseId,
                 .operationId         = operationId,
                 .authorityDecisionId = authorityDecisionId.value(),
@@ -5743,7 +5743,7 @@ namespace uf::operator_runtime
         // authorized by; the statement below then requires that same lease to
         // still be the live row. Two refusals, and neither implies the other.
         if (
-            authority.controlledTargetKey != lease.controlledTargetKey
+            authority.controlledTargetId != lease.controlledTargetId
             || authority.leaseId != lease.leaseId
             || authority.sessionEpoch != lease.sessionEpoch
             || authority.fencingToken != lease.fencingToken
@@ -5775,7 +5775,7 @@ namespace uf::operator_runtime
                   "JOIN snapshots snapshot ON snapshot.token=o.snapshot_token "
                   "WHERE o.operation_id=?1 AND d.dispatch_sequence=?2 "
                   "AND session.active=1 AND session.session_epoch=?3 "
-                  "AND o.controlled_target_key=?4 "
+                  "AND o.controlled_target_id=?4 "
                   "AND lease.lease_id=?5 AND lease.fencing_token=?6 "
                   "AND lease.revision=?7 AND lease.session_epoch=?3 "
                   "AND a.dispatch_sequence=?2 AND a.authority_decision_id=?8 "
@@ -5791,7 +5791,7 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             query.get(),
             4,
-            lease.controlledTargetKey
+            lease.controlledTargetId
         ));
         UF_TRY(bindText(m_impl->database.get(), query.get(), 5, lease.leaseId));
         UF_TRY(bindInteger(m_impl->database.get(), query.get(), 6, lease.fencingToken));
@@ -5939,7 +5939,7 @@ namespace uf::operator_runtime
                 // taken from the approver: an approval issued for hashes its
                 // holder chose authorises whatever those hashes name, which is
                 // how one step's approval comes to authorise another's.
-                "SELECT o.state, o.session_id, o.controlled_target_key, "
+                "SELECT o.state, o.session_id, o.controlled_target_id, "
                 "o.command_fingerprint, o.frozen_plan_hash, plan.plan_hash, "
                 "plan.decision_basis_hash, plan.effect_envelope_hash, "
                 "step.step_intent_hash FROM operations o "
@@ -5972,7 +5972,7 @@ namespace uf::operator_runtime
         }
         if (
             columnText(operationQuery.get(), 1) != request.lease.sessionId
-            || columnText(operationQuery.get(), 2) != request.lease.controlledTargetKey
+            || columnText(operationQuery.get(), 2) != request.lease.controlledTargetId
         )
         {
             return fail(
@@ -6003,7 +6003,7 @@ namespace uf::operator_runtime
             prepare(
                 m_impl->database.get(),
                 "INSERT INTO approvals(token, operation_id, session_id, controller_id, "
-                "controlled_target_key, lease_id, session_epoch, fencing_token, "
+                "controlled_target_id, lease_id, session_epoch, fencing_token, "
                 "command_fingerprint, frozen_plan_hash, step_intent_hash, decision_basis_hash, "
                 "effect_envelope_hash, policy_hash, approver_principal, "
                 "approver_capability_hash, authority_decision_id, expires_at_unix_millis) "
@@ -6019,7 +6019,7 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             insert.get(),
             5,
-            request.lease.controlledTargetKey
+            request.lease.controlledTargetId
         ));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 6, request.lease.leaseId));
         UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 7, request.lease.sessionEpoch));

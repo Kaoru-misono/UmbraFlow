@@ -532,4 +532,61 @@ namespace uf::operator_runtime::contract
         CHECK(commitInput.find(words.confirmedEntry.payload) == std::string::npos);
         CHECK_FALSE(commitInput.ends_with("\"prior_project_state\":null}"));
     }
+
+    TEST_CASE("the deriver is handed an envelope no caller could have supplied")
+    {
+        auto const root = TemporaryDirectory{"derive-input"};
+        auto prepared   = prepareStore(root.path());
+        REQUIRE(prepared.project.observedDeriveInput != nullptr);
+
+        auto const first = *prepared.project.observedDeriveInput;
+        REQUIRE_FALSE(first.empty());
+
+        // The Snapshot Coordinator assembles the envelope rather than accepting
+        // one, so its five members appear in JCS order over the world the
+        // composing transaction read. A caller has nowhere to put a sixth.
+        auto const pendingAt  = first.find("\"pending_operation_transition\"");
+        auto const pinnedAt   = first.find("\"pinned_project_artifact_identities\"");
+        auto const priorAt    = first.find("\"prior_project_observation\"");
+        auto const stateAt    = first.find("\"project_state\"");
+        auto const snapshotAt = first.find("\"ui_snapshot\"");
+        REQUIRE(pendingAt != std::string::npos);
+        REQUIRE(pinnedAt != std::string::npos);
+        REQUIRE(priorAt != std::string::npos);
+        REQUIRE(stateAt != std::string::npos);
+        REQUIRE(snapshotAt != std::string::npos);
+        CHECK(pendingAt < pinnedAt);
+        CHECK(pinnedAt < priorAt);
+        CHECK(priorAt < stateAt);
+        CHECK(stateAt < snapshotAt);
+
+        // No prior reading is the literal null rather than an absent member, so
+        // a plugin can tell it from a reading it failed to read.
+        CHECK(first.find("\"prior_project_observation\":null") != std::string::npos);
+
+        // ui_snapshot is the trailing member, so it runs to the end of the
+        // envelope.
+        auto const uiSnapshotOf = [](std::string const& envelope) -> std::string
+        {
+            auto const at = envelope.find("\"ui_snapshot\":");
+            return at == std::string::npos ? std::string{} : envelope.substr(at);
+        };
+
+        // freshSnapshot captures again, so this is a second occasion over an
+        // unchanged world.
+        prepared.snapshot = freshSnapshot(prepared);
+        auto const second = *prepared.project.observedDeriveInput;
+        CHECK(second != first);
+
+        // The next derivation is handed the reading before it, so the prior is
+        // now a document; a Coordinator that dropped it would still be composing
+        // snapshots and only this member would say so.
+        CHECK(second.find("\"prior_project_observation\":null") == std::string::npos);
+
+        // ui_snapshot carries the resolved world and never the occasion it was
+        // captured on, which is what makes a semantically equal recapture
+        // derive an identical reading rather than a new one.
+        CHECK(uiSnapshotOf(second) == uiSnapshotOf(first));
+        REQUIRE_FALSE(uiSnapshotOf(first).empty());
+    }
 }

@@ -45,7 +45,7 @@ namespace uf::operator_runtime
         std::string idempotencyNamespace{};
         ContentHash projectRegistrationHash;
         ContentHash capabilityProfileHash;
-        std::string controlledTargetKey{};
+        std::string controlledTargetId{};
         std::string projectInstanceKey{};
         SessionMode mode{SessionMode::Read};
 
@@ -113,7 +113,7 @@ namespace uf::operator_runtime
     {
         SubscriptionCursor sequence{};
         LedgerEventKind    kind{LedgerEventKind::OperationCreated};
-        std::string        controlledTargetKey{};
+        std::string        controlledTargetId{};
         std::string        subjectId{};
 
         auto operator==(LedgerEvent const&) const -> bool = default;
@@ -156,7 +156,7 @@ namespace uf::operator_runtime
     {
         std::string leaseId{};
         std::string sessionId{};
-        std::string controlledTargetKey{};
+        std::string controlledTargetId{};
         std::string controllerId{};
         uint64      sessionEpoch{};
         uint64      fencingToken{};

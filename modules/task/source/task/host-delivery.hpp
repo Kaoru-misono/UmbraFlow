@@ -23,7 +23,7 @@ namespace uf::task
     // the monotonicity rule at TaskHost::adoptControlFence.
     struct ControlFence final
     {
-        std::string controlledTargetKey{};
+        std::string controlledTargetId{};
         uint64      sessionEpoch{};
         uint64      fencingToken{};
     };
@@ -49,7 +49,7 @@ namespace uf::task
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct DispatchAuthority final
     {
-        std::string      controlledTargetKey{};
+        std::string      controlledTargetId{};
         std::string      leaseId{};
         std::string      operationId{};
         std::string      authorityDecisionId{};

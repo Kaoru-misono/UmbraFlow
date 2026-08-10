@@ -210,7 +210,7 @@ namespace uf::operator_runtime
                 .idempotencyNamespace      = "controller-1",
                 .projectRegistrationHash   = registrationHash,
                 .capabilityProfileHash     = hashOf("capability"),
-                .controlledTargetKey       = "target-1",
+                .controlledTargetId        = "target-1",
                 .projectInstanceKey        = "instance-1",
                 .mode                      = SessionMode::Write,
                 .kind                      = ControllerKind::Script,
@@ -297,7 +297,7 @@ namespace uf::operator_runtime
         // Every field is the ledger's own, read out of the rows the reservation
         // wrote. A caller states none of them.
         // HOST_VALIDATION_TEST(DeliveryAuthority.controlled_target_id)
-        CHECK(authority.controlledTargetKey == prepared.lease.controlledTargetKey);
+        CHECK(authority.controlledTargetId == prepared.lease.controlledTargetId);
         // HOST_VALIDATION_TEST(DeliveryAuthority.lease_id)
         CHECK(authority.leaseId == prepared.lease.leaseId);
         // HOST_VALIDATION_TEST(DeliveryAuthority.session_epoch)

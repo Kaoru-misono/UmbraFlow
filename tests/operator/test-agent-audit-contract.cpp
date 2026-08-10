@@ -422,7 +422,7 @@ namespace uf::operator_runtime
         CHECK(batch->events[2].subjectId == takeover->lease.leaseId);
         for (auto const& event : batch->events)
         {
-            CHECK(event.controlledTargetKey == "target-1");
+            CHECK(event.controlledTargetId == "target-1");
         }
         CHECK(batch->nextCursor.value == base.value + 3U);
 
@@ -506,7 +506,7 @@ namespace uf::operator_runtime
         auto const pin = [&prepared](
             std::string sessionId,
             std::string projectInstanceKey,
-            std::string controlledTargetKey,
+            std::string controlledTargetId,
             ControllerKind kind
         )
         {
@@ -516,7 +516,7 @@ namespace uf::operator_runtime
                 .idempotencyNamespace      = "controller-1",
                 .projectRegistrationHash   = prepared.project.registration.hash(),
                 .capabilityProfileHash     = hashOf("capability"),
-                .controlledTargetKey       = std::move(controlledTargetKey),
+                .controlledTargetId        = std::move(controlledTargetId),
                 .projectInstanceKey        = std::move(projectInstanceKey),
                 .mode                      = SessionMode::Write,
                 .kind                      = kind,
@@ -988,7 +988,7 @@ namespace uf::operator_runtime
                 .idempotencyNamespace      = "controller-1",
                 .projectRegistrationHash   = pinned->manifest.projectRegistrationHash(),
                 .capabilityProfileHash = hashOf("capability"),
-                .controlledTargetKey   = "target-agent",
+                .controlledTargetId    = "target-agent",
                 .projectInstanceKey    = "instance-agent",
                 .mode                  = SessionMode::Write,
                 .kind                  = ControllerKind::Agent,

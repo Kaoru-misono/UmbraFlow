@@ -207,7 +207,7 @@ namespace uf::operator_runtime::contract
                 .idempotencyNamespace      = "controller-1",
                 .projectRegistrationHash   = project.registration.hash(),
                 .capabilityProfileHash     = hashOf("capability"),
-                .controlledTargetKey       = "target-1",
+                .controlledTargetId        = "target-1",
                 .projectInstanceKey        = "instance-1",
                 .mode                      = SessionMode::Write,
                 .kind                      = ControllerKind::Script,
