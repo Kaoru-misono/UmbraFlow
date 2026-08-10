@@ -102,8 +102,14 @@ namespace uf::operator_runtime::contract
         // bytes its session manifest pins, and the suite must be unable to
         // freeze a plan any other way.
         OperatorPlanAuthority planAuthority;
-        ControlLease          lease;
-        SnapshotRecord        snapshot;
+
+        // The authenticated controller every entry point below is reached
+        // through. It is part of the prepared state because there is no other
+        // way in: bindController is the only mint, and a suite that could
+        // assemble one would be asserting its own identity.
+        ControllerBinding controller;
+        ControlLease      lease;
+        SnapshotRecord    snapshot;
 
         // The Host whose observations this store composes snapshots from. Only
         // TaskHost can mint one, so the suite carries a live Host rather than a

@@ -210,11 +210,14 @@ namespace uf::operator_runtime::contract
                 .controlledTargetKey       = "target-1",
                 .projectInstanceKey        = "instance-1",
                 .mode                      = SessionMode::Write,
+                .kind                      = ControllerKind::Script,
             },
             manifest
         ).has_value());
 
-        auto const lease = store.acquireLease("session-1");
+        auto const controller = store.bindController("session-1");
+        REQUIRE(controller.has_value());
+        auto const lease = store.acquireLease(*controller);
         REQUIRE(lease.has_value());
         auto observation = activateObservationHost(
             *std::move(installed),
@@ -235,6 +238,7 @@ namespace uf::operator_runtime::contract
             .project                 = project,
             .manifest                = manifest,
             .planAuthority           = *std::move(authority),
+            .controller              = *controller,
             .lease                   = *lease,
             .snapshot                = *std::move(snapshot),
             .observation             = std::move(observation),
@@ -289,7 +293,6 @@ namespace uf::operator_runtime::contract
     ) -> CommandRequest
     {
         return CommandRequest{
-            .sessionId            = snapshot.sessionId,
             .snapshotToken        = snapshot.token,
             .idempotencyNamespace = "controller-1",
             .clientRequestId      = std::move(clientRequestId),
@@ -330,12 +333,13 @@ namespace uf::operator_runtime::contract
         std::string toolName
     ) -> StoredOperation
     {
-        auto operation = prepared.store.createOrLoadOperation(
+        auto operation = prepared.store.submitCommand(
+            prepared.controller,
             command(prepared.snapshot, std::move(clientRequestId)),
             toolInvocation(prepared.project, std::move(toolName))
         );
         REQUIRE(operation.has_value());
-        auto const frozen = frozenPlan(prepared, *operation);
+        auto const frozen = frozenPlan(prepared, operation->operation);
         REQUIRE(frozen.has_value());
         auto const step = plannedStep(prepared, frozen->operation);
         REQUIRE(step.has_value());

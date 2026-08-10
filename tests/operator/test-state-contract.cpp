@@ -426,7 +426,8 @@ namespace uf::operator_runtime
                 },
             }
         ).has_value());
-        CHECK_FALSE(prepared.store.createOrLoadOperation(
+        CHECK_FALSE(prepared.store.submitCommand(
+            prepared.controller,
             command(prepared.snapshot, "request-stale"),
             toolInvocation(prepared.project, "observe-1")
         ).has_value());
@@ -448,7 +449,8 @@ namespace uf::operator_runtime
         // reading above is the positive control that it can move at all.
         CHECK(afterCommit->projectStateHash == prepared.snapshot.projectStateHash);
         CHECK(afterCommit->decisionBasisHash == prepared.snapshot.decisionBasisHash);
-        CHECK(prepared.store.createOrLoadOperation(
+        CHECK(prepared.store.submitCommand(
+            prepared.controller,
             command(*afterCommit, "request-fresh"),
             toolInvocation(prepared.project, "observe-1")
         ).has_value());
@@ -472,18 +474,21 @@ namespace uf::operator_runtime
         auto forged          = command(prepared.snapshot, "request-forged");
         forged.snapshotToken = std::string(prepared.snapshot.token.size(), 'a');
         CHECK(forged.snapshotToken != prepared.snapshot.token);
-        CHECK_FALSE(prepared.store.createOrLoadOperation(
+        CHECK_FALSE(prepared.store.submitCommand(
+            prepared.controller,
             forged,
             toolInvocation(prepared.project, "command-1")
         ).has_value());
 
         // Not a live Receipt: presenting it does not consume it. One token
         // opens as many Operations as the session asks for.
-        REQUIRE(prepared.store.createOrLoadOperation(
+        REQUIRE(prepared.store.submitCommand(
+            prepared.controller,
             command(prepared.snapshot, "request-1"),
             toolInvocation(prepared.project, "command-1")
         ).has_value());
-        REQUIRE(prepared.store.createOrLoadOperation(
+        REQUIRE(prepared.store.submitCommand(
+            prepared.controller,
             command(prepared.snapshot, "request-2"),
             toolInvocation(prepared.project, "observe-1")
         ).has_value());
@@ -492,9 +497,10 @@ namespace uf::operator_runtime
         // session that made it, so a human takeover ends it without anything
         // about the token itself changing.
         REQUIRE(
-            prepared.store.takeoverLease("session-1", "human takeover").has_value()
+            prepared.store.takeoverLease(prepared.controller, "human takeover").has_value()
         );
-        CHECK_FALSE(prepared.store.createOrLoadOperation(
+        CHECK_FALSE(prepared.store.submitCommand(
+            prepared.controller,
             command(prepared.snapshot, "request-3"),
             toolInvocation(prepared.project, "observe-1")
         ).has_value());
@@ -706,7 +712,7 @@ namespace uf::operator_runtime
         // A takeover replaces the lease id, the fencing token, the lease
         // revision and the control availability revision -- everything the
         // identity carries about authority and nothing about content.
-        auto const takeover = prepared.store.takeoverLease("session-1", "human");
+        auto const takeover = prepared.store.takeoverLease(prepared.controller, "human");
         REQUIRE(takeover.has_value());
         CHECK(takeover->lease.fencingToken > prepared.lease.fencingToken);
         CHECK(takeover->resolvedDispatches == 0U);

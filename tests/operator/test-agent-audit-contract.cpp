@@ -174,7 +174,7 @@ namespace uf::operator_runtime
         CHECK(host->clicks() == 1U);
 
         auto const takeover = prepared.store.takeoverLease(
-            "session-1",
+            prepared.controller,
             "human takeover while a dispatch was in flight"
         );
         REQUIRE(takeover.has_value());
@@ -265,7 +265,7 @@ namespace uf::operator_runtime
         );
 
         auto const takeover = prepared.store.takeoverLease(
-            "session-1",
+            prepared.controller,
             "human takeover after the outcome was recorded"
         );
         REQUIRE(takeover.has_value());

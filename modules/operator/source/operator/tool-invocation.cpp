@@ -16,7 +16,8 @@ namespace uf::operator_runtime
         std::string toolName,
         std::string toolVersion,
         CanonicalJson canonicalArgs,
-        ToolMutability mutability
+        ToolMutability mutability,
+        ToolSurface surface
     )
         : m_projectRegistrationHash{projectRegistrationHash}
         , m_toolCatalogHash{toolCatalogHash}
@@ -24,6 +25,7 @@ namespace uf::operator_runtime
         , m_toolVersion{std::move(toolVersion)}
         , m_canonicalArgs{std::move(canonicalArgs)}
         , m_mutability{mutability}
+        , m_surface{surface}
     {
     }
 
@@ -57,6 +59,19 @@ namespace uf::operator_runtime
     auto ValidatedToolInvocation::mutability() const noexcept -> ToolMutability
     {
         return m_mutability;
+    }
+
+    auto ValidatedToolInvocation::surface() const noexcept -> ToolSurface
+    {
+        return m_surface;
+    }
+
+    auto toolSurfaceAllowed(
+        ControllerProfile profile,
+        ToolSurface surface
+    ) noexcept -> bool
+    {
+        return !profile.semanticToolsOnly || surface == ToolSurface::Semantic;
     }
 
     ProjectToolCatalogSchemaOwner::ProjectToolCatalogSchemaOwner(
@@ -132,6 +147,7 @@ namespace uf::operator_runtime
             std::move(descriptor.toolVersion),
             std::move(canonicalArgs),
             descriptor.mutability,
+            descriptor.surface,
         };
     }
 }

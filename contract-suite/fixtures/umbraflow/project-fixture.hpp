@@ -553,22 +553,41 @@ namespace uf::operator_runtime::test_support
                     std::string_view name{};
                     std::string_view version{};
                     ToolMutability   mutability{ToolMutability::Mutating};
+
+                    // Every tool states its own surface, because a catalog that
+                    // left it to the default would be proving the default
+                    // rather than the rule. The one entry that deliberately
+                    // omits it lives in the p03 case, with its own validator.
+                    ToolSurface      surface{ToolSurface::Semantic};
                 };
                 constexpr auto catalog = std::array{
                     ToolCase{
                         .name       = "command-1",
                         .version    = "1",
                         .mutability = ToolMutability::Mutating,
+                        .surface    = ToolSurface::Semantic,
                     },
                     ToolCase{
                         .name       = "command-2",
                         .version    = "1",
                         .mutability = ToolMutability::Mutating,
+                        .surface    = ToolSurface::Semantic,
                     },
                     ToolCase{
                         .name       = "different-command",
                         .version    = "1",
                         .mutability = ToolMutability::Mutating,
+                        .surface    = ToolSurface::Semantic,
+                    },
+                    // The machine-surface tool: it names a coordinate, so no
+                    // online Agent may be handed it. Read-only so that the p03
+                    // cases never contend for the mutation-chain slot the p01
+                    // cases are about.
+                    ToolCase{
+                        .name       = "raw-coordinate-click",
+                        .version    = "1",
+                        .mutability = ToolMutability::ReadOnly,
+                        .surface    = ToolSurface::Privileged,
                     },
                     // The five tools whose plans differ. The plugin decides
                     // which proposal each one gets; the catalog only says they
@@ -628,6 +647,7 @@ namespace uf::operator_runtime::test_support
                 return ToolDescriptor{
                     .toolVersion = std::string{found->version},
                     .mutability  = found->mutability,
+                    .surface     = found->surface,
                 };
             }
         );
@@ -887,6 +907,12 @@ namespace uf::operator_runtime::test_support
             // for want of an entry, and "read-only Operations carry no plan"
             // would be proved by the fixture rather than by the Operator.
             ProposalCase{"observe-1", "observe-1", ordinaryEffects, ordinaryLimits},
+            ProposalCase{
+                "raw-coordinate-click",
+                "raw-coordinate-click",
+                ordinaryEffects,
+                ordinaryLimits,
+            },
         };
         for (auto const& proposal : cases)
         {
@@ -976,8 +1002,13 @@ namespace uf::operator_runtime::test_support
         ProjectFixture        project;
         SessionManifest       manifest;
         OperatorPlanAuthority planAuthority;
-        ControlLease          lease;
-        SnapshotRecord        snapshot;
+
+        // The authenticated controller every entry point is reached through.
+        // bindController is its only mint, so a case cannot assert its own
+        // identity, and the kind it carries is the one pinSession pinned.
+        ControllerBinding controller;
+        ControlLease      lease;
+        SnapshotRecord    snapshot;
 
         // The Host whose observations this store composes snapshots from. It is
         // part of the prepared state rather than built per case because
@@ -1110,10 +1141,13 @@ namespace uf::operator_runtime::test_support
                 .controlledTargetKey       = "target-1",
                 .projectInstanceKey        = "instance-1",
                 .mode                      = SessionMode::Write,
+                .kind                      = ControllerKind::Script,
             },
             manifest
         ).has_value());
-        auto lease = store.acquireLease("session-1");
+        auto controller = store.bindController("session-1");
+        REQUIRE(controller.has_value());
+        auto lease = store.acquireLease(*controller);
         REQUIRE(lease.has_value());
         auto observation = contract::activateObservationHost(
             *std::move(installed),
@@ -1141,6 +1175,7 @@ namespace uf::operator_runtime::test_support
             .project                 = project,
             .manifest                = manifest,
             .planAuthority           = *std::move(planAuthority),
+            .controller              = *controller,
             .lease                   = *lease,
             .snapshot                = *std::move(snapshot),
             .observation             = std::move(observation),
@@ -1156,11 +1191,63 @@ namespace uf::operator_runtime::test_support
     ) -> CommandRequest
     {
         return CommandRequest{
-            .sessionId            = snapshot.sessionId,
             .snapshotToken        = snapshot.token,
             .idempotencyNamespace = "controller-1",
             .clientRequestId      = std::move(clientRequestId),
         };
+    }
+
+    // A second authenticated controller of another kind over the same
+    // registration. It needs a ProjectInstance of its own because only one
+    // write session per instance may be active; the controlled target is the
+    // caller's choice, so a case can put two kinds on one target to watch them
+    // contend, or on two targets to keep them independent.
+    //
+    // It returns a binding and nothing else: taking the lease and composing a
+    // snapshot are the case's own steps, because whether the second controller
+    // acquires a free target or seizes a held one is the property under test.
+    [[nodiscard]]
+    inline auto addController(
+        PreparedStore& prepared,
+        ControllerKind kind,
+        SessionMode mode,
+        std::string const& sessionId,
+        std::string const& projectInstanceKey,
+        std::string const& controlledTargetKey
+    ) -> ControllerBinding
+    {
+        REQUIRE(prepared.store.provisionProjectInstance(
+            prepared.project.registration,
+            prepared.plugin,
+            ProjectInstanceBaseline{
+                .projectInstanceKey  = projectInstanceKey,
+                .eventId             = "baseline-" + projectInstanceKey,
+                .sessionManifestHash = prepared.manifest.hash(),
+                .entry               = journalEntry(
+                    prepared.project,
+                    prepared.project.registration.baselineEventType(),
+                    "{\"kind\":\"baseline\"}"
+                ),
+            }
+        ).has_value());
+        REQUIRE(prepared.store.pinSession(
+            SessionPin{
+                .sessionId                 = sessionId,
+                .authenticatedControllerId = "controller-1",
+                .idempotencyNamespace      = "controller-1",
+                .projectRegistrationHash   = prepared.project.registration.hash(),
+                .capabilityProfileHash     = hashOf("capability"),
+                .controlledTargetKey       = controlledTargetKey,
+                .projectInstanceKey        = projectInstanceKey,
+                .mode                      = mode,
+                .kind                      = kind,
+            },
+            prepared.manifest
+        ).has_value());
+        auto binding = prepared.store.bindController(sessionId);
+        REQUIRE(binding.has_value());
+        REQUIRE(binding->kind() == kind);
+        return *binding;
     }
 
     [[nodiscard]]
@@ -1185,12 +1272,13 @@ namespace uf::operator_runtime::test_support
         std::string_view toolName
     ) -> StoredOperation
     {
-        auto operation = prepared.store.createOrLoadOperation(
+        auto operation = prepared.store.submitCommand(
+            prepared.controller,
             command(prepared.snapshot, std::move(clientRequestId)),
             toolInvocation(prepared.project, std::string{toolName})
         );
         REQUIRE(operation.has_value());
-        return *operation;
+        return operation->operation;
     }
 
     [[nodiscard]]

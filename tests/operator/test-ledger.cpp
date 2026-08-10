@@ -166,9 +166,13 @@ namespace uf::operator_runtime
             ProjectPluginHandle          plugin;
             test_support::ProjectFixture project;
             OperatorPlanAuthority        planAuthority;
-            ControlLease                 lease;
-            SnapshotRecord               snapshot;
-            contract::ObservationHost    observation;
+
+            // The authenticated controller every entry point is reached
+            // through. bindController is its only mint.
+            ControllerBinding         controller;
+            ControlLease              lease;
+            SnapshotRecord            snapshot;
+            contract::ObservationHost observation;
 
             // What a delivering Host is activated from. The observing Host above
             // cannot serve a second TaskContext, so a dispatch opens the same
@@ -228,10 +232,13 @@ namespace uf::operator_runtime
                     .controlledTargetKey       = "target-1",
                     .projectInstanceKey        = "instance-1",
                     .mode                      = SessionMode::Write,
+                    .kind                      = ControllerKind::Script,
                 },
                 manifest
             ).has_value());
-            auto lease = store.acquireLease("session-1");
+            auto controller = store.bindController("session-1");
+            REQUIRE(controller.has_value());
+            auto lease = store.acquireLease(*controller);
             REQUIRE(lease.has_value());
             auto observation = contract::activateObservationHost(
                 *std::move(installed),
@@ -255,6 +262,7 @@ namespace uf::operator_runtime
                 .plugin                  = projectPlugin,
                 .project                 = project,
                 .planAuthority           = *std::move(planAuthority),
+                .controller              = *controller,
                 .lease                   = *lease,
                 .snapshot                = *std::move(snapshot),
                 .observation             = std::move(observation),
@@ -298,7 +306,6 @@ namespace uf::operator_runtime
         ) -> CommandRequest
         {
             return CommandRequest{
-                .sessionId            = snapshot.sessionId,
                 .snapshotToken        = snapshot.token,
                 .idempotencyNamespace = "controller-1",
                 .clientRequestId      = std::move(clientRequestId),
@@ -312,12 +319,13 @@ namespace uf::operator_runtime
             std::string_view toolName
         ) -> StoredOperation
         {
-            auto operation = prepared.store.createOrLoadOperation(
+            auto operation = prepared.store.submitCommand(
+                prepared.controller,
                 command(prepared.snapshot, std::move(clientRequestId)),
                 toolInvocation(prepared.project, std::string{toolName})
             );
             REQUIRE(operation.has_value());
-            return *operation;
+            return operation->operation;
         }
 
         [[nodiscard]]
@@ -829,7 +837,7 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
-        auto const takeover = prepared.store.takeoverLease("session-1", "human takeover");
+        auto const takeover = prepared.store.takeoverLease(prepared.controller, "human takeover");
         REQUIRE(takeover.has_value());
         CHECK(takeover->lease.fencingToken > prepared.lease.fencingToken);
         CHECK(takeover->resolvedDispatches == 0U);
@@ -845,47 +853,57 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
         auto const request = command(prepared.snapshot, "request-1");
-        auto first = prepared.store.createOrLoadOperation(
+        auto first = prepared.store.submitCommand(
+            prepared.controller,
             request,
             toolInvocation(prepared.project, "command-1")
         );
         REQUIRE(first.has_value());
-        CHECK(first->lookup == CommandLookup::Created);
+        CHECK(first->operation.lookup == CommandLookup::Created);
 
-        auto const repeated = prepared.store.createOrLoadOperation(
+        auto const repeated = prepared.store.submitCommand(
+            prepared.controller,
             request,
             toolInvocation(prepared.project, "command-1")
         );
         REQUIRE(repeated.has_value());
-        CHECK(repeated->lookup == CommandLookup::Existing);
-        CHECK(repeated->operationId == first->operationId);
+        CHECK(repeated->operation.lookup == CommandLookup::Existing);
+        CHECK(repeated->operation.operationId == first->operation.operationId);
+
+        // Idempotency is by request identity and the fingerprint is over the
+        // catalog's bytes, so one command submitted twice is one fingerprint.
+        CHECK(repeated->commandFingerprint == first->commandFingerprint);
 
         // Same client_request_id, different tool: the stored fingerprint is
         // what decides, and it covers the tool the catalog named.
-        CHECK_FALSE(prepared.store.createOrLoadOperation(
+        CHECK_FALSE(prepared.store.submitCommand(
+            prepared.controller,
             request,
             toolInvocation(prepared.project, "different-command")
         ).has_value());
-        CHECK_FALSE(prepared.store.createOrLoadOperation(
+        CHECK_FALSE(prepared.store.submitCommand(
+            prepared.controller,
             command(prepared.snapshot, "request-2"),
             toolInvocation(prepared.project, "command-2")
         ).has_value());
 
         // A read-only tool takes no mutation chain, so it is admitted while the
         // mutating Operation above is still live.
-        CHECK(prepared.store.createOrLoadOperation(
+        CHECK(prepared.store.submitCommand(
+            prepared.controller,
             command(prepared.snapshot, "request-3"),
             toolInvocation(prepared.project, "observe-1")
         ).has_value());
 
         auto const cancelled = prepared.store.transitionOperation(
-            first->operationId,
-            first->revision,
+            first->operation.operationId,
+            first->operation.revision,
             OperationSignal::Cancelled
         );
         REQUIRE(cancelled.has_value());
         CHECK(cancelled->state == OperationState::Cancelled);
-        CHECK(prepared.store.createOrLoadOperation(
+        CHECK(prepared.store.submitCommand(
+            prepared.controller,
             command(prepared.snapshot, "request-2"),
             toolInvocation(prepared.project, "command-2")
         ).has_value());
@@ -1030,7 +1048,7 @@ namespace uf::operator_runtime
             if (reacquire)
             {
                 REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
-                auto const fresh = prepared.store.acquireLease("session-1");
+                auto const fresh = prepared.store.acquireLease(prepared.controller);
                 REQUIRE(fresh.has_value());
                 REQUIRE(fresh->leaseId != prepared.lease.leaseId);
                 REQUIRE(fresh->fencingToken > prepared.lease.fencingToken);

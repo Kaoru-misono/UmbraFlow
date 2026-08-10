@@ -67,6 +67,9 @@ endfunction()
 # UF_SCHEMA_ONLY_REQUIREMENTS enforces is that the set of requirements holding
 # no contract- gate at all cannot change without an edit here.
 set(UF_REQUIRED_DOCTEST_CONTRACTS
+    contract-product-p01
+    contract-product-p02
+    contract-product-p03
     contract-product-p04
     contract-product-p05-fixtures
     contract-product-p06
@@ -186,9 +189,6 @@ endif()
 # prefix can be held to account from here -- it makes a reclassification, which
 # is one keystroke on a name, an explicit edit to this list.
 set(UF_SCHEMA_ONLY_REQUIREMENTS
-    product-p01
-    product-p02
-    product-p03
     agent-a01
     agent-a02
     agent-a03
@@ -482,6 +482,9 @@ if(TARGET ${PROJECT_NAME}_operator)
             ${PROJECT_NAME}_operator
             ${PROJECT_NAME}_image
         CASES
+            contract-product-p01
+            contract-product-p02
+            contract-product-p03
             contract-product-p04
             contract-product-p05-fixtures
             contract-product-p06

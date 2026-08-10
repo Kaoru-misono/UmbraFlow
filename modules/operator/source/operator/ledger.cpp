@@ -19,6 +19,7 @@
 #include <format>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -357,7 +358,7 @@ namespace uf::operator_runtime
         // database rather than by hand. initialize() verifies immediately after
         // creating the schema, so a forgotten recomputation cannot ship green.
         constexpr auto k_exactSchemaV1Fingerprint = std::string_view{
-            "sha256:937773366fcfe4f820c5ea07912a3b1b4291cc9761d714721f950657507a3011"
+            "sha256:c691f1d9bfb79cc4cc8c88bca126fa732d51a0760c59e0c768e8c49535031996"
         };
 
         [[nodiscard]]
@@ -497,7 +498,8 @@ namespace uf::operator_runtime
                 );
                 constexpr auto expectedTables = std::string_view{
                     "approvals,authority_decisions,control_leases,control_transitions,"
-                    "dispatches,fencing_high_water,journal_events,operation_plans,"
+                    "dispatches,external_input_findings,fencing_high_water,"
+                    "journal_events,ledger_events,operation_plans,"
                     "operation_steps,operations,project_instances,"
                     "project_observations,project_registrations,project_state,"
                     "reconciliations,runtime_artifacts,runtime_installations,"
@@ -612,6 +614,13 @@ namespace uf::operator_runtime
                         controlled_target_key TEXT NOT NULL,
                         project_instance_key TEXT NOT NULL,
                         mode TEXT NOT NULL CHECK(mode IN ('read', 'write')),
+                        -- Which of the three operators holds this session. It
+                        -- is part of the immutable pinned tuple, so a
+                        -- controller cannot become another kind between two
+                        -- commands, and bindController reads it here rather
+                        -- than accepting it.
+                        controller_kind TEXT NOT NULL
+                            CHECK(controller_kind IN ('script', 'agent', 'human')),
                         active INTEGER NOT NULL CHECK(active IN (0, 1)),
                         FOREIGN KEY(project_registration_hash, project_instance_key)
                             REFERENCES project_instances(
@@ -656,21 +665,34 @@ namespace uf::operator_runtime
                         transition TEXT NOT NULL,
                         reason TEXT NOT NULL
                     ) STRICT;
-)sql"
-                // One statement sequence, two literals: MSVC caps a single
-                // string literal and the schema outgrew it here. Adjacent
-                // literals concatenate before anything reads them, so the SQL
-                // text -- and therefore k_exactSchemaV1Fingerprint, which
-                // covers the STORED DDL -- is byte-identical to the unsplit
-                // block. The seam must add no character of its own: it sits
-                // between a newline and a newline.
-                R"sql(
+
+                    -- The one append-only sequence every controller-visible
+                    -- fact is appended to, in the same transaction that causes
+                    -- it. It exists because control_transitions.sequence and
+                    -- reconciliations.sequence are independent counters and
+                    -- three counters cannot be one cursor.
+                    --
+                    -- The kind vocabulary lists exactly what is appended today.
+                    -- A value nothing writes would be a promise with no code,
+                    -- so the enumeration grows with its producer rather than
+                    -- ahead of it.
+                    CREATE TABLE IF NOT EXISTS ledger_events(
+                        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
+                        controlled_target_key TEXT NOT NULL,
+                        kind TEXT NOT NULL CHECK(kind IN (
+                            'operation_created', 'control_transitioned',
+                            'external_input_detected'
+                        )),
+                        subject_id TEXT NOT NULL
+                    ) STRICT;
+
                     -- canonical_parts is the exact SnapshotParts JCS and is the
                     -- only thing identity_hash and decision_basis_hash are
                     -- recomputable from, which is what lets a test falsify the
                     -- derivation. The scalar columns below it are not a second
                     -- spelling of the same fact: they are the join keys, and
-                    -- SQL cannot join through JSON text. createOrLoadOperation
+                    -- SQL cannot join through JSON text. submitCommand
                     -- compares project_state_revision and
                     -- project_observation_revision against the live rows, so a
                     -- token goes stale when the composed world moves and not
@@ -751,6 +773,17 @@ namespace uf::operator_runtime
                         'proposed', 'awaiting_approval', 'ready', 'needs_revalidation',
                         'running', 'reconciling', 'ambiguous'
                     );
+)sql"
+                // One statement sequence, two literals: MSVC caps a single
+                // string literal and the schema outgrew it here. Adjacent
+                // literals concatenate before anything reads them, so the SQL
+                // text -- and therefore k_exactSchemaV1Fingerprint, which
+                // covers the STORED DDL -- is byte-identical to the unsplit
+                // block. The seam must add no character of its own: it sits
+                // between a newline and a newline, and it moves to wherever the
+                // cap requires without moving the fingerprint, because the two
+                // halves concatenate to the same bytes wherever it sits.
+                R"sql(
 
                     -- operation_id is the primary key, so a plan freezes once
                     -- and a second freeze is a constraint violation rather than
@@ -901,6 +934,37 @@ namespace uf::operator_runtime
                         disposition TEXT NOT NULL,
                         proposal_hash TEXT NOT NULL,
                         canonical_proposal TEXT NOT NULL
+                    ) STRICT;
+
+                    -- What out-of-band human input leaves behind. It
+                    -- deliberately has no tool_name, tool_version,
+                    -- canonical_args, command_fingerprint, client_request_id or
+                    -- snapshot_token column, and no state: an auditor tells a
+                    -- command from a finding by which table the row is in, and
+                    -- the two column sets are disjoint by construction. A
+                    -- finding cannot be spelled as an Operation and an
+                    -- Operation cannot be spelled as a finding.
+                    --
+                    -- invalidated_snapshot_revision is the snapshot revision
+                    -- this target had reached when the input was seen; every
+                    -- token at or below it is refused afterwards, which is how
+                    -- a keystroke stops the automation without terminating it.
+                    CREATE TABLE IF NOT EXISTS external_input_findings(
+                        finding_id TEXT PRIMARY KEY,
+                        controlled_target_key TEXT NOT NULL,
+                        session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
+                        reporter_session_id TEXT NOT NULL
+                            REFERENCES sessions(session_id),
+                        detected_after_cursor INTEGER NOT NULL
+                            CHECK(detected_after_cursor >= 0),
+                        invalidated_snapshot_revision INTEGER NOT NULL
+                            CHECK(invalidated_snapshot_revision >= 0),
+                        operation_id TEXT REFERENCES operations(operation_id),
+                        required_action TEXT NOT NULL
+                            CHECK(required_action IN (
+                                'freeze_and_reobserve', 'freeze_and_reconcile'
+                            )),
+                        reason TEXT NOT NULL
                     ) STRICT;
 
                     CREATE TABLE IF NOT EXISTS project_state(
@@ -1055,6 +1119,154 @@ namespace uf::operator_runtime
             }
 
             UF_UNREACHABLE_MSG("Unknown SessionMode value");
+        }
+
+        // What ledger_events records. Every value here has a producer in this
+        // file; the DDL's CHECK lists exactly these three.
+        enum class LedgerEventKind : uint8
+        {
+            OperationCreated,
+            ControlTransitioned,
+            ExternalInputDetected,
+        };
+
+        [[nodiscard]]
+        auto ledgerEventWireName(LedgerEventKind kind) noexcept -> std::string_view
+        {
+            switch (kind)
+            {
+            case LedgerEventKind::OperationCreated: return "operation_created";
+            case LedgerEventKind::ControlTransitioned: return "control_transitioned";
+            case LedgerEventKind::ExternalInputDetected: return "external_input_detected";
+            }
+
+            UF_UNREACHABLE_MSG("Unknown LedgerEventKind value");
+        }
+
+        [[nodiscard]]
+        auto externalInputActionWireName(
+            ExternalInputAction action
+        ) noexcept -> std::string_view
+        {
+            switch (action)
+            {
+            case ExternalInputAction::FreezeAndReobserve: return "freeze_and_reobserve";
+            case ExternalInputAction::FreezeAndReconcile: return "freeze_and_reconcile";
+            }
+
+            UF_UNREACHABLE_MSG("Unknown ExternalInputAction value");
+        }
+
+        // The cursor as it stands right now: the sequence of the last appended
+        // event, or 0 before the first one. Read inside the caller's
+        // transaction, so nothing can commit between reading it and using it.
+        [[nodiscard]]
+        auto currentEventCursor(sqlite3* database) -> Result<uint64>
+        {
+            UF_TRY_VALUE(
+                query,
+                prepare(
+                    database,
+                    "SELECT COALESCE(MAX(sequence), 0) FROM ledger_events"
+                )
+            );
+            if (sqlite3_step(query.get()) != SQLITE_ROW)
+            {
+                return databaseFailure(database, "could not read the event cursor");
+            }
+            return static_cast<uint64>(sqlite3_column_int64(query.get(), 0));
+        }
+
+        // Appended in the same transaction as the fact it records, never after
+        // it. SQLite allows one writer at a time and every mutating path here
+        // opens BEGIN IMMEDIATE, so sequences are assigned in commit order and
+        // a rolled-back append leaves no gap.
+        [[nodiscard]]
+        auto appendLedgerEvent(
+            sqlite3* database,
+            uint64 sessionEpoch,
+            std::string_view controlledTargetKey,
+            LedgerEventKind kind,
+            std::string_view subjectId
+        ) -> Status
+        {
+            UF_TRY_VALUE(
+                insert,
+                prepare(
+                    database,
+                    "INSERT INTO ledger_events(session_epoch, controlled_target_key, "
+                    "kind, subject_id) VALUES(?1, ?2, ?3, ?4)"
+                )
+            );
+            UF_TRY(bindInteger(database, insert.get(), 1, sessionEpoch));
+            UF_TRY(bindText(database, insert.get(), 2, controlledTargetKey));
+            UF_TRY(bindText(database, insert.get(), 3, ledgerEventWireName(kind)));
+            UF_TRY(bindText(database, insert.get(), 4, subjectId));
+            return expectDone(database, insert.get());
+        }
+
+        [[nodiscard]]
+        auto parseSessionMode(std::string_view value) -> Result<SessionMode>
+        {
+            constexpr auto modes = std::array{SessionMode::Read, SessionMode::Write};
+            auto const match = std::ranges::find_if(
+                modes,
+                [value](SessionMode candidate)
+                {
+                    return sessionModeWireName(candidate) == value;
+                }
+            );
+            if (match == modes.end())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format("Unknown session mode: {}", value)
+                );
+            }
+            return *match;
+        }
+
+        // Re-reads the pinned row a binding names and refuses one whose session
+        // is no longer active in this epoch. The binding is evidence of who the
+        // caller was when bindController minted it; this row is the authority
+        // now, so every entry point that takes a binding starts here.
+        //
+        // Activity is the whole of what the row can tell us that the binding
+        // cannot. Every other member -- the controller id, the capability hash,
+        // the controlled target, the kind -- was copied out of this same row,
+        // and the row is immutable, so comparing them back would be comparing a
+        // value against the column it came from. Only bindController can mint a
+        // binding, so there is no forged one for such a comparison to catch.
+        //
+        // The epoch is not re-tested here either, and that is the same
+        // reduction rather than a second one: opening the database begins a new
+        // session epoch and deactivates every session the previous one left
+        // behind, so "from a dead epoch" and "inactive" are one fact recorded
+        // twice. bindController still names the epoch because that is where a
+        // binding's epoch value is established; testing it again on every call
+        // afterwards is a conjunct that cannot fail on its own.
+        [[nodiscard]]
+        auto requireLiveBinding(
+            sqlite3* database,
+            ControllerBinding const& controller
+        ) -> Result<SessionMode>
+        {
+            UF_TRY_VALUE(
+                query,
+                prepare(
+                    database,
+                    "SELECT mode FROM sessions WHERE session_id=?1 AND active=1"
+                )
+            );
+            UF_TRY(bindText(database, query.get(), 1, controller.sessionId()));
+            if (sqlite3_step(query.get()) != SQLITE_ROW)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "ControllerBinding names no active session"
+                );
+            }
+            return parseSessionMode(columnText(query.get(), 0));
         }
 
         [[nodiscard]]
@@ -2457,8 +2669,9 @@ namespace uf::operator_runtime
                 "(session_id, authenticated_controller_id, idempotency_namespace, "
                 "manifest_hash, runtime_artifact_root_hash, installed_generation, "
                 "project_registration_hash, capability_profile_hash, session_epoch, "
-                "controlled_target_key, project_instance_key, mode, active) "
-                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)"
+                "controlled_target_key, project_instance_key, mode, controller_kind, "
+                "active) "
+                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 1)"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, pin.sessionId));
@@ -2503,6 +2716,12 @@ namespace uf::operator_runtime
             12,
             sessionModeWireName(pin.mode)
         ));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            insert.get(),
+            13,
+            controllerKindWireName(pin.kind)
+        ));
         UF_TRY(expectDone(m_impl->database.get(), insert.get()));
 
         UF_TRY_VALUE(
@@ -2512,7 +2731,8 @@ namespace uf::operator_runtime
                 "SELECT authenticated_controller_id, idempotency_namespace, manifest_hash, "
                 "runtime_artifact_root_hash, installed_generation, "
                 "project_registration_hash, capability_profile_hash, session_epoch, "
-                "controlled_target_key, project_instance_key, mode, active "
+                "controlled_target_key, project_instance_key, mode, controller_kind, "
+                "active "
                 "FROM sessions WHERE session_id=?1"
             )
         );
@@ -2534,7 +2754,8 @@ namespace uf::operator_runtime
             && columnText(query.get(), 8) == pin.controlledTargetKey
             && columnText(query.get(), 9) == pin.projectInstanceKey
             && columnText(query.get(), 10) == sessionModeWireName(pin.mode)
-            && sqlite3_column_int(query.get(), 11) == 1;
+            && columnText(query.get(), 11) == controllerKindWireName(pin.kind)
+            && sqlite3_column_int(query.get(), 12) == 1;
         if (!matches)
         {
             return fail(
@@ -2545,44 +2766,68 @@ namespace uf::operator_runtime
         return transaction.commit();
     }
 
-    auto OperatorCoordinator::acquireLease(
+    auto OperatorCoordinator::bindController(
         std::string const& sessionId
-    ) -> Result<ControlLease>
+    ) -> Result<ControllerBinding>
     {
         UF_TRY(requireName(sessionId, "session_id"));
-        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
-
         UF_TRY_VALUE(
-            sessionQuery,
+            query,
             prepare(
                 m_impl->database.get(),
-                "SELECT controlled_target_key, authenticated_controller_id, "
-                "capability_profile_hash, session_epoch FROM sessions WHERE session_id=?1 "
-                "AND mode='write' AND active=1"
+                "SELECT authenticated_controller_id, controlled_target_key, "
+                "capability_profile_hash, session_epoch, controller_kind "
+                "FROM sessions WHERE session_id=?1 AND active=1 AND session_epoch=?2"
             )
         );
-        UF_TRY(bindText(m_impl->database.get(), sessionQuery.get(), 1, sessionId));
-        if (sqlite3_step(sessionQuery.get()) != SQLITE_ROW)
+        UF_TRY(bindText(m_impl->database.get(), query.get(), 1, sessionId));
+        UF_TRY(bindInteger(
+            m_impl->database.get(),
+            query.get(),
+            2,
+            m_impl->sessionEpoch
+        ));
+        if (sqlite3_step(query.get()) != SQLITE_ROW)
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "Cannot acquire a lease for an unknown session"
+                "Cannot bind a controller to an unknown current-epoch session"
             );
         }
-        auto const target = columnText(sessionQuery.get(), 0);
-        auto const controllerId = columnText(sessionQuery.get(), 1);
-        auto const capabilityProfileHash = columnText(sessionQuery.get(), 2);
-        UF_TRY_VALUE(capabilityHash, parseHashColumn(capabilityProfileHash));
-        auto const sessionEpoch = static_cast<uint64>(
-            sqlite3_column_int64(sessionQuery.get(), 3)
+        UF_TRY_VALUE(capabilityHash, parseHashColumn(columnText(query.get(), 2)));
+        UF_TRY_VALUE(kind, parseControllerKind(columnText(query.get(), 4)));
+        return ControllerBinding{
+            sessionId,
+            columnText(query.get(), 0),
+            columnText(query.get(), 1),
+            capabilityHash,
+            static_cast<uint64>(sqlite3_column_int64(query.get(), 3)),
+            kind,
+        };
+    }
+
+    auto OperatorCoordinator::acquireLease(
+        ControllerBinding const& controller
+    ) -> Result<ControlLease>
+    {
+        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
+        UF_TRY_VALUE(
+            mode,
+            requireLiveBinding(m_impl->database.get(), controller)
         );
-        if (sessionEpoch != m_impl->sessionEpoch)
+        if (mode != SessionMode::Write)
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "Cannot acquire a lease for a session from a prior process epoch"
+                "Cannot acquire a lease for a read-mode session"
             );
         }
+        auto const& sessionId = controller.sessionId();
+        auto const& target = controller.controlledTargetKey();
+        auto const& controllerId = controller.controllerId();
+        auto const capabilityProfileHash = controller.capabilityProfileHash().hex();
+        auto const capabilityHash = controller.capabilityProfileHash();
+        auto const sessionEpoch = controller.sessionEpoch();
 
         UF_TRY_VALUE(
             activeQuery,
@@ -2676,6 +2921,14 @@ namespace uf::operator_runtime
         UF_TRY(bindInteger(m_impl->database.get(), transitionWrite.get(), 6, nextFence));
         UF_TRY(expectDone(m_impl->database.get(), transitionWrite.get()));
 
+        UF_TRY(appendLedgerEvent(
+            m_impl->database.get(),
+            sessionEpoch,
+            target,
+            LedgerEventKind::ControlTransitioned,
+            leaseId
+        ));
+
         UF_TRY(transaction.commit());
         return ControlLease{
             .leaseId               = std::move(leaseId),
@@ -2699,45 +2952,29 @@ namespace uf::operator_runtime
     }
 
     auto OperatorCoordinator::takeoverLease(
-        std::string const& sessionId,
+        ControllerBinding const& controller,
         std::string const& reason
     ) -> Result<ControlTakeover>
     {
-        UF_TRY(requireName(sessionId, "session_id"));
         UF_TRY(requireName(reason, "takeover reason"));
         UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
-
         UF_TRY_VALUE(
-            sessionQuery,
-            prepare(
-                m_impl->database.get(),
-                "SELECT controlled_target_key, authenticated_controller_id, "
-                "capability_profile_hash, session_epoch FROM sessions WHERE session_id=?1 "
-                "AND mode='write' AND active=1"
-            )
+            mode,
+            requireLiveBinding(m_impl->database.get(), controller)
         );
-        UF_TRY(bindText(m_impl->database.get(), sessionQuery.get(), 1, sessionId));
-        if (sqlite3_step(sessionQuery.get()) != SQLITE_ROW)
+        if (mode != SessionMode::Write)
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "Cannot take over control for an unknown session"
+                "Cannot take over control with a read-mode session"
             );
         }
-        auto const target = columnText(sessionQuery.get(), 0);
-        auto const controllerId = columnText(sessionQuery.get(), 1);
-        auto const capabilityProfileHash = columnText(sessionQuery.get(), 2);
-        UF_TRY_VALUE(capabilityHash, parseHashColumn(capabilityProfileHash));
-        auto const sessionEpoch = static_cast<uint64>(
-            sqlite3_column_int64(sessionQuery.get(), 3)
-        );
-        if (sessionEpoch != m_impl->sessionEpoch)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Cannot take over with a session from a prior process epoch"
-            );
-        }
+        auto const& sessionId = controller.sessionId();
+        auto const& target = controller.controlledTargetKey();
+        auto const& controllerId = controller.controllerId();
+        auto const capabilityProfileHash = controller.capabilityProfileHash().hex();
+        auto const capabilityHash = controller.capabilityProfileHash();
+        auto const sessionEpoch = controller.sessionEpoch();
 
         auto previousFence = uint64{0};
         UF_TRY_VALUE(
@@ -2836,6 +3073,14 @@ namespace uf::operator_runtime
                 "a human takeover found this dispatch unanswered"
             )
         );
+
+        UF_TRY(appendLedgerEvent(
+            m_impl->database.get(),
+            sessionEpoch,
+            target,
+            LedgerEventKind::ControlTransitioned,
+            leaseId
+        ));
 
         UF_TRY(transaction.commit());
         return ControlTakeover{
@@ -2969,6 +3214,14 @@ namespace uf::operator_runtime
         UF_TRY(bindInteger(m_impl->database.get(), transitionWrite.get(), 5, lease.sessionEpoch));
         UF_TRY(bindInteger(m_impl->database.get(), transitionWrite.get(), 6, nextFence));
         UF_TRY(expectDone(m_impl->database.get(), transitionWrite.get()));
+
+        UF_TRY(appendLedgerEvent(
+            m_impl->database.get(),
+            lease.sessionEpoch,
+            lease.controlledTargetKey,
+            LedgerEventKind::ControlTransitioned,
+            lease.leaseId
+        ));
 
         UF_TRY(transaction.commit());
         return nextFence;
@@ -3461,15 +3714,27 @@ namespace uf::operator_runtime
         };
     }
 
-    auto OperatorCoordinator::createOrLoadOperation(
+    auto OperatorCoordinator::submitCommand(
+        ControllerBinding const& controller,
         CommandRequest const& request,
         ValidatedToolInvocation const& invocation
-    ) -> Result<StoredOperation>
+    ) -> Result<AcceptedCommand>
     {
-        UF_TRY(requireName(request.sessionId, "session_id"));
         UF_TRY(requireName(request.snapshotToken, "snapshot_token"));
         UF_TRY(requireName(request.idempotencyNamespace, "idempotency_namespace"));
         UF_TRY(requireName(request.clientRequestId, "client_request_id"));
+
+        // The accept side of p03, evaluated again over the same predicate the
+        // offer side used. Both halves are required: the offer keeps an online
+        // Agent from ever holding a Privileged invocation, and this keeps it
+        // from presenting one another controller was offered.
+        if (!toolSurfaceAllowed(controller.profile(), invocation.surface()))
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Controller restricted to semantic tools submitted a privileged tool"
+            );
+        }
 
         auto const& toolName = invocation.toolName();
         auto const& toolVersion = invocation.toolVersion();
@@ -3477,9 +3742,13 @@ namespace uf::operator_runtime
         auto const mutating = invocation.mutability() == ToolMutability::Mutating;
 
         // The fingerprint covers exactly what the catalog decided the command
-        // is. Mutability is absent on purpose: it is a function of the tool and
-        // its version, so including it would let two fingerprints disagree
-        // about one tool without any of the fingerprinted bytes differing.
+        // is. Mutability and surface are absent on purpose: they are functions
+        // of the tool and its version, so including them would let two
+        // fingerprints disagree about one tool without any of the fingerprinted
+        // bytes differing. Who submitted it is absent for the same reason and
+        // one more: Script, Agent and Human naming the identical tool and
+        // arguments are naming one command, and a fingerprint that separated
+        // them would make the shared Operation path unprovable.
         auto fingerprintMaterial = toolName;
         fingerprintMaterial.push_back('\0');
         fingerprintMaterial += toolVersion;
@@ -3490,13 +3759,14 @@ namespace uf::operator_runtime
             sha256(std::as_bytes(std::span{fingerprintMaterial}))
         );
         UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
+        UF_TRY(requireLiveBinding(m_impl->database.get(), controller));
 
         UF_TRY_VALUE(
             sessionQuery,
             prepare(
                 m_impl->database.get(),
                 "SELECT session.controlled_target_key, session.project_instance_key, "
-                "registration.plugin_id, session.idempotency_namespace, session.session_epoch, "
+                "registration.plugin_id, session.idempotency_namespace, "
                 "session.project_registration_hash "
                 "FROM sessions session JOIN project_registrations "
                 "registration ON registration.registration_hash="
@@ -3504,7 +3774,12 @@ namespace uf::operator_runtime
                 "WHERE session.session_id=?1 AND session.active=1"
             )
         );
-        UF_TRY(bindText(m_impl->database.get(), sessionQuery.get(), 1, request.sessionId));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            sessionQuery.get(),
+            1,
+            controller.sessionId()
+        ));
         if (sqlite3_step(sessionQuery.get()) != SQLITE_ROW)
         {
             return fail(AutomationErrorKind::ActionRejected, "Unknown authenticated session");
@@ -3513,11 +3788,8 @@ namespace uf::operator_runtime
         auto const projectInstanceKey = columnText(sessionQuery.get(), 1);
         auto const pluginId = columnText(sessionQuery.get(), 2);
         auto const idempotencyNamespace = columnText(sessionQuery.get(), 3);
-        auto const sessionEpoch = static_cast<uint64>(sqlite3_column_int64(sessionQuery.get(), 4));
-        if (
-            request.idempotencyNamespace != idempotencyNamespace
-            || sessionEpoch != m_impl->sessionEpoch
-        )
+        auto const sessionEpoch = controller.sessionEpoch();
+        if (request.idempotencyNamespace != idempotencyNamespace)
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
@@ -3528,7 +3800,7 @@ namespace uf::operator_runtime
         // hashes the canonical registration JCS, and tool_catalog_hash is one of
         // its members, so an invocation minted against another catalog cannot
         // present this root.
-        if (invocation.projectRegistrationHash().hex() != columnText(sessionQuery.get(), 5))
+        if (invocation.projectRegistrationHash().hex() != columnText(sessionQuery.get(), 4))
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
@@ -3577,7 +3849,7 @@ namespace uf::operator_runtime
             // an idempotency_namespace unique to one. Without this, the hit
             // path hands another session's operation id and revision back,
             // which is all transitionOperation needs to terminate it.
-            if (columnText(existingQuery.get(), 10) != request.sessionId)
+            if (columnText(existingQuery.get(), 10) != controller.sessionId())
             {
                 return fail(
                     AutomationErrorKind::ActionRejected,
@@ -3595,13 +3867,16 @@ namespace uf::operator_runtime
             auto const frozen     = sqlite3_column_type(existingQuery.get(), 8) != SQLITE_NULL;
             auto const dispatched = sqlite3_column_int(existingQuery.get(), 9) != 0;
             UF_TRY(transaction.commit());
-            return StoredOperation{
-                .operationId   = std::move(operationId),
-                .lookup        = CommandLookup::Existing,
-                .state         = state,
-                .revision      = revision,
-                .planFrozen    = frozen,
-                .hasDispatched = dispatched,
+            return AcceptedCommand{
+                .operation = StoredOperation{
+                    .operationId   = std::move(operationId),
+                    .lookup        = CommandLookup::Existing,
+                    .state         = state,
+                    .revision      = revision,
+                    .planFrozen    = frozen,
+                    .hasDispatched = dispatched,
+                },
+                .commandFingerprint = commandFingerprint,
             };
         }
 
@@ -3617,6 +3892,13 @@ namespace uf::operator_runtime
                 // whose observation revision was reused from an earlier
                 // ProjectState, which is the only way the reuse rule in
                 // createSnapshot could otherwise carry a stale reading forward.
+                //
+                // The NOT EXISTS clause is what makes out-of-band human input
+                // stop the automation: a finding records the snapshot revision
+                // its target had reached, and every token at or below that
+                // revision is refused afterwards. The controller has to look
+                // again before it acts, which is the whole effect a finding is
+                // allowed to have.
                 "SELECT session.controlled_target_key FROM snapshots s JOIN sessions session "
                 "ON session.session_id=s.session_id JOIN control_leases lease "
                 "ON lease.controlled_target_key=session.controlled_target_key "
@@ -3628,11 +3910,20 @@ namespace uf::operator_runtime
                 "WHERE s.token=?1 AND s.session_id=?2 AND s.session_epoch=?3 AND "
                 "s.lease_revision=lease.revision AND lease.session_id=s.session_id "
                 "AND s.project_state_revision=state.revision "
-                "AND obs.project_state_revision=state.revision"
+                "AND obs.project_state_revision=state.revision "
+                "AND NOT EXISTS(SELECT 1 FROM external_input_findings finding "
+                "WHERE finding.controlled_target_key=session.controlled_target_key "
+                "AND finding.session_epoch=s.session_epoch "
+                "AND finding.invalidated_snapshot_revision>=s.snapshot_revision)"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), snapshotQuery.get(), 1, request.snapshotToken));
-        UF_TRY(bindText(m_impl->database.get(), snapshotQuery.get(), 2, request.sessionId));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            snapshotQuery.get(),
+            2,
+            controller.sessionId()
+        ));
         UF_TRY(bindInteger(m_impl->database.get(), snapshotQuery.get(), 3, sessionEpoch));
         if (
             sqlite3_step(snapshotQuery.get()) != SQLITE_ROW
@@ -3720,7 +4011,7 @@ namespace uf::operator_runtime
             )
         );
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, operationId));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 2, request.sessionId));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 2, controller.sessionId()));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 3, request.snapshotToken));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 4, request.idempotencyNamespace));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 5, request.clientRequestId));
@@ -3733,14 +4024,217 @@ namespace uf::operator_runtime
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 12, pluginId));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 13, projectInstanceKey));
         UF_TRY(expectDone(m_impl->database.get(), insert.get()));
+        UF_TRY(appendLedgerEvent(
+            m_impl->database.get(),
+            sessionEpoch,
+            controlledTargetKey,
+            LedgerEventKind::OperationCreated,
+            operationId
+        ));
         UF_TRY(transaction.commit());
-        return StoredOperation{
-            .operationId   = std::move(operationId),
-            .lookup        = CommandLookup::Created,
-            .state         = OperationState::Proposed,
-            .revision      = 1U,
-            .planFrozen    = false,
-            .hasDispatched = false,
+        return AcceptedCommand{
+            .operation = StoredOperation{
+                .operationId   = std::move(operationId),
+                .lookup        = CommandLookup::Created,
+                .state         = OperationState::Proposed,
+                .revision      = 1U,
+                .planFrozen    = false,
+                .hasDispatched = false,
+            },
+            .commandFingerprint = commandFingerprint,
+        };
+    }
+
+    auto OperatorCoordinator::recordExternalInput(
+        ControllerBinding const& reporter,
+        ExternalInputReport const& report
+    ) -> Result<RecordedExternalInput>
+    {
+        UF_TRY(requireName(report.reason, "external input reason"));
+        if (!reporter.profile().mayReportExternalInput)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "This controller kind may not report external input about a third party"
+            );
+        }
+        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
+        UF_TRY(requireLiveBinding(m_impl->database.get(), reporter));
+
+        auto const& target = reporter.controlledTargetKey();
+        auto const epoch   = reporter.sessionEpoch();
+
+        // Read before this finding's own append, so a finding never claims to
+        // have been detected after itself.
+        UF_TRY_VALUE(cursor, currentEventCursor(m_impl->database.get()));
+
+        UF_TRY_VALUE(
+            revisionQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT COALESCE(MAX(s.snapshot_revision), 0) FROM snapshots s "
+                "JOIN sessions session ON session.session_id=s.session_id "
+                "WHERE session.controlled_target_key=?1 AND s.session_epoch=?2"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), revisionQuery.get(), 1, target));
+        UF_TRY(bindInteger(m_impl->database.get(), revisionQuery.get(), 2, epoch));
+        if (sqlite3_step(revisionQuery.get()) != SQLITE_ROW)
+        {
+            return databaseFailure(
+                m_impl->database.get(),
+                "could not read the snapshot revision an external input invalidates"
+            );
+        }
+        auto const invalidatedRevision = static_cast<uint64>(
+            sqlite3_column_int64(revisionQuery.get(), 0)
+        );
+
+        // At most one Operation on a target is non-terminal, so the finding
+        // freezes it by name rather than by a sweep. DecisionInputsChanged is
+        // the only signal that fits: the inputs a decision was taken on have
+        // moved, and nothing about the Operation itself was judged.
+        UF_TRY_VALUE(
+            pendingQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT operation_id, revision, state, frozen_plan_hash, "
+                "EXISTS(SELECT 1 FROM dispatches d WHERE "
+                "d.operation_id=operations.operation_id) FROM operations "
+                "WHERE controlled_target_key=?1 AND state IN "
+                "('proposed', 'awaiting_approval', 'ready') LIMIT 1"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), pendingQuery.get(), 1, target));
+        auto frozenOperation = std::optional<std::string>{};
+        if (sqlite3_step(pendingQuery.get()) == SQLITE_ROW)
+        {
+            auto operationId = columnText(pendingQuery.get(), 0);
+            auto const revision = static_cast<uint64>(
+                sqlite3_column_int64(pendingQuery.get(), 1)
+            );
+            UF_TRY_VALUE(state, parseOperationState(columnText(pendingQuery.get(), 2)));
+            auto const planFrozen =
+                sqlite3_column_type(pendingQuery.get(), 3) != SQLITE_NULL;
+            auto const dispatched = sqlite3_column_int(pendingQuery.get(), 4) != 0;
+            UF_TRY_VALUE(machine, OperationMachine::restore(state, planFrozen, dispatched));
+            UF_TRY_VALUE(
+                nextState,
+                machine.transition(OperationEvent::DecisionInputsChanged)
+            );
+            UF_TRY_VALUE(
+                nextRevision,
+                checkedSqlIncrement(revision, "Operation revision")
+            );
+            UF_TRY_VALUE(
+                update,
+                prepare(
+                    m_impl->database.get(),
+                    "UPDATE operations SET state=?1, revision=?2 "
+                    "WHERE operation_id=?3 AND revision=?4"
+                )
+            );
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                update.get(),
+                1,
+                operationStateWireName(nextState)
+            ));
+            UF_TRY(bindInteger(m_impl->database.get(), update.get(), 2, nextRevision));
+            UF_TRY(bindText(m_impl->database.get(), update.get(), 3, operationId));
+            UF_TRY(bindInteger(m_impl->database.get(), update.get(), 4, revision));
+            UF_TRY(expectDone(m_impl->database.get(), update.get()));
+            if (sqlite3_changes(m_impl->database.get()) != 1)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Operation revision lost its CAS to an external input finding"
+                );
+            }
+            frozenOperation = std::move(operationId);
+        }
+
+        UF_TRY_VALUE(findingId, randomToken(m_impl->database.get()));
+        UF_TRY_VALUE(
+            insert,
+            prepare(
+                m_impl->database.get(),
+                "INSERT INTO external_input_findings(finding_id, controlled_target_key, "
+                "session_epoch, reporter_session_id, detected_after_cursor, "
+                "invalidated_snapshot_revision, operation_id, required_action, reason) "
+                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, findingId));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 2, target));
+        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 3, epoch));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            insert.get(),
+            4,
+            reporter.sessionId()
+        ));
+        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 5, cursor));
+        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 6, invalidatedRevision));
+        if (frozenOperation.has_value())
+        {
+            UF_TRY(bindText(m_impl->database.get(), insert.get(), 7, *frozenOperation));
+        }
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            insert.get(),
+            8,
+            externalInputActionWireName(report.requiredAction)
+        ));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 9, report.reason));
+        UF_TRY(expectDone(m_impl->database.get(), insert.get()));
+
+        UF_TRY(appendLedgerEvent(
+            m_impl->database.get(),
+            epoch,
+            target,
+            LedgerEventKind::ExternalInputDetected,
+            findingId
+        ));
+
+        // Read back inside the transaction rather than returning the locals
+        // that were bound. A caller who is told what the Operator computed
+        // learns nothing about what the Operator stored, and a finding whose
+        // stored cursor disagreed with the reported one would be invisible --
+        // the audit reads the row, not the return value.
+        UF_TRY_VALUE(
+            stored,
+            prepare(
+                m_impl->database.get(),
+                "SELECT detected_after_cursor, invalidated_snapshot_revision, "
+                "operation_id FROM external_input_findings WHERE finding_id=?1"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), stored.get(), 1, findingId));
+        if (sqlite3_step(stored.get()) != SQLITE_ROW)
+        {
+            return databaseFailure(
+                m_impl->database.get(),
+                "could not read back the recorded external input finding"
+            );
+        }
+        auto const storedCursor = static_cast<uint64>(
+            sqlite3_column_int64(stored.get(), 0)
+        );
+        auto const storedRevision = static_cast<uint64>(
+            sqlite3_column_int64(stored.get(), 1)
+        );
+        auto storedOperation = std::optional<std::string>{};
+        if (sqlite3_column_type(stored.get(), 2) != SQLITE_NULL)
+        {
+            storedOperation = columnText(stored.get(), 2);
+        }
+        UF_TRY(transaction.commit());
+        return RecordedExternalInput{
+            .findingId                   = std::move(findingId),
+            .detectedAfterCursor         = storedCursor,
+            .invalidatedSnapshotRevision = storedRevision,
+            .operationId                 = std::move(storedOperation),
         };
     }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "controller.hpp"
 #include "effective-plan.hpp"
 #include "journal-entry.hpp"
 #include "manifest.hpp"
@@ -44,6 +45,12 @@ namespace uf::operator_runtime
         std::string controlledTargetKey{};
         std::string projectInstanceKey{};
         SessionMode mode{SessionMode::Read};
+
+        // Which of the three operators this session is. It is pinned with the
+        // rest of the immutable session tuple rather than chosen per call, so a
+        // controller cannot change what it is between two commands. Agent is
+        // the default because it is the least privileged of the three.
+        ControllerKind kind{ControllerKind::Agent};
     };
 
     struct RuntimeArtifactInstallRequest final
@@ -106,13 +113,14 @@ namespace uf::operator_runtime
     };
 
     // Everything about a command that is the caller's to say. The tool, its
-    // version, its arguments and its mutability are not here: they arrive as a
-    // ValidatedToolInvocation the Tool Catalog owner minted, so that a caller
-    // cannot present a mutating tool as read-only and escape the mutation
-    // chain.
+    // version, its arguments, its mutability and its surface are not here: they
+    // arrive as a ValidatedToolInvocation the Tool Catalog owner minted, so
+    // that a caller cannot present a mutating tool as read-only and escape the
+    // mutation chain, nor a privileged tool as semantic and escape the Agent
+    // ceiling. session_id is not here either: it has exactly one spelling, on
+    // the ControllerBinding.
     struct CommandRequest final
     {
-        std::string sessionId{};
         std::string snapshotToken{};
         std::string idempotencyNamespace{};
         std::string clientRequestId{};
@@ -132,6 +140,18 @@ namespace uf::operator_runtime
         uint64         revision{};
         bool           planFrozen{};
         bool           hasDispatched{};
+    };
+
+    // What one accepted submission settled. The fingerprint is
+    // sha256(tool \0 version \0 args), derived inside the submitting
+    // transaction from the bytes the catalog owner recognised. It is returned
+    // so that two submissions can be proved to be one command -- by whom is
+    // deliberately not among the hashed bytes, which is what makes the shared
+    // Operation path provable -- and it is not a field any caller may state.
+    struct AcceptedCommand final
+    {
+        StoredOperation operation;
+        ContentHash     commandFingerprint;
     };
 
     // What one frozen plan settled. Every member is derived inside freezePlan's
@@ -244,6 +264,45 @@ namespace uf::operator_runtime
         uint64       expiresAtUnixMillis{};
     };
 
+    // What an external input requires of the automation that was mid-flight
+    // when it happened. Both values freeze; they differ in what has to happen
+    // before anything moves again.
+    enum class ExternalInputAction : uint8
+    {
+        FreezeAndReobserve,
+        FreezeAndReconcile,
+    };
+
+    // Out-of-band input is a finding, not a command: it reports that the world
+    // moved under us. This type is deliberately unable to name a tool, a tool
+    // version, arguments, a mutability, a surface, a snapshot token or a
+    // request id, and no overload of recordExternalInput takes a
+    // ValidatedToolInvocation. The parameter list is the guarantee -- there is
+    // no shape here that a dispatcher could act on, so no caller can smuggle a
+    // command through this door.
+    //
+    // reason is free text and lands in a column nothing resolves a tool from;
+    // a caller who writes a tool name into it produces a row the Operator will
+    // never dispatch, because dispatch reads operations and operation_steps and
+    // this row is in neither.
+    struct ExternalInputReport final
+    {
+        ExternalInputAction requiredAction{ExternalInputAction::FreezeAndReobserve};
+        std::string         reason{};
+    };
+
+    // What one recorded finding settled. Every member is derived inside the
+    // recording transaction: the cursor and the invalidated revision are read
+    // from the ledger, and operationId names whichever Operation the finding
+    // froze, or nothing when the target had none in flight.
+    struct RecordedExternalInput final
+    {
+        std::string                findingId{};
+        uint64                     detectedAfterCursor{};
+        uint64                     invalidatedSnapshotRevision{};
+        std::optional<std::string> operationId{};
+    };
+
     struct JournalAppend final
     {
         std::string               eventId{};
@@ -331,9 +390,20 @@ namespace uf::operator_runtime
             SessionManifest const& manifest
         ) -> Status;
 
+        // The one door onto the Operation path. Everything below takes a
+        // ControllerBinding rather than a session id, so there is exactly one
+        // spelling of "who is asking" and it is minted here from the pinned
+        // sessions row. A binding is evidence and not a capability: every entry
+        // point re-reads the row and refuses a binding whose epoch, kind or
+        // activity has moved since it was minted.
+        [[nodiscard]]
+        auto bindController(
+            std::string const& sessionId
+        ) -> Result<ControllerBinding>;
+
         [[nodiscard]]
         auto acquireLease(
-            std::string const& sessionId
+            ControllerBinding const& controller
         ) -> Result<ControlLease>;
 
         // Seizing control also closes what the displaced controller left in
@@ -344,7 +414,7 @@ namespace uf::operator_runtime
         // exists for.
         [[nodiscard]]
         auto takeoverLease(
-            std::string const& sessionId,
+            ControllerBinding const& controller,
             std::string const& reason
         ) -> Result<ControlTakeover>;
 
@@ -369,14 +439,39 @@ namespace uf::operator_runtime
             task::UiObservationSnapshot const& observation
         ) -> Result<SnapshotRecord>;
 
+        // The one function that creates an Operation, and it cannot be called
+        // without a ControllerBinding. Script, Agent and Human reach it by the
+        // identical route and share one operations row, one command
+        // fingerprint, one snapshot binding, one mutation-chain slot, one state
+        // machine and one Journal; a kind varies nothing along it except the
+        // tool surface it may present.
+        //
         // The invocation must be minted by the Tool Catalog owner bound to the
         // same ProjectRegistration the session is pinned to; a mismatch is
-        // refused rather than reconciled.
+        // refused rather than reconciled. Its surface is re-evaluated here
+        // against the binding, because a controller can present an invocation
+        // it was never offered.
         [[nodiscard]]
-        auto createOrLoadOperation(
+        auto submitCommand(
+            ControllerBinding const& controller,
             CommandRequest const& request,
             ValidatedToolInvocation const& invocation
-        ) -> Result<StoredOperation>;
+        ) -> Result<AcceptedCommand>;
+
+        // Records that the world moved under us, which is what out-of-band
+        // human input is. It is not an Operation and cannot become one: it
+        // fabricates no authority, it is not a request anything could deny, and
+        // it takes no invocation. Only a binding whose profile admits it may
+        // report one.
+        //
+        // Its effect is to freeze whatever this target had in flight and to
+        // invalidate every snapshot taken up to that point, so the next command
+        // has to look again before it acts.
+        [[nodiscard]]
+        auto recordExternalInput(
+            ControllerBinding const& reporter,
+            ExternalInputReport const& report
+        ) -> Result<RecordedExternalInput>;
 
         [[nodiscard]]
         auto transitionOperation(

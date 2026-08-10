@@ -174,6 +174,9 @@ namespace uf::operator_runtime
         auto project     = std::optional<test_support::ProjectFixture>{};
         auto heldPlugin  = std::optional<ProjectPluginHandle>{};
         auto heldReading = std::optional<task::UiObservationSnapshot>{};
+        auto heldBinding = std::optional<ControllerBinding>{};
+        auto heldRequest = std::optional<CommandRequest>{};
+        auto heldTool    = std::optional<ValidatedToolInvocation>{};
         {
             auto prepared = prepareStore(temporary.path());
             // No renewal call exists, and none is needed: the same lease keeps
@@ -184,6 +187,9 @@ namespace uf::operator_runtime
                 test_support::observeAgain(prepared)
             ).has_value());
             heldLease   = prepared.lease;
+            heldBinding = prepared.controller;
+            heldRequest = command(prepared.snapshot, "request-1");
+            heldTool    = toolInvocation(prepared.project, "observe-1");
             manifest    = prepared.manifest;
             project     = prepared.project;
             heldPlugin  = prepared.plugin;
@@ -207,18 +213,43 @@ namespace uf::operator_runtime
                 .controlledTargetKey       = "target-1",
                 .projectInstanceKey        = "instance-1",
                 .mode                      = SessionMode::Write,
+                .kind                      = ControllerKind::Script,
             };
         };
         CHECK_FALSE(restarted->pinSession(pin("session-1"), *manifest).has_value());
-        CHECK_FALSE(restarted->acquireLease("session-1").has_value());
+
+        // There is no binding to present either: the epoch check now lives at
+        // the one door onto the path, so a controller from the previous epoch
+        // cannot be authenticated at all.
+        CHECK_FALSE(restarted->bindController("session-1").has_value());
         CHECK_FALSE(restarted->createSnapshot(
             *heldLease,
             *heldPlugin,
             *heldReading
         ).has_value());
 
+        // A ControllerBinding is a value, so one survives the coordinator that
+        // minted it. It is evidence and not a bearer capability: the entry
+        // point re-reads the pinned row, and the epoch it carries is from a
+        // process that has ended.
+        CHECK_FALSE(
+            restarted->submitCommand(*heldBinding, *heldRequest, *heldTool)
+                .has_value()
+        );
+
+        // A takeover is the sharpest of the three, because takeoverLease
+        // succeeds against any state of the target: nothing downstream of the
+        // epoch check would refuse it, so this is the one call that fails only
+        // because the binding is from a dead epoch.
+        CHECK_FALSE(
+            restarted->takeoverLease(*heldBinding, "a dead epoch's binding")
+                .has_value()
+        );
+
         REQUIRE(restarted->pinSession(pin("session-2"), *manifest).has_value());
-        auto const fresh = restarted->acquireLease("session-2");
+        auto const rebound = restarted->bindController("session-2");
+        REQUIRE(rebound.has_value());
+        auto const fresh = restarted->acquireLease(*rebound);
         REQUIRE(fresh.has_value());
         CHECK(fresh->sessionEpoch > heldLease->sessionEpoch);
 
@@ -468,7 +499,8 @@ namespace uf::operator_runtime
             foreign.registration.hash()
             != prepared.project.registration.hash()
         );
-        CHECK_FALSE(prepared.store.createOrLoadOperation(
+        CHECK_FALSE(prepared.store.submitCommand(
+            prepared.controller,
             command(prepared.snapshot, "request-foreign"),
             toolInvocation(foreign, "command-1")
         ).has_value());
@@ -733,7 +765,8 @@ namespace uf::operator_runtime
         // still frozen, mutation chain still held against a second command.
         CHECK(current.state == OperationState::Reconciling);
         CHECK(current.planFrozen);
-        CHECK_FALSE(prepared.store.createOrLoadOperation(
+        CHECK_FALSE(prepared.store.submitCommand(
+            prepared.controller,
             test_support::command(prepared.snapshot, "request-2"),
             test_support::toolInvocation(prepared.project, "command-1")
         ).has_value());

@@ -26,7 +26,7 @@ namespace uf::operator_runtime::contract
         auto prepared   = prepareStore(root.path());
 
         auto const takeover = prepared.store.takeoverLease(
-            "session-1",
+            prepared.controller,
             "human takeover"
         );
         REQUIRE(takeover.has_value());
@@ -53,24 +53,28 @@ namespace uf::operator_runtime::contract
         auto const& words = prepared.project.vocabulary;
 
         auto const request  = command(prepared.snapshot, "request-1");
-        auto const first    = prepared.store.createOrLoadOperation(
+        auto const first    = prepared.store.submitCommand(
+            prepared.controller,
             request,
             toolInvocation(prepared.project, words.mutatingTool)
         );
-        auto const repeated = prepared.store.createOrLoadOperation(
+        auto const repeated = prepared.store.submitCommand(
+            prepared.controller,
             request,
             toolInvocation(prepared.project, words.mutatingTool)
         );
         REQUIRE(first.has_value());
         REQUIRE(repeated.has_value());
-        CHECK(first->lookup == CommandLookup::Created);
-        CHECK(repeated->lookup == CommandLookup::Existing);
-        CHECK(first->operationId == repeated->operationId);
+        CHECK(first->operation.lookup == CommandLookup::Created);
+        CHECK(repeated->operation.lookup == CommandLookup::Existing);
+        CHECK(first->operation.operationId == repeated->operation.operationId);
+        CHECK(first->commandFingerprint == repeated->commandFingerprint);
 
         // Durable idempotency is by request identity, so the same identity
         // carrying a different command is a conflict rather than a second
         // Operation.
-        CHECK_FALSE(prepared.store.createOrLoadOperation(
+        CHECK_FALSE(prepared.store.submitCommand(
+            prepared.controller,
             request,
             toolInvocation(prepared.project, words.otherMutatingTool)
         ).has_value());
@@ -248,12 +252,13 @@ namespace uf::operator_runtime::contract
 
         // The approval edge is reached by freezing a plan whose derived risk
         // demands one, never by asking for it: no caller can name the event.
-        auto const proposed = prepared.store.createOrLoadOperation(
+        auto const proposed = prepared.store.submitCommand(
+            prepared.controller,
             command(prepared.snapshot, "request-1"),
             toolInvocation(prepared.project, words.approvalRequiredPlanTool)
         );
         REQUIRE(proposed.has_value());
-        auto const frozen = frozenPlan(prepared, *proposed);
+        auto const frozen = frozenPlan(prepared, proposed->operation);
         REQUIRE(frozen.has_value());
         CHECK(frozen->approvalRequired);
         CHECK(frozen->operation.state == OperationState::AwaitingApproval);
@@ -262,7 +267,7 @@ namespace uf::operator_runtime::contract
         REQUIRE(first.has_value());
 
         auto const approvalRequest = ApprovalRequest{
-            .operationId            = proposed->operationId,
+            .operationId            = proposed->operation.operationId,
             .lease                  = prepared.lease,
             .policyHash             = hashOf("policy"),
             .approverPrincipal      = "human-1",
@@ -289,7 +294,7 @@ namespace uf::operator_runtime::contract
 
         // An awaiting Operation is not dispatchable without one.
         CHECK_FALSE(prepared.store.reserveDispatch(
-            proposed->operationId,
+            proposed->operation.operationId,
             first->operation.revision,
             prepared.lease,
             host->generation(),
@@ -298,7 +303,7 @@ namespace uf::operator_runtime::contract
         ).has_value());
 
         auto const dispatch = prepared.store.reserveDispatch(
-            proposed->operationId,
+            proposed->operation.operationId,
             first->operation.revision,
             prepared.lease,
             host->generation(),
@@ -332,7 +337,7 @@ namespace uf::operator_runtime::contract
         // The unconsumed approval names the step it was issued for, so it does
         // not carry over to the one that replaced it.
         CHECK_FALSE(prepared.store.reserveDispatch(
-            proposed->operationId,
+            proposed->operation.operationId,
             second->operation.revision,
             prepared.lease,
             host->generation(),
@@ -347,7 +352,8 @@ namespace uf::operator_runtime::contract
         auto prepared     = prepareStore(root.path());
         auto const& words = prepared.project.vocabulary;
 
-        auto first = prepared.store.createOrLoadOperation(
+        auto const first = prepared.store.submitCommand(
+            prepared.controller,
             command(prepared.snapshot, "request-1"),
             toolInvocation(prepared.project, words.mutatingTool)
         );
@@ -355,18 +361,20 @@ namespace uf::operator_runtime::contract
 
         // One mutation chain per controlled target: a second mutating command
         // is refused while the first is live, whatever tool it names.
-        CHECK_FALSE(prepared.store.createOrLoadOperation(
+        CHECK_FALSE(prepared.store.submitCommand(
+            prepared.controller,
             command(prepared.snapshot, "request-2"),
             toolInvocation(prepared.project, words.otherMutatingTool)
         ).has_value());
 
-        first = prepared.store.transitionOperation(
-            first->operationId,
-            first->revision,
+        auto const cancelled = prepared.store.transitionOperation(
+            first->operation.operationId,
+            first->operation.revision,
             OperationSignal::Cancelled
         );
-        REQUIRE(first.has_value());
-        CHECK(prepared.store.createOrLoadOperation(
+        REQUIRE(cancelled.has_value());
+        CHECK(prepared.store.submitCommand(
+            prepared.controller,
             command(prepared.snapshot, "request-2"),
             toolInvocation(prepared.project, words.otherMutatingTool)
         ).has_value());

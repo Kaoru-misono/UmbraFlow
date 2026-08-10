@@ -729,9 +729,14 @@ return {
                         "expedition tool argument schema rejected a document"
                     );
                 }
+                // Every expedition tool is stated in the expedition's own
+                // vocabulary -- a destination, a commodity, a survey -- so the
+                // catalog declares them semantic. Leaving them to the default
+                // would declare the opposite by omission.
                 return ToolDescriptor{
                     .toolVersion = std::string{found->version},
                     .mutability  = found->mutability,
+                    .surface     = ToolSurface::Semantic,
                 };
             };
         }
