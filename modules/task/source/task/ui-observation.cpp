@@ -52,9 +52,7 @@ namespace uf::task
 
     auto UiObservationSnapshot::stateResolutionHash() const -> ContentHash
     {
-        auto const digest = sha256(
-            std::as_bytes(std::span{m_canonicalJcs.data(), m_canonicalJcs.size()})
-        );
+        auto const digest = sha256(std::as_bytes(std::span{m_canonicalJcs}));
 
         // sha256 refuses only content too large for its own length encoding, and
         // a canonical StateResolution document cannot reach 2^61 bytes.
