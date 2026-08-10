@@ -1,4 +1,9 @@
-"""Canonical RuntimeModel v2 validation and TOML compilation."""
+"""Canonical RuntimeModel v2 validation and TOML compilation.
+
+This module compiles page-model.toml and never reads one back. The only reader
+of that file is the trusted Luau parser in modules/task/runtime/project.luau; a
+Python reader here would be a second parser for the same bytes.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +12,6 @@ import hashlib
 import json
 import math
 import re
-import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -329,29 +333,3 @@ def compile_runtime_toml(model: dict[str, Any]) -> tuple[bytes, str]:
         raise SchemaIssue("runtime model is invalid: " + "; ".join(row["message"] for row in errors[:6]))
     content = runtime_model_to_toml(model).encode("utf-8")
     return content, hashlib.sha256(content).hexdigest()
-
-
-def load_runtime_toml(path: Path | str) -> dict[str, Any]:
-    raw = tomllib.loads(Path(path).read_text(encoding="utf-8"))
-    singular_to_plural = {
-        "ui_target": "ui_targets",
-        "locator": "locators",
-        "reader": "readers",
-        "surface": "surfaces",
-        "binding": "bindings",
-        "transition": "transitions",
-    }
-    allowed = {"schema_version", "base_resolution", "base_dpi", *singular_to_plural}
-    unknown = set(raw) - allowed
-    if unknown:
-        raise SchemaIssue(f"unknown runtime TOML field(s): {sorted(unknown)!r}")
-    model = {
-        "schema_version": raw.get("schema_version"),
-        "base_resolution": raw.get("base_resolution"),
-        "base_dpi": raw.get("base_dpi"),
-        **{plural: raw.get(singular, []) for singular, plural in singular_to_plural.items()},
-    }
-    errors = validate_runtime_model(model)
-    if errors:
-        raise SchemaIssue("runtime TOML is invalid: " + "; ".join(row["message"] for row in errors[:6]))
-    return model

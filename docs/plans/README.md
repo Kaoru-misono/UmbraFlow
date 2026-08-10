@@ -39,6 +39,34 @@ Reading order: target form, then layer ownership, then the model semantics.
   changes so the schema fingerprint is recomputed once per landing. **Read it
   before any of the four**; where one of them disagrees with it, it wins.
 
+## The 2026-08-09 rewrite design set
+
+The rewrite was specified over one day in five more documents. They are not
+authorities — the frozen rewrite above wins wherever they disagree with it — but
+several field-level and behavioural contracts are written down nowhere else, so
+they stay here rather than being archived. Listed 2026-08-11, having been in
+`docs/plans/` and absent from this index since they were written.
+
+- [Runtime annotation and Agent model](2026-08-09-runtime-annotation-and-agent-model.md) —
+  design proposal: annotation as offline model building and compilation, and the
+  deployment boundary that follows from it.
+- [Runtime model contract v1](2026-08-09-runtime-model-contract.md) — frozen for
+  P0 implementation: the field-level contract, and the document that drops
+  `Page`, `Element`, `Reference`, `CapabilitySet`, `holding`, `exercised`,
+  `screen` and `expect` from the runtime model.
+- [Annotation-system parallel work breakdown](2026-08-09-annotation-agent-work-breakdown.md) —
+  the P0-P8 package split and each package's write set.
+- [Annotation-v2 test matrix](2026-08-09-annotation-v2-test-matrix.md) — eleven
+  behaviour contracts, T01-T11. Since 2026-08-11 it is their only record: the
+  fixture data under `tests/annotation/` and `tests/fixtures/annotation-v2/`
+  that it described was removed that day, unreferenced by any target.
+- [Claude handoff](2026-08-09-claude-handoff.md) — the takeover brief for this
+  branch and its hard boundaries.
+
+`2026-08-09-runtime-migration-baseline.manifest.json` and
+`-disposition.manifest.json` are the migration report's machine-readable data,
+not separate plans.
+
 ## Retained predecessor references
 
 The documents below preserve prior decisions and measurements. They are
@@ -66,13 +94,17 @@ superseded wherever they conflict with the current authority above.
   Its layer-one clauses (`cycle_page` / `cycle_find`, the `engine -> annotation` edge) are
   amended by the script-owned page model above.
 - [Annotation model — capabilities, holding, appearances](2026-07-31-annotation-model-capabilities.md) —
-  developer-approved 2026-07-31, slimmed 2026-08-01 to what stays live: §二 (the design) and
-  §四之二 (seven added rulings), plus the open questions in §五. The capability set
-  `{identify, interact, read}`, `PageReference` with `Holding` and exercised capabilities, named
-  `Appearance`s and `ElementId` are all landed, under `umbraflow-authoring/v4`,
-  `umbraflow-annotations/v3` and `umbraflow-trace/v2`. Its **model conclusions remain
-  authoritative**; where that model is implemented is superseded by the script-owned page model
-  above.
+  developer-approved 2026-07-31, **superseded 2026-08-11** and kept as the record of that
+  decision. The entry here previously said its model conclusions remained authoritative and had
+  landed under `umbraflow-authoring/v4`, `umbraflow-annotations/v3` and `umbraflow-trace/v2`.
+  Only `umbraflow-trace/v2` is real, and it is untouched by this supersession; the other two
+  are in no schema and in no source file. The runtime model is now
+  `schema/umbraflow-runtime-v2.schema.json`. `Capabilities`, `Holding`, `exercised`,
+  `Appearance` and `ElementId` are not types in the tree. Two of its §二 conclusions survive
+  under the current vocabulary — a pixel region is annotated once as a `ui_target` whose
+  Bindings carry their own actions, and several appearances of one element are several Bindings
+  on one `ui_target` told apart by `variant`. Everything above about C++ types, CLI verbs and
+  schema key names is superseded by the runtime hardening rewrite.
 - [Agent front end and the exploration environment](2026-08-01-agent-front-end-and-exploration.md) —
   developer-authorised 2026-08-01, the implementation shape of the second Luau environment:
   which verbs are privileged, how the closure isolation is built, and the `annotation.*` trace

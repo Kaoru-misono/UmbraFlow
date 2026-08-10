@@ -1,5 +1,33 @@
 # 标注模型重构 — 能力集合、持有关系、多形态
 
+> **Superseded 2026-08-11.** Read the status note below as a record of what was
+> decided on 2026-07-31, not as a description of the tree. It is wrong in one
+> load-bearing way: it says the design landed under `umbraflow-authoring/v4`,
+> `umbraflow-annotations/v3` and `umbraflow-trace/v2`. Only the third of those
+> is real — `umbraflow-trace/v2` is pinned in
+> `schema/umbraflow-trace-v2.schema.json` and in `trace::k_traceSchema`, and it
+> is unaffected by this supersession. The other two exist nowhere in `schema/`,
+> `modules/`, `entry/`, `tools/` or `tests/`, and neither does the code that
+> named them (`k_authoringDocumentSchema`, `k_runtimeManifestSchema`). The
+> runtime model is now `schema/umbraflow-runtime-v2.schema.json`, whose
+> vocabulary is Surface, Binding, `variant`, `ui_target`, `locator` and
+> `reader`. `Capabilities`, `Holding`, `exercised`, `Appearance` and `ElementId`
+> are not types anywhere in the tree.
+>
+> What supersedes it:
+> [runtime hardening rewrite](2026-08-09-runtime-hardening-rewrite.md) is the
+> design authority, [the next block](2026-08-10-next-block.md) holds requirement
+> state and ordering, and
+> [the W2-W7 reconciliation](2026-08-10-w2-w7-reconciliation.md) rules where the
+> four same-day specifications conflict.
+>
+> Two conclusions of §二 survive under other names, which is why this document
+> is kept rather than archived. One region serving several purposes is now a
+> `ui_target` whose Bindings each carry their own actions, so the pixel is
+> annotated once. One semantic element with several appearances is now several
+> Bindings on one `ui_target`, told apart by `variant`. §三 and §四 were already
+> marked 已废止 before this note.
+>
 > 状态:**设计结论有效并已落地**——能力集合 `{identify, interact, read}`、引用侧的
 > `Holding` 与 `exercised`、具名 `Appearance`(空列表 = 由页面定位)、由引用派生的页面
 > 签名都在代码里;词汇是 element / appearance(权威表见 `CONTEXT.md`),schema 是

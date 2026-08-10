@@ -481,6 +481,15 @@ The backend API must be frozen by P0/P5 before this Agent merges.
 
 ## 11. P7: fixtures and cross-layer tests
 
+> **2026-08-11:** this package ran and its output was later removed. The write
+> set below was created on 2026-08-09; `tests/fixtures/annotation-v2/` and
+> `tests/annotation/` never gained a test target, nothing referenced them, and
+> they were deleted on 2026-08-11. `tests/task/fixtures/` was never created. The
+> eleven scenarios listed here survive as T01-T11 in
+> [the test matrix](2026-08-09-annotation-v2-test-matrix.md), which also records
+> the fixture format and which contracts a live gate covers today. Do not
+> recreate the deleted files from this section.
+
 Owner: Verification Agent
 
 ### Scope

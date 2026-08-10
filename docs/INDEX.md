@@ -2,7 +2,14 @@
 
 ## Start here
 
+Three documents carry the current authority. The rewrite is the design, the next
+block holds requirement state and ordering, and the reconciliation rules where
+the four same-day specifications conflict.
+
 - [Runtime v2 and game-operator breaking authority](plans/2026-08-09-runtime-hardening-rewrite.md)
+  — the design authority.
+- [W2-W7 reconciliation](plans/2026-08-10-w2-w7-reconciliation.md) — read before
+  any of the four work-item specifications; it wins where one of them disagrees.
 - [Requirement and migration map](plans/2026-08-09-runtime-migration-report.md)
 - [Architecture](ARCHITECTURE.md)
 - [Current execution checklist](TODO.md)
@@ -18,9 +25,12 @@
 
 ## Current plans
 
-The first six below are the reading order; the dated decisions after them build on
-it. [`plans/README.md`](plans/README.md) carries each plan's status and is the
-canonical listing — this section is its short form. Everything else is archived.
+The first six below were the reading order; the dated decisions after them build
+on it. One of the six, the annotation model, was superseded on 2026-08-11 and is
+kept for its record rather than for reading order.
+[`plans/README.md`](plans/README.md) carries each plan's status and is the
+canonical listing — this section is its short form, and it lists the 2026-08-09
+rewrite design set that this section does not. Everything else is archived.
 
 - Target form — three layers plus the Agent operator (approved 2026-08-01):
   [Three layers and the Agent operator](plans/2026-08-01-three-layers-and-agent-operator.md)
@@ -32,9 +42,10 @@ canonical listing — this section is its short form. Everything else is archive
 - Current task-system architecture (approved 2026-07-29; its layer-one boundary
   is amended by the script-owned page model above):
   [Three-layer task system](plans/2026-07-29-three-layer-task-system.md)
-- Current annotation-model decisions (approved 2026-07-31, slimmed 2026-08-01 to
-  §二 design and §四之二 rulings; design conclusions stand, implementation
-  position moved by the script-owned page model above):
+- Superseded 2026-08-11, kept as the record of a decision that was real when
+  made (approved 2026-07-31): two of the three schemas it claimed to have landed
+  under never existed, and the current annotation-model decisions are the three
+  authorities under "Start here":
   [Annotation model — capabilities, holding, appearances](plans/2026-07-31-annotation-model-capabilities.md)
 - Implementation shape of the exploration environment (authorised 2026-08-01):
   [Agent front end and the exploration environment](plans/2026-08-01-agent-front-end-and-exploration.md)

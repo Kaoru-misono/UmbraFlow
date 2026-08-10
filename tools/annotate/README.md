@@ -7,11 +7,26 @@ The private workspace is exact and non-migrating:
 
 ```text
 annotation-workspace.sqlite
-blobs/<prefix>/<sha256>
+.workspace.lock
+blobs/evidence/<prefix>/<sha256>
+blobs/runtime-assets/<asset-type>/<prefix>/<sha256>
 objects/runtime-artifacts/<runtime-artifact-root>/
 replay-bundles/<prefix>/<bundle-id>
 .staging/
 ```
+
+Evidence and deployable assets never share a directory: the kind is part of the
+path, so a blob cannot be reached through the wrong namespace. `<asset-type>` is
+`template_png` or `template_webp`, and `<prefix>` is the first two hex
+characters of the digest.
+
+The schema pins four authoring capability roots: `workspace_database`,
+`candidate_workspace_root`, `evidence_blob_root` and `replay_bundle_root`.
+Three of them never leave the workspace. The fourth is different by design —
+`candidate_workspace_root` is where publication stages a committed
+RuntimeArtifact, and publication copies that artifact's files into the handoff
+one by one, verifying the export against the release manifest. Its contents
+travel; the root itself does not.
 
 The deployment handoff is a separate OS/ACL root. It contains only committed
 exports:
