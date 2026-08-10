@@ -177,6 +177,10 @@ namespace uf::task
             PixelPoint  point;
         };
 
+        // No in-class initializers for the generation, the two hashes or the
+        // mint instant: GenerationId, ContentHash and MonotonicInstant have no
+        // default state, so every construction site supplies all four.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
         struct PendingReceipt final
         {
             uint64                     ordinal{};

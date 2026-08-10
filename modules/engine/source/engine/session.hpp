@@ -231,6 +231,10 @@ namespace uf::engine
     // against, the client-space point the button went down at, and how long it
     // stayed down. The hold is the only thing separating this receipt from an
     // ActReceipt for the same coordinate.
+    //
+    // No in-class initializers for the frame or the point: FrameId and Point
+    // have no default state, so every construction site supplies both.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct LongPressReceipt final
     {
         FrameId            frameId;
@@ -254,6 +258,10 @@ namespace uf::engine
     // the travel between them took. Both points are here because the far one is
     // the caller's arithmetic rather than anything it measured, so a trace that
     // carries only the start cannot answer where the drag actually ended.
+    //
+    // No in-class initializers for the frame or the two points: FrameId and
+    // Point have no default state, so every construction site supplies all three.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct DragReceipt final
     {
         FrameId            frameId;

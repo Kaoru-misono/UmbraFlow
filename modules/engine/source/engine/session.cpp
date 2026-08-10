@@ -773,6 +773,14 @@ namespace uf::engine
             return std::unexpected{std::move(reading).error()};
         }
 
+        // Bound once rather than reached through reading-> at each use. The
+        // confidence field below is read under its own guard, but in a
+        // conditional expression bugprone-unchecked-optional-access follows that
+        // guard only when the guard and the read name the SAME object: spelling
+        // either of them reading->line re-derives it and the read is reported as
+        // unchecked. One name is also one fewer indirection to follow.
+        auto& line = reading->line;
+
         auto event = engineEvent(
             "engine.text_read",
             identity,
@@ -783,14 +791,12 @@ namespace uf::engine
                 },
                 trace::TraceField{
                     .name  = "text_present",
-                    .value = reading->line.has_value(),
+                    .value = line.has_value(),
                 },
                 trace::TraceField{
                     .name  = "confidence_bp",
                     .value = static_cast<uint64>(
-                        reading->line
-                            ? reading->line->confidenceBp
-                            : uint32{0}
+                        line ? line->confidenceBp : uint32{0}
                     ),
                 },
                 trace::TraceField{
@@ -823,11 +829,11 @@ namespace uf::engine
         );
         UF_TRY(emit(event));
 
-        if (!reading->line)
+        if (!line)
         {
             return std::optional<TextReading>{std::nullopt};
         }
-        return std::optional<TextReading>{*std::move(reading->line)};
+        return std::optional<TextReading>{*std::move(line)};
     }
 
     auto EngineSession::readTextLines(

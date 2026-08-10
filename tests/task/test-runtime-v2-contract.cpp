@@ -128,6 +128,13 @@ namespace uf::task
         constexpr auto k_anchorGray = uint8{2};
         constexpr auto k_actionGray = uint8{5};
 
+        // Owns the directory it created: the destructor removes the whole tree.
+        // Copying would leave two owners of one path, and the first destruction
+        // would delete the tree the survivor still names -- silently, because
+        // remove_all's second call is a successful no-op. Moving is deleted too
+        // rather than written: every use here initializes from a prvalue, so
+        // there is no move to elide and an unused move constructor would be a
+        // second ownership rule nobody exercises.
         class TemporaryDirectory final
         {
             std::filesystem::path m_path;
@@ -145,6 +152,11 @@ namespace uf::task
                 REQUIRE(std::filesystem::create_directory(m_path));
             }
 
+            TemporaryDirectory(TemporaryDirectory const&) = delete;
+            TemporaryDirectory(TemporaryDirectory&&) = delete;
+            auto operator=(TemporaryDirectory const&) -> TemporaryDirectory& = delete;
+            auto operator=(TemporaryDirectory&&) -> TemporaryDirectory& = delete;
+
             ~TemporaryDirectory() noexcept
             {
                 auto error = std::error_code{};
@@ -156,6 +168,11 @@ namespace uf::task
                 return m_path;
             }
         };
+
+        // The ownership rule above, stated where it can fail: restoring either
+        // implicit operation stops this file compiling.
+        static_assert(!std::is_copy_constructible_v<TemporaryDirectory>);
+        static_assert(!std::is_move_constructible_v<TemporaryDirectory>);
 
         struct ArtifactFile final
         {
