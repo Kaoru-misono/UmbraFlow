@@ -107,16 +107,21 @@ def _positive_integer(value: Any, name: str) -> int:
 
 
 def _canonical_document(value: Any) -> str:
+    """Return the one canonical form: RFC 8785, the same bytes every boundary hashes.
+
+    This was a second canonicalization -- json.dumps(sort_keys=True,
+    allow_nan=False) -- that agreed with jcs_bytes only by accident. sort_keys
+    orders member names by code point where RFC 8785 orders them by UTF-16 code
+    unit, so the two disagree the moment a name outside the Basic Multilingual
+    Plane meets one in U+E000..U+FFFF; and json.dumps writes floats and
+    integers of any width, which JCS here refuses. Both fed SHA-256 identities,
+    and record_project_operation_replay_result computed one hash under each.
+    """
+
     try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        )
-    except (TypeError, ValueError) as error:
-        raise StoreError("document must be finite JSON") from error
+        return jcs_bytes(value).decode("utf-8")
+    except CanonicalJsonError as error:
+        raise StoreError(f"document must be exact RFC 8785 JSON: {error}") from error
 
 
 def _object(encoded: str | bytes) -> dict[str, Any]:

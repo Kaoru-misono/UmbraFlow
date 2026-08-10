@@ -1,0 +1,117 @@
+# Shared RFC 8785 (JSON Canonicalization Scheme) test vectors.
+#
+# RFC 8785 is spelled three times in this repository -- core/text/json-text.cpp
+# in C++, tools/annotate/jcs.py in Python and modules/task/runtime/jcs.luau in
+# Luau -- and bytes produced by one are hashed and verified by another. A
+# divergence between two spellings cannot fail either one's own tests; it
+# produces bytes that merely disagree. These rows are the one place all three
+# are held to the same expectations.
+#
+# Expected bytes come from V8, which is the reference RFC 8785 itself cites:
+# JSON.stringify IS the required string form, String(n) IS Number::toString and
+# JS < on strings IS UTF-16 code-unit order. They are NOT derived from any
+# implementation under test.
+#
+# CONSUMERS
+#   tests/core/test-json-text.cpp         reads this file
+#   tools/annotate/tests/test_backend.py  reads this file
+#   tests/task/test-jcs.luau              embeds the rows verbatim, because the
+#                                         Luau sandbox cannot open a file;
+#                                         test_backend.py fails when the
+#                                         embedded copy and this file disagree.
+#
+# FORMAT
+#   Blank lines and lines starting with # are ignored.
+#   `count <N>` appears exactly once and states how many rows follow. A
+#   consumer that parses a different number must fail: a vector file that
+#   failed to load would otherwise turn every assertion here into a silent pass.
+#   A row is space-separated tokens. A token containing = is an outcome
+#   override, a token equal to # ends the row and starts a human label, and
+#   everything else is a positional field.
+#   Every field is x followed by lowercase hex of raw bytes, so the empty
+#   byte string is a bare x, or - when the field does not apply. Hex keeps this
+#   file pure printable ASCII containing neither a quote nor a backslash, which
+#   is what lets the Luau test embed the rows as plain string literals.
+#
+# OUTCOMES
+#   Each row states one expectation per implementation. With no override an
+#   implementation must produce the row's expected bytes exactly. An override is
+#   cpp=, py= or luau= followed by one of:
+#     reject  the implementation must refuse this input, by its own error
+#     absent  the implementation has no entry point for this rule at all
+#     x<hex>  the implementation produces these bytes instead
+#   A row whose expected field is - asserts nothing through that field, so every
+#   implementation that reads it must carry an override: py and luau always, and
+#   cpp for every kind except order, where cpp reads the name list instead.
+#
+# ROW KINDS
+#   string <input> <expected>
+#       <input> is the raw bytes of a JSON string value; <expected> is the
+#       complete canonical string token, surrounding quotes included.
+#   order <expected> <name>...
+#       The member names in canonical order. C++ has no value-tree encoder, so
+#       it checks the name sequence with its ordering predicate and ignores
+#       <expected>; Python and Luau build an object mapping each name to its
+#       1-based canonical position and must emit exactly <expected>.
+#   integer <literal> <expected>
+#       <literal> is an exact decimal integer in ASCII. Python reads it as an
+#       arbitrary-precision int; Luau reads it as a double, which may round it
+#       before the encoder ever sees it.
+#   empty-object, empty-array
+#       The empty container of that shape, which carries no field but its
+#       expected bytes. Lua has one empty table for both, so this is the one
+#       value the three cannot all spell the same way.
+#   double <literal> <expected>
+#       <literal> is ASCII: either a decimal literal, or one of the four names
+#       nan, inf, -inf and -0, which each consumer maps rather than parses so
+#       that no strtod detail gets to decide the sign of a zero.
+
+count 47
+
+string x x2222 # empty string
+string x616263 x2261626322 # plain ASCII
+string x22 x225c2222 # quotation mark takes the two-character escape
+string x5c x225c5c22 # reverse solidus takes the two-character escape
+string x2f x222f22 # solidus is NOT escaped
+string x08090a0c0d x225c625c745c6e5c665c7222 # the five short control escapes
+string x00 x225c753030303022 # NUL takes lowercase u0000
+string x0b x225c753030306222 # vertical tab has no short escape
+string x1f x225c753030316622 # u001f in LOWERCASE hex; uppercase would hash differently
+string x7f x227f22 # DEL is NOT escaped
+string xc280 x22c28022 # the C1 control U+0080 is NOT escaped
+string xc3a9e282acf09f9880 x22c3a9e282acf09f988022 # non-ASCII passes through as UTF-8
+string xff x22ff22 py=reject luau=reject # 0xff is not UTF-8
+string xeda080 x22eda08022 py=reject luau=reject # an encoded lone surrogate is not UTF-8
+order x7b22f0908080223a312c22ee8080223a327d xf0908080 xee8080 # U+10000 sorts BEFORE U+E000: UTF-16 order is neither byte nor code-point order
+order x7b225c72223a312c2231223a322c22c280223a332c22c3b6223a342c22e282ac223a352c22f09f9880223a362c22efacb3223a377d x0d x31 xc280 xc3b6 xe282ac xf09f9880 xefacb3 # RFC 8785 section 3.2.3 property ordering example
+order x7b2261223a312c226162223a322c2262223a337d x61 x6162 x62 # a shorter name that is a prefix sorts first
+order x7b22223a312c2230223a322c2241223a332c225a223a342c2261223a352c227a223a367d x x30 x41 x5a x61 x7a # empty name first, then ASCII by code unit
+order x7b22f0908080223a312c22f09f9880223a322c22ee8080223a332c22efacb3223a347d xf0908080 xf09f9880 xee8080 xefacb3 # two supplementary names against two BMP names
+order - x61 xff py=reject luau=reject # an invalid UTF-8 name sorts after every valid one in c++; the others refuse
+integer x30 x30 cpp=absent # zero
+integer x31 x31 cpp=absent # one
+integer x2d31 x2d31 cpp=absent # minus one
+integer x313030 x313030 cpp=absent # no exponent and no trailing point
+integer x39303037313939323534373430393931 x39303037313939323534373430393931 cpp=absent # 2^53-1, the largest exact integer
+integer x39303037313939323534373430393932 x39303037313939323534373430393932 cpp=absent py=reject # 2^53 is exact as a double, but python refuses it
+integer x39303037313939323534373430393933 x39303037313939323534373430393932 cpp=absent py=reject # 2^53+1 has already rounded down before luau sees it
+integer x31313532393231353034363036383436393736 x31313532393231353034363036383437303030 cpp=absent py=reject # 2^60 renders with trailing zeros as a double
+double x302e31 x302e31 cpp=absent # shortest round-trip, not 0.1000000000000000055511151231257827
+double x312e35 x312e35 cpp=absent # exact half
+double x3132332e343536 x3132332e343536 cpp=absent # ordinary fraction
+double x302e3330303030303030303030303030303034 x302e3330303030303030303030303030303034 cpp=absent # 0.1 plus 0.2
+double x31652d36 x302e303030303031 cpp=absent # 0.000001 is the last magnitude written without an exponent
+double x31652d37 x31652d37 cpp=absent # 1e-7, NOT the printf spelling 1e-07
+double x2d322e35652d38 x2d322e35652d38 cpp=absent # negative, with an unpadded exponent
+double x31653135 x31303030303030303030303030303030 cpp=absent # a large power of ten still written out
+double x302e33333333333333333333333333333333 x302e33333333333333333333333333333333 cpp=absent # one third, the shortest form that reads back exactly
+double x31653230 x313030303030303030303030303030303030303030 cpp=absent # written out in full
+double x31653231 x31652b3231 cpp=absent # the boundary where the exponent form begins
+double x35652d333234 x35652d333234 cpp=absent # smallest subnormal double
+double x312e3739373639333133343836323331353765333038 x312e37393736393331333438363233313537652b333038 cpp=absent # largest finite double
+double x2d30 x30 cpp=absent # negative zero prints as 0
+double x6e616e - cpp=absent py=reject luau=reject # NaN has no JSON form
+double x696e66 - cpp=absent py=reject luau=reject # infinity has no JSON form
+double x2d696e66 - cpp=absent py=reject luau=reject # negative infinity has no JSON form
+empty-object - cpp=absent py=x7b7d luau=x5b5d # lua cannot tell an empty object from an empty array, so it emits []
+empty-array x5b5d cpp=absent # the empty array is the one empty container all of them agree on

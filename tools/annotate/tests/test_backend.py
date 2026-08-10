@@ -10,6 +10,7 @@ import inspect
 import json
 import multiprocessing
 import os
+import re
 import socket
 import sqlite3
 import subprocess
@@ -414,6 +415,78 @@ def _recover_in_process(
         policy.close()
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+JCS_VECTOR_PATH = REPOSITORY_ROOT / "tests" / "vectors" / "jcs-vectors.txt"
+LUAU_JCS_TEST_PATH = REPOSITORY_ROOT / "tests" / "task" / "test-jcs.luau"
+LUAU_VECTOR_BEGIN = "-- BEGIN SHARED VECTORS tests/vectors/jcs-vectors.txt"
+LUAU_VECTOR_END = "-- END SHARED VECTORS"
+VECTOR_FIELD = re.compile(r"^x(?:[0-9a-f]{2})*$")
+LUAU_EMBEDDED_ROW = re.compile(r'^\s*"([\x20-\x21\x23-\x5b\x5d-\x7e]*)",$')
+
+# Named so that no strtod detail decides the sign of a zero, and so that the
+# two values JSON cannot carry are written rather than parsed.
+VECTOR_SPECIAL_DOUBLES = {
+    "nan": float("nan"),
+    "inf": float("inf"),
+    "-inf": float("-inf"),
+    "-0": -0.0,
+}
+
+
+def _decode_vector_field(token: str) -> bytes | None:
+    if token == "-":
+        return None
+    if VECTOR_FIELD.match(token) is None:
+        raise ValueError(f"not a lowercase-hex vector field: {token!r}")
+    return bytes.fromhex(token[1:])
+
+
+def _parse_vector_rows(lines: list[str]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    declared: int | None = None
+    for line in lines:
+        if not line or line.startswith("#"):
+            continue
+        tokens = line.split()
+        if tokens[0] == "count":
+            if declared is not None:
+                raise ValueError("the vector file declares count twice")
+            declared = int(tokens[1])
+            continue
+        fields: list[bytes | None] = []
+        outcomes: dict[str, object] = {}
+        label = ""
+        for index, token in enumerate(tokens[1:], start=1):
+            if token == "#":
+                label = " ".join(tokens[index + 1 :])
+                break
+            name, separator, value = token.partition("=")
+            if not separator:
+                fields.append(_decode_vector_field(token))
+                continue
+            # An unknown implementation name must fail rather than be ignored:
+            # a typo would otherwise silently drop the only expectation the row
+            # carries for one of the three.
+            if name not in {"cpp", "py", "luau"}:
+                raise ValueError(f"unknown implementation in a vector row: {name!r}")
+            outcomes[name] = (
+                value if value in {"reject", "absent"} else _decode_vector_field(value)
+            )
+        rows.append({"kind": tokens[0], "fields": fields, "py": outcomes.get("py"), "label": label})
+    if declared is None:
+        raise ValueError("the vector file declares no count")
+    # A vector file that failed to load, or loaded short, would make every
+    # assertion built on it pass by having nothing to assert.
+    if len(rows) != declared:
+        raise ValueError(f"the vector file declares {declared} rows and carries {len(rows)}")
+    return rows
+
+
+def _shared_vector_lines() -> list[str]:
+    text = JCS_VECTOR_PATH.read_text(encoding="ascii")
+    return [line for line in text.split("\n") if line and not line.startswith("#")]
+
+
 class SchemaAndJcsTests(unittest.TestCase):
     def test_official_draft_202012_runtime_validation_matches_direct_validator(self) -> None:
         schema_path = Path("schema/umbraflow-runtime-v2.schema.json")
@@ -517,13 +590,89 @@ class SchemaAndJcsTests(unittest.TestCase):
         )
         with self.assertRaises(CanonicalJsonError):
             load_exact_jcs(b'{"a": 1}')
+        # A double is a JSON number, and repr is not its canonical spelling.
+        self.assertEqual(jcs_bytes({"float": 1.5}), b'{"float":1.5}')
+        self.assertEqual(jcs_bytes({"float": 100.0}), b'{"float":100}')
         with self.assertRaises(CanonicalJsonError):
-            jcs_bytes({"float": 1.5})
+            load_exact_jcs(b'{"float":100.0}')
         for value in ({"a": 1}, {"a": [True, None, "x"]}, {"a": {"b": -2}}):
             expected = json.dumps(
                 value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
             ).encode()
             self.assertEqual(jcs_bytes(value), expected)
+
+    @staticmethod
+    def _vector_input(kind: str, fields: list[bytes | None]) -> object:
+        if kind == "empty-object":
+            return {}
+        if kind == "empty-array":
+            return []
+        if kind == "string":
+            return fields[0].decode("utf-8", "surrogateescape")
+        if kind == "integer":
+            return int(fields[0].decode("ascii"))
+        if kind == "double":
+            literal = fields[0].decode("ascii")
+            if literal in VECTOR_SPECIAL_DOUBLES:
+                return VECTOR_SPECIAL_DOUBLES[literal]
+            return float(literal)
+        if kind == "order":
+            names = [field.decode("utf-8", "surrogateescape") for field in fields[1:]]
+            # Built back to front, so that a canonicalizer which merely
+            # preserved insertion order could not pass this row.
+            document: dict[str, int] = {}
+            for position in range(len(names), 0, -1):
+                document[names[position - 1]] = position
+            return document
+        raise ValueError(f"unknown vector row kind: {kind!r}")
+
+    def test_shared_jcs_vectors_hold_for_this_canonicalizer(self) -> None:
+        checked: dict[str, int] = {}
+        for row in _parse_vector_rows(_shared_vector_lines()):
+            kind = row["kind"]
+            outcome = row["py"]
+            fields = row["fields"]
+            with self.subTest(label=row["label"]):
+                if outcome == "absent":
+                    continue
+                value = self._vector_input(kind, fields)
+                if outcome == "reject":
+                    # CanonicalJsonError and nothing broader: a deleted guard
+                    # must not stay green on an incidental UnicodeError.
+                    with self.assertRaises(CanonicalJsonError):
+                        jcs_bytes(value)
+                else:
+                    if outcome is not None:
+                        expected = outcome
+                    elif kind in {"order", "empty-object", "empty-array"}:
+                        expected = fields[0]
+                    else:
+                        expected = fields[1]
+                    self.assertIsNotNone(expected)
+                    self.assertEqual(jcs_bytes(value), expected)
+            checked[kind] = checked.get(kind, 0) + 1
+        # Every kind the file can carry, so that a row this consumer silently
+        # skipped could not be mistaken for a row it passed.
+        self.assertEqual(
+            sorted(checked),
+            ["double", "empty-array", "empty-object", "integer", "order", "string"],
+        )
+
+    def test_luau_jcs_test_embeds_the_shared_vectors_verbatim(self) -> None:
+        # The Luau sandbox has no way to open a file, so tests/task/test-jcs.luau
+        # carries the rows inline. Nothing else compares the two copies, and two
+        # copies of a canonicalization contract that may silently disagree is
+        # the exact hazard the shared file exists to remove.
+        luau = LUAU_JCS_TEST_PATH.read_text(encoding="utf-8").split("\n")
+        begin = luau.index(LUAU_VECTOR_BEGIN)
+        end = luau.index(LUAU_VECTOR_END)
+        embedded = []
+        for line in luau[begin + 1 : end]:
+            match = LUAU_EMBEDDED_ROW.match(line)
+            if match is not None:
+                embedded.append(match.group(1))
+        self.assertGreater(len(embedded), 0)
+        self.assertEqual(embedded, _shared_vector_lines())
 
 
 def _schema_registry() -> Registry:
@@ -585,7 +734,20 @@ class ExactDatabaseTests(WorkspaceTestCase):
             self.assertIn("replay_bundles_immutable_delete", triggers)
             self.assertIn("project_operation_replay_intents_immutable_update", triggers)
             self.assertIn("project_operation_attestations_immutable_delete", triggers)
-        self.assertRegex(SCHEMA_ROOT_HASH, r"^[0-9a-f]{64}$")
+        # A checked-in literal, not a shape. The regex that stood here was true
+        # of any SHA-256, so deleting a CHECK constraint from any CREATE TABLE
+        # changed this value silently and every test stayed green. Changing it
+        # now has to be a deliberate edit on this line, in the same change that
+        # alters the DDL. This is still Python compared against Python: the
+        # release manifest stamps this value at publication.py:499 and
+        # store.py:2252 compares it against the same constant, while the C++
+        # reader at modules/operator/source/operator/runtime-installation.cpp
+        # only consumes the field NAME. Nothing outside this package verifies
+        # the value it receives.
+        self.assertEqual(
+            SCHEMA_ROOT_HASH,
+            "72fa0c39964397921007665e2f4f3f7936bd46f476a3adf589d32bd59ce9d873",
+        )
 
     def test_schema_and_application_drift_are_rejected_without_migration(self) -> None:
         self.workspace.close()
@@ -1358,7 +1520,7 @@ class ReplayBundleTests(WorkspaceTestCase):
         publisher.publish("candidate-1", 1, None, ids, project_id)
         self.assertEqual(self.workspace.store.publication_head()["generation"], 1)
 
-    def test_frameless_bundle_audits_but_cannot_stand_in_for_a_frame_replay(self) -> None:
+    def test_frameless_bundle_is_recorded_without_retention_and_stays_auditable(self) -> None:
         recorded = self.workspace.add_bundle(with_frames=False)
         self.assertEqual(recorded["frame_count"], 0)
         self.assertIsNone(recorded["frame_retention_expires_at"])
@@ -1368,6 +1530,16 @@ class ReplayBundleTests(WorkspaceTestCase):
             self.workspace.store.replay_bundle(recorded["bundle_id"])["document"],
             recorded["document"],
         )
+
+    def test_project_operation_evidence_is_not_accepted_in_a_ui_replay_slot(self) -> None:
+        # This was the second half of the frameless-bundle case, whose title
+        # claimed a frameless bundle cannot stand in for a frame replay. The
+        # NotFound below comes from looking a project attestation up in
+        # replay_result_intents, where only UI replay results live -- the
+        # separation of the two tables, not the bundle's frame count, which
+        # never entered either outcome. A Replay Bundle is not an input to this
+        # gate at all, so the property that title named cannot be asserted here.
+        recorded = self.workspace.add_bundle()
         self.workspace.accept()
         ids = self.workspace.attest()
         project_id = self.workspace.attest_project(bundle_id=recorded["bundle_id"])[1]
