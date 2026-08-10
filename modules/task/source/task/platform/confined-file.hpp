@@ -76,12 +76,20 @@ namespace uf::task_platform
         auto childNames() const -> Result<std::vector<std::string>>;
 
         // Removes one child of the root and everything beneath it. The name
-        // must be a single component, spelled as childNames returned it. A
-        // child that is already gone is not a failure, because removing the
-        // same orphan twice is the same outcome.
+        // must be a single component, spelled as childNames returned it, and a
+        // name that is empty, '.', '..' or that carries a separator is refused
+        // as InvalidResource rather than resolved. A child that is already gone
+        // is not a failure, because removing the same orphan twice is the same
+        // outcome.
         //
         // A reparse point anywhere in the tree refuses the removal; it can
         // never redirect it.
+        //
+        // A failure is not a rollback. Entries the walk had already finished
+        // stay removed, and the error does not say how far it got, so the
+        // caller's only recourse is to repeat the call -- which is sound
+        // exactly because an absent child is not a failure. Retire whatever
+        // records the tree AFTER the removal reports success, never before.
         [[nodiscard]]
         auto removeTree(std::string_view name) const -> Status;
     };

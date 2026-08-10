@@ -59,20 +59,153 @@ EXCLUDED_PREFIXES = {
     ("tests", "external"),
 }
 
+# The encoding prefixes a raw string literal may carry ahead of its R. Longest
+# first, so u8R"..." is not read as u followed by 8R.
+RAW_STRING_PREFIXES = ("u8", "u", "U", "L")
 
-def normalize(content: str, *, replace_tabs: bool) -> str:
+
+def is_identifier_character(value: str) -> bool:
+    return value.isalnum() or value == "_"
+
+
+def skip_line_comment(content: str, index: int) -> int:
+    """The index of the newline that ends the // comment starting at index."""
+    while True:
+        newline = content.find("\n", index)
+        if newline < 0:
+            return len(content)
+        if newline == 0 or content[newline - 1] != "\\":
+            return newline
+        index = newline + 1
+
+
+def raw_string_at(content: str, quote: int) -> tuple[int, str] | None:
+    """The body start and closing token of the raw string opening at quote."""
+    if quote == 0 or content[quote - 1] != "R":
+        return None
+
+    start = quote - 1
+    for prefix in RAW_STRING_PREFIXES:
+        if start >= len(prefix) and content[start - len(prefix) : start] == prefix:
+            start -= len(prefix)
+            break
+    if start > 0 and is_identifier_character(content[start - 1]):
+        return None
+
+    body = content.find("(", quote + 1)
+    if body < 0:
+        return None
+
+    # A d-char-sequence holds at most 16 characters and no whitespace, so a
+    # parenthesis further down the file does not open a raw string.
+    delimiter = content[quote + 1 : body]
+    if len(delimiter) > 16 or any(character.isspace() for character in delimiter):
+        return None
+
+    return body + 1, ")" + delimiter + '"'
+
+
+def mark_quoted(content: str, quote: int, mask: list[bool]) -> int:
+    """Mark an ordinary string or character literal and return the index past it."""
+    terminator = content[quote]
+    index = quote + 1
+    while index < len(content):
+        character = content[index]
+        if character == "\\" and index + 1 < len(content):
+            mask[index] = True
+            mask[index + 1] = True
+            index += 2
+            continue
+        if character == terminator:
+            return index + 1
+        if character == "\n":
+            return index
+        mask[index] = True
+        index += 1
+    return len(content)
+
+
+def mark_literals(content: str) -> list[bool]:
+    """Mark every character that carries a literal's value rather than layout.
+
+    Whitespace inside a literal is data. A raw string carries it across line
+    boundaries, where stripping a trailing space or widening a tab rewrites the
+    program's meaning while it still compiles: modules/operator's ledger pins a
+    fingerprint over the exact text of an R"sql(...)" block, and a format pass
+    that edited those bytes would make the store refuse every database already
+    written, with recomputing the fingerprint -- the documented remedy -- the
+    step that made the break permanent.
+    """
+    mask = [False] * len(content)
+    size = len(content)
+    index = 0
+    while index < size:
+        if content.startswith("//", index):
+            index = skip_line_comment(content, index)
+            continue
+        if content.startswith("/*", index):
+            end = content.find("*/", index + 2)
+            index = size if end < 0 else end + 2
+            continue
+
+        character = content[index]
+        if character == '"':
+            raw = raw_string_at(content, index)
+            if raw is None:
+                index = mark_quoted(content, index, mask)
+                continue
+            body, terminator = raw
+            end = content.find(terminator, body)
+            for position in range(body, size if end < 0 else end):
+                mask[position] = True
+            index = size if end < 0 else end + len(terminator)
+            continue
+
+        # A digit separator is not a character literal: 1'000 must not open one.
+        if character == "'" and not (
+            index > 0 and is_identifier_character(content[index - 1])
+        ):
+            index = mark_quoted(content, index, mask)
+            continue
+
+        index += 1
+    return mask
+
+
+def line_masks(mask: list[bool], lines: list[str]) -> list[list[bool]]:
+    masks = []
+    offset = 0
+    for line in lines:
+        masks.append(mask[offset : offset + len(line)])
+        offset += len(line) + 1
+    return masks
+
+
+def normalize(content: str, *, replace_tabs: bool, protect_literals: bool) -> str:
     normalized = content.replace("\r\n", "\n").replace("\r", "\n")
     lines = normalized.split("\n")
+    masks = (
+        line_masks(mark_literals(normalized), lines)
+        if protect_literals
+        else [[False] * len(line) for line in lines]
+    )
 
     while lines and lines[-1] == "":
         lines.pop()
+        masks.pop()
 
     normalized_lines = []
-    for line in lines:
-        line = line.rstrip(" \t")
+    for line, mask in zip(lines, masks):
+        end = len(line)
+        while end > 0 and line[end - 1] in " \t" and not mask[end - 1]:
+            end -= 1
+        kept = line[:end]
         if replace_tabs:
-            line = line.replace("\t", "    ")
-        normalized_lines.append(line)
+            kept = "".join(
+                "    " if character == "\t" and not protected else character
+                for character, protected in zip(kept, mask[:end])
+            )
+        normalized_lines.append(kept)
 
     if not normalized_lines:
         return ""
@@ -141,6 +274,7 @@ def process(path: Path, *, check: bool) -> bool:
     fixed = normalize(
         original,
         replace_tabs=path.suffix.lower() in SPACE_INDENTED_EXTENSIONS,
+        protect_literals=path.suffix.lower() in CPP_EXTENSIONS,
     )
     if fixed == original:
         return False

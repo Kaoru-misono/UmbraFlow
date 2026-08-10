@@ -1,5 +1,7 @@
 #include <task/platform/confined-file.hpp>
 
+#include <domain/error.hpp>
+
 #include <doctest/doctest.h>
 
 #include <algorithm>
@@ -81,6 +83,21 @@ namespace uf::task_platform
             std::filesystem::create_directory_symlink(target, link, error);
             return !error;
 #endif
+        }
+
+        // The name check refuses; everything downstream of it reports an I/O
+        // failure. Asking for the kind rather than for failure alone is what
+        // makes the check falsifiable: with its '.' and '..' clauses deleted
+        // both names still fail, on Windows because the held root handle denies
+        // a second open asking for DELETE and on POSIX because unlinkat rejects
+        // them, but the kind becomes IoFailure -- and on POSIX the root has been
+        // emptied by the time it is reported.
+        [[nodiscard]]
+        auto refusedAsInvalidResource(Status const& status) -> bool
+        {
+            return !status.has_value()
+                && automationErrorKind(status.error())
+                    == AutomationErrorKind::InvalidResource;
         }
 
         auto createChain(
@@ -253,8 +270,12 @@ namespace uf::task_platform
         createChain(temporary.path() / "deep", 40U);
         CHECK_FALSE(root->removeTree("deep").has_value());
 
-        // Nothing is unlinked until every child call has returned, so the
-        // refusal leaves the tree standing rather than half removed.
+        // This chain holds one entry per level, so the walk reaches nothing it
+        // could have finished before the level that refuses, and the whole tree
+        // is still standing. Removal is not all-or-nothing in general: a
+        // directory is unlinked once its own children have returned, so
+        // siblings the walk already finished are gone by the time a later one
+        // refuses.
         CHECK(std::filesystem::exists(temporary.path() / "deep"));
     }
 
@@ -269,11 +290,11 @@ namespace uf::task_platform
         auto root = ConfinedRoot::open(inside);
         REQUIRE(root.has_value());
 
-        CHECK_FALSE(root->removeTree("").has_value());
-        CHECK_FALSE(root->removeTree(".").has_value());
-        CHECK_FALSE(root->removeTree("..").has_value());
-        CHECK_FALSE(root->removeTree("orphan/assets").has_value());
-        CHECK_FALSE(root->removeTree("orphan\\assets").has_value());
+        CHECK(refusedAsInvalidResource(root->removeTree("")));
+        CHECK(refusedAsInvalidResource(root->removeTree(".")));
+        CHECK(refusedAsInvalidResource(root->removeTree("..")));
+        CHECK(refusedAsInvalidResource(root->removeTree("orphan/assets")));
+        CHECK(refusedAsInvalidResource(root->removeTree("orphan\\assets")));
         CHECK(std::filesystem::exists(inside / "orphan" / "assets"));
     }
 
