@@ -2,8 +2,10 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
@@ -79,6 +81,19 @@ namespace uf::task_platform
             std::filesystem::create_directory_symlink(target, link, error);
             return !error;
 #endif
+        }
+
+        auto createChain(
+            std::filesystem::path const& base,
+            std::size_t levels
+        ) -> void
+        {
+            auto path = base;
+            for (auto level = std::size_t{0}; level < levels; ++level)
+            {
+                path /= "d";
+            }
+            REQUIRE(std::filesystem::create_directories(path));
         }
     }
 
@@ -166,5 +181,153 @@ namespace uf::task_platform
 
         // A ceiling below the file's size is refused rather than truncated.
         CHECK_FALSE(root->readFile("manifest.json", 1U).has_value());
+    }
+
+    TEST_CASE("a confined root lists its children and removes one tree whole")
+    {
+        auto const temporary = TemporaryDirectory{};
+        std::filesystem::create_directories(temporary.path() / "orphan" / "assets");
+        write(temporary.path() / "orphan" / "assets" / "one.png", "pixels");
+        write(temporary.path() / "orphan" / "manifest.json", "{}");
+        write(temporary.path() / "keep.txt", "kept");
+
+        auto root = ConfinedRoot::open(temporary.path());
+        REQUIRE(root.has_value());
+
+        auto const names = root->childNames();
+        REQUIRE(names.has_value());
+        CHECK(names->size() == 2U);
+        CHECK(std::ranges::contains(*names, std::string{"orphan"}));
+        CHECK(std::ranges::contains(*names, std::string{"keep.txt"}));
+
+        REQUIRE(root->removeTree("orphan").has_value());
+        CHECK_FALSE(std::filesystem::exists(temporary.path() / "orphan"));
+        CHECK(std::filesystem::exists(temporary.path() / "keep.txt"));
+
+        // Removing what is already gone is the outcome the caller asked for.
+        CHECK(root->removeTree("orphan").has_value());
+    }
+
+    TEST_CASE("a confined root refuses to remove a tree with a link planted in it")
+    {
+        auto const temporary = TemporaryDirectory{};
+        auto const outside = temporary.path() / "outside";
+        std::filesystem::create_directories(outside);
+        write(outside / "canary.txt", "must survive");
+
+        auto const inside = temporary.path() / "root";
+        std::filesystem::create_directories(inside / "orphan");
+        auto const nested = linkDirectory(inside / "orphan" / "assets", outside);
+#if defined(_WIN32)
+        REQUIRE(nested);
+#else
+        if (!nested)
+        {
+            MESSAGE("this account cannot create a directory symlink");
+            return;
+        }
+#endif
+        REQUIRE(linkDirectory(inside / "direct", outside));
+
+        auto root = ConfinedRoot::open(inside);
+        REQUIRE(root.has_value());
+
+        // The link is refused rather than unlinked through, whether it is the
+        // named child or something the walk reaches under it.
+        CHECK_FALSE(root->removeTree("direct").has_value());
+        CHECK_FALSE(root->removeTree("orphan").has_value());
+        CHECK(std::filesystem::is_regular_file(outside / "canary.txt"));
+    }
+
+    TEST_CASE("a confined root refuses a removal deeper than its recursion ceiling")
+    {
+        auto const temporary = TemporaryDirectory{};
+        auto root = ConfinedRoot::open(temporary.path());
+        REQUIRE(root.has_value());
+
+        // The positive control: nesting on its own is not what is refused.
+        createChain(temporary.path() / "shallow", 8U);
+        REQUIRE(root->removeTree("shallow").has_value());
+        CHECK_FALSE(std::filesystem::exists(temporary.path() / "shallow"));
+
+        createChain(temporary.path() / "deep", 40U);
+        CHECK_FALSE(root->removeTree("deep").has_value());
+
+        // Nothing is unlinked until every child call has returned, so the
+        // refusal leaves the tree standing rather than half removed.
+        CHECK(std::filesystem::exists(temporary.path() / "deep"));
+    }
+
+    TEST_CASE("a confined root refuses a removal name that is not a single child")
+    {
+        // The root sits one level down, so a name that escaped it could still
+        // only reach this test's own directory.
+        auto const temporary = TemporaryDirectory{};
+        auto const inside = temporary.path() / "root";
+        std::filesystem::create_directories(inside / "orphan" / "assets");
+
+        auto root = ConfinedRoot::open(inside);
+        REQUIRE(root.has_value());
+
+        CHECK_FALSE(root->removeTree("").has_value());
+        CHECK_FALSE(root->removeTree(".").has_value());
+        CHECK_FALSE(root->removeTree("..").has_value());
+        CHECK_FALSE(root->removeTree("orphan/assets").has_value());
+        CHECK_FALSE(root->removeTree("orphan\\assets").has_value());
+        CHECK(std::filesystem::exists(inside / "orphan" / "assets"));
+    }
+
+    TEST_CASE("a confined root stays bound to the directory it opened, not to its name")
+    {
+        // The two platforms hold this by different means and can therefore be
+        // asked different questions, so both are asked rather than one skipped.
+        // A Windows handle is opened without delete sharing, so the rename below
+        // is refused and the substitution can never be staged; a POSIX
+        // descriptor does not block the rename, so the substitution is staged
+        // and every operation is then required to reach the opened directory
+        // rather than the name it used to have.
+        auto const temporary = TemporaryDirectory{};
+        auto const inside = temporary.path() / "root";
+        std::filesystem::create_directories(inside / "orphan");
+        write(inside / "orphan" / "kept.txt", "opened");
+        write(inside / "real.txt", "opened");
+
+        auto root = ConfinedRoot::open(inside);
+        REQUIRE(root.has_value());
+
+        auto const moved = temporary.path() / "moved";
+        auto renameError = std::error_code{};
+        std::filesystem::rename(inside, moved, renameError);
+
+#if defined(_WIN32)
+        CHECK(static_cast<bool>(renameError));
+        CHECK(std::filesystem::exists(inside / "real.txt"));
+#else
+        REQUIRE_FALSE(static_cast<bool>(renameError));
+
+        // A decoy takes the vacated name. Its entries are named differently
+        // from the opened tree's, so any operation that resolves the root by
+        // name again is distinguishable from one that goes through the
+        // descriptor.
+        std::filesystem::create_directories(inside / "orphan");
+        write(inside / "orphan" / "decoy.txt", "decoy");
+        write(inside / "decoy.txt", "decoy");
+
+        auto const names = root->childNames();
+        REQUIRE(names.has_value());
+        CHECK(std::ranges::contains(*names, std::string{"real.txt"}));
+        CHECK_FALSE(std::ranges::contains(*names, std::string{"decoy.txt"}));
+
+        CHECK(root->readFile("real.txt", 1024U).has_value());
+        CHECK_FALSE(root->readFile("decoy.txt", 1024U).has_value());
+        CHECK(root->readFile("orphan/kept.txt", 1024U).has_value());
+        CHECK_FALSE(root->readFile("orphan/decoy.txt", 1024U).has_value());
+
+        // The removal takes the opened directory's child; the decoy standing at
+        // the old name keeps its own.
+        REQUIRE(root->removeTree("orphan").has_value());
+        CHECK_FALSE(std::filesystem::exists(moved / "orphan"));
+        CHECK(std::filesystem::is_regular_file(inside / "orphan" / "decoy.txt"));
+#endif
     }
 }

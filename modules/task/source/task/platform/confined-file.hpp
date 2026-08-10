@@ -6,20 +6,23 @@
 #include <filesystem>
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
 namespace uf::task_platform
 {
-    // A directory tree opened so that nothing can change what is read between
-    // the moment a path is checked and the moment it is opened.
+    // A directory tree opened so that nothing can change what is read, written
+    // or removed between the moment a path is checked and the moment the object
+    // it named is used.
     //
     // Verifying bytes by hash defeats substitution but not confinement: a path
     // that is inspected and then opened by name is resolved twice, and only the
     // second resolution decides what the process actually reads. This type
     // resolves once. The root handle is held for the object's lifetime, every
     // directory on the way to a file is opened and held while that file is
-    // opened, and no component is ever traversed through a reparse point --
+    // opened, enumeration goes through a held handle rather than through the
+    // name again, and no component is ever traversed through a reparse point --
     // checked by attribute rather than by tag, so a junction, an AppExecLink
     // and a cloud placeholder are refused alike.
     //
@@ -66,5 +69,20 @@ namespace uf::task_platform
             std::string_view relativeText,
             std::span<std::byte const> bytes
         ) const -> Status;
+
+        // The root's immediate child names, UTF-8 encoded and in no particular
+        // order.
+        [[nodiscard]]
+        auto childNames() const -> Result<std::vector<std::string>>;
+
+        // Removes one child of the root and everything beneath it. The name
+        // must be a single component, spelled as childNames returned it. A
+        // child that is already gone is not a failure, because removing the
+        // same orphan twice is the same outcome.
+        //
+        // A reparse point anywhere in the tree refuses the removal; it can
+        // never redirect it.
+        [[nodiscard]]
+        auto removeTree(std::string_view name) const -> Status;
     };
 }

@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <format>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -21,6 +22,8 @@
 #    endif
 #    include <windows.h>
 #else
+#    include <cerrno>
+#    include <dirent.h>
 #    include <fcntl.h>
 #    include <sys/stat.h>
 #    include <unistd.h>
@@ -30,6 +33,12 @@ namespace uf::task_platform
 {
     namespace
     {
+        // A tree an installer produced is three levels deep at most. The
+        // ceiling exists because the removal below walks whatever is actually
+        // there, and what is actually there is writable by whoever can plant a
+        // link in it.
+        constexpr auto k_maximumRemovalDepth = uint32{32};
+
         [[nodiscard]]
         auto refuse(std::string message) -> std::unexpected<Error>
         {
@@ -40,6 +49,24 @@ namespace uf::task_platform
         auto ioFailure(std::string message) -> std::unexpected<Error>
         {
             return fail(AutomationErrorKind::IoFailure, std::move(message));
+        }
+
+        // A child name must name a child. These are the shapes that would
+        // otherwise leave the directory this root was opened on.
+        [[nodiscard]]
+        auto requireChildName(std::string_view name) -> Status
+        {
+            if (
+                name.empty()
+                || name == "."
+                || name == ".."
+                || name.contains('/')
+                || name.contains('\\')
+            )
+            {
+                return refuse(std::format("'{}' is not a single child name", name));
+            }
+            return ok();
         }
 
         // The manifest spelling is already validated by the caller; this only
@@ -147,15 +174,39 @@ namespace uf::task_platform
             File,
         };
 
-        [[nodiscard]]
-        auto openNoFollow(
-            std::wstring const& path,
-            OpenKind kind
-        ) -> Result<Handle>
+        // FILE_SHARE_DELETE is deliberately absent from every open below: while
+        // a handle lives its object cannot be renamed or removed by anyone
+        // else, which is what keeps the accumulated path bound to the objects
+        // already checked. That is also why the root is opened WITHOUT DELETE
+        // in its mask -- a second open asking for an access the first one's
+        // share mode denies is a sharing violation against ourselves.
+        constexpr auto k_directoryAccess = static_cast<DWORD>(
+            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
+        );
+
+        constexpr auto k_fileReadAccess = static_cast<DWORD>(GENERIC_READ);
+
+        constexpr auto k_removalAccess = static_cast<DWORD>(
+            DELETE | FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
+        );
+
+        constexpr auto k_enumerationBufferBytes = std::size_t{64U * 1024U};
+
+        struct OpenedNode final
         {
-            // FILE_SHARE_DELETE is deliberately absent: while this handle
-            // lives, the object cannot be renamed or deleted, which is what
-            // stops a later component resolving through a different prefix.
+            Handle handle{};
+            bool   directory{};
+        };
+
+        // The one resolution every operation shares. An absent name is reported
+        // as an empty optional rather than as a failure, because a removal that
+        // finds its target already gone has the outcome it wanted.
+        [[nodiscard]]
+        auto openNode(
+            std::wstring const& path,
+            DWORD access
+        ) -> Result<std::optional<OpenedNode>>
+        {
             // FILE_FLAG_OPEN_REPARSE_POINT opens the link itself rather than
             // its target, so the attribute check below sees it.
             // SAFETY: path is a null-terminated wide string owned by the
@@ -163,9 +214,7 @@ namespace uf::task_platform
             // adopted by Handle, which closes it exactly once.
             auto* const raw = ::CreateFileW(
                 path.c_str(),
-                kind == OpenKind::Directory
-                    ? static_cast<DWORD>(FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES)
-                    : static_cast<DWORD>(GENERIC_READ),
+                access,
                 static_cast<DWORD>(FILE_SHARE_READ),
                 nullptr,
                 static_cast<DWORD>(OPEN_EXISTING),
@@ -174,9 +223,17 @@ namespace uf::task_platform
                 ),
                 nullptr
             );
+            auto const openError = ::GetLastError();
             auto handle = Handle{raw};
             if (!handle.valid())
             {
+                if (
+                    openError == ERROR_FILE_NOT_FOUND
+                    || openError == ERROR_PATH_NOT_FOUND
+                )
+                {
+                    return std::optional<OpenedNode>{};
+                }
                 return ioFailure("cannot open a confined path");
             }
 
@@ -192,12 +249,166 @@ namespace uf::task_platform
             {
                 return refuse("a confined path is a reparse point");
             }
-            auto const isDirectory = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U;
-            if (isDirectory != (kind == OpenKind::Directory))
+            return std::optional<OpenedNode>{
+                OpenedNode{
+                    .handle    = std::move(handle),
+                    .directory = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0U,
+                }
+            };
+        }
+
+        // The walk's open: the name must exist and must be the kind the caller
+        // declared it would be.
+        [[nodiscard]]
+        auto openNoFollow(
+            std::wstring const& path,
+            OpenKind kind
+        ) -> Result<Handle>
+        {
+            auto const access = kind == OpenKind::Directory
+                ? k_directoryAccess
+                : k_fileReadAccess;
+            UF_TRY_VALUE(opened, openNode(path, access));
+            if (!opened)
+            {
+                return ioFailure("cannot open a confined path");
+            }
+            if (opened->directory != (kind == OpenKind::Directory))
             {
                 return refuse("a confined path is not the kind its manifest declared");
             }
-            return handle;
+            return std::move(opened->handle);
+        }
+
+        struct RootIdentity final
+        {
+            uint32 volumeSerial{};
+            uint64 fileIndex{};
+        };
+
+        [[nodiscard]]
+        auto identityOf(Handle const& handle) -> Result<RootIdentity>
+        {
+            auto information = BY_HANDLE_FILE_INFORMATION{};
+            // SAFETY: handle is valid and information is a local the API fills
+            // completely on success.
+            if (::GetFileInformationByHandle(handle.get(), &information) == 0)
+            {
+                return ioFailure("cannot identify a confined root");
+            }
+            auto index = static_cast<uint64>(information.nFileIndexHigh) << 32U;
+            index |= static_cast<uint64>(information.nFileIndexLow);
+            return RootIdentity{
+                .volumeSerial = static_cast<uint32>(information.dwVolumeSerialNumber),
+                .fileIndex    = index,
+            };
+        }
+
+        // Enumeration goes THROUGH the handle rather than through the name
+        // again: FindFirstFileW would reopen the directory, and a second open
+        // is both another resolution to get right and a sharing question
+        // against the handle already held.
+        [[nodiscard]]
+        auto childWideNames(Handle const& handle) -> Result<std::vector<std::wstring>>
+        {
+            auto buffer  = std::vector<std::byte>(k_enumerationBufferBytes);
+            auto names   = std::vector<std::wstring>{};
+            auto restart = true;
+            while (true)
+            {
+                auto const informationClass = restart
+                    ? FileIdBothDirectoryRestartInfo
+                    : FileIdBothDirectoryInfo;
+                restart = false;
+                // SAFETY: buffer is a live vector and the size passed is its
+                // own; the API fills it with a chain of records whose
+                // NextEntryOffset bounds the walk below.
+                auto const filled = ::GetFileInformationByHandleEx(
+                    handle.get(),
+                    informationClass,
+                    buffer.data(),
+                    static_cast<DWORD>(buffer.size())
+                );
+                if (filled == 0)
+                {
+                    if (::GetLastError() == ERROR_NO_MORE_FILES)
+                    {
+                        return names;
+                    }
+                    return ioFailure("cannot enumerate a confined directory");
+                }
+
+                auto offset = std::size_t{};
+                while (true)
+                {
+                    if (offset + sizeof(FILE_ID_BOTH_DIR_INFO) > buffer.size())
+                    {
+                        return ioFailure("a directory enumeration record ran past its buffer");
+                    }
+                    // SAFETY: the bound above keeps the whole fixed part of the
+                    // record inside the buffer, and the name length below is
+                    // the one the same record declares.
+                    auto const* const entry = reinterpret_cast<FILE_ID_BOTH_DIR_INFO const*>(
+                        buffer.data() + offset
+                    );
+                    auto const nameBytes = static_cast<std::size_t>(entry->FileNameLength);
+                    auto name = std::wstring{entry->FileName, nameBytes / sizeof(wchar_t)};
+                    if (name != L"." && name != L"..")
+                    {
+                        names.emplace_back(std::move(name));
+                    }
+                    if (entry->NextEntryOffset == 0U)
+                    {
+                        break;
+                    }
+                    offset += entry->NextEntryOffset;
+                }
+            }
+        }
+
+        [[nodiscard]]
+        auto removeTreeAt(std::wstring const& path, uint32 depth) -> Status
+        {
+            if (depth > k_maximumRemovalDepth)
+            {
+                return refuse("a confined tree is deeper than its ceiling");
+            }
+            UF_TRY_VALUE(opened, openNode(path, k_removalAccess));
+            if (!opened)
+            {
+                return ok();
+            }
+            if (opened->directory)
+            {
+                UF_TRY_VALUE(names, childWideNames(opened->handle));
+                for (auto const& name : names)
+                {
+                    auto child = path;
+                    child += L'\\';
+                    child += name;
+                    UF_TRY(removeTreeAt(child, depth + 1U));
+                }
+            }
+
+            // The handle already names the object the attribute check passed,
+            // so the removal cannot be pointed at a different one. It takes
+            // effect when the handle closes at the end of this call, which is
+            // why a parent only marks itself once every child call returned.
+            auto disposition = FILE_DISPOSITION_INFO{};
+            disposition.DeleteFile = TRUE;
+            // SAFETY: opened->handle carries DELETE access and disposition is a
+            // local of exactly the size the information class declares.
+            auto const marked = ::SetFileInformationByHandle(
+                opened->handle.get(),
+                FileDispositionInfo,
+                &disposition,
+                static_cast<DWORD>(sizeof(disposition))
+            );
+            if (marked == 0)
+            {
+                return ioFailure("cannot remove a confined path");
+            }
+            return ok();
         }
 
         [[nodiscard]]
@@ -307,28 +518,130 @@ namespace uf::task_platform
                 }
             }
         };
+
+        struct DirectoryStreamCloser final
+        {
+            auto operator()(DIR* stream) const noexcept -> void
+            {
+                static_cast<void>(::closedir(stream));
+            }
+        };
+
+        using DirectoryStream = std::unique_ptr<DIR, DirectoryStreamCloser>;
+
+        [[nodiscard]]
+        auto childNamesAt(int directory) -> Result<std::vector<std::string>>
+        {
+            // SAFETY: fdopendir takes ownership of the descriptor it is given,
+            // so it gets a duplicate and the caller's directory descriptor
+            // stays valid after the stream closes.
+            auto const duplicate = ::dup(directory);
+            if (duplicate < 0)
+            {
+                return ioFailure("cannot enumerate a confined directory");
+            }
+            auto stream = DirectoryStream{::fdopendir(duplicate)};
+            if (stream == nullptr)
+            {
+                // SAFETY: the duplicate is still ours because fdopendir failed.
+                static_cast<void>(::close(duplicate));
+                return ioFailure("cannot enumerate a confined directory");
+            }
+
+            auto names = std::vector<std::string>{};
+            for (
+                auto const* entry = ::readdir(stream.get());
+                entry != nullptr;
+                entry = ::readdir(stream.get())
+            )
+            {
+                // SAFETY: d_name is a NUL-terminated name the stream owns until
+                // the next readdir, and its array bound is not its length, so
+                // the contract that ends it is the terminator rather than a
+                // count. The cast states that decay instead of leaving it
+                // implicit; the string copies out before the stream advances.
+                auto name = std::string{static_cast<char const*>(entry->d_name)};
+                if (name == "." || name == "..")
+                {
+                    continue;
+                }
+                names.emplace_back(std::move(name));
+            }
+            return names;
+        }
+
+        [[nodiscard]]
+        auto removeTreeAt(
+            int parent,
+            std::string const& name,
+            uint32 depth
+        ) -> Status
+        {
+            if (depth > k_maximumRemovalDepth)
+            {
+                return refuse("a confined tree is deeper than its ceiling");
+            }
+
+            // Declared rather than `auto metadata = ...{}`: `stat` names a
+            // function as well as the struct, so ordinary lookup finds the
+            // function and the type is reachable only through its elaborated
+            // form.
+            struct stat metadata{};
+            // SAFETY: parent is a directory descriptor owned by the caller and
+            // name is null-terminated for the duration of the call.
+            if (::fstatat(parent, name.c_str(), &metadata, AT_SYMLINK_NOFOLLOW) != 0)
+            {
+                if (errno == ENOENT)
+                {
+                    return ok();
+                }
+                return ioFailure("cannot inspect a confined path");
+            }
+            if (S_ISLNK(metadata.st_mode))
+            {
+                return refuse("a confined path is a link");
+            }
+            if (S_ISDIR(metadata.st_mode))
+            {
+                // SAFETY: parent is owned by the caller, and O_NOFOLLOW makes a
+                // link at this component fail rather than resolve.
+                auto child = Descriptor{
+                    ::openat(
+                        parent,
+                        name.c_str(),
+                        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                    )
+                };
+                if (!child.valid())
+                {
+                    return refuse("a confined directory is missing or is a link");
+                }
+                UF_TRY_VALUE(names, childNamesAt(child.get()));
+                for (auto const& entry : names)
+                {
+                    UF_TRY(removeTreeAt(child.get(), entry, depth + 1U));
+                }
+                // SAFETY: parent is owned by the caller and name is
+                // null-terminated for the duration of the call.
+                if (::unlinkat(parent, name.c_str(), AT_REMOVEDIR) != 0)
+                {
+                    return ioFailure("cannot remove a confined directory");
+                }
+                return ok();
+            }
+
+            // SAFETY: parent is owned by the caller and name is null-terminated
+            // for the duration of the call; unlinkat never follows a link.
+            if (::unlinkat(parent, name.c_str(), 0) != 0)
+            {
+                return ioFailure("cannot remove a confined file");
+            }
+            return ok();
+        }
 #endif
     }
 
 #if defined(_WIN32)
-    namespace
-    {
-        [[nodiscard]]
-        auto rootIdentity(Handle const& handle) -> Result<std::pair<uint32, uint64>>
-        {
-            auto information = BY_HANDLE_FILE_INFORMATION{};
-            // SAFETY: handle is valid and information is a local the API fills
-            // completely on success.
-            if (::GetFileInformationByHandle(handle.get(), &information) == 0)
-            {
-                return ioFailure("cannot identify a confined root");
-            }
-            auto const index = (static_cast<uint64>(information.nFileIndexHigh) << 32U)
-                | static_cast<uint64>(information.nFileIndexLow);
-            return std::pair{static_cast<uint32>(information.dwVolumeSerialNumber), index};
-        }
-    }
-
     class ConfinedRoot::Impl final
     {
     public:
@@ -343,6 +656,26 @@ namespace uf::task_platform
         // branch gets for free.
         uint32 volumeSerial{};
         uint64 fileIndex{};
+
+        // Every operation starts here: the name must still reach the object
+        // this root was opened on, or a rename above it would silently move the
+        // whole walk.
+        [[nodiscard]]
+        auto verifyAnchor() const -> Status
+        {
+            UF_TRY_VALUE(anchor, openNoFollow(rootPath, OpenKind::Directory));
+            UF_TRY_VALUE(identity, identityOf(anchor));
+            if (
+                identity.volumeSerial != volumeSerial
+                || identity.fileIndex != fileIndex
+            )
+            {
+                return refuse(
+                    "the confined root no longer resolves to the directory it was opened on"
+                );
+            }
+            return ok();
+        }
     };
 #else
     class ConfinedRoot::Impl final
@@ -370,12 +703,12 @@ namespace uf::task_platform
     {
         auto const native = root.native();
         UF_TRY_VALUE(handle, openNoFollow(native, OpenKind::Directory));
-        UF_TRY_VALUE(identity, rootIdentity(handle));
+        UF_TRY_VALUE(identity, identityOf(handle));
         auto implementation = std::make_unique<Impl>();
         implementation->rootPath     = native;
         implementation->root         = std::move(handle);
-        implementation->volumeSerial = identity.first;
-        implementation->fileIndex    = identity.second;
+        implementation->volumeSerial = identity.volumeSerial;
+        implementation->fileIndex    = identity.fileIndex;
         return ConfinedRoot{std::move(implementation)};
     }
 
@@ -385,20 +718,7 @@ namespace uf::task_platform
     ) const -> Result<std::vector<std::byte>>
     {
         UF_TRY_VALUE(parts, components(relativeText));
-
-        // The name must still reach the object this root was opened on; a
-        // rename above it would otherwise silently move the whole walk.
-        UF_TRY_VALUE(anchor, openNoFollow(m_impl->rootPath, OpenKind::Directory));
-        UF_TRY_VALUE(identity, rootIdentity(anchor));
-        if (
-            identity.first != m_impl->volumeSerial
-            || identity.second != m_impl->fileIndex
-        )
-        {
-            return refuse(
-                "the confined root no longer resolves to the directory it was opened on"
-            );
-        }
+        UF_TRY(m_impl->verifyAnchor());
 
         // Every ancestor is held open until the file itself has been opened, so
         // no directory on the way can be renamed or replaced in between.
@@ -424,20 +744,7 @@ namespace uf::task_platform
     ) const -> Status
     {
         UF_TRY_VALUE(parts, components(relativeText));
-
-        // The name must still reach the object this root was opened on; a
-        // rename above it would otherwise silently move the whole walk.
-        UF_TRY_VALUE(anchor, openNoFollow(m_impl->rootPath, OpenKind::Directory));
-        UF_TRY_VALUE(identity, rootIdentity(anchor));
-        if (
-            identity.first != m_impl->volumeSerial
-            || identity.second != m_impl->fileIndex
-        )
-        {
-            return refuse(
-                "the confined root no longer resolves to the directory it was opened on"
-            );
-        }
+        UF_TRY(m_impl->verifyAnchor());
 
         auto held = std::vector<Handle>{};
         auto path = m_impl->rootPath;
@@ -504,6 +811,40 @@ namespace uf::task_platform
             return ioFailure("cannot flush a confined file");
         }
         return ok();
+    }
+
+    auto ConfinedRoot::childNames() const -> Result<std::vector<std::string>>
+    {
+        UF_TRY(m_impl->verifyAnchor());
+        UF_TRY_VALUE(wide, childWideNames(m_impl->root));
+        auto names = std::vector<std::string>{};
+        names.reserve(wide.size());
+        for (auto const& value : wide)
+        {
+            auto const encoded = std::filesystem::path{value}.u8string();
+            names.emplace_back(encoded.begin(), encoded.end());
+        }
+        return names;
+    }
+
+    auto ConfinedRoot::removeTree(std::string_view name) const -> Status
+    {
+        UF_TRY(requireChildName(name));
+        UF_TRY(m_impl->verifyAnchor());
+
+        // The name came back out of childNames as UTF-8, so it goes back in as
+        // UTF-8; letting path interpret it as the active code page would break
+        // the round trip for exactly the names an attacker chooses.
+        auto decoded = std::u8string{};
+        decoded.reserve(name.size());
+        for (auto const value : name)
+        {
+            decoded.push_back(static_cast<char8_t>(value));
+        }
+        auto path = m_impl->rootPath;
+        path += L'\\';
+        path += std::filesystem::path{decoded}.native();
+        return removeTreeAt(path, 0U);
     }
 #else
     auto ConfinedRoot::open(
@@ -578,18 +919,19 @@ namespace uf::task_platform
             return refuse("a confined file is empty or exceeds its ceiling");
         }
 
-        auto bytes  = std::vector<std::byte>(*total);
-        auto filled = std::size_t{};
-        while (filled < *total)
+        auto bytes     = std::vector<std::byte>(*total);
+        auto remaining = std::span<std::byte>{bytes};
+        while (!remaining.empty())
         {
-            // SAFETY: bytes.data() + filled stays inside the vector because
-            // filled < *total == bytes.size().
-            auto const read = ::read(file.get(), bytes.data() + filled, *total - filled);
-            if (read <= 0)
+            // SAFETY: the count offered is the size of what is left, so the
+            // descriptor can only fill inside it; a return outside
+            // (0, remaining.size()] is refused rather than stepped past.
+            auto const read = ::read(file.get(), remaining.data(), remaining.size());
+            if (read <= 0 || static_cast<std::size_t>(read) > remaining.size())
             {
                 return ioFailure("cannot read a confined file");
             }
-            filled += static_cast<std::size_t>(read);
+            remaining = remaining.subspan(static_cast<std::size_t>(read));
         }
         return bytes;
     }
@@ -639,23 +981,35 @@ namespace uf::task_platform
             return refuse("a confined file already exists or is a link");
         }
 
-        auto written = std::size_t{};
-        while (written < bytes.size())
+        auto remaining = bytes;
+        while (!remaining.empty())
         {
-            // SAFETY: bytes.data() + written stays inside the span because
-            // written < bytes.size().
-            auto const wrote = ::write(file.get(), bytes.data() + written, bytes.size() - written);
-            if (wrote <= 0)
+            // SAFETY: the count offered is the size of what is left, so the
+            // descriptor can only consume inside it; a return outside
+            // (0, remaining.size()] is refused rather than stepped past.
+            auto const wrote = ::write(file.get(), remaining.data(), remaining.size());
+            if (wrote <= 0 || static_cast<std::size_t>(wrote) > remaining.size())
             {
                 return ioFailure("cannot write a confined file");
             }
-            written += static_cast<std::size_t>(wrote);
+            remaining = remaining.subspan(static_cast<std::size_t>(wrote));
         }
         if (::fsync(file.get()) != 0)
         {
             return ioFailure("cannot flush a confined file");
         }
         return ok();
+    }
+
+    auto ConfinedRoot::childNames() const -> Result<std::vector<std::string>>
+    {
+        return childNamesAt(m_impl->root.get());
+    }
+
+    auto ConfinedRoot::removeTree(std::string_view name) const -> Status
+    {
+        UF_TRY(requireChildName(name));
+        return removeTreeAt(m_impl->root.get(), std::string{name}, 0U);
     }
 #endif
 }
