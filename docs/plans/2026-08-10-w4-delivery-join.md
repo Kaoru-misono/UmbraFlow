@@ -14,6 +14,13 @@ halves of that sentence live in different modules and are joined by nothing.
 document. `docs/plans/2026-08-10-next-block.md` §2 assigns `c03` and `a07` here
 and §4 rules that `OperatorCoordinator` grows rather than gaining a sibling.
 
+> **Amended 2026-08-10: read §1.2 of
+> [the W2-W7 reconciliation](2026-08-10-w2-w7-reconciliation.md) first.**
+> `contract-control-c03` and `contract-agent-a07` do not exist; `dcc43b5`
+> renamed them `schema-control-c03` and `schema-agent-a07`. Every row of §7's
+> mutation table names a gate W4 must **create**, migration report first, rather
+> than one it can extend.
+
 ## 1. The linearization argument
 
 ### 1.1 What must be totally ordered

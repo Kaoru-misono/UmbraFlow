@@ -37,8 +37,23 @@ WarningsAsErrors: '*'
 # no lookahead: a negative-lookahead pattern silently matches nothing and drops
 # every header diagnostic. Name the first-party roots positively -- the same
 # four scripts/check_cpp_format.py scopes itself to -- and subtract the vendored
-# and generated trees, every one of which lives under an `external` or `build`
-# directory.
+# and generated trees.
+#
+# The exclusion is the Python gates' vocabulary, not a description of today's
+# tree: VENDORED_DIRECTORY_NAMES in check_safety.py and check_cpp_format.py is
+# {external, third_party}, and fix_format.py skips both `.worktrees` and
+# `.claude/worktrees`. `third_party` is named here before one exists, so the
+# first one cannot arrive linted under WarningsAsErrors while both Python gates
+# skip it. All binary directories are ${sourceDir}/build/${presetName}.
+#
+# ExcludeHeaderFilterRegex needs clang-tidy 19 or newer. An unrecognised key is
+# not ignored: clang-tidy reports `unknown key`, discards this entire file, and
+# then analyses with its built-in defaults and no WarningsAsErrors, exiting 0.
+# Measured on the clang-tidy 19.1.5 the Visual Studio 2022 toolchain puts on
+# PATH, which the x64-analysis preset uses because it pins nothing. An older
+# clang-tidy therefore does not narrow this configuration, it deletes it, and
+# the analysis lane goes green having checked none of it. See
+# docs/pitfalls/checks-that-cannot-fail.md.
 HeaderFilterRegex: '[/\\](modules|entry|tests|contract-suite)[/\\]'
-ExcludeHeaderFilterRegex: '[/\\](external|build|\.worktrees)[/\\]'
+ExcludeHeaderFilterRegex: '[/\\](external|third_party|build|\.?worktrees)[/\\]'
 FormatStyle: none

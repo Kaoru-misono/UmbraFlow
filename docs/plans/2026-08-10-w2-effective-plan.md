@@ -9,6 +9,15 @@ Depends on: nothing. `W3`, `W4` and `W6` depend on this.
 Authority above this document: [`2026-08-09-runtime-hardening-rewrite.md`](2026-08-09-runtime-hardening-rewrite.md).
 Ordering and requirement state: [`2026-08-10-next-block.md`](2026-08-10-next-block.md) §2 and §4.
 
+> **Amended 2026-08-10: read §1.2 of
+> [the W2-W7 reconciliation](2026-08-10-w2-w7-reconciliation.md) first.** Every
+> `contract-*` gate name this document treats as existing was renamed to
+> `schema-*` by `dcc43b5`; `ctest -N` lists no `contract-control-c05`,
+> `contract-control-c08` or `contract-state-s04`. This item owes **new**
+> `contract-*` cases — the migration report updated first, then
+> `tests/CMakeLists.txt`, then a suite's `CASES` list — not a rewrite of cases
+> that no longer exist under those names.
+
 Every file-level claim below was read out of the tree at commit
 `design/annotation-system-v2` on 2026-08-10. The tree is being edited by other
 agents while this was written: `tests/operator/test-control-contract.cpp` and

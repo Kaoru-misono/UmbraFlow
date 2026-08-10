@@ -16,6 +16,14 @@ IDs are [`2026-08-09-runtime-migration-report.md`](2026-08-09-runtime-migration-
 rows `P-01`, `P-02`, `P-03`, `A-01`, `A-02`. The frozen authority is
 [`2026-08-09-runtime-hardening-rewrite.md`](2026-08-09-runtime-hardening-rewrite.md).
 
+> **Amended 2026-08-10: read §1.2 of
+> [the W2-W7 reconciliation](2026-08-10-w2-w7-reconciliation.md) first.** Those
+> five migration report rows now read `schema-product-p01/p02/p03` and
+> `schema-agent-a01/a02`; `dcc43b5` renamed them, and no `contract-` spelling of
+> any of the five exists. They are not "the five IDs `tests/CMakeLists.txt`
+> already requires" — W6 and W7 must each create a new `contract-*` case, with
+> the migration report updated first.
+
 W7 is specified with W6 because `ExternalInputFinding.detected_after_cursor` is
 a `SubscriptionCursor` (`schema/umbraflow-operator-v1.schema.json:269`). W6
 cannot record a finding without the cursor. **Ruling: W6 introduces the

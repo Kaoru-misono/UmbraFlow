@@ -514,7 +514,7 @@ them. Numbering follows the holder's own numbering where it has one.
 | 16 | W4 §7 | `contract-control-c03`, `contract-agent-a07` exist | **No** — §1.2 | Same |
 | 17 | W6/W7 §8 | `contract-product-p01/p02/p03`, `contract-agent-a01/a02` exist and are "the five IDs `tests/CMakeLists.txt` already requires" | **No** — §1.2 | Same |
 | 18 | all four | `tests/operator/project-fixture.hpp` | **No** — §1.1 | Path only |
-| 19 | W3 §9.1 | `UiObservationSnapshot::canonicalJcs()` has a producer | **It did not; it does now** — `modules/task/runtime/jcs.luau` landed on 2026-08-10, outside these four items | §4.1. The dependency is closed, but `frameworkBundleHash()` moved with it and the new Luau test was not yet registered in a CTest |
+| 19 | W3 §9.1 | `UiObservationSnapshot::canonicalJcs()` has a producer | **It did not; it does now** — `modules/task/runtime/jcs.luau` landed on 2026-08-10, outside these four items, and `7cef402` consumed it the same day | §4.1. The dependency is closed and `frameworkBundleHash()` moved with it; `dcc43b5` registered the new Luau test as `test-jcs-luau` |
 
 ### 4.1 The JCS serializer, which blocked half of W3
 
@@ -546,13 +546,25 @@ new at the time of reading:
   `explore`. That is the right side of the line for a resolver serializer, but it
   is a property of the name and worth one conscious check.
 - `tests/task/test-jcs.luau` was **not** in `TASK_LUAU_TESTS` in
-  `tests/CMakeLists.txt` when read, so it ran in no CTest. That may simply be the
-  other agent mid-landing; if it persists it is §1.3's family again.
+  `tests/CMakeLists.txt` when read, so it ran in no CTest. It was the other agent
+  mid-landing: `dcc43b5` registered it as `test-jcs-luau` later on 2026-08-10 and
+  added the configure-time check that fails when any `tests/task/*.luau` is
+  registered nowhere.
 
 The dependency is therefore satisfied rather than open, and the landing-order
 edge in §5 stands as history: it is why W3's Operator half — the value types, the
 composition, the DDL, the join, the tests — was designed to be separable and
 writable against a fixture-minted `UiObservationSnapshot`.
+
+**Amended 2026-08-10: that separability was exercised.** `7cef402` landed the
+producing half on its own — `TaskHost::observe` returning a Host-minted
+`UiObservationSnapshot` whose canonical bytes come from `jcs.luau` — changing no
+existing signature. R2 below is unaffected: it rules on the half that rewrites
+`createSnapshot` and the `snapshots` table, and that half is still W2's landing.
+An implementer of W3 now writes against a real `UiObservationSnapshot` rather
+than a fixture-minted one, and `observationId()` is Host-minted rather than the
+resolver's, because the resolver's id carries a per-VM counter that would
+otherwise enter `decision_basis_hash`.
 
 ## 5. Landing order
 
@@ -890,11 +902,15 @@ for one literal is a merge conflict on the thing R5 exists to protect.
 
 ## 8. What could not be verified
 
-- **The 19 `schema-*` gates were never individually falsified.** Nobody has
-  confirmed that each turns red when the schema definition it reads is removed.
-  They almost certainly would — reading that definition is all they do — but
-  "almost certainly" is what this repository's own falsification discipline
-  refuses to accept elsewhere. Recorded as unverified rather than assumed.
+- ~~**The 19 `schema-*` gates were never individually falsified.**~~ Closed
+  2026-08-10 by
+  [the third adversarial round](../reviews/2026-08-10-third-round-review.md):
+  each of the 38 definition names they look up occurs exactly once in its schema
+  file, so `definition()` cannot latch onto a `$ref` or a `required` entry and
+  removing a definition fires the gate's `REQUIRE`. The residual weakness is
+  narrower than the original doubt — the field checks are substring searches over
+  the whole definition text, so a property moved out of `properties` but left in
+  `required` is still found.
 - **The gate list will move again.** It was re-read after W10's rename landed and
   matches the counts in §1.2, but three of the four work items still owe it new
   `contract-*` IDs. No work item should copy an ID list out of this document; re-read

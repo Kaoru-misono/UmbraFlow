@@ -30,6 +30,20 @@
 > produce well over a hundred fatal diagnostics. That is tracked as W11 in
 > [the next block](plans/2026-08-10-next-block.md) and blocks merging this
 > branch regardless of anything below.
+>
+> Amended 2026-08-10, after the third adversarial round. It returned FAIL with
+> 17 findings — [the record](reviews/2026-08-10-third-round-review.md) — so the
+> two unticked review boxes below wait on it too. Three corrections to the
+> paragraphs above. The G0 tick "map every requirement to an exact CTest ID"
+> holds again only as of today's repair: `dcc43b5` renamed 14 gate IDs to
+> `schema-*` without updating the migration report, which then named CTests
+> `ctest -N` cannot produce; the report now carries all 47 gates — 28
+> `contract-*` and 19 `schema-*` — over 42 requirements. `ctest -N` gained four
+> `CONTRACT-SUITE` aggregates rather than two: `test-contract-operator` and
+> `test-contract-runtime` as well as `contract-suite-umbraflow` and
+> `contract-suite-arcana`. And W11 is a scope rather than a count — "well over a
+> hundred" was W0's reading before `603b0b0`, `cec8898` and `6f8d3a8` cleared
+> everything outside `modules/operator`, `contract-suite` and `tests/operator`.
 
 ## G0 — contract and inherited baseline
 

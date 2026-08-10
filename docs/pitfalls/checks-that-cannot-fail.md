@@ -133,3 +133,60 @@ configure preset inheriting `x64-debug` with `CPP_ENABLE_CLANG_TIDY=ON`, and
 precisely so it runs there. So the dead filter suppressed header diagnostics on
 every developer's Windows analysis run as well as in CI, for as long as it stood.
 When the filter starts matching, the diagnostic count rises on both.
+
+## A `.clang-tidy` key the local clang-tidy does not know deletes the whole file
+
+Found 2026-08-10 by inspection rather than by damage, while checking the fix
+above. Same family, one level further out: not a filter that matches nothing,
+but a configuration that is not loaded at all.
+
+### Symptom
+
+None. clang-tidy prints `unknown key '<Name>'` and
+`Error parsing <path>/.clang-tidy: invalid argument` on stderr, then analyses
+the translation unit anyway and **exits 0**. Under
+`CMAKE_CXX_CLANG_TIDY` the build proceeds, so the lane is green.
+
+### Root cause
+
+clang-tidy parses `.clang-tidy` with LLVM's YAML I/O, which treats an
+unrecognised key as an error for the whole document. It does not skip the key
+and keep the rest: the file is discarded and clang-tidy falls back to its
+built-in defaults — a different check set, and no `WarningsAsErrors`. Every
+check the repository selected, and the strictness that makes them fail a build,
+are gone.
+
+This repository is exposed through one key. `ExcludeHeaderFilterRegex` needs
+clang-tidy 19 or newer. CI pins clang-tidy 23, but the `x64-analysis` preset
+uses whatever is on `PATH`; on this machine that is the 19.1.5 shipped inside
+Visual Studio 2022, which supports the key. An older one on any host silently
+turns that host's analysis run into a pass over nothing.
+
+Note the direction, because guessing gets it backwards: an unsupported key does
+not *widen* what is analysed, it removes the configuration.
+
+### Regression check
+
+Measured with clang-tidy 19.1.5 on Windows, in a scratch directory, over the
+`probe.hpp`/`probe.cpp` pair above:
+
+```bash
+# A: repository .clang-tidy with one bogus key added
+clang-tidy probe.cpp -- -std=c++23   # "unknown key"; 0 member-init reports; exit 0
+# B: the same file with the bogus key removed
+clang-tidy probe.cpp -- -std=c++23   # 1 member-init report; "warning treated as error"; exit 1
+```
+
+B is the positive control: without it, A's silence is indistinguishable from
+clean code. Run this pair whenever a key is added to `.clang-tidy`, and check
+`clang-tidy --help` for the key's presence on the oldest clang-tidy any lane may
+resolve.
+
+### Related: a clang-tidy claim cannot be checked by the local gate
+
+`scripts/ci-local.*` configures the host debug preset, and clang-tidy runs only
+under `CPP_ENABLE_CLANG_TIDY` — the three `*-analysis` presets and the
+`clang-analysis` CI job. A commit message that says a suppression or a check
+"turns the gate red" is talking about a lane no local gate exercises, and which
+does not compile today (W11 in `../plans/2026-08-10-next-block.md`). State which
+lane, and whether it built.

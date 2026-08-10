@@ -16,6 +16,19 @@ W3. Its two requirements are §2 rows `s01` (**absent** — `ProjectObservation`
 does not exist) and `s02` (**partial** — `createSnapshot` takes a caller
 identity, composes nothing).
 
+> **Amended 2026-08-10, twice.**
+>
+> - Read §1.2 of
+>   [the W2-W7 reconciliation](2026-08-10-w2-w7-reconciliation.md) first. The
+>   `contract-state-s01` and `contract-state-s02` this document describes as
+>   already registered no longer exist: `dcc43b5` renamed them `schema-state-*`.
+>   W3 owes **new** `contract-*` cases, migration report first.
+> - The additive half of this item landed as `7cef402`: `TaskHost::observe`
+>   returns a Host-minted `UiObservationSnapshot` whose canonical bytes are
+>   produced in trusted Luau, and no existing signature changed. What remains is
+>   the Operator half — `ProjectObservation`, and `createSnapshot` composing
+>   rather than accepting — which lands with W2.
+
 ## 1. The five state kinds
 
 The enumeration is not in the upstream execution profile. It is in the frozen

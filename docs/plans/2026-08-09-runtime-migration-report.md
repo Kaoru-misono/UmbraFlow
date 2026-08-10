@@ -34,13 +34,31 @@ may serve multiple IDs, but `ctest -N` must list each of those IDs separately.
 IDs marked `EXTERNAL` are consumer or cross-repository attestations; local
 fixtures cannot satisfy them.
 
+> **Amended 2026-08-10: gates carry two prefixes, and this map was rebuilt from
+> the registrations.** `dcc43b5` split the vocabulary — `contract-<area>-<id>`
+> exercises the code and goes red when the behaviour is removed;
+> `schema-<area>-<id>` only reads a `schema/*.json` file and asserts a
+> definition exists with certain members, so it passes whether or not the
+> behaviour does. Fourteen rows below moved to the `schema-` spelling. Five more
+> requirements, `C-09` through `C-13`, kept a `contract-` gate — it moved into
+> the exported suite with the store behaviour it names — and gained a `schema-`
+> gate beside it in `tests/operator/`, which is why 42 requirements carry 47
+> gates: 28 `contract-*` under label `CI;CONTRACT` and 19 `schema-*` under
+> `CI;SCHEMA`. `dcc43b5` did not update this report and `5bb281d` edited it
+> without correcting the rows; the drift was found by
+> [the third adversarial round](../reviews/2026-08-10-third-round-review.md),
+> R3-F3. The registrations are the authority:
+> `UF_REQUIRED_DOCTEST_CONTRACTS` in `tests/CMakeLists.txt` and the `CASES`
+> lists in `tests/CMakeLists.txt` and
+> `contract-suite/fixtures/umbraflow/CMakeLists.txt`.
+
 ## Requirement ownership and test map
 
 | ID | Owner | Schema location | Verification |
 |---|---|---|---|
-| P-01 | Operator facade | OP:`ToolInvocation/CommandRecord/Operation` | CTEST `contract-product-p01` |
-| P-02 | Host + Operator | OP:`ControlTransition/ExternalInputFinding` | CTEST `contract-product-p02` |
-| P-03 | Script sandbox | OP:`ControllerCapability` | CTEST `contract-product-p03` |
+| P-01 | Operator facade | OP:`ToolInvocation/CommandRecord/Operation` | CTEST `schema-product-p01` |
+| P-02 | Host + Operator | OP:`ControlTransition/ExternalInputFinding` | CTEST `schema-product-p02` |
+| P-03 | Script sandbox | OP:`ControllerCapability` | CTEST `schema-product-p03` |
 | P-04 | Project registry | PR:`ProjectRegistrationManifest` | CTEST `contract-product-p04` |
 | P-05 | Upstream harness + real consumers | PR + CP | CTEST `contract-product-p05-fixtures`; EXTERNAL `attest-dual-game-p05` |
 | P-06 | Session coordinator | PR + OP:`OperatorSession` | CTEST `contract-product-p06` |
@@ -61,60 +79,73 @@ fixtures cannot satisfy them.
 | U-06 | Host | OP:`ReceiptRef/DeliveryOutcome` | CTEST `contract-runtime-u06` |
 | U-07 | Annotation + deployment boundary | AW:`Publication` + RA | CTEST `contract-runtime-u07` |
 | U-08 | Host + deployment boundary | RA + TR | CTEST `contract-runtime-u08` |
-| S-01 | Snapshot coordinator | OP:`SnapshotParts` + JR:`ProjectState` | CTEST `contract-state-s01` |
-| S-02 | Snapshot coordinator | OP:`ProjectSnapshot/SnapshotToken` | CTEST `contract-state-s02` |
+| S-01 | Snapshot coordinator | OP:`SnapshotParts` + JR:`ProjectState` | CTEST `schema-state-s01` |
+| S-02 | Snapshot coordinator | OP:`ProjectSnapshot/SnapshotToken` | CTEST `schema-state-s02` |
 | S-03 | Snapshot coordinator | OP:`SnapshotToken` | CTEST `contract-state-s03` |
-| S-04 | Operator planner | OP:`DecisionBasis` | CTEST `contract-state-s04` |
+| S-04 | Operator planner | OP:`DecisionBasis` | CTEST `schema-state-s04` |
 | S-05 | Session coordinator | OP:`SessionManifest` + PR | CTEST `contract-state-s05` |
 | S-06 | Project state store | JR:`ProjectInstance/ProjectState` | CTEST `contract-state-s06` |
 | C-01 | Host control ledger | OP:`ControlLease/FencingToken` | CTEST `contract-control-c01` |
 | C-02 | Host control ledger | OP:`SessionEpoch/ControlLease` | CTEST `contract-control-c02` |
-| C-03 | Host delivery | OP:`DeliveryAuthority/ReceiptRef` | CTEST `contract-control-c03` |
+| C-03 | Host delivery | OP:`DeliveryAuthority/ReceiptRef` | CTEST `schema-control-c03` |
 | C-04 | Operator facade | OP:`ToolInvocation/CommandRecord` | CTEST `contract-control-c04` |
-| C-05 | Operator planner | OP:`PlanProposal/EffectivePlan` + PR | CTEST `contract-control-c05` |
+| C-05 | Operator planner | OP:`PlanProposal/EffectivePlan` + PR | CTEST `schema-control-c05` |
 | C-06 | Operation ledger | OP:`CommandRecord/Operation` | CTEST `contract-control-c06` |
 | C-07 | Operation ledger | OP:`OperationState/PlanVersion` | CTEST `contract-control-c07` |
-| C-08 | Operator planner | OP:`EffectivePlan/UIActionIntent/WorkflowLimits` | CTEST `contract-control-c08` |
-| C-09 | Operation ledger | OP:`DispatchOutcome/ToolResult` | CTEST `contract-control-c09` |
-| C-10 | Operation ledger + Host | OP:`DispatchRecord/DeliveryOutcome` | CTEST `contract-control-c10` |
-| C-11 | Reconciliation coordinator | OP:`ReconcileProposal` + JR | CTEST `contract-control-c11` |
-| C-12 | Policy/approval ledger | PL + OP:`ApprovalToken/AuthorityDecision` | CTEST `contract-control-c12` |
-| C-13 | Operation ledger | OP:`MutationChain` | CTEST `contract-control-c13` |
+| C-08 | Operator planner | OP:`EffectivePlan/UIActionIntent/WorkflowLimits` | CTEST `schema-control-c08` |
+| C-09 | Operation ledger | OP:`DispatchOutcome/ToolResult` | CTEST `contract-control-c09` and CTEST `schema-control-c09` |
+| C-10 | Operation ledger + Host | OP:`DispatchRecord/DeliveryOutcome` | CTEST `contract-control-c10` and CTEST `schema-control-c10` |
+| C-11 | Reconciliation coordinator | OP:`ReconcileProposal` + JR | CTEST `contract-control-c11` and CTEST `schema-control-c11` |
+| C-12 | Policy/approval ledger | PL + OP:`ApprovalToken/AuthorityDecision` | CTEST `contract-control-c12` and CTEST `schema-control-c12` |
+| C-13 | Operation ledger | OP:`MutationChain` | CTEST `contract-control-c13` and CTEST `schema-control-c13` |
 | C-14 | Operation ledger | OP:`DispatchRecord/OperationState` | CTEST `contract-control-c14` |
-| A-01 | Agent event facade | OP:`SubscriptionCursor/ResyncRequired` | CTEST `contract-agent-a01` |
-| A-02 | Agent runtime | OP:`AgentBudget/ProgressMarker` | CTEST `contract-agent-a02` |
-| A-03 | Audit owners | TR + OP + JR + AW:`ReplayBundle` | CTEST `contract-agent-a03` |
+| A-01 | Agent event facade | OP:`SubscriptionCursor/ResyncRequired` | CTEST `schema-agent-a01` |
+| A-02 | Agent runtime | OP:`AgentBudget/ProgressMarker` | CTEST `schema-agent-a02` |
+| A-03 | Audit owners | TR + OP + JR + AW:`ReplayBundle` | CTEST `schema-agent-a03` |
 | A-04 | Reconciliation coordinator | JR:`JournalEvent` | CTEST `contract-agent-a04` |
-| A-05 | Publication gates | AW:`ReplayGate` + PR:`plugin_hash` | CTEST `contract-agent-a05` |
+| A-05 | Publication gates | AW:`ReplayGate` + PR:`plugin_hash` | CTEST `schema-agent-a05` |
 | A-06 | Deployment boundary | AW:`AuthoringCapabilityRoot` + RA | CTEST `contract-agent-a06` |
-| A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `contract-agent-a07` |
+| A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `schema-agent-a07` |
 | A-08 | Operator recovery | OP:`ExternalInputFinding/OperationState` | CTEST `contract-agent-a08` |
 
-Planned test sources are:
+Where the 47 gates are declared, as of 2026-08-10:
 
-- `tests/operator/test-product-contract.cpp` for `contract-product-*`;
-- `tests/operator/test-project-plugin-contract.cpp` for
-  `contract-product-p05-fixtures` and generic opaque-payload isolation;
-- `tests/task/test-runtime-v2-contract.cpp` plus trusted Luau fixtures for
-  `contract-runtime-*`;
-- `tests/operator/test-state-contract.cpp` for `contract-state-*`;
-- `tests/operator/test-control-contract.cpp` for `contract-control-*`;
-- `tests/operator/test-agent-audit-contract.cpp` for `contract-agent-*`.
+- `tests/operator/test-product-contract.cpp` — `schema-product-p01`-`p03`,
+  `contract-product-p04`, `contract-product-p06`;
+- `tests/operator/test-project-plugin-contract.cpp` —
+  `contract-product-p05-fixtures`, plus the generic opaque-payload isolation
+  cases, which carry prose names and run only under the aggregate;
+- `tests/task/test-runtime-v2-contract.cpp` plus trusted Luau fixtures —
+  `contract-runtime-u01`-`u08`;
+- `tests/operator/test-state-contract.cpp` — `schema-state-s01`, `s02`, `s04`
+  and `contract-state-s03`, `s05`, `s06`;
+- `tests/operator/test-control-contract.cpp` — `contract-control-c02`, `c04`,
+  `c07`, `c14` and `schema-control-c03`, `c05`, `c08`, `c09`-`c13`;
+- `tests/operator/test-agent-audit-contract.cpp` — `contract-agent-a04`, `a06`,
+  `a08` and `schema-agent-a01`, `a02`, `a03`, `a05`, `a07`;
+- `contract-suite/source/suite-control-ledger.cpp` — `contract-control-c01`,
+  `c06`, `c09`-`c13`, the store behaviour a consuming repository runs against
+  its own project.
 
 ## Repository surface and retained primitive gates
 
 The requirement rows above are necessary but not sufficient. These additional
 local CTest IDs prevent a complete-looking contract suite from hiding deleted
-regressions or forbidden compatibility surface:
+regressions or forbidden compatibility surface. Stop condition 2 requires this
+report to carry every local CTest ID, so the list below is the whole of
+`ctest -N` that the 47 gates above do not already name:
 
 - CTEST `contract-repository-surface`
-- CTEST `contract-suite-umbraflow` and CTEST `contract-suite-arcana` — added
-  2026-08-10 with the exported Operator contract suite (see
-  [the next block](2026-08-10-next-block.md) §5). They run the same cases
-  through the public entry point a consumer uses, so a change that keeps the
-  in-tree fixtures green but breaks the exported surface is visible. Registered
-  under the `CONTRACT-SUITE` label; recorded here because stop condition 2
-  requires this report to carry every local CTest ID.
+- Four aggregates under the `CONTRACT-SUITE` label, each running every compiled
+  case in its binary including the ones no requirement ID names:
+  CTEST `test-contract-operator`, CTEST `test-contract-runtime`,
+  CTEST `contract-suite-umbraflow` and CTEST `contract-suite-arcana`. The last
+  two were added 2026-08-10 with the exported Operator contract suite (see
+  [the next block](2026-08-10-next-block.md) §5); they run cases through the
+  public entry point a consumer uses, so a change that keeps the in-tree
+  fixtures green but breaks the exported surface is visible. The first two
+  gained the same aggregate in `dcc43b5`, after seven compiled cases in
+  `test-contract-operator` were found running under no CTest at all.
 - CTEST `test-core`
 - CTEST `test-domain`
 - CTEST `test-engine`
@@ -123,6 +154,16 @@ regressions or forbidden compatibility surface:
 - CTEST `test-task`
 - CTEST `test-trace`
 - CTEST `test-cli`
+- CTEST `test-vision`, CTEST `test-image` and CTEST `test-operator`
+- CTEST `test-jcs-luau`, CTEST `test-runtime-model-v2-luau`,
+  CTEST `test-resolution-v2-luau` and CTEST `test-receipt-request-v2-luau`,
+  under the `LUAU` label. `tests/CMakeLists.txt` also fails configure when a
+  `tests/task/*.luau` file is in none of them.
+- CTEST `check-modules`, CTEST `check-safety`, CTEST `test-check-safety` and
+  CTEST `test-annotate-backend`
+- CTEST `test-ocr-real` is registered only on a host that has created
+  `tests/assets/real-regression`, and carries the `REAL` label rather than
+  `CI`. It is the one ID `ctest -N` may legitimately not list.
 
 `contract-repository-surface` is implemented by
 `tests/test-runtime-surface.py` and registered directly with CTest. It fails

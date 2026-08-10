@@ -2,7 +2,9 @@
 
 Status: in execution. W1, W5, W8 and the contract suite raised in §5 landed on
 2026-08-10. W0 ran the same day and returned half a pass, which opened W11.
-W2-W4, W6, W7 and W9 are unstarted.
+W3's additive half landed the same day (`7cef402`), closing the data dependency
+that blocked `decision_basis_hash`; W3's Operator half, W2, W4, W6, W7 and W9
+are unstarted, and `s01`, `s02`, `s04`, `c05` and `c08` are all still open.
 Date: 2026-08-10 (revised the same day, against the landed tree)
 Scope: `umbraflow-cpp` only. No consumer-project writes.
 Bundle: v1.9, root `c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`
@@ -62,10 +64,15 @@ is what §2 and §3 are for, and each of those work items now owes a **new**
 `tests/CMakeLists.txt`, then a suite's `CASES` list — rather than a rewrite of a
 case that no longer exists under that name.
 
-The 19 `schema-*` gates have not been individually falsified — nobody has
-confirmed that each turns red when the definition it reads is removed. They
-almost certainly would, since reading that definition is all they do, but that
-is unverified and is recorded as unverified.
+The 19 `schema-*` gates **were** falsified on 2026-08-10, by
+[the third adversarial round](../reviews/2026-08-10-third-round-review.md).
+Each of the 38 definition names they pass to `definition(schema, name)` occurs
+exactly once in its schema file, so the lookup cannot latch onto a `$ref` or a
+`required` entry and removing a definition fires
+`REQUIRE(namePosition != std::string::npos)`. One weakness survives, finer
+grained than the gate: the field checks are substring searches over the whole
+definition text, so a property moved out of `properties` but left in `required`
+is still found.
 
 `a03` and `a05` are a different case again since W5. Both requirements have
 behaviour and both are gated — by the Python suite `test-annotate-backend`, one
@@ -102,9 +109,9 @@ state and its owning work item or items:
 |---|---|---|---|
 | `a07` | human takeover and Host delivery share one linearization | **partial** — `takeoverLease` exists, not joined to `Host::deliver` | W4 |
 | `c03` | `Host::deliver` is the only linearization point | **partial** — holds inside `task`, not joined to the ledger | W4 |
-| `s04` | `decision_basis_hash` covers only semantic decision input | **partial** — a caller argument today | **W2 + W3** |
-| `s02` | Snapshot Coordinator publishes a complete snapshot atomically | **partial** — `createSnapshot` takes a caller identity, composes nothing | W3 |
-| `s01` | the five state kinds have separate owners | **absent** — `ProjectObservation` does not exist | W3 |
+| `s04` | `decision_basis_hash` covers only semantic decision input | **partial** — still a caller argument; `7cef402` supplied the Host-minted state resolution hash it will be derived from | **W2 + W3** |
+| `s02` | Snapshot Coordinator publishes a complete snapshot atomically | **partial** — `createSnapshot` takes a caller identity, composes nothing; `7cef402` added the observation it will compose without changing any signature | W3 |
+| `s01` | the five state kinds have separate owners | **partial since `7cef402`** — the UI kind now has a Host owner, `TaskHost::observe` returning a `UiObservationSnapshot`; `ProjectObservation` and the Operator side do not exist | W3 |
 | `c05` | the Operator mints EffectivePlan from a plugin PlanProposal | **absent** | W2 |
 | `c08` | one Operation runs a bounded multi-step workflow | **absent** — no step sequencing exists | W2 |
 | `a03` | Audit Trace, Ledger, Journal and Replay Bundle are separate | **exists** since W5 — the bundle closure is implemented, gated only by the aggregate `test-annotate-backend`; the C++ case is `schema-agent-a03` | W5 done; W10 renamed it, no per-requirement behavioural ID exists |
@@ -144,7 +151,7 @@ change after them, and W6 needs W4 as well as W2 because W4 changes
 | W0 | Merge readiness: run `linux-analysis` and the three sanitizer presets locally. CI runs on `master` only, so the first CI sight of this work is post-merge; seven of eight configurations are reproducible locally, macOS is not | — | none | 1 day | **ran 2026-08-10**: sanitizers pass, `linux-analysis` fails; the failure is W11 |
 | W1 | **Coverage debt**: write behavioural cases for the six requirements whose implementation already exists but whose gate only reads a schema | `c02 c04 s03 s06 a04 a06` | none | 2-3 days | **done 2026-08-10** |
 | W2 | **EffectivePlan authority**: mint it from a plugin `PlanProposal` bound to registration, command fingerprint and decision basis; derive the frozen plan, step intent and effect envelope hashes from it; add bounded step sequencing; `reserveDispatch` takes the minted plan instead of three caller hashes | `c05 c08` + half of `s04` | none | 5-7 days | open, **lands with W3** |
-| W3 | **Snapshot Coordinator**: introduce `ProjectObservation`; compose UI observation, `plugin.derive` and current ProjectState atomically; derive the snapshot parts instead of accepting them | `s01 s02` + half of `s04` | W2 (merged); the JCS serializer, which landed 2026-08-10 | 4 days | open, **lands with W2** |
+| W3 | **Snapshot Coordinator**: introduce `ProjectObservation`; compose UI observation, `plugin.derive` and current ProjectState atomically; derive the snapshot parts instead of accepting them | `s01 s02` + half of `s04` | W2 (merged); the JCS serializer, which landed 2026-08-10 | 4 days | **additive half landed 2026-08-10** (`7cef402`: `TaskHost::observe` and `UiObservationSnapshot`, no signature changed); the Operator half is open and **lands with W2** |
 | W4 | **Join Host delivery to the ledger**: `recordDeliveryOutcome` takes what `Host::deliver` returned, inside the fence; the takeover path enters the same linearization | `c03 a07` | W2+W3 | 3 days **understated**: `contract-control-c03` needs a real `TaskHost`, so the ~490-line Runtime v2 fixture in `tests/task/test-runtime-v2-contract.cpp` must be **extracted** into `tests/support/` and shared, not copied. That extraction is W4's | open |
 | W5 | **Replay Bundle and the two gates**: implement the bundle closure and both publication gates rather than declaring them | `a03 a05` | none | 4 days | **done 2026-08-10** |
 | W6 | **Controller facade**: one path for Script, Agent and Human; out-of-band human input enters as an external source; the Agent surface is semantic-only | `p01 p02 p03` | W2+W3, **and W4** | 4 days | open |
@@ -152,7 +159,7 @@ change after them, and W6 needs W4 as well as W2 because W4 changes
 | W8 | Artifact GC by database refcount for orphaned `runtime-artifacts/<hash>/` and `.staging` | — | none | 1-2 days | **done 2026-08-10** |
 | W9 | Third adversarial review round | — | W2-W4 | 1 day per reviewer | open |
 | W10 | Rename the schema-shape gates `schema-*` as each requirement gains a behavioural gate, so the matrix never overstates | — | tracks W1-W7 | folded in | **the twelve open IDs renamed 2026-08-10**; still tracks W2-W7, which each owe a new `contract-*` case |
-| W11 | **Make the clang-tidy analysis presets compile**: about 14 `-Werror` failures from the project's own `-Wunsafe-buffer-usage`, and roughly 90 fatal clang-tidy diagnostics under `WarningsAsErrors: '*'`. Opened 2026-08-10 by W0's result | — | none | unestimated; not one day | open |
+| W11 | **Make the clang-tidy analysis presets compile**: the `*-analysis` presets do not build, under the project's own `-Wunsafe-buffer-usage` and under `WarningsAsErrors: '*'`. Its scope is whatever those presets still refuse, never a count — the count moved three times on the day it was written. Opened 2026-08-10 by W0's result | — | none | unestimated; not one day | open and shrinking. Done when a `linux-analysis` build reports nothing **and states how many objects it analysed** |
 
 `s04` is split and closes only when both halves land. W2 derives `identity_hash`
 and `decision_basis_hash` from the parts; W3 derives the parts. Neither half is
@@ -170,9 +177,11 @@ frozen Luau tables. Serializing in C++ would mean walking RuntimeModel-derived
 structure, which `tests/test-runtime-surface.py` treats as a violation, so it had
 to be trusted Luau. **`modules/task/runtime/jcs.luau` landed on 2026-08-10**,
 outside these work items, with `tests/task/test-jcs.luau` beside it. The
-dependency is closed. Two consequences of that landing belong to whoever touches
-it next: `cmake/build.cmake` globs `*.luau`, so `frameworkBundleHash()` has
-moved, and the new Luau test was not yet in `TASK_LUAU_TESTS` when checked.
+dependency is closed. One consequence of that landing belongs to whoever
+touches it next: `cmake/build.cmake` globs `*.luau`, so `frameworkBundleHash()`
+has moved. The second — that the new Luau test ran in no CTest — was closed by
+`dcc43b5`, which registered `test-jcs-luau` and made `tests/CMakeLists.txt` fail
+configure when any `tests/task/*.luau` is in no `TASK_LUAU_TESTS` entry.
 
 The merged `W2 + W3` change is the keystone: five requirements and three later
 items hang off it.
@@ -190,10 +199,26 @@ through `CPP_REQUIRE_CLANG_LIFETIME_SAFETY=ON`, found nothing anywhere.
 
 The `linux-analysis` half failed, and W0's one-day framing was wrong about it.
 It is not a toolchain difference to be waived: the run used clang 23.1.0 from
-the apt.llvm.org channel CI pins. It is roughly 14 `-Werror` errors from
-`-Wunsafe-buffer-usage`, which `cmake/compiler-safety-analysis.cmake` adds for
-any Clang, plus about 90 fatal clang-tidy diagnostics. That is real work, and it
-is W11 above rather than a footnote on W0.
+the apt.llvm.org channel CI pins. What it measured on 2026-08-10, before any of
+the clearing work, was roughly 14 `-Werror` errors from `-Wunsafe-buffer-usage`,
+which `cmake/compiler-safety-analysis.cmake` adds for any Clang, plus about 90
+fatal clang-tidy diagnostics. That is real work, and it is W11 above rather than
+a footnote on W0.
+
+**W0's two figures are a reading, not W11's scope, and they were already stale
+when this plan first quoted them** (recorded 2026-08-10 after
+[the third adversarial round](../reviews/2026-08-10-third-round-review.md),
+R3-F11). The order matters: `603b0b0` landed before this plan was written and
+had already cleared everything outside `modules/operator`,
+`modules/task/.../platform` and `contract-suite` — 77 of 106 unique sites over
+137 objects, taken to 0. `cec8898` then compiled `modules/task/.../platform`
+clean at full `-Werror` under both clang 23 and g++ 15, and `6f8d3a8` cleared
+what `7cef402`'s new translation unit made visible. What is left is
+`modules/operator`, `contract-suite` and `tests/operator`, and an agent is
+clearing it. State the property and the date of the reading; a count written
+into a plan is wrong by the next landing, and W0's `90` and `603b0b0`'s `29`
+were never shown to count the same thing — one site can emit several
+diagnostics, and neither text says which unit it uses.
 
 Three cautions attach to W11. First, `WarningsAsErrors: '*'` combined with C++20
 modules means the first failing library kills every downstream BMI: the
@@ -228,8 +253,11 @@ What the three landed items actually left behind:
   `cpp_add_contract_suite` builds its binary `NO_CTEST` and registers one test per
   `CASES` entry and nothing else, while `uf_add_operator_contract_suite`
   additionally registers a `contract-suite-<project>` aggregate that runs the
-  whole binary. **Ruled: `cpp_add_contract_suite` gains the aggregate**; the
-  W2+W3 agent is applying it.
+  whole binary. **Ruled: `cpp_add_contract_suite` gains the aggregate**, and
+  `dcc43b5` applied it on 2026-08-10: `test-contract-operator` and
+  `test-contract-runtime` are now registered CTests under the `CONTRACT-SUITE`
+  label, so flipping an assertion in one of the seven turns the suite red while
+  every per-case gate stays green.
 
   That is the fourth instance found on 2026-08-10 of one defect — a name exists,
   the name promises something, and nothing verifies the promise. The other three
@@ -252,6 +280,15 @@ What the three landed items actually left behind:
   missing project/operation gate as well as by a missing UI one. "Independent"
   means neither gate's evidence satisfies the other, not that either may be
   absent.
+
+  The third adversarial round confirmed on 2026-08-10 that **the bundle identity
+  cannot be steered by a caller**: `_bundle_document` refuses a supplied
+  `bundle_id` before anything else, every definition under the workspace schema
+  root sets `additionalProperties: false` so no extra field can ride into the
+  hash, and `_verify_bundle_file` recomputes the address from the stored bytes
+  on every read. One consequence it recorded is a design fact rather than a
+  defect: the address covers `frame_retention_expires_at`, so two bundles over
+  identical evidence differing by one second of expiry are two permanent rows.
 - **W8** made the refcount a set of foreign keys rather than a counter:
   `runtime_installations` rows, a new `runtime_publications` table, and
   `runtime_state.active_runtime_artifact_root_hash`. An artifact directory is
@@ -329,13 +366,71 @@ At that point all 42 `REQUIRED_CORE` requirements have a behavioural gate,
 mutation is the external dual-game attestation plus the consumer-side phases —
 none of which this repository can close alone.
 
-Two things will still be owed and should not be quietly counted as done. `a03`
+One thing will still be owed and should not be quietly counted as done: `a03`
 and `a05` will have their behaviour gated only by the aggregate
-`test-annotate-backend`, with no per-requirement CTest ID. And the 19 `schema-*`
-gates will still be unfalsified — nobody has removed a schema definition and
-watched its gate turn red.
+`test-annotate-backend`, with no per-requirement CTest ID. The other item that
+stood here — that the 19 `schema-*` gates were unfalsified — was closed on
+2026-08-10 by the third adversarial round; see §1.
 
 Requirement coverage is not the same as merge readiness. W11 is independent of
 all of it and blocks the branch rather than the design: `linux-analysis` is a
 required CI job and it does not compile today, so this work cannot reach
 `master` green whatever §2 says.
+
+## 7. Corrections to this block's record, 2026-08-10
+
+The finding record is
+[the third adversarial round](../reviews/2026-08-10-third-round-review.md). What
+follows are the dispositions that belong in the plan rather than in the review,
+and one correction to the review itself. Nothing landed is rewritten to match.
+
+**`dcc43b5`'s "cannot be split" does not hold, and the real coupling is worse
+than the one it claims.** The commit message gives one reason for a single
+landing: `tests/CMakeLists.txt` enforces that registered case names exactly
+match the declared `TEST_CASE`s, so a split would leave an intermediate commit
+where configure fails for the whole tree. R3-F6 is right that this does not
+reach the `scripts/check_safety.py` half — renaming ten rules from
+`ADR-011 forbidden ...` to `background_only forbidden ...`, dropping `external`
+from `UNSAFE_DIRECTORY_NAMES`, and adding
+`test_a_vendored_directory_is_never_a_boundary_directory` touch no `TEST_CASE`
+name, no CMake list and no CTest registration. Only
+`SOURCE_ROOTS += "contract-suite"` in the two Python gates needed the new
+directory to exist.
+
+R3-F6 is wrong about the artifact-reclamation half, and the correction is the
+more useful fact. The finding argues that half "already stands alone" at
+`dcc43b5` because its only dependency, `ConfinedRoot::removeTree`, arrives later
+in `cec8898`. The dependency runs the other way. At `dcc43b5`,
+`modules/operator/source/operator/ledger.cpp` calls `removeTree` and
+`childNames` on a `task_platform::ConfinedRoot`, and neither member exists
+anywhere in the tree at that commit: `git grep removeTree dcc43b5` returns three
+call sites in that one file and no declaration. **`dcc43b5` does not compile**,
+and `cec8898` is what makes it build. So the block already contains a broken
+intermediate commit — a build failure rather than the configure failure the
+message was guarding against — and the stated reason for the single landing did
+not prevent it. Whoever recombines this history before it is published should
+fold the `ConfinedRoot` extension into `dcc43b5`, or order `cec8898` first. That
+is a note for a quiet tree, not a licence to operate on history while other
+agents hold work in it.
+
+**`f0b351b`'s closing sentence names a lane that does not run.** "Removing one
+suppression turns the gate red" is true of clang-tidy and false of any gate a
+developer runs: clang-tidy is enabled only by `CPP_ENABLE_CLANG_TIDY`, which
+belongs to the three `*-analysis` presets and the `clang-analysis` CI job, and
+`scripts/ci-local.*` configures the host debug preset. The same block's
+[coding standard amendment](../../.claude/skills/cpp-coding/references/coding-standard.md)
+records that the job does not compile. The claim is about a lane that is red for
+other reasons, which is W11 above.
+
+**Verified negatives worth not re-deriving.** The 11
+`cppcoreguidelines-pro-type-member-init` suppressions that stood at `cec8898`
+are each correct: only four member types are involved — `PixelRect`,
+`PixelPoint`, `FrameId` and `ContentHash` — and none is default-constructible,
+so the check's suggested `{}` fix would not compile. `6f8d3a8` added three more
+by the same argument, proved the same way and with the probe run in reverse
+first. Two limits survive and are not defects: the proof was never committed as
+a `static_assert`, so a default constructor added to one of those types later
+turns the suppressions into silent holes; and `NOLINTNEXTLINE` sits above the
+record, not the member, so a bare new field in one of those structs is swallowed
+without a diagnostic. `scripts/member_init.py`, which is in the local gate, sees
+none of these members because it matches only `m_\w+` names.
