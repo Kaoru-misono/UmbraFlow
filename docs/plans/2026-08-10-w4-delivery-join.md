@@ -1,7 +1,8 @@
 # W4: join Host delivery to the ledger
 
-Status: specification; no code changed on its account
-Date: 2026-08-10
+Status: **landed 2026-08-11** — additive half `e64c143`, ledger join `25f57f9`.
+Everything below is the pre-landing specification and is left as written.
+Date: 2026-08-10 (landed 2026-08-11)
 Closes: `c03`, `a07`
 Depends on: W2 (hard, see §8), W3 (sequencing only, see §8)
 Scope: `umbraflow-cpp` only. No consumer-project writes.
@@ -31,6 +32,63 @@ and §4 rules that `OperatorCoordinator` grows rather than gaining a sibling.
 > hashes — so re-read §5's call sites in the tree before editing. The order
 > "migration report first, then `tests/CMakeLists.txt`" is unchanged and was
 > inverted by both landings; do not inherit that.
+
+> **Landed 2026-08-11 in `e64c143` and `25f57f9`. Read what follows as the plan,
+> not as the tree.** `c03` and `a07` are closed and both own a
+> `contract-` gate. Every "Corrected 2026-08-11 against the landed tree" note
+> below was written against `848e390` and predates this landing, so where one of
+> them states a current value — the fingerprint above all — read it as of that
+> commit. The tree carries
+> `sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559` over
+> 23 tables after W6 and W7; W4's own recomputation was `937773366f…` over the
+> same 20 tables, because the `dispatches` DDL text changed without a table being
+> added, exactly as §6 predicted.
+>
+> **What this document specified and the implementation refused.**
+>
+> - **Q4's answer is "grow a Host", not "drive `reconciling` through a
+>   takeover".** §7's note and the fixture row for `reconcilingOperation` both
+>   route the exported suite around its missing Host that way. It cannot be
+>   done safely: every Host-less route to a resolved dispatch moves the fence,
+>   which would have made an existing approval case pass for the wrong reason —
+>   a check that cannot fail, introduced on purpose to avoid a fixture. The
+>   exported suite grew a Host instead, so the Runtime v2 world is now
+>   consumer-visible through it, which is the cost Q4 named and the one worth
+>   paying.
+> - **T-10 is unfalsifiable as written.** It asks to drop `AND delivery_outcome
+>   IS NULL` from the resolution `UPDATE`, but the scan that reaches that
+>   `UPDATE` has two filters that each independently exclude the case, so only
+>   removing both goes red. The mutation was run and reported green rather than
+>   quietly re-aimed.
+> - `operator::DeliveryOutcome` is **deleted** rather than kept beside
+>   `task::DeliveryOutcome`. One spelling, no alias.
+> - The two-generations ruling was followed and one clause of the
+>   reconciliation's reasoning for it was not; see
+>   [§7.2 there](2026-08-10-w2-w7-reconciliation.md).
+>
+> **Production is strictly narrower than this document leaves it, not merely
+> unchanged.** `mintClickReceipt` now refuses while no control fence has been
+> adopted and nothing in production adopts one, where previously the fence
+> started at 1 and minting was permitted. Q5 therefore reads more strongly than
+> it was written: the Host half of `a07` is proved by tests and reachable by
+> nothing else.
+>
+> **Both halves' mutations were run — 18 in `e64c143`, 19 in `25f57f9` — and
+> the green ones are the report.** The four zeros
+> this item carries are recorded beside the requirements they qualify in
+> [the next block](2026-08-10-next-block.md) §2, and their repeatable shapes in
+> [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md): the lease
+> identity spelled three times, the takeover-scoping property that no fixture
+> can express, `dispatches.delivery_reason` written and read back by nothing,
+> and `HostDeliveryReport`'s friend count, which no test can express at all and
+> which was confirmed empirically — a second friend compiles and every case
+> stays green.
+>
+> One finding fell out that this document did not predict and that is
+> independent of it: a second `TaskContext` on one `TaskHost` generation
+> resolves nothing, because `observe.luau`'s template cache is keyed by the
+> RuntimeModel and outlives the context that registered the handles. It forced
+> the positive control onto its own Host.
 
 ## 1. The linearization argument
 

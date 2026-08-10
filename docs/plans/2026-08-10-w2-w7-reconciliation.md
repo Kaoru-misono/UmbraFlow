@@ -35,6 +35,25 @@ Line numbers are anchors, not addresses.
 > as made, including R2, which was departed from in the one respect recorded in
 > [the next block](2026-08-10-next-block.md) §3.
 
+> **Read this second, later on 2026-08-11: all four have landed and this
+> document governs nothing that is still ahead.** W4 is `e64c143` (the additive
+> half in `modules/task`) and `25f57f9` (the ledger join); W6 is `93698b4`; W7
+> is `c23efd3`. Everything below is now the record of a ruling rather than an
+> instruction, with three exceptions worth carrying forward:
+>
+> - §1.2's gate arithmetic is stale by three landings in the same direction it
+>   was stale before. The tree carries **59 gates over 42 requirements, 40
+>   `contract-*` and 19 `schema-*`**; the paragraph's structural point — that
+>   one requirement may own one gate of each kind, so the two counts differ on
+>   purpose — is what survives, and the numbers in it are a 2026-08-11 reading
+>   of an earlier tree. `UF_REQUIRED_DOCTEST_CONTRACTS` is the authority, as it
+>   was each previous time.
+> - §6.3 is corrected in place, below, with a row per landing.
+> - **§7.2's recommendation about `sessions.installed_generation` is wrong**,
+>   and is marked so at the recommendation rather than only here.
+>
+> §8's four open items are answered where they stand.
+
 ## 1. The tree moved under all four documents
 
 Three facts invalidate call-site tables in all four specifications. None of them
@@ -792,8 +811,28 @@ change and says so in the commit message (R5).
 |---|---|---|
 | 2026-08-10 | 18 | `approvals,authority_decisions,control_leases,control_transitions,dispatches,fencing_high_water,journal_events,operations,project_instances,project_registrations,project_state,reconciliations,runtime_artifacts,runtime_installations,runtime_publications,runtime_state,sessions,snapshots` |
 | W3 + W2, **landed** | 20 | adds `operation_plans`, `operation_steps`, `project_observations`; drops `runtime_publications`. Fingerprint `sha256:12f64bfff305c30c716fbd5bdc9934a17140dfe4e127b5bce2ec7a10ecd309e4` |
-| W4 | 20 | unchanged — no new table |
-| W6+W7 | 23 | adds `agent_budgets`, `external_input_findings`, `ledger_events` |
+| W4, **landed** `25f57f9` | 20 | unchanged as predicted — no new table, but the `dispatches` DDL gains the three-value outcome vocabulary and `delivery_reason`, so the text moved. Fingerprint `sha256:937773366fcfe4f8…` |
+| W6, **landed** `93698b4` | 22 | adds `external_input_findings` and `ledger_events`. Fingerprint `sha256:c691f1d9bfb79cc4…` |
+| W7, **landed** `c23efd3` | 23 | adds `agent_budgets`. Fingerprint `sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559` |
+
+> **Corrected again 2026-08-11, after the last three landings.** The three-row
+> plan above became four rows in the tree: W6 and W7 landed separately, so
+> `agent_budgets` arrived one landing after the other two tables and the
+> fingerprint was recomputed three more times rather than twice. Only
+> `bda31e4b18…` is current; the two intermediate values are given truncated
+> because their only remaining use is reading a commit message against the
+> right tree. Each landing recomputed from a freshly created database and
+> positive-controlled the recipe against the previous `ledger.cpp` before
+> trusting the new value, which is R5 discharged rather than asserted.
+>
+> **One thing this section implied and the tree falsified: moving the seam
+> between the two DDL string literals does not change the fingerprint.** W6 had
+> to move it — the new table pushed the second literal past MSVC's string-length
+> cap — and a dedicated mutation that inserts a *third* seam is green across
+> every gate. The canonical string is the DDL as SQLite stored it, so what moves
+> the fingerprint is a changed character, never a changed split point. The
+> converse still holds and is the rule that matters: any changed character does
+> move it, including a comment.
 
 Final list after W6+W7, which is what W6/W7 §6.3 meant to write:
 
@@ -889,6 +928,25 @@ generation — and `TaskHost` has no notion of `TargetGeneration`, which is a
 `ObservationLease`. The schema's `SnapshotParts.target_generation` is the second
 one.
 
+> **Corrected 2026-08-11 against `25f57f9`: the ruling below is right and one
+> clause of its reasoning is false.** Two names under two types is what landed
+> and it is correct. But "the ledger sources it from
+> `sessions.installed_generation`" is wrong, and W4 did not follow it. Those are
+> two different quantities that a fixture makes look like one. A
+> `GenerationId` is a counter `TaskHost` mints **for itself**, incremented per
+> `activateRuntimeArtifact` on one process's `m_nextGenerationValue`;
+> `sessions.installed_generation` is the CAS generation of an installed
+> artifact, shared by every process that opens the ledger. They coincide at 1
+> only because a fixture activates once against the first installation, and they
+> diverge the moment a second Host activates or a second artifact is installed.
+>
+> `reserveDispatch` therefore **takes `runtimeGeneration` as a parameter** and
+> echoes it into the authority, which is safe in the one direction that matters:
+> naming the wrong Host generation can only make `TaskHost::deliver` refuse.
+> `targetGeneration` is the ledger's own, read from the snapshot the world was
+> observed at and verified again on the way back — that round trip is the proof
+> of what it means, and it is why the two names could not be collapsed.
+
 So W4's field is either (a) the runtime `GenerationId`, in which case the Host
 can check it, the ledger sources it from `sessions.installed_generation`, and W4
 has no W3 dependency for it; or (b) the target's `TargetGeneration`, in which
@@ -931,23 +989,26 @@ for one literal is a merge conflict on the thing R5 exists to protect.
   narrower than the original doubt — the field checks are substring searches over
   the whole definition text, so a property moved out of `properties` but left in
   `required` is still found.
-- **The gate list will move again.** It was re-read after W10's rename landed and
-  matches the counts in §1.2, but three of the four work items still owe it new
-  `contract-*` IDs. No work item should copy an ID list out of this document; re-read
-  `tests/CMakeLists.txt` and both fixture `CMakeLists.txt` files immediately before
-  implementing.
+- ~~**The gate list will move again.**~~ It did, three more times, and has now
+  stopped: all four work items landed and the registered set is 59 gates over 42
+  requirements. The advice survives its occasion — no work item should copy an
+  ID list out of this document; re-read `tests/CMakeLists.txt` and both fixture
+  `CMakeLists.txt` files immediately before implementing.
 - **`a03` and `a05`.** The requirement is closed by `tools/annotate` and gated by
-  the aggregate CTest `test-annotate-backend`, 43 tests under one name. There is
-  still **no per-requirement CTest ID for the behavioural half**. The C++ cases
-  are now `schema-agent-a03` / `schema-agent-a05`, and — read today — they are no
-  longer pure schema-shape reads: behavioural assertions against
-  `prepared.project.journalSchemaOwner` have been appended to at least `a03`. A
-  case that exercises code while wearing the `schema-` prefix contradicts the
-  vocabulary comment in `tests/CMakeLists.txt:43-56`, which says `schema-` "passes
-  whether or not the behaviour exists". Either those assertions belong in a
-  `contract-agent-a03` case or the prefix is wrong. Not W2-W7's to settle;
-  recorded because it is the one place where the renamed vocabulary currently
-  overstates.
+  the aggregate CTest `test-annotate-backend`. There is
+  still **no per-requirement CTest ID for the behavioural half**, and that is the
+  whole of what is missing: the behaviour exists and runs on every CI run under
+  one name. The C++ cases are `schema-agent-a03` / `schema-agent-a05`.
+
+  > **Closed 2026-08-11.** The second half of this bullet — that behavioural
+  > assertions against `prepared.project.journalSchemaOwner` had been appended to
+  > `schema-agent-a03`, so a `schema-` case proved more than its prefix claims —
+  > is no longer true of the tree. Those assertions now sit in
+  > `contract-agent-a04`, and `schema-agent-a03` reads
+  > `umbraflow-operator-v1`, `-journal-v1`, `-annotation-workspace-v2` and
+  > `-trace-v2` and asserts definition shape and nothing else. The vocabulary no
+  > longer overstates anywhere; the doubt was resolved in the direction this
+  > bullet asked for rather than by relaxing the prefix.
 - **`k_workflowCeiling`'s values** (W2 open question 2). 64/64/256/64/600000 are
   invented in W2. Nothing in the frozen bundle, the schema or the migration
   report names a ceiling, and a search of the tree confirms it. Unresolved, and
@@ -966,8 +1027,14 @@ for one literal is a merge conflict on the thing R5 exists to protect.
   257, 263`) were checked and match. Its `ledger.cpp` anchors were spot-checked
   and are within a line or two. The `contract-suite/fixtures/arcana-expedition/provider.cpp`
   anchors in W2 and W3 were not individually checked.
-- **Whether any of the fifteen W2, eight W3, sixteen W4 or twenty-three W6/W7
-  falsifying mutations actually turn their case red.** None has been run. Each
-  document is explicit that a mutation leaving a case green means the case is the
-  defect; that discipline is not discharged by any of them and is not discharged
-  here.
+- ~~**Whether any of the fifteen W2, eight W3, sixteen W4 or twenty-three W6/W7
+  falsifying mutations actually turn their case red.**~~ **Discharged
+  2026-08-11: every one of them was run, across four landings.** The discipline
+  held and it paid — the green results, not the red ones, are what each landing
+  reported, and two of the four campaigns had to be rerun because the harness
+  itself was a check that could not fail. What each campaign found is in its own
+  commit message, the honest zeros are collected in
+  [the next block](2026-08-10-next-block.md) §2, and the two harness defects are
+  in [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md). The
+  sentence this bullet was written to prevent — "the mutations are specified" as
+  a substitute for running them — is the one thing that did not happen.

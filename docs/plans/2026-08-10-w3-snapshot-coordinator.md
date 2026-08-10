@@ -40,12 +40,15 @@ identity, composes nothing).
 > `ObservedSnapshotParts` parameter this document would have deleted:
 > `createSnapshot` reached its final shape here, as
 > `(lease, plugin, observation)`. §5.1's fingerprint and table list are
-> superseded — the tree carries
+> superseded — at `848e390` the tree carried
 > `sha256:12f64bfff305c30c716fbd5bdc9934a17140dfe4e127b5bce2ec7a10ecd309e4`
 > over 20 tables, `project_observations` among them and
 > `runtime_publications` deleted by `848e390`. The intermediate value this
 > landing itself computed, `3a406b9d…`, was superseded the same day and reached
-> no document.
+> no document. (That value was superseded three more times later the same day;
+> the tree now carries
+> `sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559`
+> over 23 tables. `project_observations` is still among them.)
 >
 > **Every mutation in this document was run, and three of its rows did not
 > survive contact.** `T6a` and `T6b` are each green and only `T6c`, deleting

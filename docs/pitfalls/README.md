@@ -9,7 +9,10 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
 
 - [Checks that cannot fail](checks-that-cannot-fail.md) — a gate whose
   configuration makes it unable to report; read this before trusting any lint
-  job's green.
+  job's green, before trusting a mutation campaign's results, and before writing
+  a refusal assertion without a positive control. It also collects the opposite
+  case: properties that are true and load-bearing and that no mutation can
+  reach, which are worth naming rather than papering over.
 - [Concurrent agent builds in one worktree](concurrent-agent-builds.md)
 - [Running the repository's own tooling](repository-tooling-invocation.md) — a
   repo-wide formatter rewrites files another agent owns, and the documented

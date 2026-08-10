@@ -1,7 +1,8 @@
 # W6 Controller facade and W7 Agent subscription and budgets
 
-Status: specification; no code changed on its account
-Date: 2026-08-10
+Status: **landed 2026-08-11** — W6 `93698b4`, W7 `c23efd3`. Everything below is
+the pre-landing specification and is left as written.
+Date: 2026-08-10 (landed 2026-08-11)
 Scope: `umbraflow-cpp` only. No consumer-project writes.
 Closes: `p01 p02 p03` (W6), `a01 a02` (W7)
 Depends on: W2 ([`2026-08-10-w2-effective-plan.md`](2026-08-10-w2-effective-plan.md))
@@ -34,6 +35,71 @@ rows `P-01`, `P-02`, `P-03`, `A-01`, `A-02`. The frozen authority is
 > are corrected there. The five rows above are still schema-only and W6 and W7
 > still each owe a new `contract-*` case, migration report first — an order both
 > landings inverted and had to have repaired afterwards.
+
+> **Landed 2026-08-11 in `93698b4` (W6) and `c23efd3` (W7). Read what follows as
+> the plan, not as the tree.** `p01`, `p02`, `p03`, `a01` and `a02` are closed
+> and each owns a `contract-` gate. Every "Corrected 2026-08-11 against the
+> landed tree" note below was written against `848e390` and predates these two
+> landings; where one states a current value, read it as of that commit. The
+> tree carries
+> `sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559` over
+> 23 tables, reached in two steps rather than the one §6.3 plans: W6 added
+> `external_input_findings` and `ledger_events` (22 tables,
+> `c691f1d9bf…`) and W7 added `agent_budgets`.
+>
+> **§6.1's three schema changes were all declined, which is what the
+> reconciliation §7.1 recommended and is worth stating as an outcome rather than
+> an omission.** `schema/` is byte-identical to `848e390`.
+> `ProgressMarker.elapsed_without_progress_ms` stays and stays unconsumed;
+> `maximum_no_progress_steps` was not added and the ceiling is
+> `k_agentNoProgressCeiling`, Operator-owned beside the risk-unit table;
+> `OperatorSession.controller_kind` landed as the `sessions.controller_kind`
+> column only, so no bundle root moved and no `session_manifest_hash` moved with
+> it.
+>
+> **What this document specified and the implementation refused.** Each refusal
+> is a second spelling or a new authority channel avoided, not a corner cut.
+>
+> - **`ExternalInputSource` does not exist.** `p02` works by making a command
+>   inexpressible rather than by tagging one: `recordExternalInput` takes an
+>   action and a reason, there is no tool name, no version, no canonical
+>   arguments and no overload taking a `ValidatedToolInvocation`, and
+>   `external_input_findings` has no column that could hold one — asserted
+>   against the stored DDL text.
+> - **`AgentBudgetRemaining` carries one no-progress counter, not two.** §5.1's
+>   `noProgressSteps` beside `sameStateRepetitions` are two names for one fact;
+>   the tree has `consecutiveNoProgressSteps`.
+> - **`budgetsRequired` stays on `ControllerProfile`, but not where §5.1 puts
+>   its enforcement.** Budgets are established at `pinSession` — the door the
+>   host comes through — never at `bindController`, so no entry point taking a
+>   `ControllerBinding` can name, raise or refresh one.
+> - **`createSnapshot` gains neither a `ControllerBinding` nor an `observedAt`.**
+>   The lease already names the session, and a caller-supplied instant is a
+>   caller-supplied deadline; the time budget is the coordinator's own steady
+>   clock.
+> - **T-A02-j is unfalsifiable as written.** Loosening
+>   `CHECK(remaining_actions >= 0)` to `>= -1` cannot go red while a C++ guard
+>   refuses in front of the column. The guard was removed instead: the charge is
+>   an unconditional decrement and the constraint *is* the refusal, which is what
+>   makes the mutation mean something.
+> - `operation_state_changed` is deliberately not a fourth `ledger_events` kind.
+>   One event kind with one producer would leave four other transitions silent,
+>   which is a worse incompleteness than three kinds that are complete with
+>   respect to themselves.
+> - `agent_budgets.agent_profile_hash` was specified, written and removed: the
+>   session names the manifest and the manifest names the profile.
+>
+> **The mutation campaigns are the payload, and W6's had to be rerun in full.**
+> The harness restored files with their original modification time, so Ninja
+> never rebuilt and every later run tested a mutation that had supposedly been
+> reverted; it surfaced only when a post-campaign run failed against source that
+> said the opposite. Both defects in the harness, and the masked-refusal defect
+> W7 found in its own new case, are in
+> [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md). The zeros
+> these two items carry — `requireLiveBinding`'s four mutually masking
+> conjuncts, and the budget-presence invariant that cannot be turned red because
+> both of its sides move together — are recorded beside their requirements in
+> [the next block](2026-08-10-next-block.md) §2.
 
 W7 is specified with W6 because `ExternalInputFinding.detected_after_cursor` is
 a `SubscriptionCursor` (`schema/umbraflow-operator-v1.schema.json:269`). W6

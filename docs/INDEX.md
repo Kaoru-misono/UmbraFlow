@@ -8,8 +8,10 @@ the four same-day specifications conflict.
 
 - [Runtime v2 and game-operator breaking authority](plans/2026-08-09-runtime-hardening-rewrite.md)
   — the design authority.
-- [W2-W7 reconciliation](plans/2026-08-10-w2-w7-reconciliation.md) — read before
-  any of the four work-item specifications; it wins where one of them disagrees.
+- [W2-W7 reconciliation](plans/2026-08-10-w2-w7-reconciliation.md) — it won
+  where one of the four work-item specifications disagreed with it, and all four
+  have landed, so it is now the record of those rulings rather than reading
+  ahead of implementation.
 - [Requirement and migration map](plans/2026-08-09-runtime-migration-report.md)
 - [Architecture](ARCHITECTURE.md)
 - [Current execution checklist](TODO.md)
@@ -18,10 +20,11 @@ the four same-day specifications conflict.
   which stays accepted with a stated reason. A-F8 was accepted and then closed
   the same day by W8.
 - [The next block after runtime hardening](plans/2026-08-10-next-block.md) —
-  the requirement-by-requirement map of what is still owed and which work item
-  closes it. W1, W5, W8 and the contract suite landed 2026-08-10; W3 and W2
-  landed 2026-08-11, leaving nine requirements without a behavioural gate and
-  W4, W6, W7 and W9 open.
+  the requirement-by-requirement map. **Its requirement block closed on
+  2026-08-11**: all 42 `REQUIRED_CORE` requirements are implemented, 40 own a
+  behavioural gate and `a03`/`a05` own an aggregate gate with no per-requirement
+  ID. What remains is W9, W11, W12's second half and that naming work; §6 is the
+  list.
 - [Consumer attestation](plans/2026-08-11-consumer-attestation.md) — the nine
   `EXTERNAL attest-consumer-dNN` IDs, specified 2026-08-11: what a consumer
   produces, what binds it, and what upstream may and may not refuse. Proposal

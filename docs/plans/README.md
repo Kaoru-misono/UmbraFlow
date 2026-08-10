@@ -19,28 +19,32 @@ Reading order: target form, then layer ownership, then the model semantics.
   reproducible inherited baseline, KEEP/REWRITE/DELETE dispositions, and the exact
   requirement-to-owner/schema/CTest map.
 - [The next block after runtime hardening](2026-08-10-next-block.md) --
-  **in execution since 2026-08-10**; it was proposed earlier that day. Establishes
-  that the tree is mid Phase 2A rather than past it, that this branch has never
-  been pushed and so has never been through CI, and orders the deferred work by
-  dependency. W1, W5, W8 and the contract suite it raised as unowned have
-  landed; W0 ran and returned half a pass; W3 and W2 landed on 2026-08-11 and
-  W4 is in progress; W6, W7, W9 and W11 have not started. W12 was added on
-  2026-08-11 — the `core` admission debt that the 2026-07-25 sweep ruled and
-  that was archived with the review before anyone ran it — and `bcc3171`
-  answered its first half the same day.
+  **its requirement block closed on 2026-08-11**, and it is still the live
+  record of what remains. It established that the tree was mid Phase 2A rather
+  than past it, that this branch has never been pushed and so has never been
+  through CI, and ordered the deferred work by dependency. W1, W5, W8 and the
+  contract suite it raised as unowned landed on 2026-08-10; W3, W2, W4, W6 and
+  W7 landed on 2026-08-11, closing every `REQUIRED_CORE` requirement. Open: W9
+  (the review round over W2-W7, now unblocked), W11 (`clang-analysis`, which
+  blocks the branch), W12's retroactive import review, and per-requirement IDs
+  for `a03` and `a05`. W12 was added on 2026-08-11 — the `core` admission debt
+  that the 2026-07-25 sweep ruled and that was archived with the review before
+  anyone ran it — and `bcc3171` answered its first half the same day.
 - Four of that plan's work items were written out in full on 2026-08-10, each
   specification only. They do not open rulings of their own; they are the next
   block's rows at implementation depth, and they are superseded by it wherever
-  they disagree. **W2 and W3 have since landed and are kept as the pre-landing
-  record**, each carrying a dated note saying what differs from the tree and
-  what it still owes; W4 and W6/W7 are still live guidance and are corrected
-  inline.
+  they disagree. **All four have now landed and all four are kept as the
+  pre-landing record**, each carrying a dated note saying what differs from the
+  tree, which of its clauses the implementation refused, and what it still owes.
+  None of them is guidance any longer.
   [W2 EffectivePlan authority](2026-08-10-w2-effective-plan.md) — landed
   `848e390` --
   [W3 Snapshot Coordinator](2026-08-10-w3-snapshot-coordinator.md) — landed
   `7cef402` + `4b955de` --
-  [W4 delivery join](2026-08-10-w4-delivery-join.md) --
-  [W6 and W7 controller and Agent](2026-08-10-w6-w7-controller-and-agent.md).
+  [W4 delivery join](2026-08-10-w4-delivery-join.md) — landed `e64c143` +
+  `25f57f9` --
+  [W6 and W7 controller and Agent](2026-08-10-w6-w7-controller-and-agent.md) —
+  landed `93698b4` + `c23efd3`.
 - [Consumer attestation](2026-08-11-consumer-attestation.md) — **specification
   proposal, nothing implemented.** What `attest-consumer-d01`-`d09` are, what
   each of the nine requirements must attest, who signs and what that does and
@@ -53,10 +57,13 @@ Reading order: target form, then layer ownership, then the model semantics.
   were written in parallel by agents who could not see each other. This resolves
   every conflict between them, lists the cross-assumptions one makes that another
   does not satisfy, fixes the landing order, and unions their `ledger.cpp` DDL
-  changes so the schema fingerprint is recomputed once per landing. **Read it
-  before W4 and W6/W7**; where one of them disagrees with it, it wins. Its §6.3
-  DDL arithmetic was corrected on 2026-08-11 after W3 and W2 landed and
-  `runtime_publications` was deleted.
+  changes so the schema fingerprint is recomputed once per landing. It governed
+  all four and they have all landed, so it is now a ruling record rather than
+  something to read before implementing. Its §6.3 carries a row per landing;
+  **its §7.2 recommendation that the ledger source `runtimeGeneration` from
+  `sessions.installed_generation` is false and is marked so at the
+  recommendation** — those are two different quantities that only a fixture
+  makes look like one.
 
 ## The 2026-08-09 rewrite design set
 

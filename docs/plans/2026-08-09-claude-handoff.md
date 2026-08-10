@@ -166,6 +166,13 @@ d445c811b9469a58ff116df4763d4e7f1acd80b6a3392639d7eb257321916753
 > `k_exactSchemaV1Fingerprint`。「改 DDL 必须重算、不得保留双 fingerprint」这条
 > 约束不变，两次落地都遵守了。
 
+> 2026-08-11 当天稍晚：同样只补当前值。W4（`e64c143`、`25f57f9`）、W6（`93698b4`）、
+> W7（`c23efd3`）相继落地，新增 `external_input_findings`、`ledger_events`、
+> `agent_budgets`，现在共 23 张表，fingerprint 为
+> `sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559`。
+> W4 没有加表却也改了 fingerprint——`dispatches` 的 DDL 文本变了——这正是那条约束
+> 想覆盖的情况。42 条 `REQUIRED_CORE` 需求全部实现完毕。
+
 ### 4.5 ProjectPlugin
 
 - 只支持 startup-time registry `(plugin_id, project_registration_hash)` exact lookup，无 latest/fallback。

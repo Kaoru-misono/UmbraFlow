@@ -12,12 +12,13 @@ The discipline that catches both is the same. Remove the property, watch the
 check turn red, put the property back. An untested check is a claim, not a
 gate.
 
-## They are one family, not four coincidences
+## They are one family, not a run of coincidences
 
-Four separate instances were found on 2026-08-10, in four unrelated files, and a
-fifth on 2026-08-11 in a database column. They are the same defect wearing five
-costumes: **a name exists, the name promises something, and nothing verifies the
-promise.**
+Four separate instances were found on 2026-08-10, in four unrelated files, and
+four more on 2026-08-11 — one in a database column and three in the harness that
+was running the mutations meant to catch the rest. They are the same defect
+wearing eight costumes: **a name exists, the name promises something, and nothing
+verifies the promise.**
 
 | Instance | The name that promised | What verified it |
 |---|---|---|
@@ -26,13 +27,36 @@ promise.**
 | `test-annotate-backend` | "the authoring authority is gated" | nothing — the suite existed and ran in no CTest at all |
 | `cpp_add_contract_suite` | "these cases run" | nothing — the helper builds the binary `NO_CTEST` and registers one CTest per `CASES` entry, so seven compiled cases in `tests/operator/test-project-plugin-contract.cpp` executed in no gate |
 | `authority_decisions.decision_basis_hash` (found 2026-08-11) | "the ledger records which decision basis authorised this dispatch" | nothing — the column is written and never read. `reserveDispatch` takes the basis from `operation_plans`, and no public surface reads `authority_decisions` back, so corrupting the stored value turns no test red |
+| `ctest -R <name>` in a mutation harness (found 2026-08-11) | "the case this mutation targets ran and passed" | nothing — `ctest -R` exits 0 when the filter matches no test, so a prose-named case, a typo or a renamed gate reads exactly like a pass. Four results were falsely green on one campaign's first pass |
+| restoring the mutated file (found 2026-08-11) | "the tree is back to its original state" | nothing — the restore preserved the file's original modification time, so Ninja saw nothing newer than its output and skipped the rebuild. Every run after the first tested a mutation that had supposedly been reverted |
+| three refusal assertions in one new case (found 2026-08-11) | "the budget refuses this" | nothing — the fixture named an instance that already had an active write session, so a unique index refused all three regardless, and the mutation they existed to catch came back green |
 
-Note what they are *not*. None is a bug in a check's logic; every one of the five
-works correctly on the inputs it receives. The defect is upstream of the logic,
-in what reaches it — an unmatchable filter, a missing root, an unregistered
-binary, an un-run case — or downstream of it, in a result nothing consumes. That
+Note what they are *not*. None is a bug in a check's logic; every one of the
+eight works correctly on the inputs it receives. The defect is upstream of the
+logic, in what reaches it — an unmatchable filter, a missing root, an
+unregistered binary, an un-run case, a stale object file, a fixture nothing can
+succeed against — or downstream of it, in a result nothing consumes. That
 is why review does not catch them: reading the check tells you nothing, because
 the check is fine.
+
+The last three are worth their own emphasis because of *where* they were found.
+All three were in the machinery built to run falsifying mutations — the
+discipline this document prescribes. **A mutation harness is a gate, and it needs
+its own positive control before its results mean anything.** Two of them cost a
+full campaign rerun and one produced four false greens that were reported before
+they were caught. Three questions settle a harness cheaply: does the run fail
+when the case name does not exist, does the binary actually rebuild between the
+mutated and restored states, and does the case still pass for the reason it
+names when nothing is mutated.
+
+The third has a fix that generalises past mutation work. **A refusal assertion
+proves nothing until you show the same call can succeed.** Three refusals in a
+row are equally consistent with a correct guard and with a fixture nothing can
+succeed against, and the two are indistinguishable from the assertion side. The
+repair was a fresh fixture *and* a positive control — the same pin, against a
+matching profile, succeeding — which is the negative-result rule applied one
+level down: an empty result excludes nothing until the experiment is shown able
+to produce a non-empty one.
 
 Two consequences worth carrying:
 
@@ -83,7 +107,74 @@ across two work items had been specified and never run. Three stayed green;
 [W2's specification](../plans/2026-08-10-w2-effective-plan.md) records all three,
 and this is the one that generalises beyond its own requirement.
 
-Instance detail follows for the one that cost the most.
+A second instance landed the same day, and the pair is the useful thing.
+`dispatches.delivery_reason` is written, and it is guarded harder than most
+columns: a three-way `CHECK` ties its nullness to `delivery_outcome`, so no row
+can carry a reason without an outcome or an outcome that needs one without a
+reason. **Every one of those guards is about the column's shape, and nothing
+reads its text back.** Replace the stored reason with any other string of the
+right nullness and no test notices. The constraint and the reader are different
+questions, and satisfying the first is the most common way to stop asking the
+second.
+
+The counter-example is in the same block and shows the discipline discharged
+rather than only violated. `ledger_events`' descriptive columns — `kind`,
+`controlled_target_key`, `subject_id` — were written one landing before anything
+read them. That was recorded as a known zero at the time, with the reader named
+and scheduled, and `subscribe` became it one landing later. A write-only column
+is a debt, not a defect, **when the commit that adds it says so and names what
+will read it.** The defect is the unrecorded one.
+
+## Properties no mutation can reach
+
+The same block produced a second, opposite family: properties that are true,
+load-bearing, and **unfalsifiable by construction**. Nothing here is a gate that
+silently passes, so this is not the family above — but it is what an honest
+campaign turns up once the harness is trustworthy, and the failure mode is the
+same in the end: a green suite that a reader takes as coverage. Four shapes,
+each recognisable on sight.
+
+- **One fact spelled N times.** A dispatch's lease identity is `lease_id`,
+  `fencing_token` and `lease.revision`; the revision is always set equal to the
+  fencing token and both move with the lease id on every acquire, release and
+  takeover. Only the conjunction is falsifiable. A test was written specifically
+  to isolate them, using the one schedule where the audit row and the live lease
+  disagree, and even that could not separate them. The same shape, worse:
+  `requireLiveBinding` compared four fields that had each been copied out of the
+  very row it compared against, so each conjunct was masked by the others and
+  none was individually falsifiable. **The repair for the second was to delete
+  two conjuncts**; the repair for the first was to say so. Tell them apart by
+  asking whether the redundancy buys defence in depth against a *different*
+  writer, or merely re-reads one writer's own output.
+- **An invariant whose two sides move together.** "A budget row is present
+  exactly when the controller kind requires one" cannot be turned red, because
+  the same authority writes both sides and any mutation moves them in step. It
+  is still worth keeping: it converts a silent no-charge into a loud failure.
+  Keep it, and name it as unfalsifiable at the declaration, rather than counting
+  it as coverage.
+- **A property of a declaration, not of behaviour.** `HostDeliveryReport` has
+  exactly one friend, and that count is the entire mechanism keeping a test
+  harness from fabricating a delivery it never performed. No test can express
+  it: adding a second friend compiles, and every case stays green. This was
+  confirmed empirically rather than assumed — which is the only honest way to
+  claim a zero. Only reading the header catches a change here, so the header
+  says why the count matters.
+- **A scoping property with one instance in every fixture.** "A takeover
+  resolves only its own target's dispatches" has no test at all. Its mutation
+  goes red, but for the wrong reason — a bind-parameter range error — and every
+  fixture has exactly one controlled target, so the property itself is never
+  observed. **A rule of the form "only its own X" needs two Xs in the fixture or
+  it is untested**, however many assertions surround it.
+
+What to do with each is the same: record the zero where the requirement is
+recorded, so the next reader meets it beside the thing it qualifies, and do not
+let a green campaign be reported as if these were part of it. The ones this
+repository carries are in
+[the next block](../plans/2026-08-10-next-block.md) §2, beside the requirements
+they qualify.
+
+Returning to the first family: instance detail follows for the member that cost
+the most.
 
 ## A PCRE lookahead in `HeaderFilterRegex` silently discards every header diagnostic
 
