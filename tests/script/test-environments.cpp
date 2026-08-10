@@ -5,6 +5,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <string>
 #include <string_view>
 
@@ -96,7 +97,7 @@ namespace uf::script
             // The denial list in full, not a sample. The library itself is asserted
             // present first because `os.time == nil` would also hold if `os` had
             // silently gone missing, which would be a different VM than the one tested.
-            constexpr std::string_view deniedGlobals[] = {
+            constexpr auto deniedGlobals = std::to_array<std::string_view>({
                 "_G",
                 "getfenv",
                 "setfenv",
@@ -104,7 +105,7 @@ namespace uf::script
                 "gcinfo",
                 "coroutine",
                 "debug",
-            };
+            });
             for (std::string_view const name : deniedGlobals)
             {
                 INFO("denied global: ", name);
@@ -117,13 +118,13 @@ namespace uf::script
             CHECK(projectTruth(*engine, "type(os) == 'table'") == doctest::Approx(1.0));
             CHECK(projectTruth(*engine, "type(math) == 'table'") == doctest::Approx(1.0));
 
-            constexpr std::string_view deniedFields[] = {
+            constexpr auto deniedFields = std::to_array<std::string_view>({
                 "os.time",
                 "os.clock",
                 "os.date",
                 "math.random",
                 "math.randomseed",
-            };
+            });
             for (std::string_view const name : deniedFields)
             {
                 INFO("denied field: ", name);
@@ -263,10 +264,12 @@ namespace uf::script
             );
             REQUIRE(refused.failure.has_value());
             CHECK(
+                // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
                 automationErrorKind(*refused.failure)
                 == AutomationErrorKind::InvalidResource
             );
             CHECK(
+                // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
                 refused.failure->message()
                 == "probe installer refused to build its tables"
             );
@@ -277,10 +280,12 @@ namespace uf::script
             );
             REQUIRE(unsupported.failure.has_value());
             CHECK(
+                // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
                 automationErrorKind(*unsupported.failure)
                 == AutomationErrorKind::UnsupportedCapability
             );
             CHECK(
+                // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
                 unsupported.failure->message()
                 == "probe installer has no such capability"
             );

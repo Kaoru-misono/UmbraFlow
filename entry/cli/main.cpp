@@ -5,6 +5,7 @@
 #include "targets.hpp"
 
 #include <core/numeric/checked-cast.hpp>
+#include <core/safety/annotations.hpp>
 
 #include <algorithm>
 #include <array>
@@ -137,10 +138,16 @@ auto main(int argumentCount, char const* const* p_arguments) -> int
             std::cerr << "umbra-flow error: invalid process argument vector\n";
             return std::to_underlying(uf::cli::ExitCode::Failure);
         }
+        // SAFETY: a hosted entry point receives argumentCount argument pointers
+        // followed by a null one ([basic.start.main]/2). That count arrives
+        // beside the pointer rather than within it, so no expression can restate
+        // the bound; this is the single place the C contract becomes a span.
+        UF_UNSAFE_BUFFER_BEGIN
         auto const arguments = std::span<char const* const>{
             p_arguments,
             *convertedArgumentCount
         };
+        UF_UNSAFE_BUFFER_END
         auto raw = std::vector<std::string>{};
         for (auto const* argument : arguments.subspan(1U))
         {

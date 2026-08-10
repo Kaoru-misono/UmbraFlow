@@ -148,7 +148,7 @@ namespace uf
         CHECK(rendered.find(invalidArgument().category().name()) != std::string::npos);
         CHECK(rendered.find(invalidArgument().message()) != std::string::npos);
         CHECK(rendered.find(native.category().name()) != std::string::npos);
-        CHECK(rendered.find("5") != std::string::npos);
+        CHECK(rendered.find('5') != std::string::npos);
     }
 
     TEST_CASE("status propagation adds context without logging")

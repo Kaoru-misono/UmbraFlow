@@ -109,7 +109,7 @@ namespace uf::task
                     "annotation project root must be a real directory, not a link"
                 );
             }
-            auto const canonical = std::filesystem::canonical(root, error);
+            auto canonical = std::filesystem::canonical(root, error);
             if (error)
             {
                 return fail(

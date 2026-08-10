@@ -2,6 +2,7 @@
 
 #include "event.hpp"
 
+#include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/types/integer.hpp>
@@ -38,6 +39,11 @@ namespace uf::trace
             m_lastSequence        = event.sequence();
             return ok();
         }
+
+        // The block above is the only writer and engages all four fields at
+        // once, so an engaged m_sessionId means the other two are engaged too.
+        UF_ASSERT(m_sessionManifestHash.has_value());
+        UF_ASSERT(m_producer.has_value());
 
         if (event.sessionId() != *m_sessionId)
         {

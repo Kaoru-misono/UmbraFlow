@@ -66,6 +66,7 @@ TEST_CASE("UTF-8 scalar decoding covers every sequence width")
     REQUIRE(decoded.has_value());
     auto const expected =
         std::vector<uf::uint32>{0x24U, 0xA2U, 0x20ACU, 0x1F600U};
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
     CHECK(*decoded == expected);
     CHECK_FALSE(
         uf::decodeUtf8Scalars(std::string_view{"\xED\xA0\x80", 3}).has_value()

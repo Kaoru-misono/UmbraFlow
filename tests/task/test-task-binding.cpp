@@ -36,6 +36,14 @@ namespace uf::task
                 REQUIRE(std::filesystem::create_directory(m_path));
             }
 
+            // The directory is removed by whoever holds it, so holding it is
+            // exclusive and untransferable: a second holder would remove a
+            // directory the first still names.
+            TemporaryDir(TemporaryDir const&)                    = delete;
+            TemporaryDir(TemporaryDir&&)                         = delete;
+            auto operator=(TemporaryDir const&) -> TemporaryDir& = delete;
+            auto operator=(TemporaryDir&&) -> TemporaryDir&      = delete;
+
             ~TemporaryDir() noexcept
             {
                 auto error = std::error_code{};

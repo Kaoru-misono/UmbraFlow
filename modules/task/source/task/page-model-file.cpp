@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <format>
+#include <memory>
 #include <set>
 #include <span>
 #include <string>
@@ -306,13 +307,11 @@ namespace uf::task
                 {
                     return failure("a canonical unsigned byte size");
                 }
-                auto value = uint64{};
-                auto const parsed = std::from_chars(
-                    digits.data(),
-                    digits.data() + digits.size(),
-                    value
-                );
-                if (parsed.ec != std::errc{} || parsed.ptr != digits.data() + digits.size())
+                auto value              = uint64{};
+                auto const* const begin = std::to_address(digits.begin());
+                auto const* const end   = std::to_address(digits.end());
+                auto const parsed       = std::from_chars(begin, end, value);
+                if (parsed.ec != std::errc{} || parsed.ptr != end)
                 {
                     return failure("an unsigned byte size within range");
                 }
@@ -390,7 +389,7 @@ namespace uf::task
             {
                 return refuse("runtime artifact root must be a real directory, not a link");
             }
-            auto const canonical = std::filesystem::canonical(root, error);
+            auto canonical = std::filesystem::canonical(root, error);
             if (error)
             {
                 return ioFailure("canonicalize", root, error);
@@ -426,8 +425,8 @@ namespace uf::task
                 }
             }
 
-            auto error            = std::error_code{};
-            auto const canonical = std::filesystem::canonical(current, error);
+            auto error     = std::error_code{};
+            auto canonical = std::filesystem::canonical(current, error);
             if (error)
             {
                 return ioFailure("canonicalize", current, error);

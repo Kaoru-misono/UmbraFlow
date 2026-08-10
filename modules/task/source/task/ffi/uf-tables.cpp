@@ -507,7 +507,14 @@ namespace uf::task
             addNumber(state, "dominant_green", result->dominantGreen);
             addNumber(state, "dominant_blue", result->dominantBlue);
             addNumber(state, "dominant_pixels", result->dominantPixels);
-            if (result->fullySelectedPixels.has_value())
+            // PixelProbeReport engages the three selection counts together or
+            // not at all, so this asks for exactly what it then reads rather
+            // than reading two of them on the strength of the first.
+            if (
+                result->fullySelectedPixels.has_value()
+                && result->rampSelectedPixels.has_value()
+                && result->selectedWeight.has_value()
+            )
             {
                 addNumber(state, "fully_selected_pixels", *result->fullySelectedPixels);
                 addNumber(state, "ramp_selected_pixels", *result->rampSelectedPixels);

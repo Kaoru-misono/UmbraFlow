@@ -766,7 +766,7 @@ namespace uf
             )
         );
         UF_CHECK(std::holds_alternative<ColourProbeReport>(scan.outcome));
-        return std::get<ColourProbeReport>(std::move(scan.outcome));
+        return std::get<ColourProbeReport>(scan.outcome);
     }
 
     auto probeColour(

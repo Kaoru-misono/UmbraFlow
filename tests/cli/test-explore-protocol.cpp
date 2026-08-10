@@ -421,7 +421,9 @@ namespace uf::cli
             auto const recorded = readQueueCursor(cursorPath, queue);
             REQUIRE(recorded.has_value());
             REQUIRE(recorded->has_value());
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             CHECK((*recorded)->consumedBytes == k_first.size());
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             CHECK((*recorded)->consumedLines == 1U);
 
             auto const extent = measureQueueExtent(queue);

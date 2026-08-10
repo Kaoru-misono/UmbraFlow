@@ -201,6 +201,7 @@ namespace uf
                 REQUIRE(low != std::string_view::npos);
                 auto const value = checkedCast<uint8>(high * 16U + low);
                 REQUIRE(value.has_value());
+                // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
                 bytes.emplace_back(asByte(*value));
             }
             return bytes;
@@ -264,6 +265,7 @@ namespace uf
         {
             REQUIRE(result.has_value());
             REQUIRE(result->has_value());
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             return (*result)->score();
         }
 
@@ -1251,15 +1253,19 @@ namespace uf
             REQUIRE(masked->has_value());
             REQUIRE(unmaskable->has_value());
             CHECK(
+                // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
                 **masked
                 == SadMatch{origin, origin, testCase.maskedScore}
             );
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             CHECK((*unmaskable)->score() == testCase.opaqueScore);
 
             // The largest score a 99% similarity threshold accepts over this
             // template rectangle, on the scale unmasked thresholds already use.
             auto const maximumSad = uint64{255} * pixelCount / 100U;
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             CHECK((*masked)->score() <= maximumSad);
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             CHECK((*unmaskable)->score() > maximumSad);
 
             // Control: over its own background the same template and mask are
@@ -2166,6 +2172,7 @@ namespace uf
                     Bgra8Pixel{
                         .blue  = 255,
                         .green = 255,
+                        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
                         .red   = *red,
                         .alpha = 255,
                     },

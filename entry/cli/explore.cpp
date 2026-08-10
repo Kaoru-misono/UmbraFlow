@@ -197,7 +197,7 @@ namespace uf::cli
         task::ExplorationSession& session,
         ExploreArgs const& args,
         ExploreIpcPaths const& paths,
-        std::stop_token cancellation
+        std::stop_token const& cancellation
     ) -> Result<task::TaskRunReport>
     {
         auto reader = QueueReader{

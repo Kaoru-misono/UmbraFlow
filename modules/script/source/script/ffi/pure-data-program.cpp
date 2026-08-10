@@ -49,16 +49,16 @@ namespace uf::script
 {
     namespace
     {
-        constexpr auto k_maximumSourceBytes = std::size_t{256U * 1024U};
-        constexpr auto k_maximumBytecodeBytes = std::size_t{1024U * 1024U};
-        constexpr auto k_maximumDataBytes = std::size_t{1024U * 1024U};
-        constexpr auto k_maximumArtifactCount = std::size_t{64U};
-        constexpr auto k_maximumArtifactBytes = std::size_t{4U * 1024U * 1024U};
-        constexpr auto k_maximumTotalArtifactBytes = std::size_t{16U * 1024U * 1024U};
-        constexpr auto k_maximumErrorBytes = std::size_t{4096U};
-        constexpr auto k_memoryQuotaBytes = std::size_t{16U * 1024U * 1024U};
-        constexpr auto k_interruptBudgetTicks = uint64{2'000'000U};
-        constexpr auto k_maximumRuntime = std::chrono::seconds{2};
+        constexpr auto k_maximumSourceBytes        = std::size_t{256U} * 1024U;
+        constexpr auto k_maximumBytecodeBytes      = std::size_t{1024U} * 1024U;
+        constexpr auto k_maximumDataBytes          = std::size_t{1024U} * 1024U;
+        constexpr auto k_maximumArtifactCount      = std::size_t{64U};
+        constexpr auto k_maximumArtifactBytes      = std::size_t{4U} * 1024U * 1024U;
+        constexpr auto k_maximumTotalArtifactBytes = std::size_t{16U} * 1024U * 1024U;
+        constexpr auto k_maximumErrorBytes         = std::size_t{4096U};
+        constexpr auto k_memoryQuotaBytes          = std::size_t{16U} * 1024U * 1024U;
+        constexpr auto k_interruptBudgetTicks      = uint64{2'000'000U};
+        constexpr auto k_maximumRuntime            = std::chrono::seconds{2};
 
         constexpr auto k_pureGlobals = std::array{
             std::string_view{"assert"},       std::string_view{"error"},
@@ -397,7 +397,7 @@ return {
             lua_pushlstring(thread, entryPoint.data(), entryPoint.size());
             lua_pushlstring(thread, input.data(), input.size());
             UF_TRY(resume(thread, 5, control));
-            if (lua_gettop(thread) != 1 || !lua_isstring(thread, 1))
+            if (lua_gettop(thread) != 1 || lua_isstring(thread, 1) == 0)
             {
                 return refuse("pure data program returned a non-string value");
             }

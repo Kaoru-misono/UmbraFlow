@@ -195,7 +195,7 @@ namespace uf::engine
     }
 
     Observation::Observation(Observation&& other) noexcept
-        : m_frame{other.m_frame}
+        : m_frame{std::move(other.m_frame)}
         , m_lease{other.m_lease}
         , m_frameIdentity{other.m_frameIdentity}
         , m_sessionIdentity{other.m_sessionIdentity}
@@ -212,7 +212,7 @@ namespace uf::engine
             return *this;
         }
 
-        m_frame           = other.m_frame;
+        m_frame           = std::move(other.m_frame);
         m_lease           = other.m_lease;
         m_frameIdentity   = other.m_frameIdentity;
         m_sessionIdentity = other.m_sessionIdentity;

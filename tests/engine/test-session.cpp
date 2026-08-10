@@ -63,6 +63,7 @@ namespace uf::engine
         {
             auto const kind = automationErrorKind(error);
             REQUIRE(kind.has_value());
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             CHECK(*kind == expected);
         }
 
@@ -812,19 +813,24 @@ namespace uf::engine
         );
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK((*found)->matchedRect.x() == 1);
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK((*found)->sadScore == 0);
 
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         auto receipt = session.clickPoint(std::move(*observation), (*found)->clickPixel);
         REQUIRE(receipt.has_value());
         CHECK(under.clicks->clickCount() == 1);
         CHECK(receipt->frameId == FrameId{17});
         REQUIRE(under.clicks->lastClick().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(receipt->clickPoint == *under.clicks->lastClick());
 
         // The lease reaches the delivery layer unchanged, so its D0 fence fields
         // still identify the observed frame.
         REQUIRE(under.clicks->lastLease().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(under.clicks->lastLease()->frameId() == FrameId{17});
 
         auto const expected = std::vector<std::string>{
@@ -912,7 +918,9 @@ namespace uf::engine
         );
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK((*found)->sadScore > 0);
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK((*found)->maximumSad == 255);
         CHECK(under.clicks->clickCount() == 0);
     }
@@ -1017,6 +1025,7 @@ namespace uf::engine
 
         // The consumed observation must fail closed on any further use.
         auto const reuse = session.matchTemplate(
+            // NOLINTNEXTLINE(bugprone-use-after-move): the spent handle must fail closed.
             handle,
             grayTemplate(k_presentGray),
             pixelRectOf(0, 0, 3, 1)
@@ -1040,6 +1049,7 @@ namespace uf::engine
         // dead, so the moved-from handle fails closed exactly like a consumed one.
         auto moved       = *std::move(source);
         auto const reuse = session.matchTemplate(
+            // NOLINTNEXTLINE(bugprone-use-after-move): the moved-from handle must fail closed.
             *source,
             grayTemplate(k_presentGray),
             pixelRectOf(0, 0, 3, 1)
@@ -1146,6 +1156,7 @@ namespace uf::engine
 
         // The delivery already invalidated the handle, so retrying with the
         // surviving alias fails closed and cannot double-deliver.
+        // NOLINTNEXTLINE(bugprone-use-after-move): the spent handle must fail closed.
         auto const retry = session->clickPoint(std::move(handle), PixelPoint{1, 0});
         REQUIRE_FALSE(retry.has_value());
         requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
@@ -1354,10 +1365,12 @@ namespace uf::engine
         CHECK(under.clicks->keyCount() == 1);
         CHECK(receipt->frameId == FrameId{17});
         REQUIRE(under.clicks->lastKeyGeneration().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(*under.clicks->lastKeyGeneration() == TargetGeneration::fromValue(3));
 
         // A delivered keystroke changes the screen exactly as a click does, so the
         // observation is spent and a second delivery on the same handle is refused.
+        // NOLINTNEXTLINE(bugprone-use-after-move): the spent handle must fail closed.
         auto const retry = session.pressKey(std::move(handle), *key);
         REQUIRE_FALSE(retry.has_value());
         requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
@@ -1381,16 +1394,19 @@ namespace uf::engine
         CHECK(receipt->frameId == FrameId{17});
         CHECK(receipt->notches == int32{-2});
         REQUIRE(under.clicks->lastNotches().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(*under.clicks->lastNotches() == int32{-2});
 
         // The verb enforces no lease here, but it must not swallow one either:
         // the controller's delivery-time fence needs the observation's own.
         REQUIRE(under.clicks->lastScrollLease().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(under.clicks->lastScrollLease()->frameId() == FrameId{17});
 
         // A delivered scroll moves the screen, so the observation is spent.
         // Remove the invalidation in EngineSession::scroll and one frame delivers
         // two wheel messages, so this goes red.
+        // NOLINTNEXTLINE(bugprone-use-after-move): the spent handle must fail closed.
         auto const retry = session.scroll(std::move(handle), int32{-2});
         REQUIRE_FALSE(retry.has_value());
         requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
@@ -1550,18 +1566,22 @@ namespace uf::engine
         // would still hold if the duration were dropped between session and sink.
         // Replace `hold` with a constant in the sink call and only this goes red.
         REQUIRE(under.clicks->lastHold().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(*under.clicks->lastHold() == hold);
         REQUIRE(under.clicks->lastLongPress().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(under.clicks->lastLongPress()->x() == doctest::Approx(1.0));
 
         // The lease reaching the sink is this observation's own, which keeps the
         // controller's delivery-time fence in the loop as layer two.
         REQUIRE(under.clicks->lastLongPressLease().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(under.clicks->lastLongPressLease()->frameId() == FrameId{17});
 
         // The press changed the screen, so the observation is spent. Remove the
         // invalidation in EngineSession::longPress and one frame delivers two
         // presses, so this goes red.
+        // NOLINTNEXTLINE(bugprone-use-after-move): the spent handle must fail closed.
         auto const retry = session.longPress(std::move(handle), PixelPoint{1, 0}, hold);
         REQUIRE_FALSE(retry.has_value());
         requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
@@ -1627,21 +1647,26 @@ namespace uf::engine
         // and a click cannot -- so this pair is the case's reason to exist.
         REQUIRE(under.clicks->lastDragStart().has_value());
         REQUIRE(under.clicks->lastDragEnd().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(under.clicks->lastDragStart()->x() == doctest::Approx(0.0));
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(under.clicks->lastDragEnd()->x() == doctest::Approx(2.0));
         CHECK(
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             under.clicks->lastDragStart()->x() != under.clicks->lastDragEnd()->x()
         );
 
         // The travel the caller named reached the port: replace it with a
         // constant in the sink call and only this goes red.
         REQUIRE(under.clicks->lastTravel().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(*under.clicks->lastTravel() == travel);
 
         // The drag moved what the frame was a picture of, so the observation is
         // spent. Remove the invalidation in EngineSession::drag and one frame
         // delivers two drags, so this goes red.
         auto const retry = session.drag(
+            // NOLINTNEXTLINE(bugprone-use-after-move): the spent handle must fail closed.
             std::move(handle),
             PixelPoint{0, 0},
             PixelPoint{2, 0},
@@ -1872,17 +1897,20 @@ namespace uf::engine
         CHECK(under.clicks->keyCount() == 0);
         CHECK(under.clicks->scrollCount() == 0);
         REQUIRE(under.clicks->lastMove().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(under.clicks->lastMove()->x() == doctest::Approx(1.0));
 
         // The lease reaching the sink is this observation's own, which keeps the
         // controller's delivery-time fence in the loop as layer two.
         REQUIRE(under.clicks->lastMoveLease().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(under.clicks->lastMoveLease()->frameId() == FrameId{17});
 
         // A pointer message changes what the target believes is hovered, so the
         // observation is spent. Remove the invalidation in
         // EngineSession::movePointer and one frame delivers two moves, so this
         // goes red.
+        // NOLINTNEXTLINE(bugprone-use-after-move): the spent handle must fail closed.
         auto const retry = session.movePointer(std::move(handle), PixelPoint{1, 0});
         REQUIRE_FALSE(retry.has_value());
         requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
@@ -2238,7 +2266,9 @@ namespace uf::engine
         );
         REQUIRE(ceiling.has_value());
         REQUIRE(p_source->deadline().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(*p_source->deadline() >= *floor);
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(*p_source->deadline() <= *ceiling);
         CHECK(p_source->cancellable());
     }

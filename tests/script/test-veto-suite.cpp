@@ -5,6 +5,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <bit>
 #include <chrono>
 #include <stop_token>
@@ -176,7 +177,7 @@ namespace uf::script
             auto engine = Engine::create();
             REQUIRE(engine.has_value());
 
-            constexpr std::string_view denied[] = {
+            constexpr auto denied = std::to_array<std::string_view>({
                 "io == nil",             // filesystem + stdio
                 "require == nil",        // dynamic module loading
                 "package == nil",        // module system table
@@ -186,7 +187,7 @@ namespace uf::script
                 "os.remove == nil",      // delete a file
                 "os.rename == nil",      // rename a file
                 "os.tmpname == nil",     // reserve a temp file name
-            };
+            });
             for (std::string_view const expr : denied)
             {
                 INFO("expression: ", expr);

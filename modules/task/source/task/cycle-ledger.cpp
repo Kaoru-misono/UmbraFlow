@@ -162,6 +162,7 @@ namespace uf::task
     auto CycleLedger::spend(CycleTicket ticket) -> Result<engine::Observation>
     {
         UF_TRY(requireOpen(ticket));
+        UF_ASSERT(m_open.has_value());
 
         // The delivery consumes the frame by rvalue whatever it then does with
         // it, so the cycle is spent the moment it is handed over: take the frame

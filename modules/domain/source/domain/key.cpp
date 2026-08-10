@@ -120,10 +120,7 @@ namespace uf
         }
 
         auto text = std::array<char, k_maxKeyNameBytes>{};
-        for (auto index = std::size_t{0}; index < name.size(); ++index)
-        {
-            text[index] = name[index];
-        }
+        std::ranges::copy(name, text.begin());
         return KeyName{text, static_cast<uint8>(name.size())};
     }
 

@@ -3,6 +3,7 @@
 #include <core/utility/scope-exit.hpp>
 #include <domain/error.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdlib>
 #include <format>
@@ -59,7 +60,7 @@ namespace uf::script
         // `os` and `math` are the same tables installSandbox already stripped of
         // their clock and RNG entry points, and every global it nilled is
         // absent from the main globals this copies from.
-        constexpr std::string_view k_projectStandardGlobals[] = {
+        constexpr auto k_projectStandardGlobals = std::to_array<std::string_view>({
             "_VERSION",
             "assert",
             "error",
@@ -89,7 +90,7 @@ namespace uf::script
             "table",
             "utf8",
             "vector",
-        };
+        });
 
         [[nodiscard]]
         auto topError(lua_State* thread) -> std::string

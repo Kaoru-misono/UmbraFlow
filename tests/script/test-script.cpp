@@ -8,6 +8,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <stop_token>
@@ -151,7 +152,7 @@ namespace uf::script
 
             // Bytecode/loader egress, the survivors luaL_sandbox leaves behind, and
             // the residual clock/RNG.
-            constexpr std::string_view absent[] = {
+            constexpr auto absent = std::to_array<std::string_view>({
                 "load == nil",
                 "loadstring == nil",
                 "dofile == nil",
@@ -169,7 +170,7 @@ namespace uf::script
                 "os.date == nil",
                 "math.random == nil",
                 "math.randomseed == nil",
-            };
+            });
             for (std::string_view const expr : absent)
             {
                 INFO("expression: ", expr);
@@ -186,13 +187,13 @@ namespace uf::script
 
             // Anti-vacuity guard for the removal case above: the safe library surface
             // must survive the sandbox intact.
-            constexpr std::string_view present[] = {
+            constexpr auto present = std::to_array<std::string_view>({
                 "type('x') == 'string'",
                 "math.floor(3.7) == 3",
                 "string.rep('a', 3) == 'aaa'",
                 "table.concat({10, 20}, '-') == '10-20'",
                 "select('#', 1, 2, 3) == 3",
-            };
+            });
             for (std::string_view const expr : present)
             {
                 INFO("expression: ", expr);
