@@ -2,13 +2,15 @@
 
 Status: in execution. W1, W5, W8 and the contract suite raised in §5 landed on
 2026-08-10. W0 ran the same day and returned half a pass, which opened W11.
-W3's additive half landed the same day (`7cef402`), closing the data dependency
-that blocked `decision_basis_hash`; W3's Operator half, W2, W4, W6, W7 and W9
-are unstarted, and `s01`, `s02`, `s04`, `c05` and `c08` are all still open.
-W12 was opened on 2026-08-11, from a 2026-07-25 ruling that had been archived
-without ever reaching a live document; it closes no requirement and blocks
-nothing here.
-Date: 2026-08-10 (revised the same day, against the landed tree)
+**W3 and W2 have both landed** — W3's additive half on 2026-08-10 (`7cef402`),
+its Operator half in `4b955de`, and W2 in `848e390` on 2026-08-11 — closing
+`s01`, `s02`, `s04`, `c05` and `c08`. W4, W6, W7 and W9 are open; W4's additive
+half is in progress in `modules/task`. W12 was opened on 2026-08-11, from a
+2026-07-25 ruling that had been archived without ever reaching a live document;
+it closes no requirement and blocks nothing here, and `bcc3171` answered its
+first half the same day.
+Date: 2026-08-10 (revised the same day, against the landed tree; requirement
+state brought current 2026-08-11)
 Scope: `umbraflow-cpp` only. No consumer-project writes.
 Bundle: v1.9, root `c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`
 
@@ -16,10 +18,17 @@ This plan is derived from the requirement matrix, not from what happened to be
 found. Every `REQUIRED_CORE` requirement appears in §2 exactly once, with the
 work item — or items — that close it. Nothing in the design is left unassigned.
 
-That invariant was re-checked on 2026-08-10 after W10's rename landed and after
-`s04` was split: 28 in the Done list plus 14 in the table, no ID in both, 42 in
-total. `s04` is the only row naming two items; it appears once, in the table, and
-that row now reads "W2 + W3" because neither half closes it alone (§2).
+That invariant was re-checked on 2026-08-11 after W2 and W3 landed: 33 in the
+Done list plus 9 in the table, no ID in both, 42 in total. The nine are exactly
+`UF_SCHEMA_ONLY_REQUIREMENTS` in `tests/CMakeLists.txt`, which CMake derives
+from the registered gates and refuses to disagree with — so the table below is
+now checkable against a configure run rather than by reading. `s04` was the one
+row naming two items, W2 + W3, because neither half closed it alone; both landed
+and it has left the table.
+
+> Checked 2026-08-10 and stated here as it then was: 28 in the Done list plus 14
+> in the table. That reading is superseded by the paragraph above rather than
+> wrong — five requirements gained a behavioural gate between the two dates.
 
 W2, W3, W4 and W6/W7 were each written out in full on 2026-08-10 by agents who
 could not see each other's drafts. Their conflicts, their unsatisfied
@@ -53,22 +62,26 @@ since W10's rename landed on 2026-08-10 the gates carry two prefixes and say
 which kind they are:
 
 - `contract-<area>-<id>`, label `CI;CONTRACT` — exercises the code and goes red
-  when the behaviour is removed. **28 of them.**
+  when the behaviour is removed. **33 of them** since W2 and W3 landed; 28 when
+  this section was written on 2026-08-10.
 - `schema-<area>-<id>`, label `CI;SCHEMA` — reads a `schema/*.json` file and
   asserts a definition exists with certain members. It passes whether or not the
   behaviour exists, which is why it may not wear the `contract-` name. **19 of
   them.**
 
-**47 gates over 42 requirements, and that is correct rather than an arithmetic
+**52 gates over 42 requirements, and that is correct rather than an arithmetic
 slip.** One requirement may own one gate of each kind, guarding different things.
 `c09` through `c13` do: the store behaviour is a `contract-control-cNN` in the
 exported suite, and the schema symbol the migration report defines that ID by is
-a `schema-control-cNN` in `tests/operator/test-control-contract.cpp`. What the
-vocabulary forbids is a name that overstates — a `contract-` gate whose
-assertions only read a schema file. Anyone who reads "47 and 42" as a mistake and
+a `schema-control-cNN` in `tests/operator/test-control-contract.cpp`. `s01`,
+`s02`, `s04`, `c05` and `c08` joined them on 2026-08-11 by the same rule — the
+behaviour that closed each one is a new `contract-` case, and the schema-shape
+read it already had keeps its `schema-` name rather than being folded in. What
+the vocabulary forbids is a name that overstates — a `contract-` gate whose
+assertions only read a schema file. Anyone who reads "52 and 42" as a mistake and
 tries to reconcile the two numbers will delete a real gate.
 
-The 28 requirements owning a `contract-*` gate are exactly the Done list in §2.
+The 33 requirements owning a `contract-*` gate are exactly the Done list in §2.
 Fourteen IDs were renamed to `schema-*`: `p01 p02 p03`, `s01 s02 s04`,
 `c03 c05 c08`, `a01 a02 a07` — the twelve this plan is for — plus `a03` and `a05`,
 which are the different case described below. Five `schema-control-c09` through
@@ -80,6 +93,13 @@ is what §2 and §3 are for, and each of those work items now owes a **new**
 `contract-<area>-<id>` case — the migration report updated first, then
 `tests/CMakeLists.txt`, then a suite's `CASES` list — rather than a rewrite of a
 case that no longer exists under that name.
+
+Five of the twelve — `s01 s02 s04 c05 c08` — were closed that way on 2026-08-11
+by W3 and W2, and the order was inverted both times: `4b955de` and `848e390`
+registered the cases and left the migration report naming a `schema-` spelling
+for each. The report was repaired on 2026-08-11 rather than the rule relaxed. It
+is the one document in this chain no gate reads, so it drifts whenever the
+sequence is run backwards, and this is the second recorded instance after R3-F3.
 
 The 19 `schema-*` gates **were** falsified on 2026-08-10, by
 [the third adversarial round](../reviews/2026-08-10-third-round-review.md).
@@ -104,9 +124,10 @@ behaviour exists" is nonetheless no longer true of it.
 
 ## 2. Every requirement, and what closes it
 
-**Done — behavioural gate exists (28).** `p04 p05 p06`, `u01`-`u08`,
-`s05`, `c01 c06 c07 c09 c10 c11 c12 c13 c14`, `a08`, and — since W1 landed on
-2026-08-10 — `c02 c04 s03 s06 a04 a06`. No further work; they are
+**Done — behavioural gate exists (33).** `p04 p05 p06`, `u01`-`u08`,
+`s05`, `c01 c06 c07 c09 c10 c11 c12 c13 c14`, `a08`; since W1 landed on
+2026-08-10, `c02 c04 s03 s06 a04 a06`; and since W3 and W2 landed on 2026-08-11,
+`s01 s02` (`4b955de`) and `s04 c05 c08` (`848e390`). No further work; they are
 re-verified by the existing suite on every run.
 
 One limit inside that six is worth carrying rather than smoothing over. Two of
@@ -119,18 +140,52 @@ case is the ABA commit itself, where a stale
 `expectedProjectStateRevision` of 0 is refused because another instance really
 does sit at revision 0.
 
-**The 14 that own a `schema-*` gate and no `contract-*` gate**, each with its
-state and its owning work item or items:
+**The five that closed on 2026-08-11 carry the same kind of limit, and it is
+larger.** All 23 of W2's and W3's falsifying mutations were run — the first time
+any of this block's were — and three of W2's stay green. Each is a defect in the
+test, not in the code, and none is closed by the requirement being marked done.
+W3's run found less but not nothing; its three retargeted or contradicted rows
+are recorded in [its own specification](2026-08-10-w3-snapshot-coordinator.md).
+
+- The registration guard in `OperatorPlanAuthority::mintPlan` that W2 §9 T2
+  names is not the guard doing the work. `freezePlan` has already checked the
+  plugin against the session, so it refuses first and the case passes with the
+  named guard disabled. The guard stays as defence in depth; what does not
+  stand is the claim that T2 proves it.
+- "A plan freezes once" (T10) is enforced by the state machine refusing a
+  non-`Proposed` Operation, not by `operation_plans`' primary key. The key is a
+  real second enforcement, and W2's own argument against double enforcement
+  applies to it.
+- **The audit row has no reader** (T13). Corrupting
+  `authority_decisions.decision_basis_hash` is invisible to every test, because
+  `reserveDispatch` reads the basis from `operation_plans` and nothing on the
+  public surface reads `authority_decisions` back. Recorded as an instance of
+  the repository's own recurring family in
+  [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md), which is
+  where it belongs: it is not a fact about `c05`, it is a fact about what an
+  audit column is worth without a reader.
+
+Three things W2 specified are stored and unenforced, and closing `c08` did not
+close them. `maximum_observations`, `maximum_waits` and `maximum_elapsed_ms` are
+clamped against `k_workflowCeiling` at mint and written into `operation_plans`,
+and no count is ever compared against them — only `maximum_steps` and
+`maximum_dispatches` refuse. `StepKind::Wait` is never exercised, because
+neither fixture answers `next_step` with a `WaitIntent`, so the wait branch of
+`readStepIntent` and the `kind() == StepKind::UiAction` guard in the ledger are
+untested on that side; W2 §11 questions 4 and 5 are the open design half of
+that. And `ApprovalRequest::policyHash` remains a caller field — `c12`'s
+recorded debt, with `c12` counted done.
+
+**The 9 that own a `schema-*` gate and no `contract-*` gate**, each with its
+state and its owning work item. This set is `UF_SCHEMA_ONLY_REQUIREMENTS` in
+`tests/CMakeLists.txt`; CMake derives the same set from the registered gates and
+fails configure if the two disagree, so a row leaves this table only when a
+`contract-` case for it exists:
 
 | ID | Requirement | Implementation state | Closed by |
 |---|---|---|---|
 | `a07` | human takeover and Host delivery share one linearization | **partial** — `takeoverLease` exists, not joined to `Host::deliver` | W4 |
 | `c03` | `Host::deliver` is the only linearization point | **partial** — holds inside `task`, not joined to the ledger | W4 |
-| `s04` | `decision_basis_hash` covers only semantic decision input | **partial** — still a caller argument; `7cef402` supplied the Host-minted state resolution hash it will be derived from | **W2 + W3** |
-| `s02` | Snapshot Coordinator publishes a complete snapshot atomically | **partial** — `createSnapshot` takes a caller identity, composes nothing; `7cef402` added the observation it will compose without changing any signature | W3 |
-| `s01` | the five state kinds have separate owners | **partial since `7cef402`** — the UI kind now has a Host owner, `TaskHost::observe` returning a `UiObservationSnapshot`; `ProjectObservation` and the Operator side do not exist | W3 |
-| `c05` | the Operator mints EffectivePlan from a plugin PlanProposal | **absent** | W2 |
-| `c08` | one Operation runs a bounded multi-step workflow | **absent** — no step sequencing exists | W2 |
 | `a03` | Audit Trace, Ledger, Journal and Replay Bundle are separate | **exists** since W5 — the bundle closure is implemented, gated only by the aggregate `test-annotate-backend`; the C++ case is `schema-agent-a03` | W5 done; W10 renamed it, no per-requirement behavioural ID exists |
 | `a05` | UI replay and project/operation replay are independent gates | **exists** since W5 — both sub-gates are `required` and neither is satisfied by the other's evidence; gated only by the aggregate `test-annotate-backend`; the C++ case is `schema-agent-a05` | W5 done; W10 renamed it, no per-requirement behavioural ID exists |
 | `p01` | Script, Agent and Human share one Operation path | **absent** — no controller facade | W6 |
@@ -144,8 +199,8 @@ state and its owning work item or items:
 ```
 W0 merge readiness ─── independent
 W1 coverage debt ───── independent
-W2 + W3 ────────────── ONE change: EffectivePlan and Snapshot Coordinator
-      │                (both rewrite createSnapshot and the snapshots table)
+W3 then W2 ─────────── EffectivePlan and Snapshot Coordinator, both landed
+      │                (ruled one change; landed as two, W3 first)
       ├── W4 delivery join ─── W6 controller facade ─── W7 Agent surface
 W5 replay gates ───── independent of W2-W4
 W8 artifact GC ─────── independent
@@ -154,39 +209,39 @@ W11 clang-tidy ─────── independent, opened by W0
 W12 core admission ─── independent, predates this block
 ```
 
-**W2 and W3 land as one change** ([reconciliation](2026-08-10-w2-w7-reconciliation.md)
-R2). Both rewrite `OperatorCoordinator::createSnapshot` and both rewrite the
-`snapshots` table; W3's own §8.1 already requires the columns to be unioned and
-the schema fingerprint recomputed once. Landed separately they cost two
-fingerprint recomputations, two rounds of exported-fixture updates, and an
-intermediate state that does not build, because W2's `ObservedSnapshotParts`
-parameter is deleted by W3 before any caller has adopted it. W4 is a separate
-change after them, and W6 needs W4 as well as W2 because W4 changes
-`takeoverLease`'s return type.
+**W2 and W3 were ruled one change** ([reconciliation](2026-08-10-w2-w7-reconciliation.md)
+R2) and landed as two, W3 first (`4b955de`) and W2 second (`848e390`). The
+hazard R2 named did not occur, and the reason is that the order was reversed
+rather than the ruling ignored: W3 gave `createSnapshot` its final shape —
+`(lease, plugin, observation)`, composing rather than accepting — so W2 never
+introduced the `ObservedSnapshotParts` parameter that W3 would have had to
+delete. The cost R2 predicted was paid: two fingerprint recomputations rather
+than one. W4 is a separate change after them, and W6 needs W4 as well as W2
+because W4 changes `takeoverLease`'s return type.
 
 | # | Item | Closes | Depends on | Cost | Status |
 |---|---|---|---|---|---|
 | W0 | Merge readiness: run `linux-analysis` and the three sanitizer presets locally. CI runs on `master` only, so the first CI sight of this work is post-merge; seven of eight configurations are reproducible locally, macOS is not | — | none | 1 day | **ran 2026-08-10**: sanitizers pass, `linux-analysis` fails; the failure is W11 |
 | W1 | **Coverage debt**: write behavioural cases for the six requirements whose implementation already exists but whose gate only reads a schema | `c02 c04 s03 s06 a04 a06` | none | 2-3 days | **done 2026-08-10** |
-| W2 | **EffectivePlan authority**: mint it from a plugin `PlanProposal` bound to registration, command fingerprint and decision basis; derive the frozen plan, step intent and effect envelope hashes from it; add bounded step sequencing; `reserveDispatch` takes the minted plan instead of three caller hashes | `c05 c08` + half of `s04` | none | 5-7 days | open, **lands with W3** |
-| W3 | **Snapshot Coordinator**: introduce `ProjectObservation`; compose UI observation, `plugin.derive` and current ProjectState atomically; derive the snapshot parts instead of accepting them | `s01 s02` + half of `s04` | W2 (merged); the JCS serializer, which landed 2026-08-10 | 4 days | **additive half landed 2026-08-10** (`7cef402`: `TaskHost::observe` and `UiObservationSnapshot`, no signature changed); the Operator half is open and **lands with W2** |
-| W4 | **Join Host delivery to the ledger**: `recordDeliveryOutcome` takes what `Host::deliver` returned, inside the fence; the takeover path enters the same linearization | `c03 a07` | W2+W3 | 3 days **understated**: `contract-control-c03` needs a real `TaskHost`, so the ~490-line Runtime v2 fixture in `tests/task/test-runtime-v2-contract.cpp` must be **extracted** into `tests/support/` and shared, not copied. That extraction is W4's | open |
+| W2 | **EffectivePlan authority**: mint it from a plugin `PlanProposal` bound to registration, command fingerprint and decision basis; derive the frozen plan, step intent and effect envelope hashes from it; add bounded step sequencing; `reserveDispatch` takes the minted plan instead of three caller hashes | `c05 c08` + half of `s04` | none | 5-7 days | **done 2026-08-11** (`848e390`), with three deviations and three unresolved test defects recorded in §2 and in [the specification](2026-08-10-w2-effective-plan.md) |
+| W3 | **Snapshot Coordinator**: introduce `ProjectObservation`; compose UI observation, `plugin.derive` and current ProjectState atomically; derive the snapshot parts instead of accepting them | `s01 s02` + half of `s04` | the JCS serializer, which landed 2026-08-10 | 4 days | **done**: additive half 2026-08-10 (`7cef402`: `TaskHost::observe` and `UiObservationSnapshot`, no signature changed), Operator half `4b955de` |
+| W4 | **Join Host delivery to the ledger**: `recordDeliveryOutcome` takes what `Host::deliver` returned, inside the fence; the takeover path enters the same linearization | `c03 a07` | W2+W3, both landed | 3 days **understated**: `contract-control-c03` needs a real `TaskHost`, so the ~490-line Runtime v2 fixture in `tests/task/test-runtime-v2-contract.cpp` must be extracted and shared, not copied | **in progress**. The extraction is done — `55bd564` put it in `tests/support/runtime-v2-fixture.hpp`; the additive half is under way in `modules/task` |
 | W5 | **Replay Bundle and the two gates**: implement the bundle closure and both publication gates rather than declaring them | `a03 a05` | none | 4 days | **done 2026-08-10** |
 | W6 | **Controller facade**: one path for Script, Agent and Human; out-of-band human input enters as an external source; the Agent surface is semantic-only | `p01 p02 p03` | W2+W3, **and W4** | 4 days | open |
 | W7 | **Agent subscription and budgets**: `subscribe(after_cursor)`, and action/risk/time/observation/no-progress budgets | `a01 a02` | W6 | 4 days | open |
 | W8 | Artifact GC by database refcount for orphaned `runtime-artifacts/<hash>/` and `.staging` | — | none | 1-2 days | **done 2026-08-10** |
 | W9 | Third adversarial review round | — | W2-W4 | 1 day per reviewer | open |
-| W10 | Rename the schema-shape gates `schema-*` as each requirement gains a behavioural gate, so the matrix never overstates | — | tracks W1-W7 | folded in | **the twelve open IDs renamed 2026-08-10**; still tracks W2-W7, which each owe a new `contract-*` case |
+| W10 | Rename the schema-shape gates `schema-*` as each requirement gains a behavioural gate, so the matrix never overstates | — | tracks W1-W7 | folded in | **the twelve open IDs renamed 2026-08-10**; five of them gained a `contract-` case on 2026-08-11 with W3 and W2. Still tracks W4, W6 and W7, which each owe one |
 | W11 | **Make the clang-tidy analysis presets compile**: the `*-analysis` presets do not build, under the project's own `-Wunsafe-buffer-usage` and under `WarningsAsErrors: '*'`. Its scope is whatever those presets still refuse, never a count — the count moved three times on the day it was written. Opened 2026-08-10 by W0's result | — | none | unestimated; not one day | open and shrinking. Done when a `linux-analysis` build reports nothing **and states how many objects it analysed** |
-| W12 | **Core admission debt**: give every `core` facility with no caller outside its own capability test a recorded `evaluate-core-capability` answer, and review the 2026-07-20 template import that admitted most of `core` before the gate existed | — | none | unestimated | open. Opened 2026-08-11 from a 2026-07-25 ruling that had been archived without ever reaching a live document |
+| W12 | **Core admission debt**: give every `core` facility with no caller outside its own capability test a recorded `evaluate-core-capability` answer, and review the 2026-07-20 template import that admitted most of `core` before the gate existed | — | none | unestimated | **first half done 2026-08-11** (`bcc3171`): all four facilities evaluated, all four rejected and removed, the rulings recorded in `capability-kernel.md` and `core-reuse.md`. The retroactive import review is open |
 
-`s04` is split and closes only when both halves land. W2 derives `identity_hash`
-and `decision_basis_hash` from the parts; W3 derives the parts. Neither half is
-enough on its own: a derived basis over caller-supplied components still lets a
-caller pin a snapshot to a world nobody observed, and composed parts under a
-caller-supplied hash still let a caller name the decision. That is why the §2 row
-names two items and why the merged landing in the graph above is the only order
-that closes it.
+`s04` was split and closed only when both halves landed. W2 derives
+`identity_hash` and `decision_basis_hash` from the parts; W3 derives the parts.
+Neither half was enough on its own: a derived basis over caller-supplied
+components still lets a caller pin a snapshot to a world nobody observed, and
+composed parts under a caller-supplied hash still let a caller name the
+decision. That is why `s04` held a row naming two items until 2026-08-11, and
+why W3 had to precede W2 rather than follow it.
 
 W3 carried a prerequisite it does not own. `TaskHost::observe` returns a
 `UiObservationSnapshot` whose `canonicalJcs()` is the exact StateResolution
@@ -202,8 +257,8 @@ has moved. The second — that the new Luau test ran in no CTest — was closed 
 `dcc43b5`, which registered `test-jcs-luau` and made `tests/CMakeLists.txt` fail
 configure when any `tests/task/*.luau` is in no `TASK_LUAU_TESTS` entry.
 
-The merged `W2 + W3` change is the keystone: five requirements and three later
-items hang off it.
+`W3` then `W2` was the keystone: five requirements and three later items hung
+off it, and all five closed on 2026-08-11. W4, W6 and W7 are now unblocked.
 
 W1's row said "eight requirements" while its `Closes` column listed six; six is
 what it wrote and six is what it closed. The count is corrected above.
@@ -318,6 +373,22 @@ What the three landed items actually left behind:
   An existing operator database is refused at open rather than migrated;
   nothing is released, so those databases are recreated.
 
+  > **Corrected 2026-08-11: two legs, not three, and a different fingerprint.**
+  > The third adversarial round's R3-F2 showed the `runtime_publications` leg
+  > was observed by no test and defended by a comment the code did not support.
+  > `848e390` deleted the table rather than leaving it under a debt marker,
+  > after verifying its unreachability independently — reclamation has no
+  > non-test caller, `OperatorCoordinator` appears in no entry point, and
+  > `open()` holds `PRAGMA locking_mode=EXCLUSIVE` for the connection's
+  > lifetime. The reference set is now `runtime_installations` and
+  > `runtime_state.active_runtime_artifact_root_hash`; the W8 property above
+  > holds over those two. The current fingerprint is
+  > `sha256:12f64bfff305c30c716fbd5bdc9934a17140dfe4e127b5bce2ec7a10ecd309e4`
+  > over 20 tables, still occurring exactly once in the tree, at
+  > `modules/operator/source/operator/ledger.cpp`. A-F8 stays closed: what
+  > closed it was reading the whole reference set at one time, not the number
+  > of legs in it.
+
 **W12 is the only item here that came from outside this block's scope, and how
 it arrived is the reason it exists.** On 2026-07-25 a simplification sweep
 measured `Synchronized`, `ControlFlow`, `Flags` and `NonZero` as included by
@@ -345,18 +416,31 @@ the Core additions table in
 [`capability-kernel.md`](../../.claude/skills/evaluate-core-capability/references/capability-kernel.md)
 — or the next survey measures the same thing a third time.
 
+That evaluation returned in `bcc3171` on 2026-08-11. All four were **rejected**
+and deleted with their capability tests, each on its own grounds rather than on
+the caller count: `Flags` has no bitmask-valued enum to serve, `Synchronized`
+cannot express the wait the tree's one real mutex needs, `NonZero` had no
+candidate, and `ControlFlow`'s one plausible call site — `vision/sad.hpp` —
+would have made an invalid state representable. The four rulings are in
+`capability-kernel.md` and the kernel list in `core-reuse.md` is corrected, so
+they landed where a reader meets the facility rather than only here.
+`Synchronized`'s aliasing contract was moved into the `cpp-coding` safety
+profile before its file went, which is the only thing any of the four carried
+that needed a home.
+
 **The retroactive import review is the larger half, and it explains the shape of
-the surface.** 19 of the 27 files under `modules/core/source/core/` at `55bd564`
+the surface.** 15 of the 23 files under `modules/core/source/core/` at `bcc3171`
 came from the repository's first commit, `79e6b3d` (2026-07-20), as a template
-import; `modules/` held nothing but `core` at that commit, and
+import — 19 of 27 before that commit removed four of them. `modules/` held
+nothing but `core` at the first commit, and
 `evaluate-core-capability` did not exist until `98e0d63` two days later. Every
 facility admitted after product code existed has a production caller outside
 `core`. So the callerless surface is an **admission** failure rather than an
 adoption failure, and the gate works whenever it is actually run. The standing
 form of that finding is the **Admission history** section of
 `capability-kernel.md`, put there rather than here deliberately: a plan gets
-archived, and this item exists because a finding was archived. What W12 owes is
-the one pass over those 19, not a permanent re-litigation.
+archived, and this item exists because a finding was archived. What W12 still
+owes is the one pass over the remaining 15, not a permanent re-litigation.
 
 ## 4. Rulings already made
 
@@ -372,7 +456,9 @@ the one pass over those 19, not a permanent re-litigation.
 - **W2 and W3 land as one change; `s04` closes only when both do.** See §3 and
   [the reconciliation](2026-08-10-w2-w7-reconciliation.md), which also carries the
   union of the four items' DDL changes so the schema fingerprint is recomputed
-  once per landing rather than once per item.
+  once per landing rather than once per item. (Executed 2026-08-11 as two
+  landings, W3 then W2; the second half of the ruling held and the first was
+  departed from. §3 says what that cost and why the hazard did not occur.)
 - **`p03`'s containment is declaration plus attribution, not prevention.** The
   Tool Catalog is project-owned, so a project can mark a coordinate tool
   `Semantic`; `plugin_hash` inside `project_registration_hash` makes that
@@ -423,10 +509,13 @@ the one pass over those 19, not a permanent re-litigation.
 ## 6. What finishing this plan means
 
 W1 through W7 close all 20 requirements that were open when this plan was
-written; W1 and W5 have taken eight of them. What is left to W2+W3, W4, W6 and W7
-is the twelve still marked partial or absent in §2, each of which owes a new
-`contract-<area>-<id>` case — the migration report updated first, then
-`tests/CMakeLists.txt`, then a suite's `CASES` list.
+written; W1, W5, W3 and W2 have taken thirteen of them. What is left to W4, W6
+and W7 is the seven still marked partial or absent in §2 — `c03 a07` to W4,
+`p01 p02 p03` to W6, `a01 a02` to W7 — each of which owes a new
+`contract-<area>-<id>` case, the migration report updated first, then
+`tests/CMakeLists.txt`, then a suite's `CASES` list. The other two rows in §2's
+table, `a03` and `a05`, are the separate case below: behaviour that exists and
+is gated only by an aggregate.
 
 At that point all 42 `REQUIRED_CORE` requirements have a behavioural gate,
 `contract-*` means what it says, and the remaining distance to production

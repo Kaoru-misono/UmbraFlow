@@ -14,9 +14,10 @@ gate.
 
 ## They are one family, not four coincidences
 
-Four separate instances were found on 2026-08-10, in four unrelated files. They
-are the same defect wearing four costumes: **a name exists, the name promises
-something, and nothing verifies the promise.**
+Four separate instances were found on 2026-08-10, in four unrelated files, and a
+fifth on 2026-08-11 in a database column. They are the same defect wearing five
+costumes: **a name exists, the name promises something, and nothing verifies the
+promise.**
 
 | Instance | The name that promised | What verified it |
 |---|---|---|
@@ -24,12 +25,14 @@ something, and nothing verifies the promise.**
 | `SOURCE_ROOTS` in `scripts/check_cpp_format.py` and `scripts/check_safety.py` | "every first-party C++ source is formatted and safety-checked" | nothing — `contract-suite/` was absent from the tuple, so an entire exported module was unscanned |
 | `test-annotate-backend` | "the authoring authority is gated" | nothing — the suite existed and ran in no CTest at all |
 | `cpp_add_contract_suite` | "these cases run" | nothing — the helper builds the binary `NO_CTEST` and registers one CTest per `CASES` entry, so seven compiled cases in `tests/operator/test-project-plugin-contract.cpp` executed in no gate |
+| `authority_decisions.decision_basis_hash` (found 2026-08-11) | "the ledger records which decision basis authorised this dispatch" | nothing — the column is written and never read. `reserveDispatch` takes the basis from `operation_plans`, and no public surface reads `authority_decisions` back, so corrupting the stored value turns no test red |
 
-Note what they are *not*. None is a bug in a check's logic; every one of the four
-checks works correctly on the inputs it receives. The defect is upstream of the
-logic, in what reaches it: an unmatchable filter, a missing root, an unregistered
-binary, an un-run case. That is why review does not catch them — reading the
-check tells you nothing, because the check is fine.
+Note what they are *not*. None is a bug in a check's logic; every one of the five
+works correctly on the inputs it receives. The defect is upstream of the logic,
+in what reaches it — an unmatchable filter, a missing root, an unregistered
+binary, an un-run case — or downstream of it, in a result nothing consumes. That
+is why review does not catch them: reading the check tells you nothing, because
+the check is fine.
 
 Two consequences worth carrying:
 
@@ -52,6 +55,33 @@ that way for seventeen days (W12 in
 archiving until every unexecuted ruling has a live owner named in the file being
 archived, which is this family's positive control one level out: the artifact has
 to state what it still owes.
+
+### A stored column is a claim until something reads it back
+
+The fifth row is a different costume from the first four and worth stating on its
+own, because it is the one that will recur. `authority_decisions` exists to make
+a dispatch's authorisation auditable. The row is written under the right
+transaction, the column is `NOT NULL`, the value is derived rather than accepted
+— and nothing ever reads it. The property "this dispatch was authorised by that
+basis" is therefore unfalsifiable: replace the stored hash with any other and
+every test still passes, because the code path that would notice reads the basis
+from `operation_plans` instead.
+
+**A write-only column is not evidence, whatever its constraints say.** The
+CHECKs, the foreign keys and the derivation all guard the value's *shape*; none
+of them guards the claim that the value means what the schema says. Two questions
+settle it before the column is added: what reads this back, and what turns red
+when the stored value is wrong. If the answer to the first is "an auditor,
+eventually", the column is unguarded until that auditor exists, and it should say
+so at the declaration.
+
+This was found by running a mutation — corrupt the stored value, expect red, get
+green — which is the only method that finds it. Reading the code does not: the
+write site looks correct because it is correct. It came out of the first full
+execution of a block's falsifying mutations, on 2026-08-11, where 23 mutations
+across two work items had been specified and never run. Three stayed green;
+[W2's specification](../plans/2026-08-10-w2-effective-plan.md) records all three,
+and this is the one that generalises beyond its own requirement.
 
 Instance detail follows for the one that cost the most.
 

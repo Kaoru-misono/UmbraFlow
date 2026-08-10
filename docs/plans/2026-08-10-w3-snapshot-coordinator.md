@@ -1,7 +1,9 @@
 # W3: the Snapshot Coordinator
 
-Status: specification; no code changed on its account
-Date: 2026-08-10
+Status: **landed** — additive half `7cef402` (2026-08-10), Operator half
+`4b955de` (2026-08-11). Everything below is the pre-landing specification and is
+left as written.
+Date: 2026-08-10 (landed 2026-08-11)
 Scope: `umbraflow-cpp` only. No consumer-project writes.
 Closes: `s01` (five state kinds have separate owners), `s02` (the Snapshot
 Coordinator publishes a complete snapshot atomically)
@@ -28,6 +30,42 @@ identity, composes nothing).
 >   produced in trusted Luau, and no existing signature changed. What remains is
 >   the Operator half — `ProjectObservation`, and `createSnapshot` composing
 >   rather than accepting — which lands with W2.
+
+> **Landed 2026-08-11 in `4b955de`. Read what follows as the plan, not as the
+> tree.** `s01` and `s02` are closed, and `contract-state-s01` and
+> `contract-state-s02` exist as new cases in
+> `tests/operator/test-state-contract.cpp`. The reconciliation's R2 ruled that
+> this item and W2 land together; they landed separately, and this one went
+> first. That order is why W2 never had to introduce the
+> `ObservedSnapshotParts` parameter this document would have deleted:
+> `createSnapshot` reached its final shape here, as
+> `(lease, plugin, observation)`. §5.1's fingerprint and table list are
+> superseded — the tree carries
+> `sha256:12f64bfff305c30c716fbd5bdc9934a17140dfe4e127b5bce2ec7a10ecd309e4`
+> over 20 tables, `project_observations` among them and
+> `runtime_publications` deleted by `848e390`. The intermediate value this
+> landing itself computed, `3a406b9d…`, was superseded the same day and reached
+> no document.
+>
+> **Every mutation in this document was run, and three of its rows did not
+> survive contact.** `T6a` and `T6b` are each green and only `T6c`, deleting
+> both clauses, is red: §3.4's claim that the second snapshot-join clause "is
+> not redundant with the clause above it" does not hold against this
+> implementation — both revisions are written from one in-transaction local and
+> the state revision is already inside the derive fingerprint. The conjunction
+> is guarded; neither clause is. `T5d` in its literal form proves nothing,
+> because the value it adds is constant across captures in this fixture; it was
+> retargeted to a per-capture value and reported as a substitution. And the
+> surface rule `T8` asserts did not exist, so it was written — its first
+> version passed with the forbidden parameter reintroduced, and the mutation is
+> what caught it.
+>
+> One specification claim cannot hold. §3.5 and §4 say two snapshots over an
+> identical world share an `identity_hash`; `observation_id` is one of the
+> fifteen frozen `SnapshotParts` members and every `observe()` mints a new one,
+> so they always differ. The case asserts the true and stronger property
+> instead: the two canonical parts differ only in `observation_id`, proved by
+> erasing that member and comparing, while the decision bases are equal.
 
 ## 1. The five state kinds
 

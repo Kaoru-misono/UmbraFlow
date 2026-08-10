@@ -1,7 +1,8 @@
 # W2: EffectivePlan authority
 
-Status: specification only; no code changed on its account
-Date: 2026-08-10
+Status: **landed 2026-08-11 in `848e390`**, with deviations. Everything below is
+the pre-landing specification and is left as written.
+Date: 2026-08-10 (landed 2026-08-11)
 Scope: `umbraflow-cpp` only. No consumer-project writes.
 Closes: `c05`, `c08`, `s04`
 Depends on: nothing. `W3`, `W4` and `W6` depend on this.
@@ -17,6 +18,52 @@ Ordering and requirement state: [`2026-08-10-next-block.md`](2026-08-10-next-blo
 > `contract-*` cases — the migration report updated first, then
 > `tests/CMakeLists.txt`, then a suite's `CASES` list — not a rewrite of cases
 > that no longer exist under those names.
+
+> **Landed 2026-08-11 in `848e390`. Read what follows as the plan, not as the
+> tree.** `c05`, `c08` and `s04` are closed; all three `contract-*` cases were
+> written new, though the migration report was updated after the registration
+> rather than before it and had to be repaired. What differs from this document
+> is recorded once, in `848e390`'s message, and is not back-written here:
+> `PlanMintInputs` takes the command identity as bytes from the `operations`
+> row rather than a `ValidatedToolInvocation`, `StepMintInputs` takes the
+> stored canonical plan rather than an in-memory `EffectivePlan`, and
+> `ProposedEffect` keeps `opaque_project_payload`. §6's fingerprint and table
+> list are superseded twice over — by the landing and by the removal of
+> `runtime_publications` in the same commit; the tree carries
+> `sha256:12f64bfff305c30c716fbd5bdc9934a17140dfe4e127b5bce2ec7a10ecd309e4`
+> over 20 tables.
+>
+> **All 15 mutations in §9 were run — the first time any of this block's 23
+> were.** Eleven turn their case red. `T4` is not applicable as written, and
+> the reason is a stronger guarantee than it asked for: `DecisionBasisParts`
+> carries the four content hashes and nothing else, so there is no counter,
+> lease, epoch or token in scope to fold in. **`T2`, `T10` and `T13` stay
+> green**, and they are defects in the cases rather than in the code:
+>
+> - `T2` — the registration guard in `mintPlan` is not the guard doing the
+>   work; `freezePlan` has already verified the plugin against the session and
+>   refuses first. Kept as defence in depth, recorded as not load-bearing.
+> - `T10` — "a plan freezes once" is enforced by the state machine refusing a
+>   non-`Proposed` Operation, not by `operation_plans`' primary key. This
+>   document's own argument against double enforcement (§5) applies to the key.
+> - `T13` — **the audit row has no reader.** Corrupting
+>   `authority_decisions.decision_basis_hash` is invisible to every test,
+>   because `reserveDispatch` reads the basis from `operation_plans` and
+>   nothing on the public surface reads `authority_decisions` back.
+>
+> `T11` was green until the fixture was fixed: the read-only tool had no plan,
+> so removing the Operator's refusal moved the failure into the plugin. The
+> fixture was proving the property, not the code.
+>
+> **What this document still owes, and where.** Under `CLAUDE.md`'s archiving
+> precondition it cannot be archived while these stand. The three green
+> mutations and §10's three unenforced limits are carried in
+> [the next block](2026-08-10-next-block.md) §2, beside the requirements they
+> qualify; `T13` is additionally recorded in
+> [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md), because
+> an audit column with no reader is a repository-wide shape rather than a fact
+> about `c05`. §11's open questions 4 and 5 are still open and are now the
+> reason `StepKind::Wait` is unexercised.
 
 Every file-level claim below was read out of the tree at commit
 `design/annotation-system-v2` on 2026-08-10. The tree is being edited by other

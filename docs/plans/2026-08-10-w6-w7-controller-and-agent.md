@@ -24,6 +24,17 @@ rows `P-01`, `P-02`, `P-03`, `A-01`, `A-02`. The frozen authority is
 > already requires" — W6 and W7 must each create a new `contract-*` case, with
 > the migration report updated first.
 
+> **Amended 2026-08-11: "W2 landed" above meant W2's specification; W2's code
+> landed on 2026-08-11.** W3 is `4b955de` and W2 is `848e390`, so the
+> assumptions this document called unverified about W3 can now be read out of
+> the tree, and only W4 is still in flight. Two of W2's shapes differ from what
+> §9 reconciled against — `reserveDispatch` takes no caller hashes at all, and
+> `createSnapshot` is `(lease, plugin, observation)` because W3 landed first and
+> `ObservedSnapshotParts` was never written. §6.3's fingerprint and table list
+> are corrected there. The five rows above are still schema-only and W6 and W7
+> still each owe a new `contract-*` case, migration report first — an order both
+> landings inverted and had to have repaired afterwards.
+
 W7 is specified with W6 because `ExternalInputFinding.detected_after_cursor` is
 a `SubscriptionCursor` (`schema/umbraflow-operator-v1.schema.json:269`). W6
 cannot record a finding without the cursor. **Ruling: W6 introduces the
@@ -799,18 +810,27 @@ conclusion no controller reached.
 `OperatorCoordinator::open` verifies the exact schema bytes at
 `modules/operator/source/operator/ledger.cpp:337-382`. Two things change:
 
-1. **The expected fingerprint literal**, currently
-   `"sha256:5738e6f98534efbdfc3114413de70c032b64e2cbaa84d4c152ec6cbb512120a4"`.
-   It is an unnamed inline literal; W2 §6 cites it at line 372 and a direct read
-   of the file puts it at line 371, so check before editing. W6 must lift it
-   into a named constant in the file's anonymous namespace —
-   `k_operatorDatabaseSchemaHash` — so W2, W3, W4, W6 and W7 all touch one place
-   rather than five copies in five branches. Recompute it from a freshly created
-   database, never by hand: the canonical string is the *stored* DDL text,
-   indentation and comments included.
-2. **The expected table list at `ledger.cpp:476-482`**, which with W2's two
-   tables and W6/W7's three becomes, sorted:
-   `agent_budgets,approvals,authority_decisions,control_leases,control_transitions,dispatches,external_input_findings,fencing_high_water,journal_events,ledger_events,operation_plans,operation_steps,operations,project_instances,project_registrations,project_state,reconciliations,runtime_artifacts,runtime_installations,runtime_publications,runtime_state,sessions,snapshots`
+1. **The expected fingerprint literal.** It is
+   `constexpr auto k_exactSchemaV1Fingerprint` in the file's anonymous
+   namespace, holding
+   `"sha256:12f64bfff305c30c716fbd5bdc9934a17140dfe4e127b5bce2ec7a10ecd309e4"`.
+   Recompute it from a freshly created database, never by hand: the canonical
+   string is the *stored* DDL text, indentation and comments included.
+2. **The expected table list**, which over the 20 tables W3 and W2 left plus
+   W6/W7's three becomes, sorted:
+   `agent_budgets,approvals,authority_decisions,control_leases,control_transitions,dispatches,external_input_findings,fencing_high_water,journal_events,ledger_events,operation_plans,operation_steps,operations,project_instances,project_observations,project_registrations,project_state,reconciliations,runtime_artifacts,runtime_installations,runtime_state,sessions,snapshots`
+
+> **Corrected 2026-08-11 against the landed tree** (`4b955de`, `848e390`).
+> Three things changed under this section. The literal was unnamed and is now
+> `k_exactSchemaV1Fingerprint`, promoted by `848e390` — W6 inherits the named
+> constant rather than creating it, and the name is not the
+> `k_operatorDatabaseSchemaHash` this document proposed. The value moved from
+> `5738e6f9…` to the one above. And the list this section originally gave was
+> wrong in two ways at once: it omitted W3's `project_observations`, which
+> [the reconciliation](2026-08-10-w2-w7-reconciliation.md) §6.3 had already
+> caught, and it carried `runtime_publications`, which `848e390` deleted. The
+> corrected list above is 23 tables; the reconciliation's §6.3 is the same
+> arithmetic and remains the place where the per-landing counts live.
 
 `k_operatorDatabaseSchemaHash` must **not** be added to `SCHEMA_AUTHORITIES` in
 `tests/test-runtime-surface.py`: that gate hashes a *file*, and this is a

@@ -31,6 +31,20 @@
 > [the next block](plans/2026-08-10-next-block.md) and blocks merging this
 > branch regardless of anything below.
 >
+> Amended 2026-08-11: W3 (`4b955de`) and W2 (`848e390`) landed, closing `s01`,
+> `s02`, `s04`, `c05` and `c08`. Three consequences reach the boxes below. The
+> gate map moved again — 52 gates over 42 requirements, 33 `contract-*` and 19
+> `schema-*` — and the migration report drifted a second time for the same
+> reason as R3-F3, because both landings registered their cases before updating
+> it; it has been repaired. The Operator DDL fingerprint moved twice more, to
+> `sha256:12f64bfff305c30c716fbd5bdc9934a17140dfe4e127b5bce2ec7a10ecd309e4`
+> over 20 tables, and `848e390` deleted the `runtime_publications` table that
+> R3-F2 found unobservable, so the G2/G4 ticks predate a third schema break.
+> And the block's mutations were executed for the first time: three of W2's
+> stay green and are unresolved defects in the tests, carried in
+> [the next block](plans/2026-08-10-next-block.md) §2 and in
+> [checks that cannot fail](pitfalls/checks-that-cannot-fail.md).
+>
 > Amended 2026-08-10, after the third adversarial round. It returned FAIL with
 > 17 findings — [the record](reviews/2026-08-10-third-round-review.md) — so the
 > two unticked review boxes below wait on it too. Three corrections to the

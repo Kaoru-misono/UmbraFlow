@@ -23,15 +23,22 @@ Reading order: target form, then layer ownership, then the model semantics.
   that the tree is mid Phase 2A rather than past it, that this branch has never
   been pushed and so has never been through CI, and orders the deferred work by
   dependency. W1, W5, W8 and the contract suite it raised as unowned have
-  landed; W0 ran and returned half a pass; W2-W4, W6, W7, W9 and W11 have not.
-  W12 was added on 2026-08-11 — the `core` admission debt that the 2026-07-25
-  sweep ruled and that was archived with the review before anyone ran it.
+  landed; W0 ran and returned half a pass; W3 and W2 landed on 2026-08-11 and
+  W4 is in progress; W6, W7, W9 and W11 have not started. W12 was added on
+  2026-08-11 — the `core` admission debt that the 2026-07-25 sweep ruled and
+  that was archived with the review before anyone ran it — and `bcc3171`
+  answered its first half the same day.
 - Four of that plan's work items were written out in full on 2026-08-10, each
-  specification only, none started. They do not open rulings of their own; they
-  are the next block's rows at implementation depth, and they are superseded by
-  it wherever they disagree.
-  [W2 EffectivePlan authority](2026-08-10-w2-effective-plan.md) --
-  [W3 Snapshot Coordinator](2026-08-10-w3-snapshot-coordinator.md) --
+  specification only. They do not open rulings of their own; they are the next
+  block's rows at implementation depth, and they are superseded by it wherever
+  they disagree. **W2 and W3 have since landed and are kept as the pre-landing
+  record**, each carrying a dated note saying what differs from the tree and
+  what it still owes; W4 and W6/W7 are still live guidance and are corrected
+  inline.
+  [W2 EffectivePlan authority](2026-08-10-w2-effective-plan.md) — landed
+  `848e390` --
+  [W3 Snapshot Coordinator](2026-08-10-w3-snapshot-coordinator.md) — landed
+  `7cef402` + `4b955de` --
   [W4 delivery join](2026-08-10-w4-delivery-join.md) --
   [W6 and W7 controller and Agent](2026-08-10-w6-w7-controller-and-agent.md).
 - [Consumer attestation](2026-08-11-consumer-attestation.md) — **specification
@@ -47,7 +54,9 @@ Reading order: target form, then layer ownership, then the model semantics.
   every conflict between them, lists the cross-assumptions one makes that another
   does not satisfy, fixes the landing order, and unions their `ledger.cpp` DDL
   changes so the schema fingerprint is recomputed once per landing. **Read it
-  before any of the four**; where one of them disagrees with it, it wins.
+  before W4 and W6/W7**; where one of them disagrees with it, it wins. Its §6.3
+  DDL arithmetic was corrected on 2026-08-11 after W3 and W2 landed and
+  `runtime_publications` was deleted.
 
 ## The 2026-08-09 rewrite design set
 

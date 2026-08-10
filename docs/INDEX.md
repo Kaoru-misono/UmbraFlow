@@ -19,7 +19,9 @@ the four same-day specifications conflict.
   the same day by W8.
 - [The next block after runtime hardening](plans/2026-08-10-next-block.md) —
   the requirement-by-requirement map of what is still owed and which work item
-  closes it. W1, W5, W8 and the contract suite landed 2026-08-10.
+  closes it. W1, W5, W8 and the contract suite landed 2026-08-10; W3 and W2
+  landed 2026-08-11, leaving nine requirements without a behavioural gate and
+  W4, W6, W7 and W9 open.
 - [Consumer attestation](plans/2026-08-11-consumer-attestation.md) — the nine
   `EXTERNAL attest-consumer-dNN` IDs, specified 2026-08-11: what a consumer
   produces, what binds it, and what upstream may and may not refuse. Proposal

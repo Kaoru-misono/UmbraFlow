@@ -21,6 +21,17 @@ and §4 rules that `OperatorCoordinator` grows rather than gaining a sibling.
 > mutation table names a gate W4 must **create**, migration report first, rather
 > than one it can extend.
 
+> **Amended 2026-08-11: both dependencies have landed, and one of W4's own
+> tasks was done for it.** W3 is `4b955de` and W2 is `848e390`, so nothing
+> sequences this item any longer. `55bd564` extracted the Runtime v2 fixture
+> into `tests/support/runtime-v2-fixture.hpp`, which §7 and the work-item row
+> counted as W4's cost; take it as given rather than re-deriving it. Two
+> signatures this document reads changed underneath it — `createSnapshot` is
+> now `(lease, plugin, observation)` and `reserveDispatch` takes no caller
+> hashes — so re-read §5's call sites in the tree before editing. The order
+> "migration report first, then `tests/CMakeLists.txt`" is unchanged and was
+> inverted by both landings; do not inherit that.
+
 ## 1. The linearization argument
 
 ### 1.1 What must be totally ordered
@@ -708,21 +719,20 @@ No new table, so the `expectedTables` list (`ledger.cpp:476-482`) is unchanged.
 stop condition 2 are untouched.
 
 **The fingerprint that must be recomputed** is the expected hash in
-`verifyExactDatabaseSchema`, `modules/operator/source/operator/ledger.cpp:368-373`.
-It is an unnamed string literal today:
+`verifyExactDatabaseSchema`, `modules/operator/source/operator/ledger.cpp`.
 
-```cpp
-UF_TRY_VALUE(
-    expected,
-    ContentHash::parse(
-        "sha256:5738e6f98534efbdfc3114413de70c032b64e2cbaa84d4c152ec6cbb512120a4"
-    )
-);
-```
+> **Corrected 2026-08-11 against the landed tree** (`4b955de`, `848e390`). Two
+> of the three claims below have been overtaken. The literal is no longer
+> unnamed: `848e390` promoted it to
+> `constexpr auto k_exactSchemaV1Fingerprint` in the anonymous namespace, which
+> is the change this section assigned to W4, so W4 inherits it rather than
+> making it. And the value is now
+> `sha256:12f64bfff305c30c716fbd5bdc9934a17140dfe4e127b5bce2ec7a10ecd309e4`
+> over 20 tables. What still holds is everything that matters here: W4 adds no
+> table, so `expectedTables` is unchanged, and the fingerprint must still be
+> recomputed because the `dispatches` DDL text changes.
 
-W4 promotes it to a named constant in the same anonymous namespace —
-`constexpr auto k_exactSchemaV1Fingerprint = std::string_view{"sha256:..."};` —
-so the next DDL change has one place to look. It is the sha256 of the
+It is the sha256 of the
 length-prefixed `type|name|tbl_name|sql` rows of `sqlite_schema` ordered by
 `(type, name)`; there is no way to compute it by hand from the DDL text, so the
 recipe is: add `actual.hex()` to the mismatch message under a `[DEBUG-w4]` tag,

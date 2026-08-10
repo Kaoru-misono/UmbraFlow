@@ -42,15 +42,32 @@ fixtures cannot satisfy them.
 > behaviour does. Fourteen rows below moved to the `schema-` spelling. Five more
 > requirements, `C-09` through `C-13`, kept a `contract-` gate — it moved into
 > the exported suite with the store behaviour it names — and gained a `schema-`
-> gate beside it in `tests/operator/`, which is why 42 requirements carry 47
-> gates: 28 `contract-*` under label `CI;CONTRACT` and 19 `schema-*` under
-> `CI;SCHEMA`. `dcc43b5` did not update this report and `5bb281d` edited it
+> gate beside it in `tests/operator/`, which is why 42 requirements carried 47
+> gates on that date: 28 `contract-*` under label `CI;CONTRACT` and 19
+> `schema-*` under `CI;SCHEMA`. (Five more requirements joined them by
+> 2026-08-11; see the amendment below for the current totals.)
+> `dcc43b5` did not update this report and `5bb281d` edited it
 > without correcting the rows; the drift was found by
 > [the third adversarial round](../reviews/2026-08-10-third-round-review.md),
 > R3-F3. The registrations are the authority:
 > `UF_REQUIRED_DOCTEST_CONTRACTS` in `tests/CMakeLists.txt` and the `CASES`
 > lists in `tests/CMakeLists.txt` and
 > `contract-suite/fixtures/umbraflow/CMakeLists.txt`.
+
+> **Amended 2026-08-11: five requirements gained a `contract-` gate, so the
+> totals are 52 gates over 42 requirements — 33 `contract-*` and 19
+> `schema-*`.** The deciding artifact is `UF_REQUIRED_DOCTEST_CONTRACTS` in
+> `tests/CMakeLists.txt`, which is machine-checked and was correct throughout;
+> this report is the human authority and no gate reads it, which is why it is
+> the side that drifted. `4b955de` added `contract-state-s01` and
+> `contract-state-s02` with the Snapshot Coordinator; `848e390` added
+> `contract-control-c05`, `contract-control-c08` and `contract-state-s04` with
+> the EffectivePlan. Neither commit updated the rows below, which is the same
+> violation of stop condition 2 that R3-F3 found in `dcc43b5`, and the second
+> time the order "report first, then `tests/CMakeLists.txt`" was inverted. The
+> five requirements now own one gate of each kind, for the reason `C-09`
+> through `C-13` already do: the behaviour and the schema shape are different
+> things to guard.
 
 > **Amended 2026-08-11: the nine `attest-consumer-dNN` IDs now have a
 > specification.** Until that date the `D-01`-`D-09` rows below were the only
@@ -94,20 +111,20 @@ fixtures cannot satisfy them.
 | U-06 | Host | OP:`ReceiptRef/DeliveryOutcome` | CTEST `contract-runtime-u06` |
 | U-07 | Annotation + deployment boundary | AW:`Publication` + RA | CTEST `contract-runtime-u07` |
 | U-08 | Host + deployment boundary | RA + TR | CTEST `contract-runtime-u08` |
-| S-01 | Snapshot coordinator | OP:`SnapshotParts` + JR:`ProjectState` | CTEST `schema-state-s01` |
-| S-02 | Snapshot coordinator | OP:`ProjectSnapshot/SnapshotToken` | CTEST `schema-state-s02` |
+| S-01 | Snapshot coordinator | OP:`SnapshotParts` + JR:`ProjectState` | CTEST `contract-state-s01` and CTEST `schema-state-s01` |
+| S-02 | Snapshot coordinator | OP:`ProjectSnapshot/SnapshotToken` | CTEST `contract-state-s02` and CTEST `schema-state-s02` |
 | S-03 | Snapshot coordinator | OP:`SnapshotToken` | CTEST `contract-state-s03` |
-| S-04 | Operator planner | OP:`DecisionBasis` | CTEST `schema-state-s04` |
+| S-04 | Operator planner | OP:`DecisionBasis` | CTEST `contract-state-s04` and CTEST `schema-state-s04` |
 | S-05 | Session coordinator | OP:`SessionManifest` + PR | CTEST `contract-state-s05` |
 | S-06 | Project state store | JR:`ProjectInstance/ProjectState` | CTEST `contract-state-s06` |
 | C-01 | Host control ledger | OP:`ControlLease/FencingToken` | CTEST `contract-control-c01` |
 | C-02 | Host control ledger | OP:`SessionEpoch/ControlLease` | CTEST `contract-control-c02` |
 | C-03 | Host delivery | OP:`DeliveryAuthority/ReceiptRef` | CTEST `schema-control-c03` |
 | C-04 | Operator facade | OP:`ToolInvocation/CommandRecord` | CTEST `contract-control-c04` |
-| C-05 | Operator planner | OP:`PlanProposal/EffectivePlan` + PR | CTEST `schema-control-c05` |
+| C-05 | Operator planner | OP:`PlanProposal/EffectivePlan` + PR | CTEST `contract-control-c05` and CTEST `schema-control-c05` |
 | C-06 | Operation ledger | OP:`CommandRecord/Operation` | CTEST `contract-control-c06` |
 | C-07 | Operation ledger | OP:`OperationState/PlanVersion` | CTEST `contract-control-c07` |
-| C-08 | Operator planner | OP:`EffectivePlan/UIActionIntent/WorkflowLimits` | CTEST `schema-control-c08` |
+| C-08 | Operator planner | OP:`EffectivePlan/UIActionIntent/WorkflowLimits` | CTEST `contract-control-c08` and CTEST `schema-control-c08` |
 | C-09 | Operation ledger | OP:`DispatchOutcome/ToolResult` | CTEST `contract-control-c09` and CTEST `schema-control-c09` |
 | C-10 | Operation ledger + Host | OP:`DispatchRecord/DeliveryOutcome` | CTEST `contract-control-c10` and CTEST `schema-control-c10` |
 | C-11 | Reconciliation coordinator | OP:`ReconcileProposal` + JR | CTEST `contract-control-c11` and CTEST `schema-control-c11` |
@@ -123,7 +140,7 @@ fixtures cannot satisfy them.
 | A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `schema-agent-a07` |
 | A-08 | Operator recovery | OP:`ExternalInputFinding/OperationState` | CTEST `contract-agent-a08` |
 
-Where the 47 gates are declared, as of 2026-08-10:
+Where the 52 gates are declared, as of 2026-08-11:
 
 - `tests/operator/test-product-contract.cpp` — `schema-product-p01`-`p03`,
   `contract-product-p04`, `contract-product-p06`;
@@ -133,9 +150,10 @@ Where the 47 gates are declared, as of 2026-08-10:
 - `tests/task/test-runtime-v2-contract.cpp` plus trusted Luau fixtures —
   `contract-runtime-u01`-`u08`;
 - `tests/operator/test-state-contract.cpp` — `schema-state-s01`, `s02`, `s04`
-  and `contract-state-s03`, `s05`, `s06`;
+  and `contract-state-s01`, `s02`, `s03`, `s04`, `s05`, `s06`;
 - `tests/operator/test-control-contract.cpp` — `contract-control-c02`, `c04`,
-  `c07`, `c14` and `schema-control-c03`, `c05`, `c08`, `c09`-`c13`;
+  `c05`, `c07`, `c08`, `c14` and `schema-control-c03`, `c05`, `c08`,
+  `c09`-`c13`;
 - `tests/operator/test-agent-audit-contract.cpp` — `contract-agent-a04`, `a06`,
   `a08` and `schema-agent-a01`, `a02`, `a03`, `a05`, `a07`;
 - `contract-suite/source/suite-control-ledger.cpp` — `contract-control-c01`,
@@ -148,7 +166,7 @@ The requirement rows above are necessary but not sufficient. These additional
 local CTest IDs prevent a complete-looking contract suite from hiding deleted
 regressions or forbidden compatibility surface. Stop condition 2 requires this
 report to carry every local CTest ID, so the list below is the whole of
-`ctest -N` that the 47 gates above do not already name:
+`ctest -N` that the 52 gates above do not already name:
 
 - CTEST `contract-repository-surface`
 - Four aggregates under the `CONTRACT-SUITE` label, each running every compiled

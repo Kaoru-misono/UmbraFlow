@@ -25,6 +25,16 @@ was written — `tests/CMakeLists.txt`, `tests/operator/*` and `contract-suite/`
 all moved during the reading pass. §8 says exactly what could not be pinned.
 Line numbers are anchors, not addresses.
 
+> **Read this first, 2026-08-11: two of the four have landed.** W3 is
+> `4b955de` and W2 is `848e390`; W4 and W6/W7 are what is left, and this
+> document still governs them. Three consequences for anyone reading on:
+> the DDL arithmetic in §6.3 is corrected there and is one table lower than
+> planned, because `848e390` deleted `runtime_publications`; §1.2's "47 gates,
+> 28 `contract-*`" is a 2026-08-10 reading and the tree now carries 52 and 33,
+> five of them the cases W3 and W2 owed; and the rulings below are left exactly
+> as made, including R2, which was departed from in the one respect recorded in
+> [the next block](2026-08-10-next-block.md) §3.
+
 ## 1. The tree moved under all four documents
 
 Three facts invalidate call-site tables in all four specifications. None of them
@@ -767,12 +777,23 @@ them.
 Three landings, three recomputations. Each recomputes **both** values in the same
 change and says so in the commit message (R5).
 
+> **Corrected 2026-08-11: two of the three landings have happened, and
+> `runtime_publications` was deleted rather than carried.** The table below was
+> written on 2026-08-10 against an 18-table tree. W3 (`4b955de`) and W2
+> (`848e390`) have since landed, and `848e390` also removed the
+> `runtime_publications` table that the third adversarial round's R3-F2 showed
+> no test could observe. So the counts here are one lower than planned from
+> W2+W3 onward, and the deleted name must not be re-added by whoever writes the
+> remaining lists. The tree is the authority: `expectedTables` and
+> `k_exactSchemaV1Fingerprint` in
+> `modules/operator/source/operator/ledger.cpp`.
+
 | After | Table count | `expectedTables`, sorted |
 |---|---|---|
-| today | 18 | `approvals,authority_decisions,control_leases,control_transitions,dispatches,fencing_high_water,journal_events,operations,project_instances,project_registrations,project_state,reconciliations,runtime_artifacts,runtime_installations,runtime_publications,runtime_state,sessions,snapshots` |
-| W2+W3 | 21 | adds `operation_plans`, `operation_steps`, `project_observations` |
-| W4 | 21 | unchanged — no new table |
-| W6+W7 | 24 | adds `agent_budgets`, `external_input_findings`, `ledger_events` |
+| 2026-08-10 | 18 | `approvals,authority_decisions,control_leases,control_transitions,dispatches,fencing_high_water,journal_events,operations,project_instances,project_registrations,project_state,reconciliations,runtime_artifacts,runtime_installations,runtime_publications,runtime_state,sessions,snapshots` |
+| W3 + W2, **landed** | 20 | adds `operation_plans`, `operation_steps`, `project_observations`; drops `runtime_publications`. Fingerprint `sha256:12f64bfff305c30c716fbd5bdc9934a17140dfe4e127b5bce2ec7a10ecd309e4` |
+| W4 | 20 | unchanged — no new table |
+| W6+W7 | 23 | adds `agent_budgets`, `external_input_findings`, `ledger_events` |
 
 Final list after W6+W7, which is what W6/W7 §6.3 meant to write:
 
@@ -781,8 +802,7 @@ agent_budgets,approvals,authority_decisions,control_leases,control_transitions,
 dispatches,external_input_findings,fencing_high_water,journal_events,
 ledger_events,operation_plans,operation_steps,operations,project_instances,
 project_observations,project_registrations,project_state,reconciliations,
-runtime_artifacts,runtime_installations,runtime_publications,runtime_state,
-sessions,snapshots
+runtime_artifacts,runtime_installations,runtime_state,sessions,snapshots
 ```
 
 Sorting is SQLite `BINARY`, so `operation_plans` and `operation_steps` precede

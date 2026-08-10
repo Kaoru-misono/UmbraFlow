@@ -75,6 +75,18 @@ operator database no longer opens. Nothing is released, so those databases are
 recreated rather than migrated, and there is exactly one fingerprint in the
 tree.
 
+> **Read as of 2026-08-11: one of those three legs is gone, and A-F8 stays
+> closed.** The paragraphs above describe the tree of 2026-08-10 and are left as
+> written. Since then the third adversarial round's R3-F2 showed that no test
+> could observe a non-empty `runtime_publications` and that the comment
+> defending it was not supported by the code, and `848e390` deleted the table
+> rather than leaving it under a debt marker. The reference set is now
+> `runtime_installations` and `runtime_state.active_runtime_artifact_root_hash`,
+> and the fingerprint is
+> `sha256:12f64bfff305c30c716fbd5bdc9934a17140dfe4e127b5bce2ec7a10ecd309e4`.
+> What closed A-F8 was reading the whole reference set at one time under
+> `BEGIN IMMEDIATE`, and that is unchanged by the number of legs in it.
+
 ## Accepted, with reasons
 
 **A-F8 — a failed installed-generation CAS leaves the published artifact

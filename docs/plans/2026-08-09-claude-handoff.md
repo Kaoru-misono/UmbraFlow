@@ -157,6 +157,15 @@ d445c811b9469a58ff116df4763d4e7f1acd80b6a3392639d7eb257321916753
 > [next block](2026-08-10-next-block.md) 第三节与
 > [review](../reviews/2026-08-10-runtime-hardening-review.md) 的 A-F8。
 
+> 2026-08-11：上面两条同样保持原样，只补当前值。W3（`4b955de`）与 W2（`848e390`）
+> 落地，新增 `project_observations`、`operation_plans`、`operation_steps`；同一个
+> W2 commit 删掉了 `runtime_publications`——第三轮评审 R3-F2 证明没有任何测试能观察
+> 到它，且代码不支持为它辩护的注释。现在共 20 张表，fingerprint 为
+> `sha256:12f64bfff305c30c716fbd5bdc9934a17140dfe4e127b5bce2ec7a10ecd309e4`，仍
+> 只在 `ledger.cpp` 出现一次，并且已提升为具名常量
+> `k_exactSchemaV1Fingerprint`。「改 DDL 必须重算、不得保留双 fingerprint」这条
+> 约束不变，两次落地都遵守了。
+
 ### 4.5 ProjectPlugin
 
 - 只支持 startup-time registry `(plugin_id, project_registration_hash)` exact lookup，无 latest/fallback。
@@ -412,6 +421,13 @@ ctest --test-dir build -N
 > 原样。P-05 的可消费契约套件落地后，`ctest -N` 另外列出
 > `contract-suite-umbraflow` 和 `contract-suite-arcana`（label `CONTRACT-SUITE`），
 > 所以列表长于 43 不是回归。见 [next block](2026-08-10-next-block.md) 第五节。
+
+> 2026-08-11：43 这个数字已经不能再当计数用了，上面两条保持原样。W10 把 gate 拆成
+> `contract-*`（行为）和 `schema-*`（只读 schema 文件）两族，一个需求可以各持一个，
+> 所以 42 个需求现在带 52 个 gate：33 个 `contract-*`、19 个 `schema-*`。权威是
+> `tests/CMakeLists.txt` 的 `UF_REQUIRED_DOCTEST_CONTRACTS`，人读的映射在
+> [migration report](2026-08-09-runtime-migration-report.md)。验收要看的是「每个
+> `REQUIRED_CORE` 需求都有行为 gate」，不是某个总数。
 
 ## 9. 最终交付口径
 
