@@ -17,6 +17,8 @@
 
 include_guard(GLOBAL)
 
+include("${CMAKE_CURRENT_LIST_DIR}/doctest-gate.cmake")
+
 set(UF_CONTRACT_SUITE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../contract-suite")
 set(UF_CONTRACT_SUITE_INCLUDE_DIR "${UF_CONTRACT_SUITE_ROOT}/include")
 set(UF_CONTRACT_SUITE_SOURCE_DIR "${UF_CONTRACT_SUITE_ROOT}/source")
@@ -40,9 +42,11 @@ foreach(UF_CONTRACT_SUITE_SOURCE IN LISTS UF_CONTRACT_SUITE_SOURCES)
     endif()
 endforeach()
 
-# Every contract ID the suite's own sources declare. A CASES entry outside this
-# set would register a CTest whose --test-case filter matches nothing, and
-# doctest reports an empty selection as success.
+# Every contract ID the suite's own sources declare, read out of the source
+# text. That text is what a preprocessor has not seen yet, so this set answers
+# "is the name spelled the same in both places" and nothing about whether the
+# case is compiled; uf_require_executed_assertions below answers the second
+# question on the run.
 set(UF_CONTRACT_SUITE_DECLARED_CASES "")
 foreach(UF_CONTRACT_SUITE_SOURCE IN LISTS UF_CONTRACT_SUITE_SOURCES)
     file(READ "${UF_CONTRACT_SUITE_SOURCE}" UF_CONTRACT_SUITE_TEXT)
@@ -60,6 +64,16 @@ foreach(UF_CONTRACT_SUITE_SOURCE IN LISTS UF_CONTRACT_SUITE_SOURCES)
         list(APPEND UF_CONTRACT_SUITE_DECLARED_CASES "${UF_CONTRACT_SUITE_DECLARED_CASE}")
     endforeach()
 endforeach()
+set(UF_CONTRACT_SUITE_UNIQUE_DECLARED_CASES ${UF_CONTRACT_SUITE_DECLARED_CASES})
+list(REMOVE_DUPLICATES UF_CONTRACT_SUITE_UNIQUE_DECLARED_CASES)
+list(LENGTH UF_CONTRACT_SUITE_DECLARED_CASES UF_CONTRACT_SUITE_DECLARED_CASE_COUNT)
+list(LENGTH UF_CONTRACT_SUITE_UNIQUE_DECLARED_CASES UF_CONTRACT_SUITE_UNIQUE_DECLARED_CASE_COUNT)
+if(NOT UF_CONTRACT_SUITE_DECLARED_CASE_COUNT EQUAL UF_CONTRACT_SUITE_UNIQUE_DECLARED_CASE_COUNT)
+    message(FATAL_ERROR
+        "the Operator contract suite declares duplicate contract TEST_CASE names: "
+        "[${UF_CONTRACT_SUITE_DECLARED_CASES}]"
+    )
+endif()
 
 # One run of the suite against one project.
 #
@@ -67,10 +81,13 @@ endforeach()
 #   SOURCES  the consumer's provider translation units.
 #   LIBS     anything the provider needs beyond the Operator.
 #   CASES    contract IDs this run also registers one CTest each for, on top of
-#            the aggregate gate. At most one run may claim them, because two
-#            projects cannot both own the CTest name contract-control-c01; this
-#            repository's own run claims the IDs its migration report names, and
-#            every other run is the single gate a consumer gets.
+#            the aggregate gate. A run claims either every ID the suite declares
+#            or none of them: at most one run may claim, because two projects
+#            cannot both own the CTest name contract-control-c01, so requiring
+#            the claiming run to claim all of them is what turns a new case in
+#            contract-suite/source/ into a configure error rather than a case
+#            that only ever runs inside an aggregate. This repository's own run
+#            claims; every other run is the single gate a consumer gets.
 function(uf_add_operator_contract_suite)
     cmake_parse_arguments(ARG "" "TARGET;PROJECT" "SOURCES;LIBS;CASES" ${ARGN})
 
@@ -110,19 +127,26 @@ function(uf_add_operator_contract_suite)
         )
     endif()
 
+    if(ARG_CASES)
+        set(SORTED_SUITE_CASES ${ARG_CASES})
+        set(SORTED_SUITE_DECLARED_CASES ${UF_CONTRACT_SUITE_DECLARED_CASES})
+        list(SORT SORTED_SUITE_CASES)
+        list(SORT SORTED_SUITE_DECLARED_CASES)
+        if(NOT SORTED_SUITE_CASES STREQUAL SORTED_SUITE_DECLARED_CASES)
+            message(FATAL_ERROR
+                "uf_add_operator_contract_suite(${ARG_TARGET}) CASES do not exactly match "
+                "the suite's TEST_CASE declarations; "
+                "requested=[${SORTED_SUITE_CASES}], declared=[${SORTED_SUITE_DECLARED_CASES}]"
+            )
+        endif()
+    endif()
+
     get_property(REGISTERED_CONTRACT_CASES GLOBAL PROPERTY UF_REGISTERED_CONTRACT_CASES)
     foreach(SUITE_CASE IN LISTS ARG_CASES)
         if(NOT SUITE_CASE MATCHES "^(contract|schema)-")
             message(FATAL_ERROR
                 "uf_add_operator_contract_suite(${ARG_TARGET}) rejects a gate outside "
                 "the contract-/schema- vocabulary: ${SUITE_CASE}"
-            )
-        endif()
-        list(FIND UF_CONTRACT_SUITE_DECLARED_CASES "${SUITE_CASE}" DECLARED_CASE_INDEX)
-        if(DECLARED_CASE_INDEX EQUAL -1)
-            message(FATAL_ERROR
-                "uf_add_operator_contract_suite(${ARG_TARGET}) requests a case the suite "
-                "does not declare: ${SUITE_CASE}"
             )
         endif()
         list(FIND REGISTERED_CONTRACT_CASES "${SUITE_CASE}" REGISTERED_CASE_INDEX)
@@ -189,6 +213,7 @@ function(uf_add_operator_contract_suite)
         TIMEOUT 120
         LABELS "CI;CONTRACT-SUITE"
     )
+    uf_require_executed_assertions(contract-suite-${ARG_PROJECT})
 
     foreach(SUITE_CASE IN LISTS ARG_CASES)
         add_test(
@@ -206,6 +231,7 @@ function(uf_add_operator_contract_suite)
             TIMEOUT 60
             LABELS "${SUITE_CASE_LABELS}"
         )
+        uf_require_executed_assertions(${SUITE_CASE})
         set_property(GLOBAL APPEND PROPERTY UF_REGISTERED_CONTRACT_CASES "${SUITE_CASE}")
     endforeach()
 endfunction()

@@ -1,3 +1,5 @@
+include("${CMAKE_SOURCE_DIR}/cmake/doctest-gate.cmake")
+
 function(cpp_add_test)
     cmake_parse_arguments(ARG "NO_CTEST" "NAME" "SOURCES;LIBS" ${ARGN})
 
@@ -37,6 +39,7 @@ function(cpp_add_test)
             TIMEOUT 60
             LABELS "CI"
         )
+        uf_require_executed_assertions(${ARG_NAME})
     endif()
 endfunction()
 
@@ -52,8 +55,17 @@ endfunction()
 # One requirement may own one gate of each kind. C-09 through C-13 do: their
 # store behaviour lives in the exported suite, which registers the contract-
 # name, while their schema shape stayed in tests/operator and takes the schema-
-# name. What this list forbids is the case the ruling was written against -- a
-# contract- gate whose assertions only read a schema file.
+# name.
+#
+# Which kind a case belongs to is not mechanically checked, and cannot be from
+# here: neither CMake nor a doctest binary can read a case body and decide
+# whether its assertions reach production code, and "goes red when the behaviour
+# is removed" is a statement about a tree that does not exist yet. A contract-
+# gate whose assertions only read a schema file is caught by review and by
+# nothing else. What this list does enforce is that the registered CTest names
+# are exactly these and are spelled in the vocabulary; what
+# UF_SCHEMA_ONLY_REQUIREMENTS enforces is that the set of requirements holding
+# no contract- gate at all cannot change without an edit here.
 set(UF_REQUIRED_DOCTEST_CONTRACTS
     contract-product-p04
     contract-product-p05-fixtures
@@ -159,6 +171,29 @@ if(NOT UF_REQUIRED_CORE_REQUIREMENT_COUNT EQUAL 42)
         "${UF_REQUIRED_CORE_REQUIREMENT_COUNT}"
     )
 endif()
+
+# The requirements that own no contract- gate: every assertion standing behind
+# them reads a schema file, so they are covered in name and unenforced in fact.
+# The check at the end of this file derives the same set from the registered
+# gates and requires the two to agree, in both directions. That is as far as the
+# prefix can be held to account from here -- it makes a reclassification, which
+# is one keystroke on a name, an explicit edit to this list.
+set(UF_SCHEMA_ONLY_REQUIREMENTS
+    product-p01
+    product-p02
+    product-p03
+    state-s01
+    state-s02
+    state-s04
+    control-c03
+    control-c05
+    control-c08
+    agent-a01
+    agent-a02
+    agent-a03
+    agent-a05
+    agent-a07
+)
 
 # A suite is valid only when its requested IDs and concrete doctest declarations
 # are the same set. The global registry also rejects placeholders, cross-suite
@@ -311,6 +346,7 @@ function(cpp_add_contract_suite)
         TIMEOUT 120
         LABELS "CI;CONTRACT-SUITE"
     )
+    uf_require_executed_assertions(${ARG_TARGET})
 
     foreach(CONTRACT_CASE IN LISTS ARG_CASES)
         add_test(
@@ -328,6 +364,7 @@ function(cpp_add_contract_suite)
             TIMEOUT 60
             LABELS "${CONTRACT_CASE_LABELS}"
         )
+        uf_require_executed_assertions(${CONTRACT_CASE})
         set_property(GLOBAL APPEND PROPERTY UF_REGISTERED_CONTRACT_CASES "${CONTRACT_CASE}")
     endforeach()
 endfunction()
@@ -834,6 +871,37 @@ if(NOT COVERED_REQUIREMENTS STREQUAL SORTED_REQUIRED_CORE_REQUIREMENTS)
         "Gate registration does not cover the REQUIRED_CORE requirements exactly; "
         "required=[${SORTED_REQUIRED_CORE_REQUIREMENTS}], "
         "covered=[${COVERED_REQUIREMENTS}]"
+    )
+endif()
+
+# Coverage above counts a schema- gate, which passes whether or not the
+# behaviour exists. This separates the two so the requirements standing on a
+# shape check alone are named rather than folded into a count of 42. Moving a
+# gate between the prefixes changes the derived set and fails here.
+set(BEHAVIOURAL_REQUIREMENTS "")
+foreach(REGISTERED_GATE IN LISTS SORTED_REGISTERED_CONTRACT_CASES)
+    if(REGISTERED_GATE MATCHES "^contract-")
+        string(REGEX REPLACE "^contract-" "" BEHAVIOURAL_REQUIREMENT "${REGISTERED_GATE}")
+        list(APPEND BEHAVIOURAL_REQUIREMENTS "${BEHAVIOURAL_REQUIREMENT}")
+    endif()
+endforeach()
+list(REMOVE_DUPLICATES BEHAVIOURAL_REQUIREMENTS)
+set(SHAPE_ONLY_REQUIREMENTS "")
+foreach(COVERED_REQUIREMENT IN LISTS COVERED_REQUIREMENTS)
+    list(FIND BEHAVIOURAL_REQUIREMENTS "${COVERED_REQUIREMENT}" BEHAVIOURAL_INDEX)
+    if(BEHAVIOURAL_INDEX EQUAL -1)
+        list(APPEND SHAPE_ONLY_REQUIREMENTS "${COVERED_REQUIREMENT}")
+    endif()
+endforeach()
+list(SORT SHAPE_ONLY_REQUIREMENTS)
+set(SORTED_SCHEMA_ONLY_REQUIREMENTS ${UF_SCHEMA_ONLY_REQUIREMENTS})
+list(SORT SORTED_SCHEMA_ONLY_REQUIREMENTS)
+if(NOT SHAPE_ONLY_REQUIREMENTS STREQUAL SORTED_SCHEMA_ONLY_REQUIREMENTS)
+    message(FATAL_ERROR
+        "The requirements that own no contract- gate are not the ones "
+        "UF_SCHEMA_ONLY_REQUIREMENTS names; "
+        "pinned=[${SORTED_SCHEMA_ONLY_REQUIREMENTS}], "
+        "registered=[${SHAPE_ONLY_REQUIREMENTS}]"
     )
 endif()
 if(NOT TEST contract-repository-surface)
