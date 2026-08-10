@@ -19,15 +19,17 @@ Reading order: target form, then layer ownership, then the model semantics.
   reproducible inherited baseline, KEEP/REWRITE/DELETE dispositions, and the exact
   requirement-to-owner/schema/CTest map.
 - [The next block after runtime hardening](2026-08-10-next-block.md) --
-  **its requirement block closed on 2026-08-11**, and it is still the live
-  record of what remains. It established that the tree was mid Phase 2A rather
-  than past it, that this branch has never been pushed and so has never been
-  through CI, and ordered the deferred work by dependency. W1, W5, W8 and the
-  contract suite it raised as unowned landed on 2026-08-10; W3, W2, W4, W6 and
-  W7 landed on 2026-08-11, closing every `REQUIRED_CORE` requirement. Open: W9
-  (the review round over W2-W7, now unblocked), W11 (`clang-analysis`, which
-  blocks the branch), W12's retroactive import review, and per-requirement IDs
-  for `a03` and `a05`. W12 was added on 2026-08-11 — the `core` admission debt
+  **its requirement block closed on 2026-08-11 except `a07`**, and it is still
+  the live record of what remains. It established that the tree was mid Phase 2A
+  rather than past it, that this branch has never been pushed and so has never
+  been through CI, and ordered the deferred work by dependency. W1, W5, W8 and
+  the contract suite it raised as unowned landed on 2026-08-10; W3, W2, W4, W6
+  and W7 landed on 2026-08-11, closing every `REQUIRED_CORE` requirement but one.
+  Open: `a07`, reopened on 2026-08-11 (`07abc3e`) because its gate proves one of
+  its two acceptance clauses and nothing implements the other — 39 of 42 closed,
+  not 40; W9 (the review round over W2-W7, now unblocked), W11
+  (`clang-analysis`, which blocks the branch), W12's retroactive import review,
+  and per-requirement IDs for `a03` and `a05`. W12 was added on 2026-08-11 — the `core` admission debt
   that the 2026-07-25 sweep ruled and that was archived with the review before
   anyone ran it — and `bcc3171` answered its first half the same day.
 - Four of that plan's work items were written out in full on 2026-08-10, each

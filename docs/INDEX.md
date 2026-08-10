@@ -21,10 +21,13 @@ the four same-day specifications conflict.
   the same day by W8.
 - [The next block after runtime hardening](plans/2026-08-10-next-block.md) —
   the requirement-by-requirement map. **Its requirement block closed on
-  2026-08-11**: all 42 `REQUIRED_CORE` requirements are implemented, 40 own a
-  behavioural gate and `a03`/`a05` own an aggregate gate with no per-requirement
-  ID. What remains is W9, W11, W12's second half and that naming work; §6 is the
-  list.
+  2026-08-11 except `a07`**: all 42 `REQUIRED_CORE` requirements are implemented,
+  **39** own a behavioural gate that closes them, `a03`/`a05` own an aggregate
+  gate with no per-requirement ID, and `a07` is reopened — its gate proves the
+  second of its two acceptance clauses and nothing implements the first. What
+  remains is `a07`, W9, W11, W12's second half and that naming work; §6 is the
+  list and §6.1 is why the reopening was twenty hours late.
+  *(Corrected 2026-08-11 against `07abc3e`; this line said 40.)*
 - [Consumer attestation](plans/2026-08-11-consumer-attestation.md) — the nine
   `EXTERNAL attest-consumer-dNN` IDs, specified 2026-08-11: what a consumer
   produces, what binds it, and what upstream may and may not refuse. Proposal

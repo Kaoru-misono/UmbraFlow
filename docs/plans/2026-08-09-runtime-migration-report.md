@@ -78,6 +78,18 @@ fixtures cannot satisfy them.
 > `contract-agent-a01` and `contract-agent-a02`. Their rows below are updated to
 > name both gates, as the twelve before them are.
 >
+> **Corrected 2026-08-11 (`07abc3e`): the gate totals stand, the closure count
+> does not.** 59 gates over 42 requirements is right, and all 40 `contract-*`
+> gates are registered and green. What the paragraph below asserts and should
+> not is that a `contract-` gate per requirement means the requirement is
+> closed. `contract-agent-a07` proves one of `A-07`'s two acceptance clauses —
+> an in-flight dispatch is explicitly reported — and nothing implements the
+> other. So **39 requirements own a behavioural gate that closes them, not 40**,
+> and `A-07` is reopened; its row below says so. This table maps requirements to
+> gates and is correct as such. It is not a closure ledger, and reading it as one
+> is how the row stayed unqualified. See
+> [the next block](2026-08-10-next-block.md) §2 and §6.1.
+
 > **Forty of the forty-two requirements now own a behavioural gate, and the two
 > that do not are not open work.** `A-03` and `A-05` are implemented — the
 > Replay Bundle closure and both publication gates landed in `25520a3` on the
@@ -168,7 +180,7 @@ fixtures cannot satisfy them.
 | A-04 | Reconciliation coordinator | JR:`JournalEvent` | CTEST `contract-agent-a04` |
 | A-05 | Publication gates | AW:`ReplayGate` + PR:`plugin_hash` | CTEST `schema-agent-a05`; behaviour under the aggregate CTEST `test-annotate-backend`, with no per-requirement ID |
 | A-06 | Deployment boundary | AW:`AuthoringCapabilityRoot` + RA | CTEST `contract-agent-a06` |
-| A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `contract-agent-a07` and CTEST `schema-agent-a07` |
+| A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `contract-agent-a07` and CTEST `schema-agent-a07` — **both gates exist and the requirement is reopened**: `contract-agent-a07` proves the second acceptance clause (an in-flight dispatch is explicitly reported) and nothing implements the first (takeover and Host delivery share one target serialization). See [the next block](2026-08-10-next-block.md) §2, 2026-08-11 (`07abc3e`) |
 | A-08 | Operator recovery | OP:`ExternalInputFinding/OperationState` | CTEST `contract-agent-a08` |
 
 Where the 59 gates are declared, as of 2026-08-11:

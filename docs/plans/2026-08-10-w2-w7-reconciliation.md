@@ -814,6 +814,7 @@ change and says so in the commit message (R5).
 | W4, **landed** `25f57f9` | 20 | unchanged as predicted — no new table, but the `dispatches` DDL gains the three-value outcome vocabulary and `delivery_reason`, so the text moved. Fingerprint `sha256:937773366fcfe4f8…` |
 | W6, **landed** `93698b4` | 22 | adds `external_input_findings` and `ledger_events`. Fingerprint `sha256:c691f1d9bfb79cc4…` |
 | W7, **landed** `c23efd3` | 23 | adds `agent_budgets`. Fingerprint `sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559` |
+| `07abc3e`, **landed** | 23 | no table added or dropped. Eight DDL columns are renamed to `controlled_target_id`, which is the whole of the change to the canonicalized text. Fingerprint `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1` — **the current value** |
 
 > **Corrected again 2026-08-11, after the last three landings.** The three-row
 > plan above became four rows in the tree: W6 and W7 landed separately, so
@@ -821,7 +822,11 @@ change and says so in the commit message (R5).
 > fingerprint was recomputed three more times rather than twice. Only
 > `bda31e4b18…` is current; the two intermediate values are given truncated
 > because their only remaining use is reading a commit message against the
-> right tree. Each landing recomputed from a freshly created database and
+> right tree. *(Corrected 2026-08-11: `07abc3e` added a fifth row and
+> `be80aca714…` is now the current value. `bda31e4b18…` joins the truncated set
+> for the same reason, and the point below about which edits move a fingerprint
+> gains its cleanest case — a column rename moves the canonicalized text and no
+> table name.)* Each landing recomputed from a freshly created database and
 > positive-controlled the recipe against the previous `ledger.cpp` before
 > trusting the new value, which is R5 discharged rather than asserted.
 >
@@ -1023,6 +1028,14 @@ for one literal is a merge conflict on the thing R5 exists to protect.
   spells it `controlled_target_key`. Two spellings of one thing, predating all
   four items. Whichever survives must be applied to the schema and the DDL in one
   change. Not settled here, and not W2-W7's to settle alone.
+  > **Settled 2026-08-11 in `07abc3e`.** `controlled_target_id` survived and was
+  > applied to the schema, the DDL and the C++ in one change — 14 files, 85
+  > camel-case and 57 snake-case sites, zero residual old spellings. The code was
+  > the drifted side, as this row implies. The literal bridge in the ledger,
+  > `.controlledTargetId = controlledTargetKey`, was deleted rather than
+  > relocated. Fingerprint
+  > `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
+  > over the same 23 tables; see the table in §6 and `CONTEXT.md`.
 - **W4's `Host::deliver` line anchors** (`task-host.hpp:126-130, 190, 205, 248,
   257, 263`) were checked and match. Its `ledger.cpp` anchors were spot-checked
   and are within a line or two. The `contract-suite/fixtures/arcana-expedition/provider.cpp`

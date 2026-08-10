@@ -31,13 +31,23 @@ given. Two further traps:
 ## Current vocabulary
 
 **Controlled target** — one attached window/process the Operator holds a lease
-over. Wire spelling `controlled_target_id` (`$defs.OperatorSession`,
-`$defs.ControlLease` in `schema/umbraflow-operator-v1.schema.json`); C++
-spelling `ControlLease::controlledTargetKey` in
-`modules/operator/source/operator/ledger.hpp`. There is no `ControlledTarget`
+over. **`controlled_target_id` is the only spelling**, and it is one word in
+every layer: the wire (`$defs.OperatorSession`, `$defs.ControlLease` in
+`schema/umbraflow-operator-v1.schema.json`), the DDL columns, and the C++
+(`ControlLease::controlledTargetId` in
+`modules/operator/source/operator/ledger.hpp`). There is no `ControlledTarget`
 type; the word survives only in two ledger error messages. Window-instance
 freshness is the separate value `TargetGeneration`
 (`modules/domain/source/domain/ids.hpp`).
+
+_Avoid_: `controlled_target_key`, `controlledTargetKey` (the C++ and DDL
+spelling until 2026-08-11 `07abc3e`, which renamed 14 files and left zero
+residual sites). The two spellings were bridged by a literal rename inside the
+ledger, `.controlledTargetId = controlledTargetKey`; that bridge was deleted
+rather than relocated. The rename moved the Operator DDL fingerprint to
+`sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1` over
+the same 23 tables, so an `operator-runtime.sqlite` from before it is refused at
+open and deleted, never migrated.
 
 **RuntimeArtifact** — a verified manifest, one `page-model.toml`, and the
 manifest-listed assets under `assets/`. Pinned as

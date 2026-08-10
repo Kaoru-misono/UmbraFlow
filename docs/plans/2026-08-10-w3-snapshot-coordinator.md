@@ -3,6 +3,14 @@
 Status: **landed** — additive half `7cef402` (2026-08-10), Operator half
 `4b955de` (2026-08-11). Everything below is the pre-landing specification and is
 left as written.
+
+> **Read every `controlled_target_key` and `controlledTargetKey` below as
+> `controlled_target_id` / `controlledTargetId`** — including the SQL in §4 and
+> the `SnapshotParts` table in §5. `07abc3e` (2026-08-11) settled this
+> document's own open question 2 in favour of the schema's spelling and applied
+> it to the schema, the DDL and the C++ in one change, leaving zero residual
+> sites. The mapping row `| controlled_target_id | session.controlled_target_key |`
+> is now the identity.
 Date: 2026-08-10 (landed 2026-08-11)
 Scope: `umbraflow-cpp` only. No consumer-project writes.
 Closes: `s01` (five state kinds have separate owners), `s02` (the Snapshot
@@ -45,10 +53,12 @@ identity, composes nothing).
 > over 20 tables, `project_observations` among them and
 > `runtime_publications` deleted by `848e390`. The intermediate value this
 > landing itself computed, `3a406b9d…`, was superseded the same day and reached
-> no document. (That value was superseded three more times later the same day;
+> no document. (That value was superseded four more times later the same day;
 > the tree now carries
-> `sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559`
-> over 23 tables. `project_observations` is still among them.)
+> `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
+> over 23 tables — `bda31e4b18…` stood between W7 and `07abc3e`, which renamed
+> eight DDL columns to `controlled_target_id`. `project_observations` is still
+> among them.)
 >
 > **Every mutation in this document was run, and three of its rows did not
 > survive contact.** `T6a` and `T6b` are each green and only `T6c`, deleting
@@ -1018,6 +1028,14 @@ list. None of them is settled here.
    thing and it predates W3. Whichever survives must be applied to the schema
    and the DDL in one change; this specification writes the schema's member name
    over the code's value and does not pretend that is settled.
+   > **Settled 2026-08-11 in `07abc3e`**, the way this question framed it: the
+   > schema's spelling survived and was applied to the schema, the DDL and the
+   > C++ in one change — 14 files, 142 code sites, zero residual old spellings —
+   > and the literal bridge `.controlledTargetId = controlledTargetKey` was
+   > deleted rather than relocated. The Operator DDL fingerprint moved to
+   > `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
+   > over the same 23 tables. `CONTEXT.md` carries the term and the retired
+   > spellings.
 3. **`ui_snapshot` versus `ui_observation`.** The frozen design names the derive
    input member `ui_snapshot` and the `ProjectSnapshot` member `ui_observation`.
    They are different objects, so both are the authority's; a reader will still

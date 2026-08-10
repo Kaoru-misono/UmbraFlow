@@ -347,6 +347,32 @@ nothing will ever invoke. That is a real cost and the header is honest about why
 it is paid (`project-under-test.hpp:61-80`): the suite must not carry a proposal
 no plugin produced.
 
+> **Tested and partly confirmed, 2026-08-11 (`07abc3e`). Four of the five are
+> gone; one stands.** The objection recorded here and at R10/Q7 was acted on:
+> `mismatchedPlanTool`, `oversizedPlanTool`, `twoStepPlanTool` and
+> `reorderedEffectsTool` are removed from the public header and from the tree
+> entirely — zero occurrences anywhere under `contract-suite/`, `tests/` or
+> `modules/`. `approvalRequiredPlanTool` remains, at
+> `project-under-test.hpp:61-71`, and is still read by both fixtures and by
+> `contract-suite/source/suite-control-ledger.cpp`. So `ProjectVocabulary` is
+> **16 fields, one of them a synthetic tool**, not 20 and five.
+>
+> **The deciding test was not the objection but a falsification.** Each of the
+> four was mutated to confirm it asserted something real, and all four turned out
+> to be Operator invariants that do not vary by project — so the framework can
+> and does test them itself, and charging every consumer a permanent
+> tool-catalog row for them was the wrong trade. `approvalRequiredPlanTool`
+> survives because the shape it reaches, a proposal whose risk requires human
+> approval before the first dispatch, genuinely depends on the project's own
+> plugin: only the project can say which of its tools has that risk. Umbraflow's
+> own copies of the four stay, because `tests/operator/` reaches them directly
+> and pays no registration cost for them.
+>
+> **What this vindicates is the recommendation, not the fear.** §5.4's rule —
+> `ProjectVocabulary` is the right place to grow, and a vocabulary field is a
+> fact only the project knows — is exactly the test that removed the four and
+> kept the fifth. The four were not project facts.
+
 It is nevertheless the right place for growth, and the attestation document's Q4
 already proposes another field there (an unconfirmed-fact document, to gate
 `A-04`'s project half). Recommendation: accept that `ProjectVocabulary` grows,
@@ -356,7 +382,8 @@ field is a fact only the project knows. A `find_if` is not.
 But see Q7: five synthetic tools in a shipping tool catalog are inside
 `tool_catalog_hash`, therefore inside `project_registration_hash`, therefore
 inside every session identity. A consumer is being asked to permanently attest a
-catalog containing test scaffolding.
+catalog containing test scaffolding. *(2026-08-11: one synthetic tool, not five
+— see the note above.)*
 
 ### 5.5 The generator case, argued and rejected
 
@@ -368,10 +395,13 @@ It is wrong here, for a reason specific to this design rather than a general
 preference. **The generated lines would be validators, and a validator the
 consumer owns but did not think about is exactly the failure this repository
 spent a day cataloguing.** `docs/pitfalls/checks-that-cannot-fail.md` records
-eight instances of "a name exists, the name promises something, and nothing
+nine instances of "a name exists, the name promises something, and nothing
 verifies the promise" — including one where a CMake helper named
 `cpp_add_contract_suite` built its binary `NO_CTEST`, so seven compiled cases in
-`tests/operator/test-project-plugin-contract.cpp` executed in no gate. A generated
+`tests/operator/test-project-plugin-contract.cpp` executed in no gate, and one
+where a *consumer-owned* validator named for the fixed `JournalProvenance`
+schema compared bytes to a literal that violates it (§6.4) — which is this
+argument's own prediction, arriving before the generator did. A generated
 `canonicalValidator` that returns `ok()` for everything is that defect,
 pre-installed, in every consumer, with the consumer's name on it. When the
 framework later tightens what canonical means, nothing tells the consumer which
@@ -531,6 +561,47 @@ the number of consumers.
 alongside the Python and Luau implementations, and offered to consumers as the
 default `CanonicalJsonValidator`.** This needs `evaluate-core-capability` before
 it is written; it is a genuine core-admission question, not a formality. Q3.
+
+**A second validator has the same shape and a worse ending, found 2026-08-11.**
+`JournalProvenanceValidator` is delegated to the project exactly as
+`CanonicalJsonValidator` is — and unlike JCS, the schema it answers for is not
+merely project-independent, it is already **written down in this repository**, as
+`JournalProvenance` in `schema/umbraflow-journal-v1.schema.json`:
+`additionalProperties: false`, four required members, `kind` restricted to five
+values. Nothing connects the callback to that file. Both fixtures implement the
+validator as one byte-comparison against the single provenance literal they
+ship, and **both literals violate the schema** — umbraflow's `{"kind":"fixture"}`
+fails the enum and omits three required members; arcana's `{"witness":"suite"}`
+omits all four and breaks `additionalProperties`. A consumer's suite therefore
+passes while producing provenance documents the framework's own schema rejects,
+and three separate strings — the type's comment, the `UF_TRY_CONTEXT` at
+`modules/operator/source/operator/journal-entry.cpp:121`, and both refusal
+messages — assert that the fixed schema was enforced.
+
+**This is a gap, not a design decision**, and the deciding evidence is inside the
+same class rather than a matter of taste. `ProjectJournalSchemaOwner::create`
+demands `exactJournalSchemaManifestBytes` so the *payload* validator "provably
+answers for the manifest this registration named; without them the recorded
+`payload_schema_hash` is whatever an arbitrary validator chose to return"
+(`journal-entry.hpp`). The provenance validator has no such pin and returns
+`Status` rather than a derived value, so nothing in the record shows what it
+answered for. One constructor, two validators, one anchored and one free. The
+"a project must participate" reading is true of provenance *values* —
+`principal_id`, `observation_ids` are project-shaped — and does not reach the
+schema decision, which is fixed and framework-owned.
+
+**Recommendation: delete `JournalProvenanceValidator` and validate the document
+in the framework against its own schema.** It costs the consumer one fewer
+callback, which makes it the rare correction that reduces onboarding cost, and
+it is the answer §6.2's registration-pin line already implies. D1 in §6.5 catches
+it directly: no member of `ProjectRegistrationClaims` pins a provenance schema,
+because there is nothing project-specific to pin. If delegation must survive for
+a reason not yet stated, the framework must probe each supplied validator with a
+known-bad document at construction and refuse one that accepts it — D2, applied
+to a validator instead of a default. Recorded as the ninth instance in
+[checks that cannot fail](../pitfalls/checks-that-cannot-fail.md), which carries
+the generalisable form: delegating a check gives away the enforcement and keeps
+the promise.
 
 ### 6.5 How you would know the line was being crossed
 
@@ -846,6 +917,14 @@ would hit them. A prediction that turns out wrong is the useful outcome.
   (`mismatchedPlanTool`, `oversizedPlanTool`, `twoStepPlanTool`,
   `approvalRequiredPlanTool`, `reorderedEffectsTool`) that its game does not
   have and that will be inside `tool_catalog_hash` forever. §5.4, Q7.
+  **Resolved for four, stands for one (2026-08-11, `07abc3e`).** All but
+  `approvalRequiredPlanTool` are removed from the public header and the tree;
+  each was first mutated to confirm it asserted something real, and all four
+  proved to be Operator invariants that do not vary by project, so the framework
+  tests them itself. The fifth depends on the project's own plugin and stays.
+  The prediction was therefore correct as an objection and correct as a cost —
+  this is a consumer's objection acted on, not overruled — but the cost was
+  four-fifths avoidable, which R10 did not claim either way.
 - **R11.** The canonical validator is implemented as an allowlist, like both
   fixtures, because writing RFC 8785 in C++ for one suite run is not worth it —
   and the consumer will not notice that this means its suite run proves nothing
@@ -857,7 +936,8 @@ would hit them. A prediction that turns out wrong is the useful outcome.
 
 **What I predict will *not* be a problem**, stated so it can be falsified in the
 other direction: the `ProjectVocabulary` itself, once its 20 fields are
-understood; the `baselineEntry.eventType` / `registration.baselineEventType()`
+understood *(16 since `07abc3e` on 2026-08-11 — see §5.4)*; the
+`baselineEntry.eventType` / `registration.baselineEventType()`
 agreement, which `prepareStore` checks with a `REQUIRE` and a comment naming the
 provider; and `readPlanProposal` / `readStepIntent`, which are exactly the seam
 that works and which the consumer will never think about.
@@ -928,6 +1008,21 @@ alternative — a second catalog for suite runs — would mean the suite proves
 things about a catalog production never uses, which is the defect
 `tool-invocation.hpp:150-153` exists to prevent. But the owner should decide
 knowingly, because it is permanent.
+
+> **Answered 2026-08-11 (`07abc3e`), and by a third option this question did not
+> list: remove four of the five from the consumer's surface entirely.** The
+> question framed a binary — one catalog with the scaffolding in it, or a second
+> catalog the suite alone uses — and correctly rejected the second. What neither
+> branch asked was whether each tool had to be a *project* fact at all. Mutating
+> the four showed they assert Operator invariants that do not vary by project, so
+> the framework tests them directly and no consumer pays a registration row.
+> `approvalRequiredPlanTool` is the one that survives the same test, because
+> which of a project's tools carries approval-requiring risk is decided by that
+> project's plugin. Q7's recommendation now applies to one tool instead of five,
+> and is accepted on those terms: it stays in the shipping catalog, and §5.4
+> documents why. **The generalisable part is the test, not the answer** — before
+> asking whether a consumer should pay for a vocabulary field, ask whether the
+> property it reaches varies by project.
 
 **Q8 — whose safety profile does a consumer's suite binary carry?** §7.4. The
 comment says the consumer's; the code applies this repository's. *Recommend

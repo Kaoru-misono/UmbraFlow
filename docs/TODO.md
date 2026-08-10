@@ -46,7 +46,7 @@
 > [checks that cannot fail](pitfalls/checks-that-cannot-fail.md).
 >
 > Amended 2026-08-11, after the block closed. W4 (`e64c143`, `25f57f9`), W6
-> (`93698b4`) and W7 (`c23efd3`) landed, closing `c03`, `a07`, `p01`, `p02`,
+> (`93698b4`) and W7 (`c23efd3`) landed, closing `c03`, `p01`, `p02`,
 > `p03`, `a01` and `a02` — every `REQUIRED_CORE` requirement is now implemented.
 > Four consequences reach the boxes below. The gate map is **59 gates over 42
 > requirements, 40 `contract-*` and 19 `schema-*`**, and a green run is 83
@@ -54,12 +54,27 @@
 > per-requirement behavioural ID; both are implemented and both run under the
 > aggregate `test-annotate-backend`, so that is a naming gap and not a coverage
 > gap. The Operator DDL fingerprint moved three more times and is now
-> `sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559`
-> over 23 tables, so every G2/G4 tick predates six schema breaks; an operator
+> `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
+> over 23 tables, so every G2/G4 tick predates seven schema breaks; an operator
 > database from any earlier date is refused at open and deleted, never migrated.
 > And the migration report drifted a third, fourth and fifth time for the same
 > structural reason — no gate reads it — which is now recorded in the report
 > itself.
+>
+> Corrected 2026-08-11 (`07abc3e`), on two counts this paragraph got wrong.
+> **`a07` was listed as closed by W4 and it is not**; it is reopened. Its
+> acceptance text has two clauses, `contract-agent-a07` proves the second, and
+> the first — that a human takeover and Host delivery share one target
+> serialization — is implemented by nothing: the takeover transaction and
+> `TaskHost`'s fence have no call edge between them in production or in test.
+> **39 of 42 requirements are closed by a behavioural gate, not 40.** The gate
+> map above is unchanged and correct: 40 `contract-*` gates are registered and
+> green, and one of them closes half a requirement. The reopened row and the two
+> ways it closes are in [the next block](plans/2026-08-10-next-block.md) §2. The
+> fingerprint above also read `bda31e4b18…` and was a seventh break out of date:
+> `07abc3e` renamed eight DDL columns to `controlled_target_id`, the only
+> spelling now, which changes the canonicalized DDL text without changing a table
+> name — hence the same 23 tables.
 >
 > Amended 2026-08-10, after the third adversarial round. It returned FAIL with
 > 17 findings — [the record](reviews/2026-08-10-third-round-review.md) — so the

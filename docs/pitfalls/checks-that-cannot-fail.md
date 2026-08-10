@@ -15,10 +15,10 @@ gate.
 ## They are one family, not a run of coincidences
 
 Four separate instances were found on 2026-08-10, in four unrelated files, and
-four more on 2026-08-11 — one in a database column and three in the harness that
-was running the mutations meant to catch the rest. They are the same defect
-wearing eight costumes: **a name exists, the name promises something, and nothing
-verifies the promise.**
+five more on 2026-08-11 — one in a database column, three in the harness that
+was running the mutations meant to catch the rest, and one in the exported
+contract suite itself. They are the same defect wearing nine costumes: **a name
+exists, the name promises something, and nothing verifies the promise.**
 
 | Instance | The name that promised | What verified it |
 |---|---|---|
@@ -30,6 +30,7 @@ verifies the promise.**
 | `ctest -R <name>` in a mutation harness (found 2026-08-11) | "the case this mutation targets ran and passed" | nothing — `ctest -R` exits 0 when the filter matches no test, so a prose-named case, a typo or a renamed gate reads exactly like a pass. Four results were falsely green on one campaign's first pass |
 | restoring the mutated file (found 2026-08-11) | "the tree is back to its original state" | nothing — the restore preserved the file's original modification time, so Ninja saw nothing newer than its output and skipped the rebuild. Every run after the first tested a mutation that had supposedly been reverted |
 | three refusal assertions in one new case (found 2026-08-11) | "the budget refuses this" | nothing — the fixture named an instance that already had an active write session, so a unique index refused all three regardless, and the mutation they existed to catch came back green |
+| `JournalProvenanceValidator` (found 2026-08-11) | "this document conforms to the fixed `JournalProvenance` schema" — the type's own comment, the call site's `UF_TRY_CONTEXT` string, and both fixtures' refusal messages all say so | nothing — the framework hands the check to the project and never cross-checks it against `schema/umbraflow-journal-v1.schema.json`. Both shipped validators compare bytes to the one literal they ship, and **both literals violate that schema**: `{"kind":"fixture"}` fails the `kind` enum and omits three required members, `{"witness":"suite"}` omits all four and breaks `additionalProperties: false`. A suite run is green either way |
 
 Note what they are *not*. None is a bug in a check's logic; every one of the
 eight works correctly on the inputs it receives. The defect is upstream of the
@@ -119,11 +120,64 @@ second.
 
 The counter-example is in the same block and shows the discipline discharged
 rather than only violated. `ledger_events`' descriptive columns — `kind`,
-`controlled_target_key`, `subject_id` — were written one landing before anything
+`controlled_target_id` (spelled `controlled_target_key` until `07abc3e`),
+`subject_id` — were written one landing before anything
 read them. That was recorded as a known zero at the time, with the reader named
 and scheduled, and `subscribe` became it one landing later. A write-only column
 is a debt, not a defect, **when the commit that adds it says so and names what
 will read it.** The defect is the unrecorded one.
+
+### Delegating a check does not delegate the promise
+
+The ninth row is the first instance found in the *exported* surface, and it is
+the one with a live victim: **a real consumer's suite passed while producing
+provenance documents the framework's own schema would reject.** Nothing
+malfunctioned. The framework calls a validator; the validator refuses documents;
+the refusal message names `JournalProvenance`. What no code does is connect any
+of that to `schema/umbraflow-journal-v1.schema.json`, where `JournalProvenance`
+is actually defined — `additionalProperties: false`, four required members, and
+`kind` restricted to five values. `JournalProvenanceValidator` is a
+`std::function<Status(std::string_view)>` supplied by the project, and both
+shipped implementations are one byte-comparison against the single literal that
+fixture also ships. Each literal violates the schema several times over. Each
+suite run is green.
+
+**The tell is that the same class already solves the same problem one member
+away, and says why.** `ProjectJournalSchemaOwner::create` demands
+`exactJournalSchemaManifestBytes` so that, in the header's own words, "the
+payload validator provably answers for the manifest this registration named;
+without them the recorded `payload_schema_hash` is whatever an arbitrary
+validator chose to return." That argument transfers word for word to provenance,
+and the provenance half has no pin at all — no bytes, no manifest, and a `Status`
+return that leaves no evidence in the record that the check ran against anything
+in particular. One constructor, two validators, one of them anchored and one of
+them free.
+
+**Verdict: a gap, not a design.** The defensible kernel of the "by design"
+reading is that provenance carries project-shaped values — `principal_id`,
+`observation_ids` — so a project must participate. But supplying the *values* is
+not supplying the *schema decision*. `JournalProvenance` is fixed, it is
+framework-owned, and it lives in a framework schema file, so the framework can
+validate it without asking anyone. The correction that matches "Break it rather
+than bridge it" is to delete `JournalProvenanceValidator` and validate the
+document in `journal-entry.cpp` against the schema the comment already names. If
+delegation has to survive for a reason not yet stated, then the framework must
+feed each project validator a known-bad provenance document at construction and
+refuse a validator that accepts it — a negative control, which is the same
+discipline this document exists to enforce, applied to a check rather than to a
+test.
+
+**The generalisable rule.** When a framework delegates a check to a consumer, it
+keeps the promise and gives away the enforcement. That trade is only safe if the
+framework can still tell that the delegate did the job — by pinning the bytes the
+delegate must answer for, by taking back a value derived from them, or by
+probing the delegate with an input it must reject. A callback typed
+`Status(std::string_view)` offers none of the three, and a name like "the fixed
+`X` schema" on such a callback is the promise with nothing behind it.
+
+Recorded 2026-08-11. The consumer-cost side of the same finding is in
+[consumer onboarding](../plans/2026-08-11-consumer-onboarding.md) §6.4, beside
+the canonical-validator instance it rhymes with.
 
 ## Properties no mutation can reach
 

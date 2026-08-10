@@ -3,7 +3,32 @@
 Status: **landed 2026-08-11** — additive half `e64c143`, ledger join `25f57f9`.
 Everything below is the pre-landing specification and is left as written.
 Date: 2026-08-10 (landed 2026-08-11)
-Closes: `c03`, `a07`
+Closes: `c03`. **`a07` is reopened — see the note directly below.**
+
+> **Reopened 2026-08-11 (`07abc3e`): this document closed `c03` and half of
+> `a07`, and Q5 said so before the row was marked closed.** `a07`'s acceptance
+> text has two clauses. `contract-agent-a07` proves the second — an in-flight
+> dispatch is explicitly reported — and §4.3 and §4.4 below specify exactly that.
+> The first clause is structural: a human takeover and Host delivery share one
+> target serialization. Nothing joins them. `takeoverLease`'s transaction and
+> `TaskHost::adoptControlFence` have **no call edge between them anywhere, in
+> production or in test**, and `operator::controlFence(ControlLease const&)` —
+> the one API that converts a lease into a Host fence — has zero production
+> callers. §1.2 below is where the divergence entered: it relocates the
+> linearization to SQLite commit order and rules operation 2 out of the database
+> deliberately and correctly, which leaves the Host side to be joined by
+> something else. Nothing was.
+>
+> The vacuity defence in the landing note below stands as far as it goes and no
+> further: production cannot dispatch, so nothing violates the invariant today,
+> but that is an argument about a join that was never assembled and a future
+> wiring inherits the window intact.
+>
+> **Q5 conceded this and asked that it reach the requirement matrix. It never
+> did**, and the row carried no caveat until `07abc3e`. The reopened row, the two
+> ways it closes, and the rule proposed so the next concession does not die the
+> same way are in [the next block](2026-08-10-next-block.md) §2 and §6.1. Nothing
+> below is rewritten; Q5 was right when written and is still the finding.
 Depends on: W2 (hard, see §8), W3 (sequencing only, see §8)
 Scope: `umbraflow-cpp` only. No consumer-project writes.
 
@@ -34,15 +59,21 @@ and §4 rules that `OperatorCoordinator` grows rather than gaining a sibling.
 > inverted by both landings; do not inherit that.
 
 > **Landed 2026-08-11 in `e64c143` and `25f57f9`. Read what follows as the plan,
-> not as the tree.** `c03` and `a07` are closed and both own a
-> `contract-` gate. Every "Corrected 2026-08-11 against the landed tree" note
+> not as the tree.** `c03` and `a07` both own a `contract-` gate; `c03` is closed
+> and `a07` is not — see the reopening note at the top of this document. Every
+> "Corrected 2026-08-11 against the landed tree" note
 > below was written against `848e390` and predates this landing, so where one of
 > them states a current value — the fingerprint above all — read it as of that
-> commit. The tree carries
+> commit. After W6 and W7 the tree carried
 > `sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559` over
-> 23 tables after W6 and W7; W4's own recomputation was `937773366f…` over the
+> 23 tables; W4's own recomputation was `937773366f…` over the
 > same 20 tables, because the `dispatches` DDL text changed without a table being
-> added, exactly as §6 predicted.
+> added, exactly as §6 predicted. *(Corrected 2026-08-11: `07abc3e` moved it
+> again, to
+> `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1` over
+> the same 23 tables, renaming eight DDL columns to `controlled_target_id`. Read
+> every `controlled_target_key` below as that spelling: the C++ one is gone and
+> the bridge that carried both was deleted rather than relocated.)*
 >
 > **What this document specified and the implementation refused.**
 >
@@ -927,6 +958,14 @@ About W3 (`docs/plans/2026-08-10-w3-snapshot-coordinator.md`):
   is the natural owner. Until then the Host half of `a07` is proved by tests
   and exercised by nothing else, which is correct but worth stating in the
   requirement matrix rather than leaving implied.
+  > **Carried 2026-08-11 (`07abc3e`), twenty hours late.** This question was
+  > right, W6 landed without answering it, and the matrix row was marked closed
+  > with no caveat. It is now the reason `a07` is reopened; the row, the two ways
+  > it closes and the deciding argument are in
+  > [the next block](2026-08-10-next-block.md) §2. Q5 is also the worked example
+  > behind the rule proposed in §6.1 there — an open question that names a
+  > requirement blocks that requirement's row — because it names `a07` in its own
+  > text and would have been caught by reading two lines.
 - **Q6.** §5.2 binds one `TaskHost` to one `controlled_target_key` at its first
   fence adoption. Is that the intended shape, or will one Host serve several
   targets — in which case `m_fence` becomes a per-target map and every

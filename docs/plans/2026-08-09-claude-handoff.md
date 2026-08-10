@@ -173,6 +173,16 @@ d445c811b9469a58ff116df4763d4e7f1acd80b6a3392639d7eb257321916753
 > W4 没有加表却也改了 fingerprint——`dispatches` 的 DDL 文本变了——这正是那条约束
 > 想覆盖的情况。42 条 `REQUIRED_CORE` 需求全部实现完毕。
 
+> 2026-08-11 更正（`07abc3e`）：上一段两处已过时。fingerprint 又动了一次，现为
+> `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`，
+> 仍是 23 张表——`07abc3e` 把八个 DDL 列名统一成 `controlled_target_id`，只改
+> DDL 文本不改表名，正好又是那条约束覆盖的情况。另外「42 条需求全部实现完毕」这句
+> 本身没错，但当时被读成「全部关闭」：`a07` 的验收有两条子句，`contract-agent-a07`
+> 只证明了第二条（在途 dispatch 被明确报告），第一条（takeover 与 Host delivery
+> 同一线性化序列）无任何实现——takeover 事务与 `TaskHost` 的 fence 之间，生产和测试
+> 里都没有调用边。**以行为 gate 关闭的是 39 条，不是 40 条**，`a07` 重新打开，详见
+> [next block](2026-08-10-next-block.md) §2。
+
 ### 4.5 ProjectPlugin
 
 - 只支持 startup-time registry `(plugin_id, project_registration_hash)` exact lookup，无 latest/fallback。

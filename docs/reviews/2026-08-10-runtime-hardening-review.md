@@ -88,11 +88,12 @@ tree.
 > `BEGIN IMMEDIATE`, and that is unchanged by the number of legs in it.
 >
 > **Later on 2026-08-11**: W4, W6 and W7 moved the fingerprint three more times,
-> to
-> `sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559`
-> over 23 tables. None of the three touched the reference set, so A-F8 is
-> unaffected; the value is corrected here only because a stale fingerprint in a
-> live document is what a later reader copies.
+> to `sha256:bda31e4b18…` over 23 tables, and `07abc3e` moved it a fourth, to
+> `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
+> over the same 23 tables — eight DDL columns renamed to `controlled_target_id`,
+> no table added or dropped. None of the four touched the reference set, so A-F8
+> is unaffected; the value is corrected here only because a stale fingerprint in
+> a live document is what a later reader copies.
 
 ## Accepted, with reasons
 

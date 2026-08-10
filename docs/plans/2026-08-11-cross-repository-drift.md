@@ -263,6 +263,28 @@ the design. **Correction:** either deliver the Host-side fence install on the
 production path, or reopen `A-07` and record I-02 as not yet met. A requirement
 counted closed against half its acceptance text is worse than one left open.
 
+> **Applied 2026-08-11 (`07abc3e`): the second branch, and this finding was
+> right.** `a07` is reopened and the invariant is recorded as unmet in
+> [the next block](2026-08-10-next-block.md) §2, which also states the two ways
+> it closes and that choosing between them belongs to an owner rather than to a
+> document. The requirement count moved with it: **39 of 42 closed by a
+> behavioural gate, not 40**, corrected in `docs/TODO.md`, `docs/INDEX.md`,
+> `docs/plans/README.md`, the migration report's `A-07` row and the W4
+> specification. Three details verified while applying it, each stronger than
+> stated above: the disjointness is total — there is **no call edge** between
+> `takeoverLease` and `TaskHost::adoptControlFence` in production *or in test*,
+> and every one of the fence's 16 call sites passes a literal or a
+> fixture-construction lease; the bridging API
+> `operator::controlFence(ControlLease const&)` has **zero production callers**,
+> its two test callers being `observation-fixture.hpp`:774 and
+> `test-control-contract.cpp`:403, the latter fabricating the moved fence by
+> hand-incrementing `fencingToken` rather than reading a takeover; and
+> `mintClickReceipt` now refuses at fence 0
+> (`modules/task/source/task/task-host.cpp`:578), which is a *second*
+> independent reason production cannot dispatch and which post-dates the bundle
+> text quoted above. F-4 remains the finding; this note only records that it was
+> acted on rather than accepted.
+
 ---
 
 ### F-5 — The consumer's whole Luau task layer targets a host surface the framework bans in CI
@@ -591,6 +613,18 @@ It predates this block, so it is not fallout from tonight. **Correction:** renam
 the C++ and the DDL to `controlled_target_id` and delete the bridging assignment.
 Roughly 142 sites; no behaviour changes, because the value is already identical.
 
+> **Applied 2026-08-11 in `07abc3e`, exactly as specified.** 14 files, 142 sites,
+> zero residual old spellings; the bridge at `:3956` was deleted rather than
+> relocated. Two consequences this finding did not have to predict and that a
+> later reader needs. The eight DDL columns are inside the canonicalized schema
+> text, so the Operator fingerprint moved to
+> `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
+> while `expectedTables` stayed at 23 — a column rename moves the text and not
+> the table names — and an `operator-runtime.sqlite` from before the rename now
+> fails to open and is deleted, never migrated. `CONTEXT.md` carries
+> `controlled_target_id` as the one spelling with both retired forms under
+> `_Avoid_`, which is where the next reader should look first.
+
 ---
 
 ### F-14 — `ARCHITECTURE.md` names two different bundle versions seven lines apart
@@ -623,8 +657,17 @@ and `docs/plans/` — `2026-08-09-claude-handoff.md`, `2026-08-10-next-block.md`
 `2026-08-10-w3-snapshot-coordinator.md`, `2026-08-10-w4-delivery-join.md`,
 `2026-08-10-w6-w7-controller-and-agent.md`. The pre-window value `5738e6f9…`
 survives in six. The current value is
-`sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559`
-(`modules/operator/source/operator/ledger.cpp`:361).
+`sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
+(`modules/operator/source/operator/ledger.cpp`:362).
+
+> **Corrected 2026-08-11 (`07abc3e`).** This paragraph named
+> `bda31e4b18…` at `:361` as current. That commit renamed eight DDL columns to
+> `controlled_target_id`, which moves the canonicalized DDL text without moving a
+> table name, so the count stays at 23 and the constant moved one line. The
+> finding this paragraph makes is unaffected and was promptly re-proved by its own
+> subject: `bda31e4b18…` reached ten documents as a live value before it was
+> superseded, and correcting them was a second sweep. The nine and six counts
+> above are re-verified as of this correction and unchanged.
 
 **Consumer-side check performed:** uf-chaos pins **no** framework fingerprint
 anywhere, so this breadth does not extend across the boundary. VERIFIED —

@@ -31,10 +31,12 @@ Ordering and requirement state: [`2026-08-10-next-block.md`](2026-08-10-next-blo
 > list are superseded twice over — by the landing and by the removal of
 > `runtime_publications` in the same commit; at `848e390` the tree carried
 > `sha256:12f64bfff305c30c716fbd5bdc9934a17140dfe4e127b5bce2ec7a10ecd309e4`
-> over 20 tables. (Superseded three landings later on the same day: the tree now
-> carries
-> `sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559`
-> over 23 tables. Nothing else in this note moves with it.)
+> over 20 tables. (Superseded three landings later on the same day, and once
+> more after that: the tree now carries
+> `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1`
+> over 23 tables — `bda31e4b18…` stood between W7 and `07abc3e`, which renamed
+> eight DDL columns to `controlled_target_id` without changing a table name.
+> Nothing else in this note moves with it.)
 >
 > **All 15 mutations in §9 were run — the first time any of this block's 23
 > were.** Eleven turn their case red. `T4` is not applicable as written, and

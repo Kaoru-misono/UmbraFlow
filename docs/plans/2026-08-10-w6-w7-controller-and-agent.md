@@ -42,14 +42,23 @@ rows `P-01`, `P-02`, `P-03`, `A-01`, `A-02`. The frozen authority is
 > landed tree" note below was written against `848e390` and predates these two
 > landings; where one states a current value, read it as of that commit. The
 > tree carries
-> `sha256:bda31e4b18a8096b28e5208f5988dea8658bea9d7917d78cd8655d4f581a8559` over
-> 23 tables, reached in two steps rather than the one §6.3 plans: W6 added
+> `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1` over
+> 23 tables, reached in three steps rather than the one §6.3 plans: W6 added
 > `external_input_findings` and `ledger_events` (22 tables,
-> `c691f1d9bf…`) and W7 added `agent_budgets`.
+> `c691f1d9bf…`), W7 added `agent_budgets` (23 tables, `bda31e4b18…`), and
+> `07abc3e` renamed eight DDL columns to `controlled_target_id` without touching
+> a table name. *(Corrected 2026-08-11: this named `bda31e4b18…` as the tree's
+> value and two steps.)*
 >
 > **§6.1's three schema changes were all declined, which is what the
 > reconciliation §7.1 recommended and is worth stating as an outcome rather than
 > an omission.** `schema/` is byte-identical to `848e390`.
+>
+> **Read every `controlledTargetKey` and `controlled_target_key` below as
+> `controlledTargetId` / `controlled_target_id`**, including
+> `ControllerBinding`'s member and accessor in §4. `07abc3e` made the schema's
+> spelling the only one across the schema, the DDL and the C++ in one change,
+> with zero residual sites; `CONTEXT.md` carries the term.
 > `ProgressMarker.elapsed_without_progress_ms` stays and stays unconsumed;
 > `maximum_no_progress_steps` was not added and the ceiling is
 > `k_agentNoProgressCeiling`, Operator-owned beside the risk-unit table;
