@@ -142,6 +142,163 @@ namespace uf::operator_runtime
         using test_support::TemporaryDirectory;
     }
 
+    // A human takeover and a Host delivery share one linearization. The
+    // takeover cannot un-click what may already have landed; what it does is
+    // close the window in which the ledger could still be told the effect did
+    // not happen.
+    TEST_CASE("contract-agent-a07")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto host      = test_support::deliveringHost(prepared);
+
+        auto const operation = test_support::createReadyOperation(
+            prepared,
+            "request-1",
+            "command-1"
+        );
+        auto const reserved = prepared.store.reserveDispatch(
+            operation.operationId,
+            operation.revision,
+            prepared.lease,
+            host->generation(),
+            AuthorityDecisionId{"authority-1"},
+            std::nullopt
+        );
+        REQUIRE(reserved.has_value());
+
+        // The Host acts. The click has landed and nothing in the ledger says so
+        // yet: this is the whole of the race.
+        auto const inFlight = host->deliverReport(reserved->authority);
+        REQUIRE(inFlight.outcome() == task::DeliveryOutcome::Delivered);
+        CHECK(host->clicks() == 1U);
+
+        auto const takeover = prepared.store.takeoverLease(
+            "session-1",
+            "human takeover while a dispatch was in flight"
+        );
+        REQUIRE(takeover.has_value());
+        CHECK(takeover->lease.fencingToken > prepared.lease.fencingToken);
+
+        // The takeover found the dispatch unanswered and resolved it in the
+        // transaction that bumped the fence. The count is the difference
+        // between "nothing was in flight" and "one effect may already have
+        // landed", and the caller is told which.
+        CHECK(takeover->resolvedDispatches == 1U);
+
+        // The displaced controller still holds a real report. It is refused
+        // twice over -- the lease it names is no longer the live row, and the
+        // dispatch is no longer unanswered.
+        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
+            prepared.lease,
+            reserved->operationRevision,
+            inFlight
+        ).has_value());
+
+        // What the ledger recorded instead is transport_unknown, which is not
+        // proof of absence, so no reconciliation may conclude Rejected for this
+        // Operation. Asserted through the one path that reads the column.
+        auto const displacedLease = prepared.lease;
+        prepared.lease            = takeover->lease;
+        auto const resolved       = StoredOperation{
+            .operationId = operation.operationId,
+            .lookup      = CommandLookup::Existing,
+            .state       = OperationState::Reconciling,
+            .revision      = reserved->operationRevision + 1U,
+            .planFrozen    = true,
+            .hasDispatched = true,
+        };
+        CHECK_FALSE(prepared.store.commitReconciliation(
+            prepared.plugin,
+            ReconciliationCommit{
+                .operationId                  = resolved.operationId,
+                .expectedOperationRevision    = resolved.revision,
+                .expectedProjectStateRevision = 0U,
+                .outcome                      = reconciliationOutcome(
+                    prepared,
+                    resolved.operationId,
+                    "{\"disposition\":\"rejected\"}"
+                ),
+                .journalEvents                = {},
+            }
+        ).has_value());
+
+        // The positive control for the revision above: the same Operation, the
+        // same revision, a disposition transport_unknown does not forbid.
+        REQUIRE(prepared.store.commitReconciliation(
+            prepared.plugin,
+            ReconciliationCommit{
+                .operationId                  = resolved.operationId,
+                .expectedOperationRevision    = resolved.revision,
+                .expectedProjectStateRevision = 0U,
+                .outcome                      = reconciliationOutcome(
+                    prepared,
+                    resolved.operationId,
+                    "{\"disposition\":\"confirmed\"}"
+                ),
+                .journalEvents                = {
+                    JournalAppend{
+                        .eventId = "event-1",
+                        .entry   = journalEntry(
+                            prepared.project,
+                            "fixture.confirmed",
+                            "{\"value\":1}"
+                        ),
+                    },
+                },
+            }
+        ).has_value());
+        CHECK(displacedLease.fencingToken < prepared.lease.fencingToken);
+    }
+
+    // The reverse schedule. A recorded outcome is not re-opened by a takeover
+    // that arrives after it, so "resolve what is unanswered" cannot become
+    // "overwrite what was answered".
+    TEST_CASE("a takeover after the outcome was recorded resolves nothing")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto const operation = reconcilingOperation(
+            prepared,
+            "request-1",
+            task::DeliveryOutcome::Delivered
+        );
+
+        auto const takeover = prepared.store.takeoverLease(
+            "session-1",
+            "human takeover after the outcome was recorded"
+        );
+        REQUIRE(takeover.has_value());
+        CHECK(takeover->resolvedDispatches == 0U);
+
+        // The Operation is exactly where the recorded outcome left it: the
+        // takeover neither advanced its revision nor moved its state.
+        prepared.lease = takeover->lease;
+        REQUIRE(prepared.store.commitReconciliation(
+            prepared.plugin,
+            ReconciliationCommit{
+                .operationId                  = operation.operationId,
+                .expectedOperationRevision    = operation.revision,
+                .expectedProjectStateRevision = 0U,
+                .outcome                      = reconciliationOutcome(
+                    prepared,
+                    operation.operationId,
+                    "{\"disposition\":\"confirmed\"}"
+                ),
+                .journalEvents                = {
+                    JournalAppend{
+                        .eventId = "event-1",
+                        .entry   = journalEntry(
+                            prepared.project,
+                            "fixture.confirmed",
+                            "{\"value\":1}"
+                        ),
+                    },
+                },
+            }
+        ).has_value());
+    }
+
     TEST_CASE("schema-agent-a01")
     {
         auto const schema = readSchema("umbraflow-operator-v1.schema.json");
@@ -233,7 +390,7 @@ namespace uf::operator_runtime
         auto const operation = reconcilingOperation(
             prepared,
             "request-1",
-            DeliveryOutcome::Delivered
+            task::DeliveryOutcome::Delivered
         );
         auto const progressEvent = [&prepared]
         {

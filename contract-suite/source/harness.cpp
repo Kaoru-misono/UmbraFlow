@@ -181,6 +181,8 @@ namespace uf::operator_runtime::contract
             }
         );
         REQUIRE(installed.has_value());
+        auto const artifactRootHash    = installed->rootHash();
+        auto const installedGeneration = installed->installedGeneration();
 
         auto const manifest = sessionManifest(
             project.registration,
@@ -228,15 +230,41 @@ namespace uf::operator_runtime::contract
         auto authority = planAuthority(project.registration, manifest, "operator");
         REQUIRE(authority.has_value());
         return PreparedStore{
-            .store         = std::move(store),
-            .plugin        = plugin,
-            .project       = project,
-            .manifest      = manifest,
-            .planAuthority = *std::move(authority),
-            .lease         = *lease,
-            .snapshot      = *std::move(snapshot),
-            .observation   = std::move(observation),
+            .store                   = std::move(store),
+            .plugin                  = plugin,
+            .project                 = project,
+            .manifest                = manifest,
+            .planAuthority           = *std::move(authority),
+            .lease                   = *lease,
+            .snapshot                = *std::move(snapshot),
+            .observation             = std::move(observation),
+            .runtimeArtifactRootHash = artifactRootHash,
+            .installedGeneration     = installedGeneration,
         };
+    }
+
+    auto deliveringHost(PreparedStore& prepared)
+        -> std::unique_ptr<DeliveringHost>
+    {
+        return deliveringHostFor(
+            prepared.store,
+            prepared.lease,
+            prepared.installedGeneration,
+            prepared.runtimeArtifactRootHash
+        );
+    }
+
+    auto deliverAndRecord(
+        PreparedStore& prepared,
+        DeliveringHost& host,
+        DispatchReservation const& reservation
+    ) -> Result<StoredOperation>
+    {
+        return prepared.store.recordDeliveryOutcome(
+            prepared.lease,
+            reservation.operationRevision,
+            host.deliverReport(reservation.authority)
+        );
     }
 
     auto observeAgain(PreparedStore& prepared) -> task::UiObservationSnapshot
@@ -329,21 +357,19 @@ namespace uf::operator_runtime::contract
             std::move(clientRequestId),
             std::move(toolName)
         );
+        auto host           = deliveringHost(prepared);
         auto const dispatch = prepared.store.reserveDispatch(
             ready.operationId,
             ready.revision,
             prepared.lease,
+            host->generation(),
             authority,
             std::nullopt
         );
         REQUIRE(dispatch.has_value());
-        auto const reconciling = prepared.store.recordDeliveryOutcome(
-            ready.operationId,
-            dispatch->dispatchSequence,
-            dispatch->operationRevision,
-            DeliveryOutcome::Delivered
-        );
+        auto const reconciling = deliverAndRecord(prepared, *host, *dispatch);
         REQUIRE(reconciling.has_value());
+        REQUIRE(host->clicks() == 1U);
         return *reconciling;
     }
 

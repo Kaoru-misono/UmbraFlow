@@ -92,6 +92,7 @@ set(UF_REQUIRED_DOCTEST_CONTRACTS
     schema-state-s04
     contract-control-c01
     contract-control-c02
+    contract-control-c03
     contract-control-c04
     contract-control-c05
     contract-control-c06
@@ -113,6 +114,7 @@ set(UF_REQUIRED_DOCTEST_CONTRACTS
     schema-control-c13
     contract-agent-a04
     contract-agent-a06
+    contract-agent-a07
     contract-agent-a08
     schema-agent-a01
     schema-agent-a02
@@ -187,12 +189,10 @@ set(UF_SCHEMA_ONLY_REQUIREMENTS
     product-p01
     product-p02
     product-p03
-    control-c03
     agent-a01
     agent-a02
     agent-a03
     agent-a05
-    agent-a07
 )
 
 # A suite is valid only when its requested IDs and concrete doctest declarations
@@ -498,6 +498,7 @@ if(TARGET ${PROJECT_NAME}_operator)
             schema-state-s02
             schema-state-s04
             contract-control-c02
+            contract-control-c03
             contract-control-c04
             contract-control-c05
             contract-control-c07
@@ -513,6 +514,7 @@ if(TARGET ${PROJECT_NAME}_operator)
             schema-control-c13
             contract-agent-a04
             contract-agent-a06
+            contract-agent-a07
             contract-agent-a08
             schema-agent-a01
             schema-agent-a02
@@ -616,6 +618,13 @@ if(TARGET ${PROJECT_NAME}_task)
             contract-runtime-u06
             contract-runtime-u07
             contract-runtime-u08
+    )
+    # TaskHostTestAccess is declared a friend of TaskHost once, so uf::task may
+    # hold one type of that name; it lives beside the exported suite because the
+    # Operator's delivery contracts need the same privilege. The dependency runs
+    # from tests/ into the suite and never back.
+    target_include_directories(test-contract-runtime PRIVATE
+        "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}"
     )
     if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
         cpp_stage_runtime_libraries(

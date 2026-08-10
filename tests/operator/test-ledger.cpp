@@ -169,6 +169,12 @@ namespace uf::operator_runtime
             ControlLease                 lease;
             SnapshotRecord               snapshot;
             contract::ObservationHost    observation;
+
+            // What a delivering Host is activated from. The observing Host above
+            // cannot serve a second TaskContext, so a dispatch opens the same
+            // installed artifact again rather than sharing it.
+            ContentHash runtimeArtifactRootHash;
+            uint64      installedGeneration{};
         };
 
         [[nodiscard]]
@@ -189,6 +195,8 @@ namespace uf::operator_runtime
                 }
             );
             REQUIRE(installed.has_value());
+            auto const artifactRootHash    = installed->rootHash();
+            auto const installedGeneration = installed->installedGeneration();
             auto const project = makeProject("fixture.alpha", pluginSource);
             auto const manifest = sessionManifest(
                 project.registration,
@@ -243,14 +251,29 @@ namespace uf::operator_runtime
             );
             REQUIRE(planAuthority.has_value());
             return PreparedStore{
-                .store         = std::move(store),
-                .plugin        = projectPlugin,
-                .project       = project,
-                .planAuthority = *std::move(planAuthority),
-                .lease         = *lease,
-                .snapshot      = *std::move(snapshot),
-                .observation   = std::move(observation),
+                .store                   = std::move(store),
+                .plugin                  = projectPlugin,
+                .project                 = project,
+                .planAuthority           = *std::move(planAuthority),
+                .lease                   = *lease,
+                .snapshot                = *std::move(snapshot),
+                .observation             = std::move(observation),
+                .runtimeArtifactRootHash = artifactRootHash,
+                .installedGeneration     = installedGeneration,
             };
+        }
+
+        // A Host that can act under this store's current lease.
+        [[nodiscard]]
+        auto deliveringHost(PreparedStore& prepared)
+            -> std::unique_ptr<contract::DeliveringHost>
+        {
+            return contract::deliveringHostFor(
+                prepared.store,
+                prepared.lease,
+                prepared.installedGeneration,
+                prepared.runtimeArtifactRootHash
+            );
         }
 
         [[nodiscard]]
@@ -808,7 +831,8 @@ namespace uf::operator_runtime
         auto prepared  = prepareStore(temporary.path());
         auto const takeover = prepared.store.takeoverLease("session-1", "human takeover");
         REQUIRE(takeover.has_value());
-        CHECK(takeover->fencingToken > prepared.lease.fencingToken);
+        CHECK(takeover->lease.fencingToken > prepared.lease.fencingToken);
+        CHECK(takeover->resolvedDispatches == 0U);
         CHECK_FALSE(prepared.store.createSnapshot(
             prepared.lease,
             prepared.plugin,
@@ -878,15 +902,17 @@ namespace uf::operator_runtime
         REQUIRE(step.has_value());
         auto const operation = step->operation;
 
+        auto host           = deliveringHost(prepared);
         auto const dispatch = prepared.store.reserveDispatch(
             operation.operationId,
             operation.revision,
             prepared.lease,
+            host->generation(),
             AuthorityDecisionId{"authority-1"},
             std::nullopt
         );
         REQUIRE(dispatch.has_value());
-        CHECK(dispatch->frozenPlanHash == frozen->planHash);
+        CHECK(dispatch->authority.frozenPlanHash == frozen->planHash);
 
         // The one pending step is now linked to that dispatch, so a second
         // reservation finds none and refuses rather than freezing again.
@@ -894,24 +920,28 @@ namespace uf::operator_runtime
             operation.operationId,
             dispatch->operationRevision,
             prepared.lease,
+            host->generation(),
             AuthorityDecisionId{"authority-2"},
             std::nullopt
         ).has_value());
 
+        // A refused sink is the one situation the engine cannot describe, so
+        // the Host under-claims: the click may have landed before the failure.
+        host->refuseClicks();
+        auto const unknown = host->deliverReport(dispatch->authority);
+        REQUIRE(unknown.outcome() == task::DeliveryOutcome::TransportUnknown);
         auto const reconciles = prepared.store.recordDeliveryOutcome(
-            operation.operationId,
-            dispatch->dispatchSequence,
+            prepared.lease,
             dispatch->operationRevision,
-            DeliveryOutcome::TransportUnknown
+            unknown
         );
         REQUIRE(reconciles.has_value());
         CHECK(reconciles->state == OperationState::Reconciling);
         CHECK(reconciles->planFrozen);
         CHECK_FALSE(prepared.store.recordDeliveryOutcome(
-            operation.operationId,
-            dispatch->dispatchSequence,
+            prepared.lease,
             reconciles->revision,
-            DeliveryOutcome::Delivered
+            host->deliverReport(dispatch->authority)
         ).has_value());
 
         auto const foreign = makeProject(
@@ -961,6 +991,170 @@ namespace uf::operator_runtime
         CHECK(committed->state == OperationState::Confirmed);
     }
 
+    // The live control_leases row is what a delivery report is matched against,
+    // and it is not the same fact as the authority_decisions row the reservation
+    // wrote: that row is an audit record and never moves, so after a release and
+    // a re-acquire the two disagree. The dispatch is still unanswered here, so
+    // the outcome compare-and-swap cannot be what refuses.
+    //
+    // The stranded dispatch this leaves behind is deliberate and is the whole of
+    // open question Q3: a release is voluntary and does not resolve what it
+    // abandons, so the next restart's recovery sweep is what answers for it.
+    TEST_CASE("a released lease cannot answer for the dispatch it reserved")
+    {
+        // One variable: whether the lease is released and re-acquired between
+        // the delivery and the record. Everything else is the same schedule, so
+        // the accepting run is the positive control for the refusing one.
+        auto const recordsAfter = [](bool reacquire)
+        {
+            auto temporary = TemporaryDirectory{};
+            auto prepared  = prepareStore(temporary.path());
+            auto const operation = createReadyOperation(
+                prepared,
+                "request-1",
+                "command-1"
+            );
+            auto host           = deliveringHost(prepared);
+            auto const reserved = prepared.store.reserveDispatch(
+                operation.operationId,
+                operation.revision,
+                prepared.lease,
+                host->generation(),
+                AuthorityDecisionId{"authority-1"},
+                std::nullopt
+            );
+            REQUIRE(reserved.has_value());
+            auto const displaced = host->deliverReport(reserved->authority);
+            REQUIRE(displaced.outcome() == task::DeliveryOutcome::Delivered);
+
+            if (reacquire)
+            {
+                REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
+                auto const fresh = prepared.store.acquireLease("session-1");
+                REQUIRE(fresh.has_value());
+                REQUIRE(fresh->leaseId != prepared.lease.leaseId);
+                REQUIRE(fresh->fencingToken > prepared.lease.fencingToken);
+            }
+
+            return prepared.store.recordDeliveryOutcome(
+                prepared.lease,
+                reserved->operationRevision,
+                displaced
+            ).has_value();
+        };
+
+        CHECK(recordsAfter(false));
+        CHECK_FALSE(recordsAfter(true));
+    }
+
+    // The restart sweep and a takeover run one body: the sweep names no target
+    // and answers for everything, a takeover names the one target it seized.
+    // Nothing else in this suite leaves a dispatch unanswered across a restart,
+    // so without this the sweep only ever ran over an empty set, where it cannot
+    // fail. A release strands one, which is what open() then has to answer for.
+    TEST_CASE("a restart answers for the dispatch a release stranded")
+    {
+        auto temporary = TemporaryDirectory{};
+        {
+            auto prepared = prepareStore(temporary.path());
+            auto const operation = createReadyOperation(
+                prepared,
+                "request-1",
+                "command-1"
+            );
+            auto host           = deliveringHost(prepared);
+            auto const reserved = prepared.store.reserveDispatch(
+                operation.operationId,
+                operation.revision,
+                prepared.lease,
+                host->generation(),
+                AuthorityDecisionId{"authority-1"},
+                std::nullopt
+            );
+            REQUIRE(reserved.has_value());
+            REQUIRE(host->deliver(reserved->authority).has_value());
+            REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
+        }
+
+        // Dropping the coordinator closes the database. The reopen runs the
+        // sweep, and a sweep that touched the wrong rows or lost a
+        // compare-and-swap fails the open rather than opening a store whose
+        // dispatch nobody answered for. One coordinator owns a runtime
+        // directory at a time, so each restart is its own scope.
+        {
+            auto restarted = OperatorCoordinator::open(
+                temporary.path() / "production"
+            );
+            REQUIRE(restarted.has_value());
+        }
+
+        // Second restart: the sweep is idempotent because the dispatch it
+        // resolved is no longer unanswered.
+        auto again = OperatorCoordinator::open(temporary.path() / "production");
+        REQUIRE(again.has_value());
+    }
+
+    // Only not_delivered proves an external effect absent, and only a Host that
+    // consumed its authorization and never called into the delivery path can
+    // produce it. transport_unknown deliberately under-claims, so it must not
+    // unlock the same conclusion.
+    TEST_CASE("only a proven absence unlocks Rejected")
+    {
+        auto const rejectedFor = [](task::DeliveryOutcome outcome)
+        {
+            auto temporary = TemporaryDirectory{};
+            auto prepared  = prepareStore(temporary.path());
+            auto const operation = createReadyOperation(
+                prepared,
+                "request-1",
+                "command-1"
+            );
+            auto host           = deliveringHost(prepared);
+            auto const dispatch = prepared.store.reserveDispatch(
+                operation.operationId,
+                operation.revision,
+                prepared.lease,
+                host->generation(),
+                AuthorityDecisionId{"authority-1"},
+                std::nullopt
+            );
+            REQUIRE(dispatch.has_value());
+            if (outcome == task::DeliveryOutcome::TransportUnknown)
+            {
+                host->refuseClicks();
+            }
+            auto const report = outcome == task::DeliveryOutcome::NotDelivered
+                ? host->deliverIntoAnotherCycle(dispatch->authority)
+                : host->deliverReport(dispatch->authority);
+            REQUIRE(report.outcome() == outcome);
+            auto const reconciling = prepared.store.recordDeliveryOutcome(
+                prepared.lease,
+                dispatch->operationRevision,
+                report
+            );
+            REQUIRE(reconciling.has_value());
+            CHECK(host->clicks() == 0U);
+
+            return prepared.store.commitReconciliation(
+                prepared.plugin,
+                ReconciliationCommit{
+                    .operationId                  = reconciling->operationId,
+                    .expectedOperationRevision    = reconciling->revision,
+                    .expectedProjectStateRevision = 0U,
+                    .outcome                      = reconciliationOutcome(
+                        prepared,
+                        reconciling->operationId,
+                        "{\"disposition\":\"rejected\"}"
+                    ),
+                    .journalEvents                = {},
+                }
+            ).has_value();
+        };
+
+        CHECK(rejectedFor(task::DeliveryOutcome::NotDelivered));
+        CHECK_FALSE(rejectedFor(task::DeliveryOutcome::TransportUnknown));
+    }
+
     namespace
     {
         // Drives one command all the way to Reconciling, which is the only
@@ -982,19 +1176,20 @@ namespace uf::operator_runtime
                 std::string{clientRequestId},
                 toolName
             );
+            auto host           = deliveringHost(prepared);
             auto const dispatch = prepared.store.reserveDispatch(
                 operation.operationId,
                 operation.revision,
                 prepared.lease,
+                host->generation(),
                 authority,
                 std::nullopt
             );
             REQUIRE(dispatch.has_value());
             auto reconciles = prepared.store.recordDeliveryOutcome(
-                operation.operationId,
-                dispatch->dispatchSequence,
+                prepared.lease,
                 dispatch->operationRevision,
-                DeliveryOutcome::Delivered
+                host->deliverReport(dispatch->authority)
             );
             REQUIRE(reconciles.has_value());
             REQUIRE(reconciles->state == OperationState::Reconciling);
@@ -1148,21 +1343,28 @@ namespace uf::operator_runtime
             AuthorityDecisionId{"human-decision-1"}
         );
         REQUIRE(approval.has_value());
+        auto host           = deliveringHost(prepared);
         auto const dispatch = prepared.store.reserveDispatch(
             proposed.operationId,
             step->operation.revision,
             prepared.lease,
+            host->generation(),
             AuthorityDecisionId{"dispatch-authority-1"},
             *approval
         );
         REQUIRE(dispatch.has_value());
+
+        // Recording an outcome moves no fence, which is what leaves the token
+        // below differing from a usable one in the step it names and nothing
+        // else. Resolving through a takeover would refuse it for its fence
+        // instead, and the case would pass with the step binding removed.
         auto reconciles = prepared.store.recordDeliveryOutcome(
-            proposed.operationId,
-            dispatch->dispatchSequence,
+            prepared.lease,
             dispatch->operationRevision,
-            DeliveryOutcome::NotDelivered
+            host->deliverIntoAnotherCycle(dispatch->authority)
         );
         REQUIRE(reconciles.has_value());
+        CHECK(host->clicks() == 0U);
         auto const waiting = mintStepFor(prepared, *reconciles);
         REQUIRE(waiting.has_value());
         REQUIRE(waiting->operation.state == OperationState::AwaitingApproval);
@@ -1173,6 +1375,7 @@ namespace uf::operator_runtime
             proposed.operationId,
             waiting->operation.revision,
             prepared.lease,
+            host->generation(),
             AuthorityDecisionId{"dispatch-authority-2"},
             *approval
         ).has_value());
@@ -1241,19 +1444,20 @@ namespace uf::operator_runtime
         auto const first = mintStepFor(prepared, frozen->operation);
         REQUIRE(first.has_value());
 
+        auto host           = deliveringHost(prepared);
         auto const dispatch = prepared.store.reserveDispatch(
             proposed.operationId,
             first->operation.revision,
             prepared.lease,
+            host->generation(),
             AuthorityDecisionId{"authority-1"},
             std::nullopt
         );
         REQUIRE(dispatch.has_value());
         auto const reconciling = prepared.store.recordDeliveryOutcome(
-            proposed.operationId,
-            dispatch->dispatchSequence,
+            prepared.lease,
             dispatch->operationRevision,
-            DeliveryOutcome::Delivered
+            host->deliverReport(dispatch->authority)
         );
         REQUIRE(reconciling.has_value());
 
@@ -1294,15 +1498,17 @@ namespace uf::operator_runtime
         // hash, so a second freeze did not replace the row underneath it.
         auto const step = mintStepFor(prepared, frozen->operation);
         REQUIRE(step.has_value());
+        auto host           = deliveringHost(prepared);
         auto const dispatch = prepared.store.reserveDispatch(
             proposed.operationId,
             step->operation.revision,
             prepared.lease,
+            host->generation(),
             AuthorityDecisionId{"authority-1"},
             std::nullopt
         );
         REQUIRE(dispatch.has_value());
-        CHECK(dispatch->frozenPlanHash == frozen->planHash);
+        CHECK(dispatch->authority.frozenPlanHash == frozen->planHash);
     }
 
     TEST_CASE("read-only Operations get no plan")
@@ -1354,10 +1560,12 @@ namespace uf::operator_runtime
         auto const step = mintStepFor(prepared, frozen->operation);
         REQUIRE(step.has_value());
 
+        auto host           = deliveringHost(prepared);
         auto const dispatch = prepared.store.reserveDispatch(
             proposed.operationId,
             step->operation.revision,
             prepared.lease,
+            host->generation(),
             AuthorityDecisionId{"authority-1"},
             std::nullopt
         );
@@ -1366,7 +1574,7 @@ namespace uf::operator_runtime
         // None of the three was the caller's to say, and each is the value the
         // ledger derived rather than any other hash it holds.
         CHECK(dispatch->decisionBasisHash == frozen->decisionBasisHash);
-        CHECK(dispatch->frozenPlanHash == frozen->planHash);
+        CHECK(dispatch->authority.frozenPlanHash == frozen->planHash);
         CHECK(dispatch->stepIntentHash == step->stepIntentHash);
         CHECK(dispatch->decisionBasisHash != frozen->planHash);
     }
@@ -1388,10 +1596,12 @@ namespace uf::operator_runtime
 
         auto const step = mintStepFor(prepared, frozen->operation);
         REQUIRE(step.has_value());
+        auto host = deliveringHost(prepared);
         CHECK_FALSE(prepared.store.reserveDispatch(
             proposed.operationId,
             step->operation.revision,
             prepared.lease,
+            host->generation(),
             AuthorityDecisionId{"authority-1"},
             std::nullopt
         ).has_value());

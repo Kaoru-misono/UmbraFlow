@@ -9,6 +9,7 @@
 #include "reconcile-outcome.hpp"
 #include "tool-invocation.hpp"
 
+#include <task/host-delivery.hpp>
 #include <task/page-model-file.hpp>
 #include <task/ui-observation.hpp>
 
@@ -17,6 +18,7 @@
 #include <core/types/strong-value.hpp>
 
 #include <domain/content-hash.hpp>
+#include <domain/ids.hpp>
 
 #include <filesystem>
 #include <memory>
@@ -161,14 +163,18 @@ namespace uf::operator_runtime
     // parameters until W2 and are now results: the Operation has at most one
     // pending UI-action step, so a dispatch names nothing and either finds that
     // step or fails.
+    //
+    // frozenPlanHash and dispatchSequence are deliberately not repeated beside
+    // authority: they live there and are read from there, because the value the
+    // Host is handed and the value the ledger later matches its own rows
+    // against must be one value and not two that agree today.
     struct DispatchReservation final
     {
-        ContentHash frozenPlanHash;
-        ContentHash decisionBasisHash;
-        ContentHash stepIntentHash;
-        uint64      dispatchSequence{};
-        uint64      operationRevision{};
-        uint64      stepIndex{};
+        task::DispatchAuthority authority;
+        ContentHash             decisionBasisHash;
+        ContentHash             stepIntentHash;
+        uint64                  operationRevision{};
+        uint64                  stepIndex{};
     };
 
     // The transitions a controller may ask for by name. The four plan-lifecycle
@@ -189,12 +195,22 @@ namespace uf::operator_runtime
         PostDispatchAbort,
     };
 
-    enum class DeliveryOutcome : uint8
+    // What one human takeover did: the lease the new controller now holds, and
+    // the dispatches this takeover found unanswered and resolved to
+    // transport_unknown. The count is returned rather than logged because
+    // "nothing was in flight" and "one effect may already have landed" are
+    // different situations for the caller.
+    struct ControlTakeover final
     {
-        NotDelivered,
-        Delivered,
-        TransportUnknown,
+        ControlLease lease;
+        uint64       resolvedDispatches{};
     };
+
+    // The fence a Host must adopt to act under this lease. Derived, never
+    // stored: one lease has exactly one fence, so a second copy of it in the
+    // database would be a second thing to keep true.
+    [[nodiscard]]
+    auto controlFence(ControlLease const& lease) -> task::ControlFence;
 
     // The identity of one authority decision. It is a strong type and not a
     // std::string because it travels beside operationId through reserveDispatch
@@ -320,11 +336,17 @@ namespace uf::operator_runtime
             std::string const& sessionId
         ) -> Result<ControlLease>;
 
+        // Seizing control also closes what the displaced controller left in
+        // flight: every dispatch nobody has answered for is resolved to
+        // transport_unknown in the same transaction that bumps the fence, and
+        // its Operation moves to reconciling. Never not_delivered -- a dispatch
+        // the Host may already have posted is exactly what the third value
+        // exists for.
         [[nodiscard]]
         auto takeoverLease(
             std::string const& sessionId,
             std::string const& reason
-        ) -> Result<ControlLease>;
+        ) -> Result<ControlTakeover>;
 
         [[nodiscard]]
         auto releaseLease(
@@ -390,21 +412,38 @@ namespace uf::operator_runtime
             OperatorPlanAuthority const& planAuthority
         ) -> Result<PlannedStep>;
 
+        // The single mint of dispatch authority: the returned
+        // task::DispatchAuthority is the only one a Host will act on, because
+        // every field of it is matched against these rows again when the report
+        // comes back.
+        //
+        // runtimeGeneration is the one member the ledger cannot know. A Host
+        // generation is a per-process counter the Host itself mints, and
+        // sessions.installed_generation is a different quantity -- the CAS
+        // generation of the installed artifact -- so echoing that column here
+        // would make one name mean two things. It is therefore the caller's,
+        // and it is safe as the caller's for the reason the whole authority is
+        // plain data: naming the wrong generation can only make the Host refuse.
         [[nodiscard]]
         auto reserveDispatch(
             std::string const& operationId,
             uint64 expectedRevision,
             ControlLease const& lease,
+            GenerationId runtimeGeneration,
             AuthorityDecisionId const& authorityDecisionId,
             std::optional<ApprovalGrant> const& approval
         ) -> Result<DispatchReservation>;
 
+        // The Operation and the dispatch are read out of the report, because
+        // the only dispatch this call may answer for is the one the Host was
+        // authorized to perform, and a HostDeliveryReport is constructible only
+        // by TaskHost. expectedRevision stays a parameter: it is the caller's
+        // own read of the ledger, not the Host's.
         [[nodiscard]]
         auto recordDeliveryOutcome(
-            std::string const& operationId,
-            uint64 dispatchSequence,
+            ControlLease const& lease,
             uint64 expectedRevision,
-            DeliveryOutcome outcome
+            task::HostDeliveryReport const& report
         ) -> Result<StoredOperation>;
 
         [[nodiscard]]

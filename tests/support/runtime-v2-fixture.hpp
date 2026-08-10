@@ -1,5 +1,7 @@
 #pragma once
 
+#include <operator-contract/host-delivery-fixture.hpp>
+
 #include <task/host-delivery.hpp>
 #include <task/page-model-file.hpp>
 #include <task/task-context.hpp>
@@ -56,94 +58,11 @@
 // same artifact bytes, and the manifest hash is derived from those bytes, so
 // the two spellings would silently pin different worlds.
 //
-// Everything here lives in uf::task because TaskHostTestAccess must: the friend
-// declarations resolve to uf::task::TaskHostTestAccess and nowhere else.
+// TaskHostTestAccess itself is not here: it is in
+// operator-contract/host-delivery-fixture.hpp, because the Operator's contracts
+// need the same privilege and uf::task may hold only one type of that name.
 namespace uf::task
 {
-    struct TaskHostTestAccess final
-    {
-        [[nodiscard]]
-        static auto activate(
-            TaskHost& host,
-            std::filesystem::path const& artifactRoot,
-            ContentHash const& expectedRootHash
-        ) -> Result<GenerationId>
-        {
-            UF_TRY_VALUE(
-                verified,
-                uf::task::loadRuntimeArtifact(artifactRoot, expectedRootHash)
-            );
-            auto artifact = std::make_shared<RuntimeArtifactHandle const>(
-                std::move(verified)
-            );
-            return host.activateRuntimeArtifact(
-                InstalledRuntimeArtifact{std::move(artifact), 1U}
-            );
-        }
-
-        [[nodiscard]]
-        static auto run(
-            TaskHost& host,
-            GenerationId generation,
-            TaskContext& context,
-            std::string_view source
-        ) -> Result<script::ScriptValue>
-        {
-            return host.runTrustedRuntime(
-                generation,
-                context,
-                source,
-                "runtime-v2-contract"
-            );
-        }
-
-        [[nodiscard]] static auto pendingReceipt(TaskHost& host) -> TaskHost::Receipt
-        {
-            REQUIRE(host.m_receipts.size() == 1U);
-            auto const& pending = host.m_receipts.front();
-            CHECK(pending.intent.stateIdentity.starts_with("state-resolution-"));
-            CHECK(pending.intent.surface == "screen");
-            CHECK(pending.intent.uiTarget == "confirm");
-            CHECK(pending.intent.binding == "confirm.primary");
-            CHECK(pending.intent.variant == "primary");
-            CHECK(pending.intent.action == "activate");
-            CHECK(pending.intent.proofLocator == "confirm-mark");
-            return TaskHost::Receipt{host.m_hostNonce, pending.ordinal};
-        }
-
-        [[nodiscard]] static auto pendingSemanticHash(TaskHost const& host) -> ContentHash
-        {
-            REQUIRE(host.m_receipts.size() == 1U);
-            return host.m_receipts.front().semanticHash;
-        }
-
-        // The authority is the caller's, never the Host's: a harness that could
-        // ask the Host what to present would prove only that the Host agrees
-        // with itself. It still cannot fabricate the RESULT -- TaskHostTestAccess
-        // is deliberately not a friend of HostDeliveryReport.
-        [[nodiscard]]
-        static auto deliver(
-            TaskHost& host,
-            DispatchAuthority authority,
-            TaskHost::Receipt const& receipt,
-            TaskContext& context
-        ) -> Result<HostDeliveryReport>
-        {
-            return host.deliver(std::move(authority), receipt, context);
-        }
-
-        [[nodiscard]]
-        static auto adoptControlFence(TaskHost& host, ControlFence fence) -> Status
-        {
-            return host.adoptControlFence(std::move(fence));
-        }
-
-        [[nodiscard]] static auto fence(TaskHost const& host) -> ControlFence
-        {
-            return host.m_fence;
-        }
-    };
-
     inline constexpr auto k_anchorGray = uint8{2};
     inline constexpr auto k_actionGray = uint8{5};
 

@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -108,7 +109,30 @@ namespace uf::operator_runtime::contract
         // TaskHost can mint one, so the suite carries a live Host rather than a
         // recorded value.
         ObservationHost       observation;
+
+        // What a delivering Host is activated from. A dispatch needs a Host that
+        // can act, and the observing one above cannot serve a second
+        // TaskContext, so every delivery opens the same installed artifact
+        // again rather than sharing that Host.
+        ContentHash runtimeArtifactRootHash;
+        uint64      installedGeneration{};
     };
+
+    // A Host that can act under the store's current lease. It is a separate
+    // Host per call on purpose; see DeliveringHost.
+    [[nodiscard]]
+    auto deliveringHost(PreparedStore& prepared)
+        -> std::unique_ptr<DeliveringHost>;
+
+    // One reserved dispatch carried through a real Host and recorded. The report
+    // cannot be fabricated -- HostDeliveryReport's only friend is TaskHost --
+    // so this is the only way a case reaches a recorded delivery outcome.
+    [[nodiscard]]
+    auto deliverAndRecord(
+        PreparedStore& prepared,
+        DeliveringHost& host,
+        DispatchReservation const& reservation
+    ) -> Result<StoredOperation>;
 
     // One further observation cycle on the prepared Host: a new capture, a new
     // observation id, and -- over an unchanged world -- the same resolution.

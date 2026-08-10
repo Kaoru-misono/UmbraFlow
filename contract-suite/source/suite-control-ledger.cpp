@@ -30,7 +30,12 @@ namespace uf::operator_runtime::contract
             "human takeover"
         );
         REQUIRE(takeover.has_value());
-        CHECK(takeover->fencingToken > prepared.lease.fencingToken);
+        CHECK(takeover->lease.fencingToken > prepared.lease.fencingToken);
+
+        // Nothing was in flight, so the takeover resolved nothing. The count is
+        // reported rather than logged because "nothing was in flight" and "one
+        // effect may already have landed" are different situations.
+        CHECK(takeover->resolvedDispatches == 0U);
 
         // The displaced lease keeps its value and loses its authority, which is
         // the only difference that matters after a takeover.
@@ -81,22 +86,32 @@ namespace uf::operator_runtime::contract
             prepared.project.vocabulary.mutatingTool
         );
 
+        auto host = deliveringHost(prepared);
+        // A sink that refuses is what a real one cannot describe: the post may
+        // have reached the target before the failure, and clickPoint reports one
+        // Err for every phase. It is the only way to reach the outcome that
+        // deliberately under-claims.
+        host->refuseClicks();
         auto const dispatch = prepared.store.reserveDispatch(
             operation.operationId,
             operation.revision,
             prepared.lease,
+            host->generation(),
             AuthorityDecisionId{"authority-1"},
             std::nullopt
         );
         REQUIRE(dispatch.has_value());
 
+        auto const report = host->deliverReport(dispatch->authority);
+        REQUIRE(report.outcome() == task::DeliveryOutcome::TransportUnknown);
+        CHECK_FALSE(report.reason().empty());
+
         // An unknown transport outcome is still an outcome: it enters
         // reconciliation rather than resolving the Operation either way.
         auto const reconciles = prepared.store.recordDeliveryOutcome(
-            operation.operationId,
-            dispatch->dispatchSequence,
+            prepared.lease,
             dispatch->operationRevision,
-            DeliveryOutcome::TransportUnknown
+            report
         );
         REQUIRE(reconciles.has_value());
         CHECK(reconciles->state == OperationState::Reconciling);
@@ -113,10 +128,12 @@ namespace uf::operator_runtime::contract
             prepared.project.vocabulary.mutatingTool
         );
 
+        auto host           = deliveringHost(prepared);
         auto const dispatch = prepared.store.reserveDispatch(
             operation.operationId,
             operation.revision,
             prepared.lease,
+            host->generation(),
             AuthorityDecisionId{"authority-1"},
             std::nullopt
         );
@@ -125,6 +142,7 @@ namespace uf::operator_runtime::contract
             operation.operationId,
             dispatch->operationRevision,
             prepared.lease,
+            host->generation(),
             AuthorityDecisionId{"authority-2"},
             std::nullopt
         ).has_value() == false);
@@ -267,11 +285,14 @@ namespace uf::operator_runtime::contract
         REQUIRE(spent.has_value());
         REQUIRE(spare.has_value());
 
+        auto host = deliveringHost(prepared);
+
         // An awaiting Operation is not dispatchable without one.
         CHECK_FALSE(prepared.store.reserveDispatch(
             proposed->operationId,
             first->operation.revision,
             prepared.lease,
+            host->generation(),
             AuthorityDecisionId{"dispatch-authority-unapproved"},
             std::nullopt
         ).has_value());
@@ -280,21 +301,28 @@ namespace uf::operator_runtime::contract
             proposed->operationId,
             first->operation.revision,
             prepared.lease,
+            host->generation(),
             AuthorityDecisionId{"dispatch-authority-1"},
             *spent
         );
         REQUIRE(dispatch.has_value());
         CHECK(dispatch->stepIntentHash == first->stepIntentHash);
-        CHECK(dispatch->frozenPlanHash == frozen->planHash);
+        CHECK(dispatch->authority.frozenPlanHash == frozen->planHash);
         CHECK(dispatch->decisionBasisHash == frozen->decisionBasisHash);
 
+        // The Receipt is consumed by a context that does not hold its cycle, so
+        // nothing is posted and the outcome proves the effect absent. Recording
+        // it moves no fence, which is what leaves the surviving approval below
+        // differing from the consumed one in the step it names and nothing else.
+        auto const report = host->deliverIntoAnotherCycle(dispatch->authority);
+        REQUIRE(report.outcome() == task::DeliveryOutcome::NotDelivered);
         auto const reconciling = prepared.store.recordDeliveryOutcome(
-            proposed->operationId,
-            dispatch->dispatchSequence,
+            prepared.lease,
             dispatch->operationRevision,
-            DeliveryOutcome::NotDelivered
+            report
         );
         REQUIRE(reconciling.has_value());
+        CHECK(host->clicks() == 0U);
 
         auto const second = plannedStep(prepared, *reconciling);
         REQUIRE(second.has_value());
@@ -307,6 +335,7 @@ namespace uf::operator_runtime::contract
             proposed->operationId,
             second->operation.revision,
             prepared.lease,
+            host->generation(),
             AuthorityDecisionId{"dispatch-authority-2"},
             *spare
         ).has_value());

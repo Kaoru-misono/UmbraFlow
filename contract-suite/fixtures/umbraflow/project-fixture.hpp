@@ -12,6 +12,7 @@
 #include <operator/runtime-installation.hpp>
 #include <operator/tool-invocation.hpp>
 
+#include <task/host-delivery.hpp>
 #include <task/page-model-file.hpp>
 
 #include <core/types/integer.hpp>
@@ -983,7 +984,28 @@ namespace uf::operator_runtime::test_support
         // TaskHost owns an activated generation, and a second Host over the
         // same artifact would be a second observer of one world.
         contract::ObservationHost  observation;
+
+        // What a delivering Host is activated from. A dispatch needs a Host that
+        // can act, and the observing one above cannot serve a second
+        // TaskContext, so every delivery opens the same installed artifact
+        // again rather than sharing that Host.
+        ContentHash runtimeArtifactRootHash;
+        uint64      installedGeneration{};
     };
+
+    // A Host that can act under the store's current lease. It is a separate
+    // Host per call on purpose; see contract::DeliveringHost.
+    [[nodiscard]]
+    inline auto deliveringHost(PreparedStore& prepared)
+        -> std::unique_ptr<contract::DeliveringHost>
+    {
+        return contract::deliveringHostFor(
+            prepared.store,
+            prepared.lease,
+            prepared.installedGeneration,
+            prepared.runtimeArtifactRootHash
+        );
+    }
 
     // Runs one further observation cycle on the prepared Host. Each call is a
     // new capture with a new observation id and, over an unchanged world, the
@@ -1054,6 +1076,8 @@ namespace uf::operator_runtime::test_support
             }
         );
         REQUIRE(installed.has_value());
+        auto const artifactRootHash    = installed->rootHash();
+        auto const installedGeneration = installed->installedGeneration();
         auto const source = pluginSource(pluginId);
         auto const project = makeProject(pluginId, source);
         auto const manifest = sessionManifest(
@@ -1112,14 +1136,16 @@ namespace uf::operator_runtime::test_support
         );
         REQUIRE(planAuthority.has_value());
         return PreparedStore{
-            .store         = std::move(store),
-            .plugin        = projectPlugin,
-            .project       = project,
-            .manifest      = manifest,
-            .planAuthority = *std::move(planAuthority),
-            .lease         = *lease,
-            .snapshot      = *std::move(snapshot),
-            .observation   = std::move(observation),
+            .store                   = std::move(store),
+            .plugin                  = projectPlugin,
+            .project                 = project,
+            .manifest                = manifest,
+            .planAuthority           = *std::move(planAuthority),
+            .lease                   = *lease,
+            .snapshot                = *std::move(snapshot),
+            .observation             = std::move(observation),
+            .runtimeArtifactRootHash = artifactRootHash,
+            .installedGeneration     = installedGeneration,
         };
     }
 
@@ -1221,11 +1247,17 @@ namespace uf::operator_runtime::test_support
 
     // Drives one mutating Operation through a real dispatch to the reconciling
     // state, so a reconciliation contract starts where a reconciliation starts.
+    //
+    // The outcome is not a parameter any more and cannot be: only a TaskHost
+    // mints a HostDeliveryReport, so the fixture asks for the delivery it wants
+    // and reads back what the Host concluded. NotDelivered is reached by
+    // presenting the Receipt to a context that does not hold its cycle, which
+    // consumes it and posts nothing.
     [[nodiscard]]
     inline auto reconcilingOperation(
         PreparedStore& prepared,
         std::string clientRequestId,
-        DeliveryOutcome outcome
+        task::DeliveryOutcome expected
     ) -> StoredOperation
     {
         auto const authority = AuthorityDecisionId{"authority-" + clientRequestId};
@@ -1234,19 +1266,28 @@ namespace uf::operator_runtime::test_support
             std::move(clientRequestId),
             "command-1"
         );
+        auto host           = deliveringHost(prepared);
         auto const dispatch = prepared.store.reserveDispatch(
             ready.operationId,
             ready.revision,
             prepared.lease,
+            host->generation(),
             authority,
             std::nullopt
         );
         REQUIRE(dispatch.has_value());
+        if (expected == task::DeliveryOutcome::TransportUnknown)
+        {
+            host->refuseClicks();
+        }
+        auto const report = expected == task::DeliveryOutcome::NotDelivered
+            ? host->deliverIntoAnotherCycle(dispatch->authority)
+            : host->deliverReport(dispatch->authority);
+        REQUIRE(report.outcome() == expected);
         auto const reconciling = prepared.store.recordDeliveryOutcome(
-            ready.operationId,
-            dispatch->dispatchSequence,
+            prepared.lease,
             dispatch->operationRevision,
-            outcome
+            report
         );
         REQUIRE(reconciling.has_value());
         REQUIRE(reconciling->state == OperationState::Reconciling);

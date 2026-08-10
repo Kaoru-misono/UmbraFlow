@@ -228,18 +228,186 @@ namespace uf::operator_runtime
         CHECK(fresh->fencingToken > heldLease->fencingToken);
     }
 
+    // Host::deliver is the only linearization point for an external effect: the
+    // ledger learns that one happened, or provably did not, only from the call
+    // that could have caused it. Every marker below sits on the assertion that
+    // now validates that authority field against the ledger's own rows.
+    TEST_CASE("contract-control-c03")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto host      = test_support::deliveringHost(prepared);
+
+        auto const proposed = test_support::proposedOperation(
+            prepared,
+            "request-1",
+            "command-1"
+        );
+        auto const frozen = test_support::freezePlanFor(prepared, proposed);
+        REQUIRE(frozen.has_value());
+        auto const step = test_support::mintStepFor(prepared, frozen->operation);
+        REQUIRE(step.has_value());
+        auto const operation = step->operation;
+        auto const reserved  = prepared.store.reserveDispatch(
+            operation.operationId,
+            operation.revision,
+            prepared.lease,
+            host->generation(),
+            AuthorityDecisionId{"authority-1"},
+            std::nullopt
+        );
+        REQUIRE(reserved.has_value());
+        auto const authority = reserved->authority;
+
+        // Every field is the ledger's own, read out of the rows the reservation
+        // wrote. A caller states none of them.
+        // HOST_VALIDATION_TEST(DeliveryAuthority.controlled_target_id)
+        CHECK(authority.controlledTargetKey == prepared.lease.controlledTargetKey);
+        // HOST_VALIDATION_TEST(DeliveryAuthority.lease_id)
+        CHECK(authority.leaseId == prepared.lease.leaseId);
+        // HOST_VALIDATION_TEST(DeliveryAuthority.session_epoch)
+        CHECK(authority.sessionEpoch == prepared.lease.sessionEpoch);
+        // HOST_VALIDATION_TEST(DeliveryAuthority.fencing_token)
+        CHECK(authority.fencingToken == prepared.lease.fencingToken);
+        // HOST_VALIDATION_TEST(DeliveryAuthority.operation_id)
+        CHECK(authority.operationId == operation.operationId);
+        // HOST_VALIDATION_TEST(DeliveryAuthority.dispatch_seq)
+        CHECK(authority.dispatchSequence == 1U);
+        // HOST_VALIDATION_TEST(DeliveryAuthority.authority_decision_id)
+        CHECK(authority.authorityDecisionId == "authority-1");
+        // HOST_VALIDATION_TEST(DeliveryAuthority.frozen_plan_hash)
+        CHECK(authority.frozenPlanHash == frozen->planHash);
+        // The generation of the world the snapshot was composed over, not the
+        // Host's own. It is the one authority field the Host cannot read, so
+        // only the ledger can prove what it means.
+        // HOST_VALIDATION_TEST(DeliveryAuthority.target_generation)
+        CHECK(
+            authority.targetGeneration
+            == test_support::observeAgain(prepared).targetGeneration()
+        );
+
+        // Four forgeries the Host cannot see through, because it checks only
+        // the target, the epoch, the fence and its own generation. Each is
+        // refused by one clause of the ledger's predicate and by nothing else:
+        // the dispatch is still unanswered after all of them, which is what the
+        // successful record below proves.
+        auto forgedDecision                = authority;
+        forgedDecision.authorityDecisionId = "authority-nobody-reserved";
+        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
+            prepared.lease,
+            reserved->operationRevision,
+            host->deliverReport(forgedDecision)
+        ).has_value());
+
+        auto forgedPlan           = authority;
+        forgedPlan.frozenPlanHash = test_support::hashOf("not-the-frozen-plan");
+        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
+            prepared.lease,
+            reserved->operationRevision,
+            host->deliverReport(forgedPlan)
+        ).has_value());
+
+        auto forgedGeneration             = authority;
+        forgedGeneration.targetGeneration = TargetGeneration::fromValue(
+            authority.targetGeneration.value() + 1U
+        );
+        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
+            prepared.lease,
+            reserved->operationRevision,
+            host->deliverReport(forgedGeneration)
+        ).has_value());
+
+        // A report authorized by a lease it does not name, presented under the
+        // live one. Every row the statement reads is the honest lease's, so the
+        // only thing separating this from the delivery below is the C++
+        // pre-check that compares the report to the lease it was presented with.
+        auto strayLease    = authority;
+        strayLease.leaseId = "another-lease";
+        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
+            prepared.lease,
+            reserved->operationRevision,
+            host->deliverReport(strayLease)
+        ).has_value());
+
+        // An honest report presented under a lease value that is not the live
+        // row. The report and the lease agree, so the C++ pre-check passes and
+        // only the statement refuses.
+        auto ghostLease        = prepared.lease;
+        ghostLease.leaseId     = "ghost-lease";
+        auto ghostAuthority    = authority;
+        ghostAuthority.leaseId = ghostLease.leaseId;
+        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
+            ghostLease,
+            reserved->operationRevision,
+            host->deliverReport(ghostAuthority)
+        ).has_value());
+
+        auto staleRevisionLease     = prepared.lease;
+        staleRevisionLease.revision = prepared.lease.revision + 1U;
+        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
+            staleRevisionLease,
+            reserved->operationRevision,
+            host->deliverReport(authority)
+        ).has_value());
+
+        // A Host fenced past the ledger's live row. Its report is honest about
+        // the fence it acted under, and that fence is exactly what the ledger
+        // refuses: this is the displaced controller, one transaction early.
+        auto movedFence              = prepared.lease;
+        movedFence.fencingToken      = prepared.lease.fencingToken + 1U;
+        auto fencedAuthority         = authority;
+        fencedAuthority.fencingToken = movedFence.fencingToken;
+        {
+            auto installed = prepared.store.openInstalledRuntimeArtifact(
+                prepared.installedGeneration,
+                prepared.runtimeArtifactRootHash
+            );
+            REQUIRE(installed.has_value());
+            auto fencedHost = contract::DeliveringHost{
+                *std::move(installed),
+                controlFence(movedFence),
+            };
+            fencedAuthority.runtimeGeneration = fencedHost.generation();
+            CHECK_FALSE(prepared.store.recordDeliveryOutcome(
+                movedFence,
+                reserved->operationRevision,
+                fencedHost.deliverReport(fencedAuthority)
+            ).has_value());
+        }
+
+        // A report the Host really produced, under the live lease, at the
+        // revision the reservation left behind.
+        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
+            prepared.lease,
+            reserved->operationRevision + 1U,
+            host->deliverReport(authority)
+        ).has_value());
+
+        auto const report = host->deliverReport(authority);
+        CHECK(report.outcome() == task::DeliveryOutcome::Delivered);
+        CHECK(report.reason().empty());
+        // HOST_VALIDATION_TEST(DeliveryAuthority.receipt_ref)
+        CHECK(report.receiptId() != 0U);
+        auto const recorded = prepared.store.recordDeliveryOutcome(
+            prepared.lease,
+            reserved->operationRevision,
+            report
+        );
+        REQUIRE(recorded.has_value());
+        CHECK(recorded->state == OperationState::Reconciling);
+        CHECK(recorded->hasDispatched);
+
+        // Immutable once recorded: a second report about the same dispatch is
+        // refused by the outcome compare-and-swap, independently of the lease.
+        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
+            prepared.lease,
+            recorded->revision,
+            host->deliverReport(authority)
+        ).has_value());
+    }
+
     TEST_CASE("schema-control-c03")
     {
-        // HOST_VALIDATION_TEST(DeliveryAuthority.controlled_target_id)
-        // HOST_VALIDATION_TEST(DeliveryAuthority.target_generation)
-        // HOST_VALIDATION_TEST(DeliveryAuthority.session_epoch)
-        // HOST_VALIDATION_TEST(DeliveryAuthority.lease_id)
-        // HOST_VALIDATION_TEST(DeliveryAuthority.fencing_token)
-        // HOST_VALIDATION_TEST(DeliveryAuthority.operation_id)
-        // HOST_VALIDATION_TEST(DeliveryAuthority.dispatch_seq)
-        // HOST_VALIDATION_TEST(DeliveryAuthority.frozen_plan_hash)
-        // HOST_VALIDATION_TEST(DeliveryAuthority.authority_decision_id)
-        // HOST_VALIDATION_TEST(DeliveryAuthority.receipt_ref)
         auto const schema    = readSchema("umbraflow-operator-v1.schema.json");
         auto const authority = definition(schema, "DeliveryAuthority");
         auto const receipt   = definition(schema, "ReceiptRef");
@@ -513,7 +681,8 @@ namespace uf::operator_runtime
         CHECK(frozen->limits.maximumSteps == 2U);
 
         auto current         = frozen->operation;
-        auto lastStepIntent  = std::optional<ContentHash>{};
+        auto lastStepIntent = std::optional<ContentHash>{};
+        auto host           = test_support::deliveringHost(prepared);
         for (auto index = uint64{1}; index <= 2U; ++index)
         {
             auto const step = test_support::mintStepFor(prepared, current);
@@ -534,21 +703,26 @@ namespace uf::operator_runtime
                 current.operationId,
                 step->operation.revision,
                 prepared.lease,
+                host->generation(),
                 AuthorityDecisionId{std::format("authority-{}", index)},
                 std::nullopt
             );
             REQUIRE(dispatch.has_value());
             CHECK(dispatch->stepIntentHash == step->stepIntentHash);
             CHECK(dispatch->stepIndex == index);
+            CHECK(dispatch->authority.dispatchSequence == index);
 
+            // The outcome lands on the dispatch the report names rather than on
+            // the first one: the second pass would lose its CAS against an
+            // already-answered row if the sequence came from anywhere else.
             auto const reconciling = prepared.store.recordDeliveryOutcome(
-                current.operationId,
-                dispatch->dispatchSequence,
+                prepared.lease,
                 dispatch->operationRevision,
-                DeliveryOutcome::Delivered
+                host->deliverReport(dispatch->authority)
             );
             REQUIRE(reconciling.has_value());
             REQUIRE(reconciling->state == OperationState::Reconciling);
+            CHECK(host->clicks() == index);
             current = *reconciling;
         }
 

@@ -1,8 +1,11 @@
 #pragma once
 
+#include <operator-contract/host-delivery-fixture.hpp>
+
 #include <operator/ledger.hpp>
 #include <operator/runtime-installation.hpp>
 
+#include <task/host-delivery.hpp>
 #include <task/page-model-file.hpp>
 #include <task/task-context.hpp>
 #include <task/task-host.hpp>
@@ -416,12 +419,34 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
     // Every verb succeeds and none of them touches anything: an observation
     // cycle never acts, and a sink that refused would make a snapshot failure
     // indistinguishable from an action failure.
+    //
+    // Clicks are counted because "the Host posted nothing" is the only evidence
+    // a NotDelivered report can be checked against, and a click can be refused
+    // because a refused click is what a real sink cannot describe: the post may
+    // have reached the target before the failure. EngineSession::clickPoint
+    // reports one Err for every phase, so refusing here is the only way to reach
+    // the outcome that deliberately under-claims.
     class ObservationActionSink final : public engine::IActionSink
     {
+        uint32 m_clicks{};
+        bool   m_refuseClicks{};
+
     public:
+        [[nodiscard]] auto clicks() const noexcept -> uint32 { return m_clicks; }
+
+        auto refuseClicks() noexcept -> void { m_refuseClicks = true; }
+
         [[nodiscard]]
         auto click(Point<ClientSpace>, ObservationLease const&) -> Status override
         {
+            if (m_refuseClicks)
+            {
+                return fail(
+                    AutomationErrorKind::TargetUnavailable,
+                    "the observation action sink refused this click"
+                );
+            }
+            ++m_clicks;
             return ok();
         }
 
@@ -479,6 +504,7 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
     class ObservationRuntime final
     {
         std::unique_ptr<trace::TraceRecorder> m_recorder{};
+        ObservationActionSink*                m_pActions{};
         std::optional<task::TaskContext>      m_context{};
 
     public:
@@ -495,9 +521,11 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
             REQUIRE(recorder.has_value());
             m_recorder = std::make_unique<trace::TraceRecorder>(*std::move(recorder));
 
+            auto actions = std::make_unique<ObservationActionSink>();
+            m_pActions   = actions.get();
             auto session = engine::EngineSession::create(
                 std::make_unique<ObservationFrameSource>(std::move(value)),
-                std::make_unique<ObservationActionSink>(),
+                std::move(actions),
                 *m_recorder,
                 engine::EngineSessionConfig{
                     .liveFingerprint    = observationFingerprint(),
@@ -519,6 +547,11 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         [[nodiscard]] auto context() noexcept -> task::TaskContext&
         {
             return *m_context;
+        }
+
+        [[nodiscard]] auto actions() noexcept -> ObservationActionSink&
+        {
+            return *m_pActions;
         }
     };
 
@@ -560,5 +593,185 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         );
         REQUIRE(result.has_value());
         return *std::move(result);
+    }
+
+    [[nodiscard]]
+    inline auto activateDeliveringGeneration(
+        task::TaskHost& host,
+        task::InstalledRuntimeArtifact installed
+    ) -> GenerationId
+    {
+        auto generation = host.activateRuntimeArtifact(std::move(installed));
+        REQUIRE(generation.has_value());
+        return *generation;
+    }
+
+    // One Host that can act, held for as long as a case needs to dispatch.
+    //
+    // It is its own Host rather than the prepared store's observing one because
+    // observe.luau's template cache is keyed by the RuntimeModel and outlives
+    // the TaskContext that registered its handles: a second TaskContext on one
+    // Host generation resolves nothing. A delivery therefore brings its own
+    // Host, its own generation and its own frame -- which also keeps the frame
+    // inside the engine's action-freshness bound, since it is captured when the
+    // Host is built rather than whenever the case started.
+    class DeliveringHost final
+    {
+        std::unique_ptr<task::TaskHost>     m_host;
+        std::unique_ptr<ObservationRuntime> m_runtime;
+        std::unique_ptr<ObservationRuntime> m_other{};
+        GenerationId                        m_generation;
+
+        auto mint() -> void
+        {
+            auto const minted = task::TaskHostTestAccess::run(
+                *m_host,
+                m_generation,
+                m_runtime->context(),
+                task::k_authorizeClickSource
+            );
+            REQUIRE(minted.has_value());
+        }
+
+    public:
+        DeliveringHost(
+            task::InstalledRuntimeArtifact installed,
+            task::ControlFence fence
+        )
+            : m_host{std::make_unique<task::TaskHost>()}
+            , m_runtime{
+                  std::make_unique<ObservationRuntime>(
+                      observationFrame(resolvedFramePixels(), FrameId{701})
+                  )
+              }
+            , m_generation{
+                  activateDeliveringGeneration(*m_host, std::move(installed))
+              }
+        {
+            // Minting is refused until a ledger fence is adopted, so this is
+            // where a Host stops being inert.
+            REQUIRE(
+                task::TaskHostTestAccess::adoptControlFence(
+                    *m_host,
+                    std::move(fence)
+                ).has_value()
+            );
+        }
+
+        DeliveringHost(DeliveringHost const&) = delete;
+        DeliveringHost(DeliveringHost&&) = delete;
+        auto operator=(DeliveringHost const&) -> DeliveringHost& = delete;
+        auto operator=(DeliveringHost&&) -> DeliveringHost& = delete;
+        ~DeliveringHost() = default;
+
+        [[nodiscard]] auto generation() const noexcept -> GenerationId
+        {
+            return m_generation;
+        }
+
+        [[nodiscard]] auto clicks() const noexcept -> uint32
+        {
+            return m_runtime->actions().clicks();
+        }
+
+        auto refuseClicks() noexcept -> void
+        {
+            m_runtime->actions().refuseClicks();
+        }
+
+        auto adoptFence(task::ControlFence fence) -> void
+        {
+            REQUIRE(
+                task::TaskHostTestAccess::adoptControlFence(
+                    *m_host,
+                    std::move(fence)
+                ).has_value()
+            );
+        }
+
+        // Mints one Receipt and presents it under `authority`. The Result is
+        // returned rather than unwrapped: an Err means nothing was consumed, and
+        // a case that could not see that difference could not tell a refusal
+        // from a delivery nobody recorded.
+        [[nodiscard]]
+        auto deliver(task::DispatchAuthority authority)
+            -> Result<task::HostDeliveryReport>
+        {
+            mint();
+            auto const receipt = task::TaskHostTestAccess::pendingReceipt(*m_host);
+            return task::TaskHostTestAccess::deliver(
+                *m_host,
+                std::move(authority),
+                receipt,
+                m_runtime->context()
+            );
+        }
+
+        [[nodiscard]]
+        auto deliverReport(task::DispatchAuthority authority)
+            -> task::HostDeliveryReport
+        {
+            auto report = deliver(std::move(authority));
+            REQUIRE(report.has_value());
+            return *std::move(report);
+        }
+
+        // Mints one Receipt in this Host's cycle and presents it to a second
+        // context holding a cycle of its own. The Receipt is consumed and no
+        // click is posted, which is how a fixture reaches the one outcome that
+        // proves an external effect absent.
+        [[nodiscard]]
+        auto deliverIntoAnotherCycle(task::DispatchAuthority authority)
+            -> task::HostDeliveryReport
+        {
+            mint();
+            if (!m_other)
+            {
+                m_other = std::make_unique<ObservationRuntime>(
+                    observationFrame(resolvedFramePixels(), FrameId{702})
+                );
+                // The other context must hold a cycle of its own, or the refusal
+                // proves only that it has none.
+                auto const opened = task::TaskHostTestAccess::run(
+                    *m_host,
+                    m_generation,
+                    m_other->context(),
+                    "return observe.open(project.load_project()) ~= nil"
+                );
+                REQUIRE(opened.has_value());
+            }
+            auto const receipt = task::TaskHostTestAccess::pendingReceipt(*m_host);
+            auto report = task::TaskHostTestAccess::deliver(
+                *m_host,
+                std::move(authority),
+                receipt,
+                m_other->context()
+            );
+            REQUIRE(report.has_value());
+            REQUIRE(m_other->actions().clicks() == 0U);
+            return *std::move(report);
+        }
+    };
+
+    // A Host that can act under `lease`, activated from the artifact the store
+    // already installed. Every prepared-store fixture wraps this, so there is
+    // one spelling of "open the installed artifact again and adopt the fence".
+    [[nodiscard]]
+    inline auto deliveringHostFor(
+        OperatorCoordinator& store,
+        ControlLease const& lease,
+        uint64 installedGeneration,
+        ContentHash const& artifactRootHash
+    ) -> std::unique_ptr<DeliveringHost>
+    {
+        auto installed = store.openInstalledRuntimeArtifact(
+            installedGeneration,
+            artifactRootHash
+        );
+        REQUIRE(installed.has_value());
+        return std::make_unique<DeliveringHost>(
+            *std::move(installed),
+            controlFence(lease)
+        );
     }
 }

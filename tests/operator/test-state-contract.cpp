@@ -233,7 +233,7 @@ namespace uf::operator_runtime
         auto const operation = reconcilingOperation(
             prepared,
             "request-1",
-            DeliveryOutcome::Delivered
+            task::DeliveryOutcome::Delivered
         );
         REQUIRE(prepared.store.commitReconciliation(
             prepared.plugin,
@@ -401,7 +401,7 @@ namespace uf::operator_runtime
         auto const operation = reconcilingOperation(
             prepared,
             "request-1",
-            DeliveryOutcome::Delivered
+            task::DeliveryOutcome::Delivered
         );
         REQUIRE(prepared.store.commitReconciliation(
             prepared.plugin,
@@ -632,7 +632,7 @@ namespace uf::operator_runtime
         auto const operation = reconcilingOperation(
             prepared,
             "request-1",
-            DeliveryOutcome::Delivered
+            task::DeliveryOutcome::Delivered
         );
         auto const progressed = prepared.store.commitReconciliation(
             prepared.plugin,
@@ -708,8 +708,9 @@ namespace uf::operator_runtime
         // identity carries about authority and nothing about content.
         auto const takeover = prepared.store.takeoverLease("session-1", "human");
         REQUIRE(takeover.has_value());
-        CHECK(takeover->fencingToken > prepared.lease.fencingToken);
-        prepared.lease = *takeover;
+        CHECK(takeover->lease.fencingToken > prepared.lease.fencingToken);
+        CHECK(takeover->resolvedDispatches == 0U);
+        prepared.lease = takeover->lease;
 
         auto const after = prepared.store.createSnapshot(
             prepared.lease,
@@ -732,7 +733,7 @@ namespace uf::operator_runtime
         auto const operation = reconcilingOperation(
             prepared,
             "request-1",
-            DeliveryOutcome::Delivered
+            task::DeliveryOutcome::Delivered
         );
         REQUIRE(prepared.store.commitReconciliation(
             prepared.plugin,
