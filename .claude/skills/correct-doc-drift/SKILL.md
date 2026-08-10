@@ -17,6 +17,7 @@ drift at the moment it becomes visible, not in a someday cleanup.
 | **Superseded decision** | Script root ruled `uf` (2026-07-29); older docs still teach `umbra.*`, older ones still `bot.*` |
 | **Stale blocker wording** | integration-plan said S0 schema "deferred" 4 days after it locked |
 | **Queued-but-unapplied fix** | hardening ledger ordered a veto #2 rewording in the roadmap; nobody applied it |
+| **Ruling archived unexecuted** | the 2026-07-25 sweep ruled four `core` facilities through `evaluate-core-capability`; the review was archived on 2026-08-01 (`eb1d205`) and the ruling left the live set with it, still unrun 17 days later |
 | **Doc-vs-code contradiction** | "the engine has no loop" vs `waitForPage`'s internal poll loop |
 | **Terminology drift** | one concept spelled `bot`/`umbra`/`uf` across three documents |
 
@@ -31,6 +32,11 @@ drift at the moment it becomes visible, not in a someday cleanup.
    ("X is blocked", "Y is the schema"), verify it against code/newer docs.
 4. **Queued fix discovered** — a doc orders a correction elsewhere: apply it
    now. Queued fixes rot (see the veto #2 incident).
+5. **Pre-archive** — a plan or review leaving the live set takes its unexecuted
+   rulings with it. Item 4 catches that while the document is still read; this
+   catches it as the document stops being read. Move each ruling to a live owner
+   and name that owner in the file before it moves: the archiving rule in
+   `CLAUDE.md`, seen from the document's side.
 
 ## Process
 

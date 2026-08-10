@@ -15,6 +15,34 @@ A facility belongs in `core` only when it meets all of these conditions:
 4. The implementation is small enough to audit and portable across the supported toolchains.
 5. It has useful behavior that can be protected by a concise retained test.
 
+## Admission history
+
+Surveyed 2026-08-11 against `55bd564`. It is load-bearing when reading the
+Core additions table below: **that table lists what is admitted, not what this
+gate evaluated.**
+
+19 of the 27 files under `modules/core/source/core/` arrived in the repository's
+first commit, `79e6b3d` (2026-07-20), as a template import. At that commit
+`modules/` held nothing but `core`, so no product code existed to demonstrate a
+need — and this skill did not exist either, having been written two days later
+in `98e0d63`. The import could not have passed a gate that postdates it.
+
+Every facility admitted after product code existed has a production caller
+outside `core`: `text/utf8.hpp`, `types/integer.hpp` and
+`text/unsafe/unicode-code-unit.hpp` (`91d1e35`, 2026-07-21),
+`time/poll-sleep.hpp` (`f146329`, 2026-07-29), `text/json-text.hpp`
+(`847e55f`, 2026-08-09). The facilities whose only includer is
+`tests/core/test-capabilities.cpp` are all imported ones. So a facility here
+with no caller but its own capability test is evidence of an admission that
+never happened rather than of an adoption that failed, and the gate works
+whenever it is actually run.
+
+Two consequences. A facility's presence in `core` is not a decision, so never
+cite the table below as the reason to keep one; find the evaluation that
+admitted it, or run one now. And the 2026-07-20 import has never been reviewed
+retroactively — one pass over the 19, not an open-ended re-litigation — which is
+tracked as W12 in `docs/plans/2026-08-10-next-block.md`.
+
 ## Standard library first
 
 Use these facilities directly rather than introducing project copies:

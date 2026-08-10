@@ -88,6 +88,10 @@ findings are closed.
   — the review whose conclusions the three-layer plan adopted.
 - [Full-project architecture review](archive/reviews/2026-07-27-full-project-review.md)
 - [Repo-wide C++ simplification sweep](archive/reviews/2026-07-25-simplify-sweep.md)
+  — archived 2026-08-01 while still owing one thing. Its §6 ruling, that four
+  `core` facilities be run through `evaluate-core-capability`, has been W12 of
+  [the next block](plans/2026-08-10-next-block.md) since 2026-08-11; the review
+  itself is left as written.
 
 The knowledge base (`docs/knowledge/`) was deleted on 2026-08-01: with the code
 framework mid-migration it was pure maintenance burden. Reusable failure

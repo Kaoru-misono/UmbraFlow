@@ -24,6 +24,8 @@ Reading order: target form, then layer ownership, then the model semantics.
   been pushed and so has never been through CI, and orders the deferred work by
   dependency. W1, W5, W8 and the contract suite it raised as unowned have
   landed; W0 ran and returned half a pass; W2-W4, W6, W7, W9 and W11 have not.
+  W12 was added on 2026-08-11 — the `core` admission debt that the 2026-07-25
+  sweep ruled and that was archived with the review before anyone ran it.
 - Four of that plan's work items were written out in full on 2026-08-10, each
   specification only, none started. They do not open rulings of their own; they
   are the next block's rows at implementation depth, and they are superseded by

@@ -5,6 +5,9 @@ Status: in execution. W1, W5, W8 and the contract suite raised in §5 landed on
 W3's additive half landed the same day (`7cef402`), closing the data dependency
 that blocked `decision_basis_hash`; W3's Operator half, W2, W4, W6, W7 and W9
 are unstarted, and `s01`, `s02`, `s04`, `c05` and `c08` are all still open.
+W12 was opened on 2026-08-11, from a 2026-07-25 ruling that had been archived
+without ever reaching a live document; it closes no requirement and blocks
+nothing here.
 Date: 2026-08-10 (revised the same day, against the landed tree)
 Scope: `umbraflow-cpp` only. No consumer-project writes.
 Bundle: v1.9, root `c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`
@@ -148,6 +151,7 @@ W5 replay gates ───── independent of W2-W4
 W8 artifact GC ─────── independent
 W9 third review ────── after W2-W4
 W11 clang-tidy ─────── independent, opened by W0
+W12 core admission ─── independent, predates this block
 ```
 
 **W2 and W3 land as one change** ([reconciliation](2026-08-10-w2-w7-reconciliation.md)
@@ -174,6 +178,7 @@ change after them, and W6 needs W4 as well as W2 because W4 changes
 | W9 | Third adversarial review round | — | W2-W4 | 1 day per reviewer | open |
 | W10 | Rename the schema-shape gates `schema-*` as each requirement gains a behavioural gate, so the matrix never overstates | — | tracks W1-W7 | folded in | **the twelve open IDs renamed 2026-08-10**; still tracks W2-W7, which each owe a new `contract-*` case |
 | W11 | **Make the clang-tidy analysis presets compile**: the `*-analysis` presets do not build, under the project's own `-Wunsafe-buffer-usage` and under `WarningsAsErrors: '*'`. Its scope is whatever those presets still refuse, never a count — the count moved three times on the day it was written. Opened 2026-08-10 by W0's result | — | none | unestimated; not one day | open and shrinking. Done when a `linux-analysis` build reports nothing **and states how many objects it analysed** |
+| W12 | **Core admission debt**: give every `core` facility with no caller outside its own capability test a recorded `evaluate-core-capability` answer, and review the 2026-07-20 template import that admitted most of `core` before the gate existed | — | none | unestimated | open. Opened 2026-08-11 from a 2026-07-25 ruling that had been archived without ever reaching a live document |
 
 `s04` is split and closes only when both halves land. W2 derives `identity_hash`
 and `decision_basis_hash` from the parts; W3 derives the parts. Neither half is
@@ -312,6 +317,46 @@ What the three landed items actually left behind:
   appears once in the tree, in `modules/operator/source/operator/ledger.cpp`.
   An existing operator database is refused at open rather than migrated;
   nothing is released, so those databases are recreated.
+
+**W12 is the only item here that came from outside this block's scope, and how
+it arrived is the reason it exists.** On 2026-07-25 a simplification sweep
+measured `Synchronized`, `ControlFlow`, `Flags` and `NonZero` as included by
+exactly one file, `tests/core/test-capabilities.cpp`, and by nothing in
+production. It declined to delete them and ruled instead that all four are
+unvalidated core surface to be run through `evaluate-core-capability` — a
+governance question it put outside its own scope. That ruling is §6 of
+[the archived sweep](../archive/reviews/2026-07-25-simplify-sweep.md), and it
+reached no TODO entry and no plan. The review was archived on 2026-08-01 in
+`eb1d205`, and the ruling was archived with it. Re-measured at `55bd564` on
+2026-08-11 the four counts were unchanged and the evaluation had not run:
+seventeen days in which the finding was correct, recorded and inert. `CLAUDE.md`
+gained an archiving precondition the same day so the next closed document cannot
+leave the same way. Do not amend the archived review to match — the pointer runs
+one way, from here to there.
+
+**What closes W12 is a recorded answer per facility, not a particular verdict.**
+An evaluation was in flight on 2026-08-11, and `ControlFlow` in particular turns
+on whether `modules/vision/source/vision/sad.hpp` is a real call site. Keeping a
+facility closes its row exactly as well as removing one does; what does not close
+it is a second measurement. Each answer has to land where a later reader meets
+the facility — the kernel list in
+[`core-reuse.md`](../../.claude/skills/cpp-coding/references/core-reuse.md) and
+the Core additions table in
+[`capability-kernel.md`](../../.claude/skills/evaluate-core-capability/references/capability-kernel.md)
+— or the next survey measures the same thing a third time.
+
+**The retroactive import review is the larger half, and it explains the shape of
+the surface.** 19 of the 27 files under `modules/core/source/core/` at `55bd564`
+came from the repository's first commit, `79e6b3d` (2026-07-20), as a template
+import; `modules/` held nothing but `core` at that commit, and
+`evaluate-core-capability` did not exist until `98e0d63` two days later. Every
+facility admitted after product code existed has a production caller outside
+`core`. So the callerless surface is an **admission** failure rather than an
+adoption failure, and the gate works whenever it is actually run. The standing
+form of that finding is the **Admission history** section of
+`capability-kernel.md`, put there rather than here deliberately: a plan gets
+archived, and this item exists because a finding was archived. What W12 owes is
+the one pass over those 19, not a permanent re-litigation.
 
 ## 4. Rulings already made
 

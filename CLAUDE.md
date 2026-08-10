@@ -97,6 +97,11 @@ Use `python` on Windows and `python3` on Linux or macOS. The host presets are
 - Archive a finished plan into `docs/archive/plans/` and a closed review into
   `docs/archive/reviews/`. Move the file normally, never with `git mv`, and
   never stage or commit as part of archiving.
+- Archiving is blocked while a document still owes something. Before the move,
+  carry every ruling it made that nobody executed into a live TODO entry, plan
+  row, or work item, and name that location in the file being archived. An
+  archived document must state either that nothing in it is still owed or where
+  what is owed now lives; if a reader cannot tell which, it is not closed.
 - Skills live in `.claude/skills/<name>/SKILL.md`. Only the description is
   loaded every session, so it carries the triggers and nothing else.
 

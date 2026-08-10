@@ -44,6 +44,15 @@ Two consequences worth carrying:
   `ctest -N`, the case name is registered. The control is cheap and it is the
   only thing that separates a gate from a claim.
 
+The shape has a documentation form, found 2026-08-11. A review can make a ruling,
+be closed, and be archived with that ruling still unexecuted — the queue then
+reports done while nothing ever ran. The 2026-07-25 sweep's `core` ruling sat
+that way for seventeen days (W12 in
+[the next block](../plans/2026-08-10-next-block.md)). `CLAUDE.md` now blocks
+archiving until every unexecuted ruling has a live owner named in the file being
+archived, which is this family's positive control one level out: the artifact has
+to state what it still owes.
+
 Instance detail follows for the one that cost the most.
 
 ## A PCRE lookahead in `HeaderFilterRegex` silently discards every header diagnostic
