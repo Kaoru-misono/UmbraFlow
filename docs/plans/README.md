@@ -67,6 +67,27 @@ Reading order: target form, then layer ownership, then the model semantics.
   no schema and no compiled hash here; six questions in its §10 need a ruling.
   It also carries the 2026-08-11 correction that `D-09` is `PHASED` and that
   `C-11` and `A-04` carry `PROJECT_CONTRACT`.
+- [A project is a directory of data](2026-08-11-project-as-data.md) —
+  **specification proposal, nothing implemented.** `ProvidedProject` member by
+  member and which of its thirteen members a data-only project can never supply;
+  the project directory format, its two root documents and the vocabulary
+  document that does not exist today; why conformance is a second binary rather
+  than a subcommand; why the plugin mechanism is already finished and the loader
+  is the only missing piece; what dies in both trees, and the eight-step order in
+  which uf-chaos's `contract/` may finally be deleted, leaving a project with no
+  compiler and no CMake. Ten questions in §7 need a ruling, one of them before
+  any code moves.
+- [The provider surface, measured](2026-08-11-project-as-data-inventory.md) — the
+  independent measurement the document above is sized from, taken at `6bfe1d6`
+  by an agent that could not see it. Every `ProvidedProject` leaf, where it is
+  reached and by what; which of the three provider implementations builds each
+  one from committed bytes and which from a literal; what uf-chaos's 828-line
+  schema evaluator actually implements against what its schemas use. Two results
+  govern the migration order rather than merely describing it: **neither in-tree
+  exemplar parses a byte**, so nothing here can test the correction until they do,
+  and the eight suite cases most entangled with C++ construction — including all
+  four that exist to prove the five authorities cannot be forged — close no
+  requirement at all.
 - [W2-W7 reconciliation](2026-08-10-w2-w7-reconciliation.md) — the four above
   were written in parallel by agents who could not see each other. This resolves
   every conflict between them, lists the cross-assumptions one makes that another

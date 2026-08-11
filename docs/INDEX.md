@@ -32,6 +32,20 @@ the four same-day specifications conflict.
   `EXTERNAL attest-consumer-dNN` IDs, specified 2026-08-11: what a consumer
   produces, what binds it, and what upstream may and may not refuse. Proposal
   only; six questions await a ruling.
+- [A project is a directory of data](plans/2026-08-11-project-as-data.md) — the
+  correction that follows from "uf-chaos depends only on umbraflow's compiled
+  binary": the exported C++ provider surface is replaced by a project directory
+  format and a host-side loader, and conformance becomes a second shipped
+  binary. A consuming project ends with no C++ at all. Proposal only; ten
+  questions await a ruling.
+- [The provider surface, measured](plans/2026-08-11-project-as-data-inventory.md)
+  — the evidence that design is sized from, measured at `6bfe1d6`:
+  `ProvidedProject`'s thirty leaves, reached 106 times, of which twenty-three are
+  already data, five are C++ authorities and two are live-behaviour recorders.
+  Read §A.1.1 before trusting any run of the suite: **both in-tree exemplars
+  validate nothing**, substituting hardcoded byte-string allowlists for the two
+  validators `project-plugin.hpp:90-94` demands, so the framework's own two runs
+  stay green against a validator that accepts non-canonical bytes.
 - [The journal record binding](plans/2026-08-11-journal-record-binding.md) —
   landed 2026-08-11. The `journal_events` and `project_state` rows now carry the
   member names of the journal records they store, the framework validates
