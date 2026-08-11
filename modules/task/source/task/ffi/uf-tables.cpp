@@ -6,7 +6,9 @@
 #include <task/task-host.hpp>
 
 #include <core/error/result.hpp>
+#include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
+#include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 #include <core/utility/scope-exit.hpp>
 
@@ -20,10 +22,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <ratio>
 #include <span>
 #include <string>
 #include <string_view>
@@ -621,6 +625,249 @@ namespace uf::task
             return 1;
         }
 
+        [[nodiscard]]
+        auto signedInteger(lua_State* state, int index, std::string_view name) -> int32
+        {
+            if (lua_type(state, index) != LUA_TNUMBER)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    std::string{name} + " must be a number"
+                );
+            }
+            auto const value = checkedIntegralCast<int32>(lua_tonumber(state, index));
+            if (!value)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    std::string{name} + " must be a whole number within range"
+                );
+            }
+            return *value;
+        }
+
+        // A script's millisecond count as the monotonic Duration the host times
+        // with. A raw duration_cast would overflow the signed tick rep -- which
+        // is undefined behaviour -- far below the count's own limit and before
+        // any downstream guard could run, so the Duration is built through the
+        // checked helpers and a NaN, negative, fractional or out-of-range count
+        // is a Tier B InvalidResource instead.
+        [[nodiscard]]
+        auto millisDuration(lua_State* state, int index, std::string_view name)
+            -> MonotonicInstant::Duration
+        {
+            if (lua_type(state, index) != LUA_TNUMBER)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    std::string{name} + " must be a number of milliseconds"
+                );
+            }
+            using Duration  = MonotonicInstant::Duration;
+            using MsToTicks = std::ratio_divide<std::milli, Duration::period>;
+            static_assert(
+                MsToTicks::den == 1,
+                "Duration must be no coarser than a millisecond"
+            );
+
+            auto ticks = std::optional<Duration::rep>{};
+            if (auto const millis = lua_tonumber(state, index); millis >= 0.0)
+            {
+                if (auto const count = checkedIntegralCast<Duration::rep>(millis))
+                {
+                    ticks = checkedMultiply<Duration::rep>(
+                        *count,
+                        static_cast<Duration::rep>(MsToTicks::num)
+                    );
+                }
+            }
+            if (!ticks)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    std::string{name}
+                        + " must be a finite, non-negative whole number of "
+                          "milliseconds within range"
+                );
+            }
+            return Duration{*ticks};
+        }
+
+        // The seven acting primitives. Each takes the cycle's ticket first and
+        // spends it, so a chunk that wants to measure what it did opens another
+        // cycle -- which is also what stops a crop taken after an act from
+        // describing the frame that authorised it.
+        //
+        // They are installed by buildAnnotationSurface and by nothing else. See
+        // TaskContext's declarations for why an exploration chunk needs no
+        // Receipt to reach them and what still fences them.
+
+        auto cycleClickPoint(lua_State* state) -> int
+        {
+            auto* const context = boundContext(state);
+            guardLive(state, context);
+            auto const status = context->cycleClickPoint(
+                *cycleAt(state, 1),
+                PixelPoint{
+                    unsignedInteger(state, 2, "click x"),
+                    unsignedInteger(state, 3, "click y"),
+                }
+            );
+            if (!status)
+            {
+                raiseFromError(state, context, status.error());
+            }
+            return 0;
+        }
+
+        auto cycleLongPress(lua_State* state) -> int
+        {
+            auto* const context = boundContext(state);
+            guardLive(state, context);
+            auto const status = context->cycleLongPress(
+                *cycleAt(state, 1),
+                PixelPoint{
+                    unsignedInteger(state, 2, "long press x"),
+                    unsignedInteger(state, 3, "long press y"),
+                },
+                millisDuration(state, 4, "long press hold")
+            );
+            if (!status)
+            {
+                raiseFromError(state, context, status.error());
+            }
+            return 0;
+        }
+
+        auto cycleDrag(lua_State* state) -> int
+        {
+            auto* const context = boundContext(state);
+            guardLive(state, context);
+            auto const status = context->cycleDrag(
+                *cycleAt(state, 1),
+                PixelPoint{
+                    unsignedInteger(state, 2, "drag x"),
+                    unsignedInteger(state, 3, "drag y"),
+                },
+                PixelPoint{
+                    unsignedInteger(state, 4, "drag end x"),
+                    unsignedInteger(state, 5, "drag end y"),
+                },
+                millisDuration(state, 6, "drag travel")
+            );
+            if (!status)
+            {
+                raiseFromError(state, context, status.error());
+            }
+            return 0;
+        }
+
+        auto cycleMovePointer(lua_State* state) -> int
+        {
+            auto* const context = boundContext(state);
+            guardLive(state, context);
+            auto const status = context->cycleMovePointer(
+                *cycleAt(state, 1),
+                PixelPoint{
+                    unsignedInteger(state, 2, "pointer move x"),
+                    unsignedInteger(state, 3, "pointer move y"),
+                }
+            );
+            if (!status)
+            {
+                raiseFromError(state, context, status.error());
+            }
+            return 0;
+        }
+
+        auto cycleScroll(lua_State* state) -> int
+        {
+            auto* const context = boundContext(state);
+            guardLive(state, context);
+            auto const status = context->cycleScroll(
+                *cycleAt(state, 1),
+                signedInteger(state, 2, "wheel notches")
+            );
+            if (!status)
+            {
+                raiseFromError(state, context, status.error());
+            }
+            return 0;
+        }
+
+        // The one definition of which key names exist, applied to the value a
+        // chunk actually wrote. A name outside the set is refused BEFORE the
+        // cycle is spent, so a typo costs no frame -- and the set is not opened
+        // here: this is the same KeyName::create the Receipt path calls.
+        auto cycleKey(lua_State* state) -> int
+        {
+            auto* const context = boundContext(state);
+            guardLive(state, context);
+            auto const ticket = *cycleAt(state, 1);
+            auto const key = KeyName::create(stringAt(state, 2, "key name"));
+            if (!key)
+            {
+                raiseFromError(state, context, key.error());
+            }
+            auto const status = context->cycleKey(ticket, *key);
+            if (!status)
+            {
+                raiseFromError(state, context, status.error());
+            }
+            return 0;
+        }
+
+        // Pauses for the whole duration asked for, and refuses to do it while a
+        // cycle is open.
+        //
+        // That refusal is the verb's point rather than a precaution. A frame
+        // held across a wait is older than the wait by exactly the interval that
+        // made the wait worth taking, so a chunk that acted, settled, and then
+        // cropped its open cycle would measure the screen it was trying to wait
+        // out. Refusing here makes "wait, THEN observe" the only expressible
+        // order, which is stronger than a verb that bundles the two and leaves
+        // the unbundled spelling reachable.
+        auto settle(lua_State* state) -> int
+        {
+            auto* const context = boundContext(state);
+            guardLive(state, context);
+            auto const duration = millisDuration(state, 1, "settle duration");
+            if (duration > k_maxSettleDuration)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "a settle may not exceed the host's ceiling; a wait that "
+                    "long belongs to a chunk that observes between its parts"
+                );
+            }
+            if (context->hasOpenCycle())
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "a settle cannot be taken while a cycle is open; the frame "
+                    "it holds would be older than the wait by the whole wait"
+                );
+            }
+            context->settle(duration);
+
+            // pollSleep returns early once the run's cancel source is requested,
+            // so a settle that ended that way must take the terminal path rather
+            // than report a wait it did not finish.
+            if (context->cancellationRequested())
+            {
+                context->markTerminal(AutomationErrorKind::Cancelled);
+                lua_pushstring(state, "uf: annotation cancelled");
+                lua_error(state);
+            }
+            return 0;
+        }
+
         auto beginCycleMetatable(lua_State* state) -> Status
         {
             lua_newtable(state);
@@ -655,7 +902,7 @@ namespace uf::task
         auto buildAnnotationSurface(lua_State* state, TaskContext* context) -> Status
         {
             UF_TRY(beginCycleMetatable(state));
-            lua_createtable(state, 0, 8);
+            lua_createtable(state, 0, 15);
             int const surface = lua_gettop(state);
             install(state, surface, "explore_cycle_open", &cycleOpen, context);
             install(state, surface, "explore_cycle_close", &cycleClose, context);
@@ -664,6 +911,13 @@ namespace uf::task
             install(state, surface, "explore_project_read", &projectRead, context);
             install(state, surface, "explore_project_write", &projectWrite, context);
             install(state, surface, "explore_terminal", &terminal, context);
+            install(state, surface, "explore_click_point", &cycleClickPoint, context);
+            install(state, surface, "explore_long_press", &cycleLongPress, context);
+            install(state, surface, "explore_drag", &cycleDrag, context);
+            install(state, surface, "explore_move_pointer", &cycleMovePointer, context);
+            install(state, surface, "explore_scroll", &cycleScroll, context);
+            install(state, surface, "explore_key", &cycleKey, context);
+            install(state, surface, "explore_settle", &settle, context);
             lua_pushstring(state, k_errorType);
             lua_setfield(state, surface, "error_tag");
             UF_TRY(script::deepFreeze(state, surface));

@@ -54,6 +54,27 @@ namespace uf::task
         std::chrono::milliseconds{10}
     };
 
+    // The longest a single long press may hold the button down. A separate and
+    // much lower ceiling than the settle one: a long press leaves a pointer
+    // button physically down in the target with only this host to lift it, and
+    // every other input queued behind it. Beyond it is Tier B, for
+    // k_maxSettleDuration's reason.
+    // CALIBRATION: five seconds is a placeholder. Targets that publish a
+    // long-press gesture measure it in hundreds of milliseconds.
+    inline constexpr auto k_maxLongPressHold = MonotonicInstant::Duration{
+        std::chrono::seconds{5}
+    };
+
+    // The longest a single drag may spend travelling. The long-press ceiling's
+    // reason exactly -- the button is down for all of it -- and the same number,
+    // because what is bounded is the same thing: how long this host may leave a
+    // pointer button physically down in the target.
+    // CALIBRATION: five seconds is a placeholder. A pan that needs more than a
+    // second of travel is more likely a chunk's bug than a slow target.
+    inline constexpr auto k_maxDragTravel = MonotonicInstant::Duration{
+        std::chrono::seconds{5}
+    };
+
     // How many text reads one observation cycle may charge. Its own budget
     // dimension rather than a share of the matcher's pixel-comparison pool
     // because the units do not compare: a SAD comparison is nanoseconds, a line
@@ -426,6 +447,82 @@ namespace uf::task
             ProbeColourKey key
         ) -> Result<ColourGridReport>;
 
+        // The six acts an exploration chunk may deliver, each spending the
+        // cycle `ticket` names so one frame delivers at most one input.
+        //
+        // WHY THESE NEED NO RECEIPT. A Receipt exists so that a PLUGIN-issued
+        // action is auditable and replayable: a model-declared action, a
+        // proof_locator re-measured on this cycle, one receipt per cycle, a
+        // freshness lease. That discipline is what makes an action a project
+        // plugin asked for trustworthy, and none of it is weakened here,
+        // because none of these verbs is reachable from a plugin environment --
+        // they are installed by buildAnnotationSurface and by nothing else, and
+        // only the exploration VM runs that installer
+        // (task/exploration-session.hpp, task/script-bindings.hpp).
+        //
+        // An explore chunk is not a plugin. It is code a human or an authoring
+        // agent wrote inside an environment that already holds the authoring
+        // private surface, and requiring it to name a Binding is not a safety
+        // property but a chicken-and-egg: an agent must REACH a screen before it
+        // can model one, so a front end that can only act on screens already
+        // modelled can never model the first screen. The verbs below are how the
+        // model gets written in the first place; the Receipt path is how the
+        // model is later acted on in production, and neither is a way into the
+        // other.
+        //
+        // What still fences them is everything about the FRAME. The ledger
+        // hands the observation over here, so the ticket dies before delivery;
+        // the engine then applies its own gate unchanged -- live fingerprint,
+        // lease validity, target-instance revalidation -- for every verb that
+        // names a coordinate, and its narrower gate for the two that do not.
+        // See engine::EngineSession for which clauses each verb answers to.
+        //
+        // Each writes one annotation.*_delivered line naming what the chunk
+        // asked for, so no act on this surface is unrecorded; see
+        // task-context.cpp for why that line is not a second spelling of the
+        // engine's own.
+        [[nodiscard]]
+        auto cycleClickPoint(CycleTicket ticket, PixelPoint point) -> Status;
+
+        // `hold` and `travel` have no default at any layer: how long a target
+        // wants a press held is a fact about that target. This is the layer that
+        // bounds them, because it is the one whose refusal can name what the
+        // chunk wrote -- k_maxLongPressHold and k_maxDragTravel, refused before
+        // the cycle is spent so a mistyped duration costs no frame and leaves no
+        // button down.
+        [[nodiscard]]
+        auto cycleLongPress(
+            CycleTicket ticket,
+            PixelPoint point,
+            MonotonicInstant::Duration hold
+        ) -> Status;
+
+        // Both points are bare coordinates. The far end is a coordinate rather
+        // than an offset because an offset would have to be range-checked here
+        // against a client size this layer does not know, while a coordinate
+        // meets the same check the start meets.
+        [[nodiscard]]
+        auto cycleDrag(
+            CycleTicket ticket,
+            PixelPoint start,
+            PixelPoint end,
+            MonotonicInstant::Duration travel
+        ) -> Status;
+
+        [[nodiscard]]
+        auto cycleMovePointer(CycleTicket ticket, PixelPoint point) -> Status;
+
+        [[nodiscard]]
+        auto cycleScroll(CycleTicket ticket, int32 notches) -> Status;
+
+        // One delivered key spends its cycle exactly as a click does, because it
+        // changes the screen exactly as a click does. KeyName is the single
+        // definition of which key names exist and this verb opens nothing: a
+        // name outside the set is refused by the same create() the Receipt path
+        // calls.
+        [[nodiscard]]
+        auto cycleKey(CycleTicket ticket, KeyName key) -> Status;
+
         // Releases whatever cycle is open and reports whether there was one. NOT
         // a script verb and never installed as a primitive: see
         // CycleLedger::closeOpen for who may call it, which is a host closing a
@@ -482,9 +579,10 @@ namespace uf::task
         ) const -> bool;
 
         // Sleeps for `duration`, returning early once the run's cancel source is
-        // requested. It backs the `settle` primitive, whose length is part of the
-        // replayable record. The caller enforces the k_maxSettleDuration ceiling
-        // and re-checks cancellationRequested() afterwards.
+        // requested. It backs the `settle` primitive. The caller enforces the
+        // k_maxSettleDuration ceiling, refuses a settle taken while a cycle is
+        // open, and re-checks cancellationRequested() afterwards; the binding
+        // holds those because its refusal can name what the chunk wrote.
         auto settle(MonotonicInstant::Duration duration) const -> void;
 
         // Whether the run's single cancel source has requested a stop; only the

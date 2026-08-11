@@ -33,6 +33,7 @@
 #include <vision/frame-analysis.hpp>
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <format>
 #include <optional>
@@ -54,6 +55,70 @@ namespace uf::task
             );
             UF_CHECK(parsed.has_value());
             return *parsed;
+        }
+
+        // The exploration front end's own record of one act it delivered.
+        //
+        // The engine writes an engine.*_delivered line for the same act, and
+        // this is not that line under a second name. The engine's says a
+        // coordinate reached the target and carries it in CLIENT space after the
+        // transform; this one says an exploration chunk chose it, and carries
+        // what the chunk actually wrote, in the frame pixels it wrote them in.
+        // On this stream that difference is the whole audit: an
+        // engine.action_delivered line claims a Binding authorised the act, and
+        // on an exploration stream nothing did -- there is no model yet, which
+        // is why the chunk is running (engine/session.hpp, clickPoint).
+        //
+        // `verb` is the act's own spelling rather than one shared event type
+        // with a kind field, so a reader grepping the stream for a drag finds
+        // drags and a schema that gains an act cannot acquire a name by
+        // defaulting.
+        [[nodiscard]]
+        auto annotationActionEvent(
+            std::string_view verb,
+            FrameId frame,
+            std::vector<trace::TraceField> fields
+        ) -> trace::TraceEventSpec
+        {
+            return trace::TraceEventSpec{
+                .eventType = std::format("annotation.{}_delivered", verb),
+                .audit     = trace::AuditMetadata{
+                    .actor = "annotation",
+                    .references = {
+                        trace::TraceReference{
+                            .type = "frame",
+                            .id   = std::to_string(frame.value()),
+                        },
+                    },
+                },
+                .payload = trace::TypedTracePayload{
+                    .schemaHash = traceSchemaHash(),
+                    .fields     = std::move(fields),
+                },
+            };
+        }
+
+        // A bounded, non-negative duration as the whole milliseconds a trace
+        // field carries. Every caller has already refused a negative value and
+        // capped the duration far below any overflow, so the count is exact.
+        [[nodiscard]]
+        auto traceMillis(MonotonicInstant::Duration duration) -> uint64
+        {
+            return static_cast<uint64>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(duration)
+                    .count()
+            );
+        }
+
+        // The two fields every coordinate-naming exploration act opens its trace
+        // line with, in the frame-pixel vocabulary engine.action_authorized
+        // already uses for the same numbers.
+        [[nodiscard]] auto pointFields(PixelPoint point) -> std::vector<trace::TraceField>
+        {
+            return {
+                trace::TraceField{.name = "pixel_x", .value = uint64{point.x()}},
+                trace::TraceField{.name = "pixel_y", .value = uint64{point.y()}},
+            };
         }
 
         // One crop's mask before and after it is reduced to what the caller sees:
@@ -720,6 +785,166 @@ namespace uf::task
     {
         UF_TRY_VALUE(observation, m_cycles.spend(ticket));
         return m_session.pressKey(std::move(observation), key);
+    }
+
+    // The six below share one shape and it is deliberate: spend the cycle, hand
+    // the observation to the engine verb that owns the act, and write the
+    // front-end's line only once the act has landed. The spend comes first on
+    // every one of them, so the frame leaves the ledger BEFORE anything is
+    // posted and this ticket can never deliver twice; the engine consumes the
+    // observation by rvalue, so the cycle is spent whatever the outcome.
+    //
+    // A refused act writes no annotation line. The engine has already written
+    // engine.action_rejected naming the reason, and a delivered-line for an act
+    // that did not happen is the one entry an auditor must never find.
+
+    auto TaskContext::cycleClickPoint(CycleTicket ticket, PixelPoint point) -> Status
+    {
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+        UF_TRY_VALUE(
+            receipt,
+            m_session.clickPoint(std::move(observation), point)
+        );
+        return m_recorder.emit(
+            annotationActionEvent("click", receipt.frameId, pointFields(point))
+        );
+    }
+
+    auto TaskContext::cycleLongPress(
+        CycleTicket ticket,
+        PixelPoint point,
+        MonotonicInstant::Duration hold
+    ) -> Status
+    {
+        // Both refusals precede the spend, so a chunk with a sign error or a
+        // mistyped hold keeps its frame and leaves no button down.
+        if (hold < MonotonicInstant::Duration::zero() || hold > k_maxLongPressHold)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "a long press must hold for between 0 and {} milliseconds",
+                    traceMillis(k_maxLongPressHold)
+                )
+            );
+        }
+
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+        UF_TRY_VALUE(
+            receipt,
+            m_session.longPress(std::move(observation), point, hold)
+        );
+        auto fields = pointFields(point);
+        fields.emplace_back(
+            trace::TraceField{.name = "hold_millis", .value = traceMillis(hold)}
+        );
+        return m_recorder.emit(
+            annotationActionEvent("long_press", receipt.frameId, std::move(fields))
+        );
+    }
+
+    auto TaskContext::cycleDrag(
+        CycleTicket ticket,
+        PixelPoint start,
+        PixelPoint end,
+        MonotonicInstant::Duration travel
+    ) -> Status
+    {
+        if (travel < MonotonicInstant::Duration::zero() || travel > k_maxDragTravel)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "a drag must travel for between 0 and {} milliseconds",
+                    traceMillis(k_maxDragTravel)
+                )
+            );
+        }
+
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+        UF_TRY_VALUE(
+            receipt,
+            m_session.drag(std::move(observation), start, end, travel)
+        );
+
+        // Both ends are on the line. The far one is the chunk's own arithmetic
+        // rather than anything it measured, so a record carrying only the start
+        // cannot answer where the drag ended.
+        auto fields = pointFields(start);
+        fields.emplace_back(
+            trace::TraceField{.name = "end_pixel_x", .value = uint64{end.x()}}
+        );
+        fields.emplace_back(
+            trace::TraceField{.name = "end_pixel_y", .value = uint64{end.y()}}
+        );
+        fields.emplace_back(
+            trace::TraceField{
+                .name  = "travel_millis",
+                .value = traceMillis(travel),
+            }
+        );
+        return m_recorder.emit(
+            annotationActionEvent("drag", receipt.frameId, std::move(fields))
+        );
+    }
+
+    auto TaskContext::cycleMovePointer(CycleTicket ticket, PixelPoint point) -> Status
+    {
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+        UF_TRY_VALUE(
+            receipt,
+            m_session.movePointer(std::move(observation), point)
+        );
+        return m_recorder.emit(
+            annotationActionEvent(
+                "pointer_move",
+                receipt.frameId,
+                pointFields(point)
+            )
+        );
+    }
+
+    auto TaskContext::cycleScroll(CycleTicket ticket, int32 notches) -> Status
+    {
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+        UF_TRY_VALUE(receipt, m_session.scroll(std::move(observation), notches));
+
+        // Signed, because direction is half of what was delivered.
+        return m_recorder.emit(
+            annotationActionEvent(
+                "scroll",
+                receipt.frameId,
+                {
+                    trace::TraceField{
+                        .name  = "wheel_notches",
+                        .value = static_cast<int64>(receipt.notches),
+                    },
+                }
+            )
+        );
+    }
+
+    auto TaskContext::cycleKey(CycleTicket ticket, KeyName key) -> Status
+    {
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+        UF_TRY_VALUE(receipt, m_session.pressKey(std::move(observation), key));
+
+        // The name is read back off the RECEIPT rather than off the argument, so
+        // the line records the key the delivery layer actually carried. A verb
+        // that traced its own input would still say "E" if the chain below it
+        // delivered something else.
+        return m_recorder.emit(
+            annotationActionEvent(
+                "key",
+                receipt.frameId,
+                {
+                    trace::TraceField{
+                        .name  = "key",
+                        .value = std::string{receipt.key.value()},
+                    },
+                }
+            )
+        );
     }
 
     auto TaskContext::waitUntil(

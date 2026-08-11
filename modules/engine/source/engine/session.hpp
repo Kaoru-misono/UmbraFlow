@@ -555,12 +555,12 @@ namespace uf::engine
 
         // Delivers one click at `point`, spending `observation`.
         //
-        // Which line the delivery is written under is decided here and nowhere
-        // else: engine.action_delivered on a task or operator stream,
-        // annotation.click_delivered on the exploration stream, where the caller
-        // is an agent naming a coordinate with no element and no page behind it.
-        // The stream validator refuses the other spelling on each stream
-        // (docs/plans/2026-08-01-agent-front-end-and-exploration.md 1).
+        // It writes engine.action_delivered on every stream. This layer knows
+        // which target it posted to and nothing about which front end asked, so
+        // it cannot say whether a Binding stood behind the coordinate; the
+        // caller that does know writes that line itself, and on the exploration
+        // stream it is annotation.click_delivered
+        // (task/task-context.cpp, annotationActionEvent).
         //
         // It enforces: a requested stop refuses before any sink call, a foreign
         // handle is an InternalInvariant, a consumed handle is StaleObservation,

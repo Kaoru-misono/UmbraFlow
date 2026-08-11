@@ -48,4 +48,13 @@ namespace uf::task
             std::string{k_exploreModule},
         };
     }
+
+    auto runtimeProjectGlobals() -> std::vector<std::string>
+    {
+        return std::vector<std::string>{
+            std::string{"jcs"},
+            std::string{"observe"},
+            std::string{"project"},
+        };
+    }
 }

@@ -658,6 +658,7 @@ if(TARGET ${PROJECT_NAME}_task)
         SOURCES
             task/test-adversarial-surface.cpp
             task/test-confined-file.cpp
+            task/test-exploration-verbs.cpp
             task/test-task-binding.cpp
             task/test-framework-bundle.cpp
             task/test-script-validator.cpp

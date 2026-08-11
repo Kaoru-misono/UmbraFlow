@@ -71,10 +71,22 @@ namespace uf::task
     auto frameworkProjectGlobals() -> std::vector<std::string>;
 
     // The privileged authoring VM publishes only `explore`. The module owns its
-    // cycle bracket and confined project I/O; no raw native table or direct input
-    // primitive enters the project environment.
+    // cycle bracket, its acting verbs and confined project I/O; no raw native
+    // table enters the project environment, and no cycle ticket leaves the
+    // bracket that minted it.
     [[nodiscard]]
     auto explorationProjectGlobals() -> std::vector<std::string>;
+
+    // What the Host's trusted Runtime VM publishes: the modules that read a
+    // RuntimeModel and resolve a state, and nothing that acts.
+    //
+    // It is a function beside the other two rather than a literal at the boot
+    // site so the three whitelists can be compared against each other. `explore`
+    // is in exactly one of them, and that is the half of the environment split a
+    // test can read; the other half is that the two private surfaces are built
+    // by different functions and neither environment is handed the other's.
+    [[nodiscard]]
+    auto runtimeProjectGlobals() -> std::vector<std::string>;
 
     // Parses one framework module with the same vendored Luau parser the host uses
     // at load time, and reports the first syntax error together with its line and

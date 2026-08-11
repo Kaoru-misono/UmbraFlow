@@ -580,12 +580,8 @@ namespace uf::task
                 .installHostTables          = scriptHostTableInstaller(),
                 .installPrivateCapabilities = runtimePrivateCapabilities(generation),
                 .projectGlobals             = scriptProjectGlobals(),
-                .frameworkProjectGlobals = {
-                    std::string{"jcs"},
-                    std::string{"observe"},
-                    std::string{"project"},
-                },
-                .classifyRaisedError     = scriptRaisedErrorClassifier(),
+                .frameworkProjectGlobals    = runtimeProjectGlobals(),
+                .classifyRaisedError        = scriptRaisedErrorClassifier(),
             }
         );
         if (!vm)
