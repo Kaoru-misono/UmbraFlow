@@ -15,6 +15,9 @@
 #include <engine/ports.hpp>
 #include <engine/session.hpp>
 
+#include <ocr/engine.hpp>
+#include <ocr/text.hpp>
+
 #include <script/engine.hpp>
 
 #include <trace/event.hpp>
@@ -35,8 +38,9 @@
 #include <variant>
 #include <vector>
 
-// The exploration front end's acting verbs: that they deliver what the chunk
-// asked for, that every delivered act leaves a line in the trace, and that no
+// The exploration front end's verbs: that its acts deliver what the chunk asked
+// for and leave a line in the trace, that its measurements report what the frame
+// holds and refuse rather than answer when the host cannot measure, and that no
 // other environment can reach any of them.
 //
 // It builds its own world rather than including tests/support/runtime-v2-
@@ -232,6 +236,44 @@ namespace uf::task
             }
         };
 
+        // Two lines at two places, so a case can tell a line's OWN rectangle
+        // from the rectangle the chunk asked about. It answers whatever it is
+        // handed: what is under test is what the binding layer does with a
+        // reading, and a real engine would make the text a fact about a PNG
+        // instead without strengthening one assertion here.
+        class TwoLineReader final : public ocr::IOcrEngine
+        {
+        public:
+            [[nodiscard]] auto identity() const noexcept -> std::string_view override
+            {
+                return "two-line-reader";
+            }
+
+            [[nodiscard]]
+            auto read(BgraImage const&, ocr::ReadSpec const&)
+                -> Result<ocr::Readout> override
+            {
+                auto first  = PixelRect::create(0, 0, 1, 1);
+                auto second = PixelRect::create(2, 0, 1, 1);
+                REQUIRE(first.has_value());
+                REQUIRE(second.has_value());
+                return ocr::Readout{
+                    .lines = {
+                        ocr::TextLine{
+                            .text         = "alpha",
+                            .bounds       = *first,
+                            .confidenceBp = 9000,
+                        },
+                        ocr::TextLine{
+                            .text         = "beta",
+                            .bounds       = *second,
+                            .confidenceBp = 8000,
+                        },
+                    },
+                };
+            }
+        };
+
         // Keeps every event type and every payload field, because the property
         // under test is what a reader of the finished stream can establish.
         class RecordingTraceSink final : public trace::ITraceSink
@@ -275,9 +317,14 @@ namespace uf::task
             std::optional<script::Engine> m_vm{};
 
         public:
+            // `reader` defaults to none, which is the state a product session is
+            // in whenever `explore` was started without --ocr-models. Every case
+            // that does not name one is therefore asserting against a host that
+            // cannot read text at all.
             explicit ExplorationWorld(
                 std::vector<std::string> publishedGlobals = explorationProjectGlobals(),
-                bool installAnnotationSurface = true
+                bool installAnnotationSurface = true,
+                std::unique_ptr<ocr::IOcrEngine> reader = nullptr
             )
             {
                 auto trace = std::make_unique<RecordingTraceSink>();
@@ -306,7 +353,8 @@ namespace uf::task
                         .projectFingerprint      = fingerprint(),
                         .maximumPixelComparisons = k_comparisonBudget,
                         .recognitionTimeout      = std::chrono::seconds{1},
-                    }
+                    },
+                    std::move(reader)
                 );
                 REQUIRE(session.has_value());
                 m_context.emplace(*std::move(session), *m_recorder);
@@ -623,6 +671,227 @@ namespace uf::task
         REQUIRE(taken.has_value());
     }
 
+    // The synthetic frame is Gray8 {2, 5, 2}, which widens to BGRA (2,2,2),
+    // (5,5,5), (2,2,2). A key of (2,2,2) at tolerance 0 therefore takes the two
+    // ends and not the middle, and one-by-one cells put each answer in its own
+    // cell -- so the counts are the frame's pixels and nothing else.
+    TEST_CASE("a census cell counts what its own pixels are")
+    {
+        auto world = ExplorationWorld{};
+        auto const result = world.run(
+            R"lua(
+                local grid = explore.cycle(function(view)
+                    return view:census_grid(
+                        0, 0, 3, 1,
+                        1, 1,
+                        { red = 2, green = 2, blue = 2, removes = false },
+                        0
+                    )
+                end)
+                local counts = {}
+                for index = 1, #grid.selected_pixels do
+                    counts[index] = string.format("%d", grid.selected_pixels[index])
+                end
+                return string.format(
+                    "%dx%d cells %dx%d counts %s",
+                    grid.columns,
+                    grid.rows,
+                    grid.cell_width,
+                    grid.cell_height,
+                    table.concat(counts, ",")
+                )
+            )lua"
+        );
+        REQUIRE(result.has_value());
+        REQUIRE(result->text() != nullptr);
+        CHECK_MESSAGE(
+            *result->text() == std::string{"3x1 cells 1x1 counts 1,0,1"},
+            "the census did not report what the frame holds: ",
+            *result->text()
+        );
+    }
+
+    // The same key read the other way round must partition each cell, which is
+    // what makes one census answer two questions rather than one.
+    TEST_CASE("a removing key counts the pixels the colour does not take")
+    {
+        auto world = ExplorationWorld{};
+        auto const result = world.run(
+            R"lua(
+                local grid = explore.cycle(function(view)
+                    return view:census_grid(
+                        0, 0, 3, 1,
+                        1, 1,
+                        { red = 2, green = 2, blue = 2, removes = true },
+                        0
+                    )
+                end)
+                local counts = {}
+                for index = 1, #grid.selected_pixels do
+                    counts[index] = string.format("%d", grid.selected_pixels[index])
+                end
+                return table.concat(counts, ",")
+            )lua"
+        );
+        REQUIRE(result.has_value());
+        REQUIRE(result->text() != nullptr);
+        CHECK(*result->text() == std::string{"0,1,0"});
+    }
+
+    // One observation retains one frame, so the vision layer's per-cell spread
+    // is zero at every cell here and forever. It must not be published: a field
+    // that always answers the same thing reads as a measurement somebody took.
+    TEST_CASE("a census answer carries no field that could only ever be zero")
+    {
+        auto world = ExplorationWorld{};
+        auto const result = world.run(
+            R"lua(
+                local grid = explore.cycle(function(view)
+                    return view:census_grid(
+                        0, 0, 3, 1,
+                        3, 1,
+                        { red = 2, green = 2, blue = 2, removes = false }
+                    )
+                end)
+                local published = {}
+                for name in grid do
+                    published[#published + 1] = name
+                end
+                table.sort(published)
+                return table.concat(published, ",")
+            )lua"
+        );
+        REQUIRE(result.has_value());
+        REQUIRE(result->text() != nullptr);
+        CHECK_MESSAGE(
+            *result->text()
+                == std::string{
+                    "cell_height,cell_width,columns,rows,selected_pixels"
+                },
+            "the census publishes a field this host cannot measure: ",
+            *result->text()
+        );
+    }
+
+    // A cell reports how much of itself is one colour, so a grid with no key is
+    // no answer rather than a weaker one, and the module says so before the host
+    // is reached at all.
+    TEST_CASE("a census with no colour key is refused")
+    {
+        auto world = ExplorationWorld{};
+        auto const result = world.run(
+            R"lua(
+                return explore.cycle(function(view)
+                    local ok, err = pcall(function()
+                        return view:census_grid(0, 0, 3, 1, 1, 1)
+                    end)
+                    if ok then return "answered" end
+                    return tostring(err)
+                end)
+            )lua"
+        );
+        REQUIRE(result.has_value());
+        REQUIRE(result->text() != nullptr);
+        CHECK(
+            std::string_view{*result->text()}.find("grid of no colour")
+            != std::string_view::npos
+        );
+    }
+
+    // A block read is for the region nobody can draw a rectangle inside, so each
+    // line must carry where the FRAME held it rather than where the chunk looked.
+    TEST_CASE("a block read reports each line at its own rectangle")
+    {
+        auto world = ExplorationWorld{
+            explorationProjectGlobals(),
+            true,
+            std::make_unique<TwoLineReader>(),
+        };
+        auto const result = world.run(
+            R"lua(
+                local lines = explore.cycle(function(view)
+                    return view:read_lines(0, 0, 3, 1)
+                end)
+                local parts = {}
+                for index = 1, #lines do
+                    local line = lines[index]
+                    parts[index] = string.format(
+                        "%s@%d,%d %dx%d %d",
+                        line.text,
+                        line.x,
+                        line.y,
+                        line.width,
+                        line.height,
+                        math.floor(line.confidence * 100 + 0.5)
+                    )
+                end
+                return table.concat(parts, "|")
+            )lua"
+        );
+        REQUIRE(result.has_value());
+        REQUIRE(result->text() != nullptr);
+        CHECK(
+            *result->text()
+            == std::string{"alpha@0,0 1x1 90|beta@2,0 1x1 80"}
+        );
+    }
+
+    // The fail-open answer this verb must never give. A session built with no
+    // OCR adapter cannot establish anything about text, and an empty list would
+    // be indistinguishable from a region that really holds none -- so the
+    // refusal has to reach the chunk, and it has to name what is missing.
+    TEST_CASE("a block read with no OCR engine refuses instead of answering")
+    {
+        auto world = ExplorationWorld{};
+        auto const result = world.run(
+            R"lua(
+                local ok, err = pcall(function()
+                    return explore.cycle(function(view)
+                        return view:read_lines(0, 0, 3, 1)
+                    end)
+                end)
+                if ok then return "answered" end
+                return tostring(err.message)
+            )lua"
+        );
+        REQUIRE(result.has_value());
+        REQUIRE(result->text() != nullptr);
+        CHECK_MESSAGE(
+            *result->text() != std::string{"answered"},
+            "a host that cannot read text answered a question about text"
+        );
+        CHECK_MESSAGE(
+            std::string_view{*result->text()}.find("without an OCR adapter")
+                != std::string_view::npos,
+            "the refusal does not name the missing engine: ",
+            *result->text()
+        );
+    }
+
+    // Neither measurement changes anything on the target, so neither spends the
+    // cycle: one frame is censused, read and then acted on.
+    TEST_CASE("measuring does not spend the cycle the act still needs")
+    {
+        auto world = ExplorationWorld{};
+        auto const result = world.run(
+            R"lua(
+                explore.cycle(function(view)
+                    view:census_grid(
+                        0, 0, 3, 1,
+                        1, 1,
+                        { red = 2, green = 2, blue = 2, removes = false }
+                    )
+                    view:crop(0, 0, 3, 1)
+                    view:click_point(1, 0)
+                end)
+                return "done"
+            )lua"
+        );
+        REQUIRE(result.has_value());
+        REQUIRE(world.acts().size() == 1U);
+        CHECK(world.acts().front().verb == std::string{"click"});
+    }
+
     // The environment split, half one: which module each environment publishes.
     // `explore` is in exactly one whitelist, and nothing else publishes it.
     TEST_CASE("only the exploration whitelist publishes the acting module")
@@ -641,23 +910,53 @@ namespace uf::task
     }
 
     // The same half, as the VM actually enforces it. The annotation surface is
-    // installed here on purpose: this VM is handed every acting primitive and is
-    // still unable to name one, so the whitelist alone is load-bearing.
-    TEST_CASE("a Runtime-whitelist VM cannot name the acting module")
+    // installed here on purpose: this VM is handed every primitive and is still
+    // unable to name one, so the whitelist alone is load-bearing.
+    //
+    // The chunk reports every spelling it reached rather than a bare verdict,
+    // and it opens a cycle to look at the view's own keys, because that is where
+    // the measuring verbs live: census_grid is a pixel read at one-by-one cells
+    // and read_lines spends the cycle's inference budget, so "a plugin cannot
+    // click" is not the whole property.
+    TEST_CASE("a Runtime-whitelist VM cannot name any exploration verb")
     {
         auto world = ExplorationWorld{runtimeProjectGlobals()};
         auto const result = world.run(
             R"lua(
-                if explore ~= nil then return "reachable" end
-                if native ~= nil or uf_private ~= nil then return "surface leaked" end
-                return "isolated"
+                local reached = {}
+                if explore_census_grid ~= nil then
+                    reached[#reached + 1] = "explore_census_grid"
+                end
+                if explore_read_lines ~= nil then
+                    reached[#reached + 1] = "explore_read_lines"
+                end
+                if native ~= nil then reached[#reached + 1] = "native" end
+                if uf_private ~= nil then reached[#reached + 1] = "uf_private" end
+                if explore ~= nil then
+                    reached[#reached + 1] = "explore"
+                    explore.cycle(function(view)
+                        for _, verb in {
+                            "census_grid",
+                            "read_lines",
+                            "crop",
+                            "click_point",
+                            "key",
+                        } do
+                            if view[verb] ~= nil then
+                                reached[#reached + 1] = verb
+                            end
+                        end
+                    end)
+                end
+                if #reached == 0 then return "isolated" end
+                return table.concat(reached, ",")
             )lua"
         );
         REQUIRE(result.has_value());
         REQUIRE(result->text() != nullptr);
         CHECK_MESSAGE(
             *result->text() == std::string{"isolated"},
-            "a plugin environment reached the exploration acting surface: ",
+            "a plugin environment reached the exploration surface: ",
             *result->text()
         );
         CHECK(world.acts().empty());

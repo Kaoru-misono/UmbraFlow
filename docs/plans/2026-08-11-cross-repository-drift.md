@@ -411,6 +411,34 @@ surface and the Operator tool path. Two secondary hits in the same family:
 retirement), and `docs/encounters/调研-recognition.md`:109 documents
 `resolve_page(ctx, ticket, page)`, a retired runtime symbol.
 
+> **Read note, 2026-08-12 — the Explore surface this correction points the
+> consumer at has grown, and one of the fifteen verbs above will never be on
+> it.** "Seven `explore_*` verbs" was true when the audit read the file; the
+> surface is sixteen natives now. `b92b131` restored the six acting verbs, and
+> the same day `cycle_census_grid` and `cycle_read_lines` were bound as
+> `view:census_grid` and `view:read_lines`. Nine of the fifteen verbs above now
+> have an Explore spelling: `cycle_open`/`cycle_close` (`explore.cycle`),
+> `cycle_read_lines`, `cycle_census_grid`, `cycle_scroll`, `cycle_move_pointer`,
+> `key`, `project_read` and `project_write`. `cycle_read`, `cycle_match` and
+> `template_load` are on the Runtime surface only, reached through a
+> model-declared Reader or Locator rather than a rectangle the task drew; `try`
+> is a Luau helper and needs no host verb.
+>
+> `wait` and `deadline` cannot be rewritten as themselves. There is exactly one
+> waiting verb, `explore.settle`, which pauses for the duration it was told and
+> refuses while a cycle is open; the deadline-bounded poll step the consumer
+> pairs them into needs a host clock the sandbox withholds. A poll loop is
+> written as settles with an observation between them and bounded by its own
+> iteration count. `TaskContext::waitUntil`, which used to back a `wait` nothing
+> could reach, was deleted rather than published, because a second verb meaning
+> "let time pass" is the two spellings `CLAUDE.md` forbids.
+>
+> `census_grid` is on the Explore surface ONLY, and not also on the plugin
+> surface as the predecessor published it: at one-by-one cells a count is one
+> pixel's membership of one colour, so the "counts, never a pixel" argument that
+> made it unprivileged does not survive the cell size being the caller's. See
+> `TaskContext::cycleCensusGrid`.
+
 **Framework side of the same drift.** `ctx:` survives in framework *comments* at
 `modules/task/source/task/task-context.hpp`:39,43,48 and
 `modules/script/source/script/ffi/sandbox.cpp`:218, describing deleted verbs.

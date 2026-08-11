@@ -37,21 +37,15 @@
 
 namespace uf::task
 {
-    // The longest a single ctx:settle may declare. Beyond it is a project error
-    // the author can catch -- a Tier B InvalidResource, not an invariant failure.
+    // The longest a single explore.settle may declare. Beyond it is a project
+    // error the author can catch -- a Tier B InvalidResource, not an invariant
+    // failure.
     // CALIBRATION: thirty seconds is a placeholder, far above any settle a UI
-    // transition needs and far below the max-runtime budget. Longer waits belong
-    // to ctx:wait, which re-observes where a settle only sleeps.
+    // transition needs and far below the max-runtime budget. A longer wait is
+    // written as settles with an observation between them, which is the only
+    // waiting shape this host has; see TaskContext::settle.
     inline constexpr auto k_maxSettleDuration = MonotonicInstant::Duration{
         std::chrono::seconds{30}
-    };
-
-    // The floor a ctx:wait poll interval is clamped up to; without it a zero
-    // interval spins the observation cycle as fast as captures complete.
-    // CALIBRATION: ten milliseconds is a placeholder -- invisible next to a
-    // capture, high enough that a degenerate loop cannot become a busy wait.
-    inline constexpr auto k_minWaitPollInterval = MonotonicInstant::Duration{
-        std::chrono::milliseconds{10}
     };
 
     // The longest a single long press may hold the button down. A separate and
@@ -378,6 +372,12 @@ namespace uf::task
         // this verb and that one over the same rectangle are two questions with
         // two answer shapes, so a block read never serves a single-line read or
         // the reverse.
+        //
+        // A session whose composition root bound NO OCR adapter fails
+        // UnsupportedCapability here rather than reporting no lines, and every
+        // layer above must keep that a refusal: an empty list would say the
+        // region holds no text, which is a claim about the screen that a host
+        // unable to read text has not earned.
         [[nodiscard]]
         auto cycleReadLines(
             CycleTicket ticket,
@@ -390,11 +390,13 @@ namespace uf::task
         // frame identity -- which is the whole record of the crop, because the
         // bytes themselves go to the agent rather than into the stream.
         //
-        // Only the exploration environment may reach it: it is the one verb that
-        // hands raw pixels to the script layer, and a business script holding
-        // pixels could decide something no trace evidence could falsify. It is not
-        // installed on a run VM's private surface at all, which makes the rule
-        // structural (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
+        // Only the exploration environment may reach it: it hands raw pixels to
+        // the script layer, and a business script holding pixels could decide
+        // something no trace evidence could falsify. It is not installed on a run
+        // VM's private surface at all, which makes the rule structural
+        // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
+        // cycleCensusGrid is on the same shelf for a sharper reason than its
+        // counts-only answer suggests; see its declaration.
         //
         // It does NOT spend the cycle -- reading pixels changes nothing on the
         // target. The crop budget bounds it instead, and exhaustion fails
@@ -418,12 +420,21 @@ namespace uf::task
         // `cellWidth` by `cellHeight` and reports, per cell, how many pixels
         // `key` takes at full weight and how far the cell moved between frames.
         //
-        // It is the measurement verb a RUN task may reach where cycleCrop is
-        // not, and the reason is what it hands back: counts over a grid the
-        // caller drew, never a pixel, so nothing in the answer can be turned
-        // back into the screen. Before it, a script measuring a region cropped a
-        // PNG and probed it once per rectangle, paying a whole-blob decode per
-        // probe; one call answers for every cell of the rect at once.
+        // EXPLORATION ONLY, on cycleCrop's shelf. "Counts over a grid the
+        // caller drew, never a pixel" does not survive the cell size being the
+        // caller's too: at one-by-one cells a count is one pixel's membership
+        // of one colour, k_maximumColourGridCells still allows 32768 of them
+        // per call, and no budget bounds how many calls a cycle may make -- so a
+        // caller that varies the key recovers the region's pixels. It is a
+        // pixel read with an extra step, and it belongs where cycleCrop is.
+        //
+        // Nothing is lost by that. The Runtime surface takes no caller-drawn
+        // geometry at all: a plugin measures the Locators and Readers its model
+        // declared and reads evidence records, so this verb has no shape to take
+        // there. What it buys the exploration front end is the whole reason it
+        // exists -- a chunk measuring a region cropped a PNG and probed it once
+        // per rectangle, paying a whole-blob decode per probe, where one call
+        // answers for every cell of the rect at once.
         //
         // It does NOT spend the cycle and charges no per-cycle budget. The crop
         // pool exists to bound an encode and the read pool to bound inference,
@@ -433,11 +444,14 @@ namespace uf::task
         // tolerance, a cell size or a cell count the host cannot honour is a
         // Tier B InvalidResource rather than an invariant failure.
         //
-        // The per-cell spread is what probeColour reports per rect. One
-        // observation retains ONE frame, so today every cell reads zero; the
-        // field comes through from the vision layer unchanged rather than being
-        // dropped here, so a cycle that later retains more than one frame needs
-        // no second verb.
+        // The per-cell spread is what probeColour reports per rect, and it stops
+        // at the script boundary. One observation retains ONE frame and this
+        // verb hands censusColourGrid that frame twice, so the spread across
+        // them is zero at every cell; the binding layer therefore publishes
+        // only the counts, because a field that always answers the same thing
+        // reads as a measurement nobody took. It is NOT dropped here, so a cycle
+        // that later retains more than one frame needs no second verb -- only a
+        // binding that starts passing it on.
         [[nodiscard]]
         auto cycleCensusGrid(
             CycleTicket ticket,
@@ -562,27 +576,23 @@ namespace uf::task
             std::span<std::byte const> bytes
         ) -> Status;
 
-        // Sleeps until `deadline`, or for `interval`, whichever comes first, and
-        // reports whether budget remains afterwards -- false means the deadline
-        // has passed and the caller's wait loop is over. It backs the `wait`
-        // primitive and decides nothing else: the framework owns what is polled
-        // between two calls.
-        //
-        // The sleep is the shared core::pollSleep, so it wakes at a slice
-        // boundary once the run's cancel source is requested. The caller then
-        // asks cancellationRequested() and takes the terminal path; this reports
-        // budget, never cancellation.
-        [[nodiscard]]
-        auto waitUntil(
-            MonotonicInstant deadline,
-            MonotonicInstant::Duration interval
-        ) const -> bool;
-
         // Sleeps for `duration`, returning early once the run's cancel source is
-        // requested. It backs the `settle` primitive. The caller enforces the
-        // k_maxSettleDuration ceiling, refuses a settle taken while a cycle is
-        // open, and re-checks cancellationRequested() afterwards; the binding
-        // holds those because its refusal can name what the chunk wrote.
+        // requested. The sleep is the shared core::pollSleep, so it wakes at a
+        // slice boundary once that source is requested. It backs the `settle`
+        // primitive. The caller enforces the k_maxSettleDuration ceiling,
+        // refuses a settle taken while a cycle is open, and re-checks
+        // cancellationRequested() afterwards; the binding holds those because
+        // its refusal can name what the chunk wrote.
+        //
+        // The ONE way this host lets time pass, and deliberately not two. A
+        // deadline-bounded poll step -- sleep an interval, report whether budget
+        // remains, observe, repeat -- needs a host clock to mint the deadline
+        // from, which the sandbox withholds on purpose
+        // (script/ffi/sandbox.cpp), and carrying the "not while a cycle is
+        // open" refusal above would leave it this verb with a deadline
+        // attached. A chunk that polls loops over this one and counts its
+        // iterations; script::EngineConfig::maxRuntime bounds the chunk either
+        // way.
         auto settle(MonotonicInstant::Duration duration) const -> void;
 
         // Whether the run's single cancel source has requested a stop; only the

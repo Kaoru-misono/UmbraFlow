@@ -8,6 +8,11 @@
 -- wants to measure what it did has to open another cycle to do it.  The host
 -- refuses a second act on a spent ticket, so this layer keeps no copy of that
 -- rule -- one place answers "is this cycle still alive", and it is the ledger.
+--
+-- The measuring verbs are on the view for a different reason: each one names the
+-- frame that cycle retains, and the ticket that names it never leaves the
+-- bracket.  None of them spends the cycle, so a chunk crops, reads and censuses
+-- one frame and then acts on it.
 
 local native = ...
 local explore = {}
@@ -60,6 +65,80 @@ function explore.cycle(callback: any): any
             y,
             width,
             height,
+            keyScalars(key, tolerance)
+        )
+    end
+
+    -- Every line of text the frame holds inside the rectangle, in the host's
+    -- order, each as { text, x, y, width, height, confidence }.  The rectangle
+    -- on a line is the one the FRAME held it in, not the one asked about, which
+    -- is the whole reason to reach for this instead of drawing a rectangle per
+    -- line: it is for a region nobody can draw inside because what is in it
+    -- moves.
+    --
+    -- No lines is an empty table and an ordinary answer about the screen.  A
+    -- host with no OCR engine bound is NOT that: it refuses, naming the missing
+    -- adapter, because "no text here" and "nothing here can read text" are
+    -- different answers and only the first is about the screen.
+    function view:read_lines(
+        x: number,
+        y: number,
+        width: number,
+        height: number
+    ): any
+        live()
+        return requireNative("explore_read_lines")(
+            state.ticket,
+            x,
+            y,
+            width,
+            height
+        )
+    end
+
+    -- The colour census of one rectangle, downsampled.  The rectangle is tiled
+    -- into cells of `cellWidth` by `cellHeight` and the answer is a frozen table
+    -- carrying `columns`, `rows`, `cell_width`, `cell_height` and the flat
+    -- row-major `selected_pixels`, so the cell at (column, row) is at index
+    -- row * columns + column + 1.  Where the rectangle does not divide evenly the
+    -- right and bottom edges keep a PARTIAL cell and count only its real pixels.
+    --
+    -- One call answers for every cell at once, which is what it is for: the same
+    -- question asked a rectangle at a time is a crop and a probe per rectangle,
+    -- and pays a whole-PNG decode for each.
+    --
+    -- The key is REQUIRED where `crop` takes it or leaves it: a cell reports how
+    -- much of itself is one colour, so a grid with no key is no answer rather
+    -- than a weaker one.  Read with removes = true a cell counts the pixels the
+    -- colour does NOT take, and the two directions partition the cell.
+    function view:census_grid(
+        x: number,
+        y: number,
+        width: number,
+        height: number,
+        cellWidth: number,
+        cellHeight: number,
+        key: any,
+        tolerance: number?
+    ): any
+        live()
+        if key == nil then
+            error(
+                "view:census_grid needs key = { red = r, green = g, blue = b, "
+                    .. "removes = false }; a cell reports how much of itself is "
+                    .. "one colour, and there is no such thing as a grid of no "
+                    .. "colour",
+                2
+            )
+        end
+        return requireNative("explore_census_grid")(
+            state.ticket,
+            x,
+            y,
+            width,
+            height,
+            cellWidth,
+            cellHeight,
             keyScalars(key, tolerance)
         )
     end
@@ -174,6 +253,11 @@ end
 -- taking.  Acting, settling and then measuring is therefore written as three
 -- statements -- act inside one cycle, settle outside every cycle, measure
 -- inside the next -- and the host refuses every other order.
+--
+-- The only verb here that lets time pass, and deliberately not one of two.
+-- Waiting for something to appear is this verb in a loop with an observation
+-- between the pauses; the loop's bound is the chunk's own iteration count,
+-- because the sandbox hands a chunk no clock to write a deadline against.
 function explore.settle(millis: number)
     if type(millis) ~= "number" then
         error("explore.settle needs a wait in milliseconds", 2)

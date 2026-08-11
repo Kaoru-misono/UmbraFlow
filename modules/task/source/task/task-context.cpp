@@ -947,22 +947,6 @@ namespace uf::task
         );
     }
 
-    auto TaskContext::waitUntil(
-        MonotonicInstant deadline,
-        MonotonicInstant::Duration interval
-    ) const -> bool
-    {
-        // Report the expiry without sleeping when the deadline has already
-        // passed: a wait whose budget is spent must not first spend an interval.
-        if (MonotonicInstant::now() >= deadline)
-        {
-            return false;
-        }
-
-        pollSleep(interval, deadline, m_config.cancellation);
-        return MonotonicInstant::now() < deadline;
-    }
-
     auto TaskContext::settle(MonotonicInstant::Duration duration) const -> void
     {
         // The settle's own end is its deadline, so the shared poll sleep bounds

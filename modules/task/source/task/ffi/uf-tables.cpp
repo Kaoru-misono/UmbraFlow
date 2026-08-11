@@ -5,6 +5,7 @@
 #include <task/task-context.hpp>
 #include <task/task-host.hpp>
 
+#include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
@@ -514,6 +515,115 @@ namespace uf::task
             return 3;
         }
 
+        // Every line of text the cycle's frame holds inside the rectangle, each
+        // carrying the rectangle the FRAME held it in rather than the one asked
+        // about. It does not spend the cycle, so the same cycle goes on to click
+        // a line it found.
+        //
+        // A HOST WITH NO OCR ADAPTER REFUSES HERE. The engine session answers
+        // UnsupportedCapability naming the missing adapter and it leaves as a
+        // Tier B raise; an empty list would be indistinguishable from a region
+        // that really holds no text, and reading is the one capability with no
+        // score to contradict a fail-open answer.
+        auto cycleReadLines(lua_State* state) -> int
+        {
+            auto* const context = boundContext(state);
+            guardLive(state, context);
+            auto const lines = context->cycleReadLines(
+                *cycleAt(state, 1),
+                rectangle(state, 2, "read rectangle")
+            );
+            if (!lines)
+            {
+                raiseFromError(state, context, lines.error());
+            }
+
+            auto const count = checkedCast<int>(lines->size());
+            UF_CHECK(count.has_value());
+            lua_createtable(state, *count, 0);
+            auto index = 1;
+            for (auto const& line : *lines)
+            {
+                lua_createtable(state, 0, 6);
+                lua_pushlstring(state, line.text.data(), line.text.size());
+                lua_setfield(state, -2, "text");
+                addNumber(state, "x", line.rect.x());
+                addNumber(state, "y", line.rect.y());
+                addNumber(state, "width", line.rect.width());
+                addNumber(state, "height", line.rect.height());
+                lua_pushnumber(
+                    state,
+                    static_cast<double>(line.confidenceBp) / 10'000.0
+                );
+                lua_setfield(state, -2, "confidence");
+                lua_rawseti(state, -2, index);
+                ++index;
+            }
+            freezeData(state, context);
+            return 1;
+        }
+
+        // The colour census of one rectangle, downsampled into cells. It does
+        // not spend the cycle either, and its rectangle, cell size and tolerance
+        // are all checked by TaskContext against the vision layer's existing
+        // ceilings before a pixel is walked.
+        //
+        // The key is REQUIRED where a crop's is optional: a cell reports how
+        // much of itself is one colour, so a grid with no key is no answer
+        // rather than a weaker one. It is refused here, before the rectangle is
+        // built, so the message names the omission rather than the shape.
+        //
+        // Only `selected_pixels` crosses. The vision report's per-cell spread is
+        // zero at every cell while an observation retains one frame, and a
+        // published field that always answers the same thing reads as a
+        // measurement somebody took; see TaskContext::cycleCensusGrid.
+        auto cycleCensusGrid(lua_State* state) -> int
+        {
+            auto* const context = boundContext(state);
+            guardLive(state, context);
+            auto const key = colourKey(state, 8);
+            if (!key.has_value())
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "a census grid needs a colour key; a cell reports how much "
+                    "of itself is one colour, and there is no such thing as a "
+                    "grid of no colour"
+                );
+            }
+            auto const report = context->cycleCensusGrid(
+                *cycleAt(state, 1),
+                rectangle(state, 2, "census rectangle"),
+                unsignedInteger(state, 6, "census cell width"),
+                unsignedInteger(state, 7, "census cell height"),
+                *key
+            );
+            if (!report)
+            {
+                raiseFromError(state, context, report.error());
+            }
+
+            lua_createtable(state, 0, 5);
+            addNumber(state, "columns", report->columns);
+            addNumber(state, "rows", report->rows);
+            addNumber(state, "cell_width", report->cellWidth);
+            addNumber(state, "cell_height", report->cellHeight);
+            auto const cells = checkedCast<int>(report->selectedPixels.size());
+            UF_CHECK(cells.has_value());
+            lua_createtable(state, *cells, 0);
+            auto index = 1;
+            for (auto const selected : report->selectedPixels)
+            {
+                lua_pushnumber(state, static_cast<double>(selected));
+                lua_rawseti(state, -2, index);
+                ++index;
+            }
+            lua_setfield(state, -2, "selected_pixels");
+            freezeData(state, context);
+            return 1;
+        }
+
         auto probe(lua_State* state) -> int
         {
             auto* const context = boundContext(state);
@@ -697,10 +807,12 @@ namespace uf::task
             return Duration{*ticks};
         }
 
-        // The seven acting primitives. Each takes the cycle's ticket first and
+        // The six acting primitives. Each takes the cycle's ticket first and
         // spends it, so a chunk that wants to measure what it did opens another
         // cycle -- which is also what stops a crop taken after an act from
-        // describing the frame that authorised it.
+        // describing the frame that authorised it. The measuring primitives
+        // above take the ticket and spend nothing; `settle` below takes no
+        // ticket at all and refuses while one is open.
         //
         // They are installed by buildAnnotationSurface and by nothing else. See
         // TaskContext's declarations for why an exploration chunk needs no
@@ -902,11 +1014,19 @@ namespace uf::task
         auto buildAnnotationSurface(lua_State* state, TaskContext* context) -> Status
         {
             UF_TRY(beginCycleMetatable(state));
-            lua_createtable(state, 0, 15);
+            lua_createtable(state, 0, 17);
             int const surface = lua_gettop(state);
             install(state, surface, "explore_cycle_open", &cycleOpen, context);
             install(state, surface, "explore_cycle_close", &cycleClose, context);
             install(state, surface, "explore_crop", &cycleCrop, context);
+            install(state, surface, "explore_read_lines", &cycleReadLines, context);
+            install(
+                state,
+                surface,
+                "explore_census_grid",
+                &cycleCensusGrid,
+                context
+            );
             install(state, surface, "explore_probe", &probe, context);
             install(state, surface, "explore_project_read", &projectRead, context);
             install(state, surface, "explore_project_write", &projectWrite, context);
