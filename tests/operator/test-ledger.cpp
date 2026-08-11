@@ -610,7 +610,13 @@ namespace uf::operator_runtime
         );
         REQUIRE(accepted.has_value());
         CHECK(accepted->projectRegistrationHash() == project.registration.hash());
-        CHECK(accepted->payloadSchemaHash() == hashOf("progress-schema"));
+        // The sha256 of the schema that judged the payload, which is what the
+        // journal event schema manifest names for this event type. It used to
+        // be hashOf("progress-schema") -- a hash of the word, from when no
+        // schema stood behind it.
+        CHECK(
+            accepted->payloadSchemaHash() == hashOf(test_support::k_progressPayloadSchema)
+        );
 
         CHECK_FALSE(project.journalSchemaOwner.validate(
             "fixture.progress",

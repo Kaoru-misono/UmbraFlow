@@ -1,7 +1,11 @@
 #pragma once
 
+#include "project-schemas.hpp"
+
 #include <conformance/observation-fixture.hpp>
 #include <conformance/operator-protocol.hpp>
+
+#include <deployment/project-deployment.hpp>
 
 #include <operator/agent-profile.hpp>
 #include <operator/effective-plan.hpp>
@@ -53,6 +57,11 @@ namespace uf::operator_runtime::test_support
         ProjectJournalSchemaOwner     journalSchemaOwner;
         ProjectToolCatalogSchemaOwner toolCatalogSchemaOwner;
         ProjectReconcileSchemaOwner   reconcileSchemaOwner;
+
+        // The exact Tool Catalog bytes this registration pinned. A case that
+        // builds a second catalog owner over the same registration needs them,
+        // because such an owner is bound to their hash.
+        std::string toolCatalogBytes;
 
         // The exact bytes the document validator last saw as a Reduce input,
         // and as a Derive input. The fixture records them because the property
@@ -106,43 +115,14 @@ namespace uf::operator_runtime::test_support
         },
     };
 
-    // Stands in for a project's derive-input JSON Schema. Structural for
-    // looksLikeReduceEnvelope's reason: the Operator builds this envelope from
-    // whatever the world currently holds, and a real project's schema would be
-    // structural too.
+    // The payload schema identity every fixture effect names: the sha256 of
+    // k_effectPayloadSchema's own bytes, so the deployment can find the schema
+    // the effect claims and judge the payload against it.
     [[nodiscard]]
-    inline auto looksLikeDeriveEnvelope(std::string_view exactJcs) -> bool
+    inline auto effectPayloadSchemaHex() -> std::string
     {
-        constexpr auto members = std::array{
-            std::string_view{"{\"pending_operation_transition\":"},
-            std::string_view{",\"pinned_project_artifact_identities\":["},
-            std::string_view{",\"prior_project_observation\":"},
-            std::string_view{",\"project_state\":"},
-            std::string_view{",\"ui_snapshot\":"},
-        };
-        if (!exactJcs.starts_with(members.front()) || !exactJcs.ends_with('}'))
-        {
-            return false;
-        }
-        auto at = std::size_t{0};
-        for (auto const member : members)
-        {
-            auto const found = exactJcs.find(member, at);
-            if (found == std::string_view::npos)
-            {
-                return false;
-            }
-            at = found + member.size();
-        }
-        return true;
+        return schemaHashHex(k_effectPayloadSchema);
     }
-
-    // The one payload schema identity every fixture effect names. It is a
-    // literal rather than a hashOf(...) because it travels inside a plugin
-    // document, and a plugin document is bytes rather than a value.
-    inline constexpr auto k_effectPayloadSchemaHex = std::string_view{
-        "00000000000000000000000000000000000000000000000000000000000000a1"
-    };
 
     // The OP:`PlanProposal` the fixture plugin returns for each mutating tool,
     // and the OP:`UIActionIntent` it returns for every next_step. They are
@@ -176,7 +156,7 @@ namespace uf::operator_runtime::test_support
         auto effect = std::string{"{\"namespaced_type\":\"fixture.write\","};
         effect += "\"opaque_project_payload\":{\"value\":1},";
         effect += "\"payload_schema_hash\":\"";
-        effect += k_effectPayloadSchemaHex;
+        effect += effectPayloadSchemaHex();
         effect += "\",\"risk\":\"";
         effect += risk;
         effect += "\",\"scope_key\":\"";
@@ -210,126 +190,6 @@ namespace uf::operator_runtime::test_support
         "\"timeout_policy\":{\"maximum_elapsed_ms\":5000,\"on_timeout\":\"reobserve\"}}"
     };
 
-    // Stands in for a project's reduce-input JSON Schema. It is structural
-    // rather than an exact-bytes allowlist because the Operator now builds this
-    // envelope from however many events a commit appends, and a real project's
-    // schema would be structural too. The exact bytes are pinned separately, by
-    // the test that asserts what the reducer was handed.
-    [[nodiscard]]
-    inline auto looksLikeReduceEnvelope(std::string_view exactJcs) -> bool
-    {
-        constexpr auto prefix = std::string_view{"{\"journal_events\":["};
-        constexpr auto middle = std::string_view{"],\"prior_project_state\":"};
-        if (!exactJcs.starts_with(prefix) || !exactJcs.ends_with('}'))
-        {
-            return false;
-        }
-        auto const middleAt = exactJcs.find(middle);
-        if (middleAt == std::string_view::npos)
-        {
-            return false;
-        }
-
-        auto const priorState = exactJcs.substr(
-            middleAt + middle.size(),
-            exactJcs.size() - middleAt - middle.size() - 1U
-        );
-        if (
-            priorState != "null"
-            && priorState != "{\"revision\":0}"
-            && priorState != "{\"revision\":1}"
-        )
-        {
-            return false;
-        }
-
-        constexpr auto eventPrefix =
-            std::string_view{"{\"namespaced_event_type\":\""};
-        auto const eventSuffix = std::string{",\"provenance\":"}
-            + std::string{k_fixtureProvenance} + "}";
-
-        auto events = exactJcs.substr(prefix.size(), middleAt - prefix.size());
-        while (!events.empty())
-        {
-            if (!events.starts_with(eventPrefix))
-            {
-                return false;
-            }
-            auto const suffixAt = events.find(eventSuffix);
-            if (
-                suffixAt == std::string_view::npos
-                || events.substr(0U, suffixAt)
-                        .find("\",\"opaque_project_payload\":")
-                    == std::string_view::npos
-            )
-            {
-                return false;
-            }
-            events.remove_prefix(suffixAt + eventSuffix.size());
-            if (events.starts_with(','))
-            {
-                events.remove_prefix(1U);
-                continue;
-            }
-            if (!events.empty())
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    // Stands in for a project's plan-input and next_step-input JSON Schemas.
-    // Structural for looksLikeDeriveEnvelope's reason: the Operator assembles
-    // both envelopes from whatever the world currently holds.
-    [[nodiscard]]
-    inline auto looksLikeOrderedMembers(
-        std::string_view exactJcs,
-        std::span<std::string_view const> members
-    ) -> bool
-    {
-        if (!exactJcs.starts_with(members.front()) || !exactJcs.ends_with('}'))
-        {
-            return false;
-        }
-        auto at = std::size_t{0};
-        for (auto const member : members)
-        {
-            auto const found = exactJcs.find(member, at);
-            if (found == std::string_view::npos)
-            {
-                return false;
-            }
-            at = found + member.size();
-        }
-        return true;
-    }
-
-    [[nodiscard]]
-    inline auto looksLikePlanEnvelope(std::string_view exactJcs) -> bool
-    {
-        constexpr auto members = std::array{
-            std::string_view{"{\"canonical_args\":"},
-            std::string_view{",\"project_observation\":"},
-            std::string_view{",\"project_state\":"},
-            std::string_view{",\"tool_name\":"},
-            std::string_view{",\"tool_version\":"},
-        };
-        return looksLikeOrderedMembers(exactJcs, members);
-    }
-
-    [[nodiscard]]
-    inline auto looksLikeStepEnvelope(std::string_view exactJcs) -> bool
-    {
-        constexpr auto members = std::array{
-            std::string_view{"{\"frozen_plan_hash\":"},
-            std::string_view{",\"project_observation\":"},
-            std::string_view{",\"project_state\":"},
-            std::string_view{",\"step_index\":"},
-        };
-        return looksLikeOrderedMembers(exactJcs, members);
-    }
-
     [[nodiscard]]
     inline auto hashOf(std::string_view value) -> ContentHash
     {
@@ -344,14 +204,24 @@ namespace uf::operator_runtime::test_support
         std::string_view pluginBytes
     ) -> ProjectFixture
     {
-        auto const schemaHash = hashOf("registration-schema");
-        auto const pluginHash = hashOf(pluginBytes);
-        auto const toolCatalogHash = hashOf("catalogue");
-        auto const stateSchemaHash = hashOf("state");
-        auto const observationSchemaHash = hashOf("observation");
-        auto const preconditionSchemaHash = hashOf("precondition");
-        auto const reconcileSchemaHash = hashOf("reconcile");
-        auto const journalSchemaHash = hashOf("journal");
+        auto const bundle = DeploymentBundle{pluginId};
+        auto const deployed = deployment::ProjectDeployment::create(bundle.sources());
+        {
+            auto const why = deployed.has_value()
+                ? std::string{}
+                : std::string{deployed.error().message()};
+            INFO(why);
+            REQUIRE(deployed.has_value());
+        }
+
+        auto const schemaHash             = hashOf("registration-schema");
+        auto const pluginHash             = hashOf(pluginBytes);
+        auto const toolCatalogHash        = hashOf(bundle.toolCatalog());
+        auto const stateSchemaHash        = hashOf(k_projectStateSchema);
+        auto const observationSchemaHash  = hashOf(k_projectObservationSchema);
+        auto const preconditionSchemaHash = hashOf(k_toolPreconditionSchema);
+        auto const reconcileSchemaHash    = hashOf(bundle.reconcileManifest());
+        auto const journalSchemaHash      = hashOf(bundle.journalEventManifest());
         auto const exactJcs = std::format(
             "{{\"baseline_event_type\":\"fixture.baseline\","
             "\"journal_event_schema_manifest_hash\":\"{}\","
@@ -413,338 +283,54 @@ namespace uf::operator_runtime::test_support
         auto schemaOwner = ProjectSchemaOwner::create(
             *registration,
             ProjectDocumentSchemaBytes{
-                .projectState       = "state",
-                .projectObservation = "observation",
-                .toolPrecondition   = "precondition",
+                .projectState       = k_projectStateSchema,
+                .projectObservation = k_projectObservationSchema,
+                .toolPrecondition   = k_toolPreconditionSchema,
             },
-            [](std::string_view candidateJcs) -> Status
-            {
-                constexpr auto accepted = std::array{
-                    std::string_view{"{}"},
-                    std::string_view{"{\"disposition\":\"ambiguous\"}"},
-                    std::string_view{"{\"disposition\":\"confirmed\"}"},
-                    std::string_view{"{\"disposition\":\"continue\"}"},
-                    std::string_view{"{\"disposition\":\"diverged\"}"},
-                    std::string_view{"{\"disposition\":\"rejected\"}"},
-                    std::string_view{"{\"journal_events\":[],\"prior_project_state\":null}"},
-                    std::string_view{"{\"journal_events\":[],\"prior_project_state\":{\"revision\":0}}"},
-                    std::string_view{"{\"kind\":\"baseline\"}"},
-                    std::string_view{"{\"revision\":0}"},
-                    std::string_view{"{\"revision\":1}"},
-                    std::string_view{"{\"value\":1}"},
-                    std::string_view{"{\"value\":2}"},
-                    std::string_view{"{\"value\":3}"},
-                    std::string_view{"{\"value\":99}"},
-                };
-                if (
-                    std::ranges::find(accepted, candidateJcs) == accepted.end()
-                    && candidateJcs != k_fixtureProvenance
-                    && !std::ranges::contains(
-                        k_fixtureProvenanceViolations,
-                        candidateJcs
-                    )
-                    && !looksLikeReduceEnvelope(candidateJcs)
-                    && !looksLikeDeriveEnvelope(candidateJcs)
-                    && !looksLikePlanEnvelope(candidateJcs)
-                    && !looksLikeStepEnvelope(candidateJcs)
-                    && !conformance::readPlanProposal(candidateJcs).has_value()
-                    && !conformance::readStepIntent(candidateJcs).has_value()
-                )
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "fixture canonical validator rejected bytes"
-                    );
-                }
-                return ok();
-            },
-            [lastReduceInput, lastDeriveInput](ProjectPluginFunction function,
+            deployment::canonicalJsonValidator(),
+            // The deployment's own document validator, with the two envelopes
+            // the suite asserts against recorded on the way in. Recording is the
+            // fixture's; deciding is the deployment's.
+            [validate = deployed->documentValidator(),
+             lastReduceInput,
+             lastDeriveInput](ProjectPluginFunction function,
                ProjectDocumentDirection direction,
                std::string_view candidateJcs) -> Status
             {
-                auto valid = false;
                 if (direction == ProjectDocumentDirection::Input)
                 {
-                    switch (function)
+                    if (function == ProjectPluginFunction::Reduce)
                     {
-                    case ProjectPluginFunction::Reduce:
                         *lastReduceInput = std::string{candidateJcs};
-                        valid = looksLikeReduceEnvelope(candidateJcs);
-                        break;
-                    case ProjectPluginFunction::Reconcile:
-                        valid = candidateJcs.starts_with("{\"disposition\":\"")
-                            && candidateJcs.ends_with("\"}");
-                        break;
-                    case ProjectPluginFunction::Derive:
-                        *lastDeriveInput = std::string{candidateJcs};
-                        valid = looksLikeDeriveEnvelope(candidateJcs);
-                        break;
-                    case ProjectPluginFunction::Plan:
-                        valid = looksLikePlanEnvelope(candidateJcs);
-                        break;
-                    case ProjectPluginFunction::NextStep:
-                        valid = looksLikeStepEnvelope(candidateJcs);
-                        break;
                     }
-                }
-                else
-                {
-                    switch (function)
+                    if (function == ProjectPluginFunction::Derive)
                     {
-                    case ProjectPluginFunction::Reduce:
-                        valid = candidateJcs == "{\"revision\":0}"
-                            || candidateJcs == "{\"revision\":1}";
-                        break;
-                    case ProjectPluginFunction::Reconcile:
-                        valid = candidateJcs.starts_with("{\"disposition\":\"")
-                            && candidateJcs.ends_with("\"}");
-                        break;
-                    case ProjectPluginFunction::Derive:
-                        valid = candidateJcs == "{}";
-                        break;
-                    case ProjectPluginFunction::Plan:
-                        valid = conformance::readPlanProposal(candidateJcs).has_value();
-                        break;
-                    case ProjectPluginFunction::NextStep:
-                        valid = conformance::readStepIntent(candidateJcs).has_value();
-                        break;
+                        *lastDeriveInput = std::string{candidateJcs};
                     }
                 }
-                if (!valid)
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "fixture function-specific schema rejected document"
-                    );
-                }
-                return ok();
+                return validate(function, direction, candidateJcs);
             }
         );
         REQUIRE(schemaOwner.has_value());
 
         auto journalSchemaOwner = ProjectJournalSchemaOwner::create(
             *registration,
-            "journal",
-            [](std::string_view eventType,
-               std::string_view payload) -> Result<ContentHash>
-            {
-                struct PayloadCase final
-                {
-                    std::string_view eventType{};
-                    std::string_view payload{};
-                    std::string_view schemaIdentity{};
-                };
-                constexpr auto cases = std::array{
-                    PayloadCase{
-                        .eventType      = "fixture.baseline",
-                        .payload        = "{\"kind\":\"baseline\"}",
-                        .schemaIdentity = "baseline-schema",
-                    },
-                    PayloadCase{
-                        .eventType      = "fixture.progress",
-                        .payload        = "{\"value\":1}",
-                        .schemaIdentity = "progress-schema",
-                    },
-                    PayloadCase{
-                        .eventType      = "fixture.stale",
-                        .payload        = "{\"value\":2}",
-                        .schemaIdentity = "stale-schema",
-                    },
-                    PayloadCase{
-                        .eventType      = "fixture.confirmed",
-                        .payload        = "{\"value\":1}",
-                        .schemaIdentity = "confirmed-schema",
-                    },
-                    PayloadCase{
-                        .eventType      = "fixture.confirmed",
-                        .payload        = "{\"value\":2}",
-                        .schemaIdentity = "confirmed-schema",
-                    },
-                    PayloadCase{
-                        .eventType      = "fixture.duplicate",
-                        .payload        = "{\"value\":3}",
-                        .schemaIdentity = "duplicate-schema",
-                    },
-                };
-                auto const found = std::ranges::find_if(
-                    cases,
-                    [eventType, payload](PayloadCase const& candidate)
-                    {
-                        return candidate.eventType == eventType
-                            && candidate.payload == payload;
-                    }
-                );
-                if (found == cases.end())
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "fixture event-specific payload schema rejected document"
-                    );
-                }
-                return hashOf(found->schemaIdentity);
-            }
+            bundle.journalEventManifest(),
+            deployed->journalPayloadValidator()
         );
         REQUIRE(journalSchemaOwner.has_value());
 
         auto toolCatalogSchemaOwner = ProjectToolCatalogSchemaOwner::create(
             *registration,
-            "catalogue",
-            [](std::string_view toolName,
-               std::string_view exactArgsJcs) -> Result<ToolDescriptor>
-            {
-                struct ToolCase final
-                {
-                    std::string_view name{};
-                    std::string_view version{};
-                    ToolMutability   mutability{ToolMutability::Mutating};
-
-                    // Every tool states its own surface, because a catalog that
-                    // left it to the default would be proving the default
-                    // rather than the rule. The one entry that deliberately
-                    // omits it lives in the p03 case, with its own validator.
-                    ToolSurface      surface{ToolSurface::Semantic};
-                };
-                constexpr auto catalog = std::array{
-                    ToolCase{
-                        .name       = "command-1",
-                        .version    = "1",
-                        .mutability = ToolMutability::Mutating,
-                        .surface    = ToolSurface::Semantic,
-                    },
-                    ToolCase{
-                        .name       = "command-2",
-                        .version    = "1",
-                        .mutability = ToolMutability::Mutating,
-                        .surface    = ToolSurface::Semantic,
-                    },
-                    ToolCase{
-                        .name       = "different-command",
-                        .version    = "1",
-                        .mutability = ToolMutability::Mutating,
-                        .surface    = ToolSurface::Semantic,
-                    },
-                    // The machine-surface tool: it names a coordinate, so no
-                    // online Agent may be handed it. Read-only so that the p03
-                    // cases never contend for the mutation-chain slot the p01
-                    // cases are about.
-                    ToolCase{
-                        .name       = "raw-coordinate-click",
-                        .version    = "1",
-                        .mutability = ToolMutability::ReadOnly,
-                        .surface    = ToolSurface::Privileged,
-                    },
-                    // The five tools whose plans differ. The plugin decides
-                    // which proposal each one gets; the catalog only says they
-                    // all mutate.
-                    ToolCase{
-                        .name       = "mismatched-plan",
-                        .version    = "1",
-                        .mutability = ToolMutability::Mutating,
-                    },
-                    ToolCase{
-                        .name       = "oversized-plan",
-                        .version    = "1",
-                        .mutability = ToolMutability::Mutating,
-                    },
-                    ToolCase{
-                        .name       = "two-step-plan",
-                        .version    = "1",
-                        .mutability = ToolMutability::Mutating,
-                    },
-                    ToolCase{
-                        .name       = "approval-plan",
-                        .version    = "1",
-                        .mutability = ToolMutability::Mutating,
-                    },
-                    ToolCase{
-                        .name       = "reordered-effects",
-                        .version    = "1",
-                        .mutability = ToolMutability::Mutating,
-                    },
-                    ToolCase{
-                        .name       = "observe-1",
-                        .version    = "1",
-                        .mutability = ToolMutability::ReadOnly,
-                    },
-                };
-                auto const found = std::ranges::find_if(
-                    catalog,
-                    [toolName](ToolCase const& candidate)
-                    {
-                        return candidate.name == toolName;
-                    }
-                );
-                if (found == catalog.end())
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "fixture Tool Catalog has no such tool"
-                    );
-                }
-                if (exactArgsJcs != "{\"value\":1}")
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "fixture tool argument schema rejected document"
-                    );
-                }
-                return ToolDescriptor{
-                    .toolVersion = std::string{found->version},
-                    .mutability  = found->mutability,
-                    .surface     = found->surface,
-                };
-            }
+            bundle.toolCatalog(),
+            deployed->toolCatalogValidator()
         );
         REQUIRE(toolCatalogSchemaOwner.has_value());
 
         auto reconcileSchemaOwner = ProjectReconcileSchemaOwner::create(
             *registration,
-            "reconcile",
-            [](std::string_view candidateJcs) -> Result<ReconcileDisposition>
-            {
-                struct DispositionCase final
-                {
-                    std::string_view     document{};
-                    ReconcileDisposition disposition{ReconcileDisposition::Ambiguous};
-                };
-                constexpr auto cases = std::array{
-                    DispositionCase{
-                        .document    = "{\"disposition\":\"continue\"}",
-                        .disposition = ReconcileDisposition::Continue,
-                    },
-                    DispositionCase{
-                        .document    = "{\"disposition\":\"confirmed\"}",
-                        .disposition = ReconcileDisposition::Confirmed,
-                    },
-                    DispositionCase{
-                        .document    = "{\"disposition\":\"rejected\"}",
-                        .disposition = ReconcileDisposition::Rejected,
-                    },
-                    DispositionCase{
-                        .document    = "{\"disposition\":\"ambiguous\"}",
-                        .disposition = ReconcileDisposition::Ambiguous,
-                    },
-                    DispositionCase{
-                        .document    = "{\"disposition\":\"diverged\"}",
-                        .disposition = ReconcileDisposition::Diverged,
-                    },
-                };
-                auto const found = std::ranges::find_if(
-                    cases,
-                    [candidateJcs](DispositionCase const& candidate)
-                    {
-                        return candidate.document == candidateJcs;
-                    }
-                );
-                if (found == cases.end())
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "fixture reconcile output carries no known disposition"
-                    );
-                }
-                return found->disposition;
-            }
+            bundle.reconcileManifest(),
+            deployed->reconcileDispositionReader()
         );
         REQUIRE(reconcileSchemaOwner.has_value());
 
@@ -754,6 +340,7 @@ namespace uf::operator_runtime::test_support
             .journalSchemaOwner     = *journalSchemaOwner,
             .toolCatalogSchemaOwner = *toolCatalogSchemaOwner,
             .reconcileSchemaOwner   = *reconcileSchemaOwner,
+            .toolCatalogBytes       = bundle.toolCatalog(),
             .lastReduceInput        = std::move(lastReduceInput),
             .lastDeriveInput        = std::move(lastDeriveInput),
         };

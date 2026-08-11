@@ -395,6 +395,20 @@ cpp_add_test(
         ${PROJECT_NAME}_json
 )
 
+# The deployment's two validators, against both exemplars' real schema bytes.
+# The exemplars' schema documents live beside their providers, so the include
+# root is conformance/exemplars and each is named by its own directory.
+cpp_add_test(
+    NAME test-deployment
+    SOURCES
+        deployment/test-project-deployment.cpp
+    LIBS
+        ${PROJECT_NAME}_deployment
+)
+target_include_directories(test-deployment PRIVATE
+    "${PROJECT_SOURCE_DIR}/conformance/exemplars"
+)
+
 cpp_add_test(
     NAME test-domain
     SOURCES
@@ -473,6 +487,9 @@ if(TARGET ${PROJECT_NAME}_operator)
         LIBS
             ${PROJECT_NAME}_operator
             ${PROJECT_NAME}_image
+            # project-fixture.hpp builds its five authorities out of
+            # modules/deployment, which is where the validators now live.
+            ${PROJECT_NAME}_deployment
     )
     target_include_directories(test-operator PRIVATE
         "${UF_OPERATOR_FIXTURE_DIR}"
@@ -499,6 +516,7 @@ if(TARGET ${PROJECT_NAME}_operator)
             # handle -- so the gate that binds a stored row to the schema that
             # declares it links the amalgamation itself.
             ${PROJECT_NAME}_operator_sqlite3
+            ${PROJECT_NAME}_deployment
         CASES
             contract-product-p01
             contract-product-p02

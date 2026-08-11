@@ -10,7 +10,7 @@ uf_add_conformance_suite(
     TARGET  conformance-umbraflow
     PROJECT umbraflow
     SOURCES provider.cpp
-    LIBS    uf::image
+    LIBS    uf::image uf::deployment
     CASES
         contract-control-c01
         contract-control-c06

@@ -3,5 +3,5 @@ uf_add_conformance_suite(
     TARGET  conformance-arcana
     PROJECT arcana
     SOURCES provider.cpp
-    LIBS    uf::image
+    LIBS    uf::image uf::deployment
 )

@@ -27,11 +27,15 @@ namespace uf::operator_runtime::conformance
         auto vocabulary() -> ProjectVocabulary
         {
             return ProjectVocabulary{
-                .mutatingTool         = "command-1",
-                .otherMutatingTool    = "command-2",
-                .readOnlyTool         = "observe-1",
-                .toolArguments        = "{\"value\":1}",
-                .refusedToolArguments = "{\"value\":2}",
+                .mutatingTool      = "command-1",
+                .otherMutatingTool = "command-2",
+                .readOnlyTool      = "observe-1",
+                .toolArguments     = "{\"value\":1}",
+
+                // Below the minimum FixtureArguments states. It used to be
+                // {"value":2}, which the byte-comparing validator refused and a
+                // schema has no reason to: 2 is a value like any other.
+                .refusedToolArguments = "{\"value\":0}",
                 .absentTool           = "not-in-the-catalogue",
                 .baselineEntry        = JournalDocument{
                     .eventType = "fixture.baseline",

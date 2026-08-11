@@ -1,0 +1,27 @@
+[module]
+name = deployment
+type = static
+version = 0.1.0
+
+[build]
+unity_build = false
+
+# The trusted deployment layer: the code that turns a project's exact schema,
+# catalog and manifest bytes into the callables
+# modules/operator/source/operator/project-plugin.hpp:90 calls trusted
+# deployment code. `deployment` is the framework's own word for it.
+#
+# json, because every validator here is json::requireExactCanonical or a
+# json::Schema and nothing else decides. operator, because the four callables
+# this module hands out are operator's own signatures -- CanonicalJsonValidator,
+# ProjectDocumentValidator, JournalPayloadSchemaValidator, ToolCatalogValidator
+# and ReconcileDispositionReader -- and their result types (ToolDescriptor,
+# ReconcileDisposition) are operator's. domain, because a payload schema
+# identity is a ContentHash and a refusal is an AutomationErrorKind, both of
+# which this module names directly. core, for Result and the integer aliases.
+#
+# operator does not depend on this module and must not: an Operator that
+# reached into a deployment for its own validators would be the deployment.
+# The edge runs one way, from the deployment down into the Operator.
+[dependencies]
+public = core domain json operator

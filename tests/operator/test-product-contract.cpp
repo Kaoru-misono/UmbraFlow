@@ -570,7 +570,7 @@ namespace uf::operator_runtime
         // is the only way to read the default rather than the fixture.
         auto unstated = ProjectToolCatalogSchemaOwner::create(
             prepared.project.registration,
-            "catalogue",
+            prepared.project.toolCatalogBytes,
             [](std::string_view toolName,
                std::string_view) -> Result<ToolDescriptor>
             {
