@@ -316,7 +316,7 @@ sentence. `LABELS "CI;CONTRACT-SUITE"` on the four aggregates made
 `ctest -L CONTRACT` select 44 where 40 is meant, because `-L` is a regex and
 `CONTRACT` prefixes `CONTRACT-SUITE` — and a measurement had already been taken
 against the wrong number. The label is `CONFORMANCE` now, and
-`tests/CMakeLists.txt:343-346` and `cmake/conformance-suite.cmake:246-249` both
+`tests/CMakeLists.txt:343-346` and `cmake/conformance-run.cmake:165-168` both
 say why. **An aggregate label must share no substring with a per-case label.**
 
 `319bdb1` found the same shape in a diagnostic rather than a selector:

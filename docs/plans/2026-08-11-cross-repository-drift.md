@@ -24,14 +24,25 @@ to the repository root.
 >   are. `2026-08-09-runtime-hardening-rewrite.md` §"Executable specification
 >   resolutions" is the live authority.
 > - **Framework paths and identifiers were re-spelled** where they appear here:
->   `contract-suite/` → `conformance/`, `contract-suite/fixtures/` →
->   `conformance/exemplars/`, `operator-contract/` → `conformance/`,
->   `cmake/operator-contract-suite.cmake` → `cmake/conformance-suite.cmake`,
->   `uf_add_operator_contract_suite` → `uf_add_conformance_suite`,
+>   `contract-suite/` → `conformance/`, `operator-contract/` → `conformance/`,
 >   `contract-suite-<project>` → `conformance-<project>`, label `CONTRACT-SUITE`
->   → `CONFORMANCE`, `ProjectUnderTest` → `ProvidedProject`,
->   `projectUnderTest` → `provideProject`, `contract-repository-surface` →
+>   → `CONFORMANCE`, `contract-repository-surface` →
 >   `check-repository-surface`.
+>
+>   Five more were re-spelled into names that `974396e` then deleted, so they
+>   are read one hop further. No finding changes; each still names what the
+>   audit found at `c23efd3`.
+>   `contract-suite/fixtures/` → `conformance/exemplars/` → **gone: the two
+>   projects are the data directories `examples/umbraflow` and
+>   `examples/arcana-expedition`.**
+>   `cmake/operator-contract-suite.cmake` → `cmake/conformance-suite.cmake` →
+>   **`cmake/conformance-run.cmake`.**
+>   `uf_add_operator_contract_suite` → `uf_add_conformance_suite` →
+>   **`uf_add_conformance_run`**, which a consumer no longer calls at all: it
+>   runs `umbra-flow-conformance --project <directory>`.
+>   `ProjectUnderTest` → `ProvidedProject` → **`deployment::LoadedProject`.**
+>   `projectUnderTest` → `provideProject` → **`deployment::loadProject`**, which
+>   reads a directory rather than being a function a consumer defines.
 >
 > **§8.3's quotation of uf-chaos `contract/CMakeLists.txt` was re-spelled with
 > them and is therefore not that file's current text.** uf-chaos still writes

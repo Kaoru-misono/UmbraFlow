@@ -726,23 +726,25 @@ owes is the one pass over the remaining 15, not a permanent re-litigation.
 
 ## 5. Outside these work items
 
-- **Publishing a consumable conformance suite — done 2026-08-10.** It was raised
-  here as unowned; it is no longer. `cmake/conformance-suite.cmake`
-  exports `uf_add_conformance_suite()`, and
-  `conformance/include/conformance/provider.hpp` is the
-  single public header a consumer implements: it supplies a
-  `ProvidedProject` — its registration, plugin, a vocabulary of tool and
-  Journal documents its own schemas accept, its RuntimeArtifact, and the probe
-  frame that model resolves against (added 2026-08-11) — and the suite invents
-  no project bytes of its own. The suite's translation units compile into the
-  consumer's executable rather than shipping as a library, so a run carries the
-  consumer's safety profile and sanitizers. Two structurally unrelated fixtures
-  under `conformance/exemplars/` exercise it, each written the way a consuming
-  repository writes its own: one `CMakeLists.txt` calling the function and one
-  provider translation unit. They register as `conformance-umbraflow` and
-  `conformance-arcana`. This unblocks Phase 2C; it does not satisfy the
-  dual-game gate below, which still needs two real, independently owned
-  registrations.
+- **Publishing a consumable conformance suite — done 2026-08-10, reshaped
+  2026-08-11.** It was raised here as unowned; it is no longer. As landed it
+  exported CMake and one public header a consumer implemented in C++; `974396e`
+  replaced both with a binary this repository ships. A consumer runs
+  `umbra-flow-conformance --project <directory>`, and `deployment::loadProject`
+  turns that directory into the registration, the four schema owners, the plugin
+  and artifact bytes the registration pinned, the RuntimeArtifact root and the
+  probe frame the model resolves against (added 2026-08-11) — and the suite
+  still invents no project bytes of its own. A consumer compiles nothing, so the
+  run carries this repository's build rather than the consumer's: there is no
+  consumer translation unit to add to a target and no safety profile to apply to
+  somebody else's sources. `cmake/conformance-run.cmake` registers a run by
+  naming a directory, and two structurally unrelated project directories under
+  `examples/` exercise it, each written the way a consuming repository writes
+  its own. They register as `conformance-umbraflow` and `conformance-arcana`.
+  This unblocks Phase 2C; it does not satisfy the dual-game gate below, which
+  still needs two real, independently owned registrations. The design and the
+  landing are [a project is a directory of data](2026-08-11-project-as-data.md)
+  §5 step 6.
 - Phases 2B, 2C, 3, 4 and anything in a consumer repository.
 - The real dual-game attestation: `EXTERNAL / NOT_RUN`, unmovable by fixtures.
   Since 2026-08-11 the nine consumer attestations `attest-consumer-d01`-`d09`

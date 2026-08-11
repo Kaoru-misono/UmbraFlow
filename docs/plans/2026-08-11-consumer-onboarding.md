@@ -1,12 +1,22 @@
 # Consumer onboarding: measuring what a new project actually has to write
 
-Status: specification proposal. Nothing here is implemented. Ten questions in
-§11 need a ruling. Every file-level claim was read at `c23efd3`; the counts in
-§2 are reproducible from that tree.
+Status: superseded in shape, kept for its measurements. **Nothing below tells a
+consumer what to write today, because a consumer writes no C++ at all.**
+[A project is a directory of data](2026-08-11-project-as-data.md) answers "which
+C++ does a consumer stop writing" with "all of it", and `974396e` landed that:
+`provideProject`, `ProvidedProject` and
+`conformance/include/conformance/provider.hpp` are deleted, and a consuming
+repository now runs `umbra-flow-conformance --project <directory>` against a
+directory of data. What survives here is the measurement — §2 and §3 count what
+the deleted surface cost a consumer, which is the evidence the correction was
+sized from. Of §11's ten questions, Q1, Q2, Q4 and Q5 are moot, and Q3 stands as
+project-as-data's §7 Q1.
 Date: 2026-08-11
-Scope: `umbraflow-cpp` only. It proposes moving code into `conformance/`,
-`cmake/` and possibly `modules/core`; it writes nothing in a consumer tree and
-specifies no consumer-side artifact.
+Read at: `c23efd3`, and every file-level claim below is true of that tree rather
+than of this one; the counts in §2 are reproducible from it.
+Scope: `umbraflow-cpp` only. It proposed moving code into `conformance/`,
+`cmake/` and possibly `modules/core`; it wrote nothing in a consumer tree and
+specified no consumer-side artifact.
 
 Related: [consumer attestation](2026-08-11-consumer-attestation.md) specifies
 what a consumer *claims*. This specifies what a consumer *builds* before it can

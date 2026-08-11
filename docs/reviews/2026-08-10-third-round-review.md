@@ -23,11 +23,11 @@ is deleted, and a whole protection mechanism (`runtime_publications`) that no
 test can observe. One is a documented rule the block broke while writing the
 commit that was supposed to stop that class of breakage.
 
-> **Disposition note, 2026-08-11. The findings below are left exactly as
-> recorded; this says only what has since answered two of them.** R3-F2 was
-> answered by deletion rather than by a test: `848e390` removed
-> `PublicationHold` and the `runtime_publications` table after verifying the
-> unreachability this finding could not decide between — reclamation has no
+> **Disposition note, 2026-08-11, extended 2026-08-12. The findings below are
+> left exactly as recorded; this says only what has since answered three of
+> them.** R3-F2 was answered by deletion rather than by a test: `848e390`
+> removed `PublicationHold` and the `runtime_publications` table after verifying
+> the unreachability this finding could not decide between — reclamation has no
 > non-test caller, `OperatorCoordinator` appears in no entry point or other
 > module, and `open()` holds `PRAGMA locking_mode=EXCLUSIVE` for the
 > connection's lifetime. The finding's second reading was the right one: a
@@ -35,8 +35,18 @@ commit that was supposed to stop that class of breakage.
 > mechanism went. R3-F3's 14 wrong rows were repaired on 2026-08-10, and the
 > same violation recurred twice on 2026-08-11 in `4b955de` and `848e390`, which
 > registered five new gates before updating the report; the report was repaired
-> again rather than the rule relaxed. Dispositions belonging to the block rather
-> than to this record live in
+> again rather than the rule relaxed. R3-F16 was answered by the helper it names
+> being deleted and its successor carrying the property: `974396e` removed
+> `cmake/conformance-suite.cmake` entire, and `uf_add_conformance_run`
+> (`cmake/conformance-run.cmake`) sorts a run's `CASES` against the `DECLARED`
+> set and requires the two `STREQUAL`, so a claimed case the suite does not
+> declare and a declared case the run does not claim each fail the configure.
+> That is the exact set equality `cpp_add_contract_suite` already had, in both
+> directions, and `DECLARED` is read out of the suite's own sources by
+> `uf_declared_conformance_cases` rather than hand-listed. The finding's
+> carve-out survives with it: a run naming no `CASES` — which is every
+> consumer's — is not checked, deliberately. Dispositions belonging to the block
+> rather than to this record live in
 > [the next block](../plans/2026-08-10-next-block.md) §7.
 
 ## Findings

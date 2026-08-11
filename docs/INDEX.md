@@ -40,16 +40,19 @@ the four same-day specifications conflict.
   correction that follows from "uf-chaos depends only on umbraflow's compiled
   binary": the exported C++ provider surface is replaced by a project directory
   format and a host-side loader, and conformance becomes a second shipped
-  binary. A consuming project ends with no C++ at all. Proposal only; ten
-  questions await a ruling.
+  binary. A consuming project ends with no C++ at all. All ten questions are
+  ruled in §7.0, and the framework switch landed at `974396e`: `provideProject`
+  and the provider header are gone, and the suite takes `--project <directory>`.
 - [The provider surface, measured](plans/2026-08-11-project-as-data-inventory.md)
   — the evidence that design is sized from, measured at `6bfe1d6`:
   `ProvidedProject`'s thirty leaves, reached 106 times, of which twenty-three are
   already data, five are C++ authorities and two are live-behaviour recorders.
-  Read §A.1.1 before trusting any run of the suite: **both in-tree exemplars
-  validate nothing**, substituting hardcoded byte-string allowlists for the two
-  validators `project-plugin.hpp:90-94` demands, so the framework's own two runs
-  stay green against a validator that accepts non-canonical bytes.
+  Its §A.1.1 is much of why the correction was worth making: **both in-tree
+  exemplars validated nothing**, substituting hardcoded byte-string allowlists
+  for the two validators `project-plugin.hpp:90-94` demands, so the framework's
+  own two runs stayed green against a validator that accepted non-canonical
+  bytes. `974396e` deleted both exemplars, and `deployment::loadProject` now
+  builds every validator from the project's own schema bytes.
 - [The journal record binding](plans/2026-08-11-journal-record-binding.md) —
   landed 2026-08-11. The `journal_events` and `project_state` rows now carry the
   member names of the journal records they store, the framework validates
@@ -133,12 +136,16 @@ knowledge stays in [Pitfalls](pitfalls/README.md).
 ## Repository guidance
 
 - [Domain glossary](../CONTEXT.md)
-- Exported Operator conformance suite: what a consuming repository writes is
-  documented at the top of
-  [`cmake/conformance-suite.cmake`](../cmake/conformance-suite.cmake),
-  and the surface it implements is
-  [`conformance/include/conformance/provider.hpp`](../conformance/include/conformance/provider.hpp).
-  Added 2026-08-10 and renamed from `contract-suite/` on 2026-08-11; see
+- Exported Operator conformance suite: what a consuming repository writes is a
+  project directory, which it runs the shipped binary against as
+  `umbra-flow-conformance --project <directory>`. The directory format is
+  specified in §2 of
+  [A project is a directory of data](plans/2026-08-11-project-as-data.md), the
+  loader that reads it is
+  [`modules/deployment/source/deployment/project-directory.hpp`](../modules/deployment/source/deployment/project-directory.hpp),
+  and `examples/umbraflow` and `examples/arcana-expedition` are two such
+  directories. Added 2026-08-10, renamed from `contract-suite/` on 2026-08-11,
+  and stopped being a C++ surface a consumer implements the same day; see
   [Architecture](ARCHITECTURE.md) for where it sits.
 - Architecture decision records: the two ADRs under `adr/` were deleted on
   2026-07-29 and the directory is empty. Their reasoning is preserved in

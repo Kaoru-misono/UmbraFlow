@@ -585,24 +585,25 @@ other. A fixture may move neither.
 
 **The exported conformance suite is a precondition of `D-08` and of nothing else.**
 
-`conformance/include/conformance/provider.hpp` is the one
-mechanism that already turns a consumer's claim into something this repository
-can refuse. A consumer supplies a `ProvidedProject`: a
+`umbra-flow-conformance --project <directory>` is the one mechanism that already
+turns a consumer's claim into something this repository can refuse. A consumer
+supplies a project directory, and `deployment::loadProject` turns it into a
 `VerifiedProjectRegistration`, four schema owners, the exact plugin bytes and
-artifact blobs the registration pinned, a `ProjectVocabulary` of documents its
-own schemas accept, the `ProjectRuntimeArtifact` its sessions are pinned to, and
-the `ProjectProbeFrame` that artifact's model is resolved against — the
-fingerprint the model declares and one PNG capture at that extent. The last two
-are additions of 2026-08-11; before them the suite substituted a model and a
-world of its own, and a consumer's UI vocabulary was never exercised. The header
-states the discipline — "The suite invents no
-project bytes", "No member carries an in-class initializer… a defaulted authority
-would be an authority nobody granted", and there is "deliberately no default and
-no registry: a consumer that does not define it fails to link, rather than
-running a suite against nothing." A consumer that passes it has demonstrated that
-its registration, plugin, schemas and vocabulary are real, that its own
-RuntimeModel resolves the surface its plans name on a capture of its own target,
-and that the Operator accepted all of it.
+artifact blobs the registration pinned, a vocabulary of documents its own
+schemas accept, the RuntimeArtifact root its sessions are pinned to, and the one
+capture that artifact's model is resolved against — a PNG of the consumer's own
+target, judged against the extent the model itself publishes rather than a
+number any document restates. The last two are additions of 2026-08-11; before
+them the suite substituted a model and a world of its own, and a consumer's UI
+vocabulary was never exercised. The discipline outlived the header that used to
+state it: the suite invents no project bytes, no authority is defaulted — a
+defaulted authority would be an authority nobody granted — and there is nothing
+to fall back on. A directory that leaves one out does not run a suite against
+nothing; the load refuses it, and the framework's own schemas are what refuse. A
+consumer that passes it has demonstrated that its registration, plugin, schemas
+and vocabulary are real, that its own RuntimeModel resolves the surface its
+plans name on a capture of its own target, and that the Operator accepted all of
+it.
 
 That is a strong precondition and it is the wrong one for eight of the nine.
 
@@ -677,18 +678,16 @@ nine — the `D-*` block plus the project halves of these two.
 The two halves are not in the same state, and the difference matters:
 
 - **`C-11`'s project half is already covered by something a consumer runs.**
-  `contract-control-c11` is a case in the exported suite,
-  `conformance/source/suite-control-ledger.cpp`, so it compiles into every
-  consumer's binary and runs there. Only this repository's own fixture names it
-  as a per-requirement CTest; a consumer's `CASES` list is empty by design —
-  `conformance/exemplars/arcana-expedition/CMakeLists.txt` is "everything a
-  consuming repository writes to run the suite, in full" and names none, so the
-  case runs under the single `conformance-<project>` aggregate. Either way a
-  consumer that passes the suite has exercised its own disposition mapping. The
-  suite is explicit that the project owns it: `ProjectVocabulary` requires
-  `continueInput`, `confirmedInput`, `rejectedInput` and `ambiguousInput`,
-  "because its own plugin decides the mapping; the suite must never assume the
-  disposition is spelled in the request." No attestation is needed. The suite
+  `contract-control-c11` is a case in the exported suite, so every consumer's
+  run executes it. Only this repository's own registration claims it as a
+  per-requirement CTest; a consumer runs `umbra-flow-conformance --project
+  <directory>` against its own tree, and every case runs in that one process.
+  Either way a consumer that passes the suite has exercised its own disposition
+  mapping. The format is explicit that the project owns it: the framework's own
+  conformance schema requires every vocabulary to carry `continue_input`,
+  `confirmed_input`, `rejected_input` and `ambiguous_input`, because the
+  project's plugin decides the mapping and the suite must never assume the
+  disposition is spelled in the request. No attestation is needed. The suite
   pass is the evidence.
 - **`A-04`'s project half is covered by nothing a consumer runs.**
   `contract-agent-a04` is in `tests/operator/test-agent-audit-contract.cpp`, an
@@ -765,13 +764,14 @@ ruling on cross-host reproduction before G4*, because requiring two hosts now
 blocks C1 on infrastructure the consumer does not have.
 
 **Q4 — how is `A-04`'s project half gated?** Three options: (a) an attestation,
-which is weak because it is a behaviour a suite could exercise; (b) a new case in
-the exported suite, requiring `ProjectVocabulary` to gain an unconfirmed-fact
-document and every consumer to supply one; (c) leave it, and record it as a known
-gap. *Recommend (b).* It is the same shape as `C-11`'s vocabulary entries, it
-turns a claim into a run, and the cost is one field on a struct that is not yet
-consumed by anyone outside this tree. It is not this document's to execute —
-`provider.hpp` is a header, and this document owns `docs/` only.
+which is weak because it is a behaviour a suite could exercise; (b) a new case
+in the exported suite, requiring the vocabulary document to gain an
+unconfirmed-fact member and every project directory to supply one; (c) leave it,
+and record it as a known gap. *Recommend (b).* It is the same shape as `C-11`'s
+vocabulary entries, it turns a claim into a run, and the cost is one member in a
+document the framework's own conformance schema defines. It is not this
+document's to execute — it changes that schema and the loader that applies it,
+and this document owns `docs/` only.
 
 **Q5 — does the attestation set need a `predecessor_set_id`?** The release
 manifest carries `predecessor_publication_id`, and §3's `D-05` entry already

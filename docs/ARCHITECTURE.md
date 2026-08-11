@@ -40,17 +40,18 @@ types do not move there merely because two modules use them.
 
 `conformance/` (added 2026-08-10, renamed from `contract-suite/` on 2026-08-11)
 is the one first-party source tree outside `modules/`, `entry/` and `tests/`,
-and the loader does not turn it into a library. It is the exported Operator
-conformance suite: a consumer repository includes `cmake/conformance-suite.cmake`,
-writes one translation unit defining
-`uf::operator_runtime::conformance::provideProject` against the single public
-header `conformance/include/conformance/provider.hpp`, and calls
-`uf_add_conformance_suite()`. The suite's own sources compile into the
-consumer's executable rather than shipping as a library, because a conformance
-run means nothing unless it carries the consumer's safety profile and
-sanitizers. Nothing under `conformance/source/` or `include/` names a project;
-the two exemplars in `conformance/exemplars/` are ordinary consumers of the same
-entry point, and this repository is one run of the suite rather than its home.
+and the loader does not turn it into a library. It builds the second shipped
+binary, `umbra-flow-conformance`, which is the exported Operator conformance
+suite. A consuming repository compiles nothing and reaches no CMake of ours: a
+project is a directory of data, so a consumer runs
+`umbra-flow-conformance --project <directory>` against its own tree, and
+`deployment::loadProject` turns that directory into the five authorities the
+suite drives. `cmake/conformance-run.cmake` registers one CTest per run and is
+included inside the `PROJECT_IS_TOP_LEVEL` guard, because nothing outside this
+repository reaches it. Nothing under `conformance/source/` or `include/` names a
+project; `examples/umbraflow` and `examples/arcana-expedition` are two project
+directories written the way a consumer writes its own, and this repository is
+two runs of the suite rather than its home.
 
 It carries a `manifest.txt` and is not a module. The autoloader never reads it —
 `CPP_MODULE_ROOTS` names `modules/` only — but `scripts/check_modules.py` does,

@@ -170,7 +170,7 @@ image. No project source mentions `<ciso646>`.
 
 ### Root cause
 
-`tests/external/doctest/doctest/doctest.h` (2.4.11) does this at line 498:
+`external/doctest/doctest/doctest.h` (2.4.11) does this at line 498:
 
 ```cpp
 #if DOCTEST_CLANG
