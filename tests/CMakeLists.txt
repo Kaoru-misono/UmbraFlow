@@ -394,9 +394,11 @@ cpp_add_test(
         ${PROJECT_NAME}_json
 )
 
-# The deployment's two validators, against both exemplars' real schema bytes.
-# The exemplars' schema documents live beside their providers, so the include
-# root is conformance/exemplars and each is named by its own directory.
+# The deployment's two validators, against both fixtures' real schema bytes.
+# Those schema documents are C++ raw literals rather than files, which is what
+# separates them from examples/: they are the bytes these cases judge a
+# validator with, so the include root is conformance/fixtures and each is named
+# by its own directory.
 #
 # image is named here as well as inside the module because the loader decodes
 # what probe_frame names (2.7 R9), so the fixture has to write a PNG the same
@@ -413,7 +415,7 @@ cpp_add_test(
 # tests/ itself, so that the loader's cases reach tests/json/repository-path.hpp
 # rather than becoming a seventh copy of it.
 target_include_directories(test-deployment PRIVATE
-    "${PROJECT_SOURCE_DIR}/conformance/exemplars"
+    "${PROJECT_SOURCE_DIR}/conformance/fixtures"
     "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
@@ -456,12 +458,16 @@ cpp_add_test(
         ${PROJECT_NAME}_trace
 )
 
-# The project registration every Operator test builds on lives beside the
-# conformance suite's umbraflow exemplar, whose provider adapts the same header.
-# Adding its directory keeps the dependency running from tests/ into the exported
-# suite and leaves every #include "project-fixture.hpp" spelled the same way.
+# The project registration every Operator test builds on. It is the last thing
+# that still builds a ProjectRegistration in C++: the conformance suite loads one
+# out of examples/umbraflow instead, and Q5 of
+# docs/plans/2026-08-11-project-as-data.md moves these tests onto the same loader
+# as its own change, after which this directory has nothing left in it. Adding
+# the directory here leaves every #include "project-fixture.hpp" spelled the same
+# way; docs/plans/2026-08-11-project-as-data.md 4.2 owes it a home in
+# tests/support/.
 set(UF_OPERATOR_FIXTURE_DIR
-    "${PROJECT_SOURCE_DIR}/conformance/exemplars/umbraflow"
+    "${PROJECT_SOURCE_DIR}/conformance/fixtures/umbraflow"
 )
 if(NOT EXISTS "${UF_OPERATOR_FIXTURE_DIR}/project-fixture.hpp")
     message(FATAL_ERROR

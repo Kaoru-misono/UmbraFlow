@@ -1150,12 +1150,14 @@ In this repository:
 - `conformance/exemplars/umbraflow/provider.cpp` (95),
   `conformance/exemplars/arcana-expedition/provider.cpp` (1,063), and both
   `CMakeLists.txt`.
-- The project-construction half of
-  `conformance/exemplars/umbraflow/project-fixture.hpp` (1,804 total) —
-  everything from `registrationBytes` through `makeProject` and the four owner
-  `create` calls (`:387-404`, `:413`, `:525`, `:589`, `:700`). Its store
-  machinery moves to `tests/support/`, because `tests/operator/*` includes it and
-  that dependency is not what this correction is about.
+- The project-construction half of `project-fixture.hpp` — everything from
+  `registrationBytes` through `makeProject` and the four owner `create` calls.
+  *Not yet, and deliberately.* Step 6 moved the whole header, and both
+  `project-schemas.hpp`, from `conformance/exemplars/` to
+  `conformance/fixtures/`, because `tests/operator/*` and `tests/deployment/*`
+  include them and Q5 defers that dependency to its own change. `tests/support/`
+  is still where they belong; nothing in this document is closed until they are
+  there or gone.
 
 In `E:\umbraflow-projects\uf-chaos`:
 
@@ -1213,12 +1215,18 @@ repository ships.
   `umbraflow-conformance/v1` with the loader. §2.6 says why they are not files.
   A sixth, `schema/umbraflow-project-registration-v1.schema.json`, is not new —
   it is already published and starts binding rather than starts existing.
-- **`entry/conformance/main.cpp`** and the `umbra-flow-conformance` target.
+- **`conformance/source/suite-main.cpp`** and the `umbra-flow-conformance`
+  target — landed in step 6. The entry point stayed under `conformance/` rather
+  than becoming `entry/conformance/main.cpp`: it is one `main` either way, and
+  keeping it beside the cases keeps the whole switch inside `conformance/`,
+  `cmake/` and two `CMakeLists.txt`.
 - **`external/doctest`** and the `uf::doctest` INTERFACE target.
-- **`cmake/conformance-run.cmake`**.
-- **Two in-tree exemplar directories**, replacing the two provider translation
-  units, and remaining what `conformance/CMakeLists.txt:1-6` already calls them:
-  documentation a consumer copies.
+- **`cmake/conformance-run.cmake`** — landed in step 6.
+- **Two in-tree exemplar directories**, `examples/umbraflow` and
+  `examples/arcana-expedition`, replacing the two provider translation units and
+  remaining what `conformance/CMakeLists.txt` already called them: documentation
+  a consumer copies. Both are what the two CTest runs are pointed at since step
+  6.
 - In uf-chaos: `umbraflow-project.json`, `umbraflow-conformance.json`, two
   `plugin/*.luau` files carrying the bytes that are today C++ raw literals, two
   artifact-blob files, and two reconcile manifests. No registration document:
@@ -1287,48 +1295,112 @@ the moment step 6 lands it stops configuring, and the window in which the projec
 is unverifiable is exactly the gap between step 6 and step 7. Writing the data
 first makes that gap one commit wide.
 
-**6. Switch, in one change.** Both in-tree exemplars become directories; the
-suite calls the loader; `provideProject`, `ProjectRole` as an exported type, the
-two recorders, `ProjectRuntimeArtifact`, `ProjectProbeFrame::fingerprint`,
-`cmake/conformance-suite.cmake`, both `provider.cpp` files and both exemplar
-`CMakeLists.txt` are deleted; `umbra-flow-conformance` and
-`cmake/conformance-run.cmake` arrive. `requireProbeGeometry` moves from the top
-of `prepareStore` (`suite-support.cpp:171`) into `activateObservationHost`
-(`observation-fixture.hpp:540-554`), just after the Host has parsed the model and
-before the `ObservationRuntime` that needs the same fingerprint is built — still
-before any resolution, so `requireResolvedSurface`'s account of which causes can
-reach it (`observation-fixture.hpp:576-582`) survives the move and its wording
-does not. It is one change rather than two because a tree in which some projects
-arrive as C++ and some as data is two spellings of one thing, and `CLAUDE.md`
-forbids resting there.
+**6. Switch, in one change — done.** The suite stopped taking a C++
+`ProvidedProject` and started taking a project directory. `provideProject`,
+`ProjectRole` as an exported type, `ProvidedProject` with both `std::shared_ptr`
+recorders, `ProjectRuntimeArtifact`, `ArtifactFile`, `ProjectProbeFrame` — and
+with it the restated fingerprint — and
+`conformance/include/conformance/provider.hpp` itself are gone; so are
+`cmake/conformance-suite.cmake` (277 lines), both `provider.cpp` files and both
+exemplar `CMakeLists.txt`. `umbra-flow-conformance` and
+`cmake/conformance-run.cmake` arrived, and the two runs point at
+`examples/umbraflow` and `examples/arcana-expedition`. The root
+`CMakeLists.txt`'s include of the suite CMake moved inside the
+`PROJECT_IS_TOP_LEVEL` guard: with no consumer `add_subdirectory` left, nothing
+outside this repository reaches it. It is one change rather than two because a
+tree in which some projects arrive as C++ and some as data is two spellings of
+one thing, and `CLAUDE.md` forbids resting there.
 
-The evidence that the switch is lossless is assembled in the working tree and not
-committed, and Q3 and Q6 changed what that evidence can be. It cannot be the
-registration hash computed both ways: the C++ side spells its members
-`plugin_sha256` and `registration_schema_sha256`
-(`contract/provider.cpp:799-829`), the derived side spells them `plugin_hash` and
-`manifest_schema_hash` (`schema/umbraflow-project-registration-v1.schema.json`),
-so the two documents are different bytes on purpose and their digests are
-expected to differ. What must match is the *claims*: `plugin_id`,
-`baseline_event_type`, the artifact roots, and each of the eight digests,
-computed both ways and compared member by member, before the C++ side is
-deleted. `tool_catalog_hash` is expected to differ too, by exactly the members
-Q6 dropped. After the deletion there is nothing left to compare against, which
-is why it is a falsification and not a compatibility path.
+`requireProbeGeometry` moved from the top of `prepareStore` into
+`activateObservationHost`, just after the Host has parsed the model and before
+the `ObservationRuntime` that needs the same fingerprint is built — still before
+any resolution, so `requireResolvedSurface`'s account of which causes can reach
+it survives the move; its wording now names `activateObservationHost` rather than
+`prepareStore`, which is the only thing about it that changed.
 
-Two constraints this step must satisfy or the gate goes red for unrelated
-reasons. `tests/CMakeLists.txt:68-128` requires the CTest names
-`contract-control-c01`, `-c06`, `-c09`, `-c10`, `-c11`, `-c12` and `-c13` to
-exist, and they are registered today by
-`conformance/exemplars/umbraflow/CMakeLists.txt:15-21`; `uf_add_conformance_run`
-must register the same seven. And `CMakeLists.txt:66-72` includes the suite
-CMake outside the `PROJECT_IS_TOP_LEVEL` guard so a consumer's
-`add_subdirectory` reaches it — with no consumer `add_subdirectory` left, the
-whole include moves inside the guard.
+**What the deletions cost, measured rather than reasoned.** Deleting the call and
+running a project whose capture is one pixel wider than its model left the run
+red — at `requireResolvedSurface`, over
+`{"kind":"unknown_state","reason":"unknown_scene_competitor"}`. So
+`requireProbeGeometry` is not independently falsifiable by outcome: a second
+mechanism refuses the same input. What it is falsifiable by is its message, which
+is the only one on that path naming both extents, and the comment at the
+declaration now records that measurement instead of the `internal_error` reason
+it used to predict. `docs/pitfalls/checks-that-cannot-fail.md` files that shape
+under "an assertion another refusal already satisfies".
+
+The same reordering deleted one subcase in
+`tests/operator/test-state-contract.cpp`: "a fingerprint that is not the
+capture's extent resolves nothing" had a caller declare a geometry, and after Q2
+no caller can. The surviving half — a capture whose extent is not the model's —
+reaches the resolver through `test_support::secondObservationHost`, which now
+assembles its Host itself rather than through `activateObservationHost`, because
+only a world a case builds can get past the refusal a project directory meets.
+
+**Two things it did not do, and one it placed differently.** The three headers
+`tests/operator` and `tests/deployment` still include — `project-fixture.hpp` and
+the two `project-schemas.hpp` — moved from `conformance/exemplars/` to
+`conformance/fixtures/` rather than dying, because Q5 defers the tests' own move
+onto the loader to a separate change; §4.2 still owes them a home in
+`tests/support/`. `conformance/include/` did not fold into `conformance/source/`,
+for the same reason: `tests/` compiles against it. And the entry point is
+`conformance/source/suite-main.cpp` rather than §4.3's
+`entry/conformance/main.cpp`, which keeps every file this step touches inside
+`conformance/`, `cmake/` and two `CMakeLists.txt`.
+
+**The evidence, re-derived rather than cited.** It was assembled in the working
+tree and not committed: both registrations exist at once only there, because
+`conformance/fixtures`' `makeProject` is the C++ side and
+`deployment::loadProject` over `examples/umbraflow` is the data side. `plugin_id`
+(`fixture.alpha`), `baseline_event_type` (`fixture.baseline`) and the artifact
+roots (both empty) are identical. All eight digests differ, and the
+`project_registration_hash` with them, for three reasons demonstrated rather than
+asserted:
+
+- **A file carries a trailing newline that a C++ raw literal does not.** Each of
+  the four schema documents is byte-for-byte the literal plus one newline; the
+  first differing byte is the last one.
+- **A digest inside a document moves with the document it names.** Removing the
+  trailing newline from each of the three manifests and mapping the file digests
+  back to the literal digests reproduces the C++ bytes exactly, for the tool
+  catalog, the journal manifest and the reconcile manifest. The plugin is the
+  same: substituting one embedded `payload_schema_hash` turns the C++ bytes into
+  the file's, byte for byte.
+- **`manifest_schema_hash` stops being a placeholder.** The C++ fixture hashed
+  the string `"registration-schema"`. The loader hashes
+  `schema/umbraflow-project-registration-v1.schema.json`, whose bytes are
+  identical to what `projectRegistrationSchemaBytes()` carries. That is Q3's
+  ruling landing: the framework's already-shipped registration schema starts
+  binding.
+
+Nothing that agreed when this comparison was first produced at `a57bf05`
+disagrees now. One expectation in the earlier draft of this step was wrong:
+`tool_catalog_hash` was to differ "by exactly the members Q6 dropped", and it
+does not — **because Q6 no longer says to drop them.** §2.4 records that its
+first half was overruled when the loader landed and its second answered
+differently: `plugin_id` stays and is checked against the deployment's, since a
+catalog that answered for whichever registration presented it would be a catalog
+no registration owns, and the path `tool_precondition_schema` was replaced by the
+digest `tool_precondition_sha256`, which is the only route by which the
+precondition schema's bytes reach `tool_catalog_hash`. Both members in
+`examples/umbraflow/schema/alpha/tool-catalog-v1.json` and uf-chaos's
+`schema/dream/umbraflow-tool-catalog-v1.json` are therefore required rather than
+owed for deletion, and the framework schema does force them. **Nothing here is
+outstanding.**
+
+Two constraints this step had to satisfy or the gate would have gone red for
+unrelated reasons, both met. `tests/CMakeLists.txt` requires the CTest names
+`contract-control-c01`, `-c06`, `-c09`, `-c10`, `-c11`, `-c12` and `-c13`;
+`uf_add_conformance_run` registers the same seven, beside the same aggregate
+`conformance-umbraflow`, and configure fails if a claimed case and a declared
+`TEST_CASE` disagree in either direction — measured in both directions. And the
+suite CMake's include moved inside the guard, as above.
 
 **7. Delete uf-chaos's `contract/`, its root `CMakeLists.txt` and its generated
-headers — but only after `umbra-flow-conformance --project
-E:/umbraflow-projects/uf-chaos` has run green.** Not earlier, and specifically
+headers — the precondition is met.** `umbra-flow-conformance --project
+E:/umbraflow-projects/uf-chaos` ran green on 2026-08-11, 16 cases and 1,303
+assertions, the same figures both in-tree examples produce; that repository has
+no C++ of its own left to verify it any other way. Not earlier, and specifically
 not as step 1: until the host can load a project directory, deleting the provider
 leaves uf-chaos with no way to be verified at all, and a project that cannot be
 verified is a project whose registration nobody can trust. This is the step the
@@ -1691,7 +1763,9 @@ RuntimeModel semantics. Whether a base resolution is identity or semantics is th
 ruling. **Blocks:** whether `umbraflow-conformance.json` carries a
 `fingerprint` member, and a small reordering in `prepareStore` (the fingerprint
 would be available only after the Host activates the artifact, so
-`requireProbeGeometry` moves after `activateObservationHost`).
+`requireProbeGeometry` moves after `activateObservationHost`). *Both executed in
+step 6; the document carries no `fingerprint`, and the reordering put the check
+inside `activateObservationHost` rather than after it.*
 
 **Q3 — who maintains the registration document's nine digests?** Today they
 cannot be wrong because they are computed (`contract/provider.cpp:799-829`), and

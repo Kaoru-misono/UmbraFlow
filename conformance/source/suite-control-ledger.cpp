@@ -4,7 +4,6 @@
 
 #include "suite-support.hpp"
 
-#include <conformance/provider.hpp>
 
 #include <operator/ledger.hpp>
 #include <operator/operation.hpp>
@@ -48,18 +47,18 @@ namespace uf::operator_runtime::conformance
     {
         auto const root   = TemporaryDirectory{"c06"};
         auto prepared     = prepareStore(root.path());
-        auto const& words = prepared.project.vocabulary;
+        auto const& words = prepared.project.underTest.vocabulary;
 
         auto const request  = command(prepared.snapshot, "request-1");
         auto const first    = prepared.store.submitCommand(
             prepared.controller,
             request,
-            toolInvocation(prepared.project, words.mutatingTool)
+            toolInvocation(prepared.project, ProjectRole::UnderTest, words.mutatingTool)
         );
         auto const repeated = prepared.store.submitCommand(
             prepared.controller,
             request,
-            toolInvocation(prepared.project, words.mutatingTool)
+            toolInvocation(prepared.project, ProjectRole::UnderTest, words.mutatingTool)
         );
         REQUIRE(first.has_value());
         REQUIRE(repeated.has_value());
@@ -74,7 +73,11 @@ namespace uf::operator_runtime::conformance
         CHECK_FALSE(prepared.store.submitCommand(
             prepared.controller,
             request,
-            toolInvocation(prepared.project, words.otherMutatingTool)
+            toolInvocation(
+                prepared.project,
+                ProjectRole::UnderTest,
+                words.otherMutatingTool
+            )
         ).has_value());
     }
 
@@ -85,7 +88,7 @@ namespace uf::operator_runtime::conformance
         auto const operation = readyOperation(
             prepared,
             "request-1",
-            prepared.project.vocabulary.mutatingTool
+            prepared.project.underTest.vocabulary.mutatingTool
         );
 
         auto host = deliveringHost(prepared);
@@ -127,7 +130,7 @@ namespace uf::operator_runtime::conformance
         auto const operation = readyOperation(
             prepared,
             "request-1",
-            prepared.project.vocabulary.mutatingTool
+            prepared.project.underTest.vocabulary.mutatingTool
         );
 
         auto host           = deliveringHost(prepared);
@@ -154,7 +157,7 @@ namespace uf::operator_runtime::conformance
     {
         auto const root   = TemporaryDirectory{"c11"};
         auto prepared     = prepareStore(root.path());
-        auto const& words = prepared.project.vocabulary;
+        auto const& words = prepared.project.underTest.vocabulary;
         auto const operation = reconcilingOperation(
             prepared,
             "request-1",
@@ -169,6 +172,7 @@ namespace uf::operator_runtime::conformance
                 .expectedProjectStateRevision = 0U,
                 .outcome                      = reconcileOutcome(
                     prepared.project,
+                    ProjectRole::UnderTest,
                     prepared.plugin,
                     operation.operationId,
                     words.continueInput
@@ -176,7 +180,11 @@ namespace uf::operator_runtime::conformance
                 .journalEvents = {
                     JournalAppend{
                         .eventId = "event-1",
-                        .entry   = journalEntry(prepared.project, words.progressEntry),
+                        .entry = journalEntry(
+                            prepared.project,
+                            ProjectRole::UnderTest,
+                            words.progressEntry
+                        ),
                     },
                 },
             }
@@ -216,6 +224,7 @@ namespace uf::operator_runtime::conformance
                 .expectedProjectStateRevision = 1U,
                 .outcome                      = reconcileOutcome(
                     prepared.project,
+                    ProjectRole::UnderTest,
                     prepared.plugin,
                     current.operationId,
                     words.confirmedInput
@@ -223,11 +232,19 @@ namespace uf::operator_runtime::conformance
                 .journalEvents = {
                     JournalAppend{
                         .eventId = "event-2",
-                        .entry   = journalEntry(prepared.project, words.confirmedEntry),
+                        .entry = journalEntry(
+                            prepared.project,
+                            ProjectRole::UnderTest,
+                            words.confirmedEntry
+                        ),
                     },
                     JournalAppend{
                         .eventId = "event-1",
-                        .entry   = journalEntry(prepared.project, words.supersededEntry),
+                        .entry = journalEntry(
+                            prepared.project,
+                            ProjectRole::UnderTest,
+                            words.supersededEntry
+                        ),
                     },
                 },
             }
@@ -246,14 +263,18 @@ namespace uf::operator_runtime::conformance
     {
         auto const root   = TemporaryDirectory{"c12"};
         auto prepared     = prepareStore(root.path());
-        auto const& words = prepared.project.vocabulary;
+        auto const& words = prepared.project.underTest.vocabulary;
 
         // The approval edge is reached by freezing a plan whose derived risk
         // demands one, never by asking for it: no caller can name the event.
         auto const proposed = prepared.store.submitCommand(
             prepared.controller,
             command(prepared.snapshot, "request-1"),
-            toolInvocation(prepared.project, words.approvalRequiredPlanTool)
+            toolInvocation(
+                prepared.project,
+                ProjectRole::UnderTest,
+                words.approvalRequiredPlanTool
+            )
         );
         REQUIRE(proposed.has_value());
         auto const frozen = frozenPlan(prepared, proposed->operation);
@@ -348,12 +369,12 @@ namespace uf::operator_runtime::conformance
     {
         auto const root   = TemporaryDirectory{"c13"};
         auto prepared     = prepareStore(root.path());
-        auto const& words = prepared.project.vocabulary;
+        auto const& words = prepared.project.underTest.vocabulary;
 
         auto const first = prepared.store.submitCommand(
             prepared.controller,
             command(prepared.snapshot, "request-1"),
-            toolInvocation(prepared.project, words.mutatingTool)
+            toolInvocation(prepared.project, ProjectRole::UnderTest, words.mutatingTool)
         );
         REQUIRE(first.has_value());
 
@@ -362,7 +383,11 @@ namespace uf::operator_runtime::conformance
         CHECK_FALSE(prepared.store.submitCommand(
             prepared.controller,
             command(prepared.snapshot, "request-2"),
-            toolInvocation(prepared.project, words.otherMutatingTool)
+            toolInvocation(
+                prepared.project,
+                ProjectRole::UnderTest,
+                words.otherMutatingTool
+            )
         ).has_value());
 
         auto const cancelled = prepared.store.transitionOperation(
@@ -374,7 +399,11 @@ namespace uf::operator_runtime::conformance
         CHECK(prepared.store.submitCommand(
             prepared.controller,
             command(prepared.snapshot, "request-2"),
-            toolInvocation(prepared.project, words.otherMutatingTool)
+            toolInvocation(
+                prepared.project,
+                ProjectRole::UnderTest,
+                words.otherMutatingTool
+            )
         ).has_value());
     }
 
@@ -382,7 +411,7 @@ namespace uf::operator_runtime::conformance
     {
         auto const root   = TemporaryDirectory{"disposition"};
         auto prepared     = prepareStore(root.path());
-        auto const& words = prepared.project.vocabulary;
+        auto const& words = prepared.project.underTest.vocabulary;
         auto const operation = reconcilingOperation(
             prepared,
             "request-1",
@@ -401,6 +430,7 @@ namespace uf::operator_runtime::conformance
         );
         rejected.outcome = reconcileOutcome(
             prepared.project,
+            ProjectRole::UnderTest,
             prepared.plugin,
             operation.operationId,
             words.rejectedInput
@@ -418,6 +448,7 @@ namespace uf::operator_runtime::conformance
         );
         ambiguous.outcome = reconcileOutcome(
             prepared.project,
+            ProjectRole::UnderTest,
             prepared.plugin,
             operation.operationId,
             words.ambiguousInput
@@ -428,19 +459,19 @@ namespace uf::operator_runtime::conformance
 
         // An outcome minted against another registration is refused as well,
         // however confident the conclusion it carries.
-        auto const foreign      = provideProject(ProjectRole::Foreign);
-        auto foreignCommit      = confirmedCommit(
+        auto foreignCommit    = confirmedCommit(
             prepared,
             operation,
             0U,
             "event-2",
             words.progressEntry
         );
-        foreignCommit.outcome   = reconcileOutcome(
-            foreign,
-            loadPlugin(foreign),
+        foreignCommit.outcome = reconcileOutcome(
+            prepared.project,
+            ProjectRole::Foreign,
+            loadPlugin(prepared.project, ProjectRole::Foreign),
             operation.operationId,
-            foreign.vocabulary.confirmedInput
+            prepared.project.foreign.vocabulary.confirmedInput
         );
         CHECK_FALSE(
             prepared.store.commitReconciliation(prepared.plugin, foreignCommit).has_value()
@@ -451,7 +482,7 @@ namespace uf::operator_runtime::conformance
     {
         auto const root   = TemporaryDirectory{"outcome-transplant"};
         auto prepared     = prepareStore(root.path());
-        auto const& words = prepared.project.vocabulary;
+        auto const& words = prepared.project.underTest.vocabulary;
 
         auto const first  = reconcilingOperation(
             prepared,
@@ -460,6 +491,7 @@ namespace uf::operator_runtime::conformance
         );
         auto const stolen = reconcileOutcome(
             prepared.project,
+            ProjectRole::UnderTest,
             prepared.plugin,
             first.operationId,
             words.confirmedInput
@@ -497,7 +529,7 @@ namespace uf::operator_runtime::conformance
     {
         auto const root   = TemporaryDirectory{"reducer-input"};
         auto prepared     = prepareStore(root.path());
-        auto const& words = prepared.project.vocabulary;
+        auto const& words = prepared.project.underTest.vocabulary;
         REQUIRE(prepared.project.lastReduceInput != nullptr);
 
         constexpr auto eventTypeKey = std::string_view{"\"namespaced_event_type\""};

@@ -48,6 +48,126 @@
 #include <utility>
 #include <vector>
 
+// Publishing a RuntimeArtifact from bytes held in C++.
+//
+// This left conformance/include with step 6, because a project directory
+// publishes its own artifact and the suite installs those bytes rather than
+// re-serializing a manifest. What still needs it is tests/operator, which
+// builds a SECOND artifact -- ambiguousRuntimeModel below -- that no project
+// directory contains and that exists to give the ledger two artifact roots to
+// tell apart. It stays in the conformance namespace because that is the name
+// its callers spell, and it dies with the rest of this header when Q5 of
+// docs/plans/2026-08-11-project-as-data.md moves those tests onto the loader.
+namespace uf::operator_runtime::conformance
+{
+    // One file inside a RuntimeArtifact: the artifact-relative path a locator
+    // names, and the exact bytes stored there.
+    struct ArtifactFile final
+    {
+        std::string            path{};
+        std::vector<std::byte> bytes{};
+    };
+
+    // One published RuntimeArtifact: a RuntimeModel and the complete asset
+    // closure that model's locators name.
+    struct ProjectRuntimeArtifact final
+    {
+        std::string               model{};
+        std::vector<ArtifactFile> assets{};
+    };
+
+    [[nodiscard]]
+    inline auto artifactManifestRow(ArtifactFile const& file) -> std::string
+    {
+        return std::format(
+            R"({{"path":"{}","sha256":"{}","size":{}}})",
+            file.path,
+            observationHash(file.bytes).hex(),
+            file.bytes.size()
+        );
+    }
+
+    // Writes one RuntimeArtifact directory and returns its root hash, which is
+    // the hash of the manifest naming every file in it.
+    [[nodiscard]]
+    inline auto publishRuntimeArtifact(
+        std::filesystem::path const& root,
+        std::string_view model,
+        std::vector<ArtifactFile> assets
+    ) -> ContentHash
+    {
+        std::ranges::sort(assets, {}, &ArtifactFile::path);
+        writeArtifactFile(root / task::k_runtimeModelFileName, model);
+        auto rows = std::vector<std::string>{};
+        rows.reserve(assets.size());
+        for (auto const& asset : assets)
+        {
+            writeArtifactFile(root / std::filesystem::path{asset.path}, asset.bytes);
+            rows.emplace_back(artifactManifestRow(asset));
+        }
+
+        auto assetJson = std::string{};
+        for (auto index = std::size_t{0}; index < rows.size(); ++index)
+        {
+            if (index != 0U)
+            {
+                assetJson.push_back(',');
+            }
+            assetJson += rows[index];
+        }
+        auto const modelBytes = std::as_bytes(
+            std::span{model.data(), model.size()}
+        );
+        auto const modelFile = ArtifactFile{
+            .path  = std::string{task::k_runtimeModelFileName},
+            .bytes = {modelBytes.begin(), modelBytes.end()},
+        };
+        auto const manifest = std::format(
+            R"({{"assets":[{}],"manifest_schema_hash":"{}",)"
+            R"("page_model":{},"runtime_model_schema_hash":"{}"}})",
+            assetJson,
+            task::k_runtimeArtifactSchemaHash,
+            artifactManifestRow(modelFile),
+            task::k_runtimeModelSchemaHash
+        );
+        writeArtifactFile(root / task::k_runtimeArtifactManifestFileName, manifest);
+        return observationHash(manifest);
+    }
+
+    // The same handoff shape observationRelease builds from a published
+    // directory, for an artifact that has no directory to be published from.
+    [[nodiscard]]
+    inline auto observationRelease(
+        std::filesystem::path const& root,
+        ProjectRuntimeArtifact const& artifact
+    ) -> ObservationRelease
+    {
+        auto const handoff          = root / "release";
+        auto const artifactRootHash = publishRuntimeArtifact(
+            handoff / "runtime-artifact",
+            artifact.model,
+            artifact.assets
+        );
+        auto const releaseManifest = std::format(
+            R"({{"annotation_workspace_schema_hash":"{}",)"
+            R"("candidate_id":"candidate-1","candidate_revision":1,)"
+            R"("generation":1,"predecessor_publication_id":null,)"
+            R"("replay_gate_hash":"{}","runtime_artifact_root_hash":"{}",)"
+            R"("workspace_sqlite_schema_hash":"{}"}})",
+            detail::k_annotationWorkspaceSchemaHash,
+            observationHash("replay-gate").hex(),
+            artifactRootHash.hex(),
+            detail::k_workspaceSqliteSchemaHash
+        );
+        writeArtifactFile(handoff / "release.manifest.json", releaseManifest);
+        return ObservationRelease{
+            .handoffRoot         = handoff,
+            .releaseManifestHash = observationHash(releaseManifest),
+            .artifactRootHash    = artifactRootHash,
+        };
+    }
+}
+
 namespace uf::operator_runtime::test_support
 {
     struct ProjectFixture final
@@ -689,14 +809,6 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         };
     }
 
-    [[nodiscard]]
-    inline auto umbraflowFingerprint() -> ProjectFingerprint
-    {
-        auto result = ProjectFingerprint::create(3, 1, 96, 96);
-        REQUIRE(result.has_value());
-        return *result;
-    }
-
     // One row of grays, encoded the way a real capture arrives.
     [[nodiscard]]
     inline auto umbraflowProbeRow(std::span<uint8 const> grays)
@@ -741,25 +853,23 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         return umbraflowProbeRow(grays);
     }
 
-    // The frame this project's model resolves its one scene on.
+    // The frame this project's model resolves its one scene on. Bytes and
+    // nothing else: the geometry it must match is the model's, republished by
+    // the RuntimeModelBinding the Host parses that model into, so a fixture that
+    // carried a fingerprint of its own would be restating a number the model
+    // already states.
     [[nodiscard]]
-    inline auto umbraflowProbeFrame() -> conformance::ProjectProbeFrame
+    inline auto umbraflowProbeFrame() -> std::vector<std::byte>
     {
-        return conformance::ProjectProbeFrame{
-            .fingerprint = umbraflowFingerprint(),
-            .png         = umbraflowProbePng(k_anchorGray, k_actionGray),
-        };
+        return umbraflowProbePng(k_anchorGray, k_actionGray);
     }
 
     // The same world with the scene anchor absent, so the resolver reports an
     // unknown state and the observation's state_resolution_hash differs.
     [[nodiscard]]
-    inline auto umbraflowUnresolvedProbeFrame() -> conformance::ProjectProbeFrame
+    inline auto umbraflowUnresolvedProbeFrame() -> std::vector<std::byte>
     {
-        return conformance::ProjectProbeFrame{
-            .fingerprint = umbraflowFingerprint(),
-            .png         = umbraflowProbePng(0, k_actionGray),
-        };
+        return umbraflowProbePng(0, k_actionGray);
     }
 
     // The one UI action this project offers a contract run, spelled exactly as
@@ -1033,10 +1143,17 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
     // without reaching a different artifact: an observation taken through an
     // artifact the session never pinned is refused before it is resolved, so
     // the two refusals cannot be told apart from one fixture.
+    //
+    // It assembles the Host itself rather than calling activateObservationHost,
+    // because that function now refuses a capture whose extent is not the
+    // model's before any observation happens. A case that wants the RESOLVER's
+    // answer to such a capture has to reach past that refusal, and only a case
+    // building its own world can: a project directory meets the refusal, which
+    // is the point of it.
     [[nodiscard]]
     inline auto secondObservationHost(
         PreparedStore& prepared,
-        conformance::ProjectProbeFrame const& probe,
+        std::span<std::byte const> probeFrame,
         FrameId frameId
     ) -> conformance::ObservationHost
     {
@@ -1047,11 +1164,23 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
             artifactRootHash
         );
         REQUIRE(installed.has_value());
-        return conformance::activateObservationHost(
-            *std::move(installed),
-            probe,
-            frameId
+
+        auto host       = std::make_unique<task::TaskHost>();
+        auto generation = host->activateRuntimeArtifact(*std::move(installed));
+        REQUIRE(generation.has_value());
+        auto const fingerprint = conformance::declaredFingerprint(
+            *host,
+            *generation
         );
+        return conformance::ObservationHost{
+            .host    = std::move(host),
+            .runtime = std::make_unique<conformance::ObservationRuntime>(
+                probeFrame,
+                fingerprint,
+                frameId
+            ),
+            .generation = *generation,
+        };
     }
 
     // A snapshot over the world as it now stands. A token references a

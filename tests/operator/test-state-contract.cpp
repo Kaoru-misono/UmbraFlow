@@ -461,69 +461,48 @@ namespace uf::operator_runtime
     }
 
     // What a state resolution is resolved FROM. The suite carries no frame and
-    // no geometry of its own: a project supplies both in one ProjectProbeFrame,
-    // and the two halves of it have to agree or the resolver is comparing the
-    // model's rectangles against pixels from somewhere else.
+    // no geometry of its own: a project supplies the capture, the model it
+    // published states the geometry, and the two have to agree or the resolver
+    // is comparing the model's rectangles against pixels from somewhere else.
     //
     // What the RESOLVER can say about it is deliberately coarse: the engine's
     // refusal reaches observe.luau as unknown evidence, so a mismatched pair
     // resolves nothing and carries no message naming the mismatch. That is why
-    // the suite asserts the resolution rather than only that an observation
-    // happened -- and why a project's own supplied pair is checked earlier, by
-    // requireProbeGeometry in prepareStore, which is the only place that holds
-    // both numbers. The worlds below are built by this case rather than
-    // supplied, so they reach the resolver as a project's never can.
-    TEST_CASE("an observation is resolved from the frame and geometry one project supplied")
+    // this case asserts the resolution rather than only that an observation
+    // happened -- and why a project's own capture meets requireProbeGeometry
+    // first, inside activateObservationHost, which is the only place holding
+    // both numbers. The world below is built by this case rather than supplied,
+    // so it reaches the resolver as a project's never can.
+    //
+    // The mirror case -- a declared geometry that is not the capture's extent --
+    // was deleted here rather than moved. After the Q2 ruling a caller cannot
+    // declare a geometry at all: the model states base_resolution and the
+    // trusted parser publishes it, so there is no second value left to make
+    // wrong. docs/plans/2026-08-11-project-as-data.md 7.0 Q2 records that as
+    // what deleting the restated number cost.
+    TEST_CASE("an observation is resolved from the frame and the geometry its model declares")
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = test_support::prepareStore(temporary.path());
 
-        // The positive control. Without it the two refusals below would prove
-        // only that something in this fixture stopped working.
+        // The positive control. Without it the refusal below would prove only
+        // that something in this fixture stopped working.
         conformance::requireResolvedSurface(
             test_support::observeAgain(prepared),
             test_support::k_fixtureUiAction.surface
         );
 
-        auto const declared = test_support::umbraflowProbeFrame();
-
-        SUBCASE("a capture whose extent is not the declared resolution resolves nothing")
-        {
-            // One pixel wider than the model's base_resolution, and otherwise
-            // the same world: the anchor and the mark are still where the model
-            // looks for them.
-            auto wider = declared;
-            wider.png  = test_support::umbraflowWiderProbePng();
-
-            auto host = test_support::secondObservationHost(
-                prepared,
-                wider,
-                FrameId{811}
-            );
-            CHECK(conformance::observeOnce(host).canonicalJcs().contains(
-                R"("kind":"unknown_state")"
-            ));
-        }
-
-        SUBCASE("a fingerprint that is not the capture's extent resolves nothing")
-        {
-            // The mirror image: the capture is the one the model was authored
-            // on, and the geometry the project declared for it is not.
-            auto const fingerprint = ProjectFingerprint::create(4, 1, 96, 96);
-            REQUIRE(fingerprint.has_value());
-
-            auto misdeclared        = declared;
-            misdeclared.fingerprint = *fingerprint;
-
-            auto host = test_support::secondObservationHost(
-                prepared,
-                misdeclared,
-                FrameId{812}
-            );
-            CHECK(conformance::observeOnce(host).canonicalJcs().contains(
-                R"("kind":"unknown_state")"
-            ));
-        }
+        // One pixel wider than the model's base_resolution, and otherwise the
+        // same world: the anchor and the mark are still where the model looks
+        // for them.
+        auto host = test_support::secondObservationHost(
+            prepared,
+            test_support::umbraflowWiderProbePng(),
+            FrameId{811}
+        );
+        CHECK(conformance::observeOnce(host).canonicalJcs().contains(
+            R"("kind":"unknown_state")"
+        ));
     }
 
     TEST_CASE("contract-state-s03")

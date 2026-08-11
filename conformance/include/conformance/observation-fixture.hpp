@@ -1,7 +1,6 @@
 #pragma once
 
 #include <conformance/host-delivery-fixture.hpp>
-#include <conformance/provider.hpp>
 
 #include <operator/ledger.hpp>
 #include <operator/runtime-installation.hpp>
@@ -36,17 +35,18 @@
 
 #include <doctest/doctest.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -54,10 +54,11 @@
 // project captured, and the TaskHost that turns the two into one
 // task::UiObservationSnapshot.
 //
-// Nothing here describes a world. The model, the geometry it was authored at
-// and the capture that satisfies it all arrive in ProvidedProject, because a
-// suite holding any one of the three would be asking whether ITS world resolves
-// rather than whether the supplying project's does.
+// Nothing here describes a world. The model and the capture that satisfies it
+// are both read out of the project directory, and the geometry the model was
+// authored at is published by the RuntimeModelBinding the Host produced from
+// that model -- so a suite holding any of the three would be asking whether ITS
+// world resolves rather than whether the supplying project's does.
 //
 // It is shared rather than duplicated because createSnapshot composes an
 // observation the Host minted, and UiObservationSnapshot's only friend is
@@ -80,13 +81,6 @@ namespace uf::operator_runtime::conformance
         return observationHash(
             std::as_bytes(std::span{value.data(), value.size()})
         );
-    }
-
-    [[nodiscard]]
-    inline auto observationBytes(std::string_view text) -> std::vector<std::byte>
-    {
-        auto const view = std::as_bytes(std::span{text.data(), text.size()});
-        return {view.begin(), view.end()};
     }
 
     inline auto writeArtifactFile(
@@ -123,58 +117,18 @@ namespace uf::operator_runtime::conformance
     }
 
     [[nodiscard]]
-    inline auto artifactManifestRow(ArtifactFile const& file) -> std::string
+    inline auto readArtifactFile(
+        std::filesystem::path const& path
+    ) -> std::string
     {
-        return std::format(
-            R"({{"path":"{}","sha256":"{}","size":{}}})",
-            file.path,
-            observationHash(file.bytes).hex(),
-            file.bytes.size()
-        );
-    }
-
-    // Writes one RuntimeArtifact directory and returns its root hash, which is
-    // the hash of the manifest naming every file in it.
-    [[nodiscard]]
-    inline auto publishRuntimeArtifact(
-        std::filesystem::path const& root,
-        std::string_view model,
-        std::vector<ArtifactFile> assets
-    ) -> ContentHash
-    {
-        std::ranges::sort(assets, {}, &ArtifactFile::path);
-        writeArtifactFile(root / task::k_runtimeModelFileName, model);
-        auto rows = std::vector<std::string>{};
-        rows.reserve(assets.size());
-        for (auto const& asset : assets)
-        {
-            writeArtifactFile(root / std::filesystem::path{asset.path}, asset.bytes);
-            rows.emplace_back(artifactManifestRow(asset));
-        }
-
-        auto assetJson = std::string{};
-        for (auto index = std::size_t{0}; index < rows.size(); ++index)
-        {
-            if (index != 0U)
-            {
-                assetJson.push_back(',');
-            }
-            assetJson += rows[index];
-        }
-        auto const modelFile = ArtifactFile{
-            .path  = std::string{task::k_runtimeModelFileName},
-            .bytes = observationBytes(model),
+        auto stream = std::ifstream{path, std::ios::binary};
+        REQUIRE(stream.good());
+        auto bytes = std::string{
+            std::istreambuf_iterator<char>{stream},
+            std::istreambuf_iterator<char>{},
         };
-        auto const manifest = std::format(
-            R"({{"assets":[{}],"manifest_schema_hash":"{}",)"
-            R"("page_model":{},"runtime_model_schema_hash":"{}"}})",
-            assetJson,
-            task::k_runtimeArtifactSchemaHash,
-            artifactManifestRow(modelFile),
-            task::k_runtimeModelSchemaHash
-        );
-        writeArtifactFile(root / task::k_runtimeArtifactManifestFileName, manifest);
-        return observationHash(manifest);
+        REQUIRE_FALSE(stream.bad());
+        return bytes;
     }
 
     // A release handoff the Operator's installer accepts, carrying the project's
@@ -188,18 +142,34 @@ namespace uf::operator_runtime::conformance
         ContentHash           artifactRootHash;
     };
 
+    // Wraps the RuntimeArtifact a project already published in the handoff shape
+    // the installer takes. Nothing here writes an artifact: the manifest naming
+    // every file in it is the project's own, and its bytes are what the root
+    // hash is of, so a suite that re-serialized one would install an artifact no
+    // project ever published and pin sessions to a hash no project can restate.
     [[nodiscard]]
     inline auto observationRelease(
         std::filesystem::path const& root,
-        ProjectRuntimeArtifact const& artifact
+        std::filesystem::path const& artifactDirectory
     ) -> ObservationRelease
     {
-        auto const handoff          = root / "release";
-        auto const artifactRootHash = publishRuntimeArtifact(
+        auto const handoff = root / "release";
+        auto error         = std::error_code{};
+        std::filesystem::create_directories(handoff, error);
+        REQUIRE_FALSE(error);
+        std::filesystem::copy(
+            artifactDirectory,
             handoff / "runtime-artifact",
-            artifact.model,
-            artifact.assets
+            std::filesystem::copy_options::recursive
+                | std::filesystem::copy_options::overwrite_existing,
+            error
         );
+        REQUIRE_FALSE(error);
+
+        auto const artifactRootHash = observationHash(readArtifactFile(
+            artifactDirectory
+            / std::filesystem::path{task::k_runtimeArtifactManifestFileName}
+        ));
         auto const releaseManifest = std::format(
             R"({{"annotation_workspace_schema_hash":"{}",)"
             R"("candidate_id":"candidate-1","candidate_revision":1,)"
@@ -223,21 +193,29 @@ namespace uf::operator_runtime::conformance
     // its model declares.
     //
     // Both halves are the supplying project's own -- the PNG it handed over and
-    // the base_resolution its model states -- so this is the one place that can
-    // name the disagreement in numbers the project can act on. EngineSession
-    // refuses the same pair, and that refusal is real but unreadable from a
-    // contract run: TargetCompatibilityUnverified is not a script-visible
-    // reason, so the resolver records `internal_error` and the message naming
-    // both extents never leaves the engine. A project that met only that would
-    // be told its model resolved nothing and left to work out why.
-    inline auto requireProbeGeometry(ProjectProbeFrame const& probe) -> void
+    // the base_resolution its model states, republished by the binding the Host
+    // parsed that model into -- so this is the one place that can name the
+    // disagreement in numbers the project can act on.
+    //
+    // It is not the only thing that refuses such a pair, and it is the only one
+    // that says why. Measured 2026-08-11 by deleting this call and running a
+    // project whose capture is one pixel wider than its model: the run stayed
+    // red, at requireResolvedSurface, over
+    // {"kind":"unknown_state","reason":"unknown_scene_competitor"} -- a
+    // script-visible reason from a closed vocabulary that names no extent. A
+    // project that met only that would be told its model resolved nothing and
+    // left to work out why.
+    inline auto requireProbeGeometry(
+        std::span<std::byte const> probeFrame,
+        ProjectFingerprint const& fingerprint
+    ) -> void
     {
-        auto const decoded = image::decodePng(probe.png, "contract-probe-frame.png");
+        auto const decoded = image::decodePng(probeFrame, "contract-probe-frame.png");
         REQUIRE(decoded.has_value());
 
         auto const extentMatches = (
-            decoded->width == probe.fingerprint.width()
-            && decoded->height == probe.fingerprint.height()
+            decoded->width == fingerprint.width()
+            && decoded->height == fingerprint.height()
         );
         REQUIRE_MESSAGE(
             extentMatches,
@@ -247,9 +225,9 @@ namespace uf::operator_runtime::conformance
             "x",
             decoded->height,
             ", model ",
-            probe.fingerprint.width(),
+            fingerprint.width(),
             "x",
-            probe.fingerprint.height()
+            fingerprint.height()
         );
     }
 
@@ -263,15 +241,15 @@ namespace uf::operator_runtime::conformance
     // It is EngineSession's ensureCompatibleFrame -- not this fixture -- that
     // decides whether the capture describes the same pixels the model was
     // authored in, which is what lets a case deliberately build a mismatched
-    // world. requireProbeGeometry below is what a project SUPPLYING one meets
+    // world. requireProbeGeometry above is what a project SUPPLYING one meets
     // first.
     [[nodiscard]]
     inline auto observationFrame(
-        ProjectProbeFrame const& probe,
+        std::span<std::byte const> probeFrame,
         FrameId id
     ) -> Frame
     {
-        auto decoded = image::decodePng(probe.png, "contract-probe-frame.png");
+        auto decoded = image::decodePng(probeFrame, "contract-probe-frame.png");
         REQUIRE(decoded.has_value());
         auto const width  = decoded->width;
         auto const height = decoded->height;
@@ -459,9 +437,13 @@ namespace uf::operator_runtime::conformance
         std::optional<task::TaskContext>      m_context{};
 
     public:
-        ObservationRuntime(ProjectProbeFrame const& probe, FrameId frameId)
+        ObservationRuntime(
+            std::span<std::byte const> probeFrame,
+            ProjectFingerprint const& fingerprint,
+            FrameId frameId
+        )
         {
-            auto frame = observationFrame(probe, frameId);
+            auto frame = observationFrame(probeFrame, frameId);
 
             auto recorder = trace::TraceRecorder::create(
                 std::make_unique<ObservationTraceSink>(),
@@ -489,8 +471,8 @@ namespace uf::operator_runtime::conformance
                     // decides here is whether that capture's extent matches the
                     // resolution the model declares, which is the disagreement a
                     // suite carrying a frame of its own could never produce.
-                    .liveFingerprint    = probe.fingerprint,
-                    .projectFingerprint = probe.fingerprint,
+                    .liveFingerprint    = fingerprint,
+                    .projectFingerprint = fingerprint,
 
                     // Ten seconds rather than one: a project's frame may be a
                     // real client area, and the matcher converts all of it to
@@ -536,19 +518,47 @@ namespace uf::operator_runtime::conformance
         GenerationId                        generation;
     };
 
+    // The geometry the model of `generation` declares. It is read back through
+    // the binding rather than carried alongside the capture because the model is
+    // a Luau value: after the Q2 ruling the trusted parser publishes
+    // base_resolution and base_dpi, and no document beside the model restates
+    // them. See docs/plans/2026-08-11-project-as-data.md 7.0 Q2.
+    [[nodiscard]]
+    inline auto declaredFingerprint(
+        task::TaskHost& host,
+        GenerationId generation
+    ) -> ProjectFingerprint
+    {
+        auto const binding = host.runtimeModelBinding(generation);
+        REQUIRE(binding.has_value());
+        return binding->fingerprint();
+    }
+
     [[nodiscard]]
     inline auto activateObservationHost(
         task::InstalledRuntimeArtifact installed,
-        ProjectProbeFrame const& probe,
+        std::span<std::byte const> probeFrame,
         FrameId frameId
     ) -> ObservationHost
     {
         auto host       = std::make_unique<task::TaskHost>();
         auto generation = host->activateRuntimeArtifact(std::move(installed));
         REQUIRE(generation.has_value());
+
+        // Here rather than before the install, because this is the first moment
+        // the extent exists: the Host has just parsed the model, and the
+        // ObservationRuntime built below is what needs the same fingerprint.
+        // It is still ahead of every resolution, which is what keeps a mismatched
+        // extent out of the causes requireResolvedSurface has to explain.
+        auto const fingerprint = declaredFingerprint(*host, *generation);
+        requireProbeGeometry(probeFrame, fingerprint);
         return ObservationHost{
-            .host       = std::move(host),
-            .runtime    = std::make_unique<ObservationRuntime>(probe, frameId),
+            .host    = std::move(host),
+            .runtime = std::make_unique<ObservationRuntime>(
+                probeFrame,
+                fingerprint,
+                frameId
+            ),
             .generation = *generation,
         };
     }
@@ -578,8 +588,8 @@ namespace uf::operator_runtime::conformance
     // that failed says `locator_failed` and nothing about which pixels differed.
     // The one cause that could be named precisely -- a capture whose extent is
     // not the model's -- is named by requireProbeGeometry above, which
-    // prepareStore runs before any resolution, and is therefore not among the
-    // causes that reach here.
+    // activateObservationHost runs before any resolution, and is therefore not
+    // among the causes that reach here.
     inline auto requireResolvedSurface(
         task::UiObservationSnapshot const& snapshot,
         std::string_view surface
@@ -639,10 +649,14 @@ namespace uf::operator_runtime::conformance
     // the build it was compiled by happens to run.
     class DeliveringHost final
     {
+        // Declared before m_runtime and in this order on purpose: the runtime
+        // needs the geometry, and the geometry does not exist until this Host
+        // has activated the artifact and parsed its model.
         std::unique_ptr<task::TaskHost>     m_host;
+        GenerationId                        m_generation;
+        ProjectFingerprint                  m_fingerprint;
         std::unique_ptr<ObservationRuntime> m_runtime;
         std::unique_ptr<ObservationRuntime> m_other{};
-        GenerationId                        m_generation;
 
         // The action the project named. It is stored rather than passed to each
         // call because the chunk that mints a Receipt and the check that reads
@@ -652,8 +666,8 @@ namespace uf::operator_runtime::conformance
         // The project's own capture, kept because deliverIntoAnotherCycle builds
         // a second runtime over it on demand. Owned rather than borrowed: a
         // DeliveringHost outlives the call that made it, so a view of the
-        // caller's ProvidedProject would be a stored borrow with no contract.
-        ProjectProbeFrame m_probe;
+        // caller's loaded project would be a stored borrow with no contract.
+        std::vector<std::byte> m_probe;
 
         auto mint() -> void
         {
@@ -671,15 +685,20 @@ namespace uf::operator_runtime::conformance
             task::InstalledRuntimeArtifact installed,
             task::ControlFence fence,
             task::UiActionUnderTest action,
-            ProjectProbeFrame probe
+            std::vector<std::byte> probeFrame
         )
             : m_host{std::make_unique<task::TaskHost>()}
-            , m_runtime{std::make_unique<ObservationRuntime>(probe, FrameId{701})}
             , m_generation{
                   activateDeliveringGeneration(*m_host, std::move(installed))
               }
+            , m_fingerprint{declaredFingerprint(*m_host, m_generation)}
+            , m_runtime{std::make_unique<ObservationRuntime>(
+                  probeFrame,
+                  m_fingerprint,
+                  FrameId{701}
+              )}
             , m_action{std::move(action)}
-            , m_probe{std::move(probe)}
+            , m_probe{std::move(probeFrame)}
         {
             // Minting is refused until a ledger fence is adopted, so this is
             // where a Host stops being inert.
@@ -765,6 +784,7 @@ namespace uf::operator_runtime::conformance
             {
                 m_other = std::make_unique<ObservationRuntime>(
                     m_probe,
+                    m_fingerprint,
                     FrameId{702}
                 );
                 // The other context must hold a cycle of its own, or the refusal
@@ -803,7 +823,7 @@ namespace uf::operator_runtime::conformance
         uint64 installedGeneration,
         ContentHash const& artifactRootHash,
         task::UiActionUnderTest const& action,
-        ProjectProbeFrame const& probe
+        std::vector<std::byte> probeFrame
     ) -> std::unique_ptr<DeliveringHost>
     {
         auto installed = store.openInstalledRuntimeArtifact(
@@ -815,7 +835,7 @@ namespace uf::operator_runtime::conformance
             *std::move(installed),
             controlFence(lease),
             action,
-            probe
+            std::move(probeFrame)
         );
     }
 }

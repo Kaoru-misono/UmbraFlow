@@ -64,21 +64,22 @@ endif()
 
 add_subdirectory(entry)
 
-# The exported Operator conformance suite. It is not part of tests/: a consuming
-# repository builds it from its own tree against its own project, and this
-# repository is one of its runs. The function is defined for every build,
-# top-level or not, because a consumer's add_subdirectory of this repository is
-# the only way it reaches one.
-include(cmake/conformance-suite.cmake)
-
 # Everything below is this repository rehearsing its own contracts. A consumer
-# adding this tree as a subdirectory gets the suite it calls and the modules it
-# links; it does not get conformance-arcana in its CTest namespace, nor this
-# repository's own tests, nor a compile_commands.json written into its tree.
+# adding this tree as a subdirectory gets the modules it links; it does not get
+# conformance-arcana in its CTest namespace, nor this repository's own tests, nor
+# a compile_commands.json written into its tree.
 if(PROJECT_IS_TOP_LEVEL)
     option(CPP_BUILD_TESTS "Build this repository's own tests" ON)
 
     enable_testing()
+
+    # The Operator conformance suite. It used to be included outside this guard,
+    # so that a consumer's add_subdirectory of this repository reached the
+    # function that compiled the suite into the consumer's own executable. A
+    # project is now a directory of data and the suite is a binary this
+    # repository ships, so no consumer add_subdirectory is left to reach it:
+    # uf-chaos has had no CMake at all since its 4bb6e30.
+    include(cmake/conformance-run.cmake)
 
     # Before tests/, because tests/CMakeLists.txt ends by checking that every
     # migration-report contract ID has a CTest and some of them are registered

@@ -1,5 +1,7 @@
 #include "suite-support.hpp"
 
+#include <deployment/project-directory.hpp>
+
 #include <operator/runtime-installation.hpp>
 
 #include <task/page-model-file.hpp>
@@ -26,6 +28,81 @@ namespace uf::operator_runtime::conformance
 {
     namespace
     {
+        // Written once by main before any case runs, and read from then on. It
+        // is a function-local static rather than a namespace-scope variable so
+        // that nothing outside the two accessors below can name it.
+        [[nodiscard]] auto projectDirectorySlot() -> std::filesystem::path&
+        {
+            static auto s_directory = std::filesystem::path{};
+            return s_directory;
+        }
+
+        [[nodiscard]]
+        auto roleOf(
+            deployment::LoadedProject const& project UF_LIFETIME_BOUND,
+            ProjectRole role
+        ) -> deployment::ProjectConformanceRole const&
+        {
+            return role == ProjectRole::UnderTest
+                ? project.underTest
+                : project.foreign;
+        }
+    }
+
+    auto setProjectDirectory(std::filesystem::path directory) -> void
+    {
+        projectDirectorySlot() = std::move(directory);
+    }
+
+    auto projectDirectory() -> std::filesystem::path
+    {
+        return projectDirectorySlot();
+    }
+
+    auto loadedProject() -> deployment::LoadedProject
+    {
+        auto const directory = projectDirectory();
+        REQUIRE_MESSAGE(
+            !directory.empty(),
+            "no project directory was set; run umbra-flow-conformance --project"
+        );
+        auto loaded = deployment::loadProject(directory, {});
+        REQUIRE_MESSAGE(
+            loaded.has_value(),
+            "the project directory could not be loaded: ",
+            loaded.error().message()
+        );
+        return *std::move(loaded);
+    }
+
+    auto deploymentFor(
+        deployment::LoadedProject const& project,
+        ProjectRole role
+    ) -> deployment::LoadedDeployment const&
+    {
+        auto const* p_deployment = project.findDeployment(
+            roleOf(project, role).deployment
+        );
+        REQUIRE(p_deployment != nullptr);
+        return *p_deployment;
+    }
+
+    auto vocabularyFor(
+        deployment::LoadedProject const& project,
+        ProjectRole role
+    ) -> deployment::ProjectVocabulary const&
+    {
+        return roleOf(project, role).vocabulary;
+    }
+
+    auto uiActionOf(deployment::ProjectVocabulary const& vocabulary)
+        -> task::UiActionUnderTest
+    {
+        return task::UiActionUnderTest{
+            .surface  = vocabulary.uiAction.surface,
+            .uiTarget = vocabulary.uiAction.uiTarget,
+            .action   = vocabulary.uiAction.action,
+        };
     }
 
     TemporaryDirectory::TemporaryDirectory(std::string_view label)
@@ -63,65 +140,77 @@ namespace uf::operator_runtime::conformance
     }
 
     auto canonical(
-        ProvidedProject const& project,
+        deployment::LoadedProject const& project,
+        ProjectRole role,
         std::string value
     ) -> CanonicalJson
     {
-        auto result = project.schemaOwner.canonicalize(std::move(value));
+        auto result = deploymentFor(project, role).schemaOwner.canonicalize(
+            std::move(value)
+        );
         REQUIRE(result.has_value());
         return *result;
     }
 
     auto journalEntry(
-        ProvidedProject const& project,
-        JournalDocument const& document
+        deployment::LoadedProject const& project,
+        ProjectRole role,
+        deployment::ProjectJournalDocument const& document
     ) -> ValidatedJournalEntryData
     {
-        auto result = project.journalSchemaOwner.validate(
+        auto result = deploymentFor(project, role).journalSchemaOwner.validate(
             document.eventType,
-            canonical(project, document.payload),
-            canonical(project, project.vocabulary.provenance)
+            canonical(project, role, document.payload),
+            canonical(project, role, vocabularyFor(project, role).provenance)
         );
         REQUIRE(result.has_value());
         return *result;
     }
 
     auto toolInvocation(
-        ProvidedProject const& project,
+        deployment::LoadedProject const& project,
+        ProjectRole role,
         std::string toolName
     ) -> ValidatedToolInvocation
     {
-        auto result = project.toolCatalogSchemaOwner.validate(
+        auto result = deploymentFor(project, role).toolCatalogSchemaOwner.validate(
             std::move(toolName),
-            canonical(project, project.vocabulary.toolArguments)
+            canonical(project, role, vocabularyFor(project, role).toolArguments)
         );
         REQUIRE(result.has_value());
         return *result;
     }
 
-    auto loadPlugin(ProvidedProject const& project) -> ProjectPluginHandle
+    auto loadPlugin(
+        deployment::LoadedProject const& project,
+        ProjectRole role
+    ) -> ProjectPluginHandle
     {
-        auto registrar = ProjectPluginRegistrar{};
-        auto result    = registrar.registerPlugin(
-            project.registration,
-            project.pluginBytes,
-            project.artifactBlobs,
-            project.schemaOwner
+        auto const& one = deploymentFor(project, role);
+        auto registrar  = ProjectPluginRegistrar{};
+        auto result     = registrar.registerPlugin(
+            one.registration,
+            one.pluginBytes,
+            one.artifactBlobs,
+            one.schemaOwner
         );
         REQUIRE(result.has_value());
         return *result;
     }
 
     auto reconcileOutcome(
-        ProvidedProject const& project,
+        deployment::LoadedProject const& project,
+        ProjectRole role,
         ProjectPluginHandle const& plugin,
         std::string operationId,
         std::string input
     ) -> ValidatedReconcileOutcome
     {
-        auto proposal = plugin.reconcile(canonical(project, std::move(input)));
+        auto proposal = plugin.reconcile(
+            canonical(project, role, std::move(input))
+        );
         REQUIRE(proposal.has_value());
-        auto outcome = project.reconcileSchemaOwner.validate(
+        auto outcome = deploymentFor(project, role).reconcileSchemaOwner.validate(
             std::move(operationId),
             *std::move(proposal)
         );
@@ -152,25 +241,22 @@ namespace uf::operator_runtime::conformance
 
     auto prepareStore(std::filesystem::path const& root) -> PreparedStore
     {
-        auto const project = provideProject(ProjectRole::UnderTest);
+        auto project             = loadedProject();
+        auto const& underTest    = deploymentFor(project, ProjectRole::UnderTest);
+        auto const& vocabulary   = vocabularyFor(project, ProjectRole::UnderTest);
 
-        // The provider decides the baseline entry and the registration decides
-        // the baseline event type. When they disagree nothing below can run,
-        // and saying so here names the provider rather than the Operator.
+        // umbraflow-conformance.json decides the baseline entry and
+        // umbraflow-project.json decides the baseline event type. When they
+        // disagree nothing below can run, and saying so here names the project
+        // directory rather than the Operator.
         REQUIRE(
-            project.vocabulary.baselineEntry.eventType
-            == project.registration.baselineEventType()
+            vocabulary.baselineEntry.eventType
+            == underTest.registration.baselineEventType()
         );
-
-        // Same reason, for the other pair a project supplies as two halves that
-        // must agree. Checked before anything is installed: the capture and the
-        // geometry are both this project's, and nothing further down can name
-        // their disagreement in numbers.
-        requireProbeGeometry(project.probeFrame);
 
         auto const release = observationRelease(
             root / "session-handoff",
-            project.runtimeArtifact
+            project.runtimeArtifactRoot
         );
         auto storeResult   = OperatorCoordinator::open(root / "production");
         REQUIRE(storeResult.has_value());
@@ -187,19 +273,23 @@ namespace uf::operator_runtime::conformance
         auto const installedGeneration = installed->installedGeneration();
 
         auto const manifest = sessionManifest(
-            project.registration,
+            underTest.registration,
             installed->rootHash()
         );
-        auto const plugin = loadPlugin(project);
-        REQUIRE(store.registerProject(project.registration).has_value());
+        auto const plugin = loadPlugin(project, ProjectRole::UnderTest);
+        REQUIRE(store.registerProject(underTest.registration).has_value());
         REQUIRE(store.provisionProjectInstance(
-            project.registration,
+            underTest.registration,
             plugin,
             ProjectInstanceBaseline{
                 .projectInstanceKey  = "instance-1",
                 .eventId             = "baseline-1",
                 .sessionManifestHash = manifest.hash(),
-                .entry               = journalEntry(project, project.vocabulary.baselineEntry),
+                .entry               = journalEntry(
+                    project,
+                    ProjectRole::UnderTest,
+                    vocabulary.baselineEntry
+                ),
             }
         ).has_value());
         REQUIRE(store.pinSession(
@@ -207,7 +297,7 @@ namespace uf::operator_runtime::conformance
                 .sessionId                 = "session-1",
                 .authenticatedControllerId = "controller-1",
                 .idempotencyNamespace      = "controller-1",
-                .projectRegistrationHash   = project.registration.hash(),
+                .projectRegistrationHash   = underTest.registration.hash(),
                 .capabilityProfileHash     = hashOf("capability"),
                 .controlledTargetId        = "target-1",
                 .projectInstanceKey        = "instance-1",
@@ -222,6 +312,12 @@ namespace uf::operator_runtime::conformance
         REQUIRE(controller.has_value());
         auto const lease = store.acquireLease(*controller);
         REQUIRE(lease.has_value());
+
+        // requireProbeGeometry runs inside this call rather than at the top of
+        // this function: after the Q2 ruling the extent the capture must match
+        // is the model's, and the model is not parsed until the Host activates
+        // the artifact. It is still ahead of the observation below, so
+        // requireResolvedSurface's account of what can reach it is unchanged.
         auto observation = activateObservationHost(
             *std::move(installed),
             project.probeFrame,
@@ -232,7 +328,7 @@ namespace uf::operator_runtime::conformance
         // Checked once, here, rather than per case: every case below plans on a
         // resolved state, so a probe frame this project's model does not satisfy
         // must be named where it was supplied.
-        requireResolvedSurface(reading, project.vocabulary.uiAction.surface);
+        requireResolvedSurface(reading, vocabulary.uiAction.surface);
 
         auto snapshot = store.createSnapshot(*lease, plugin, reading);
         REQUIRE(snapshot.has_value());
@@ -251,17 +347,17 @@ namespace uf::operator_runtime::conformance
         );
         REQUIRE(runtimeModel.has_value());
         auto authority = planAuthority(
-            project.registration,
+            underTest.registration,
             manifest,
             *runtimeModel,
             "operator",
-            project.vocabulary.uiAction
+            uiActionOf(vocabulary)
         );
         REQUIRE(authority.has_value());
         return PreparedStore{
             .store                   = std::move(store),
             .plugin                  = plugin,
-            .project                 = project,
+            .project                 = std::move(project),
             .manifest                = manifest,
             .planAuthority           = *std::move(authority),
             .controller              = *controller,
@@ -281,7 +377,7 @@ namespace uf::operator_runtime::conformance
             prepared.lease,
             prepared.installedGeneration,
             prepared.runtimeArtifactRootHash,
-            prepared.project.vocabulary.uiAction,
+            uiActionOf(prepared.project.underTest.vocabulary),
             prepared.project.probeFrame
         );
     }
@@ -364,7 +460,11 @@ namespace uf::operator_runtime::conformance
         auto operation = prepared.store.submitCommand(
             prepared.controller,
             command(prepared.snapshot, std::move(clientRequestId)),
-            toolInvocation(prepared.project, std::move(toolName))
+            toolInvocation(
+                prepared.project,
+                ProjectRole::UnderTest,
+                std::move(toolName)
+            )
         );
         REQUIRE(operation.has_value());
         auto const frozen = frozenPlan(prepared, operation->operation);
@@ -410,7 +510,7 @@ namespace uf::operator_runtime::conformance
         StoredOperation const& operation,
         uint64 expectedProjectStateRevision,
         std::string eventId,
-        JournalDocument const& entry
+        deployment::ProjectJournalDocument const& entry
     ) -> ReconciliationCommit
     {
         return ReconciliationCommit{
@@ -419,14 +519,19 @@ namespace uf::operator_runtime::conformance
             .expectedProjectStateRevision = expectedProjectStateRevision,
             .outcome                      = reconcileOutcome(
                 prepared.project,
+                ProjectRole::UnderTest,
                 prepared.plugin,
                 operation.operationId,
-                prepared.project.vocabulary.confirmedInput
+                prepared.project.underTest.vocabulary.confirmedInput
             ),
             .journalEvents = {
                 JournalAppend{
                     .eventId = std::move(eventId),
-                    .entry   = journalEntry(prepared.project, entry),
+                    .entry   = journalEntry(
+                        prepared.project,
+                        ProjectRole::UnderTest,
+                        entry
+                    ),
                 },
             },
         };

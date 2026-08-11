@@ -2,11 +2,13 @@
 
 #include <conformance/observation-fixture.hpp>
 #include <conformance/operator-protocol.hpp>
-#include <conformance/provider.hpp>
+
+#include <deployment/project-directory.hpp>
 
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
 
+#include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
@@ -19,6 +21,28 @@
 
 namespace uf::operator_runtime::conformance
 {
+    // The project directory this run was pointed at.
+    //
+    // doctest hands a TEST_CASE no parameters, so the path reaches the cases
+    // through process scope: main writes it once before context.run() and
+    // nothing writes it afterwards. Cases run single-threaded in one process,
+    // which TemporaryDirectory below already relies on. Returned by copy, so no
+    // case holds a view of storage it does not own. See
+    // docs/plans/2026-08-11-project-as-data.md 7.0 Q9.
+    auto setProjectDirectory(std::filesystem::path directory) -> void;
+
+    [[nodiscard]] auto projectDirectory() -> std::filesystem::path;
+
+    // Which registration the suite is asking for. Authority is per registration,
+    // so proving that it does not cross needs a second one that is complete
+    // enough to mint documents of its own. Which deployment plays each role is
+    // umbraflow-conformance.json's answer, not this suite's.
+    enum class ProjectRole : uint8
+    {
+        UnderTest,
+        Foreign,
+    };
+
     // A directory the suite owns for the duration of one case. Cases run in one
     // process against real SQLite files, so each needs a private root and a
     // destructor that removes it even when an assertion ended the case.
@@ -40,33 +64,68 @@ namespace uf::operator_runtime::conformance
 
     [[nodiscard]] auto hashOf(std::string_view value) -> ContentHash;
 
-    // Every helper below fails the running case rather than returning a
-    // Result, because a project that cannot mint its own documents has no
-    // property left to test and the first refusal is the whole diagnosis.
+    // Everything below `loadedProject` fails the running case rather than
+    // returning a Result, because a project that cannot mint its own documents
+    // has no property left to test and the first refusal is the whole diagnosis.
+
+    // The project directory, read. A case loads it rather than sharing one
+    // load: the two recorders on it are written while that case runs, so a
+    // shared load would let one case read what another observed.
+    [[nodiscard]] auto loadedProject() -> deployment::LoadedProject;
+
+    // The deployment playing `role`, and the vocabulary that drives it. Both are
+    // views into `project` and are call-scoped: every case holds the load on its
+    // own stack, or in the PreparedStore below, for as long as it uses them.
+    [[nodiscard]]
+    auto deploymentFor(
+        deployment::LoadedProject const& project UF_LIFETIME_BOUND,
+        ProjectRole role
+    ) -> deployment::LoadedDeployment const&;
+
+    [[nodiscard]]
+    auto vocabularyFor(
+        deployment::LoadedProject const& project UF_LIFETIME_BOUND,
+        ProjectRole role
+    ) -> deployment::ProjectVocabulary const&;
+
+    // The one UI action a run drives, in the shape task names it. Two types
+    // rather than one because the loader may not depend on the Host's
+    // vocabulary of what is under test; the three members are the same three.
+    [[nodiscard]]
+    auto uiActionOf(deployment::ProjectVocabulary const& vocabulary)
+        -> task::UiActionUnderTest;
+
     [[nodiscard]]
     auto canonical(
-        ProvidedProject const& project,
+        deployment::LoadedProject const& project,
+        ProjectRole role,
         std::string value
     ) -> CanonicalJson;
 
     [[nodiscard]]
     auto journalEntry(
-        ProvidedProject const& project,
-        JournalDocument const& document
+        deployment::LoadedProject const& project,
+        ProjectRole role,
+        deployment::ProjectJournalDocument const& document
     ) -> ValidatedJournalEntryData;
 
     [[nodiscard]]
     auto toolInvocation(
-        ProvidedProject const& project,
+        deployment::LoadedProject const& project,
+        ProjectRole role,
         std::string toolName
     ) -> ValidatedToolInvocation;
 
     [[nodiscard]]
-    auto loadPlugin(ProvidedProject const& project) -> ProjectPluginHandle;
+    auto loadPlugin(
+        deployment::LoadedProject const& project,
+        ProjectRole role
+    ) -> ProjectPluginHandle;
 
     [[nodiscard]]
     auto reconcileOutcome(
-        ProvidedProject const& project,
+        deployment::LoadedProject const& project,
+        ProjectRole role,
         ProjectPluginHandle const& plugin,
         std::string operationId,
         std::string input
@@ -83,10 +142,10 @@ namespace uf::operator_runtime::conformance
     // snapshot: the state every ledger case starts from.
     struct PreparedStore final
     {
-        OperatorCoordinator store;
-        ProjectPluginHandle plugin;
-        ProvidedProject     project;
-        SessionManifest     manifest;
+        OperatorCoordinator       store;
+        ProjectPluginHandle       plugin;
+        deployment::LoadedProject project;
+        SessionManifest           manifest;
 
         // The sole mint for an EffectivePlan. It is part of the prepared state
         // because a deployment builds one from the exact operator protocol
@@ -189,7 +248,7 @@ namespace uf::operator_runtime::conformance
         StoredOperation const& operation,
         uint64 expectedProjectStateRevision,
         std::string eventId,
-        JournalDocument const& entry
+        deployment::ProjectJournalDocument const& entry
     ) -> ReconciliationCommit;
 
     [[nodiscard]]

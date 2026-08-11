@@ -1,6 +1,6 @@
 // What a ProjectRegistration's five authorities decide, and what no caller can
-// decide for them. Every case here runs against whatever project the consuming
-// repository supplied through provideProject.
+// decide for them. Every case here runs against whatever project directory the
+// run was pointed at.
 //
 // The plan authority is here too, for the one thing about it that is the
 // suite's rather than the Operator's: whether a plan names the UI action this
@@ -10,7 +10,6 @@
 
 #include <conformance/host-delivery-fixture.hpp>
 #include <conformance/operator-protocol.hpp>
-#include <conformance/provider.hpp>
 
 #include <operator/journal-entry.hpp>
 #include <operator/ledger.hpp>
@@ -62,36 +61,49 @@ namespace uf::operator_runtime::conformance
 
     TEST_CASE("the Tool Catalog owns mutability and tool version")
     {
-        auto const project = provideProject(ProjectRole::UnderTest);
-        auto const& words  = project.vocabulary;
+        auto const project     = loadedProject();
+        auto const& underTest  = deploymentFor(project, ProjectRole::UnderTest);
+        auto const& words      = vocabularyFor(project, ProjectRole::UnderTest);
 
-        auto const mutating = toolInvocation(project, words.mutatingTool);
+        auto const mutating = toolInvocation(
+            project,
+            ProjectRole::UnderTest,
+            words.mutatingTool
+        );
         CHECK(mutating.mutability() == ToolMutability::Mutating);
-        CHECK(mutating.projectRegistrationHash() == project.registration.hash());
-        CHECK(mutating.toolCatalogHash() == project.registration.toolCatalogHash());
+        CHECK(mutating.projectRegistrationHash() == underTest.registration.hash());
+        CHECK(
+            mutating.toolCatalogHash()
+            == underTest.registration.toolCatalogHash()
+        );
         CHECK_FALSE(mutating.toolVersion().empty());
 
         // The descriptor decides, so the read-only tool reaches the same
         // authority through the same call and comes back restricted.
         CHECK(
-            toolInvocation(project, words.readOnlyTool).mutability()
+            toolInvocation(
+                project,
+                ProjectRole::UnderTest,
+                words.readOnlyTool
+            ).mutability()
             == ToolMutability::ReadOnly
         );
 
         // No such tool, and arguments the descriptor's own schema refuses.
-        CHECK_FALSE(project.toolCatalogSchemaOwner.validate(
+        CHECK_FALSE(underTest.toolCatalogSchemaOwner.validate(
             words.absentTool,
-            canonical(project, words.toolArguments)
+            canonical(project, ProjectRole::UnderTest, words.toolArguments)
         ).has_value());
-        CHECK_FALSE(project.toolCatalogSchemaOwner.validate(
+        CHECK_FALSE(underTest.toolCatalogSchemaOwner.validate(
             words.mutatingTool,
-            canonical(project, words.refusedToolArguments)
+            canonical(project, ProjectRole::UnderTest, words.refusedToolArguments)
         ).has_value());
     }
 
     TEST_CASE("a schema owner cannot answer for a schema its registration never named")
     {
-        auto const project = provideProject(ProjectRole::UnderTest);
+        auto const project    = loadedProject();
+        auto const& underTest = deploymentFor(project, ProjectRole::UnderTest);
 
         // Every authority takes the exact bytes it answers for, and the hash in
         // the registration is what decides. A validator for some other catalog,
@@ -99,7 +111,7 @@ namespace uf::operator_runtime::conformance
         // permissive it is.
         CHECK_FALSE(
             ProjectToolCatalogSchemaOwner::create(
-                project.registration,
+                underTest.registration,
                 "not-the-tool-catalog",
                 [](std::string_view, std::string_view) -> Result<ToolDescriptor>
                 {
@@ -112,7 +124,7 @@ namespace uf::operator_runtime::conformance
         );
         CHECK_FALSE(
             ProjectReconcileSchemaOwner::create(
-                project.registration,
+                underTest.registration,
                 "not-the-reconcile-manifest",
                 [](std::string_view) -> Result<ReconcileDisposition>
                 {
@@ -122,7 +134,7 @@ namespace uf::operator_runtime::conformance
         );
         CHECK_FALSE(
             ProjectJournalSchemaOwner::create(
-                project.registration,
+                underTest.registration,
                 "not-the-journal-manifest",
                 [](std::string_view, std::string_view) -> Result<ContentHash>
                 {
@@ -134,15 +146,17 @@ namespace uf::operator_runtime::conformance
 
     TEST_CASE("authority does not cross ProjectRegistrations")
     {
-        auto const project = provideProject(ProjectRole::UnderTest);
-        auto const foreign = provideProject(ProjectRole::Foreign);
-        REQUIRE(foreign.registration.hash() != project.registration.hash());
+        auto const project    = loadedProject();
+        auto const& underTest = deploymentFor(project, ProjectRole::UnderTest);
+        auto const& foreign   = deploymentFor(project, ProjectRole::Foreign);
+        REQUIRE(foreign.registration.hash() != underTest.registration.hash());
 
         // A second registration mints its own documents perfectly well. What it
         // cannot do is have them accepted anywhere the first one is named.
         auto const foreignInvocation = toolInvocation(
-            foreign,
-            foreign.vocabulary.mutatingTool
+            project,
+            ProjectRole::Foreign,
+            vocabularyFor(project, ProjectRole::Foreign).mutatingTool
         );
         CHECK(
             foreignInvocation.projectRegistrationHash()
@@ -150,29 +164,31 @@ namespace uf::operator_runtime::conformance
         );
         CHECK(
             foreignInvocation.projectRegistrationHash()
-            != project.registration.hash()
+            != underTest.registration.hash()
         );
 
         auto const foreignEntry = journalEntry(
-            foreign,
-            foreign.vocabulary.confirmedEntry
+            project,
+            ProjectRole::Foreign,
+            vocabularyFor(project, ProjectRole::Foreign).confirmedEntry
         );
         CHECK(
             foreignEntry.projectRegistrationHash()
-            != project.registration.hash()
+            != underTest.registration.hash()
         );
 
         // The plugin is bound the same way: a handle registered under one
         // registration answers only for that one.
-        auto const plugin = loadPlugin(project);
-        CHECK(plugin.projectRegistrationHash() == project.registration.hash());
-        CHECK(plugin.pluginHash() == project.registration.pluginHash());
+        auto const plugin = loadPlugin(project, ProjectRole::UnderTest);
+        CHECK(plugin.projectRegistrationHash() == underTest.registration.hash());
+        CHECK(plugin.pluginHash() == underTest.registration.pluginHash());
     }
 
     TEST_CASE("a ProjectPlugin cannot be registered against foreign bytes")
     {
-        auto const project = provideProject(ProjectRole::UnderTest);
-        auto const foreign = provideProject(ProjectRole::Foreign);
+        auto const project    = loadedProject();
+        auto const& underTest = deploymentFor(project, ProjectRole::UnderTest);
+        auto const& foreign   = deploymentFor(project, ProjectRole::Foreign);
 
         auto registrar = ProjectPluginRegistrar{};
 
@@ -180,34 +196,34 @@ namespace uf::operator_runtime::conformance
         // the plugin_hash the registration pinned, so the other project's
         // plugin cannot be loaded under this registration.
         CHECK_FALSE(registrar.registerPlugin(
-            project.registration,
+            underTest.registration,
             foreign.pluginBytes,
-            project.artifactBlobs,
-            project.schemaOwner
+            underTest.artifactBlobs,
+            underTest.schemaOwner
         ).has_value());
 
         // Nor can a schema owner bound to the other registration stand in for
         // this one.
         CHECK_FALSE(registrar.registerPlugin(
-            project.registration,
-            project.pluginBytes,
-            project.artifactBlobs,
+            underTest.registration,
+            underTest.pluginBytes,
+            underTest.artifactBlobs,
             foreign.schemaOwner
         ).has_value());
 
         CHECK(registrar.registerPlugin(
-            project.registration,
-            project.pluginBytes,
-            project.artifactBlobs,
-            project.schemaOwner
+            underTest.registration,
+            underTest.pluginBytes,
+            underTest.artifactBlobs,
+            underTest.schemaOwner
         ).has_value());
 
         // Startup-only: the same exact registration cannot be replaced.
         CHECK_FALSE(registrar.registerPlugin(
-            project.registration,
-            project.pluginBytes,
-            project.artifactBlobs,
-            project.schemaOwner
+            underTest.registration,
+            underTest.pluginBytes,
+            underTest.artifactBlobs,
+            underTest.schemaOwner
         ).has_value());
     }
 
@@ -227,15 +243,19 @@ namespace uf::operator_runtime::conformance
     // indifferent to which side of a pair moved.
     TEST_CASE("a plan step must name the UI action the run agreed on")
     {
-        auto const root    = TemporaryDirectory{"ui-action-agreement"};
-        auto prepared      = prepareStore(root.path());
-        auto const& words  = prepared.project.vocabulary;
-        auto const& agreed = words.uiAction;
+        auto const root   = TemporaryDirectory{"ui-action-agreement"};
+        auto prepared     = prepareStore(root.path());
+        auto const& words = prepared.project.underTest.vocabulary;
+        auto const agreed = uiActionOf(words);
 
         auto const proposed = prepared.store.submitCommand(
             prepared.controller,
             command(prepared.snapshot, "request-1"),
-            toolInvocation(prepared.project, words.mutatingTool)
+            toolInvocation(
+                prepared.project,
+                ProjectRole::UnderTest,
+                words.mutatingTool
+            )
         );
         REQUIRE(proposed.has_value());
 
@@ -286,7 +306,10 @@ namespace uf::operator_runtime::conformance
         {
             INFO(testCase.field);
             auto authority = planAuthority(
-                prepared.project.registration,
+                deploymentFor(
+                    prepared.project,
+                    ProjectRole::UnderTest
+                ).registration,
                 prepared.manifest,
                 *runtimeModel,
                 "operator",
