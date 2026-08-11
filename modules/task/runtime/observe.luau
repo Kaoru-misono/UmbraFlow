@@ -86,7 +86,7 @@ local function measureLocator(state: any, binding: any, locatorId: string): any
 end
 
 local function readText(state: any, binding: any, readerId: string): any
-    local key = binding.id .. ":" .. readerId
+    local key = model.reading_key(binding.id, readerId)
     local cached = state.reader_values[key]
     if cached ~= nil then return cached end
     local reader = state.model.reader_by_id[readerId]
@@ -211,6 +211,44 @@ function observe.open(runtimeModel: any): any
             current.model,
             current.evidence_cycle,
             current.predicate_records
+        )
+    end
+
+    -- Every reading the resolved state reports, measured on demand rather than
+    -- during resolve_state: a Reader costs one Host read out of the cycle's
+    -- pool, and a state that resolved no Surface has nothing to attribute one
+    -- to.  Exhausting that pool leaves the reading Unknown, which resolve_readings
+    -- drops, so a model that declares more reads than a cycle can pay for
+    -- reports fewer readings and never a wrong one.
+    function cycle:resolve_readings(resolvedState: any): { any }
+        local current = requireCycle(self)
+        local candidates = resolution.reading_bindings(
+            current.model,
+            current.evidence_cycle,
+            resolvedState
+        )
+        if candidates ~= nil then
+            for _, binding in candidates do measureBinding(current, binding) end
+            -- Second pass, and the order is the point: a Reader costs a Host read
+            -- and reads the Binding's own rectangle, so only a Binding the first
+            -- pass measured present may spend one.
+            for _, binding in resolution.reading_targets(
+                current.model,
+                current.evidence_cycle,
+                resolvedState,
+                current.predicate_records
+            ) do
+                for _, readerId in binding.reads do
+                    readText(current, binding, readerId)
+                end
+            end
+        end
+        return resolution.resolve_readings(
+            current.model,
+            current.evidence_cycle,
+            resolvedState,
+            current.predicate_records,
+            current.reader_values
         )
     end
 

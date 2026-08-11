@@ -23,6 +23,8 @@
 
 #include <image/png.hpp>
 
+#include <ocr/engine.hpp>
+
 #include <script/engine.hpp>
 
 #include <trace/event.hpp>
@@ -476,7 +478,15 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         std::optional<TaskContext>           m_context{};
 
     public:
-        RuntimeContext(Frame value, uint64 comparisonBudget)
+        // `reader` is absent for every case that resolves by template alone, and
+        // a session built without one refuses readText rather than inventing a
+        // reading -- which is what keeps those cases' documents free of readings
+        // by construction instead of by omission.
+        RuntimeContext(
+            Frame value,
+            uint64 comparisonBudget,
+            std::unique_ptr<ocr::IOcrEngine> reader = nullptr
+        )
         {
             auto recorder = trace::TraceRecorder::create(
                 std::make_unique<TraceSink>(),
@@ -502,7 +512,8 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
                     .projectFingerprint      = fingerprint(),
                     .maximumPixelComparisons = comparisonBudget,
                     .recognitionTimeout      = std::chrono::seconds{1},
-                }
+                },
+                std::move(reader)
             );
             REQUIRE(session.has_value());
             m_context.emplace(*std::move(session), *m_recorder);

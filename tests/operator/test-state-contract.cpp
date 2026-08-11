@@ -4,6 +4,8 @@
 #include "project-fixture.hpp"
 #include "schema-binding.hpp"
 
+#include <script/pure-data-program.hpp>
+
 #include <domain/content-hash.hpp>
 
 #include <doctest/doctest.h>
@@ -320,6 +322,56 @@ namespace uf::operator_runtime
         ).has_value());
     }
 
+    // DecisionBasis has four members and exactly one of them stands for the
+    // world the plugin was shown. That member is a digest over the WHOLE
+    // ui_snapshot document rather than over a list of its parts, which is what
+    // lets the resolver put a new member -- an observed reading -- inside that
+    // document without a second hash having to be remembered.
+    //
+    // The property is that the two are the same bytes. Nothing enforces it
+    // today except that ledger.cpp reads canonicalJcs() for one and
+    // stateResolutionHash() for the other, and a later member added to the
+    // envelope beside ui_snapshot, or a ui_snapshot assembled from more than the
+    // observation, would be a plugin input that no replay is checked against and
+    // would raise no error anywhere.
+    TEST_CASE("the derive input's world is the exact document the decision basis digests")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        REQUIRE(prepared.project.lastDeriveInput != nullptr);
+
+        auto const envelope = *prepared.project.lastDeriveInput;
+        auto const at       = envelope.find("\"ui_snapshot\":");
+        REQUIRE(at != std::string::npos);
+
+        // ui_snapshot sorts last of the five members, so it runs to the closing
+        // brace of the envelope. Taking it by position rather than by parsing is
+        // deliberate: a parse would agree with a re-serialization, and what has
+        // to hold is that these BYTES are the hashed ones.
+        constexpr auto member = std::string_view{"\"ui_snapshot\":"};
+        auto const opened     = at + member.size();
+        REQUIRE(envelope.size() > opened);
+        REQUIRE(envelope.back() == '}');
+        auto const uiSnapshot = envelope.substr(opened, envelope.size() - opened - 1U);
+        REQUIRE_FALSE(uiSnapshot.empty());
+        CHECK(uiSnapshot.front() == '{');
+
+        CHECK(hashOf(uiSnapshot) == prepared.snapshot.stateResolutionHash);
+        CHECK(
+            prepared.snapshot.canonicalParts.find(
+                "\"state_resolution_hash\":\"" + hashOf(uiSnapshot).hex() + "\""
+            )
+            != std::string::npos
+        );
+
+        // And the same document reached the ProjectObservation the basis's other
+        // world member covers, so the two agree about one reading rather than
+        // about two.
+        CHECK(
+            prepared.snapshot.observation.stateResolutionHash() == hashOf(uiSnapshot)
+        );
+    }
+
     // s02: one complete record, published atomically, whose identity the
     // publishing transaction derived from what it read.
     TEST_CASE("contract-state-s02")
@@ -576,6 +628,7 @@ namespace uf::operator_runtime
         CHECK(manifestDefinition.find("\"project_registration_hash\"") != std::string::npos);
         CHECK(manifestDefinition.find("\"policy_artifact_hash\"") != std::string::npos);
         CHECK(manifestDefinition.find("\"journal_envelope_schema_hash\"") != std::string::npos);
+        CHECK(manifestDefinition.find("\"plugin_environment_hash\"") != std::string::npos);
 
         auto const first  = SessionManifest::create(manifestSpec());
         auto const second = SessionManifest::create(manifestSpec());
@@ -616,6 +669,27 @@ namespace uf::operator_runtime
                 != std::string::npos
             );
         }
+
+        // The ninth value the manifest binds, which no spec field can move
+        // because no caller states it. The bridge source that wraps every
+        // plugin call, the global whitelist and the frozen tables published
+        // beside it are its whole preimage, and until it was bound here a
+        // framework upgrade that changed any of them changed what every plugin
+        // did under a session manifest whose hash had not moved.
+        CHECK(
+            first->canonicalBytes().find(
+                "\"plugin_environment_hash\":\"" + first->pluginEnvironmentHash().hex() + "\""
+            )
+            != std::string::npos
+        );
+
+        // And the mint reads it from the framework rather than restating a
+        // constant of its own: the same digest the script module publishes is
+        // the one this manifest carries, so a moved environment moves the
+        // manifest by construction.
+        auto const environment = script::pluginEnvironmentHash();
+        REQUIRE(environment.has_value());
+        CHECK(first->pluginEnvironmentHash() == *environment);
     }
 
     TEST_CASE("contract-state-s06")

@@ -192,6 +192,12 @@
         "actions": {
           "type": "array",
           "items": { "$ref": "#/$defs/click_action" }
+        },
+        "reads": {
+          "$comment": "Readers whose normalised value this Binding reports once it is measured present. A reader named here never decides the detector: text is evidence about what is on a Surface, never the identity of one. Absent is the empty list, which is what most Bindings declare; making it required would say nothing on every Binding that reports nothing.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
         }
       },
       "allOf": [
@@ -389,6 +395,22 @@
         { "$ref": "#/$defs/absent_evidence" },
         { "$ref": "#/$defs/unknown_evidence" }
       ]
+    },
+    "binding_reading": {
+      "$comment": "One reading the resolver reports for a Binding it measured present, under a Reader that Binding named in reads. The text has already been normalised by that Reader's declared normalization and has already cleared its confidence_floor, so the score that decided it is spent here and is not carried: a score differs between two captures of one unchanged screen, and this value is hashed into a decision basis. There is no rectangle for the same reason U-04 gives, and no pre-normalisation text because that is the raw read the Reader exists to narrow. A reading that did not clear the floor is not reported at all.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reader", "text", "ui_target"],
+      "properties": {
+        "reader": { "$ref": "#/$defs/identifier" },
+        "text": { "type": "string" },
+        "ui_target": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "state_readings": {
+      "$comment": "Every reading a resolved state reports, ordered by ui_target then reader so one world produces one document. It is keyed by UiTarget rather than by Binding because a Binding names a visual variant, and the variant a hover or a highlight selects changes between two captures of one semantic instance. Two present Bindings sharing a UiTarget report nothing for it: which instance is on screen is exactly what an ambiguity means.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/binding_reading" }
     },
     "resolved_state": {
       "type": "object",

@@ -7,7 +7,7 @@
 
 local model = {}
 model.schema = "umbraflow-runtime/v2"
-model.schema_hash = "44be8ecf11eccc707a1a30cd04e69b612eae249f0aae837d95c40bfbcc316b3a"
+model.schema_hash = "a2d14589104bcf878aa49ed09033198a161159e5916870449ee86e9380593f1a"
 
 local runtimeModels: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 local semanticBytes: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any
@@ -235,6 +235,17 @@ function model.measurement_key(bindingId: any, value: any): string
     return "binding:" .. identifier("binding_id", bindingId) .. ":" .. model.predicate_key(value)
 end
 
+-- The key one reported reading is cached and looked up under.  It shares the
+-- `binding:` prefix with measurement_key and can never collide with one: a
+-- measurement key continues with `locator:` or `text:`, a reading key with
+-- `read:`, and neither is a legal identifier so no id can spell the other.
+function model.reading_key(bindingId: any, readerId: any): string
+    return "binding:"
+        .. identifier("binding_id", bindingId)
+        .. ":read:"
+        .. identifier("reader_id", readerId)
+end
+
 local function predicate(what: string, value: any): any
     local source = object(what, value)
     if source.kind == "locator_present" then
@@ -384,6 +395,7 @@ local function bindingBuilder(bounds: { number }): (string, any) -> any
             placement = true,
             detector = true,
             actions = true,
+            reads = true,
         })
         local actions = records(what .. ".actions", source.actions, action)
         mapById(what .. ".actions", actions)
@@ -394,6 +406,13 @@ local function bindingBuilder(bounds: { number }): (string, any) -> any
         if #actions == 0 and placement.action_point ~= nil then
             fail(what .. ".placement.action_point", "is not allowed without an action")
         end
+        -- Absent reads is the empty list and not a second shape: a Binding that
+        -- reports nothing has nothing to say here, and requiring every Binding
+        -- to write `reads = []` would put a field on every row to record its
+        -- own absence.
+        local reads = if source.reads == nil
+            then table.freeze({})
+            else stringList(what .. ".reads", source.reads)
         return table.freeze({
             id = identifier(what .. ".id", source.id),
             surface = identifier(what .. ".surface", source.surface),
@@ -402,6 +421,7 @@ local function bindingBuilder(bounds: { number }): (string, any) -> any
             placement = placement,
             detector = detector(what .. ".detector", source.detector),
             actions = actions,
+            reads = reads,
         })
     end
 end
@@ -557,6 +577,9 @@ function model.compile(value: any): any
         requireRef("binding '" .. valueBinding.id .. "'", surfaceById, valueBinding.surface)
         local target = requireRef("binding '" .. valueBinding.id .. "'", targetById, valueBinding.ui_target)
         detectorRefs("binding '" .. valueBinding.id .. "' detector", valueBinding.detector, locatorById, readerById)
+        for _, readerId in valueBinding.reads do
+            requireRef("binding '" .. valueBinding.id .. "' reads", readerById, readerId)
+        end
         if #valueBinding.actions > 0 and target.kind ~= "control" then
             fail("binding '" .. valueBinding.id .. "'", "cannot grant actions to a region UiTarget")
         end

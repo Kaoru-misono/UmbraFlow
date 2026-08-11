@@ -136,4 +136,238 @@ do
     evidence.end_cycle(cycle)
 end
 
+-- Reported readings: what a resolved state says it read, and what it will not.
+local reading = model.compile({
+    schema_version = 2,
+    base_resolution = { 1280, 720 },
+    base_dpi = { 96, 96 },
+    ui_targets = {
+        { id = "scene_anchor", kind = "region" },
+        { id = "title", kind = "region" },
+        { id = "count", kind = "region" },
+        { id = "dialog_anchor", kind = "region" },
+        { id = "dialog_title", kind = "region" },
+    },
+    locators = {
+        { id = "scene.locator", kind = "template", asset_path = "assets/scene.png", threshold = 0.9 },
+        { id = "title.locator", kind = "template", asset_path = "assets/title.png", threshold = 0.9 },
+        { id = "title.alt.locator", kind = "template", asset_path = "assets/title-alt.png", threshold = 0.9 },
+        { id = "count.locator", kind = "template", asset_path = "assets/count.png", threshold = 0.9 },
+        { id = "dialog.locator", kind = "template", asset_path = "assets/dialog.png", threshold = 0.9 },
+        { id = "dialog.title.locator", kind = "template", asset_path = "assets/dialog-title.png", threshold = 0.9 },
+    },
+    readers = {
+        { id = "name.reader", kind = "text", confidence_floor = 0.5, normalization = "collapse_whitespace" },
+        { id = "flavour.reader", kind = "text", confidence_floor = 0.5, normalization = "trim" },
+        { id = "count.reader", kind = "text", confidence_floor = 0.5, normalization = "trim" },
+    },
+    bindings = {
+        {
+            id = "scene.identity", surface = "scene", ui_target = "scene_anchor", variant = "default",
+            placement = placement(10, 10, false), detector = detector("scene.locator"), actions = {},
+        },
+        {
+            id = "title.primary", surface = "scene", ui_target = "title", variant = "primary",
+            placement = placement(100, 10, false), detector = detector("title.locator"), actions = {},
+            reads = { "name.reader", "flavour.reader" },
+        },
+        {
+            id = "title.alternate", surface = "scene", ui_target = "title", variant = "alternate",
+            placement = placement(200, 10, false), detector = detector("title.alt.locator"), actions = {},
+            reads = { "name.reader" },
+        },
+        {
+            id = "count.primary", surface = "scene", ui_target = "count", variant = "primary",
+            placement = placement(300, 10, false), detector = detector("count.locator"), actions = {},
+            reads = { "count.reader" },
+        },
+        -- On a Surface the stack below never contains. Its own detector is
+        -- present, so only the stack keeps its reading out of the report.
+        {
+            id = "dialog.title", surface = "dialog", ui_target = "dialog_title", variant = "primary",
+            placement = placement(400, 10, false), detector = detector("dialog.title.locator"), actions = {},
+            reads = { "name.reader" },
+        },
+        {
+            id = "dialog.identity", surface = "dialog", ui_target = "dialog_anchor", variant = "default",
+            placement = placement(500, 10, false), detector = detector("dialog.locator"), actions = {},
+        },
+    },
+    surfaces = {
+        { id = "scene", kind = "scene", covers = {}, identity = { all = { "scene.identity" }, any = {}, none = {} } },
+        {
+            id = "dialog", kind = "overlay", covers = { "scene" },
+            identity = { all = { "dialog.identity" }, any = {}, none = {} },
+        },
+    },
+    transitions = {},
+})
+
+-- A Reader named in reads must be one the model declares.
+assert(not pcall(function()
+    return model.compile({
+        schema_version = 2,
+        base_resolution = { 1280, 720 },
+        base_dpi = { 96, 96 },
+        ui_targets = { { id = "scene_anchor", kind = "region" } },
+        locators = {
+            { id = "scene.locator", kind = "template", asset_path = "assets/scene.png", threshold = 0.9 },
+        },
+        readers = {},
+        bindings = {
+            {
+                id = "scene.identity", surface = "scene", ui_target = "scene_anchor", variant = "default",
+                placement = placement(10, 10, false), detector = detector("scene.locator"), actions = {},
+                reads = { "undeclared.reader" },
+            },
+        },
+        surfaces = {
+            { id = "scene", kind = "scene", covers = {}, identity = { all = { "scene.identity" }, any = {}, none = {} } },
+        },
+        transitions = {},
+    })
+end))
+
+-- A Binding that declares nothing reports nothing, and is still a valid Binding.
+assert(#reading.binding_by_id["scene.identity"].reads == 0)
+assert(#reading.binding_by_id["title.primary"].reads == 2)
+
+-- The dialog Surface is never on the stack these build: its identity Binding is
+-- absent while the Binding that reads on it is present, which is the only shape
+-- that can tell "readings come from the resolved stack" apart from "readings
+-- come from every present Binding in the model".
+local function readingRecords(cycle: any, title: string, alternate: string, count: string): any
+    local result = {}
+    put(result, cycle, "scene.identity", "scene.locator", "present")
+    put(result, cycle, "title.primary", "title.locator", title)
+    put(result, cycle, "title.alternate", "title.alt.locator", alternate)
+    put(result, cycle, "count.primary", "count.locator", count)
+    put(result, cycle, "dialog.identity", "dialog.locator", "absent")
+    put(result, cycle, "dialog.title", "dialog.title.locator", "present")
+    return result
+end
+
+local function reads(pairs_: { { any } }): any
+    local result = {}
+    for _, row in pairs_ do
+        result[model.reading_key(row[1], row[2])] = row[3]
+    end
+    return result
+end
+
+local function readValue(text: string): any
+    return { kind = "read", text = text, confidence = 0.91 }
+end
+
+-- The reported shape: ui_target, reader and text, sorted, and nothing else.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    assert(state.kind == "resolved_state")
+    assert(#state.ordered_surface_stack == 1 and state.ordered_surface_stack[1] == "scene")
+    local reported = resolution.resolve_readings(reading, cycle, state, records, reads({
+        { "title.primary", "name.reader", readValue("Wandering Merchant") },
+        { "title.primary", "flavour.reader", readValue("A stranger blocks the road.") },
+        { "count.primary", "count.reader", readValue("3") },
+        -- Present, readable, and on a Surface the stack does not contain.
+        { "dialog.title", "name.reader", readValue("Off-stack Dialog") },
+    }))
+    for _, row in reported do assert(row.ui_target ~= "dialog_title") end
+    assert(#reported == 3)
+    assert(reported[1].ui_target == "count" and reported[1].reader == "count.reader")
+    assert(reported[1].text == "3")
+    assert(reported[2].ui_target == "title" and reported[2].reader == "flavour.reader")
+    assert(reported[3].ui_target == "title" and reported[3].reader == "name.reader")
+    assert(reported[3].text == "Wandering Merchant")
+
+    -- No score, no rectangle, no binding, no variant: three keys and no fourth.
+    local keys = 0
+    for key in reported[3] do
+        assert(key == "ui_target" or key == "reader" or key == "text")
+        keys += 1
+    end
+    assert(keys == 3)
+    assert(not pcall(function() (reported[3] :: any).text = "forged" end))
+    assert(not pcall(function() (reported :: any)[4] = {} end))
+    evidence.end_cycle(cycle)
+end
+
+-- A Binding that is not measured present reads nothing, even with a value cached
+-- for it: a Reader reads that Binding's rectangle, so an absent one reads pixels
+-- belonging to whatever is there instead.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "absent", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    local reported = resolution.resolve_readings(reading, cycle, state, records, reads({
+        { "title.primary", "name.reader", readValue("Wandering Merchant") },
+        { "count.primary", "count.reader", readValue("3") },
+    }))
+    assert(#reported == 1)
+    assert(reported[1].ui_target == "count")
+    evidence.end_cycle(cycle)
+end
+
+-- Below the floor, unreadable, or never taken: absent from the report rather
+-- than present with a reason the caller could re-decide.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    local reported = resolution.resolve_readings(reading, cycle, state, records, reads({
+        -- Carries the text it rejected, so what drops it is the kind and not the
+        -- absence of a string. A reading below the floor is the one shape that
+        -- would be tempting to report "with a warning", and this is the assertion
+        -- that stops it: the floor is the trusted Reader's judgement, and a
+        -- caller handed the rejected text could re-decide it.
+        { "title.primary", "name.reader", {
+            kind = "unknown",
+            reason = "low_confidence",
+            confidence = 0.2,
+            text = "Wandering Merchant",
+        } },
+        { "title.primary", "flavour.reader", { kind = "absent" } },
+        { "count.primary", "count.reader", readValue("3") },
+    }))
+    assert(#reported == 1)
+    assert(reported[1].ui_target == "count")
+    evidence.end_cycle(cycle)
+end
+
+-- Two present variants of one UiTarget: that UiTarget reports nothing, because
+-- which instance is on screen is exactly what an ambiguity means. The other
+-- UiTarget is unaffected, so the refusal is scoped rather than total.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "present", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    assert(state.kind == "resolved_state")
+    local reported = resolution.resolve_readings(reading, cycle, state, records, reads({
+        { "title.primary", "name.reader", readValue("Wandering Merchant") },
+        { "title.primary", "flavour.reader", readValue("A stranger blocks the road.") },
+        { "title.alternate", "name.reader", readValue("Wandering Merchant") },
+        { "count.primary", "count.reader", readValue("3") },
+    }))
+    assert(#reported == 1)
+    assert(reported[1].ui_target == "count")
+    evidence.end_cycle(cycle)
+end
+
+-- A state this cycle did not resolve reports nothing, and neither does one whose
+-- cycle has ended: a reading is same-cycle evidence on the terms every other
+-- resolver result already has.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    local values = reads({ { "count.primary", "count.reader", readValue("3") } })
+    assert(#resolution.resolve_readings(reading, cycle, state, records, values) == 1)
+    assert(resolution.reading_bindings(reading, cycle, {}) == nil)
+    assert(#resolution.resolve_readings(reading, cycle, {}, records, values) == 0)
+    assert(#resolution.resolve_readings(runtime, cycle, state, records, values) == 0)
+    evidence.end_cycle(cycle)
+    assert(#resolution.resolve_readings(reading, cycle, state, records, values) == 0)
+end
+
 return 1

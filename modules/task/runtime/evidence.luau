@@ -107,6 +107,19 @@ function evidence.host_proof_of(record: any, cycle: any): any?
     return entry.host_proof
 end
 
+-- The projection `umbraflow-runtime-v2.schema.json` fixes as `evidence_summary`:
+-- present/absent/unknown are `additionalProperties: false` there and none of the
+-- three declares `value`, so widening this widens a hash-pinned schema.
+--
+-- The omission is load-bearing rather than incidental. A locator record's value
+-- is `{ locator, rect }` -- the matched rectangle -- and summaries travel into
+-- every resolved state and resolved binding, so carrying `value` would put raw
+-- geometry into all of them. `result_of` keeps the whole result for `authorize`,
+-- which needs that rectangle and never lets it leave the resolver.
+--
+-- A reported text reading is therefore NOT a widened summary. It comes from
+-- resolve_readings over the Reader values observe cached, which is a separate
+-- path with its own schema.
 function evidence.summary(record: any, cycle: any): any?
     local entry = records[record]
     if entry == nil or entry.cycle ~= cycle or cycles[cycle] == nil then return nil end

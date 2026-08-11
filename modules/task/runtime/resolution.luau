@@ -296,6 +296,127 @@ function resolution.binding_candidates(
     return freezeList(result)
 end
 
+-- The Bindings a resolved state could report readings from: every Binding on a
+-- Surface of its stack that named a Reader in `reads`.  It is the reading
+-- sibling of binding_candidates and refuses on the same terms, so a state from
+-- another cycle or another model reports nothing rather than reporting readings
+-- taken against a world it did not resolve.
+function resolution.reading_bindings(
+    runtimeModel: any,
+    cycle: any,
+    resolvedState: any
+): { any }?
+    if not model.is_runtime_model(runtimeModel) then return nil end
+    local stateEntry = stateLedger[resolvedState]
+    if stateEntry == nil
+        or stateEntry.cycle ~= cycle
+        or stateEntry.model ~= runtimeModel
+        or not evidence.is_cycle_live(cycle)
+    then
+        return nil
+    end
+    local result = {}
+    for _, surfaceId in stateEntry.stack do
+        for _, candidate in runtimeModel.bindings_by_surface[surfaceId] or {} do
+            if #candidate.reads > 0 then table.insert(result, candidate) end
+        end
+    end
+    return freezeList(result)
+end
+
+-- The Bindings a resolved state may report a reading from, out of the candidates
+-- above: measured present, and the only present Binding of their UiTarget.
+--
+-- A Binding contributes only while its own detector measures present, because a
+-- Reader reads that Binding's rectangle: reading through a Binding that is not
+-- showing returns whatever is at those pixels instead.  It is a separate verb
+-- rather than a step inside resolve_readings so that the caller that spends the
+-- Host reads and the projection that consumes them apply ONE rule -- an absent
+-- Binding must not cost a read, and a rule spelled twice would agree by test
+-- rather than by construction.
+--
+-- The report is keyed by UiTarget rather than by Binding because a Binding is a
+-- UiTarget plus a visual variant, and the variant that matches flips between two
+-- captures of one unchanged instance whenever a hover or a highlight has its own
+-- Binding -- which would move state_resolution_hash and every decision basis
+-- under it.  The cost is that two present Bindings of one UiTarget cannot be
+-- told apart, so that UiTarget reports nothing at all: which instance is on
+-- screen is precisely what resolve_binding already refuses to guess.
+function resolution.reading_targets(
+    runtimeModel: any,
+    cycle: any,
+    resolvedState: any,
+    recordsByKey: any
+): { any }
+    local candidates = resolution.reading_bindings(runtimeModel, cycle, resolvedState)
+    if candidates == nil then return freezeList({}) end
+
+    local present = {}
+    local seenTarget: { [string]: boolean } = {}
+    local ambiguousTarget: { [string]: boolean } = {}
+    for _, binding in candidates do
+        local evaluated = evaluateBinding(binding, recordsByKey, cycle)
+        if evaluated.kind == "present" then
+            if seenTarget[binding.ui_target] then
+                ambiguousTarget[binding.ui_target] = true
+            end
+            seenTarget[binding.ui_target] = true
+            table.insert(present, binding)
+        end
+    end
+
+    local result = {}
+    for _, binding in present do
+        if not ambiguousTarget[binding.ui_target] then table.insert(result, binding) end
+    end
+    return freezeList(result)
+end
+
+-- What a resolved state reports it read, as `{ ui_target, reader, text }` sorted
+-- by UiTarget then Reader.
+--
+-- Only `kind == "read"` survives.  A reading below its Reader's confidence_floor
+-- or unreadable at all is absent from the list rather than present with a
+-- reason: the floor is the trusted Reader's judgement, and a caller handed the
+-- failure could re-decide it.
+function resolution.resolve_readings(
+    runtimeModel: any,
+    cycle: any,
+    resolvedState: any,
+    recordsByKey: any,
+    readingsByKey: any
+): { any }
+    local supplied = if type(readingsByKey) == "table" then readingsByKey else {}
+    local result = {}
+    for _, binding in resolution.reading_targets(
+        runtimeModel,
+        cycle,
+        resolvedState,
+        recordsByKey
+    ) do
+        for _, readerId in binding.reads do
+            local reading = supplied[model.reading_key(binding.id, readerId)]
+            if type(reading) == "table"
+                and reading.kind == "read"
+                and type(reading.text) == "string"
+            then
+                table.insert(result, table.freeze({
+                    ui_target = binding.ui_target,
+                    reader = readerId,
+                    text = reading.text,
+                }))
+            end
+        end
+    end
+    table.sort(result, function(left: any, right: any): boolean
+        if left.ui_target ~= right.ui_target then
+            return left.ui_target < right.ui_target
+        end
+        return left.reader < right.reader
+    end)
+    return freezeList(result)
+end
+
 function resolution.resolve_binding(
     runtimeModel: any,
     cycle: any,

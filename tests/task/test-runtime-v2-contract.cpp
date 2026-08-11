@@ -56,6 +56,130 @@ namespace uf::task
         }
 
         [[nodiscard]]
+        auto pixelRect(uint32 x, uint32 y, uint32 width, uint32 height) -> PixelRect
+        {
+            auto const value = PixelRect::create(x, y, width, height);
+            REQUIRE(value.has_value());
+            return *value;
+        }
+
+        // An OCR engine that answers with what the case scripted, and records
+        // what it was asked. It is not a stub standing in for a real engine: the
+        // property under test is what the resolver does with a reading, and a
+        // real engine would make the text a fact about a PNG rather than about
+        // this file, without making any of these assertions stronger.
+        class ScriptedReader final : public ocr::IOcrEngine
+        {
+            std::string m_text;
+            uint32      m_confidenceBp;
+            uint32      m_calls{};
+            PixelRect   m_lastRect{pixelRect(0, 0, 1, 1)};
+
+        public:
+            ScriptedReader(std::string text, uint32 confidenceBp)
+                : m_text{std::move(text)}
+                , m_confidenceBp{confidenceBp}
+            {
+            }
+
+            [[nodiscard]] auto identity() const noexcept -> std::string_view override
+            {
+                return "scripted-reader";
+            }
+
+            [[nodiscard]]
+            auto read(BgraImage const&, ocr::ReadSpec const& spec)
+                -> Result<ocr::Readout> override
+            {
+                ++m_calls;
+                if (spec.rect.has_value())
+                {
+                    m_lastRect = *spec.rect;
+                }
+                return ocr::Readout{
+                    .lines = {
+                        ocr::TextLine{
+                            .text         = m_text,
+                            .bounds       = m_lastRect,
+                            .confidenceBp = m_confidenceBp,
+                        },
+                    },
+                };
+            }
+
+            [[nodiscard]] auto calls() const noexcept -> uint32 { return m_calls; }
+
+            [[nodiscard]] auto lastRect() const noexcept -> PixelRect
+            {
+                return m_lastRect;
+            }
+        };
+
+        // The fixture's world plus one Binding that reports what a Reader read.
+        // Its detector is the confirm mark, so the middle pixel decides whether
+        // the reading Binding is present while the anchor still resolves the
+        // Surface -- which is what lets an absent reading Binding be exercised
+        // without also unresolving the state.
+        [[nodiscard]] auto readingRuntimeModel() -> std::string
+        {
+            return R"toml(schema_version = 2
+base_resolution = [3, 1]
+base_dpi = [96, 96]
+
+[[ui_target]]
+id = "screen-marker"
+kind = "region"
+
+[[ui_target]]
+id = "title"
+kind = "region"
+
+[[locator]]
+id = "screen-anchor"
+kind = "template"
+asset_path = "assets/anchor.png"
+threshold = 1
+
+[[locator]]
+id = "confirm-mark"
+kind = "template"
+asset_path = "assets/confirm.png"
+threshold = 1
+
+[[reader]]
+id = "title.reader"
+kind = "text"
+confidence_floor = 0.5
+normalization = "collapse_whitespace"
+
+[[binding]]
+id = "screen.anchor"
+surface = "screen"
+ui_target = "screen-marker"
+variant = "primary"
+placement = { kind = "fixed", rect = [0, 0, 1, 1] }
+detector = { all = [{ kind = "locator_present", locator = "screen-anchor" }], any = [], none = [] }
+actions = []
+
+[[binding]]
+id = "title.primary"
+surface = "screen"
+ui_target = "title"
+variant = "primary"
+placement = { kind = "fixed", rect = [1, 0, 1, 1] }
+detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] }
+actions = []
+reads = ["title.reader"]
+
+[[surface]]
+id = "screen"
+kind = "scene"
+covers = []
+identity = { all = ["screen.anchor"], any = [], none = [] }
+)toml";
+        }
+
+        [[nodiscard]]
         auto explorationConfig(Frame value, std::filesystem::path tracePath)
             -> TaskRunConfig
         {
@@ -730,9 +854,13 @@ namespace uf::task
         CHECK(first->stateResolutionHash() == second->stateResolutionHash());
         CHECK(first->observationId() != second->observationId());
 
+        // readings is present and empty because this model declares no reads.
+        // Empty and absent are two different documents, and a resolved state
+        // always says which one it is.
         CHECK(
             first->canonicalJcs()
-            == R"({"kind":"resolved_state","ordered_surface_stack":["screen"]})"
+            == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
+               R"("readings":[]})"
         );
         CHECK(first->stateResolutionHash() == hash(first->canonicalJcs()));
         CHECK(first->generation() == *generation);
@@ -807,6 +935,223 @@ namespace uf::task
             ambiguous->canonicalJcs()
             == R"({"kind":"ambiguous_state","reason":"multiple_scenes"})"
         );
+    }
+
+    // The whole reading path, from the trusted Reader to the bytes a plugin is
+    // handed. Nothing below asserts against a string this file also produced:
+    // the text comes out of the scripted Reader, the normalization out of the
+    // page model, and the document out of the resolver.
+    TEST_CASE("TaskHost::observe reports what a present Binding's Reader read")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const rootHash = publish(
+            directory.path(),
+            readingRuntimeModel(),
+            runtimeAssets()
+        );
+        auto const generation = TaskHostTestAccess::activate(
+            host,
+            directory.path(),
+            rootHash
+        );
+        REQUIRE(generation.has_value());
+
+        auto reader = std::make_unique<ScriptedReader>("  Wandering   Merchant \n", 9'100);
+        auto* const p_reader = reader.get();
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{31}),
+            1'000,
+            std::move(reader)
+        };
+        auto const observed = host.observe(*generation, runtime.context());
+        REQUIRE(observed.has_value());
+
+        // The reading is attributed to the UiTarget, carries the NORMALISED text
+        // its Reader declared collapse_whitespace for, and is inside the document
+        // whose sha256 is the state resolution hash.
+        CHECK(
+            observed->canonicalJcs()
+            == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
+               R"("readings":[{"reader":"title.reader","text":"Wandering Merchant",)"
+               R"("ui_target":"title"}]})"
+        );
+        CHECK(observed->stateResolutionHash() == hash(observed->canonicalJcs()));
+
+        // The Reader was pointed at the reading Binding's own rectangle and not
+        // at the Surface, so a document that named the right UiTarget over the
+        // wrong pixels would fail here rather than read as a correct answer.
+        REQUIRE(p_reader->calls() == 1U);
+        CHECK(p_reader->lastRect().x() == 1);
+        CHECK(p_reader->lastRect().y() == 0);
+        CHECK(p_reader->lastRect().width() == 1);
+        CHECK(p_reader->lastRect().height() == 1);
+
+        // Nothing the Reader knew beyond the text travels: not the score that
+        // cleared the floor, not the rectangle, not the variant that matched,
+        // and not the pre-normalisation string.
+        CHECK(observed->canonicalJcs().find("confidence") == std::string::npos);
+        CHECK(observed->canonicalJcs().find("0.91") == std::string::npos);
+        CHECK(observed->canonicalJcs().find("rect") == std::string::npos);
+        CHECK(observed->canonicalJcs().find("primary") == std::string::npos);
+        CHECK(observed->canonicalJcs().find("title.primary") == std::string::npos);
+        CHECK(observed->canonicalJcs().find("Wandering   Merchant") == std::string::npos);
+
+        // Two captures of one unchanged screen are one decision. A score or a
+        // capture identity inside the reading would break this even though the
+        // world did not move.
+        auto const again = host.observe(*generation, runtime.context());
+        REQUIRE(again.has_value());
+        CHECK(again->canonicalJcs() == observed->canonicalJcs());
+        CHECK(again->stateResolutionHash() == observed->stateResolutionHash());
+    }
+
+    // The falsifier for the decision basis. state_resolution_hash is one member
+    // of DecisionBasis and it is a digest over this whole document, so a reading
+    // that changed while the document's hash did not would be a plugin input
+    // outside everything a replay is checked against.
+    TEST_CASE("TaskHost::observe moves the state resolution hash when a reading moves")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const rootHash = publish(
+            directory.path(),
+            readingRuntimeModel(),
+            runtimeAssets()
+        );
+        auto const generation = TaskHostTestAccess::activate(
+            host,
+            directory.path(),
+            rootHash
+        );
+        REQUIRE(generation.has_value());
+
+        auto const pixels = std::vector<std::byte>{
+            std::byte{k_anchorGray},
+            std::byte{k_actionGray},
+            std::byte{0},
+        };
+        auto firstRuntime = RuntimeContext{
+            frame(pixels, FrameId{32}),
+            1'000,
+            std::make_unique<ScriptedReader>("Wandering Merchant", 9'100)
+        };
+        auto const first = host.observe(*generation, firstRuntime.context());
+        REQUIRE(first.has_value());
+
+        // A second Host, because observe.luau caches template handles per
+        // RuntimeModel and a second TaskContext on one generation resolves
+        // nothing -- the reason host-delivery-fixture.hpp already states.
+        auto const secondDirectory = TemporaryDirectory{};
+        auto secondHost = TaskHost{};
+        auto const secondRoot = publish(
+            secondDirectory.path(),
+            readingRuntimeModel(),
+            runtimeAssets()
+        );
+        auto const secondGeneration = TaskHostTestAccess::activate(
+            secondHost,
+            secondDirectory.path(),
+            secondRoot
+        );
+        REQUIRE(secondGeneration.has_value());
+        auto secondRuntime = RuntimeContext{
+            frame(pixels, FrameId{33}),
+            1'000,
+            std::make_unique<ScriptedReader>("Abandoned Shrine", 9'100)
+        };
+        auto const second = secondHost.observe(
+            *secondGeneration,
+            secondRuntime.context()
+        );
+        REQUIRE(second.has_value());
+
+        // Identical pixels, identical model, identical surface stack: the ONLY
+        // difference between the two worlds is what the Reader read.
+        CHECK(first->canonicalJcs() != second->canonicalJcs());
+        CHECK(first->stateResolutionHash() != second->stateResolutionHash());
+        CHECK(second->canonicalJcs().find("Abandoned Shrine") != std::string::npos);
+        CHECK(
+            second->canonicalJcs().find(R"("ordered_surface_stack":["screen"])")
+            != std::string::npos
+        );
+    }
+
+    // Below the floor is not a reading. The plugin sees an empty list, which is
+    // the same answer a Reader that found nothing gives, and never the score or
+    // the reason that decided it.
+    TEST_CASE("TaskHost::observe reports no reading below its Reader's floor")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const rootHash = publish(
+            directory.path(),
+            readingRuntimeModel(),
+            runtimeAssets()
+        );
+        auto const generation = TaskHostTestAccess::activate(
+            host,
+            directory.path(),
+            rootHash
+        );
+        REQUIRE(generation.has_value());
+
+        // The model floors title.reader at 0.5 and this clears 0.1, so the text
+        // is one the Reader itself produced and the floor is what refuses it.
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{34}),
+            1'000,
+            std::make_unique<ScriptedReader>("Wandering Merchant", 1'000)
+        };
+        auto const observed = host.observe(*generation, runtime.context());
+        REQUIRE(observed.has_value());
+        CHECK(
+            observed->canonicalJcs()
+            == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
+               R"("readings":[]})"
+        );
+        CHECK(observed->canonicalJcs().find("Wandering") == std::string::npos);
+        CHECK(observed->canonicalJcs().find("low_confidence") == std::string::npos);
+    }
+
+    // A Binding that is not present reads nothing, and the state still resolves.
+    // Without this the empty list above could be an artifact of the floor alone.
+    TEST_CASE("TaskHost::observe reports no reading from an absent Binding")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const rootHash = publish(
+            directory.path(),
+            readingRuntimeModel(),
+            runtimeAssets()
+        );
+        auto const generation = TaskHostTestAccess::activate(
+            host,
+            directory.path(),
+            rootHash
+        );
+        REQUIRE(generation.has_value());
+
+        // The middle pixel no longer matches the reading Binding's locator, so
+        // the Surface still resolves off its anchor and title.primary does not.
+        auto reader = std::make_unique<ScriptedReader>("Wandering Merchant", 9'100);
+        auto* const p_reader = reader.get();
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{0}, std::byte{0}}, FrameId{35}),
+            1'000,
+            std::move(reader)
+        };
+        auto const observed = host.observe(*generation, runtime.context());
+        REQUIRE(observed.has_value());
+        CHECK(
+            observed->canonicalJcs()
+            == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
+               R"("readings":[]})"
+        );
+
+        // Nothing was read at all: an absent Binding does not spend a Host read
+        // on pixels that belong to whatever is there instead.
+        CHECK(p_reader->calls() == 0U);
     }
 
     TEST_CASE("TaskHost::observe refuses an Annotation generation before the VM")

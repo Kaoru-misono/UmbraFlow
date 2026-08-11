@@ -80,11 +80,19 @@ namespace uf::task
         // observationId(), is what reaches the plugin.
         //
         // It carries the resolution's CONTENT and nothing that names the
-        // occasion: the kind, the ordered surface stack of a resolved state, and
-        // the failure reason of the others. The resolver's own state-resolution
-        // id is a per-VM counter, so serializing it would put the number of
-        // preceding resolutions inside every decision basis and make two
-        // identical readings of one world disagree.
+        // occasion: the kind, the ordered surface stack of a resolved state, the
+        // readings that state reports, and the failure reason of the others. The
+        // resolver's own state-resolution id is a per-VM counter, so serializing
+        // it would put the number of preceding resolutions inside every decision
+        // basis and make two identical readings of one world disagree.
+        //
+        // A reading is `{ ui_target, reader, text }` and nothing else. The text
+        // was normalised and confidence-floored by the trusted Reader before it
+        // got here; the score that decided it is not carried, because it differs
+        // between two captures of one unchanged screen and this document is
+        // hashed. No rectangle travels with it either -- geometry still proves
+        // nothing (U-04), and this is trusted-resolver evidence rather than the
+        // raw OCR capability the online Agent is denied.
         [[nodiscard]]
         auto canonicalJcs() const noexcept UF_LIFETIME_BOUND
             -> std::string const&;

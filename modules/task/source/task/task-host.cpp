@@ -47,9 +47,18 @@ namespace uf::task
         // inside decision_basis_hash, and inside every frozen plan -- and two
         // identical readings of one unchanged world would then demand separate
         // approvals. The projection is therefore the kind, the ordered surface
-        // stack a resolved state carries, and the reason the other kinds
-        // failed; `candidates`, `conflicts` and `evidence` are excluded with it,
-        // because evidence ids are drawn from the same kind of counter.
+        // stack a resolved state carries, the readings that state reports, and
+        // the reason the other kinds failed; `candidates`, `conflicts` and
+        // `evidence` are excluded with it, because evidence ids are drawn from
+        // the same kind of counter.
+        //
+        // `readings` appears exactly when a Surface stack does, and is the empty
+        // array when the resolved model declares no reads: an unresolved state
+        // has no Surface to attribute a reading to, and §6.2 of the consumer
+        // design puts "UI surface resolved" ahead of every read for that reason.
+        // It is inside this document rather than beside it, which is what puts
+        // it inside state_resolution_hash and therefore inside decision_basis_hash
+        // without a second member having to be remembered.
         //
         // `kind` is always present, which is what keeps the document an object:
         // jcs encodes an empty table as `[]`, so an envelope that could be empty
@@ -69,9 +78,14 @@ namespace uf::task
                 local conflict = state.conflicts[1]
                 if conflict ~= nil then reason = conflict.kind end
             end
+            local readings = nil
+            if state.kind == "resolved_state" then
+                readings = cycle:resolve_readings(state)
+            end
             return jcs.encode({
                 kind = state.kind,
                 ordered_surface_stack = state.ordered_surface_stack,
+                readings = readings,
                 reason = reason,
             })
         )lua"};
