@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <format>
+#include <optional>
 #include <utility>
 
 namespace uf
@@ -75,17 +76,31 @@ namespace uf
         };
     }
 
+    auto ObservationLease::forRecordedFrame(Frame const& frame) noexcept
+        -> ObservationLease
+    {
+        return ObservationLease{
+            frame.sessionId(),
+            frame.targetGeneration(),
+            frame.id(),
+            std::nullopt
+        };
+    }
+
     auto ObservationLease::sessionId() const noexcept -> CaptureSessionId { return m_sessionId; }
     auto ObservationLease::targetGeneration() const noexcept -> TargetGeneration
     {
         return m_targetGeneration;
     }
     auto ObservationLease::frameId() const noexcept -> FrameId { return m_frameId; }
-    auto ObservationLease::expiresAt() const noexcept -> MonotonicInstant { return m_expiresAt; }
+    auto ObservationLease::expiresAt() const noexcept -> std::optional<MonotonicInstant>
+    {
+        return m_expiresAt;
+    }
 
     auto ObservationLease::isExpired(MonotonicInstant now) const noexcept -> bool
     {
-        return now > m_expiresAt;
+        return m_expiresAt.has_value() && now > *m_expiresAt;
     }
 
     auto ObservationLease::validate(

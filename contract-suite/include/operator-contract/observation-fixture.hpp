@@ -219,14 +219,52 @@ namespace uf::operator_runtime::contract
         };
     }
 
+    // Fails the running case unless the capture a project supplied is the extent
+    // its model declares.
+    //
+    // Both halves are the supplying project's own -- the PNG it handed over and
+    // the base_resolution its model states -- so this is the one place that can
+    // name the disagreement in numbers the project can act on. EngineSession
+    // refuses the same pair, and that refusal is real but unreadable from a
+    // contract run: TargetCompatibilityUnverified is not a script-visible
+    // reason, so the resolver records `internal_error` and the message naming
+    // both extents never leaves the engine. A project that met only that would
+    // be told its model resolved nothing and left to work out why.
+    inline auto requireProbeGeometry(ProjectProbeFrame const& probe) -> void
+    {
+        auto const decoded = image::decodePng(probe.png, "contract-probe-frame.png");
+        REQUIRE(decoded.has_value());
+
+        auto const extentMatches = (
+            decoded->width == probe.fingerprint.width()
+            && decoded->height == probe.fingerprint.height()
+        );
+        REQUIRE_MESSAGE(
+            extentMatches,
+            "the supplied probe frame is not the extent this project's model "
+            "declares: capture ",
+            decoded->width,
+            "x",
+            decoded->height,
+            ", model ",
+            probe.fingerprint.width(),
+            "x",
+            probe.fingerprint.height()
+        );
+    }
+
     // The project's own capture, decoded into the Bgra8 shape a live one has.
     //
     // The extent is the PNG's rather than the fingerprint's, deliberately: a
-    // capture is whatever the target produced, and it is EngineSession's
-    // ensureCompatibleFrame -- not this fixture -- that decides whether it
-    // describes the same pixels the model was authored in. Stamping the
-    // fingerprint's extent onto a differently sized buffer would hide exactly
-    // the disagreement that check exists to report.
+    // capture is whatever the target produced, and stamping the fingerprint's
+    // extent onto a differently sized buffer would hide the disagreement
+    // outright.
+    //
+    // It is EngineSession's ensureCompatibleFrame -- not this fixture -- that
+    // decides whether the capture describes the same pixels the model was
+    // authored in, which is what lets a case deliberately build a mismatched
+    // world. requireProbeGeometry below is what a project SUPPLYING one meets
+    // first.
     [[nodiscard]]
     inline auto observationFrame(
         ProjectProbeFrame const& probe,
@@ -306,6 +344,18 @@ namespace uf::operator_runtime::contract
         {
             return ok();
         }
+
+        // One decoded PNG, returned for as long as this source exists. Nothing
+        // it produces can change, so the interval between a capture and an
+        // action over it measures how long the suite took and says nothing
+        // about a target. Declaring that is what lets a case that resolves a
+        // real model over real card rectangles reach its click in an
+        // unoptimized build; a Live answer here would be a claim this source
+        // cannot support.
+        [[nodiscard]] auto targetWorld() const noexcept -> TargetWorld override
+        {
+            return TargetWorld::Recorded;
+        }
     };
 
     // Every verb succeeds and none of them touches anything: an observation
@@ -378,6 +428,15 @@ namespace uf::operator_runtime::contract
         {
             return ok();
         }
+
+        // Counts and discards; no verb here reaches a window. It must agree
+        // with ObservationFrameSource above or EngineSession::create refuses
+        // the session, which is the check that keeps a recorded capture from
+        // ever driving a sink that posts for real.
+        [[nodiscard]] auto targetWorld() const noexcept -> TargetWorld override
+        {
+            return TargetWorld::Recorded;
+        }
     };
 
     class ObservationTraceSink final : public trace::ITraceSink
@@ -437,6 +496,11 @@ namespace uf::operator_runtime::contract
                     // real client area, and the matcher converts all of it to
                     // gray once per search. The CTest timeout is what bounds a
                     // matcher that never finishes.
+                    //
+                    // It does not have to be reconciled with the action lease.
+                    // Over a recorded target there is no lease deadline, so a
+                    // search that runs to nine seconds still ends in a click
+                    // rather than in a refusal nobody configured.
                     .maximumPixelComparisons = comparisonCeiling,
                     .recognitionTimeout      = std::chrono::seconds{10},
                 }
@@ -504,11 +568,18 @@ namespace uf::operator_runtime::contract
     //
     // Every property the suite goes on to test is downstream of this: a plan is
     // frozen against a resolved state and a dispatch is delivered against a
-    // binding of it. Without this check a probe frame the model does not
-    // satisfy -- an extent the fingerprint disagrees with, a capture of the
-    // wrong screen, an asset that no longer crops the same pixels -- reaches the
-    // case as some later refusal about authority or delivery, which is the
-    // diagnosis the supplying project cannot act on.
+    // binding of it. Without this check a probe frame the model does not satisfy
+    // -- a capture of the wrong screen, an asset that no longer crops the same
+    // pixels -- reaches the case as some later refusal about authority or
+    // delivery, which is the diagnosis the supplying project cannot act on.
+    //
+    // What it prints is the resolution itself, which is all it has: the reasons
+    // a resolver records are a closed script-visible vocabulary, so a locator
+    // that failed says `locator_failed` and nothing about which pixels differed.
+    // The one cause that could be named precisely -- a capture whose extent is
+    // not the model's -- is named by requireProbeGeometry above, which
+    // prepareStore runs before any resolution, and is therefore not among the
+    // causes that reach here.
     inline auto requireResolvedSurface(
         task::UiObservationSnapshot const& snapshot,
         std::string_view surface
@@ -559,9 +630,13 @@ namespace uf::operator_runtime::contract
     // observe.luau's template cache is keyed by the RuntimeModel and outlives
     // the TaskContext that registered its handles: a second TaskContext on one
     // Host generation resolves nothing. A delivery therefore brings its own
-    // Host, its own generation and its own frame -- which also keeps the frame
-    // inside the engine's action-freshness bound, since it is captured when the
-    // Host is built rather than whenever the case started.
+    // Host, its own generation and its own frame.
+    //
+    // Freshness is not among the reasons. A frame built here is the same
+    // recorded bytes a frame built in prepareStore is, and the engine leases
+    // both without a deadline; a fixture that had to be built late to stay
+    // inside a wall-clock bound would be one whose passing depended on how fast
+    // the build it was compiled by happens to run.
     class DeliveringHost final
     {
         std::unique_ptr<task::TaskHost>     m_host;

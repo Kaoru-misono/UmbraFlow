@@ -101,6 +101,41 @@ namespace uf::engine
             };
         }
 
+        [[nodiscard]]
+        auto targetWorldName(TargetWorld world) noexcept -> std::string_view
+        {
+            switch (world)
+            {
+            case TargetWorld::Live: return "live";
+            case TargetWorld::Recorded: return "recorded";
+            }
+
+            UF_UNREACHABLE_MSG("Unknown TargetWorld value");
+        }
+
+        // The lease one observation carries, which is the whole of what the
+        // target world decides. A live target moves while it is being measured,
+        // so its frames age from the capture; a recorded one produces the same
+        // pixels for as long as its source exists, so an interval measured over
+        // it describes the observer.
+        [[nodiscard]]
+        auto leaseForWorld(
+            Frame const& frame,
+            TargetWorld world,
+            MonotonicInstant::Duration maximumAge
+        ) -> Result<ObservationLease>
+        {
+            switch (world)
+            {
+            case TargetWorld::Live:
+                return ObservationLease::forFrame(frame, maximumAge);
+            case TargetWorld::Recorded:
+                return ObservationLease::forRecordedFrame(frame);
+            }
+
+            UF_UNREACHABLE_MSG("Unknown TargetWorld value");
+        }
+
         // Hands `continuation` the frame's pixels as a BGRA8 view, widening a
         // Gray8 frame into a buffer this stack frame owns for the whole
         // synchronous call. A continuation, as in vision's withGrayFrame,
@@ -440,6 +475,25 @@ namespace uf::engine
             );
         }
 
+        // What keeps a recorded target from becoming a way to act on a live one.
+        // A recorded source's frames carry no deadline, so pairing them with a
+        // sink that posts to a real window would let a point measured off fixed
+        // bytes be clicked into a world that has moved arbitrarily far. Refused
+        // here rather than trusted, and refused in both directions: live frames
+        // driving a sink that reaches nothing is a session that cannot do what
+        // its ports claim either.
+        if (frameSource->targetWorld() != actionSink->targetWorld())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "engine session ports name different target worlds: frames {}, actions {}",
+                    targetWorldName(frameSource->targetWorld()),
+                    targetWorldName(actionSink->targetWorld())
+                )
+            );
+        }
+
         return EngineSession{
             std::make_shared<detail::EngineSessionIdentity>(),
             std::move(frameSource),
@@ -544,7 +598,11 @@ namespace uf::engine
 
         UF_TRY_VALUE(
             lease,
-            ObservationLease::forFrame(frame, m_config.maxActionFrameAge)
+            leaseForWorld(
+                frame,
+                m_frameSource->targetWorld(),
+                m_config.maxActionFrameAge
+            )
         );
         auto const identity = FrameIdentity::fromFrame(frame);
 

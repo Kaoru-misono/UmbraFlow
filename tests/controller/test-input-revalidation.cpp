@@ -101,6 +101,18 @@ namespace uf
             REQUIRE(result.has_value());
             return *result;
         }
+
+        // The deadline a live lease carries. Only a lease over a recorded target
+        // has none, and nothing reaching this layer holds one: a recorded frame
+        // source cannot be paired with a sink that posts to a live target.
+        [[nodiscard]]
+        auto deadlineOf(ObservationLease const& lease) -> MonotonicInstant
+        {
+            auto const expiresAt = lease.expiresAt();
+            REQUIRE(expiresAt.has_value());
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
+            return *expiresAt;
+        }
     }
 
     TEST_CASE("valid pointer action returns a floored pixel")
@@ -149,7 +161,7 @@ namespace uf
         auto const generation = TargetGeneration{};
         auto const lease = leaseAt(generation, captured);
         auto const expiredNow = after(
-            lease.expiresAt(),
+            deadlineOf(lease),
             MonotonicInstant::Duration{1}
         );
 
@@ -344,7 +356,7 @@ namespace uf
         auto const generation = TargetGeneration{};
         auto const lease = leaseAt(generation, captured);
         auto const bumped = nextGeneration(generation);
-        auto const expired = after(lease.expiresAt(), MonotonicInstant::Duration{1});
+        auto const expired = after(deadlineOf(lease), MonotonicInstant::Duration{1});
         auto const outside = Point<ClientSpace>{-1.0F, -1.0F};
 
         auto const sessionFailure = controller_detail::checkPointerPreconditions(

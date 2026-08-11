@@ -50,6 +50,25 @@ namespace uf::engine
         virtual auto capture(CaptureBudget const& budget) -> Result<Frame> = 0;
 
         [[nodiscard]] virtual auto validateTargetInstance() -> Status = 0;
+
+        // Whether the frames this source produces come from a target that moves
+        // on its own. It is what the source IS rather than a setting: there is
+        // no configuration field for it, and answering Recorded means writing a
+        // source that replays fixed bytes.
+        //
+        // Live is the default because a source that says nothing must get the
+        // strict wall-clock action lease: forgetting to declare then costs
+        // freshness rather than granting it.
+        //
+        // Declaring it moves no trust. This port already builds every Frame and
+        // stamps its capturedAt, so a source that wanted an unexpiring lease
+        // could always have forged one. What the declaration adds is a pairing
+        // EngineSession::create refuses -- recorded frames driving a sink that
+        // posts to a live target.
+        [[nodiscard]] virtual auto targetWorld() const noexcept -> TargetWorld
+        {
+            return TargetWorld::Live;
+        }
     };
 
     // A port that delivers one background input to the bound target: a click, a
@@ -223,5 +242,15 @@ namespace uf::engine
             Point<ClientSpace> point,
             ObservationLease const& lease
         ) -> Status = 0;
+
+        // Whether the inputs this sink posts reach a target that moves on its
+        // own, and Live by default, both for IFrameSource::targetWorld's
+        // reasons. A sink that reaches nothing -- a counter in a fixture --
+        // answers Recorded, and EngineSession::create refuses a session whose
+        // two ports disagree about which world they are wired to.
+        [[nodiscard]] virtual auto targetWorld() const noexcept -> TargetWorld
+        {
+            return TargetWorld::Live;
+        }
     };
 }

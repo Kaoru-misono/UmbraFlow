@@ -96,6 +96,18 @@ namespace uf::engine
 
         uint64                     maximumPixelComparisons{};
         MonotonicInstant::Duration recognitionTimeout{};
+
+        // Read only when the frame source reports TargetWorld::Live, and
+        // shortened to k_defaultMaxActionFrameAge when it asks for longer. Over
+        // a recorded target there is no deadline to set, so this is not the
+        // knob that decides whether a session may act on old frames -- the
+        // frame source is.
+        //
+        // It is independent of recognitionTimeout on purpose. Recognition and
+        // action have different budgets because a cycle may legitimately read
+        // without acting, so a recognition that finishes outside this bound is
+        // a successful observation whose result cannot be clicked, and the
+        // refusal names that at the click.
         MonotonicInstant::Duration maxActionFrameAge{k_defaultMaxActionFrameAge};
         MonotonicInstant::Duration captureTimeout{k_defaultCaptureTimeout};
 

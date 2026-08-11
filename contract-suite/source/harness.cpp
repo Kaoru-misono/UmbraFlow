@@ -172,6 +172,12 @@ namespace uf::operator_runtime::contract
             == project.registration.baselineEventType()
         );
 
+        // Same reason, for the other pair a project supplies as two halves that
+        // must agree. Checked before anything is installed: the capture and the
+        // geometry are both this project's, and nothing further down can name
+        // their disagreement in numbers.
+        requireProbeGeometry(project.probeFrame);
+
         auto const release = runtimeRelease(
             root / "session-handoff",
             project.runtimeArtifact

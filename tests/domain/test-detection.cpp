@@ -28,6 +28,18 @@ namespace uf
             return std::chrono::duration_cast<MonotonicInstant::Duration>(duration);
         }
 
+        // The deadline a lease over a live target carries. Only forRecordedFrame
+        // produces one without, and its own case below reads the optional
+        // directly rather than through this.
+        [[nodiscard]]
+        auto deadlineOf(ObservationLease const& lease) -> MonotonicInstant
+        {
+            auto const expiresAt = lease.expiresAt();
+            REQUIRE(expiresAt.has_value());
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
+            return *expiresAt;
+        }
+
         auto makeFrame(
             uint64 session,
             TargetGeneration generation,
@@ -110,9 +122,9 @@ namespace uf
         REQUIRE(lease.has_value());
         auto const beforeDeadline = addTime(capturedAt, Duration{1});
         CHECK_FALSE(lease->isExpired(beforeDeadline));
-        CHECK_FALSE(lease->isExpired(lease->expiresAt()));
+        CHECK_FALSE(lease->isExpired(deadlineOf(*lease)));
         auto const afterDeadline = addTime(
-            lease->expiresAt(),
+            deadlineOf(*lease),
             Duration{1}
         );
         CHECK(lease->isExpired(afterDeadline));
@@ -122,7 +134,7 @@ namespace uf
             Duration::zero()
         );
         REQUIRE(zeroLease.has_value());
-        CHECK(zeroLease->expiresAt() == capturedAt);
+        CHECK(deadlineOf(*zeroLease) == capturedAt);
         CHECK_FALSE(zeroLease->isExpired(capturedAt));
         CHECK(zeroLease->isExpired(addTime(capturedAt, Duration{1})));
     }
@@ -146,7 +158,7 @@ namespace uf
         CHECK(lease->targetGeneration() == frame.targetGeneration());
         CHECK(lease->frameId() == frame.id());
         CHECK(
-            lease->expiresAt().saturatingDurationSince(frame.capturedAt())
+            deadlineOf(*lease).saturatingDurationSince(frame.capturedAt())
             == k_defaultMaxActionFrameAge
         );
     }
@@ -171,7 +183,7 @@ namespace uf
                 CaptureSessionId{uint64{1}},
                 generation,
                 FrameId{uint64{10}},
-                lease->expiresAt()
+                deadlineOf(*lease)
             )
         );
 
@@ -210,7 +222,7 @@ namespace uf
                 generation,
                 FrameId{uint64{10}},
                 addTime(
-                    lease->expiresAt(),
+                    deadlineOf(*lease),
                     MonotonicInstant::Duration{1}
                 )
             )
@@ -234,7 +246,7 @@ namespace uf
         );
         REQUIRE(validLease.has_value());
         CHECK(
-            validLease->expiresAt().timePoint().time_since_epoch()
+            deadlineOf(*validLease).timePoint().time_since_epoch()
             == Duration::max()
         );
 
@@ -252,6 +264,72 @@ namespace uf
         auto const kind = automationErrorKind(overflowLease.error());
         REQUIRE(kind.has_value());
         CHECK(kind == AutomationErrorKind::InternalInvariant);
+    }
+
+    // A lease over recorded bytes keeps every identity clause and drops only the
+    // deadline, because the interval it would measure is the observer's and not
+    // the target's. The clock is walked past where a live lease of the same
+    // frame would have died, which is the comparison that makes this a property
+    // rather than a restatement of the code.
+    TEST_CASE("a recorded lease refuses on identity and never on age")
+    {
+        auto const generation = TargetGeneration::fromValue(5);
+        auto const capturedAt = instantAt(MonotonicInstant::Duration{1});
+        auto const frame = makeFrame(4, generation, 12, capturedAt);
+
+        auto const liveLease = ObservationLease::forFrame(
+            frame,
+            k_defaultMaxActionFrameAge
+        );
+        REQUIRE(liveLease.has_value());
+        auto const wellPastLive = addTime(
+            deadlineOf(*liveLease),
+            clockDuration(std::chrono::hours{1})
+        );
+
+        auto const lease = ObservationLease::forRecordedFrame(frame);
+        CHECK(lease.sessionId() == frame.sessionId());
+        CHECK(lease.targetGeneration() == frame.targetGeneration());
+        CHECK(lease.frameId() == frame.id());
+        CHECK_FALSE(lease.expiresAt().has_value());
+        CHECK_FALSE(lease.isExpired(wellPastLive));
+        CHECK(liveLease->isExpired(wellPastLive));
+
+        CHECK(
+            lease.validate(
+                frame.sessionId(),
+                generation,
+                frame.id(),
+                wellPastLive
+            )
+        );
+
+        auto const nextGeneration = generation.next();
+        REQUIRE(nextGeneration.has_value());
+        requireStaleObservation(
+            lease.validate(
+                frame.sessionId(),
+                *nextGeneration,
+                frame.id(),
+                capturedAt
+            )
+        );
+        requireStaleObservation(
+            lease.validate(
+                CaptureSessionId{uint64{99}},
+                generation,
+                frame.id(),
+                capturedAt
+            )
+        );
+        requireStaleObservation(
+            lease.validate(
+                frame.sessionId(),
+                generation,
+                FrameId{uint64{13}},
+                capturedAt
+            )
+        );
     }
 
     TEST_CASE("negative observation ages fail closed")

@@ -376,6 +376,15 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         {
             return ok();
         }
+
+        // One synthetic frame, returned unchanged for as long as this source
+        // exists. The wall-clock action lease is exercised against a live
+        // source in tests/engine/test-session.cpp; claiming Live here would only
+        // make these cases fail on how fast they were compiled.
+        [[nodiscard]] auto targetWorld() const noexcept -> TargetWorld override
+        {
+            return TargetWorld::Recorded;
+        }
     };
 
     class ActionSink final : public engine::IActionSink
@@ -442,6 +451,13 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         [[nodiscard]] auto clicks() const noexcept -> uint32 { return m_clicks; }
 
         auto refuseClicks() noexcept -> void { m_refuseClicks = true; }
+
+        // Counts and discards. It must agree with FrameSource above or
+        // EngineSession::create refuses the session.
+        [[nodiscard]] auto targetWorld() const noexcept -> TargetWorld override
+        {
+            return TargetWorld::Recorded;
+        }
     };
 
     class TraceSink final : public trace::ITraceSink

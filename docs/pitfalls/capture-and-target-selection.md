@@ -209,17 +209,36 @@ rate.
 
 ### Fix
 
-No code change. The 750 ms lease is a release-tuned budget; run the real-machine
-smoke and any production automation with a **release** build. Release recognition
-(~32 ms) leaves ample headroom under the lease. The lease and the WGC capture
-path (including the separate `CaptureStalled` timeout for a genuinely stalled,
-occluded window) are correct as designed — do not loosen the clamp, and no
-`capture()` freshness change is warranted.
+No code change for a live target. The 750 ms lease is a release-tuned budget;
+run the real-machine smoke and any production automation with a **release**
+build. Release recognition (~32 ms) leaves ample headroom under the lease. The
+lease and the WGC capture path (including the separate `CaptureStalled` timeout
+for a genuinely stalled, occluded window) are correct as designed — do not
+loosen the clamp, and no `capture()` freshness change is warranted.
+
+**Amended 2026-08-11.** The same latency reached the exported Operator contract
+suite, where the diagnosis above does not apply and the advice would have been
+wrong. A contract run replays one decoded PNG: its frames cannot change, so the
+interval the lease measures is the observer's and not a target's, and the suite
+could not pass in Debug for a reason that said nothing about the contract. The
+lease is now anchored to what the frame source reports about its target rather
+than to wall clock unconditionally — `TargetWorld` in `domain/detection.hpp`,
+answered by `engine::IFrameSource::targetWorld()` and defaulting to `Live`. A
+recorded source's lease has no deadline; every identity clause is unchanged;
+and `EngineSession::create` refuses to pair a recorded source with a sink that
+posts to a live target, so this cannot become a way to act on a real window
+from a recording.
+
+The rule for reading this entry: if the frames come from a live capture, the
+row above stands and Release is the answer. If they come from bytes, the age
+of a frame was never evidence and the source must say so.
 
 ### Regression check
 
 The Fake `FrameSource` fail-closed suite pins that an expired lease yields zero
-delivery (`ctest -L CI`). To reproduce the latency gap, time
+delivery (`ctest -L CI`), including a live frame two seconds old under the
+default bound and its recorded twin, which is delivered. To reproduce the
+latency gap, time
 `RecognitionRuntime::evaluatePage`/`evaluateActionTarget` on a 1600x900 frame in
 debug vs release; debug is ~1 s, release is tens of ms.
 

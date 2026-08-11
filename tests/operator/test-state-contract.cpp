@@ -465,11 +465,14 @@ namespace uf::operator_runtime
     // and the two halves of it have to agree or the resolver is comparing the
     // model's rectangles against pixels from somewhere else.
     //
-    // The consequence is deliberately not an error the caller can read. The
-    // engine's refusal reaches observe.luau as unknown evidence, so a project
-    // that supplied a mismatched pair sees a state that resolved nothing rather
-    // than a message naming the mismatch, which is why the suite asserts the
-    // resolution rather than only that an observation happened.
+    // What the RESOLVER can say about it is deliberately coarse: the engine's
+    // refusal reaches observe.luau as unknown evidence, so a mismatched pair
+    // resolves nothing and carries no message naming the mismatch. That is why
+    // the suite asserts the resolution rather than only that an observation
+    // happened -- and why a project's own supplied pair is checked earlier, by
+    // requireProbeGeometry in prepareStore, which is the only place that holds
+    // both numbers. The worlds below are built by this case rather than
+    // supplied, so they reach the resolver as a project's never can.
     TEST_CASE("an observation is resolved from the frame and geometry one project supplied")
     {
         auto temporary = TemporaryDirectory{};

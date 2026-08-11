@@ -25,6 +25,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <memory>
@@ -183,11 +184,24 @@ namespace uf::engine
             std::vector<Frame> m_frames;
             std::size_t        m_index{0};
             bool               m_targetValid{true};
+            TargetWorld        m_world;
 
         public:
-            explicit FakeFrameSource(std::vector<Frame> frames) noexcept
+            explicit FakeFrameSource(
+                std::vector<Frame> frames,
+                TargetWorld world = TargetWorld::Live
+            ) noexcept
                 : m_frames{std::move(frames)}
+                , m_world{world}
             {
+            }
+
+            // Live unless a case says otherwise: replaying a fixed sequence is
+            // how a moving target is modelled here, and the cases that turn the
+            // freshness lease red depend on these frames ageing.
+            [[nodiscard]] auto targetWorld() const noexcept -> TargetWorld override
+            {
+                return m_world;
             }
 
             // Models the HWND-reuse window the delivery-edge guard closes: valid
@@ -351,7 +365,24 @@ namespace uf::engine
             std::optional<Point<ClientSpace>> m_lastMove{};
             std::optional<ObservationLease>   m_lastMoveLease{};
 
+            TargetWorld m_world;
+
         public:
+            explicit CountingActionSink(
+                TargetWorld world = TargetWorld::Live
+            ) noexcept
+                : m_world{world}
+            {
+            }
+
+            // Live unless a case says otherwise: these fakes stand in for a
+            // target that moves, which is what makes them the vehicle for the
+            // wall-clock freshness cases below.
+            [[nodiscard]] auto targetWorld() const noexcept -> TargetWorld override
+            {
+                return m_world;
+            }
+
             // Models the window the engine's own gates cannot close: the sink
             // accepts the post as authorized and the injection layer refuses it
             // at delivery, where the lease is revalidated a second time.
@@ -676,12 +707,16 @@ namespace uf::engine
         [[nodiscard]]
         auto makeSession(
             std::vector<Frame> frames,
-            EngineSessionConfig config
+            EngineSessionConfig config,
+            TargetWorld world = TargetWorld::Live
         ) -> SessionUnderTest
         {
-            auto frameSource = std::make_unique<FakeFrameSource>(std::move(frames));
-            auto actionSink  = std::make_unique<CountingActionSink>();
-            auto traceSink   = std::make_unique<CollectingTraceSink>();
+            auto frameSource = std::make_unique<FakeFrameSource>(
+                std::move(frames),
+                world
+            );
+            auto actionSink = std::make_unique<CountingActionSink>(world);
+            auto traceSink  = std::make_unique<CollectingTraceSink>();
             auto* const p_source = frameSource.get();
             auto* const p_clicks = actionSink.get();
             auto* const p_traces = traceSink.get();
@@ -709,14 +744,15 @@ namespace uf::engine
         auto matchingSession(
             ProjectFingerprint fingerprint,
             EngineSessionConfig config,
-            MonotonicInstant capturedAt = MonotonicInstant::now()
+            MonotonicInstant capturedAt = MonotonicInstant::now(),
+            TargetWorld world = TargetWorld::Live
         ) -> SessionUnderTest
         {
             auto frames = std::vector<Frame>{};
             frames.emplace_back(
                 grayFrame(fingerprint, matchingPixels(), FrameId{17}, capturedAt)
             );
-            return makeSession(std::move(frames), std::move(config));
+            return makeSession(std::move(frames), std::move(config), world);
         }
 
         [[nodiscard]]
@@ -1057,6 +1093,171 @@ namespace uf::engine
             )
             != nullptr
         );
+    }
+
+    // The freshness lease as a live target makes it true, at the default bound
+    // rather than a degenerate one: two seconds of a target's life have passed
+    // between this capture and this click, and 750 ms is all the engine allows.
+    TEST_CASE("engine session refuses a click on a live frame older than the lease")
+    {
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+        auto const capturedAt  = MonotonicInstant::now().checkedAdd(
+            std::chrono::duration_cast<MonotonicInstant::Duration>(
+                std::chrono::seconds{-2}
+            )
+        );
+        REQUIRE(capturedAt.has_value());
+
+        auto under = matchingSession(
+            fingerprint,
+            baseConfig(fingerprint),
+            *capturedAt,
+            TargetWorld::Live
+        );
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+
+        auto const receipt = session.clickPoint(
+            std::move(*observation),
+            PixelPoint{1, 0}
+        );
+        REQUIRE_FALSE(receipt.has_value());
+        requireErrorKind(receipt.error(), AutomationErrorKind::StaleObservation);
+        CHECK(under.clicks->clickCount() == 0);
+    }
+
+    // The same two-second-old frame, from a source that produces fixed bytes.
+    // Nothing it shows can have changed in those two seconds, so the interval
+    // is a fact about the observer and the click lands. This is the case that
+    // goes red if a recorded lease ever grows a deadline.
+    TEST_CASE("engine session clicks a recorded frame older than a live lease allows")
+    {
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+        auto const capturedAt  = MonotonicInstant::now().checkedAdd(
+            std::chrono::duration_cast<MonotonicInstant::Duration>(
+                std::chrono::seconds{-2}
+            )
+        );
+        REQUIRE(capturedAt.has_value());
+
+        auto under = matchingSession(
+            fingerprint,
+            baseConfig(fingerprint),
+            *capturedAt,
+            TargetWorld::Recorded
+        );
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+
+        auto const receipt = session.clickPoint(
+            std::move(*observation),
+            PixelPoint{1, 0}
+        );
+        REQUIRE(receipt.has_value());
+        CHECK(under.clicks->clickCount() == 1);
+
+        // The lease that reached the sink carries no deadline, so the delivery
+        // layer's own revalidation cannot expire it either.
+        REQUIRE(under.clicks->lastLease().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
+        CHECK_FALSE(under.clicks->lastLease()->expiresAt().has_value());
+    }
+
+    // What a recorded world does NOT relax. Everything else the delivery edge
+    // refuses is untouched by the declaration, so a session whose geometry moved
+    // still posts nothing however fresh its frames are held to be.
+    TEST_CASE("a recorded target still fails closed when the live fingerprint moved")
+    {
+        auto const projectPrint = fingerprintOf(3, 1, 96);
+        auto config            = baseConfig(projectPrint);
+        config.liveFingerprint = fingerprintOf(3, 1, 120);
+
+        auto under = matchingSession(
+            projectPrint,
+            config,
+            MonotonicInstant::now(),
+            TargetWorld::Recorded
+        );
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+
+        auto const receipt = session.clickPoint(
+            std::move(*observation),
+            PixelPoint{1, 0}
+        );
+        REQUIRE_FALSE(receipt.has_value());
+        requireErrorKind(
+            receipt.error(),
+            AutomationErrorKind::TargetCompatibilityUnverified
+        );
+        CHECK(under.clicks->clickCount() == 0);
+    }
+
+    // The pairing that would turn a recorded capture into a way to act on a real
+    // window. Refused at construction in both directions, because a session that
+    // reads one world and posts into another is not a session either port
+    // described.
+    TEST_CASE("engine session refuses ports that name different target worlds")
+    {
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+
+        struct WorldCase final
+        {
+            std::string_view label{};
+            TargetWorld      frames{TargetWorld::Live};
+            TargetWorld      actions{TargetWorld::Live};
+        };
+
+        auto const cases = std::array{
+            WorldCase{
+                "recorded frames into a live sink",
+                TargetWorld::Recorded,
+                TargetWorld::Live,
+            },
+            WorldCase{
+                "live frames into a recorded sink",
+                TargetWorld::Live,
+                TargetWorld::Recorded,
+            },
+        };
+
+        for (auto const& worldCase : cases)
+        {
+            CAPTURE(worldCase.label);
+
+            auto frames = std::vector<Frame>{};
+            frames.emplace_back(
+                grayFrame(
+                    fingerprint,
+                    matchingPixels(),
+                    FrameId{17},
+                    MonotonicInstant::now()
+                )
+            );
+            auto recorder = makeRecorder(std::make_unique<CollectingTraceSink>());
+            auto session  = EngineSession::create(
+                std::make_unique<FakeFrameSource>(std::move(frames), worldCase.frames),
+                std::make_unique<CountingActionSink>(worldCase.actions),
+                recorder,
+                baseConfig(fingerprint)
+            );
+            REQUIRE_FALSE(session.has_value());
+            requireErrorKind(session.error(), AutomationErrorKind::InvalidResource);
+            CHECK(
+                std::string{session.error().message()}.contains(
+                    "different target worlds"
+                )
+            );
+        }
     }
 
     TEST_CASE("engine session rejects reuse of an invalidated observation")
