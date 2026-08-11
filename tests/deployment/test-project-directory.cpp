@@ -22,9 +22,13 @@
 
 #include <core/types/integer.hpp>
 
+#include <domain/content-hash.hpp>
+
 #include <image/png.hpp>
 
 #include <operator/manifest.hpp>
+
+#include <task/page-model-file.hpp>
 
 #include <doctest/doctest.h>
 
@@ -45,6 +49,23 @@ namespace uf::deployment
     namespace
     {
         namespace umbraflow = operator_runtime::test_support;
+
+        [[nodiscard]]
+        auto readAll(std::filesystem::path const& path) -> std::vector<std::byte>
+        {
+            auto stream = std::ifstream{path, std::ios::binary};
+            auto const text = std::string{
+                std::istreambuf_iterator<char>{stream},
+                std::istreambuf_iterator<char>{},
+            };
+            auto bytes = std::vector<std::byte>{};
+            bytes.reserve(text.size());
+            for (auto const character : text)
+            {
+                bytes.emplace_back(static_cast<std::byte>(character));
+            }
+            return bytes;
+        }
 
         auto write(std::filesystem::path const& path, std::string_view bytes) -> void
         {
@@ -368,6 +389,62 @@ namespace uf::deployment
                 .has_value()
         );
         CHECK_FALSE(validateFrameworkFormat(R"json({"tools":[]})json").has_value());
+    }
+
+    // The two project directories this repository ships as data, read from the
+    // repository rather than built by the fixture above. Until 2.5 step 6
+    // switches the conformance suite onto them, nothing else opens them at all,
+    // so a byte edited in one would be noticed by nobody.
+    //
+    // The RuntimeArtifact half is here for a second reason. Its manifest is the
+    // one file in a project directory that must be byte-exact, and the single
+    // trailing newline scripts/fix_format.py adds to every .json is exactly
+    // what parseManifest refuses -- which is why that script no longer owns a
+    // directory holding umbraflow-project.json
+    // (docs/plans/2026-08-11-project-as-data.md 2.5). This is what says the
+    // exclusion held.
+    TEST_CASE("this repository's own example project directories load")
+    {
+        constexpr auto k_marker =
+            std::string_view{"examples/umbraflow/umbraflow-project.json"};
+        auto const root = json::repositoryRoot(k_marker);
+        REQUIRE_FALSE(root.empty());
+
+        for (auto const example : std::array{
+                 std::string_view{"examples/umbraflow"},
+                 std::string_view{"examples/arcana-expedition"},
+             })
+        {
+            INFO(example);
+            auto const loaded = loadProject(root / example, {});
+            INFO(why(loaded));
+            REQUIRE(loaded.has_value());
+            CHECK(loaded->deployments.size() == 2U);
+            CHECK(loaded->findDeployment(loaded->primaryDeployment) != nullptr);
+
+            // The artifact root the project names, opened the way the installer
+            // opens it. The root hash handed in is this case's own arithmetic
+            // over the bytes it just read, so that one comparison proves
+            // nothing; what is measured is that the manifest is exact canonical
+            // bytes with nothing trailing and that every file it declares is
+            // present at the size and digest it states.
+            auto const manifestBytes = readAll(
+                loaded->runtimeArtifactRoot
+                / std::filesystem::path{task::k_runtimeArtifactManifestFileName}
+            );
+            REQUIRE_FALSE(manifestBytes.empty());
+            auto const rootHash = sha256(std::span{manifestBytes});
+            REQUIRE(rootHash.has_value());
+
+            auto const installed =
+                task::loadRuntimeArtifact(loaded->runtimeArtifactRoot, *rootHash);
+            auto const refused = installed.has_value()
+                ? std::string{}
+                : std::string{installed.error().message()};
+            INFO(refused);
+            REQUIRE(installed.has_value());
+            CHECK_FALSE(installed->assetPaths().empty());
+        }
     }
 
     // Everything below breaks one thing in this directory, so this case is what
@@ -851,6 +928,68 @@ namespace uf::deployment
             umbraflow::schemaHashHex(umbraflow::k_effectPayloadSchema)
         ));
         CHECK(why(surplus).contains("names under no event type"));
+    }
+
+    // R5. The effect payload schemas reach a digest through exactly one member,
+    // the catalog's effect_payload_sha256s, and both halves are authored in one
+    // directory -- so both directions are refused where they were written.
+    // Without this member their bytes are inside no hash at all and editing one
+    // is answered by a Plan refusal much later
+    // (docs/plans/2026-08-11-project-as-data.md 2.2).
+    TEST_CASE("R5 the catalog and the effect payload schemas must name each other")
+    {
+        auto const fixture = Fixture{};
+        REQUIRE(fixture.load().has_value());
+
+        // A journal payload schema stands in for the effect one: a complete
+        // schema this evaluator compiles, already carried by this deployment,
+        // so nothing but the catalog's digest can tell the two apart.
+        fixture.rewrite(
+            "umbraflow-project.json",
+            substituted(
+                Fixture::projectManifest(),
+                R"json("effect_payload_schemas":["schema/alpha/effect-0.json"])json",
+                R"json("effect_payload_schemas":["schema/alpha/journal-0.json"])json"
+            )
+        );
+        auto const unnamedDigest = fixture.load();
+        REQUIRE_FALSE(unnamedDigest.has_value());
+        CHECK(why(unnamedDigest).contains(
+            umbraflow::schemaHashHex(umbraflow::k_effectPayloadSchema)
+        ));
+        CHECK(why(unnamedDigest).contains("its effect_payload_schemas hash to"));
+
+        fixture.rewrite(
+            "umbraflow-project.json",
+            substituted(
+                Fixture::projectManifest(),
+                R"json("effect_payload_schemas":["schema/alpha/effect-0.json"])json",
+                R"json("effect_payload_schemas":["schema/alpha/effect-0.json","schema/alpha/journal-0.json"])json"
+            )
+        );
+        auto const surplusSchema = fixture.load();
+        REQUIRE_FALSE(surplusSchema.has_value());
+        CHECK(why(surplusSchema).contains(
+            umbraflow::schemaHashHex(umbraflow::k_journalPayloadSchemas.front())
+        ));
+        CHECK(why(surplusSchema).contains("effect_payload_sha256s does not name"));
+
+        // The member is required rather than optional, which is what stops a
+        // catalog from omitting it and putting its effect payload schemas back
+        // outside every hash while both directions above stay satisfied.
+        auto const bundle   = umbraflow::DeploymentBundle{"fixture.alpha"};
+        auto const declared = std::string{R"json("effect_payload_sha256s":[")json"}
+            + umbraflow::schemaHashHex(umbraflow::k_effectPayloadSchema)
+            + R"json("],)json";
+        fixture.rewrite("umbraflow-project.json", Fixture::projectManifest());
+        fixture.rewrite(
+            "schema/alpha/catalog.json",
+            substituted(bundle.toolCatalog(), declared, "")
+        );
+        auto const omitted = fixture.load();
+        REQUIRE_FALSE(omitted.has_value());
+        CHECK(why(omitted).contains("required has no member"));
+        CHECK(why(omitted).contains("effect_payload_sha256s"));
     }
 
     // R9. probe_frame names a capture, and a file that does not decode is

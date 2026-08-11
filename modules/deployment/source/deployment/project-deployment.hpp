@@ -104,10 +104,15 @@ namespace uf::deployment
 
         // One complete JSON Schema per OP:`ExpectedEffect` payload the project
         // can propose, matched to an effect by the payload_schema_hash the
-        // effect itself carries. There is no manifest for these and there
-        // cannot be one: no member of ProjectRegistrationClaims pins an effect
-        // payload schema, so the hash inside the document is the only pin, and
-        // an effect naming a hash no schema in this set has is refused.
+        // effect itself carries, and an effect naming a hash no schema in this
+        // set has is refused.
+        //
+        // No member of ProjectRegistrationClaims pins one directly. What puts
+        // their bytes inside a registration is the Tool Catalog's
+        // effect_payload_sha256s, which create() holds to this set both ways --
+        // so editing a pinned effect payload schema moves tool_catalog_hash and
+        // therefore project_registration_hash, rather than moving no hash at
+        // all and surfacing as a Plan refused much later.
         std::span<std::string_view const> effectPayloadSchemas{};
     };
 

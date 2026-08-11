@@ -454,9 +454,23 @@ namespace uf::deployment
     "title": "Tool Catalog document",
     "type": "object",
     "additionalProperties": false,
-    "required": ["plugin_id", "schema", "tool_precondition_sha256", "tools"],
+    "required": [
+        "effect_payload_sha256s",
+        "plugin_id",
+        "schema",
+        "tool_precondition_sha256",
+        "tools"
+    ],
     "properties": {
         "$comment": {"type": "string"},
+        "effect_payload_sha256s": {
+            "$comment": "The sha256 of each OP:ExpectedEffect payload schema this deployment supplies, and the only path by which those bytes reach tool_catalog_hash and so project_registration_hash. The array may be empty: a project that proposes no effect has nothing to pin.",
+            "type": "array",
+            "items": {
+                "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Hash"
+            },
+            "uniqueItems": true
+        },
         "plugin_id": {
             "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
         },
@@ -935,6 +949,10 @@ namespace uf::deployment
         [[nodiscard]]
         auto carriedDigests(std::span<PayloadSchema const> schemas) -> std::string
         {
+            if (schemas.empty())
+            {
+                return "nothing";
+            }
             auto listed = std::string{};
             for (auto const& schema : schemas)
             {
@@ -1526,6 +1544,59 @@ namespace uf::deployment
                 toolPreconditionHash.hex()
             ));
         }
+
+        // The effect payload schemas' only route into any digest. Nothing else
+        // in a project names them: no member of ProjectRegistrationClaims pins
+        // one and no manifest lists one, so without this member editing a byte
+        // of a pinned effect payload schema would move no hash anywhere and the
+        // first consequence would be a Plan refused much later
+        // (project-as-data.md 2.2, 7.0 Q3). Naming them here puts their bytes
+        // inside tool_catalog_hash and so inside project_registration_hash.
+        //
+        // Both directions, for the reason the journal manifest's pair states: a
+        // digest naming bytes nobody supplied is a link that is only a
+        // convention, and a schema no digest names is bytes inside no hash.
+        for (auto const& declared : member(catalog, "effect_payload_sha256s").items())
+        {
+            auto const named = declared.string();
+            auto const found = std::ranges::find_if(
+                state->effectPayloadSchemas,
+                [named](PayloadSchema const& candidate)
+                {
+                    return candidate.hash.hex() == named;
+                }
+            );
+            if (found == state->effectPayloadSchemas.end())
+            {
+                return refuse(std::format(
+                    "the Tool Catalog names effect payload schema {}, which "
+                    "this deployment does not carry: its effect_payload_schemas "
+                    "hash to {}",
+                    named,
+                    carriedDigests(state->effectPayloadSchemas)
+                ));
+            }
+        }
+        for (auto const& supplied : state->effectPayloadSchemas)
+        {
+            auto const named = std::ranges::any_of(
+                member(catalog, "effect_payload_sha256s").items(),
+                [&supplied](json::Value const& declared)
+                {
+                    return declared.string() == supplied.hash.hex();
+                }
+            );
+            if (!named)
+            {
+                return refuse(std::format(
+                    "this deployment supplies an effect payload schema hashing "
+                    "to {}, which the Tool Catalog's effect_payload_sha256s "
+                    "does not name",
+                    supplied.hash.hex()
+                ));
+            }
+        }
+
         for (auto const& tool : member(catalog, "tools").items())
         {
             auto const definition = member(tool, "argument_schema").string();

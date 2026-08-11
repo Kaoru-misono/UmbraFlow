@@ -269,13 +269,27 @@ namespace uf::operator_runtime::test_support
             m_toolCatalog = R"json({"$comment":)json"
                 R"json("The Tool Catalog this registration pins. Mutability and )json"
                 R"json(ToolSurface are declared here and nowhere else, so a controller )json"
-                R"json(is judged against these bytes.","plugin_id":")json"
+                R"json(is judged against these bytes.",)json"
+                R"json("effect_payload_sha256s":[)json";
+            auto first = true;
+            for (auto const bytes : k_effectPayloadSchemas)
+            {
+                if (!first)
+                {
+                    m_toolCatalog += ',';
+                }
+                first = false;
+                m_toolCatalog += '"';
+                m_toolCatalog += schemaHashHex(bytes);
+                m_toolCatalog += '"';
+            }
+            m_toolCatalog += R"json(],"plugin_id":")json"
                 + m_pluginId
                 + R"json(","schema":"umbraflow-tool-catalog/v1",)json"
                   R"json("tool_precondition_sha256":")json"
                 + schemaHashHex(k_toolPreconditionSchema)
                 + R"json(","tools":[)json";
-            auto first = true;
+            first = true;
             for (auto const& tool : k_toolSources)
             {
                 if (!first)

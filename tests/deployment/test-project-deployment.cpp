@@ -144,6 +144,18 @@ namespace uf::deployment
             return *std::move(deployed);
         }
 
+        // Why one set of sources was refused, for a case whose subject is the
+        // message rather than the outcome. A refusal naming a different link
+        // satisfies CHECK_FALSE exactly as the intended one does, so a case
+        // about which link broke has to read what the refusal said.
+        [[nodiscard]]
+        auto why(Result<ProjectDeployment> const& outcome) -> std::string
+        {
+            return outcome.has_value()
+                ? std::string{"<the sources built a deployment>"}
+                : std::string{outcome.error().message()};
+        }
+
         // One reduce envelope carrying one fixture.progress event.
         [[nodiscard]]
         auto reduceEnvelope(std::string_view payload) -> std::string
@@ -474,6 +486,40 @@ namespace uf::deployment
         missingPayload.journalPayloadSchemas =
             std::span{umbraflow::k_journalPayloadSchemas}.first(3U);
         CHECK_FALSE(ProjectDeployment::create(missingPayload).has_value());
+
+        // The same pair for the effect payload schemas, whose only route into
+        // tool_catalog_hash -- and so into project_registration_hash -- is the
+        // catalog's effect_payload_sha256s. Supplying none leaves that member
+        // naming bytes nobody handed over.
+        auto missingEffect                 = bundle.sources();
+        missingEffect.effectPayloadSchemas = {};
+        auto const missingEffectOutcome    = ProjectDeployment::create(missingEffect);
+        REQUIRE_FALSE(missingEffectOutcome.has_value());
+        CHECK(why(missingEffectOutcome).contains(
+            umbraflow::schemaHashHex(umbraflow::k_effectPayloadSchema)
+        ));
+        CHECK(why(missingEffectOutcome).contains(
+            "its effect_payload_schemas hash to nothing"
+        ));
+
+        // And the other direction, which is the one that decides whether the
+        // bytes are inside any digest at all: a complete schema this evaluator
+        // compiles, supplied as an effect payload and named by no digest the
+        // catalog carries.
+        constexpr auto surplusEffectSchemas = std::array{
+            umbraflow::k_effectPayloadSchema,
+            umbraflow::k_journalPayloadSchemas.front(),
+        };
+        auto surplusEffect                 = bundle.sources();
+        surplusEffect.effectPayloadSchemas = surplusEffectSchemas;
+        auto const surplusEffectOutcome    = ProjectDeployment::create(surplusEffect);
+        REQUIRE_FALSE(surplusEffectOutcome.has_value());
+        CHECK(why(surplusEffectOutcome).contains(
+            umbraflow::schemaHashHex(umbraflow::k_journalPayloadSchemas.front())
+        ));
+        CHECK(why(surplusEffectOutcome).contains(
+            "effect_payload_sha256s does not name"
+        ));
 
         // Another project's precondition schema declares none of the argument
         // definitions this catalog names, so the catalog does not attach to it.

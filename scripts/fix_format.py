@@ -59,6 +59,20 @@ EXCLUDED_PREFIXES = {
     ("tests", "external"),
 }
 
+# A project directory is exactly a directory holding this file at its root
+# (docs/plans/2026-08-11-project-as-data.md 2.1), and this normalizer does not
+# own one. Every file such a directory names is bytes a digest pins: the loader
+# derives each registration hash from the schemas, manifests and plugin it read,
+# and a runtime artifact manifest is exact canonical JSON that the installer
+# refuses with anything trailing -- including the one newline this script would
+# add. Normalizing them would either move a project's identity or make the
+# artifact unloadable, which is the same collision this repository already
+# records for the SQL its ledger fingerprints.
+#
+# The marker decides rather than a path, so a project directory added later is
+# covered without editing this script.
+PROJECT_DIRECTORY_MARKER = "umbraflow-project.json"
+
 # The encoding prefixes a raw string literal may carry ahead of its R. Longest
 # first, so u8R"..." is not read as u followed by 8R.
 RAW_STRING_PREFIXES = ("u8", "u", "U", "L")
@@ -217,12 +231,25 @@ def is_supported_text(path: Path) -> bool:
     return path.name in TEXT_FILENAMES or path.suffix.lower() in TEXT_EXTENSIONS
 
 
+def in_project_directory(path: Path, root: Path) -> bool:
+    """Whether a project directory contains path, marker file included."""
+    for parent in path.parents:
+        if (parent / PROJECT_DIRECTORY_MARKER).is_file():
+            return True
+        if parent == root:
+            return False
+    return False
+
+
 def is_excluded(path: Path, root: Path) -> bool:
     relative_parts = tuple(part.lower() for part in path.relative_to(root).parts)
     if any(part in EXCLUDED_DIRECTORY_NAMES for part in relative_parts[:-1]):
         return True
 
-    return any(relative_parts[: len(prefix)] == prefix for prefix in EXCLUDED_PREFIXES)
+    if any(relative_parts[: len(prefix)] == prefix for prefix in EXCLUDED_PREFIXES):
+        return True
+
+    return in_project_directory(path, root)
 
 
 def repository_files(root: Path) -> Iterable[Path]:
@@ -249,8 +276,13 @@ def requested_files(root: Path, inputs: list[str]) -> Iterable[Path]:
         if not candidate.exists():
             raise ValueError(f"path does not exist: {value}")
 
+        # An excluded file is not this script's to own however it is named, so
+        # naming one explicitly does not reach it either. Without this, the one
+        # invocation that matters -- a single path, typed while iterating on it
+        # -- would still rewrite a file a digest pins.
         if candidate.is_file():
-            selected.add(candidate)
+            if not is_excluded(candidate, root):
+                selected.add(candidate)
             continue
 
         for path in candidate.rglob("*"):

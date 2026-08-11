@@ -218,27 +218,29 @@ work. One new row was opened by the falsification the `cli` move was asked for.
       today; nothing reads them, `conformance/exemplars/` is untouched, and §5
       step 6 is the change that switches the suite over and deletes the C++.
       What the writing measured, and what the switch therefore owes:
-    - §2.2's `effect_payload_sha256s` **cannot be written yet, and is refused
-      rather than merely unenforced**: the framework's Tool Catalog schema
-      (`modules/deployment/source/deployment/project-deployment.cpp`,
-      `k_toolCatalogSchema`) is a closed object that does not declare it, so a
-      catalog carrying the member is refused with *"additionalProperties
-      carries 'effect_payload_sha256s', which this closed object does not
-      declare"*. The bill §2.2 states is one file short: the framework schema
-      has to gain the member in the same change as the four catalogs under
-      `examples/*/schema/*/tool-catalog-v1.json`, the two generators at
-      `conformance/exemplars/*/project-schemas.hpp`, and uf-chaos's two
-      authored catalogs at `schema/{dream,archive}/umbraflow-tool-catalog-v1.json`.
-    - **A `runtime_artifact` root cannot carry its own
-      `runtime-artifact.manifest.json` in this repository.** Measured both
-      ways: `task::loadRuntimeArtifact` accepts the exact canonical bytes and
-      refuses the same bytes with one trailing newline (*"must have no BOM,
-      whitespace, or trailing bytes outside its canonical JSON value"*), while
-      `scripts/fix_format.py --check` requires every `.json` under the
-      repository to end in exactly one. Both example artifact roots therefore
-      carry `page-model.toml` and their asset closure and no manifest, which is
-      a gap the installer will name rather than a manifest that would look
-      loaded and then fail. Ruling it needs one of the two rules to yield.
+    - §2.2's `effect_payload_sha256s` **landed 2026-08-11**, one file larger than
+      §2.2 had counted: `k_toolCatalogSchema`
+      (`modules/deployment/source/deployment/project-deployment.cpp`) is a
+      closed object, so it had to declare the member and list it in `required`
+      in the same change as `ProjectDeployment::create`'s set check, the four
+      catalogs under `examples/*/schema/*/tool-catalog-v1.json`, the two
+      generators at `conformance/exemplars/*/project-schemas.hpp`, and
+      uf-chaos's two authored catalogs at
+      `schema/{dream,archive}/umbraflow-tool-catalog-v1.json`. An effect payload
+      schema's bytes now reach `tool_catalog_hash` and so
+      `project_registration_hash`; both of uf-chaos's registration hashes moved
+      (`d5d2246…` to `1bee72c…`, `59cf758…` to `9e7f828…`) and no stored
+      session recorded either.
+    - **Both example artifact roots now carry their
+      `runtime-artifact.manifest.json`**, and the collision that kept them out
+      was ruled rather than worked around on 2026-08-11: `fix_format.py` does
+      not own files whose bytes a digest pins, implemented by the marker — it
+      excludes any directory holding `umbraflow-project.json` at its root, and
+      everything under it (§2.5). Its file count went 524 to 484, which is
+      exactly the 40 files the two example project directories contributed.
+      `task::loadRuntimeArtifact` accepts each manifest and still refuses the
+      same bytes with one trailing newline, which is the byte the normalizer
+      would have added.
     - Every digest a project-authored document states about a file beside it is
       the sha256 of the **file**, and the exemplar C++ computes the same digest
       over a string constant that carries no trailing newline. The three

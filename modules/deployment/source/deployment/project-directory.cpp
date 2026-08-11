@@ -194,7 +194,7 @@ namespace uf::deployment
                     "uniqueItems": true
                 },
                 "effect_payload_schemas": {
-                    "$comment": "No manifest names these and none can: no member of ProjectRegistrationClaims pins an effect payload schema, so the payload_schema_hash inside an OP:ExpectedEffect is the only pin.",
+                    "$comment": "The effect payload schema files this deployment supplies. No manifest names them: the Tool Catalog's effect_payload_sha256s names each by sha256, which is the only route their bytes have into tool_catalog_hash, and the payload_schema_hash inside an OP:ExpectedEffect is what selects which of them judges it.",
                     "type": "array",
                     "items": {"$ref": "#/$defs/Path"},
                     "uniqueItems": true

@@ -235,13 +235,27 @@ namespace uf::operator_runtime::conformance::expedition
                 R"json("The expedition's Tool Catalog. Every tool is stated in the )json"
                 R"json(expedition's own vocabulary, so the catalog declares them )json"
                 R"json(semantic; leaving that to the default would declare the )json"
-                R"json(opposite by omission.","plugin_id":")json"
+                R"json(opposite by omission.",)json"
+                R"json("effect_payload_sha256s":[)json";
+            auto first = true;
+            for (auto const bytes : k_effectPayloadSchemas)
+            {
+                if (!first)
+                {
+                    m_toolCatalog += ',';
+                }
+                first = false;
+                m_toolCatalog += '"';
+                m_toolCatalog += schemaHashHex(bytes);
+                m_toolCatalog += '"';
+            }
+            m_toolCatalog += R"json(],"plugin_id":")json"
                 + m_pluginId
                 + R"json(","schema":"umbraflow-tool-catalog/v1",)json"
                   R"json("tool_precondition_sha256":")json"
                 + schemaHashHex(k_toolPreconditionSchema)
                 + R"json(","tools":[)json";
-            auto first = true;
+            first = true;
             for (auto const& tool : k_toolSources)
             {
                 if (!first)
