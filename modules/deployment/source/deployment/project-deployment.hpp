@@ -1,5 +1,6 @@
 #pragma once
 
+#include <operator/effective-plan.hpp>
 #include <operator/journal-entry.hpp>
 #include <operator/project-plugin.hpp>
 #include <operator/reconcile-outcome.hpp>
@@ -20,6 +21,30 @@ namespace uf::deployment
     // ProjectSchemaOwner::canonicalize is allowed to prove.
     [[nodiscard]]
     auto canonicalJsonValidator() -> operator_runtime::CanonicalJsonValidator;
+
+    // The two documents a ProjectPlugin returns that the Operator itself acts
+    // on: OP:`PlanProposal`, and OP:`UIActionIntent` or OP:`WaitIntent`. They
+    // are free functions for the reason canonicalJsonValidator is one: the
+    // operator protocol is the Operator's own schema and is the same for every
+    // project, so neither reader consults anything a ProjectRegistration
+    // pinned.
+    //
+    // Each is a whole PlanProposalReader or StepIntentReader
+    // (operator/effective-plan.hpp:119-122): it refuses bytes that are not
+    // exact RFC 8785, then refuses anything the complete definition does not
+    // accept, before reading a member. A deployment whose ProjectSchemaOwner
+    // already judged the same document judges it twice; that is the price of a
+    // reader an OperatorPlanAuthority can be built from without one.
+    [[nodiscard]]
+    auto readPlanProposal(std::string_view exactProposalJcs)
+        -> Result<operator_runtime::PlanProposalClaims>;
+
+    // The two intents carry no discriminator, so the schema tells them apart by
+    // their complete member sets under oneOf: a document satisfying both would
+    // be a step of two kinds and is refused rather than read as either.
+    [[nodiscard]]
+    auto readStepIntent(std::string_view exactStepJcs)
+        -> Result<operator_runtime::StepIntentClaims>;
 
     // The $id each project schema document must declare. The Operator-owned
     // envelope schemas this module carries reference the project's documents by

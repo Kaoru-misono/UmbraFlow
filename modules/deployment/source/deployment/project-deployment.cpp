@@ -628,6 +628,50 @@ namespace uf::deployment
             return *std::move(compiled);
         }
 
+        // The two operator protocol schemas that reference no project document.
+        // Every other schema this module compiles is a project's or names one,
+        // so it belongs to a deployment; these two are the Operator's own and
+        // one compilation answers for every deployment and for the two readers
+        // below.
+        struct EnvelopeSchemas final
+        {
+            json::Schema planProposal;
+            json::Schema stepIntent;
+        };
+
+        [[nodiscard]]
+        auto envelopeSchemas() -> Result<EnvelopeSchemas>
+        {
+            static auto const s_compiled = []() -> Result<EnvelopeSchemas>
+            {
+                auto const commonOnly = std::array{json::Schema::Document{
+                    .label      = "operator/common",
+                    .exactBytes = k_commonSchema,
+                }};
+                UF_TRY_VALUE(
+                    planProposal,
+                    compile(
+                        "operator/plan-proposal",
+                        k_planProposalSchema,
+                        commonOnly
+                    )
+                );
+                UF_TRY_VALUE(
+                    stepIntent,
+                    compile("operator/step-intent", k_stepIntentSchema, commonOnly)
+                );
+                return EnvelopeSchemas{
+                    .planProposal = std::move(planProposal),
+                    .stepIntent   = std::move(stepIntent),
+                };
+            }();
+            if (!s_compiled.has_value())
+            {
+                return std::unexpected{s_compiled.error().clone()};
+            }
+            return *s_compiled;
+        }
+
         [[nodiscard]]
         auto parseDocument(std::string_view exactJcs) -> Result<json::Value>
         {
@@ -753,6 +797,48 @@ namespace uf::deployment
                 operator_runtime::ReconcileDisposition::Rejected,
             },
         };
+
+        // OP:`Risk`, spelled once. The wire names are riskWireName's and are
+        // not restated here: the enumerators are the domain and the projection
+        // is the mapping, so a name that drifted would drift in one place.
+        constexpr auto k_risks = std::array{
+            operator_runtime::Risk::ReadOnly,
+            operator_runtime::Risk::Low,
+            operator_runtime::Risk::Medium,
+            operator_runtime::Risk::High,
+            operator_runtime::Risk::Critical,
+        };
+
+        // The largest value each OP:`WorkflowLimits` member holds. 2^53 for the
+        // millisecond bound rather than uint64's maximum: past it a double no
+        // longer represents consecutive integers, so a larger ceiling would
+        // admit a value the document did not spell.
+        constexpr auto k_workflowCountBound  = uint64{0xFFFF'FFFF};
+        constexpr auto k_workflowMillisBound = uint64{1} << 53U;
+
+        // One OP:`WorkflowLimits` member, narrowed. The schema bounds each of
+        // the five from below and none of them from above, and converting a
+        // double outside the destination's range is undefined rather than
+        // merely large -- so the upper bound is stated where the narrowing
+        // happens and nowhere else.
+        [[nodiscard]]
+        auto workflowBound(
+            json::Value const& limits,
+            std::string_view name,
+            uint64 ceiling
+        ) -> Result<uint64>
+        {
+            auto const declared = member(limits, name).number();
+            if (declared < 0.0 || declared > static_cast<double>(ceiling))
+            {
+                return refuse(std::format(
+                    "a PlanProposal's {} is outside the range that workflow "
+                    "bound holds",
+                    name
+                ));
+            }
+            return static_cast<uint64>(declared);
+        }
 
         struct ToolEntry final
         {
@@ -1030,6 +1116,126 @@ namespace uf::deployment
         };
     }
 
+    auto readPlanProposal(std::string_view exactProposalJcs)
+        -> Result<operator_runtime::PlanProposalClaims>
+    {
+        UF_TRY_VALUE(schemas, envelopeSchemas());
+        UF_TRY(adopt(
+            json::requireExactCanonical(exactProposalJcs),
+            "a PlanProposal's bytes"
+        ));
+        UF_TRY_VALUE(document, parseDocument(exactProposalJcs));
+        UF_TRY(adopt(schemas.planProposal.validate(document), "a PlanProposal"));
+
+        // canonical_args and every opaque_project_payload below are
+        // re-serialized rather than sliced out of the input. The document is
+        // its own RFC 8785 form, so a member's canonical bytes are the bytes it
+        // occupied -- which is the property the plan hash rests on.
+        auto claims = operator_runtime::PlanProposalClaims{
+            .toolName         = std::string{member(document, "tool_name").string()},
+            .toolVersion      = std::string{member(document, "tool_version").string()},
+            .canonicalArgs    = json::canonicalBytes(member(document, "canonical_args")),
+            .effects          = {},
+            .allowedUiActions = {},
+            .limits           = {},
+        };
+        for (auto const& action : member(document, "allowed_ui_actions").items())
+        {
+            claims.allowedUiActions.emplace_back(action.string());
+        }
+        for (auto const& effect : member(document, "effects").items())
+        {
+            auto const risk = std::ranges::find(
+                k_risks,
+                member(effect, "risk").string(),
+                operator_runtime::riskWireName
+            );
+            UF_CHECK(risk != k_risks.end());
+            // OP:`Hash` is bare lowercase hex; ContentHash spells its own
+            // canonical form with the algorithm in front.
+            UF_TRY_VALUE(
+                payloadSchemaHash,
+                ContentHash::parse(
+                    "sha256:"
+                    + std::string{member(effect, "payload_schema_hash").string()}
+                )
+            );
+            claims.effects.emplace_back(operator_runtime::ProposedEffect{
+                .namespacedType    = std::string{member(effect, "namespaced_type").string()},
+                .risk              = *risk,
+                .scopeKind         = std::string{member(effect, "scope_kind").string()},
+                .scopeKey          = std::string{member(effect, "scope_key").string()},
+                .payloadSchemaHash = payloadSchemaHash,
+                .opaqueProjectPayload = json::canonicalBytes(
+                    member(effect, "opaque_project_payload")
+                ),
+            });
+        }
+
+        auto const& limits = member(document, "workflow_limits");
+        UF_TRY_VALUE(
+            steps,
+            workflowBound(limits, "maximum_steps", k_workflowCountBound)
+        );
+        UF_TRY_VALUE(
+            dispatches,
+            workflowBound(limits, "maximum_dispatches", k_workflowCountBound)
+        );
+        UF_TRY_VALUE(
+            observations,
+            workflowBound(limits, "maximum_observations", k_workflowCountBound)
+        );
+        UF_TRY_VALUE(
+            waits,
+            workflowBound(limits, "maximum_waits", k_workflowCountBound)
+        );
+        UF_TRY_VALUE(
+            elapsed,
+            workflowBound(limits, "maximum_elapsed_ms", k_workflowMillisBound)
+        );
+        claims.limits = operator_runtime::WorkflowLimits{
+            .maximumSteps         = static_cast<uint32>(steps),
+            .maximumDispatches    = static_cast<uint32>(dispatches),
+            .maximumObservations  = static_cast<uint32>(observations),
+            .maximumWaits         = static_cast<uint32>(waits),
+            .maximumElapsedMillis = elapsed,
+        };
+        return claims;
+    }
+
+    auto readStepIntent(std::string_view exactStepJcs)
+        -> Result<operator_runtime::StepIntentClaims>
+    {
+        UF_TRY_VALUE(schemas, envelopeSchemas());
+        UF_TRY(adopt(
+            json::requireExactCanonical(exactStepJcs),
+            "a step intent's bytes"
+        ));
+        UF_TRY_VALUE(document, parseDocument(exactStepJcs));
+        UF_TRY(adopt(schemas.stepIntent.validate(document), "a step intent"));
+
+        // Which of the two the oneOf matched, read back off the document:
+        // `action` is required by OP:`UIActionIntent` and forbidden by
+        // OP:`WaitIntent`, so its presence is the answer the schema already
+        // reached. A wait names no UI and leaves the three identifiers empty,
+        // which is what mintStep refuses a UI-action step for.
+        auto const* const p_action = document.find("action");
+        if (p_action == nullptr)
+        {
+            return operator_runtime::StepIntentClaims{
+                .stepKey = std::string{member(document, "step_key").string()},
+                .kind    = operator_runtime::StepKind::Wait,
+            };
+        }
+        return operator_runtime::StepIntentClaims{
+            .stepKey    = std::string{member(document, "step_key").string()},
+            .surfaceId  = std::string{member(*p_action, "surface_id").string()},
+            .uiTargetId = std::string{member(*p_action, "ui_target_id").string()},
+            .actionId   = std::string{member(*p_action, "action_id").string()},
+            .kind       = operator_runtime::StepKind::UiAction,
+        };
+    }
+
     ProjectDeployment::ProjectDeployment(std::shared_ptr<State const> p_state) noexcept
         : m_state{std::move(p_state)}
     {
@@ -1096,14 +1302,7 @@ namespace uf::deployment
             reduceInput,
             compile("operator/reduce-input", k_reduceInputSchema, withState)
         );
-        UF_TRY_VALUE(
-            planProposal,
-            compile("operator/plan-proposal", k_planProposalSchema, commonOnly)
-        );
-        UF_TRY_VALUE(
-            stepIntent,
-            compile("operator/step-intent", k_stepIntentSchema, commonOnly)
-        );
+        UF_TRY_VALUE(envelopes, envelopeSchemas());
         UF_TRY_VALUE(
             projectState,
             compile("project/state", sources.projectState, {})
@@ -1126,8 +1325,8 @@ namespace uf::deployment
             .planInput             = std::move(planInput),
             .stepInput             = std::move(stepInput),
             .reduceInput           = std::move(reduceInput),
-            .planProposal          = std::move(planProposal),
-            .stepIntent            = std::move(stepIntent),
+            .planProposal          = std::move(envelopes.planProposal),
+            .stepIntent            = std::move(envelopes.stepIntent),
             .projectState          = std::move(projectState),
             .projectObservation    = std::move(projectObservation),
             .toolPrecondition      = std::move(toolPrecondition),

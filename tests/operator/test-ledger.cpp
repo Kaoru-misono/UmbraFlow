@@ -412,8 +412,8 @@ namespace uf::operator_runtime
                 ),
                 *runtimeModel,
                 "operator",
-                conformance::readPlanProposal,
-                conformance::readStepIntent
+                deployment::readPlanProposal,
+                deployment::readStepIntent
             );
         }
 
@@ -1665,8 +1665,8 @@ namespace uf::operator_runtime
             ),
             *secondModel,
             "operator",
-            conformance::readPlanProposal,
-            conformance::readStepIntent
+            deployment::readPlanProposal,
+            deployment::readStepIntent
         );
         REQUIRE(authority.has_value());
         CHECK_FALSE(mintStepUnder(prepared, *authority).has_value());

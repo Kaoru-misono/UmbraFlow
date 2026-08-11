@@ -1,17 +1,24 @@
-// What the deployment's two validators refuse that the exemplars' substituted
-// constants accepted, and what each of them still accepts.
+// What the deployment's validators and its two operator protocol readers refuse
+// that the exemplars' substituted constants accepted, and what each of them
+// still accepts.
 //
 // Every refusal below is paired with the acceptance it is the negation of. A
 // validator that refused everything would satisfy the first half of each case
 // and fail the second, which is the failure mode this file exists to exclude:
 // the substituted constants it replaces were green precisely because nothing
 // ever asked them to refuse.
+//
+// The readers are exercised here and nowhere else. Every path that reaches one
+// in a running Operator arrives through a ProjectSchemaOwner that has already
+// applied the same schema to the same bytes, so no refusal of theirs is
+// reachable from the conformance suite -- see the case below.
 
 #include "arcana-expedition/project-schemas.hpp"
 #include "umbraflow/project-schemas.hpp"
 
 #include <deployment/project-deployment.hpp>
 
+#include <operator/effective-plan.hpp>
 #include <operator/project-plugin.hpp>
 
 #include <doctest/doctest.h>
@@ -180,6 +187,46 @@ namespace uf::deployment
                         "\"maximum_elapsed_ms\":60000,\"maximum_observations\":16,"
                         "\"maximum_steps\":8,\"maximum_waits\":4}}";
             return proposal;
+        }
+
+        // OP:`UIActionIntent` in the shape the umbraflow exemplar's plugin
+        // answers next_step with, and OP:`WaitIntent` beside it.
+        constexpr auto k_uiActionIntent = std::string_view{
+            "{\"action\":{\"action_id\":\"fixture.press\","
+            "\"canonical_parameters\":{\"value\":1},"
+            "\"surface_id\":\"fixture.surface\","
+            "\"ui_target_id\":\"fixture.target\"},"
+            "\"binding_variant_constraints\":[],"
+            "\"delivery_class\":\"delivery_safe\","
+            "\"expected_ui_postconditions\":[],"
+            "\"required_ui_preconditions\":[],\"step_key\":\"fixture.step\","
+            "\"timeout_policy\":{\"maximum_elapsed_ms\":5000,"
+            "\"on_timeout\":\"reobserve\"}}"
+        };
+
+        constexpr auto k_waitIntent = std::string_view{
+            "{\"condition\":{\"settled\":true},\"observation_budget\":4,"
+            "\"step_key\":\"fixture.wait\","
+            "\"timeout_policy\":{\"maximum_elapsed_ms\":5000,"
+            "\"on_timeout\":\"reobserve\"}}"
+        };
+
+        // One substring of an otherwise accepted document, restated. Each
+        // refusal below is about the single substitution it makes, so the
+        // document it starts from has to be the accepted one and the
+        // substitution has to be found.
+        [[nodiscard]]
+        auto substituted(
+            std::string_view exact,
+            std::string_view from,
+            std::string_view to
+        ) -> std::string
+        {
+            auto const at = exact.find(from);
+            REQUIRE(at != std::string_view::npos);
+            auto restated = std::string{exact};
+            restated.replace(at, from.size(), to);
+            return restated;
         }
     }
 
@@ -457,5 +504,132 @@ namespace uf::deployment
         // And the unmodified sources do build one, so the refusals above are
         // about the link that was broken.
         CHECK(ProjectDeployment::create(bundle.sources()).has_value());
+    }
+
+    // OP:`PlanProposal`, read for the six members the Operator acts on. The
+    // reader answers for every project, so one exemplar's proposal is enough:
+    // nothing it consults came from a ProjectRegistration.
+    TEST_CASE("the PlanProposal reader refuses what the definition does not accept")
+    {
+        auto const effectHex =
+            umbraflow::schemaHashHex(umbraflow::k_effectPayloadSchema);
+        auto const exact = planProposal("{\"value\":1}", effectHex);
+
+        auto const claims = readPlanProposal(exact);
+        REQUIRE(claims.has_value());
+        CHECK(claims->toolName == "command-1");
+        CHECK(claims->toolVersion == "1");
+        CHECK(claims->canonicalArgs == "{\"value\":1}");
+        REQUIRE(claims->allowedUiActions.size() == 1U);
+        CHECK(claims->allowedUiActions.front() == "fixture.step");
+        REQUIRE(claims->effects.size() == 1U);
+        CHECK(claims->effects.front().namespacedType == "fixture.write");
+        CHECK(claims->effects.front().risk == operator_runtime::Risk::Low);
+        CHECK(claims->effects.front().scopeKind == "instance");
+        CHECK(claims->effects.front().scopeKey == "alpha");
+        CHECK(claims->effects.front().payloadSchemaHash.hex() == effectHex);
+        CHECK(claims->effects.front().opaqueProjectPayload == "{\"value\":1}");
+        CHECK(claims->limits.maximumSteps == 8U);
+        CHECK(claims->limits.maximumDispatches == 8U);
+        CHECK(claims->limits.maximumObservations == 16U);
+        CHECK(claims->limits.maximumWaits == 4U);
+        CHECK(claims->limits.maximumElapsedMillis == 60000U);
+
+        // Not its own RFC 8785 form: one space, and one pair of members in the
+        // order a project would write them rather than the order JCS sorts
+        // them to.
+        CHECK_FALSE(readPlanProposal(
+            substituted(exact, "\"risk\":\"low\"", "\"risk\": \"low\"")
+        ).has_value());
+        CHECK_FALSE(readPlanProposal(substituted(
+            exact,
+            "\"scope_key\":\"alpha\",\"scope_kind\":\"instance\"",
+            "\"scope_kind\":\"instance\",\"scope_key\":\"alpha\""
+        )).has_value());
+
+        // Each of the four ways the definition itself refuses a document that
+        // is canonical: a missing member, an extra one, a member of the wrong
+        // type, and a value outside an enum. "extra" sorts between "effects"
+        // and "tool_name", so the second of these stays canonical and only
+        // additionalProperties can answer it.
+        CHECK_FALSE(
+            readPlanProposal(substituted(exact, ",\"tool_version\":\"1\"", ""))
+                .has_value()
+        );
+        CHECK_FALSE(readPlanProposal(
+            substituted(exact, "\"tool_name\":", "\"extra\":1,\"tool_name\":")
+        ).has_value());
+        CHECK_FALSE(readPlanProposal(
+            substituted(exact, "\"tool_name\":\"command-1\"", "\"tool_name\":1")
+        ).has_value());
+        CHECK_FALSE(readPlanProposal(
+            substituted(exact, "\"risk\":\"low\"", "\"risk\":\"unknown\"")
+        ).has_value());
+
+        // A workflow bound the Operator's own WorkflowLimits cannot hold. The
+        // schema bounds each of the five from below and none from above, so
+        // this one is canonical, is an integer, and is still not a number the
+        // claims can carry.
+        CHECK_FALSE(readPlanProposal(
+            substituted(exact, "\"maximum_steps\":8", "\"maximum_steps\":4294967296")
+        ).has_value());
+
+        // A payload schema identity that is not OP:`Hash`. Two mechanisms
+        // refuse it -- the schema's pattern and ContentHash::parse -- and they
+        // are the same predicate, so neither is falsifiable through the other.
+        CHECK_FALSE(readPlanProposal(
+            substituted(exact, effectHex, std::string(64U, 'z'))
+        ).has_value());
+    }
+
+    // OP:`UIActionIntent` and OP:`WaitIntent`, which carry no discriminator.
+    TEST_CASE("the step intent reader tells the two intents apart and refuses neither")
+    {
+        auto const uiAction = readStepIntent(k_uiActionIntent);
+        REQUIRE(uiAction.has_value());
+        CHECK(uiAction->kind == operator_runtime::StepKind::UiAction);
+        CHECK(uiAction->stepKey == "fixture.step");
+        CHECK(uiAction->surfaceId == "fixture.surface");
+        CHECK(uiAction->uiTargetId == "fixture.target");
+        CHECK(uiAction->actionId == "fixture.press");
+
+        // A wait names no UI, and the three identifiers stay empty rather than
+        // carrying a default mintStep would match against.
+        auto const wait = readStepIntent(k_waitIntent);
+        REQUIRE(wait.has_value());
+        CHECK(wait->kind == operator_runtime::StepKind::Wait);
+        CHECK(wait->stepKey == "fixture.wait");
+        CHECK(wait->surfaceId.empty());
+        CHECK(wait->uiTargetId.empty());
+        CHECK(wait->actionId.empty());
+
+        // A document carrying both shapes' discriminating members satisfies
+        // neither, because each definition closes itself. It is the case oneOf
+        // exists for: read as the more permissive of the two it would be a step
+        // of two kinds.
+        CHECK_FALSE(readStepIntent(substituted(
+            k_waitIntent,
+            "{\"condition\":",
+            "{\"action\":{\"action_id\":\"fixture.press\","
+            "\"canonical_parameters\":{},\"surface_id\":\"fixture.surface\","
+            "\"ui_target_id\":\"fixture.target\"},\"condition\":"
+        )).has_value());
+
+        // And the same three refusals the proposal reader makes: a missing
+        // member, a value outside an enum, and bytes that are not their own
+        // RFC 8785 form.
+        CHECK_FALSE(
+            readStepIntent(
+                substituted(k_waitIntent, ",\"observation_budget\":4", "")
+            ).has_value()
+        );
+        CHECK_FALSE(readStepIntent(substituted(
+            k_uiActionIntent,
+            "\"delivery_class\":\"delivery_safe\"",
+            "\"delivery_class\":\"invented\""
+        )).has_value());
+        CHECK_FALSE(readStepIntent(
+            substituted(k_uiActionIntent, "\"step_key\":", "\"step_key\": ")
+        ).has_value());
     }
 }

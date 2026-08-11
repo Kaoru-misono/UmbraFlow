@@ -223,12 +223,16 @@ function(uf_add_conformance_suite)
     target_include_directories(${ARG_TARGET} SYSTEM PRIVATE
         "${SUITE_DOCTEST_DIR}"
     )
-    # uf::image is the suite's own dependency, not the provider's: suite-support.cpp
-    # reaches observation-fixture.hpp, which encodes the fixture's template
-    # assets with <image/png.hpp>, and the Operator does not link image.
+    # uf::image and uf::deployment are the suite's own dependencies, not the
+    # provider's: suite-support.cpp reaches observation-fixture.hpp, which
+    # encodes the fixture's template assets with <image/png.hpp>, and
+    # operator-protocol.hpp builds its plan authority out of the deployment's
+    # two operator protocol readers. The Operator links neither, and must not
+    # link the second.
     target_link_libraries(${ARG_TARGET} PRIVATE
         uf::operator
         uf::image
+        uf::deployment
         ${ARG_LIBS}
     )
     target_compile_features(${ARG_TARGET} PRIVATE cxx_std_23)
