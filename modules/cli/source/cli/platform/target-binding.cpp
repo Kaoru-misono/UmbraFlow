@@ -1,10 +1,9 @@
 #include "target-binding.hpp"
 
+#include "candidate-selection.hpp"
 #include "controller-action-sink.hpp"
 #include "wgc-frame-source.hpp"
 #include "windows-target-geometry.hpp"
-
-#include "../candidate-selection.hpp"
 
 #include <controller/capture.hpp>
 #include <controller/discovery.hpp>

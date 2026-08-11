@@ -1,5 +1,5 @@
-#include <args.hpp>
-#include <cli-result.hpp>
+#include <cli/args.hpp>
+#include <cli/cli-result.hpp>
 
 #include <core/types/integer.hpp>
 

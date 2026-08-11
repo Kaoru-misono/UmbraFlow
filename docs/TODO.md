@@ -111,14 +111,35 @@ nameable doctest target, `EXCLUDE_FROM_ALL` for consumers and a portable
 `UF_FRAMEWORK_ROOT` default were all symptoms of a consumer compiling this
 source tree, and no consumer does that any more.
 
-- [ ] `entry/cli/` becomes `modules/cli/`, `type = static`. Independent of the
-      boundary work and blocked only on `tests/CMakeLists.txt` contention. Its
-      130 hand-written lines declare exactly what a manifest declares, its
-      headers are included as `"args.hpp"` where every other module is included
-      as `<task/task-host.hpp>`, and it is invisible to `scripts/check_modules.py`
-      — so its public dependencies on `engine` and `task` could close a cycle
-      today with the check still printing OK. Needs the `[sources.windows]` /
-      `[sources.other]` manifest grammar for its platform split.
+Amended 2026-08-11: the `cli` row and the uncommitted-cmake row below are
+closed. `conformance/` is the only manifest left outside `modules/`, so the
+`DECLARED_SOURCE_TREES` row still waits on the boundary rather than on this
+work. One new row was opened by the falsification the `cli` move was asked for.
+
+- [x] `entry/cli/` becomes `modules/cli/`, `type = static`. Done 2026-08-11.
+      `entry/` keeps `main.cpp`, the generated `application-info.hpp` and the OCR
+      payload staging, and links `uf::cli`; there is no alias for
+      `${PROJECT_NAME}_cli_support`. The `"../candidate-selection.hpp"`
+      traversal and the `<args.hpp>` that only resolved because `entry/cli` was
+      published as an include root are both gone. Includes follow the documented
+      standard like every other module: `cpp-coding` §Includes rule 2, quotes
+      for a header of one's own module, angle brackets from outside it — so
+      `entry/cli/main.cpp` and `tests/cli` reach `cli` as `<cli/…>` while the
+      module's own sources use quotes. *(Corrected 2026-08-11: this row first
+      claimed every first-party include became `<cli/…>` including inside the
+      module. That was an instruction of mine and it was wrong — it made `cli`
+      the only module of twelve spelling its own headers with angle brackets,
+      which is the second spelling this repository forbids, and amending the
+      standard instead would have meant editing eleven modules to save one.
+      Reverted across 19 files and 33 include lines, gate re-run.)*
+      **The invisibility claim was checked rather than assumed**:
+      on manifest-only replicas of the graph, giving `engine` a dependency back
+      on `cli` leaves `scripts/check_modules.py` green without the module and
+      turns it red with it — `module dependency cycle: cli -> engine -> cli`.
+      The move also carried `tests/test-runtime-surface.py`, whose
+      `RETIRED_PATHS`, `REQUIRED_SAFE_PATHS` and executable-text scan all named
+      `entry/cli/`; the scan now covers `entry/` and `modules/cli/` both, so a
+      retired source cannot come back by being written to the other one.
 - [ ] `conformance/` becomes `modules/conformance/`, `type = static`, its
       `include/` collapsed into `source/conformance/` like every other module.
       Waits on the boundary, which decides whether it is a library or a binary;
@@ -127,13 +148,36 @@ source tree, and no consumer does that any more.
       Data a project author copies, not C++ a consumer links.
 - [ ] `scripts/check_modules.py` drops `DECLARED_SOURCE_TREES` and returns to a
       single root once nothing carries a manifest outside `modules/`.
-- [ ] Decide the fate of the uncommitted `cmake/manifest.cmake` and
-      `cmake/build.cmake` work. Its `[sources.*]` platform grammar is still
-      needed by the `cli` row above and its promotion of an unknown module type
-      from `message(WARNING)` to `FATAL_ERROR` is wanted regardless — that
-      warning never fired, which is how `type = sources` sat unread in
-      `conformance/manifest.txt`. The `sources` module kind itself now has no
-      user and must not land.
+- [x] Decide the fate of the uncommitted `cmake/manifest.cmake` and
+      `cmake/build.cmake` work. Settled 2026-08-11. The `[sources.*]` platform
+      grammar stays and the `cli` row above is its first user; the promotion of
+      an unknown module type from `message(WARNING)` to `FATAL_ERROR` stays; the
+      `sources` module kind is gone, along with the INTERFACE-target branches in
+      `cpp_define_module` and `cpp_link_module` that only it reached.
+      `conformance/manifest.txt` drops `[module].type` entirely rather than
+      naming another kind: nothing about that file reaches CMake, so a type
+      there is a declaration nothing can honour. `scripts/check_modules.py`
+      passes over it unchanged, because it never read the field.
+- [x] `[sources.other]` cannot fail on the platform that has a section of its
+      own. Found 2026-08-11 while falsifying the grammar. Deleting
+      `[sources.other]` from `modules/cli/manifest.txt` does put
+      `explore-unsupported.cpp` and `targets-unsupported.cpp` back into the
+      module's compiled file set — the target's source list shows both — and the
+      Windows build stays **green**, links, and behaves identically, because a
+      static library only contributes the members needed to resolve a symbol and
+      the duplicate definitions sit in members nothing pulls. Which definition
+      wins is the linker's archive search order, not something the manifest
+      states. The mirror-image mutation is red: reassigning
+      `targets-windows.cpp` to `[sources.linux]` removes it from the Windows
+      build and `umbra-flow` fails to link on `unresolved external symbol
+      uf::cli::targetsProduct`. So the removal half of the grammar is enforced
+      and the restoration half is not, on any platform that has its own section.
+      Ruled 2026-08-11: the property under test is "this translation unit
+      compiles only on that platform", and the only honest verification of that
+      is compiling it on that platform, so the Linux and macOS CI jobs are the
+      gate — nothing on the Windows side is built to detect this mutation.
+      Those jobs are currently blocked by the repository's CI billing state, so
+      the gate exists but has not run.
 
 ## G0 — contract and inherited baseline
 

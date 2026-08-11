@@ -7,82 +7,9 @@ configure_file(
     @ONLY
 )
 
-set(CLI_LIBRARY ${PROJECT_NAME}_cli_support)
-
-# Platform-free privileged annotation logic: argument parsing, queue protocol,
-# and the process error/exit-code boundary.
-add_library(${CLI_LIBRARY} STATIC
-    cli/args.cpp
-    cli/args.hpp
-    cli/cli-result.cpp
-    cli/cli-result.hpp
-    cli/explore.cpp
-    cli/explore.hpp
-    cli/explore-protocol.cpp
-    cli/explore-protocol.hpp
-    cli/platform/ocr-engine-binding.hpp
-    cli/project-skeleton.cpp
-    cli/project-skeleton.hpp
-    # The queue/results wire `explore` runs on: one framed reader, one results
-    # writer, and the durable cursor that keeps a restart from re-delivering a
-    # queue against a live target. It stays a pair of files of its own because
-    # the shape outlived the second front-end it was factored out for.
-    cli/queue-cursor.cpp
-    cli/queue-cursor.hpp
-    cli/queue-ipc.cpp
-    cli/queue-ipc.hpp
-    # The listing that ANSWERS --hwnd. Its rendering is here and its enumeration
-    # is gated below, so the line a script parses is testable on a host with no
-    # desktop.
-    cli/targets.cpp
-    cli/targets.hpp
-)
-cpp_apply_safety_profile(${CLI_LIBRARY})
-target_include_directories(${CLI_LIBRARY}
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/cli
-)
-# Privileged exploration is still implemented by task::ExplorationSession, so
-# task and engine remain public dependencies until the authoring host is split.
-target_link_libraries(${CLI_LIBRARY}
-    PUBLIC
-        ${PROJECT_NAME}_engine
-        ${PROJECT_NAME}_task
-)
-target_compile_features(${CLI_LIBRARY} PUBLIC cxx_std_23)
-
-if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
-    target_sources(${CLI_LIBRARY}
-        PRIVATE
-            cli/candidate-selection.cpp
-            cli/candidate-selection.hpp
-            cli/explore-windows.cpp
-            cli/targets-windows.cpp
-            cli/platform/controller-action-sink.cpp
-            cli/platform/controller-action-sink.hpp
-            cli/platform/ocr-engine-binding.cpp
-            cli/platform/target-binding.cpp
-            cli/platform/target-binding.hpp
-            cli/platform/wgc-frame-source.hpp
-            cli/platform/windows-console-cancellation.cpp
-            cli/platform/windows-console-cancellation.hpp
-            cli/platform/windows-target-geometry.cpp
-            cli/platform/windows-target-geometry.hpp
-    )
-    target_link_libraries(${CLI_LIBRARY}
-        PUBLIC
-            ${PROJECT_NAME}_controller
-        PRIVATE
-            user32
-    )
-else()
-    target_sources(${CLI_LIBRARY}
-        PRIVATE
-            cli/explore-unsupported.cpp
-            cli/targets-unsupported.cpp
-    )
-endif()
-
+# Only main.cpp lives here. Everything the commands are made of is uf::cli,
+# declared by modules/cli/manifest.txt: this directory is an executable, and an
+# executable's build declaration is the one thing a module manifest cannot say.
 add_executable(${PROJECT_NAME}
     cli/main.cpp
     "${APPLICATION_INFO_HEADER}"
@@ -92,13 +19,13 @@ cpp_apply_utf8_encoding(${PROJECT_NAME})
 
 set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "umbra-flow")
 target_include_directories(${PROJECT_NAME} PRIVATE "${APPLICATION_INFO_DIRECTORY}")
-target_link_libraries(${PROJECT_NAME} PRIVATE ${CLI_LIBRARY} ${PROJECT_NAME}_core)
+target_link_libraries(${PROJECT_NAME} PRIVATE uf::cli uf::core)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 
-# cli_support links engine publicly, and engine links ocr publicly, so this
-# executable resolves onnxruntime.dll from its own directory at process start;
-# see cmake/runtime-payload.cmake for why that copy cannot be left to some
-# other target's build order.
+# cli links engine publicly, and engine links ocr publicly, so this executable
+# resolves onnxruntime.dll from its own directory at process start; see
+# cmake/runtime-payload.cmake for why that copy cannot be left to some other
+# target's build order.
 if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
     cpp_stage_runtime_libraries(${PROJECT_NAME} ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
 

@@ -8,6 +8,13 @@
 # on a consumer's include path that could close a dependency cycle while the
 # check still printed OK over a count that was never all the C++.
 #
+# There is no [module].type for the same reason. type names the kind of library
+# cmake/build.cmake creates, and this file reaches no CMake at all:
+# cmake/conformance-suite.cmake lists the suite's translation units by path and
+# compiles them into the caller's executable. A type here would be a declaration
+# nothing can honour -- which is what `type = sources` was, naming a kind the
+# build had no branch for while the parser silently read it as `static`.
+#
 # The dependency list is what the suite's own headers and sources name, and it
 # is public because every entry is named by include/conformance/, which a
 # consumer compiles against. image is the one that is not reachable through
@@ -16,7 +23,6 @@
 
 [module]
 name = conformance
-type = sources
 version = 0.1.0
 
 [dependencies]

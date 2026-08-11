@@ -1,8 +1,9 @@
-#include "args.hpp"
 #include "application-info.hpp"
-#include "cli-result.hpp"
-#include "explore.hpp"
-#include "targets.hpp"
+
+#include <cli/args.hpp>
+#include <cli/cli-result.hpp>
+#include <cli/explore.hpp>
+#include <cli/targets.hpp>
 
 #include <core/numeric/checked-cast.hpp>
 #include <core/safety/annotations.hpp>

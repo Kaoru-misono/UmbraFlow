@@ -68,6 +68,133 @@ function(cpp_embed_luau_sources TARGET_NAME LUAU_SOURCE_DIR GENERATED_DIR VERSIO
     target_sources(${TARGET_NAME} PRIVATE "${GENERATED_FILE}")
 endfunction()
 
+# Applies the manifest's [sources.<platform>] sections to the module's globbed
+# file set, in place: SRC_VAR and HDR_VAR name the caller's variables.
+#
+# A file named by any section is removed from the unconditional glob and added
+# back only when its own section is the one this platform selects. The removal
+# is the whole point: the glob has already found every file under source/, so
+# without it a windows-only translation unit would compile on Linux too and the
+# section would read as documentation rather than as a rule.
+#
+# Patterns are relative to source/<directory> -- the directory the module's own
+# public include path points at, so a pattern is spelled the way an #include of
+# the same file is. Each pattern is a plain file(GLOB): one path component per
+# component written, no recursive descent, so `*.cpp` cannot silently swallow a
+# subdirectory a later commit adds.
+function(cpp_select_platform_sources
+    MODULE_LABEL
+    MODULE_PATH
+    DIR_NAME
+    DECLARED_PLATFORMS
+    WINDOWS_PATTERNS
+    LINUX_PATTERNS
+    MACOS_PATTERNS
+    OTHER_PATTERNS
+    SRC_VAR
+    HDR_VAR
+)
+    if(DECLARED_PLATFORMS STREQUAL "")
+        return()
+    endif()
+
+    set(SOURCE_BASE "${MODULE_PATH}/source/${DIR_NAME}")
+    if(NOT IS_DIRECTORY "${SOURCE_BASE}")
+        message(FATAL_ERROR
+            "[Manifest] ${MODULE_LABEL}: [sources.*] patterns are relative to "
+            "${SOURCE_BASE}, which is not a directory."
+        )
+    endif()
+
+    set(SRC_FILES "${${SRC_VAR}}")
+    set(HDR_FILES "${${HDR_VAR}}")
+    set(MODULE_FILES ${SRC_FILES} ${HDR_FILES})
+
+    set(CLAIMED_FILES "")
+
+    foreach(PLATFORM IN LISTS DECLARED_PLATFORMS)
+        string(TOUPPER "${PLATFORM}" PLATFORM_UPPER)
+        set(SELECTED_${PLATFORM} "")
+
+        foreach(PATTERN IN LISTS ${PLATFORM_UPPER}_PATTERNS)
+            file(GLOB PATTERN_MATCHES CONFIGURE_DEPENDS "${SOURCE_BASE}/${PATTERN}")
+
+            # A pattern that matches nothing is how a source file quietly stops
+            # being compiled: the file was renamed or moved, the section still
+            # names the old path, and every platform loses it at once.
+            if(NOT PATTERN_MATCHES)
+                message(FATAL_ERROR
+                    "[Manifest] ${MODULE_LABEL}: [sources.${PLATFORM}] pattern "
+                    "'${PATTERN}' matches no file under ${SOURCE_BASE}."
+                )
+            endif()
+
+            foreach(MATCHED_FILE IN LISTS PATTERN_MATCHES)
+                if(NOT MATCHED_FILE IN_LIST MODULE_FILES)
+                    message(FATAL_ERROR
+                        "[Manifest] ${MODULE_LABEL}: [sources.${PLATFORM}] pattern "
+                        "'${PATTERN}' matches '${MATCHED_FILE}', which is not one of "
+                        "the module's own .cpp/.hpp files."
+                    )
+                endif()
+
+                string(MAKE_C_IDENTIFIER "${MATCHED_FILE}" FILE_KEY)
+                if(DEFINED CLAIMED_BY_${FILE_KEY})
+                    if(CLAIMED_BY_${FILE_KEY} STREQUAL PLATFORM)
+                        message(FATAL_ERROR
+                            "[Manifest] ${MODULE_LABEL}: [sources.${PLATFORM}] names "
+                            "'${MATCHED_FILE}' twice."
+                        )
+                    endif()
+                    message(FATAL_ERROR
+                        "[Manifest] ${MODULE_LABEL}: '${MATCHED_FILE}' is claimed by both "
+                        "[sources.${CLAIMED_BY_${FILE_KEY}}] and [sources.${PLATFORM}]. "
+                        "A file belongs to exactly one platform section."
+                    )
+                endif()
+
+                set(CLAIMED_BY_${FILE_KEY} "${PLATFORM}")
+                list(APPEND CLAIMED_FILES "${MATCHED_FILE}")
+                list(APPEND SELECTED_${PLATFORM} "${MATCHED_FILE}")
+            endforeach()
+        endforeach()
+    endforeach()
+
+    # `other` is every platform with no section of its own, so a platform that
+    # has one never also takes `other`'s files.
+    cpp_get_platform_key(CURRENT_PLATFORM)
+    if(CURRENT_PLATFORM IN_LIST DECLARED_PLATFORMS)
+        set(ACTIVE_PLATFORM "${CURRENT_PLATFORM}")
+    else()
+        set(ACTIVE_PLATFORM "other")
+    endif()
+
+    set(ACTIVE_FILES "")
+    if(DEFINED SELECTED_${ACTIVE_PLATFORM})
+        set(ACTIVE_FILES "${SELECTED_${ACTIVE_PLATFORM}}")
+    endif()
+
+    list(REMOVE_ITEM SRC_FILES ${CLAIMED_FILES})
+    list(REMOVE_ITEM HDR_FILES ${CLAIMED_FILES})
+
+    foreach(ACTIVE_FILE IN LISTS ACTIVE_FILES)
+        if(ACTIVE_FILE MATCHES "\\.cpp$")
+            list(APPEND SRC_FILES "${ACTIVE_FILE}")
+        else()
+            list(APPEND HDR_FILES "${ACTIVE_FILE}")
+        endif()
+    endforeach()
+
+    # file(GLOB) hands back a sorted list and the reinstated files were appended
+    # to the end of one; sorting keeps the file set independent of the order the
+    # sections happen to appear in.
+    list(SORT SRC_FILES)
+    list(SORT HDR_FILES)
+
+    set(${SRC_VAR} "${SRC_FILES}" PARENT_SCOPE)
+    set(${HDR_VAR} "${HDR_FILES}" PARENT_SCOPE)
+endfunction()
+
 function(cpp_define_module MODULE_ROOT_DIR DIR_NAME)
     set(MODULE_PATH "${MODULE_ROOT_DIR}/${DIR_NAME}")
     set(MANIFEST_FILE "${MODULE_PATH}/manifest.txt")
@@ -125,6 +252,19 @@ function(cpp_define_module MODULE_ROOT_DIR DIR_NAME)
     )
     file(GLOB_RECURSE HDR_FILES CONFIGURE_DEPENDS
         "${MODULE_PATH}/source/*.hpp"
+    )
+
+    cpp_select_platform_sources(
+        "${MODULE_DISPLAY_NAME}"
+        "${MODULE_PATH}"
+        "${DIR_NAME}"
+        "${MANIFEST_SOURCES_PLATFORMS}"
+        "${MANIFEST_SOURCES_WINDOWS}"
+        "${MANIFEST_SOURCES_LINUX}"
+        "${MANIFEST_SOURCES_MACOS}"
+        "${MANIFEST_SOURCES_OTHER}"
+        SRC_FILES
+        HDR_FILES
     )
 
     if(NOT SRC_FILES)

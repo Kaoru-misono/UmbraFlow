@@ -13,18 +13,24 @@ from pathlib import Path
 from typing import Any
 
 
+# The command surface is two directories: entry/ owns main.cpp and nothing else,
+# and modules/cli/ owns everything the commands are made of. Both are scanned,
+# so a retired source cannot come back by being written to the other one.
+CLI_SOURCE_ROOTS = ("entry", "modules/cli")
+CLI_LIBRARY_SOURCE = "modules/cli/source/cli"
+
 RETIRED_PATHS = (
-    "entry/cli/check.cpp",
-    "entry/cli/check.hpp",
-    "entry/cli/file-frame-source.cpp",
-    "entry/cli/file-frame-source.hpp",
-    "entry/cli/platform/ocr-engine-binding-unsupported.cpp",
-    "entry/cli/replay.cpp",
-    "entry/cli/replay.hpp",
-    "entry/cli/run.cpp",
-    "entry/cli/run.hpp",
-    "entry/cli/run-unsupported.cpp",
-    "entry/cli/run-windows.cpp",
+    f"{CLI_LIBRARY_SOURCE}/check.cpp",
+    f"{CLI_LIBRARY_SOURCE}/check.hpp",
+    f"{CLI_LIBRARY_SOURCE}/file-frame-source.cpp",
+    f"{CLI_LIBRARY_SOURCE}/file-frame-source.hpp",
+    f"{CLI_LIBRARY_SOURCE}/platform/ocr-engine-binding-unsupported.cpp",
+    f"{CLI_LIBRARY_SOURCE}/replay.cpp",
+    f"{CLI_LIBRARY_SOURCE}/replay.hpp",
+    f"{CLI_LIBRARY_SOURCE}/run.cpp",
+    f"{CLI_LIBRARY_SOURCE}/run.hpp",
+    f"{CLI_LIBRARY_SOURCE}/run-unsupported.cpp",
+    f"{CLI_LIBRARY_SOURCE}/run-windows.cpp",
     "modules/task/runtime/hits.luau",
     "modules/task/runtime/mint.luau",
     "modules/task/runtime/navigation.luau",
@@ -43,12 +49,12 @@ RETIRED_PATHS = (
 )
 
 REQUIRED_SAFE_PATHS = (
-    "entry/cli/explore.cpp",
-    "entry/cli/explore.hpp",
-    "entry/cli/project-skeleton.cpp",
-    "entry/cli/project-skeleton.hpp",
-    "entry/cli/targets.cpp",
-    "entry/cli/targets.hpp",
+    f"{CLI_LIBRARY_SOURCE}/explore.cpp",
+    f"{CLI_LIBRARY_SOURCE}/explore.hpp",
+    f"{CLI_LIBRARY_SOURCE}/project-skeleton.cpp",
+    f"{CLI_LIBRARY_SOURCE}/project-skeleton.hpp",
+    f"{CLI_LIBRARY_SOURCE}/targets.cpp",
+    f"{CLI_LIBRARY_SOURCE}/targets.hpp",
     "modules/task/runtime/project.luau",
     "schema/umbraflow-annotation-workspace-v2.schema.json",
     "schema/umbraflow-journal-v1.schema.json",
@@ -317,7 +323,12 @@ def cli_surface_errors(root: Path) -> list[str]:
             "required safe CLI commands are missing: " + ", ".join(missing)
         )
 
-    for path in sorted((root / "entry").rglob("*")):
+    cli_paths = sorted(
+        path
+        for source_root in CLI_SOURCE_ROOTS
+        for path in (root / source_root).rglob("*")
+    )
+    for path in cli_paths:
         if not path.is_file() or path.suffix.lower() not in SOURCE_SUFFIXES | {".txt"}:
             continue
         text = executable_text(path, read_text(path))

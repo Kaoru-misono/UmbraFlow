@@ -386,7 +386,7 @@ namespace uf
     {
         // What does not exist is recorded as deliberately as what does: no C++
         // entry point formats a number or frames a container, and
-        // entry/cli/explore-protocol.cpp's `{:.17g}` is not this format. A row
+        // modules/cli's explore-protocol.cpp `{:.17g}` is not this format. A row
         // claiming otherwise would describe an entry point nothing could call.
         auto checked = std::size_t{0};
         for (auto const& row : parseVectorFile())

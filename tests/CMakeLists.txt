@@ -577,9 +577,10 @@ set(CLI_TEST_SOURCES
     cli/test-project-skeleton.cpp
     cli/test-targets.cpp
 )
-# selectCandidate operates on the controller's TargetCandidate and is compiled
-# into cli_support only on Windows, so its test is registered only there.
-if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
+# selectCandidate operates on the controller's TargetCandidate, and
+# modules/cli/manifest.txt puts candidate-selection.cpp in [sources.windows], so
+# its test is registered only there.
+if(WIN32)
     list(APPEND CLI_TEST_SOURCES cli/test-candidate-selection.cpp)
 endif()
 cpp_add_test(
@@ -587,9 +588,9 @@ cpp_add_test(
     SOURCES
         ${CLI_TEST_SOURCES}
     LIBS
-        ${PROJECT_NAME}_cli_support
+        ${PROJECT_NAME}_cli
 )
-# cli_support links engine publicly, which links ocr publicly.
+# cli links engine publicly, which links ocr publicly.
 if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
     cpp_stage_runtime_libraries(test-cli ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
 endif()

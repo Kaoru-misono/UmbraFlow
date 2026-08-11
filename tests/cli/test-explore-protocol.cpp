@@ -1,6 +1,6 @@
-#include <args.hpp>
-#include <explore-protocol.hpp>
-#include <queue-cursor.hpp>
+#include <cli/args.hpp>
+#include <cli/explore-protocol.hpp>
+#include <cli/queue-cursor.hpp>
 
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>

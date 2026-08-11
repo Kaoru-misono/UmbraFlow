@@ -1,0 +1,34 @@
+# The privileged annotation command surface: argument parsing, the queue/results
+# protocol, and the process error/exit-code boundary. entry/ keeps only main.cpp,
+# which is the executable's own translation unit.
+#
+# Privileged exploration is still implemented by task::ExplorationSession, so
+# task and engine are public dependencies until the authoring host is split.
+
+[module]
+name = cli
+type = static
+version = 0.1.0
+
+[build]
+unity_build = false
+
+[dependencies]
+public = engine task
+
+# controller is public because targets.hpp and candidate-selection.hpp name its
+# TargetCandidate, so a caller holding one has to see the type. user32 is
+# private: only platform/ reaches the window API.
+[dependencies.windows]
+public = controller
+private = user32
+
+# The desktop half. Everything under platform/ is Windows API, and the three
+# files beside it are the Windows implementations of headers whose declarations
+# are platform-free.
+[sources.windows]
+include = candidate-selection.cpp candidate-selection.hpp explore-windows.cpp platform/*.cpp platform/*.hpp targets-windows.cpp
+
+# What answers the same declarations where there is no desktop to enumerate.
+[sources.other]
+include = explore-unsupported.cpp targets-unsupported.cpp
