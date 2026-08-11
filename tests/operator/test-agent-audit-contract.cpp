@@ -149,21 +149,70 @@ namespace uf::operator_runtime
         using test_support::TemporaryDirectory;
     }
 
-    // A human takeover and a Host delivery share one linearization. The
-    // takeover cannot un-click what may already have landed; what it does is
-    // close the window in which the ledger could still be told the effect did
-    // not happen.
+    // A human takeover and a Host delivery share one linearization, and the
+    // acceptance text names the two things that buys. First: once a takeover
+    // has returned, the fence it displaced cannot begin a dispatch -- the
+    // ledger will not reserve one for it, and a Host still holding it will not
+    // act on one that was reserved for someone else. Second: whatever was
+    // already in flight is reported rather than guessed at. The takeover cannot
+    // un-click what may already have landed; what it does is close the window
+    // in which the ledger could still be told the effect did not happen.
     TEST_CASE("contract-agent-a07")
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
-        auto host      = test_support::deliveringHost(prepared);
+
+        // The Host the displaced controller keeps. It is built before the
+        // takeover, so it carries the fence the takeover is about to supersede
+        // and nothing ever tells it otherwise -- which is the state a displaced
+        // controller is really in.
+        auto staleHost = test_support::deliveringHost(prepared);
 
         auto const operation = test_support::createReadyOperation(
             prepared,
             "request-1",
             "command-1"
         );
+
+        // A takeover with nothing in flight moves the fence and nothing else,
+        // which is what leaves the clause below testing the lease alone.
+        auto const takeoverBeforeDispatch = prepared.store.takeoverLease(
+            prepared.controller,
+            "a human takeover before anything was dispatched"
+        );
+        REQUIRE(takeoverBeforeDispatch.has_value());
+        CHECK(takeoverBeforeDispatch->resolvedDispatches == 0U);
+
+        auto const staleLease = prepared.lease;
+        prepared.lease        = takeoverBeforeDispatch->lease;
+        CHECK(staleLease.fencingToken < prepared.lease.fencingToken);
+
+        auto host = test_support::deliveringHost(prepared);
+
+        // A Host numbers its own generations, so these two name the same
+        // GenerationId over the same installed artifact. That is what leaves
+        // the fencing token as the single field separating the Host-side
+        // refusal below from the delivery further down: without it the
+        // authority would be foreign for a second reason and the refusal would
+        // prove nothing about the fence.
+        REQUIRE(staleHost->generation() == host->generation());
+
+        // The first clause, ledger side. The Operation, its revision and the
+        // Host generation are the three the reservation below succeeds with, so
+        // the only thing this attempt is missing is a live lease.
+        CHECK_FALSE(prepared.store.reserveDispatch(
+            operation.operationId,
+            operation.revision,
+            staleLease,
+            host->generation(),
+            AuthorityDecisionId{"authority-displaced"},
+            std::nullopt
+        ).has_value());
+
+        // Its positive control is the rest of this case: the same reservation
+        // under the lease the takeover minted is what the in-flight half below
+        // is built on, so the refusal above cannot be a takeover freezing the
+        // target.
         auto const reserved = prepared.store.reserveDispatch(
             operation.operationId,
             operation.revision,
@@ -173,6 +222,13 @@ namespace uf::operator_runtime
             std::nullopt
         );
         REQUIRE(reserved.has_value());
+
+        // The first clause, Host side. The displaced Host mints a Receipt of
+        // its own and is handed a real authority, and still cannot begin this
+        // dispatch: the fence it holds is the one the takeover replaced. Err
+        // rather than a report, so nothing was consumed and nothing was posted.
+        CHECK_FALSE(staleHost->deliver(reserved->authority).has_value());
+        CHECK(staleHost->clicks() == 0U);
 
         // The Host acts. The click has landed and nothing in the ledger says so
         // yet: this is the whole of the race.

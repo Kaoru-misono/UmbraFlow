@@ -1,30 +1,33 @@
 # The next block: complete coverage of the remaining design
 
-Status: **the requirement block is closed except `a07`.** Every work item that
+Status: **the requirement block is closed.** Every work item that
 closes a requirement — W1 through W8, with W10 folded into them — has landed,
 and all 42 `REQUIRED_CORE` requirements are implemented. W1, W5, W8 and the
 conformance suite raised in §5 landed on 2026-08-10; W3 (`7cef402`, `4b955de`), W2
 (`848e390`), W4 (`e64c143`, `25f57f9`), W6 (`93698b4`) and W7 (`c23efd3`) landed
 on 2026-08-11. W0 ran on 2026-08-10 and returned half a pass, which opened W11.
 
-> **Corrected 2026-08-11 (`07abc3e`): `a07` is reopened, and this header claimed
-> otherwise.** Its acceptance text has two clauses and its gate closes one. The
-> first clause is *structural* — a human takeover and Host delivery share one
-> target serialization — and no code joins the two critical sections: the
-> takeover's `BEGIN IMMEDIATE` transaction and `TaskHost`'s in-memory fence have
-> **no call edge between them anywhere, in production or in test**, and the one
-> bridging API, `operator::controlFence(ControlLease const&)`, has zero
-> production callers. Nothing can violate the invariant today, because
-> `TaskHost::deliver` is private with one test-only friend and `mintClickReceipt`
-> refuses while the fence is 0 — but that is vacuity about a join that was never
-> assembled, not delivery of the invariant, and a future wiring inherits the
-> window intact. **The honest count is 39 of 42 closed by a behavioural gate**,
-> not 40. §2 carries the reopened row and the two ways it closes.
+> **Corrected 2026-08-11 (`07abc3e`), then closed the same day.** `07abc3e`
+> reopened `a07` on the reading that its first acceptance clause is *structural*
+> — that a human takeover and Host delivery share one target serialization —
+> and that no code joins the two critical sections. The join finding is correct
+> and stands: there is no call edge between the takeover's `BEGIN IMMEDIATE`
+> transaction and `TaskHost`'s in-memory fence anywhere, in production or in
+> test, `operator::controlFence(ControlLease const&)` has zero production
+> callers, and this block verified something stronger — no production code holds
+> an `OperatorCoordinator` at all. What was wrong is the mapping: that sentence
+> is the matrix's 需求, not the first of the 验收's two clauses. The first clause
+> is "after a takeover returns, the displaced fence cannot begin a new
+> dispatch", `reserveDispatch`'s live-lease predicate implements it in the same
+> SQLite serialization the takeover commits in, and nothing had gated the
+> schedule. `contract-agent-a07` now does, red under two independent mutations.
+> **The count is 40 of 42 closed by a behavioural gate.** §2 carries the closed
+> row, both mutations, and the residue that is F-4's rather than `a07`'s.
 
-**What remains is not requirement coverage, apart from `a07`.** W9 (the
+**What remains is not requirement coverage.** W9 (the
 adversarial round over W2-W7), W11 (`clang-analysis`, which blocks the branch),
-W12's retroactive import review, per-requirement IDs for `a03`/`a05`, `a07`'s
-first clause, and the unresolved defects and open questions §2 and §6 name. The
+W12's retroactive import review, per-requirement IDs for `a03`/`a05`,
+and the unresolved defects and open questions §2 and §6 name. The
 consumer-side work is a different stage and is specified in
 [consumer attestation](2026-08-11-consumer-attestation.md).
 Date: 2026-08-10 (revised the same day, against the landed tree; requirement
@@ -36,20 +39,20 @@ This plan is derived from the requirement matrix, not from what happened to be
 found. Every `REQUIRED_CORE` requirement appears in §2 exactly once, with the
 work item — or items — that close it. Nothing in the design is left unassigned.
 
-That invariant was re-checked after the last four landings and again after
-`07abc3e`: **39 in the Done list, plus `a07` reopened, plus 2 in the table, no ID
+That invariant was re-checked after the last four landings, after `07abc3e`, and
+after `a07` closed: **40 in the Done list, plus 2 in the table, no ID
 in more than one place, 42 in total.** The two in the table are exactly
 `UF_SCHEMA_ONLY_REQUIREMENTS` in `tests/CMakeLists.txt`, which CMake derives
 from the registered gates and refuses to disagree with — so the table below is
 checkable against a configure run rather than by reading.
 
-`a07` is the one ID the configure run cannot adjudicate, and that is the point
-of it. `contract-agent-a07` is registered, compiled and green, so CMake counts
-it among the 40 `contract-*` gates; what CMake cannot see is that the case
-proves the second half of the requirement's acceptance text and not the first.
-A gate list is a list of names, and this is the one place in this document where
-a name and a requirement have come apart in the direction the vocabulary of §1
-was built to forbid.
+`a07` was the one ID the configure run could not adjudicate, and it is worth
+keeping why. `contract-agent-a07` was registered, compiled and green throughout,
+so CMake counted it among the 40 `contract-*` gates; what CMake cannot see is
+which clauses of an acceptance text a case actually exercises. For twenty hours
+it exercised one of two. A gate list is a list of names, and nothing in the
+build system can tell a name that keeps its promise from one that keeps half of
+it.
 
 > Three earlier readings, kept because each was true when made and none is
 > wrong: 28 in the Done list plus 14 in the table on 2026-08-10; 33 plus 9 on
@@ -93,10 +96,9 @@ which kind they are:
 - `contract-<area>-<id>`, label `CI;CONTRACT` — exercises the code and goes red
   when the behaviour is removed. **40 of them**; 33 after W3 and W2, and 28 when
   this section was written on 2026-08-10. All 40 are registered and green, and
-  they close **39** requirements: `contract-agent-a07` goes red when the
-  behaviour it tests is removed, and that behaviour is one of `a07`'s two
-  acceptance clauses. The gate count and the closed-requirement count are
-  different numbers for the first time, and §2's reopened row is why.
+  they close **40** requirements. For twenty hours on 2026-08-11 those two
+  numbers were 40 and 39, because `contract-agent-a07` exercised one of its
+  requirement's two acceptance clauses; §2 says what closed the other.
 - `schema-<area>-<id>`, label `CI;SCHEMA` — reads a `schema/*.json` file and
   asserts a definition exists with certain members. It passes whether or not the
   behaviour exists, which is why it may not wear the `contract-` name. **19 of
@@ -115,12 +117,12 @@ folded in. What the vocabulary forbids is a name that overstates — a `contract
 gate whose assertions only read a schema file. Anyone who reads "59 and 42" as a
 mistake and tries to reconcile the two numbers will delete a real gate.
 
-The whole run is 83 registered tests, of which 40 carry `CONTRACT` and 19 carry
+The whole run is 86 registered tests, of which 40 carry `CONTRACT` and 19 carry
 `SCHEMA`; the rest are the four `CONFORMANCE` aggregates, the module
 regression binaries, the four Luau contracts and the Python gates.
 
 The 40 requirements owning a `contract-*` gate are the Done list in §2 plus
-`a07`, whose gate proves half its acceptance text and which is reopened there.
+`a07`, whose row there records what its gate did not prove until it did.
 Fourteen IDs were renamed to `schema-*`: `p01 p02 p03`, `s01 s02 s04`,
 `c03 c05 c08`, `a01 a02 a07` — the twelve this plan is for — plus `a03` and `a05`,
 which are the different case described below. Five `schema-control-c09` through
@@ -136,7 +138,8 @@ case that no longer exists under that name.
 All twelve gained a `contract-` case that way on 2026-08-11 — `s01 s02 s04 c05
 c08` by W3 and W2, `c03 a07` by W4, `p01 p02 p03` by W6, `a01 a02` by W7 —
 eleven of which closed their requirement and one of which, `a07`, closed half of
-it. **The order was inverted every single time.** Each landing registered its cases and left the
+it until its gate was extended to the other clause. **The order was inverted
+every single time.** Each landing registered its cases and left the
 migration report naming a `schema-` spelling; the report was repaired after each
 rather than the rule relaxed. Six commits now, counting `dcc43b5` and R3-F3,
 with no counter-example. The report is the one document in this chain that no
@@ -161,10 +164,9 @@ requirements are implemented and both are gated.** The behaviour landed in
 `test-annotate-backend`. What is missing is a **per-requirement CTest ID for the
 behavioural half** — a name, not a gate and not the code. W10's rename did not
 create one; it moved the C++ cases to `schema-agent-a03` and `schema-agent-a05`.
-So "39 of 42 have a behavioural gate" is a statement about the naming scheme for
-two of the three, and reading it as "three requirements are unimplemented" is
-wrong for `a03` and `a05` in both halves. `a07` is the third and is a different
-case from both: it is not a naming gap, it is an unimplemented acceptance clause.
+So "40 of 42 have a behavioural gate" is a statement about the naming scheme for
+these two, and reading it as "two requirements are unimplemented" is wrong for
+`a03` and `a05` in both halves.
 
 > **Corrected 2026-08-11:** this paragraph also said `schema-agent-a03` had
 > gained behavioural assertions during the rename and so proved more than its
@@ -173,92 +175,127 @@ case from both: it is not a naming gap, it is an unimplemented acceptance clause
 > asserts definition shape and nothing else. The vocabulary does not overstate
 > or understate anywhere.
 >
-> **Corrected again 2026-08-11 (`07abc3e`):** the sentence above read "40 of 42"
-> and named `a03` and `a05` as the only two exceptions. It is 39, and the third
-> is `a07` — reopened in the row below, and unlike these two it is short a
-> behaviour rather than a name.
+> **Corrected again 2026-08-11 (`07abc3e`), and restored the same day:** the
+> sentence above read "40 of 42", was corrected to 39 while `a07` was open on a
+> half-proved gate, and reads 40 again now that its gate covers both acceptance
+> clauses. `a03` and `a05` are once more the only two exceptions, and they are
+> short a name rather than a behaviour.
 
 ## 2. Every requirement, and what closes it
 
-**Done — behavioural gate exists (39).** `p04 p05 p06`, `u01`-`u08`,
+**Done — behavioural gate exists (40).** `p04 p05 p06`, `u01`-`u08`,
 `s05`, `c01 c06 c07 c09 c10 c11 c12 c13 c14`, `a08`; since W1 landed on
 2026-08-10, `c02 c04 s03 s06 a04 a06`; and on 2026-08-11, `s01 s02`
 (`4b955de`), `s04 c05 c08` (`848e390`), `c03` (`25f57f9`), `p01 p02 p03`
 (`93698b4`) and `a01 a02` (`c23efd3`). No further work; they are re-verified by
 the existing suite on every run.
 
-**Reopened — `a07`, closed on a gate that proves half of it (1).** Recorded here
-on 2026-08-11 against `07abc3e`; it was in the Done list above between `25f57f9`
-and that commit, and this section counted 40.
+**Reopened and closed the same day — `a07`, on both clauses of its acceptance
+text (1).** Reopened here on 2026-08-11 against `07abc3e` and closed later that
+day; this section counted 40, then 39, and counts 40 again.
 
 The matrix text is `requirements-traceability.md`:116 — 需求 "人工 takeover 与
 Host delivery 同一线性化序列", 验收 "takeover 返回后旧 fence 不可开始新
-dispatch；在途 dispatch 被明确报告". Two clauses, and `contract-agent-a07`
-(`tests/operator/test-agent-audit-contract.cpp:153`) exercises the second in
-full: it reserves, delivers, takes over, checks `resolvedDispatches == 1`, sees
-`recordDeliveryOutcome` refused, and proves the resulting `transport_unknown`
-forbids a `Rejected` reconciliation while a `Confirmed` one still commits. That
-is a real property, well gated, and it is not the first clause.
+dispatch；在途 dispatch 被明确报告". **Both clauses live inside the 验收, and
+the reopening read the 需求 sentence as the first of them.** That substitution is
+what made the clause look structural. "One linearization" is the requirement;
+what closes it is the two consequences the 验收 names. The second — an in-flight
+dispatch is explicitly reported — was already gated by `contract-agent-a07`
+(`tests/operator/test-agent-audit-contract.cpp:160`), which reserves, delivers,
+takes over, checks `resolvedDispatches == 1`, sees `recordDeliveryOutcome`
+refused, and proves the resulting `transport_unknown` forbids a `Rejected`
+reconciliation while a `Confirmed` one still commits. The first is "after a
+takeover returns, the displaced fence cannot begin a new dispatch", and
+beginning a dispatch is `reserveDispatch`.
 
-**The first clause is structural, and nothing implements it.** "One
-linearization" asserts that the two critical sections are joined. They are not.
-`OperatorCoordinator::takeoverLease` (`modules/operator/source/operator/`
-`ledger.cpp:3241`) is a `BEGIN IMMEDIATE` transaction that never touches a
-`TaskHost`; `TaskHost::adoptControlFence`
-(`modules/task/source/task/task-host.hpp:283`) is an in-memory fence raise,
-private, whose only friend is `TaskHostTestAccess`
-(`task-host.hpp:193`). **There is no call edge between them anywhere, in
-production or in test.** Every one of `adoptControlFence`'s call sites passes
-either a literal — `controlFence(7)`, `controlFence(8)` in
-`tests/task/test-runtime-v2-contract.cpp` — or, in
-`conformance/include/conformance/observation-fixture.hpp:651-658`, the
-lease that existed when the fixture was built, once, in `DeliveringHost`'s
-constructor. Not one of them takes a fence from a `takeoverLease` return. The
-one bridging API, `operator::controlFence(ControlLease const&)`
-(`ledger.hpp:320`), has two callers, both fixtures, and the sharper of the two
-(`tests/operator/test-control-contract.cpp:403`) fabricates the moved fence by
-hand-incrementing `prepared.lease.fencingToken` rather than reading a takeover.
-Zero production callers. So between `takeoverLease` committing and any Host
-learning the new fence there is a window in which a dispatch under the old fence
-can still begin, which is exactly what the clause forbids.
+**The first clause was implemented and unconnected, not unimplemented.**
+`reserveDispatch` runs `requireLiveLease` (`ledger.cpp:5504`, the helper at
+`:1790`) against the live `control_leases` row on seven columns, inside the same
+`BEGIN IMMEDIATE` writer serialization `takeoverLease` commits in. A takeover
+moves `lease_id`, `fencing_token` and `revision` together, so a displaced lease
+matches no row and no authority can be minted for it. What was missing is any
+case that ran the schedule: `contract-control-c01` takes over and then refuses a
+`createSnapshot`, which is a different operation, and every other refused
+reservation is for an unapproved step, a spent approval or a consumed one.
 
-**The vacuity defence is half true, and fails on the half that matters.**
-Production genuinely cannot dispatch: `TaskHost::deliver` is private with the
-same single test-only friend, and `mintClickReceipt` refuses while the fence is
-0 (`task-host.cpp:578-584`), so a Host the Operator never authorized can mint
-nothing. Nothing can violate the invariant today. But "no caller can reach the
-window" is an argument about a join that was never assembled, not evidence that
-the join is correct; the first production path that calls `deliver` inherits the
-window intact, because no code closes it. A requirement counted closed against
-half its acceptance text is worse than one left open, because the reader who
-wires that path will not re-derive this.
+**The gate, and both mutations.** `contract-agent-a07` now runs the schedule end
+to end. It carries an Operation to ready, takes over with nothing in flight,
+requires the displaced lease to be refused a reservation that the live lease is
+then granted on the same Operation, the same revision and the same Host
+generation, requires a second Host still carrying the displaced fence to be
+unable to deliver that reservation, and only then delivers and takes over again
+for the in-flight half. 125 assertions became 157. Two mutations, each red only
+where it should be:
 
-**Two ways it closes, and choosing between them is a decision this document does
-not get to make in prose.**
+- Removing `requireLiveLease` from `reserveDispatch` leaves 53 of 54 contract
+  cases and all 44 of `test-operator`'s green and reds this one at
+  `CHECK_FALSE(reserveDispatch(..., staleLease, ...))`: the displaced lease
+  reserves, and the positive control below it then fails because the fraudulent
+  reservation consumed the one pending step — the same fact stated twice.
+- Removing `authority.fencingToken != m_fence.fencingToken` from
+  `TaskHost::deliver` reds it at the Host-side clause: the displaced Host
+  delivers and `clicks()` reads 1. That mutation also reds one case in
+  `test-contract-runtime`, which is the same comparison seen from `task`'s own
+  side rather than a guard masking this one.
 
-1. **Wire the fence install onto a production path.** W6's controller facade is
-   the natural owner and Q5 of [W4](2026-08-10-w4-delivery-join.md) already named
-   it: a takeover that returns a lease also installs that lease's fence on the
-   Host bound to the target, inside the takeover's own sequence, so the two
-   sections stop being disjoint. This delivers the clause and closes `a07`
-   honestly.
-2. **Record the invariant as deliberately unmet, with a named owner and a stated
-   condition.** Defensible only while production cannot dispatch at all, and it
-   must then be written where the wiring work will be done rather than here —
-   because the whole failure being corrected is a caveat that stayed in a
-   specification.
+**What the reopening got right, and what this block verified is stronger.**
+There is still no call edge between `takeoverLease` and
+`TaskHost::adoptControlFence` in production or in test, and **no production code
+holds an `OperatorCoordinator` at all.** Every entry point on the control path —
+`bindController`, `acquireLease`, `takeoverLease`, `submitCommand`,
+`reserveDispatch`, `recordDeliveryOutcome`, `commitReconciliation` — is reached
+only from `tests/` and `conformance/`. The one production `TaskHost`
+(`modules/cli/source/cli/explore-windows.cpp:32`) is the offline exploration
+Agent, which by `controller.hpp:17-20` holds no session, lease or ledger row. So
+"production mutation is closed by design" holds and understates itself: there is
+no production path of any kind to wire a fence onto. Option 1 below named an
+owner W6 did not produce — `controller.hpp` is `ControllerBinding`, a value that
+"stores no reference to the coordinator" and owns no delivery — so it was never
+available.
 
-Which of the two is right depends on whether the controller facade is meant to
-own delivery at all, which is a product question with an owner. It is recorded
-as open, not answered.
+**The residue, stated once so nobody re-derives it.** The bundle's mechanism for
+the 需求 sentence is one function holding one mutex
+(`umbraflow-game-automation-final-design.md`:226-227); W4 §1.2 deliberately
+replaced it with SQLite commit order plus a bracket and ruled operation 2 out of
+the database. Under the replacement a Host's fence is a cache no takeover
+refreshes, so within one process two things stay true:
 
-> The finding that forced this was written before the work landed, in
+- an authority reserved before the takeover is still physically deliverable.
+  That is the in-flight case, it is what `transport_unknown` exists for, and the
+  second clause covers it;
+- a **fabricated** authority naming the displaced fence would make that Host
+  post, because `DispatchAuthority` is an aggregate anyone can build. What
+  forbids it is `TaskHost::deliver` being private, not the type's shape.
+  `host-delivery.hpp` claimed the opposite — "a forged authority can only make
+  the Host refuse" — and has been corrected at the declaration, with the
+  condition a production delivery path owes: mint every authority from
+  `reserveDispatch` and accept none from a caller.
+
+That residue is F-4 in
+[the cross-repository drift review](2026-08-11-cross-repository-drift.md), whose
+correction offered two branches. The second was applied on 2026-08-11 and the
+first was never available, because there is no production path; F-4 is a
+divergence between the bundle's design and this framework's, and it is not an
+unmet acceptance clause. The two ways `a07` was said to close were therefore a
+false choice:
+
+1. **Wire the fence install onto a production path.** Not available: W6's
+   controller facade does not own delivery and nothing else holds both a lease
+   and a Host.
+2. **Record the invariant as deliberately unmet.** Not needed for the acceptance
+   text, which the ledger meets; the condition it wanted stated now lives at
+   `DispatchAuthority`'s declaration, where the wiring work will read it.
+
+> The finding that forced the reopening was written before the work landed, in
 > [W4](2026-08-10-w4-delivery-join.md) Q5, which asked in terms that it "is
 > correct but worth stating in the requirement matrix rather than leaving
 > implied". It was never carried here, and the row said closed with no caveat.
 > That is the same family this block spent two days removing — a finding
 > correctly made, correctly recorded, and never carried anywhere it would be
-> acted on — and §6 proposes the rule that would have caught it.
+> acted on — and §6 proposes the rule that would have caught it. Q5 was right
+> about the join and wrong about which clause depended on it, which is the
+> second lesson: a concession that names a requirement must also name the
+> acceptance clause it threatens, or the next reader re-scopes it by guess.
 
 One limit inside that six is worth carrying rather than smoothing over. Two of
 `s06`'s assertions cannot be falsified on their own: the refusal of a second
@@ -329,9 +366,11 @@ what follows is which requirement each one qualifies.
   error, and every fixture has exactly one controlled target, so the property is
   unobserved rather than merely weakly held. Closing it needs a second
   controlled target in a fixture, which is a fixture change and not a code
-  change. *(2026-08-11: this is a second, smaller gap in the same requirement.
-  The one that reopened `a07` is above — the first acceptance clause has no
-  implementation, not merely no test.)*
+  change. *(2026-08-11: this is now the only gap left in `a07`, and it is not an
+  acceptance clause — the 验收 asks that the displaced fence cannot begin a new
+  dispatch and that in-flight ones are reported, and the row above gates both.
+  Scoping a takeover to its own target is a property of the implementation that
+  no fixture can currently observe.)*
 - **`c03` — `dispatches.delivery_reason` is written, constrained, and read back
   by nothing.** A three-way `CHECK` ties its nullness to `delivery_outcome`, so
   the rule that only `not_delivered` proves absence is guarded; the *text* is
@@ -420,7 +459,7 @@ because W4 changes `takeoverLease`'s return type.
 | W1 | **Coverage debt**: write behavioural cases for the six requirements whose implementation already exists but whose gate only reads a schema | `c02 c04 s03 s06 a04 a06` | none | 2-3 days | **done 2026-08-10** |
 | W2 | **EffectivePlan authority**: mint it from a plugin `PlanProposal` bound to registration, command fingerprint and decision basis; derive the frozen plan, step intent and effect envelope hashes from it; add bounded step sequencing; `reserveDispatch` takes the minted plan instead of three caller hashes | `c05 c08` + half of `s04` | none | 5-7 days | **done 2026-08-11** (`848e390`), with three deviations and three unresolved test defects recorded in §2 and in [the specification](2026-08-10-w2-effective-plan.md) |
 | W3 | **Snapshot Coordinator**: introduce `ProjectObservation`; compose UI observation, `plugin.derive` and current ProjectState atomically; derive the snapshot parts instead of accepting them | `s01 s02` + half of `s04` | the JCS serializer, which landed 2026-08-10 | 4 days | **done**: additive half 2026-08-10 (`7cef402`: `TaskHost::observe` and `UiObservationSnapshot`, no signature changed), Operator half `4b955de` |
-| W4 | **Join Host delivery to the ledger**: `recordDeliveryOutcome` takes what `Host::deliver` returned, inside the fence; the takeover path enters the same linearization | `c03 a07` | W2+W3, both landed | 3 days **understated**: `contract-control-c03` needs a real `TaskHost`, so the ~490-line Runtime v2 fixture in `tests/task/test-runtime-v2-contract.cpp` must be extracted and shared, not copied | **done 2026-08-11** in two commits — `e64c143` (a `HostDeliveryReport` only `TaskHost` can mint) and `25f57f9` (the ledger join). The extraction was done first, in `55bd564`. Deviations and four unfalsifiable properties in [the specification](2026-08-10-w4-delivery-join.md) and §2. **The work item is done and `a07` is not closed by it**: the row's own phrase "the takeover path enters the same linearization" is the acceptance clause nothing implements, and W4's Q5 said so before the requirement was marked closed. `c03` closed. See §2, corrected 2026-08-11 (`07abc3e`) |
+| W4 | **Join Host delivery to the ledger**: `recordDeliveryOutcome` takes what `Host::deliver` returned, inside the fence; the takeover path enters the same linearization | `c03 a07` | W2+W3, both landed | 3 days **understated**: `contract-control-c03` needs a real `TaskHost`, so the ~490-line Runtime v2 fixture in `tests/task/test-runtime-v2-contract.cpp` must be extracted and shared, not copied | **done 2026-08-11** in two commits — `e64c143` (a `HostDeliveryReport` only `TaskHost` can mint) and `25f57f9` (the ledger join). The extraction was done first, in `55bd564`. Deviations and four unfalsifiable properties in [the specification](2026-08-10-w4-delivery-join.md) and §2. **The work item is done and it closed `c03` alone**: the row's own phrase "the takeover path enters the same linearization" was never delivered as a call edge and cannot be — nothing in production holds both a lease and a Host — so `a07` stood open on it for twenty hours until §2 established that the phrase is the requirement's 需求 and not one of its acceptance clauses. `a07`'s first clause is `reserveDispatch`'s live-lease predicate, gated on 2026-08-11 by extending `contract-agent-a07`. Both closed. See §2 |
 | W5 | **Replay Bundle and the two gates**: implement the bundle closure and both publication gates rather than declaring them | `a03 a05` | none | 4 days | **done 2026-08-10** |
 | W6 | **Controller facade**: one path for Script, Agent and Human; out-of-band human input enters as an external source; the Agent surface is semantic-only | `p01 p02 p03` | W2+W3, **and W4** | 4 days | **done 2026-08-11** (`93698b4`). `p02` closed by making a command inexpressible rather than by refusing one; `ExternalInputSource` was refused. See [the specification](2026-08-10-w6-w7-controller-and-agent.md) |
 | W7 | **Agent subscription and budgets**: `subscribe(after_cursor)`, and action/risk/time/observation/no-progress budgets | `a01 a02` | W6 | 4 days | **done 2026-08-11** (`c23efd3`). Budgets are established at `pinSession`, never at a door the controller comes through; six specification clauses refused |
@@ -725,14 +764,14 @@ owes is the one pass over the remaining 15, not a permanent re-litigation.
 implemented, and 18 of them gained a behavioural gate: W1 took six, W5 two, W3
 two, W2 three, W4 two, W6 three and W7 two. The remaining two are `a03` and
 `a05` — implemented by W5, gated by an aggregate, short only a per-requirement
-ID. So all 42 `REQUIRED_CORE` requirements are implemented and **39** own a gate
-that closes them; the fortieth `contract-*` gate is `contract-agent-a07`, which
-proves one of its requirement's two acceptance clauses, and `a07` is reopened in
-§2. W10 finished alongside them, so `contract-*` now means exactly what it says
-in both directions at the level of a gate — no gate overstates what it asserts,
-and none understates it. What W10's vocabulary does not reach, and `a07` is the
-demonstration, is a gate that asserts exactly what it claims about a requirement
-that asks for more. The exported conformance suite (§5)
+ID. So all 42 `REQUIRED_CORE` requirements are implemented and **40** own a gate
+that closes them. W10 finished alongside them, so `contract-*` now means exactly
+what it says in both directions at the level of a gate — no gate overstates what
+it asserts, and none understates it. What W10's vocabulary does not reach, and
+`a07` was the demonstration for twenty hours, is a gate that asserts exactly what
+it claims about a requirement that asks for more: `contract-agent-a07` was
+honest about its own assertions the whole time and still left half an acceptance
+text unproved, which no naming rule can detect. The exported conformance suite (§5)
 shipped, so a consuming repository can run the store contracts against its own
 project. Along the way the block found and recorded nine instances of one
 defect — a name that promises something nothing verifies — three of them inside

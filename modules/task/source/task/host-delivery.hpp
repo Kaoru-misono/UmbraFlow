@@ -39,8 +39,17 @@ namespace uf::task
     // checks the four fields it can know -- target, runtime generation, epoch
     // and fence -- and carries the rest back untouched so the ledger can
     // recognise its own reservation. Nothing here is proof; the proof is that a
-    // HostDeliveryReport exists at all, which is why an aggregate anyone can
-    // build is safe: a forged authority can only make the Host refuse.
+    // HostDeliveryReport exists at all, which is why this stays an aggregate
+    // anyone can build.
+    //
+    // A forged authority is not harmless, though. One naming the fence a Host
+    // currently holds makes that Host act, for as long as a Receipt minted
+    // under the same fence is pending -- and a takeover refreshes no Host's
+    // fence, so the displaced one keeps both. What forbids it is TaskHost::
+    // deliver being private, not the shape of this type. A production delivery
+    // path must therefore mint every authority from
+    // OperatorCoordinator::reserveDispatch, which refuses a lease a takeover
+    // has superseded, and accept none from a caller.
     //
     // The two generations are deliberately separate quantities under separate
     // names. runtimeGeneration is the Host's own GenerationId, so the Host can
