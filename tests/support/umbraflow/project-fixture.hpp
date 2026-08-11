@@ -20,6 +20,7 @@
 #include <task/host-delivery.hpp>
 #include <task/page-model-file.hpp>
 
+#include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
@@ -592,11 +593,18 @@ namespace uf::operator_runtime::test_support
         }
         auto const rest  = exactJcs.substr(at + key.size());
         auto       value = uint64{};
-        auto const read  = std::from_chars(
+        // SAFETY: std::from_chars names its range as a pointer pair, which is
+        // the one shape a bounded view cannot express. Both ends come from
+        // rest's own extent, so no caller states a bound and the computed
+        // address is rest's one-past-the-end.
+        UF_UNSAFE_BUFFER_BEGIN
+        auto const read = std::from_chars(
             rest.data(),
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
             rest.data() + rest.size(),
             value
         );
+        UF_UNSAFE_BUFFER_END
         if (read.ec != std::errc{})
         {
             return std::nullopt;

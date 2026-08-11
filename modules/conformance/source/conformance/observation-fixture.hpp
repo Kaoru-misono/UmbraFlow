@@ -298,8 +298,10 @@ namespace uf::operator_runtime::conformance
             uint64{frame.height()}
         );
         REQUIRE(pixels.has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         auto const ceiling = checkedMultiply(*pixels, *pixels);
         REQUIRE(ceiling.has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         return *ceiling;
     }
 
@@ -499,6 +501,13 @@ namespace uf::operator_runtime::conformance
 
         [[nodiscard]] auto context() noexcept -> task::TaskContext&
         {
+            // The constructor emplaces m_context after REQUIRE-ing every step
+            // that feeds it, so engagement is a class invariant rather than a
+            // fact on this path, and the check's dataflow does not cross a
+            // constructor. `.value()` was measured in place of `*` here:
+            // clang-tidy reports the same diagnostic for it, so rewriting the
+            // access buys nothing.
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): a constructed ObservationRuntime holds a context.
             return *m_context;
         }
 
