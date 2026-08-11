@@ -589,6 +589,55 @@ namespace uf::operator_runtime
             return !error;
 #endif
         }
+
+        // Neither pinSession refusal case below needs a registered project or
+        // a provisioned instance: the registration-disagreement refusal fires
+        // by comparing the pin against the manifest, before any table is
+        // read; the missing-instance refusal fires on a query that finds no
+        // row, which a project that was never registered also produces.
+        // Naming only what pinSession touches keeps each case pinned to the
+        // one check under test.
+        [[nodiscard]]
+        auto storeWithInstalledArtifact(std::filesystem::path const& path)
+            -> std::pair<OperatorCoordinator, ContentHash>
+        {
+            auto const release =
+                test_support::runtimeRelease(path / "session-handoff");
+            auto storeResult = OperatorCoordinator::open(path / "production");
+            REQUIRE(storeResult.has_value());
+            auto store = *std::move(storeResult);
+            auto installed = store.installRuntimeArtifact(
+                RuntimeArtifactInstallRequest{
+                    .handoffRoot                 = release.handoffRoot,
+                    .expectedReleaseManifestHash = release.releaseManifestHash,
+                    .expectedInstalledGeneration = 0U,
+                }
+            );
+            REQUIRE(installed.has_value());
+            return std::pair{std::move(store), installed->rootHash()};
+        }
+
+        [[nodiscard]]
+        auto manifestNamingRegistration(
+            ContentHash runtimeArtifactRootHash,
+            ContentHash projectRegistrationHash
+        ) -> SessionManifest
+        {
+            auto manifest = SessionManifest::create(
+                SessionManifestSpec{
+                    .hostProtocolSchemaHash       = hashOf("host"),
+                    .runtimeModelSchemaHash       = hashOf("runtime-schema"),
+                    .runtimeModelArtifactRootHash = runtimeArtifactRootHash,
+                    .operatorProtocolSchemaHash   = hashOf("operator"),
+                    .projectRegistrationHash      = projectRegistrationHash,
+                    .policyArtifactHash           = hashOf("policy"),
+                    .journalEnvelopeSchemaHash    = hashOf("journal-envelope"),
+                    .agentProfileHash             = hashOf("agent"),
+                }
+            );
+            REQUIRE(manifest.has_value());
+            return *std::move(manifest);
+        }
     }
 
     // The two operator protocol readers, on documents this registration's
@@ -658,6 +707,80 @@ namespace uf::operator_runtime
         auto prepared  = prepareStore(temporary.path());
         CHECK(prepared.store.databasePath().filename() == "operator-runtime.sqlite");
         CHECK(std::filesystem::is_regular_file(prepared.store.databasePath()));
+    }
+
+    TEST_CASE("pinSession names both registration hashes when the pin and manifest disagree")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto [store, artifactRootHash] = storeWithInstalledArtifact(temporary.path());
+
+        auto const manifestRegistration = hashOf("registration-manifest-names");
+        auto const pinRegistration      = hashOf("registration-pin-selects");
+        auto const manifest =
+            manifestNamingRegistration(artifactRootHash, manifestRegistration);
+
+        auto const disagreeing = store.pinSession(
+            SessionPin{
+                .sessionId                 = "session-mismatch",
+                .authenticatedControllerId = "controller-mismatch",
+                .idempotencyNamespace      = "controller-mismatch",
+                .projectRegistrationHash   = pinRegistration,
+                .capabilityProfileHash     = hashOf("capability"),
+                .controlledTargetId        = "target-mismatch",
+                .projectInstanceKey        = "instance-mismatch",
+                .mode                      = SessionMode::Write,
+                .kind                      = ControllerKind::Script,
+            },
+            manifest,
+            std::nullopt
+        );
+        REQUIRE_FALSE(disagreeing.has_value());
+        CHECK(
+            disagreeing.error().message().contains("does not bind the selected")
+        );
+        CHECK(disagreeing.error().message().contains(manifestRegistration.hex()));
+        CHECK(disagreeing.error().message().contains(pinRegistration.hex()));
+    }
+
+    TEST_CASE(
+        "pinSession names the registration and instance key it required when "
+        "no ProjectInstance exists"
+    )
+    {
+        auto temporary = TemporaryDirectory{};
+        auto [store, artifactRootHash] = storeWithInstalledArtifact(temporary.path());
+
+        auto const registrationHash = hashOf("registration-never-provisioned");
+        auto const manifest =
+            manifestNamingRegistration(artifactRootHash, registrationHash);
+
+        auto const missingInstance = store.pinSession(
+            SessionPin{
+                .sessionId                 = "session-no-instance",
+                .authenticatedControllerId = "controller-no-instance",
+                .idempotencyNamespace      = "controller-no-instance",
+                .projectRegistrationHash   = registrationHash,
+                .capabilityProfileHash     = hashOf("capability"),
+                .controlledTargetId        = "target-no-instance",
+                .projectInstanceKey        = "instance-never-provisioned",
+                .mode                      = SessionMode::Write,
+                .kind                      = ControllerKind::Script,
+            },
+            manifest,
+            std::nullopt
+        );
+        REQUIRE_FALSE(missingInstance.has_value());
+        CHECK(
+            missingInstance.error().message().contains(
+                "requires an existing ProjectInstance"
+            )
+        );
+        CHECK(missingInstance.error().message().contains(registrationHash.hex()));
+        CHECK(
+            missingInstance.error().message().contains(
+                "instance-never-provisioned"
+            )
+        );
     }
 
     TEST_CASE("Journal schema owner prevents caller-attached payload and provenance labels")

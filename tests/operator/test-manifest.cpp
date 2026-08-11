@@ -148,13 +148,17 @@ namespace uf::operator_runtime
                 owner
             ).has_value()
         );
-        CHECK_FALSE(
-            ProjectRegistration::verifyExact(
-                exactJcs,
-                hashOf("wrong-root"),
-                owner
-            ).has_value()
+        auto const wrongRoot = hashOf("wrong-root");
+        auto const rootMismatch =
+            ProjectRegistration::verifyExact(exactJcs, wrongRoot, owner);
+        REQUIRE_FALSE(rootMismatch.has_value());
+        CHECK(
+            rootMismatch.error().message().contains(
+                "do not match the expected root"
+            )
         );
+        CHECK(rootMismatch.error().message().contains(wrongRoot.hex()));
+        CHECK(rootMismatch.error().message().contains(rootHash.hex()));
     }
 
     TEST_CASE("VerifiedProjectRegistration rejects claims from another schema owner")

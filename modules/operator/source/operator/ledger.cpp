@@ -2816,7 +2816,12 @@ namespace uf::operator_runtime
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
-                "SessionManifest does not bind the selected ProjectRegistration"
+                std::format(
+                    "SessionManifest does not bind the selected "
+                    "ProjectRegistration: manifest names {}, pin selected {}",
+                    manifest.projectRegistrationHash().hex(),
+                    pin.projectRegistrationHash.hex()
+                )
             );
         }
         if (agentProfile.has_value() != controllerProfile(pin.kind).budgetsRequired)
@@ -2888,9 +2893,21 @@ namespace uf::operator_runtime
             sqlite3_step(instanceQuery.get()) != SQLITE_ROW
         )
         {
+            // No row means no ProjectInstance exists for this exact pair --
+            // there is no "actual" registration hash to print beside it. The
+            // table's natural key also needs plugin_id, which this pin does
+            // not carry, so which registration (if any) the instance key
+            // really is pinned to cannot be named here without a further
+            // lookup this refusal does not owe. What it does already hold is
+            // the pair it searched for.
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "Session requires an existing ProjectInstance pinned to the exact registration"
+                std::format(
+                    "Session requires an existing ProjectInstance pinned to "
+                    "project_registration_hash {} at project_instance_key {}",
+                    pin.projectRegistrationHash.hex(),
+                    pin.projectInstanceKey
+                )
             );
         }
 

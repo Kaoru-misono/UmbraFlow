@@ -305,7 +305,12 @@ namespace uf::operator_runtime
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
-                "ProjectRegistration bytes do not match the expected root hash"
+                std::format(
+                    "ProjectRegistration bytes do not match the expected root "
+                    "hash: expected {}, computed {}",
+                    expectedRootHash.hex(),
+                    actualRootHash.hex()
+                )
             );
         }
 

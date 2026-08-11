@@ -132,6 +132,24 @@ it.
       the loader's own refusal is the only one on the chain that says what
       moved. Whoever owns `modules/operator` should decide whether those three
       grow the two hashes they already hold.
+
+      Closed 2026-08-11 by the owner of `modules/operator`. Two of the three
+      already held both values at the point they refuse, the same shape as the
+      loader's check, and now print them: `manifest.cpp:304-315`
+      (`verifyExact`) names `expected` and `computed`; `ledger.cpp:2815-2826`
+      (`pinSession`'s registration-agreement check) names what the manifest
+      and the pin each name. The third, `ledger.cpp:2892-2912`, is not that
+      shape: it is an existence query on `(project_registration_hash,
+      project_instance_key)`, not a same-identity comparison, so there is no
+      second, "actual" hash already in hand to print beside the first — the
+      table's natural key also needs `plugin_id`, which `SessionPin` does not
+      carry, so fetching one would be a lookup this refusal does not otherwise
+      owe. It now prints the pair it searched for instead of staying a bare
+      literal, without pretending that pair is a before/after comparison.
+      Covered by three cases in `tests/operator/test-manifest.cpp` and
+      `tests/operator/test-ledger.cpp` asserting on message content, each
+      falsified by reverting its message to the old bare literal and
+      confirming the message-content assertions — and only those — go red.
 - [x] At every `verifyExact` call site, say in a sentence whether
       `expectedRootHash` came from another time or another source — the ledger,
       or a signature — or is the value just computed. The second case is legal
