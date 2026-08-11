@@ -1,8 +1,19 @@
 # Project content at scale: what one `derive` actually reads
 
-Status: design proposal. Nothing here is implemented. Every number below was
-measured on this machine against the real `uf-chaos` content pack; §8 lists what
-could not be measured and says so.
+Status: **its measurements stand and its central recommendation was refuted by
+its own numbers.** The seekable container this document proposes was **not**
+built: it measured the projection at 1.55 MiB against a 4 MiB cap and then
+recommended a container anyway, which is designing for a load nobody had run. A
+compact canonical JSON projection shipped instead, and a later measurement in a
+real Luau VM put it at 2,876,995 bytes on disk and 62.2% of the memory quota
+decoded — inside every ceiling. §5 is the record of an argument, not work owed.
+
+What did survive is the finding this document was not sent for: `derive` receives
+no observed string at all, so a perfect content index has nothing to look up by.
+That is being closed separately.
+
+Every number below was measured on this machine against the real `uf-chaos`
+content pack; §8 lists what could not be measured and says so.
 Date: 2026-08-12
 Scope: `umbraflow-cpp`. It proposes one container format, one sandbox addition
 and one derive-envelope member that the framework would own, and states what a

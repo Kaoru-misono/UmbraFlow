@@ -53,6 +53,24 @@ the four same-day specifications conflict.
   own two runs stayed green against a validator that accepted non-canonical
   bytes. `974396e` deleted both exemplars, and `deployment::loadProject` now
   builds every validator from the project's own schema bytes.
+- [Recognition, measured against the real game](plans/2026-08-12-recognition-measured.md)
+  — 76 real captures through the framework's own resolver, no game running, which
+  established that this system **can** be validated offline. It refutes the
+  design it was sent to verify: of 196 ambiguous key classes, 85 are separated by
+  no field anywhere in the content graph and eight are byte-identical rows, so
+  weighted scoring returns a tie however it is tuned. **Build neither the weights
+  nor the alias tables.** The key names fields that are not on screen; option
+  button labels are, and lift uniqueness from 278 to 523.
+- [Project content at scale](plans/2026-08-12-project-content-at-scale.md) — what
+  one `derive` actually reads, measured. Its own numbers refuted its container
+  proposal, and a compact projection shipped instead. Its lasting finding is the
+  one it was not sent for: **no observed string reaches the plugin at all.**
+- [What the pure plugin environment owes](plans/2026-08-12-plugin-pure-helpers.md)
+  — the plugin now receives a decoded frozen value rather than bytes, and
+  `plugin_environment_hash` pins what wraps every call. Also the answer to
+  whether the schemas are worth their complexity: keep all three categories,
+  delete about 60% of the project payload schemas' bytes and none of their
+  checks.
 - [The journal record binding](plans/2026-08-11-journal-record-binding.md) —
   landed 2026-08-11. The `journal_events` and `project_state` rows now carry the
   member names of the journal records they store, the framework validates

@@ -1,9 +1,17 @@
 # What the pure plugin environment owes a project, and what its schemas do not
 
-Status: design only. Nothing here is implemented and no file outside this one
-was written. Two questions are answered together because they are the same
-boundary from opposite sides: §1–§7 decide what a plugin is handed, and §8
-decides what is checked at the moment it is handed over.
+Status: **largely landed, and one of its recommendations was refuted by trying to
+build it.** The decoded frozen value and the `plugin_environment_hash` pin are in
+the tree. `canon.encode`, prescribed in §5, was **not** built: an external review
+ruled that the host mints `choice_instance_id` from the resolved binding, the
+surface generation and the slot, which removes the only argued caller — and a
+search found no other, in either tree, after the six plugins were migrated. So
+`canon` carries two frozen empty tables and no functions. Read §5 as the record
+of an argument that a later ruling made unnecessary, not as work owed.
+
+Two questions are answered together because they are the same boundary from
+opposite sides: §1–§7 decide what a plugin is handed, and §8 decides what is
+checked at the moment it is handed over.
 
 Date: 2026-08-12
 

@@ -94,6 +94,34 @@ Reading order: target form, then layer ownership, then the model semantics.
   cannot be forged — close no requirement at all. `974396e` settled the first:
   both exemplars are deleted, and `deployment::loadProject` builds every
   validator from the project's own schema bytes.
+- [Recognition, measured against the real game](2026-08-12-recognition-measured.md)
+  — **measurement, and the strongest refutation this branch has produced.** 76
+  real captures driven through `engine::IFrameSource` and a real `TaskHost`, 152
+  Host activations in 25 seconds with no game running — which is the practical
+  finding, because it sets how fast any of this can be iterated. Three captures
+  resolve and 73 return `no_scene_candidate`, exactly matching a two-surface
+  model asked to name 53 pages, with no false positive or negative. The
+  recognition rule cannot be applied to a capture at all, for four independent
+  reasons, none of them content ambiguity. And of 196 ambiguous key classes, 85
+  are separated by no field anywhere in the graph — so a weighted scorer returns
+  a tie however it is tuned, and the `RecognitionPack`'s weights, thresholds and
+  alias tables should not be built. Read it before designing any recognition.
+- [Project content at scale](2026-08-12-project-content-at-scale.md) — what one
+  `derive` actually reads, measured against the real 70 MB graph. Its container
+  recommendation was refuted by its own numbers and a compact projection shipped
+  instead; what survives is the finding it was not sent for, that `derive`
+  receives no observed string, so a perfect index has nothing to look up by.
+- [What the pure plugin environment owes](2026-08-12-plugin-pure-helpers.md) —
+  **largely landed.** The plugin receives a decoded frozen value rather than
+  bytes, which removed every `string.match` over a serialised envelope — one of
+  which matched the first `tool_name` anywhere in the document — and shrank one
+  fixture plugin by 63%. `plugin_environment_hash` pins the bridge that wraps
+  every plugin call and was covered by nothing. Its `canon.encode` was not built:
+  no caller survived the ruling that the host mints instance ids. It also carries
+  the answer to whether the schemas earn their complexity — keep all three
+  categories, delete about 60% of the project payload schemas' bytes and none of
+  their checks, since 3,584 of 5,996 lines are one `$defs` block repeated eleven
+  times and the framework causes that.
 - [W2-W7 reconciliation](2026-08-10-w2-w7-reconciliation.md) — the four above
   were written in parallel by agents who could not see each other. This resolves
   every conflict between them, lists the cross-assumptions one makes that another
