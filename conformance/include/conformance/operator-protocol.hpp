@@ -49,9 +49,9 @@ namespace uf::operator_runtime::conformance
             runtimeModel,
             exactOperatorProtocolSchemaBytes,
             deployment::readPlanProposal,
-            [uiAction](std::string_view exactStepJcs) -> Result<StepIntentClaims>
+            [uiAction](ValidatedDocument const& intent) -> Result<StepIntentClaims>
             {
-                UF_TRY_VALUE(claims, deployment::readStepIntent(exactStepJcs));
+                UF_TRY_VALUE(claims, deployment::readStepIntent(intent));
                 if (claims.kind != StepKind::UiAction)
                 {
                     return claims;

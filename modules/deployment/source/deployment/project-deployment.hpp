@@ -30,20 +30,20 @@ namespace uf::deployment
     // pinned.
     //
     // Each is a whole PlanProposalReader or StepIntentReader
-    // (operator/effective-plan.hpp:119-122): it refuses bytes that are not
-    // exact RFC 8785, then refuses anything the complete definition does not
-    // accept, before reading a member. A deployment whose ProjectSchemaOwner
-    // already judged the same document judges it twice; that is the price of a
-    // reader an OperatorPlanAuthority can be built from without one.
+    // (operator/effective-plan.hpp): it reads a document the schema owner that
+    // minted it has already held to exact RFC 8785 and to the complete
+    // definition, so it refuses only what the ValidatedDocument type cannot
+    // state -- that the document was stamped as this function's output.
     [[nodiscard]]
-    auto readPlanProposal(std::string_view exactProposalJcs)
+    auto readPlanProposal(operator_runtime::ValidatedDocument const& proposal)
         -> Result<operator_runtime::PlanProposalClaims>;
 
-    // The two intents carry no discriminator, so the schema tells them apart by
+    // The two intents carry no discriminator, so the schema told them apart by
     // their complete member sets under oneOf: a document satisfying both would
-    // be a step of two kinds and is refused rather than read as either.
+    // be a step of two kinds and was refused rather than read as either. What
+    // is left here is reading back which branch matched.
     [[nodiscard]]
-    auto readStepIntent(std::string_view exactStepJcs)
+    auto readStepIntent(operator_runtime::ValidatedDocument const& intent)
         -> Result<operator_runtime::StepIntentClaims>;
 
     // The $id each project schema document must declare. The Operator-owned

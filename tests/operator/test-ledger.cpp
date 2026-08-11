@@ -591,6 +591,67 @@ namespace uf::operator_runtime
         }
     }
 
+    // The two operator protocol readers, on documents this registration's
+    // schema owner stamped. They are read here rather than in tests/deployment
+    // because each takes a ValidatedDocument and only a ProjectSchemaOwner can
+    // mint one, so reaching a reader at all needs a plugin.
+    TEST_CASE("the operator protocol readers read a stamped document")
+    {
+        auto const project = makeProject("fixture.alpha", k_pluginSource);
+        auto const plugin  = loadPlugin(project, k_pluginSource);
+
+        auto const proposal = plugin.plan(canonical(
+            project.schemaOwner,
+            "{\"canonical_args\":{\"value\":1},\"project_observation\":{},"
+            "\"project_state\":{\"revision\":0},\"tool_name\":\"command-1\","
+            "\"tool_version\":\"1\"}"
+        ));
+        REQUIRE(proposal.has_value());
+        auto const intent = plugin.nextStep(canonical(
+            project.schemaOwner,
+            "{\"frozen_plan_hash\":\"" + hashOf("plan").hex()
+                + "\",\"project_observation\":{},"
+                  "\"project_state\":{\"revision\":0},\"step_index\":1}"
+        ));
+        REQUIRE(intent.has_value());
+
+        auto const claims = deployment::readPlanProposal(*proposal);
+        REQUIRE(claims.has_value());
+        CHECK(claims->toolName == "command-1");
+        CHECK(claims->toolVersion == "1");
+        CHECK(claims->canonicalArgs == "{\"value\":1}");
+        REQUIRE(claims->allowedUiActions.size() == 1U);
+        CHECK(claims->allowedUiActions.front() == "fixture.step");
+        REQUIRE(claims->effects.size() == 2U);
+        CHECK(claims->effects.front().namespacedType == "fixture.write");
+        CHECK(claims->effects.front().risk == Risk::Low);
+        CHECK(claims->effects.front().scopeKind == "instance");
+        CHECK(claims->effects.front().scopeKey == "alpha");
+        CHECK(claims->effects.front().opaqueProjectPayload == "{\"value\":1}");
+        CHECK(claims->effects.back().risk == Risk::Medium);
+        CHECK(claims->effects.back().scopeKey == "beta");
+        CHECK(claims->limits.maximumSteps == 8U);
+        CHECK(claims->limits.maximumDispatches == 8U);
+        CHECK(claims->limits.maximumObservations == 16U);
+        CHECK(claims->limits.maximumWaits == 4U);
+        CHECK(claims->limits.maximumElapsedMillis == 60000U);
+
+        auto const step = deployment::readStepIntent(*intent);
+        REQUIRE(step.has_value());
+        CHECK(step->kind == StepKind::UiAction);
+        CHECK(step->stepKey == "fixture.step");
+        CHECK(step->surfaceId == "fixture.surface");
+        CHECK(step->uiTargetId == "fixture.target");
+        CHECK(step->actionId == "fixture.press");
+
+        // The one claim a ValidatedDocument does not carry, and the whole of
+        // what each reader still refuses. Both documents are exact JCS this
+        // owner's schema accepted, so neither refusal is about canonical form
+        // or about the definition -- only about which function stamped it.
+        CHECK_FALSE(deployment::readPlanProposal(*intent).has_value());
+        CHECK_FALSE(deployment::readStepIntent(*proposal).has_value());
+    }
+
     TEST_CASE("OperatorCoordinator creates only the production database name")
     {
         auto temporary = TemporaryDirectory{};

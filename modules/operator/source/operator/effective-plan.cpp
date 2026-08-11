@@ -683,18 +683,24 @@ namespace uf::operator_runtime
                 "Plan authority is bound to a different ProjectRegistration"
             );
         }
-        if (
-            inputs.proposal.projectRegistrationHash() != m_projectRegistrationHash
-            || inputs.proposal.function() != ProjectPluginFunction::Plan
-            || inputs.proposal.direction() != ProjectDocumentDirection::Output
-        )
+        // Unfalsifiable as the ledger stands: it reads the proposal back from
+        // the plugin whose schema owner is bound to this same registration, so
+        // both sides move together and deleting this turns nothing red. It is
+        // the authority's own binding of the document to the registration, and
+        // the check that notices the day a second path reaches a mint.
+        if (inputs.proposal.projectRegistrationHash() != m_projectRegistrationHash)
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "PlanProposal was not produced by this registration's plan function"
+                "PlanProposal was not produced by this registration"
             );
         }
-        UF_TRY_VALUE(claims, m_readProposal(inputs.proposal.bytes()));
+
+        // Which ProjectPlugin function stamped the document is the reader's
+        // refusal and not repeated here: the reader is what interprets these
+        // bytes as a PlanProposal, and a document stamped for another function
+        // would reach a member the operator protocol never put in it.
+        UF_TRY_VALUE(claims, m_readProposal(inputs.proposal));
         if (claims.toolName != inputs.toolName)
         {
             return fail(
@@ -804,18 +810,14 @@ namespace uf::operator_runtime
         StepMintInputs const& inputs
     ) const -> Result<EffectiveStep>
     {
-        if (
-            inputs.intent.projectRegistrationHash() != m_projectRegistrationHash
-            || inputs.intent.function() != ProjectPluginFunction::NextStep
-            || inputs.intent.direction() != ProjectDocumentDirection::Output
-        )
+        if (inputs.intent.projectRegistrationHash() != m_projectRegistrationHash)
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "Step intent was not produced by this registration's next_step function"
+                "Step intent was not produced by this registration"
             );
         }
-        UF_TRY_VALUE(claims, m_readStepIntent(inputs.intent.bytes()));
+        UF_TRY_VALUE(claims, m_readStepIntent(inputs.intent));
         UF_TRY(requireField(claims.stepKey, "step_key"));
         if (!frozenPlanAllows(inputs.canonicalPlan, claims.stepKey))
         {

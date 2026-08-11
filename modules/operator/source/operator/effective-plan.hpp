@@ -116,15 +116,23 @@ namespace uf::operator_runtime
         StepKind    kind{StepKind::Wait};
     };
 
-    // Trusted deployment callbacks. Each must validate the complete operator
-    // protocol definition -- PlanProposal, UIActionIntent or WaitIntent -- and
-    // reject anything that is not exact RFC 8785 JCS. Neither is passed to
-    // plugin code or published in a business VM.
+    // Trusted deployment callbacks. Each reads a document a ProjectSchemaOwner
+    // has already accepted -- exact RFC 8785 JCS, judged against the complete
+    // operator protocol definition -- so neither applies either rule again. The
+    // parameter type is what carries that: ValidatedDocument's constructor is
+    // private to the schema owner, so a caller holding no owner cannot supply
+    // one, which is correct because such a caller has no authority to mint a
+    // plan either.
+    //
+    // The one claim the type does not carry is which ProjectPlugin function and
+    // direction the document was stamped for, since a Reduce output is the same
+    // type. Each reader must refuse a document stamped for another. Neither is
+    // passed to plugin code or published in a business VM.
     using PlanProposalReader = std::function<
-        Result<PlanProposalClaims>(std::string_view exactProposalJcs)
+        Result<PlanProposalClaims>(ValidatedDocument const& proposal)
     >;
     using StepIntentReader = std::function<
-        Result<StepIntentClaims>(std::string_view exactStepJcs)
+        Result<StepIntentClaims>(ValidatedDocument const& intent)
     >;
 
     // One frozen plan. Only the plan authority bound to the exact

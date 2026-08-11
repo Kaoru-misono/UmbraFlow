@@ -631,8 +631,7 @@ namespace uf::deployment
         // The two operator protocol schemas that reference no project document.
         // Every other schema this module compiles is a project's or names one,
         // so it belongs to a deployment; these two are the Operator's own and
-        // one compilation answers for every deployment and for the two readers
-        // below.
+        // one compilation answers for every deployment.
         struct EnvelopeSchemas final
         {
             json::Schema planProposal;
@@ -670,6 +669,40 @@ namespace uf::deployment
                 return std::unexpected{s_compiled.error().clone()};
             }
             return *s_compiled;
+        }
+
+        // The one thing a ValidatedDocument does not state about itself. Only a
+        // ProjectSchemaOwner can mint one, so holding it proves the bytes are
+        // exact RFC 8785 that owner's schema accepted -- but a Reduce output is
+        // the same type, and reading one as a PlanProposal would reach a member
+        // the operator protocol never put in it, where `member` below aborts on
+        // a contract rather than refusing.
+        //
+        // The direction half cannot be turned red today: ProjectSchemaOwner's
+        // validateOutput is the sole mint and stamps Output every time, so no
+        // ValidatedDocument carries Input. It is named here rather than
+        // dropped, so that a green mutation campaign is not read as coverage of
+        // it, and because it is what would notice a second mint.
+        [[nodiscard]]
+        auto requireOutputOf(
+            operator_runtime::ValidatedDocument const& document,
+            operator_runtime::ProjectPluginFunction function,
+            std::string_view what
+        ) -> Status
+        {
+            using operator_runtime::ProjectDocumentDirection;
+
+            if (
+                document.function() != function
+                || document.direction() != ProjectDocumentDirection::Output
+            )
+            {
+                return refuse(std::format(
+                    "{} is not what this ValidatedDocument was stamped as",
+                    what
+                ));
+            }
+            return ok();
         }
 
         [[nodiscard]]
@@ -1116,16 +1149,15 @@ namespace uf::deployment
         };
     }
 
-    auto readPlanProposal(std::string_view exactProposalJcs)
+    auto readPlanProposal(operator_runtime::ValidatedDocument const& proposal)
         -> Result<operator_runtime::PlanProposalClaims>
     {
-        UF_TRY_VALUE(schemas, envelopeSchemas());
-        UF_TRY(adopt(
-            json::requireExactCanonical(exactProposalJcs),
-            "a PlanProposal's bytes"
+        UF_TRY(requireOutputOf(
+            proposal,
+            operator_runtime::ProjectPluginFunction::Plan,
+            "a PlanProposal"
         ));
-        UF_TRY_VALUE(document, parseDocument(exactProposalJcs));
-        UF_TRY(adopt(schemas.planProposal.validate(document), "a PlanProposal"));
+        UF_TRY_VALUE(document, parseDocument(proposal.bytes()));
 
         // canonical_args and every opaque_project_payload below are
         // re-serialized rather than sliced out of the input. The document is
@@ -1203,16 +1235,15 @@ namespace uf::deployment
         return claims;
     }
 
-    auto readStepIntent(std::string_view exactStepJcs)
+    auto readStepIntent(operator_runtime::ValidatedDocument const& intent)
         -> Result<operator_runtime::StepIntentClaims>
     {
-        UF_TRY_VALUE(schemas, envelopeSchemas());
-        UF_TRY(adopt(
-            json::requireExactCanonical(exactStepJcs),
-            "a step intent's bytes"
+        UF_TRY(requireOutputOf(
+            intent,
+            operator_runtime::ProjectPluginFunction::NextStep,
+            "a step intent"
         ));
-        UF_TRY_VALUE(document, parseDocument(exactStepJcs));
-        UF_TRY(adopt(schemas.stepIntent.validate(document), "a step intent"));
+        UF_TRY_VALUE(document, parseDocument(intent.bytes()));
 
         // Which of the two the oneOf matched, read back off the document:
         // `action` is required by OP:`UIActionIntent` and forbidden by
