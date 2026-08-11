@@ -781,7 +781,7 @@ value tree, none in `core`, mutually independent:**
    (`:92-…`), reading the fixed 4-member `JournalProvenance` shape by exact-JCS
    member order (`:193-235`). The design note at `:24-29` says the ordering
    itself is what enforces `additionalProperties: false`.
-2. `entry/cli/explore-protocol.cpp` — `LineReader` (`:40-…`), a real narrow
+2. `modules/cli/source/cli/explore-protocol.cpp` — `LineReader` (`:40-…`), a real narrow
    reader with escapes. Its comment at `:32-39` records that it was
    deliberately *not* reused from the retired operator protocol reader, and
    that what is shared is `appendJsonString`.

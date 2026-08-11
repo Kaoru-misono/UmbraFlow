@@ -7,13 +7,15 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
 
 ## Entries
 
-- [Checks that cannot fail](checks-that-cannot-fail.md) — a gate whose
-  configuration makes it unable to report; read this before trusting any lint
-  job's green, before trusting a mutation campaign's results, before writing
-  a refusal assertion without a positive control, and before shipping a schema
-  file nothing compares the code against. It also collects the opposite
-  case: properties that are true and load-bearing and that no mutation can
-  reach, which are worth naming rather than papering over.
+- [Checks that cannot fail](checks-that-cannot-fail.md) — a taxonomy of the
+  defect this repository keeps finding one instance at a time: a name promises
+  something and nothing verifies the promise. Twelve forms, each with a real
+  instance, and — the part to read first — which method detects which form,
+  since mutation finds fewer than half of them. It carries the stronger
+  falsification rule (a red must land at the assertion that names the property,
+  and the failure text must be read), and it separates the checks that are
+  unfalsifiable **by design** and say so at their declaration from the ones
+  that are defects.
 - [Concurrent agent builds in one worktree](concurrent-agent-builds.md)
 - [Running the repository's own tooling](repository-tooling-invocation.md) — a
   repo-wide formatter rewrites files another agent owns, and the documented

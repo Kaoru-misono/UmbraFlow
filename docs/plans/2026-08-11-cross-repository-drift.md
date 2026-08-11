@@ -129,12 +129,18 @@ framework's pin would then fail against a file nobody could reconstruct, and
 `2026-08-09-runtime-hardening-rewrite.md`:20 — "If any byte differs,
 implementation stops" — would halt implementation permanently.
 
-**(b) Nothing checks the pin.** VERIFIED: the root hash `c4760bb5…` appears in
-exactly eight files, **all of them prose documents under `docs/`**. Zero hits in
-`scripts/`, `cmake/`, `tests/`, `modules/`, or any `CMakeLists.txt`. No gate
-hashes the bundle; no CI step reads that directory; `scripts/ci-local.ps1` has no
-knowledge of it. The sentence "If any byte differs, implementation stops" is
-enforced by a human remembering to check.
+**(b) Nothing checks the pin.** VERIFIED when written: the root hash `c4760bb5…`
+appeared in exactly eight files, **all of them prose documents under `docs/`**,
+with zero hits in `scripts/`, `cmake/`, `tests/`, `modules/`, or any
+`CMakeLists.txt`. No gate hashed the bundle; no CI step read that directory;
+`scripts/ci-local.ps1` had no knowledge of it. The sentence "If any byte differs,
+implementation stops" was enforced by a human remembering to check.
+
+*Closed 2026-08-11 by `5f6c1a1`.* `scripts/check_spec_bundle.py:78` carries the
+root hash, the `check-spec-pins` gate reads it, and the script runs six
+self-tests on every invocation so that a verification which cannot fail is
+itself caught. This paragraph is kept as the record of the finding, not as a
+live one.
 
 This is the [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md)
 family applied to the arbiter itself: a name promises that the bundle is pinned,

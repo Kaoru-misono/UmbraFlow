@@ -1514,16 +1514,16 @@ Two consequences to carry into implementation:
   came from this check rather than from a second mechanism. Removing the
   comparison leaves the case green, measured.
 
-  One thing the work item asked for is not in the framework and is not this
-  step's to add: **no refusal in `modules/operator` prints either hash.**
-  `ProjectRegistration::verifyExact` refuses with "ProjectRegistration bytes do
-  not match the expected root hash" (`manifest.cpp:306-309`) and
-  `OperatorCoordinator::pinSession` with "SessionManifest does not bind the
-  selected ProjectRegistration" (`ledger.cpp:2815-2820`) and "Session requires
-  an existing ProjectInstance pinned to the exact registration"
-  (`ledger.cpp:2891-2894`) — all bare literals. Both of those fire on a resume
-  against a moved project, so the chain refuses in three places; only the
-  loader's says what moved.
+  One thing the work item asked for was not in the framework and was not this
+  step's to add: no refusal in `modules/operator` printed either hash, so the
+  chain refused a moved project in three places and only the loader's said what
+  had moved. *Closed 2026-08-11 by `4ae4fcf`.* `ProjectRegistration::verifyExact`
+  (`manifest.cpp:304-315`) and `pinSession`'s registration-agreement refusal
+  (`ledger.cpp:2815-2826`) each print expected and computed. The third
+  (`ledger.cpp:2892-2912`) is an existence query rather than a comparison —
+  `project_instances` is keyed by `(plugin_id, project_instance_key)` and
+  `SessionPin` carries no `plugin_id` — so it prints the compound key it searched
+  for, and says at the refusal why there is no second value to name.
 
 The review's one stated uncertainty, recorded rather than resolved: during a
 first load, with no stored session, a mid-load modification is undetectable. Its
