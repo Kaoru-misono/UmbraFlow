@@ -18,6 +18,28 @@
 
 include_guard(GLOBAL)
 
+# doctest is vendored at external/doctest and belongs to no single module --
+# tests/ and the conformance binary both compile against it, and a repository
+# that adds this one with add_subdirectory needs the same headers for its own
+# provider translation units. It is defined once, here, beside
+# uf_require_executed_assertions below, because this file is already included
+# by both tests/CMakeLists.txt and cmake/conformance-suite.cmake; a second
+# CMakeLists.txt under external/doctest would only add a second place to keep
+# in sync with this one. uf::doctest is the only name anything spells for it.
+cmake_path(SET UF_DOCTEST_INCLUDE_DIR NORMALIZE
+    "${CMAKE_CURRENT_LIST_DIR}/../external/doctest"
+)
+if(NOT EXISTS "${UF_DOCTEST_INCLUDE_DIR}/doctest/doctest.h")
+    message(FATAL_ERROR
+        "doctest-gate: doctest headers are missing at ${UF_DOCTEST_INCLUDE_DIR}. "
+        "Restore external/doctest before configuring."
+    )
+endif()
+
+add_library(uf_doctest INTERFACE)
+target_include_directories(uf_doctest SYSTEM INTERFACE "${UF_DOCTEST_INCLUDE_DIR}")
+add_library(uf::doctest ALIAS uf_doctest)
+
 # doctest writes the count immediately after "assertions: ", right-aligned in
 # spaces, with no color escape between the two. The bracket expression spells
 # the trailing pipe: an unescaped | is alternation, and CMake's argument parser

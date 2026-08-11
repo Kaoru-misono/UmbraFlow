@@ -79,9 +79,6 @@ function(uf_add_conformance_suite)
     cmake_path(SET SUITE_ROOT NORMALIZE
         "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../conformance"
     )
-    cmake_path(SET SUITE_DOCTEST_DIR NORMALIZE
-        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../tests/external/doctest"
-    )
     set(SUITE_INCLUDE_DIR "${SUITE_ROOT}/include")
     set(SUITE_SOURCE_DIR "${SUITE_ROOT}/source")
 
@@ -220,9 +217,6 @@ function(uf_add_conformance_suite)
         "${SUITE_INCLUDE_DIR}"
         "${SUITE_SOURCE_DIR}"
     )
-    target_include_directories(${ARG_TARGET} SYSTEM PRIVATE
-        "${SUITE_DOCTEST_DIR}"
-    )
     # uf::image and uf::deployment are the suite's own dependencies, not the
     # provider's: suite-support.cpp reaches observation-fixture.hpp, which
     # encodes the fixture's template assets with <image/png.hpp>, and
@@ -233,6 +227,7 @@ function(uf_add_conformance_suite)
         uf::operator
         uf::image
         uf::deployment
+        uf::doctest
         ${ARG_LIBS}
     )
     target_compile_features(${ARG_TARGET} PRIVATE cxx_std_23)
