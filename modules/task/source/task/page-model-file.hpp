@@ -156,6 +156,22 @@ namespace uf::task
         auto rootHash() const noexcept UF_LIFETIME_BOUND -> ContentHash const&;
     };
 
+    // The identifiers one RuntimeModel defines, published by the trusted parser
+    // that already cross-references them. Three flat vocabularies of opaque
+    // strings and nothing else: a reader may ask whether a name is in one of
+    // them, which is identity, and cannot ask what the name means, which would
+    // be interpreting RuntimeModel semantics in C++.
+    //
+    // The parser publishes each list sorted and duplicate-free. No C++ asserts
+    // that, and nothing here depends on it: membership is a scan, and a rule
+    // only the parser could break is a rule nothing can test.
+    struct DeclaredRuntimeUi final
+    {
+        std::vector<std::string> surfaces{};
+        std::vector<std::string> uiTargets{};
+        std::vector<std::string> actions{};
+    };
+
     // The generation-owned result of the trusted Runtime parser. It can be
     // observed but not constructed by callers: only TaskHost's private finalize
     // path can bind parser output to one verified artifact and generation.
@@ -164,11 +180,13 @@ namespace uf::task
         GenerationId                                 m_generation;
         std::shared_ptr<RuntimeArtifactHandle const> m_artifact;
         ContentHash                                  m_semanticHash;
+        DeclaredRuntimeUi                            m_declaredUi;
 
         RuntimeModelBinding(
             GenerationId generation,
             std::shared_ptr<RuntimeArtifactHandle const> artifact,
-            ContentHash semanticHash
+            ContentHash semanticHash,
+            DeclaredRuntimeUi declaredUi
         ) noexcept;
 
         friend class TaskHost;
@@ -193,6 +211,13 @@ namespace uf::task
 
         [[nodiscard]]
         auto semanticHash() const noexcept UF_LIFETIME_BOUND -> ContentHash const&;
+
+        // What the model this generation parsed declares. It travels with the
+        // artifact root hash above rather than on its own, so a reader that
+        // trusts one of the two is trusting the same parse.
+        [[nodiscard]]
+        auto declaredUi() const noexcept UF_LIFETIME_BOUND
+            -> DeclaredRuntimeUi const&;
     };
 
     [[nodiscard]]

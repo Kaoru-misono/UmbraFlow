@@ -1452,10 +1452,16 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         REQUIRE(snapshot.has_value());
         // "operator" is the exact operator protocol schema this fixture's
         // session manifest pins; the authority verifies the bytes rather than
-        // the name.
+        // the name. The RuntimeModel binding is this generation's own parse of
+        // the artifact the manifest pins, and the authority verifies that too.
+        auto runtimeModel = observation.host->runtimeModelBinding(
+            observation.generation
+        );
+        REQUIRE(runtimeModel.has_value());
         auto planAuthority = contract::planAuthority(
             project.registration,
             manifest,
+            *runtimeModel,
             "operator",
             k_fixtureUiAction
         );

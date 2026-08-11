@@ -699,11 +699,13 @@ namespace uf::task
     RuntimeModelBinding::RuntimeModelBinding(
         GenerationId generation,
         std::shared_ptr<RuntimeArtifactHandle const> artifact,
-        ContentHash semanticHash
+        ContentHash semanticHash,
+        DeclaredRuntimeUi declaredUi
     ) noexcept
         : m_generation{generation}
         , m_artifact{std::move(artifact)}
         , m_semanticHash{semanticHash}
+        , m_declaredUi{std::move(declaredUi)}
     {
     }
 
@@ -726,6 +728,11 @@ namespace uf::task
     auto RuntimeModelBinding::semanticHash() const noexcept -> ContentHash const&
     {
         return m_semanticHash;
+    }
+
+    auto RuntimeModelBinding::declaredUi() const noexcept -> DeclaredRuntimeUi const&
+    {
+        return m_declaredUi;
     }
 
     auto loadRuntimeArtifact(

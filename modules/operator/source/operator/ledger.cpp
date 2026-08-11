@@ -5190,7 +5190,8 @@ namespace uf::operator_runtime
                 "AND step.dispatch_sequence IS NULL), "
                 "observation.canonical_observation, state.canonical_opaque_payload, "
                 "o.frozen_plan_hash, EXISTS(SELECT 1 FROM dispatches d "
-                "WHERE d.operation_id=o.operation_id) FROM operations o "
+                "WHERE d.operation_id=o.operation_id), "
+                "session.runtime_artifact_root_hash FROM operations o "
                 + std::string{k_liveControllerJoin}
                 + "JOIN project_registrations registration "
                 "ON registration.registration_hash=session.project_registration_hash "
@@ -5288,6 +5289,7 @@ namespace uf::operator_runtime
 
         auto const planHashHex   = columnText(query.get(), 7);
         auto const canonicalPlan = columnText(query.get(), 8);
+        auto const sessionArtifactRoot = columnText(query.get(), 17);
         UF_TRY_VALUE(planHash, parseHashColumn(planHashHex));
         auto const observationJcs  = columnText(query.get(), 13);
         auto const projectStateJcs = columnText(query.get(), 14);
@@ -5302,11 +5304,12 @@ namespace uf::operator_runtime
         UF_TRY_VALUE(
             step,
             planAuthority.mintStep(StepMintInputs{
-                .intent        = intent,
-                .canonicalPlan = canonicalPlan,
-                .operationId   = operationId,
-                .planHash      = planHash,
-                .stepIndex     = stepIndex,
+                .intent                  = intent,
+                .canonicalPlan           = canonicalPlan,
+                .operationId             = operationId,
+                .planHash                = planHash,
+                .stepIndex               = stepIndex,
+                .runtimeArtifactRootHash = sessionArtifactRoot,
             })
         );
 

@@ -14,6 +14,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -50,6 +51,23 @@ namespace uf::operator_runtime
             auto const at      = source.find(accepted);
             REQUIRE(at != std::string::npos);
             return source.replace(at, accepted.size(), "return '{\"value\":99}'");
+        }
+
+        // The same plugin except that its OP:`UIActionIntent` names one
+        // identifier the installed RuntimeModel does not define. Only the one
+        // member moves, so a refusal is about that member and not about a
+        // document the reader stopped understanding.
+        [[nodiscard]]
+        inline auto pluginNamingUndefinedUi(
+            std::string_view spelled,
+            std::string_view replacement
+        ) -> std::string
+        {
+            auto source   = test_support::pluginSource("fixture.alpha");
+            auto const at = source.find(spelled);
+            REQUIRE(at != std::string::npos);
+            REQUIRE(source.find(spelled, at + spelled.size()) == std::string::npos);
+            return source.replace(at, spelled.size(), replacement);
         }
 
         class TemporaryDirectory final
@@ -255,9 +273,14 @@ namespace uf::operator_runtime
                 contract::observeOnce(observation)
             );
             REQUIRE(snapshot.has_value());
+            auto runtimeModel = observation.host->runtimeModelBinding(
+                observation.generation
+            );
+            REQUIRE(runtimeModel.has_value());
             auto planAuthority = contract::planAuthority(
                 project.registration,
                 manifest,
+                *runtimeModel,
                 "operator",
                 test_support::k_fixtureUiAction
             );
@@ -361,6 +384,59 @@ namespace uf::operator_runtime
                 prepared.lease,
                 prepared.plugin,
                 prepared.planAuthority
+            );
+        }
+
+        // A plan authority carrying nothing but the Operator's own protocol
+        // readers, which is what a production deployment builds.
+        // contract::planAuthority wraps the step reader in a check that the
+        // step names the run's one agreed UI action, and that check would
+        // answer the cases below before the Operator did.
+        [[nodiscard]]
+        auto deploymentAuthority(
+            PreparedStore& prepared,
+            ContentHash const& runtimeArtifactRootHash
+        ) -> Result<OperatorPlanAuthority>
+        {
+            auto runtimeModel = prepared.observation.host->runtimeModelBinding(
+                prepared.observation.generation
+            );
+            REQUIRE(runtimeModel.has_value());
+            return OperatorPlanAuthority::create(
+                prepared.project.registration,
+                sessionManifest(
+                    prepared.project.registration,
+                    runtimeArtifactRootHash,
+                    hashOf("agent")
+                ),
+                *runtimeModel,
+                "operator",
+                contract::readPlanProposal,
+                contract::readStepIntent
+            );
+        }
+
+        [[nodiscard]]
+        auto mintStepUnder(
+            PreparedStore& prepared,
+            OperatorPlanAuthority const& authority
+        ) -> Result<PlannedStep>
+        {
+            auto const proposed = proposedOperation(prepared, "request-1", "command-1");
+            auto const frozen   = prepared.store.freezePlan(
+                proposed.operationId,
+                proposed.revision,
+                prepared.lease,
+                prepared.plugin,
+                authority
+            );
+            REQUIRE(frozen.has_value());
+            return prepared.store.mintNextStep(
+                frozen->operation.operationId,
+                frozen->operation.revision,
+                prepared.lease,
+                prepared.plugin,
+                authority
             );
         }
 
@@ -1419,14 +1495,24 @@ namespace uf::operator_runtime
         // not be able to freeze the first one's Operation.
         auto const foreignSource   = test_support::pluginSource("fixture.foreign");
         auto const foreign         = makeProject("fixture.foreign", foreignSource);
+
+        // The same RuntimeArtifact the prepared session pinned. An authority can
+        // no longer be built against an artifact root nobody installed, so the
+        // only difference left between the two authorities is the registration
+        // -- which is the one this case is about.
         auto const foreignManifest = sessionManifest(
             foreign.registration,
-            hashOf("artifact-root"),
+            prepared.runtimeArtifactRootHash,
             hashOf("agent")
         );
+        auto runtimeModel = prepared.observation.host->runtimeModelBinding(
+            prepared.observation.generation
+        );
+        REQUIRE(runtimeModel.has_value());
         auto foreignAuthority = contract::planAuthority(
             foreign.registration,
             foreignManifest,
+            *runtimeModel,
             "operator",
             test_support::k_fixtureUiAction
         );
@@ -1441,6 +1527,142 @@ namespace uf::operator_runtime
             *foreignAuthority
         ).has_value());
         CHECK(freezePlanFor(prepared, proposed).has_value());
+    }
+
+    // A plan's surface_id, ui_target_id and action_id reach no Host: the
+    // Receipt's intent is minted by the trusted chunk out of the model, and
+    // task::DispatchAuthority carries no UI identifier. Until the step check
+    // below existed they were decoration, and a plan could name UI that exists
+    // in no RuntimeModel and still be dispatched.
+    TEST_CASE("a step naming UI the installed RuntimeModel does not define is refused")
+    {
+        struct UndefinedUi final
+        {
+            std::string_view member{};
+            std::string_view spelled{};
+            std::string_view replacement{};
+        };
+        auto const undefined = std::array{
+            UndefinedUi{
+                "surface_id",
+                R"("surface_id":"fixture.surface")",
+                R"("surface_id":"fixture.absent")",
+            },
+            UndefinedUi{
+                "ui_target_id",
+                R"("ui_target_id":"fixture.target")",
+                R"("ui_target_id":"fixture.absent")",
+            },
+            UndefinedUi{
+                "action_id",
+                R"("action_id":"fixture.press")",
+                R"("action_id":"fixture.absent")",
+            },
+        };
+        for (auto const& named : undefined)
+        {
+            CAPTURE(named.member);
+            auto temporary = TemporaryDirectory{};
+            auto const source = pluginNamingUndefinedUi(
+                named.spelled,
+                named.replacement
+            );
+            auto prepared  = prepareStore(temporary.path(), source);
+            auto authority = deploymentAuthority(
+                prepared,
+                prepared.runtimeArtifactRootHash
+            );
+            REQUIRE(authority.has_value());
+            CHECK_FALSE(mintStepUnder(prepared, *authority).has_value());
+        }
+    }
+
+    // The positive control the three refusals above are worthless without: the
+    // identical route, the identical authority, and the fixture's own plan,
+    // whose three identifiers this project's model does define.
+    TEST_CASE("a step naming UI the installed RuntimeModel defines is minted")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto authority = deploymentAuthority(
+            prepared,
+            prepared.runtimeArtifactRootHash
+        );
+        REQUIRE(authority.has_value());
+
+        auto const step = mintStepUnder(prepared, *authority);
+        REQUIRE(step.has_value());
+        CHECK(step->kind == StepKind::UiAction);
+    }
+
+    TEST_CASE("a plan authority answers only for the pinned RuntimeArtifact")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        // The Host parsed the installed artifact; this manifest pins another.
+        // Without the refusal an authority could carry one project's declared
+        // vocabulary into a session pinned to a different model.
+        CHECK_FALSE(
+            deploymentAuthority(prepared, hashOf("another-artifact")).has_value()
+        );
+        CHECK(
+            deploymentAuthority(prepared, prepared.runtimeArtifactRootHash)
+                .has_value()
+        );
+    }
+
+    // What binding the authority at creation does not close: a manifest is not a
+    // session, and two manifests of one registration may pin two RuntimeArtifacts.
+    // The authority below is honestly built -- its manifest and its model agree --
+    // and still answers for a model this Operation's session row does not name,
+    // so only the ledger's own column can refuse it.
+    TEST_CASE("a plan authority for another installed artifact cannot mint a step")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        // A second model differing only by one further scene, so its declared
+        // vocabulary still contains every identifier the plan names and the
+        // artifact root is the only thing left that can decide.
+        auto const second = contract::observationRelease(
+            temporary.path() / "second",
+            contract::ProjectRuntimeArtifact{
+                .model  = test_support::ambiguousRuntimeModel(),
+                .assets = test_support::umbraflowRuntimeAssets(),
+            }
+        );
+        auto installed = prepared.store.installRuntimeArtifact(
+            installRequest(second, 1U)
+        );
+        REQUIRE(installed.has_value());
+        auto const secondRootHash = installed->rootHash();
+        REQUIRE(secondRootHash != prepared.runtimeArtifactRootHash);
+
+        auto secondHost = contract::activateObservationHost(
+            *std::move(installed),
+            contract::resolvedFramePixels(),
+            FrameId{909}
+        );
+        auto secondModel = secondHost.host->runtimeModelBinding(
+            secondHost.generation
+        );
+        REQUIRE(secondModel.has_value());
+
+        auto authority = OperatorPlanAuthority::create(
+            prepared.project.registration,
+            sessionManifest(
+                prepared.project.registration,
+                secondRootHash,
+                hashOf("agent")
+            ),
+            *secondModel,
+            "operator",
+            contract::readPlanProposal,
+            contract::readStepIntent
+        );
+        REQUIRE(authority.has_value());
+        CHECK_FALSE(mintStepUnder(prepared, *authority).has_value());
     }
 
     TEST_CASE("the plugin cannot widen the workflow bound")

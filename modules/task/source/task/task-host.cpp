@@ -472,8 +472,21 @@ namespace uf::task
             );
         }
 
+        // The declared vocabulary is taken as given, unlike the asset closure
+        // checked above. There is nothing to check it against: the parser is the
+        // only reader of RuntimeModel semantics in the system, so a Host that
+        // re-derived these identifiers would be the second reader this design
+        // exists to prevent. Its consumers compare membership, which is
+        // insensitive to order and repetition, so no ordering rule is asserted
+        // here either -- one nothing could violate would be a check that cannot
+        // fail.
         auto binding = std::make_shared<RuntimeModelBinding const>(
-            RuntimeModelBinding{generation, artifact, trusted.semanticHash}
+            RuntimeModelBinding{
+                generation,
+                artifact,
+                trusted.semanticHash,
+                std::move(trusted.declaredUi),
+            }
         );
         return p_generation->installBinding(std::move(binding));
     }
@@ -910,6 +923,23 @@ namespace uf::task
         }
         auto const bytes = artifact->modelBytes();
         return std::vector<std::byte>{bytes.begin(), bytes.end()};
+    }
+
+    auto TaskHost::runtimeModelBinding(
+        GenerationId generation
+    ) -> Result<RuntimeModelBinding>
+    {
+        UF_TRY_VALUE(p_generation, requireGeneration(generation));
+        auto const& binding = p_generation->binding();
+        if (p_generation->kind() != GenerationKind::Runtime || !binding)
+        {
+            return fail(
+                AutomationErrorKind::UnsupportedCapability,
+                "a RuntimeModel binding requires a privately finalized Runtime "
+                "generation"
+            );
+        }
+        return *binding;
     }
 
     auto TaskHost::observe(

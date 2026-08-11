@@ -955,7 +955,7 @@ namespace uf::task
         static auto finalizeModel(lua_State* state) -> int
         {
             auto& self = bound(state);
-            self.requireArity(state, 3, "runtime_model_finalize");
+            self.requireArity(state, 6, "runtime_model_finalize");
             auto encoded = std::string{"sha256:"};
             encoded += stringAt(state, 1, "runtime model schema hash");
             auto schemaHash = ContentHash::parse(encoded);
@@ -971,12 +971,34 @@ namespace uf::task
                 raiseFromError(state, nullptr, semantic.error());
             }
             auto assets = stringArray(state, 3, "RuntimeModel.asset_paths");
+            // The three vocabularies arrive as separate arrays rather than one
+            // table because that is the only shape stringArray reads, and each
+            // must reach the Host as its own list: they are compared
+            // independently and a merged list would answer the wrong question.
+            auto declaredUi = DeclaredRuntimeUi{
+                .surfaces = stringArray(
+                    state,
+                    4,
+                    "RuntimeModel.declared_surface_ids"
+                ),
+                .uiTargets = stringArray(
+                    state,
+                    5,
+                    "RuntimeModel.declared_ui_target_ids"
+                ),
+                .actions = stringArray(
+                    state,
+                    6,
+                    "RuntimeModel.declared_action_ids"
+                ),
+            };
             auto finalized = self.m_pHost->finalizeRuntimeModel(
                 self.m_generation,
                 TrustedRuntimeFinalize{
                     .parserSchemaHash = *schemaHash,
                     .semanticHash     = *semantic,
                     .assetReferences  = std::move(assets),
+                    .declaredUi       = std::move(declaredUi),
                 }
             );
             if (!finalized)

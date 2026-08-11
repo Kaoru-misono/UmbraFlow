@@ -3,6 +3,8 @@
 #include "manifest.hpp"
 #include "project-plugin.hpp"
 
+#include <task/page-model-file.hpp>
+
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
@@ -98,9 +100,19 @@ namespace uf::operator_runtime
     };
 
     // What the Operator reads out of one next_step output.
+    //
+    // The three UI identifiers are OP:`UIActionIntent`.action, and they are
+    // required for a UiAction step: mintStep refuses one that leaves any of them
+    // empty. That is why they carry no meaning-bearing default -- a reader that
+    // forgot to fill them refuses every UI-action step loudly, rather than
+    // passing a membership test against nothing. A Wait names no UI and leaves
+    // all three empty.
     struct StepIntentClaims final
     {
         std::string stepKey{};
+        std::string surfaceId{};
+        std::string uiTargetId{};
+        std::string actionId{};
         StepKind    kind{StepKind::Wait};
     };
 
@@ -288,6 +300,13 @@ namespace uf::operator_runtime
         std::string      operationId{};
         ContentHash      planHash;
         uint64           stepIndex{};
+
+        // sessions.runtime_artifact_root_hash for the session this Operation
+        // belongs to, in the column's own hex spelling. The authority's
+        // RuntimeModel binding is matched against it, so a vocabulary parsed
+        // from some other artifact of the same registration cannot answer for
+        // this session's model. It is the ledger's own row and no caller's.
+        std::string_view runtimeArtifactRootHash{};
     };
 
     // Sole mint for EffectivePlan and EffectiveStep. The two mint functions are
@@ -298,14 +317,16 @@ namespace uf::operator_runtime
     {
         friend class OperatorCoordinator;
 
-        ContentHash        m_projectRegistrationHash;
-        ContentHash        m_operatorProtocolSchemaHash;
-        PlanProposalReader m_readProposal;
-        StepIntentReader   m_readStepIntent;
+        ContentHash               m_projectRegistrationHash;
+        ContentHash               m_operatorProtocolSchemaHash;
+        task::RuntimeModelBinding m_runtimeModel;
+        PlanProposalReader        m_readProposal;
+        StepIntentReader          m_readStepIntent;
 
         OperatorPlanAuthority(
             ContentHash projectRegistrationHash,
             ContentHash operatorProtocolSchemaHash,
+            task::RuntimeModelBinding runtimeModel,
             PlanProposalReader readProposal,
             StepIntentReader readStepIntent
         );
@@ -324,10 +345,19 @@ namespace uf::operator_runtime
         // an owner that merely names a hash is a convention. The session
         // manifest supplies the hash to satisfy, and must itself be pinned to
         // this registration.
+        //
+        // runtimeModel is the same argument one level down. A plan's UI
+        // identifiers mean nothing except against the model that would have to
+        // resolve them, so the authority is built from the model the Host
+        // actually parsed and refuses a manifest pinning a different artifact
+        // root. Only TaskHost can mint one, so an authority for a model nobody
+        // parsed cannot be constructed at all -- which is what makes the check
+        // in mintStep unavoidable rather than optional.
         [[nodiscard]]
         static auto create(
             VerifiedProjectRegistration const& registration,
             SessionManifest const& sessionManifest,
+            task::RuntimeModelBinding const& runtimeModel,
             std::string_view exactOperatorProtocolSchemaBytes,
             PlanProposalReader readProposal,
             StepIntentReader readStepIntent

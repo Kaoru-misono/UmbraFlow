@@ -158,6 +158,7 @@ namespace uf::task
             ContentHash              parserSchemaHash;
             ContentHash              semanticHash;
             std::vector<std::string> assetReferences{};
+            DeclaredRuntimeUi        declaredUi{};
         };
 
         struct TrustedReceiptIntent final
@@ -312,6 +313,17 @@ namespace uf::task
         [[nodiscard]]
         auto runtimeModelBytes(GenerationId generation)
             -> Result<std::vector<std::byte>>;
+
+        // What the trusted parser made of this generation's model: its artifact
+        // root hash, its semantic hash, and the identifiers it declares. It is
+        // the one way anything outside the Host learns those identifiers, and it
+        // is a copy of a Host-minted value rather than a request to compute one,
+        // so a caller can neither name a model the Host did not parse nor state
+        // a vocabulary of its own. An Annotation generation, or a Runtime one
+        // whose model has not been finalized, is refused.
+        [[nodiscard]]
+        auto runtimeModelBinding(GenerationId generation)
+            -> Result<RuntimeModelBinding>;
 
         // Runs one observation cycle on a Runtime generation and returns what
         // the trusted resolver concluded. Annotation generations are refused:

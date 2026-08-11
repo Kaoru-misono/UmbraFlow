@@ -627,61 +627,61 @@ namespace uf::operator_runtime::contract
         {
             return protocolRefusal("step intent step_key");
         }
-        return StepIntentClaims{.stepKey = *stepKey, .kind = *kind};
-    }
-
-    // The UI one OP:`UIActionIntent` acts on. StepIntentClaims does not carry
-    // it and neither does anything downstream: the ledger stores the intent
-    // bytes and hashes them, and the task::DispatchAuthority the Host is handed
-    // carries no UI identifier at all. A plan naming a surface, target or action
-    // that exists in no RuntimeModel therefore reaches delivery unremarked --
-    // and did, in both in-tree fixtures, until this reader was written.
-    [[nodiscard]]
-    inline auto readStepIntentUi(
-        std::string_view exactStepJcs
-    ) -> std::optional<task::UiActionUnderTest>
-    {
-        auto const members = protocolObjectMembers(exactStepJcs);
-        if (!members.has_value())
+        if (*kind != StepKind::UiAction)
         {
-            return std::nullopt;
+            return StepIntentClaims{.stepKey = *stepKey, .kind = *kind};
         }
+
+        // A UI-action step must yield its three identifiers here, because
+        // mintStep matches them against the installed RuntimeModel and a claim
+        // that omitted them would be refused as empty. Reading them is the
+        // Operator's own schema and not the model's: nothing below asks what a
+        // surface is, only what the document says one is called.
         auto const action = protocolObjectMembers(
             protocolMember(*members, "action")
         );
         if (!action.has_value())
         {
-            return std::nullopt;
+            return protocolRefusal("UIActionIntent action");
         }
-        auto surface  = protocolString(protocolMember(*action, "surface_id"));
-        auto uiTarget = protocolString(protocolMember(*action, "ui_target_id"));
-        auto actionId = protocolString(protocolMember(*action, "action_id"));
-        if (!surface.has_value() || !uiTarget.has_value() || !actionId.has_value())
+        auto surfaceId  = protocolString(protocolMember(*action, "surface_id"));
+        auto uiTargetId = protocolString(protocolMember(*action, "ui_target_id"));
+        auto actionId   = protocolString(protocolMember(*action, "action_id"));
+        if (
+            !surfaceId.has_value()
+            || !uiTargetId.has_value()
+            || !actionId.has_value()
+        )
         {
-            return std::nullopt;
+            return protocolRefusal("UIActionIntent action identifier");
         }
-        return task::UiActionUnderTest{
-            .surface  = *std::move(surface),
-            .uiTarget = *std::move(uiTarget),
-            .action   = *std::move(actionId),
+        return StepIntentClaims{
+            .stepKey    = *stepKey,
+            .surfaceId  = *std::move(surfaceId),
+            .uiTargetId = *std::move(uiTargetId),
+            .actionId   = *std::move(actionId),
+            .kind       = *kind,
         };
     }
 
     // The plan authority a deployment builds. The exact operator protocol bytes
-    // are the ones the session manifest is pinned to, so an authority that
-    // answers for another schema cannot be created at all.
+    // are the ones the session manifest is pinned to, and the RuntimeModel
+    // binding is the model the Host parsed out of the artifact that manifest
+    // pins, so an authority that answers for another schema or another model
+    // cannot be created at all.
     //
     // Its step-intent reader also refuses a UI-action step naming anything but
     // `uiAction`. A contract run drives exactly one UI action -- the one the
     // project's ProjectVocabulary names -- so a plan that named another would be
     // telling the suite two different things about what this Operation does.
-    // The refusal is the suite's, not the Operator's: nothing in the Operator
-    // reads these three members, so production still accepts a plan against UI
-    // no model defines.
+    // That refusal is the suite's and is about agreement with the run; the
+    // Operator's own refusal, against the installed model, is in mintStep and
+    // holds for production callers that never see this file.
     [[nodiscard]]
     inline auto planAuthority(
         VerifiedProjectRegistration const& registration,
         SessionManifest const& manifest,
+        task::RuntimeModelBinding const& runtimeModel,
         std::string_view exactOperatorProtocolSchemaBytes,
         task::UiActionUnderTest const& uiAction
     ) -> Result<OperatorPlanAuthority>
@@ -689,6 +689,7 @@ namespace uf::operator_runtime::contract
         return OperatorPlanAuthority::create(
             registration,
             manifest,
+            runtimeModel,
             exactOperatorProtocolSchemaBytes,
             readPlanProposal,
             [uiAction](std::string_view exactStepJcs) -> Result<StepIntentClaims>
@@ -698,12 +699,10 @@ namespace uf::operator_runtime::contract
                 {
                     return claims;
                 }
-                auto const named = readStepIntentUi(exactStepJcs);
                 if (
-                    !named.has_value()
-                    || named->surface != uiAction.surface
-                    || named->uiTarget != uiAction.uiTarget
-                    || named->action != uiAction.action
+                    claims.surfaceId != uiAction.surface
+                    || claims.uiTargetId != uiAction.uiTarget
+                    || claims.actionId != uiAction.action
                 )
                 {
                     return protocolRefusal(

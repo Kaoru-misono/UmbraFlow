@@ -203,6 +203,22 @@ local function requireRef(what: string, index: { [string]: any }, id: string): a
     return result
 end
 
+-- One declared vocabulary, in the order the Host will compare it in. Sorted and
+-- deduplicated here because the Host holds these as opaque strings and cannot
+-- re-derive them: two orderings of one model would be two spellings of one fact.
+local function sortedUnique(values: { string }): { string }
+    local seen: { [string]: boolean } = {}
+    local result = {}
+    for _, value in values do
+        if not seen[value] then
+            seen[value] = true
+            table.insert(result, value)
+        end
+    end
+    table.sort(result)
+    return table.freeze(result)
+end
+
 function model.predicate_key(value: any): string
     local source = object("predicate", value)
     if source.kind == "locator_present" then
@@ -520,6 +536,22 @@ function model.compile(value: any): any
     table.sort(assetPaths)
     table.freeze(assetPaths)
 
+    -- The identifiers this model defines, as three flat vocabularies. They exist
+    -- because the Operator has to refuse a workflow step naming UI no model
+    -- declares, and C++ may not read RuntimeModel semantics to find out: the
+    -- compiler that already cross-references these ids publishes them, and the
+    -- Operator only asks whether a string is in a list.
+    local surfaceIds = {}
+    for _, valueSurface in surfaces do table.insert(surfaceIds, valueSurface.id) end
+    local uiTargetIds = {}
+    for _, valueTarget in uiTargets do table.insert(uiTargetIds, valueTarget.id) end
+    local actionIds = {}
+    for _, valueBinding in bindings do
+        for _, valueAction in valueBinding.actions do
+            table.insert(actionIds, valueAction.id)
+        end
+    end
+
     local bindingsBySurface: { [string]: { any } } = {}
     for _, valueBinding in bindings do
         requireRef("binding '" .. valueBinding.id .. "'", surfaceById, valueBinding.surface)
@@ -600,6 +632,9 @@ function model.compile(value: any): any
         surfaces = semanticModel.surfaces,
         transitions = semanticModel.transitions,
         asset_paths = assetPaths,
+        declared_surface_ids = sortedUnique(surfaceIds),
+        declared_ui_target_ids = sortedUnique(uiTargetIds),
+        declared_action_ids = sortedUnique(actionIds),
         ui_target_by_id = targetById,
         locator_by_id = locatorById,
         reader_by_id = readerById,

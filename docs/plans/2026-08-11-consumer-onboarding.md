@@ -271,6 +271,45 @@ than the yardstick implies.** Ruling needed: Q6.
 > `ReceiptRef`/`DeliveryOutcome`, and the Receipt is minted from the model, so
 > u06 was never evidence that a step intent's identifiers were checked.
 
+> **Closed 2026-08-11: the Operator now refuses it, at step minting.** The other
+> half above is shut, and where it is shut is the decision. Three facts fixed
+> the place:
+>
+> - A `PlanProposal` names no RuntimeModel identifier at all — its
+>   `allowed_ui_actions` are `step_key`s — so `freezePlan` has nothing to check
+>   and the refusal cannot be earlier than a step.
+> - At dispatch reservation the step row already exists, so refusing there would
+>   record a step the Operator will never dispatch. `mintNextStep` is the first
+>   moment the three identifiers exist and the last before anything is written.
+> - The Operator must not read RuntimeModel semantics
+>   (`tests/test-runtime-surface.py`), and it does not. `model.compile` — the
+>   trusted Luau parser that already cross-references every id — publishes
+>   `declared_surface_ids`, `declared_ui_target_ids` and `declared_action_ids`;
+>   they cross the private native surface beside `asset_paths`, exactly as that
+>   list already did; and `mintStep` asks only whether a string is in a list.
+>   The C++ would answer identically if the model were a list of colours.
+>
+> `StepIntentClaims` therefore carries `surfaceId`, `uiTargetId` and `actionId`,
+> and a UI-action claim leaving any of them empty is refused: a deployment whose
+> reader forgets to fill them stops every UI-action step rather than passing a
+> membership test against nothing.
+>
+> `OperatorPlanAuthority::create` now takes a `task::RuntimeModelBinding`,
+> mintable only by `TaskHost`, and refuses one whose artifact root the session
+> manifest does not pin. `mintStep` re-checks that root against
+> `sessions.runtime_artifact_root_hash` — the ledger's own column — because a
+> manifest is not a session: two manifests of one registration may pin two
+> artifacts, and only the ledger row says which one *this* Operation belongs to.
+>
+> What is still not checked, stated so nobody reads more into it: the Operator
+> checks the three identifiers *separately*, against three vocabularies. It does
+> not check that the model binds those three together in one Binding. That join
+> is the trusted resolver's and is enforced where a Receipt is minted —
+> `resolve_binding` refuses an undeclared UiTarget and `authorize` refuses an
+> action the resolved Binding does not grant — so a plan naming a real surface,
+> a real target and a real action that never meet still mints a step and fails
+> at the Host. Closing that would need the parser to publish the triple set.
+
 ## 5. What moves into the framework, and what stays
 
 Design constraint, taken as given: prefer moving code *into* the framework over
@@ -959,7 +998,12 @@ would hit them. A prediction that turns out wrong is the useful outcome.
   model, finds no member on `ProjectUnderTest`, and either concludes the suite
   does not test that (correct, §4.2) or spends time looking. Its
   `ui_target_id` / `surface_id` / `action_id` values will be accepted while
-  corresponding to nothing.
+  corresponding to nothing. **Both halves resolved (2026-08-11).**
+  `ProjectUnderTest::runtimeArtifact` is where the model goes, and a
+  `next_step` naming a surface, target or action that model does not define is
+  now refused by `mintStep` — so those values no longer correspond to nothing,
+  and a consumer whose plan and model disagree fails the suite instead of
+  passing it.
 - **R9.** `projectUnderTest(ProjectRole::Foreign)` is satisfied by duplicating
   the plugin source with one identifier changed, reproducing arcana's 56-of-58
   copy — unless the consumer independently invents umbraflow's

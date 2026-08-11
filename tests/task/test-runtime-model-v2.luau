@@ -102,6 +102,17 @@ assert(runtime.locator_by_id["save.template"].asset_path == "assets/templates/sa
 assert(runtime.locator_by_id["save.template"].sha256 == nil)
 assert(runtime.asset_paths[1] == "assets/templates/header.png")
 assert(runtime.asset_paths[2] == "assets/templates/save.png")
+
+-- The vocabulary the Operator matches a workflow step's UI identifiers
+-- against. It is published here because C++ may not read RuntimeModel
+-- semantics: every id the model declares must appear, and nothing else may.
+local function ids(values: { string }): string
+    return table.concat(values, ",")
+end
+assert(ids(runtime.declared_surface_ids) == "settings")
+assert(ids(runtime.declared_ui_target_ids) == "header,save_button")
+assert(ids(runtime.declared_action_ids) == "activate")
+rejects(function() runtime.declared_surface_ids[1] = "forged" end)
 assert(project.is_loaded(runtime) == false)
 rejects(function() runtime.ui_targets[1].kind = "control" end)
 

@@ -290,7 +290,10 @@ function project.load_project(): any
     local binding = requireNative("runtime_model_finalize")(
         model.schema_hash,
         semanticHash,
-        runtimeModel.asset_paths
+        runtimeModel.asset_paths,
+        runtimeModel.declared_surface_ids,
+        runtimeModel.declared_ui_target_ids,
+        runtimeModel.declared_action_ids
     )
     if binding == nil then error("Host rejected RuntimeArtifact binding", 2) end
     hostBindings[runtimeModel] = binding

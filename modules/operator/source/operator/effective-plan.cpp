@@ -80,6 +80,73 @@ namespace uf::operator_runtime
             return ok();
         }
 
+        // One member of OP:`UIActionIntent`.action, and the vocabulary the
+        // installed RuntimeModel declares for it. The three rows are a table
+        // rather than three tests so that adding a fourth identifier to the
+        // intent adds a row and cannot add a silently unchecked member.
+        //
+        // Its views borrow the binding and the claims for the length of one
+        // requireDeclaredUi call, which builds the table, reads it and destroys
+        // it before returning. Nothing stores one and none may be returned.
+        struct DeclaredUiCheck final
+        {
+            std::span<std::string const> declared{};
+            std::string_view             named{};
+            std::string_view             field{};
+        };
+
+        // The whole of what the Operator asks about a RuntimeModel: whether
+        // three strings the plugin wrote are strings the trusted parser
+        // published. It reads no RuntimeModel field, knows nothing of what a
+        // surface or an action is, and would answer identically if the model
+        // were a list of colours -- which is why this is identity and not
+        // interpretation of RuntimeModel semantics.
+        //
+        // A UI-action step whose intent left an identifier empty is refused
+        // here too: an empty name is in no vocabulary, and a reader that never
+        // filled these members therefore stops every UI-action step instead of
+        // passing a test against nothing.
+        [[nodiscard]]
+        auto requireDeclaredUi(
+            task::RuntimeModelBinding const& runtimeModel,
+            std::string_view runtimeArtifactRootHash,
+            StepIntentClaims const& claims
+        ) -> Status
+        {
+            if (runtimeModel.artifactRootHash().hex() != runtimeArtifactRootHash)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Plan authority answers for a RuntimeArtifact this session "
+                    "did not pin"
+                );
+            }
+            auto const& declared = runtimeModel.declaredUi();
+            auto const checks    = std::array{
+                DeclaredUiCheck{declared.surfaces, claims.surfaceId, "surface_id"},
+                DeclaredUiCheck{
+                    declared.uiTargets,
+                    claims.uiTargetId,
+                    "ui_target_id",
+                },
+                DeclaredUiCheck{declared.actions, claims.actionId, "action_id"},
+            };
+            for (auto const& check : checks)
+            {
+                UF_TRY(requireField(check.named, check.field));
+                if (!std::ranges::contains(check.declared, check.named))
+                {
+                    return fail(
+                        AutomationErrorKind::ActionRejected,
+                        std::string{"UIActionIntent names a "}
+                            + std::string{check.field}
+                            + " the installed RuntimeModel does not define"
+                    );
+                }
+            }
+            return ok();
+        }
+
         // OP:`ExpectedEffect` as an array, in JCS member order. JCS orders
         // members by UTF-16 code unit, which is why opaque_project_payload
         // precedes payload_schema_hash and scope_key precedes scope_kind.
@@ -537,11 +604,13 @@ namespace uf::operator_runtime
     OperatorPlanAuthority::OperatorPlanAuthority(
         ContentHash projectRegistrationHash,
         ContentHash operatorProtocolSchemaHash,
+        task::RuntimeModelBinding runtimeModel,
         PlanProposalReader readProposal,
         StepIntentReader readStepIntent
     )
         : m_projectRegistrationHash{projectRegistrationHash}
         , m_operatorProtocolSchemaHash{operatorProtocolSchemaHash}
+        , m_runtimeModel{std::move(runtimeModel)}
         , m_readProposal{std::move(readProposal)}
         , m_readStepIntent{std::move(readStepIntent)}
     {
@@ -550,6 +619,7 @@ namespace uf::operator_runtime
     auto OperatorPlanAuthority::create(
         VerifiedProjectRegistration const& registration,
         SessionManifest const& sessionManifest,
+        task::RuntimeModelBinding const& runtimeModel,
         std::string_view exactOperatorProtocolSchemaBytes,
         PlanProposalReader readProposal,
         StepIntentReader readStepIntent
@@ -580,9 +650,18 @@ namespace uf::operator_runtime
                 "Operator protocol schema bytes do not match the pinned session manifest"
             );
         }
+        if (runtimeModel.artifactRootHash() != sessionManifest.runtimeModelArtifactRootHash())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "RuntimeModel binding was parsed from a RuntimeArtifact this "
+                "session manifest does not pin"
+            );
+        }
         return OperatorPlanAuthority{
             registration.hash(),
             schemaHash,
+            runtimeModel,
             std::move(readProposal),
             std::move(readStepIntent),
         };
@@ -744,6 +823,14 @@ namespace uf::operator_runtime
                 AutomationErrorKind::ActionRejected,
                 "Step intent names an action outside the frozen allowed set"
             );
+        }
+        if (claims.kind == StepKind::UiAction)
+        {
+            UF_TRY(requireDeclaredUi(
+                m_runtimeModel,
+                inputs.runtimeArtifactRootHash,
+                claims
+            ));
         }
         UF_TRY_VALUE(
             stepIntentHash,

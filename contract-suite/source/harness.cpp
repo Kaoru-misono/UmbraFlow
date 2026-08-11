@@ -237,9 +237,20 @@ namespace uf::operator_runtime::contract
         // "operator" is the exact operator protocol schema sessionManifest
         // above pins. The authority hashes the bytes and compares, so a suite
         // that named the wrong ones could not build one at all.
+        //
+        // The RuntimeModel binding comes from the Host that just activated this
+        // project's artifact. It is what lets the Operator refuse a step naming
+        // UI the model does not define, and the suite cannot substitute one: the
+        // binding is minted only by TaskHost and only for the artifact the
+        // session manifest pins.
+        auto runtimeModel = observation.host->runtimeModelBinding(
+            observation.generation
+        );
+        REQUIRE(runtimeModel.has_value());
         auto authority = planAuthority(
             project.registration,
             manifest,
+            *runtimeModel,
             "operator",
             project.vocabulary.uiAction
         );
