@@ -1,0 +1,15 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://umbraflow.dev/schema/project/tool-precondition",
+    "title": "umbraflow fixture tool arguments",
+    "$defs": {
+        "FixtureArguments": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value"],
+            "properties": {
+                "value": {"type": "integer", "minimum": 1, "maximum": 8}
+            }
+        }
+    }
+}

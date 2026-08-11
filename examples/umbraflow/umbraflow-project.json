@@ -1,0 +1,56 @@
+{
+  "$comment": "The framework's own exemplar, as data. Its two deployments hold identical schema documents and differ only in the plugin id every manifest declares, which is what makes their registrations two rather than one.",
+  "schema": "umbraflow-project/v1",
+  "runtime_artifact": "runtime/artifact",
+  "primary_deployment": "alpha",
+  "deployments": [
+    {
+      "name": "alpha",
+      "plugin_id": "fixture.alpha",
+      "baseline_event_type": "fixture.baseline",
+      "plugin": "plugin/alpha.luau",
+      "project_state_schema": "schema/project-state-v1.schema.json",
+      "project_observation_schema": "schema/project-observation-v1.schema.json",
+      "tool_precondition_schema": "schema/tool-precondition-v1.schema.json",
+      "reconcile_schema": "schema/reconcile-v1.schema.json",
+      "tool_catalog": "schema/alpha/tool-catalog-v1.json",
+      "journal_event_schema_manifest": "schema/alpha/journal-manifest-v1.json",
+      "reconcile_manifest": "schema/alpha/reconcile-manifest-v1.json",
+      "journal_payload_schemas": [
+        "schema/journal/fixture.baseline-v1.schema.json",
+        "schema/journal/fixture.confirmed-v1.schema.json",
+        "schema/journal/fixture.duplicate-v1.schema.json",
+        "schema/journal/fixture.progress-v1.schema.json"
+      ],
+      "effect_payload_schemas": [
+        "schema/effect/fixture.write-v1.schema.json"
+      ],
+      "$comment": "This deployment registers no artifact root: its plugin is handed no blob, so the member is written empty rather than left out.",
+      "artifact_blobs": []
+    },
+    {
+      "name": "foreign",
+      "plugin_id": "fixture.foreign",
+      "baseline_event_type": "fixture.baseline",
+      "plugin": "plugin/foreign.luau",
+      "project_state_schema": "schema/project-state-v1.schema.json",
+      "project_observation_schema": "schema/project-observation-v1.schema.json",
+      "tool_precondition_schema": "schema/tool-precondition-v1.schema.json",
+      "reconcile_schema": "schema/reconcile-v1.schema.json",
+      "tool_catalog": "schema/foreign/tool-catalog-v1.json",
+      "journal_event_schema_manifest": "schema/foreign/journal-manifest-v1.json",
+      "reconcile_manifest": "schema/foreign/reconcile-manifest-v1.json",
+      "journal_payload_schemas": [
+        "schema/journal/fixture.baseline-v1.schema.json",
+        "schema/journal/fixture.confirmed-v1.schema.json",
+        "schema/journal/fixture.duplicate-v1.schema.json",
+        "schema/journal/fixture.progress-v1.schema.json"
+      ],
+      "effect_payload_schemas": [
+        "schema/effect/fixture.write-v1.schema.json"
+      ],
+      "$comment": "This deployment registers no artifact root: its plugin is handed no blob, so the member is written empty rather than left out.",
+      "artifact_blobs": []
+    }
+  ]
+}

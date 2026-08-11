@@ -1,0 +1,11 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://umbraflow.dev/schema/project/journal/expedition.founded",
+    "title": "arcana expedition.founded payload",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["camp"],
+    "properties": {
+        "camp": {"enum": ["north", "south"]}
+    }
+}

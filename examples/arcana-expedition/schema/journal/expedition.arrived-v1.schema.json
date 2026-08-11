@@ -1,0 +1,11 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://umbraflow.dev/schema/project/journal/expedition.arrived",
+    "title": "arcana expedition.arrived payload",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["leagues"],
+    "properties": {
+        "leagues": {"type": "integer", "minimum": 0, "maximum": 64}
+    }
+}

@@ -1,0 +1,27 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://umbraflow.dev/schema/project/reconcile",
+    "title": "arcana expedition reconcile documents",
+    "$defs": {
+        "ReconcileRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["observed"],
+            "properties": {
+                "observed": {
+                    "enum": ["advanced", "arrived", "blocked", "nothing"]
+                }
+            }
+        },
+        "ReconcileVerdict": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["verdict"],
+            "properties": {
+                "verdict": {
+                    "enum": ["underway", "settled", "refused", "unclear"]
+                }
+            }
+        }
+    }
+}

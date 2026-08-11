@@ -1,0 +1,47 @@
+schema_version = 2
+base_resolution = [1600, 900]
+base_dpi = [144, 144]
+
+[[ui_target]]
+id = "expedition.camp"
+kind = "region"
+
+[[ui_target]]
+id = "expedition.target"
+kind = "control"
+
+[[locator]]
+id = "expedition.banner"
+kind = "template"
+asset_path = "assets/expedition-banner.png"
+threshold = 1
+
+[[locator]]
+id = "expedition.march-mark"
+kind = "template"
+asset_path = "assets/expedition-march.png"
+threshold = 1
+
+[[binding]]
+id = "expedition.camp.banner"
+surface = "expedition.surface"
+ui_target = "expedition.camp"
+variant = "primary"
+placement = { kind = "fixed", rect = [108, 92, 16, 16] }
+detector = { all = [{ kind = "locator_present", locator = "expedition.banner" }], any = [], none = [] }
+actions = []
+
+[[binding]]
+id = "expedition.target.primary"
+surface = "expedition.surface"
+ui_target = "expedition.target"
+variant = "primary"
+placement = { kind = "fixed", rect = [1284, 738, 16, 16], action_point = [1292, 746] }
+detector = { all = [{ kind = "locator_present", locator = "expedition.march-mark" }], any = [], none = [] }
+actions = [{ id = "expedition.press", kind = "click", proof_locator = "expedition.march-mark" }]
+
+[[surface]]
+id = "expedition.surface"
+kind = "scene"
+covers = []
+identity = { all = ["expedition.camp.banner"], any = [], none = [] }

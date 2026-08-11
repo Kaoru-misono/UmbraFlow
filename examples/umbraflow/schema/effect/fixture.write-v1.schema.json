@@ -1,0 +1,11 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://umbraflow.dev/schema/project/effect/fixture.write",
+    "title": "umbraflow fixture.write effect payload",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["value"],
+    "properties": {
+        "value": {"type": "integer", "minimum": 0}
+    }
+}

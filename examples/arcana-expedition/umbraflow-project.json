@@ -1,0 +1,58 @@
+{
+  "$comment": "A second game, as data. Both deployments pin one artifact root over the same blob, so the two registrations differ only where the plugin id reaches them.",
+  "schema": "umbraflow-project/v1",
+  "runtime_artifact": "runtime/artifact",
+  "primary_deployment": "expedition",
+  "deployments": [
+    {
+      "name": "expedition",
+      "plugin_id": "arcana.expedition",
+      "baseline_event_type": "expedition.founded",
+      "plugin": "plugin/expedition.luau",
+      "project_state_schema": "schema/project-state-v1.schema.json",
+      "project_observation_schema": "schema/project-observation-v1.schema.json",
+      "tool_precondition_schema": "schema/tool-precondition-v1.schema.json",
+      "reconcile_schema": "schema/reconcile-v1.schema.json",
+      "tool_catalog": "schema/expedition/tool-catalog-v1.json",
+      "journal_event_schema_manifest": "schema/expedition/journal-manifest-v1.json",
+      "reconcile_manifest": "schema/expedition/reconcile-manifest-v1.json",
+      "journal_payload_schemas": [
+        "schema/journal/expedition.advanced-v1.schema.json",
+        "schema/journal/expedition.arrived-v1.schema.json",
+        "schema/journal/expedition.blocked-v1.schema.json",
+        "schema/journal/expedition.founded-v1.schema.json"
+      ],
+      "effect_payload_schemas": [
+        "schema/effect/expedition.march-v1.schema.json"
+      ],
+      "artifact_blobs": [
+        {"name": "map", "path": "blob/map.blob"}
+      ]
+    },
+    {
+      "name": "rival",
+      "plugin_id": "arcana.rival",
+      "baseline_event_type": "expedition.founded",
+      "plugin": "plugin/rival.luau",
+      "project_state_schema": "schema/project-state-v1.schema.json",
+      "project_observation_schema": "schema/project-observation-v1.schema.json",
+      "tool_precondition_schema": "schema/tool-precondition-v1.schema.json",
+      "reconcile_schema": "schema/reconcile-v1.schema.json",
+      "tool_catalog": "schema/rival/tool-catalog-v1.json",
+      "journal_event_schema_manifest": "schema/rival/journal-manifest-v1.json",
+      "reconcile_manifest": "schema/rival/reconcile-manifest-v1.json",
+      "journal_payload_schemas": [
+        "schema/journal/expedition.advanced-v1.schema.json",
+        "schema/journal/expedition.arrived-v1.schema.json",
+        "schema/journal/expedition.blocked-v1.schema.json",
+        "schema/journal/expedition.founded-v1.schema.json"
+      ],
+      "effect_payload_schemas": [
+        "schema/effect/expedition.march-v1.schema.json"
+      ],
+      "artifact_blobs": [
+        {"name": "map", "path": "blob/map.blob"}
+      ]
+    }
+  ]
+}

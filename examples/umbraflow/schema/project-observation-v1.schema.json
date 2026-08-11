@@ -1,0 +1,7 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://umbraflow.dev/schema/project/observation",
+    "title": "umbraflow fixture ProjectObservation",
+    "type": "object",
+    "additionalProperties": false
+}

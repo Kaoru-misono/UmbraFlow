@@ -1,0 +1,11 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://umbraflow.dev/schema/project/state",
+    "title": "umbraflow fixture ProjectState",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["revision"],
+    "properties": {
+        "revision": {"type": "integer", "minimum": 0}
+    }
+}

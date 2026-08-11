@@ -209,6 +209,42 @@ work. One new row was opened by the falsification the `cli` move was asked for.
       moving first means moving twice.
 - [ ] `conformance/exemplars/*` become project **directories** under `examples/`.
       Data a project author copies, not C++ a consumer links.
+      **The data half landed 2026-08-11.** `examples/umbraflow/` (deployments
+      `alpha` and `foreign`, no artifact root) and `examples/arcana-expedition/`
+      (deployments `expedition` and `rival`, one artifact root over one blob)
+      are project directories in `docs/plans/2026-08-11-project-as-data.md`
+      §2's format, and `deployment::loadProject` accepts both. Every value in
+      them was written out of the exemplar C++ that assembles the same values
+      today; nothing reads them, `conformance/exemplars/` is untouched, and §5
+      step 6 is the change that switches the suite over and deletes the C++.
+      What the writing measured, and what the switch therefore owes:
+    - §2.2's `effect_payload_sha256s` **cannot be written yet, and is refused
+      rather than merely unenforced**: the framework's Tool Catalog schema
+      (`modules/deployment/source/deployment/project-deployment.cpp`,
+      `k_toolCatalogSchema`) is a closed object that does not declare it, so a
+      catalog carrying the member is refused with *"additionalProperties
+      carries 'effect_payload_sha256s', which this closed object does not
+      declare"*. The bill §2.2 states is one file short: the framework schema
+      has to gain the member in the same change as the four catalogs under
+      `examples/*/schema/*/tool-catalog-v1.json`, the two generators at
+      `conformance/exemplars/*/project-schemas.hpp`, and uf-chaos's two
+      authored catalogs at `schema/{dream,archive}/umbraflow-tool-catalog-v1.json`.
+    - **A `runtime_artifact` root cannot carry its own
+      `runtime-artifact.manifest.json` in this repository.** Measured both
+      ways: `task::loadRuntimeArtifact` accepts the exact canonical bytes and
+      refuses the same bytes with one trailing newline (*"must have no BOM,
+      whitespace, or trailing bytes outside its canonical JSON value"*), while
+      `scripts/fix_format.py --check` requires every `.json` under the
+      repository to end in exactly one. Both example artifact roots therefore
+      carry `page-model.toml` and their asset closure and no manifest, which is
+      a gap the installer will name rather than a manifest that would look
+      loaded and then fail. Ruling it needs one of the two rules to yield.
+    - Every digest a project-authored document states about a file beside it is
+      the sha256 of the **file**, and the exemplar C++ computes the same digest
+      over a string constant that carries no trailing newline. The three
+      manifests and the plugin's own `payload_schema_hash` are the C++'s bytes
+      with exactly those digests restated; `plugin_id`, `baseline_event_type`
+      and the artifact roots are byte-identical to the C++ side.
 - [ ] `scripts/check_modules.py` drops `DECLARED_SOURCE_TREES` and returns to a
       single root once nothing carries a manifest outside `modules/`.
 - [x] Decide the fate of the uncommitted `cmake/manifest.cmake` and

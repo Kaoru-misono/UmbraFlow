@@ -1,0 +1,11 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://umbraflow.dev/schema/project/state",
+    "title": "arcana expedition ProjectState",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["turn"],
+    "properties": {
+        "turn": {"type": "integer", "minimum": 0}
+    }
+}

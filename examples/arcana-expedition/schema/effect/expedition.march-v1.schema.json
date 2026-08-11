@@ -1,0 +1,11 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://umbraflow.dev/schema/project/effect/expedition.march",
+    "title": "arcana expedition.march effect payload",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["turn"],
+    "properties": {
+        "turn": {"type": "integer", "minimum": 0}
+    }
+}

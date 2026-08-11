@@ -1,0 +1,11 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://umbraflow.dev/schema/project/observation",
+    "title": "arcana expedition ProjectObservation",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["visible"],
+    "properties": {
+        "visible": {"type": "boolean"}
+    }
+}
