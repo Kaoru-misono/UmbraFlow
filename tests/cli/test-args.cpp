@@ -5,6 +5,8 @@
 
 #include <domain/error.hpp>
 
+#include <ocr/engine.hpp>
+
 #include <task/task-host.hpp>
 
 #include <doctest/doctest.h>
@@ -249,10 +251,135 @@ namespace uf::cli
         CHECK(foreign.error().message().contains("--hwnd"));
     }
 
+    // The verb an agent reads a screenshot with. Its two required paths are
+    // asserted on their messages: a verb whose model directory went missing
+    // would otherwise read every image as empty and report success.
+    TEST_CASE("parseOcrArguments accepts the complete measurement shape")
+    {
+        auto const result = parseOcrArguments(
+            std::vector<std::string>{
+                "--image",
+                "capture.png",
+                "--ocr-models",
+                "models",
+                "--rect",
+                "440,600,300,140",
+                "--layout",
+                "single-line",
+                "--max-lines",
+                "8",
+            }
+        );
+
+        REQUIRE(result.has_value());
+        CHECK(result->image == std::filesystem::path{"capture.png"});
+        CHECK(result->ocrModels == std::filesystem::path{"models"});
+        REQUIRE(result->rect.has_value());
+        CHECK(result->rect->x() == uint32{440});
+        CHECK(result->rect->y() == uint32{600});
+        CHECK(result->rect->width() == uint32{300});
+        CHECK(result->rect->height() == uint32{140});
+        CHECK(result->layout == ocr::TextLayout::SingleLine);
+        CHECK(result->maximumLines == uint32{8});
+    }
+
+    // Absent --rect reads the whole image and absent --max-lines imposes no
+    // ceiling, both of which the engine spells as an empty optional. Block is
+    // the default because a caller that knew where the line was would have
+    // passed a rectangle.
+    TEST_CASE("parseOcrArguments defaults to reading all of the image")
+    {
+        auto const result = parseOcrArguments(
+            std::vector<std::string>{"--image", "a.png", "--ocr-models", "m"}
+        );
+
+        REQUIRE(result.has_value());
+        CHECK_FALSE(result->rect.has_value());
+        CHECK_FALSE(result->maximumLines.has_value());
+        CHECK(result->layout == ocr::TextLayout::Block);
+    }
+
+    TEST_CASE("parseOcrArguments requires both the image and the models")
+    {
+        auto const noImage = parseOcrArguments(
+            std::vector<std::string>{"--ocr-models", "m"}
+        );
+        REQUIRE_FALSE(noImage.has_value());
+        CHECK(noImage.error().message().contains("--image"));
+
+        auto const noModels = parseOcrArguments(
+            std::vector<std::string>{"--image", "a.png"}
+        );
+        REQUIRE_FALSE(noModels.has_value());
+        CHECK(noModels.error().message().contains("--ocr-models"));
+    }
+
+    // A rectangle is four numbers or it is not a rectangle. Three components
+    // and five are both refused rather than completed or truncated: this value
+    // decides which pixels are read, and a caller that mistyped it must not be
+    // handed text measured somewhere else.
+    TEST_CASE("parseOcrArguments refuses a rect that is not four numbers")
+    {
+        auto const malformed = std::array{
+            std::string{"440,600,300"},
+            std::string{"440,600,300,140,7"},
+            std::string{"440,600,300,"},
+            std::string{"440;600;300;140"},
+            std::string{"440,600,300,-140"},
+            std::string{"440,600,0,140"},
+            std::string{""},
+        };
+
+        for (auto const& value : malformed)
+        {
+            INFO("rect value: ", value);
+            CHECK_FALSE(
+                parseOcrArguments(
+                    std::vector<std::string>{
+                        "--image", "a.png", "--ocr-models", "m",
+                        "--rect", value,
+                    }
+                )
+                    .has_value()
+            );
+        }
+    }
+
+    TEST_CASE("parseOcrArguments accepts only the two layouts the engine has")
+    {
+        auto const block = parseOcrArguments(
+            std::vector<std::string>{
+                "--image", "a.png", "--ocr-models", "m", "--layout", "block",
+            }
+        );
+        REQUIRE(block.has_value());
+        CHECK(block->layout == ocr::TextLayout::Block);
+
+        auto const unknown = parseOcrArguments(
+            std::vector<std::string>{
+                "--image", "a.png", "--ocr-models", "m", "--layout", "paragraph",
+            }
+        );
+        REQUIRE_FALSE(unknown.has_value());
+        CHECK(unknown.error().message().contains("--layout"));
+
+        // A flag `explore` takes, refused rather than accepted and ignored:
+        // this verb binds no window, so a caller that named one is running the
+        // wrong command.
+        auto const foreign = parseOcrArguments(
+            std::vector<std::string>{
+                "--image", "a.png", "--ocr-models", "m", "--hwnd", "0x20",
+            }
+        );
+        REQUIRE_FALSE(foreign.has_value());
+        CHECK(foreign.error().message().contains("--hwnd"));
+    }
+
     TEST_CASE("public usage names every command this binary dispatches")
     {
         auto const usage = usageText();
         CHECK(usage.find("  umbra-flow explore ") != std::string::npos);
+        CHECK(usage.find("  umbra-flow ocr ") != std::string::npos);
         CHECK(usage.find("  umbra-flow open ") != std::string::npos);
         CHECK(usage.find("  umbra-flow targets\n") != std::string::npos);
         CHECK(usage.find("  umbra-flow run ") == std::string::npos);

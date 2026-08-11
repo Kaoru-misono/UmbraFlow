@@ -51,6 +51,8 @@ RETIRED_PATHS = (
 REQUIRED_SAFE_PATHS = (
     f"{CLI_LIBRARY_SOURCE}/explore.cpp",
     f"{CLI_LIBRARY_SOURCE}/explore.hpp",
+    f"{CLI_LIBRARY_SOURCE}/ocr.cpp",
+    f"{CLI_LIBRARY_SOURCE}/ocr.hpp",
     f"{CLI_LIBRARY_SOURCE}/open-project.cpp",
     f"{CLI_LIBRARY_SOURCE}/open-project.hpp",
     f"{CLI_LIBRARY_SOURCE}/project-skeleton.cpp",
@@ -68,6 +70,7 @@ REQUIRED_SAFE_PATHS = (
     "schema/umbraflow-trace-v2.schema.json",
     "tests/cli/test-args.cpp",
     "tests/cli/test-explore-protocol.cpp",
+    "tests/cli/test-ocr.cpp",
     "tests/cli/test-open-project.cpp",
     "tests/cli/test-project-skeleton.cpp",
     "tests/cli/test-targets.cpp",
@@ -76,8 +79,10 @@ REQUIRED_SAFE_PATHS = (
 RETIRED_COMMANDS = frozenset({"check", "replay", "run"})
 # open loads a project directory and registers its deployments' plugins. It
 # reaches no target and drives no session, which is why it may share a binary
-# whose whole invariant is acting on a real window.
-ALLOWED_COMMANDS = frozenset({"explore", "open", "targets"})
+# whose whole invariant is acting on a real window. ocr is here on the same
+# terms: it measures a PNG already on disk, opens no capture and posts no
+# input, so it cannot reach a window at all.
+ALLOWED_COMMANDS = frozenset({"explore", "ocr", "open", "targets"})
 FORBIDDEN_BUSINESS_GLOBALS = frozenset(
     {
         "action",

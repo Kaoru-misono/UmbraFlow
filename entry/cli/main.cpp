@@ -3,6 +3,7 @@
 #include <cli/args.hpp>
 #include <cli/cli-result.hpp>
 #include <cli/explore.hpp>
+#include <cli/ocr.hpp>
 #include <cli/open-project.hpp>
 #include <cli/targets.hpp>
 
@@ -60,6 +61,31 @@ namespace uf::cli
                 *report,
                 exploreCancellationRequested()
             );
+        }
+
+        [[nodiscard]]
+        auto dispatchOcr(std::span<std::string const> raw) -> ExitCode
+        {
+            auto const args = parseOcrArguments(raw);
+            if (!args)
+            {
+                std::cerr << formatError(args.error()) << '\n';
+                std::cerr << ocrUsageText();
+                return exitCodeForError(args.error(), false);
+            }
+
+            auto const text = ocrProduct(*args);
+            if (!text)
+            {
+                std::cerr << formatError(text.error()) << '\n';
+                return exitCodeForError(text.error(), false);
+            }
+
+            // The document and nothing else on stdout. Every diagnostic this
+            // verb produces went to stderr above, so a caller may pipe this
+            // stream straight into a parser or a hash.
+            std::cout << formatImageText(*text) << '\n';
+            return ExitCode::Success;
         }
 
         [[nodiscard]]
@@ -122,6 +148,7 @@ namespace uf::cli
 
         constexpr auto k_commands = std::array{
             Command{"explore", &dispatchExplore},
+            Command{"ocr", &dispatchOcr},
             Command{"open", &dispatchOpen},
             Command{"targets", &dispatchTargets},
         };

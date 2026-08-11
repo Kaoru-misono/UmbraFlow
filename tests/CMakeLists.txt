@@ -615,6 +615,7 @@ endif()
 set(CLI_TEST_SOURCES
     cli/test-args.cpp
     cli/test-explore-protocol.cpp
+    cli/test-ocr.cpp
     cli/test-open-project.cpp
     cli/test-project-skeleton.cpp
     cli/test-targets.cpp

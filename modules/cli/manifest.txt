@@ -17,9 +17,19 @@ unity_build = false
 # reaches its registrar. It is private because open-project.hpp names no type
 # from either: what a load produced is restated there as strings, so a caller
 # reads the report without linking the authorities that answered for it.
+#
+# image and json are private for the same reason, and both arrived with the ocr
+# verb. image decodes the PNG that verb reads and swizzles it into the channel
+# order the recognition model was trained on; nothing but ocr-windows.cpp names
+# image::RgbaImage, and ocr.hpp carries the decoded extent as two uint32 rather
+# than the decoder's type. json is what formatImageText serializes through, and
+# it appears in no header either: the verb returns std::string, because a caller
+# of this module reads canonical bytes rather than a document model. json was
+# already reachable through deployment, which is an accident of that edge and
+# not a declaration this module can rely on.
 [dependencies]
 public = engine task
-private = deployment
+private = deployment image json
 
 # controller is public because targets.hpp and candidate-selection.hpp name its
 # TargetCandidate, so a caller holding one has to see the type. user32 is
@@ -32,8 +42,9 @@ private = user32
 # files beside it are the Windows implementations of headers whose declarations
 # are platform-free.
 [sources.windows]
-include = candidate-selection.cpp candidate-selection.hpp explore-windows.cpp platform/*.cpp platform/*.hpp targets-windows.cpp
+include = candidate-selection.cpp candidate-selection.hpp explore-windows.cpp ocr-windows.cpp platform/*.cpp platform/*.hpp targets-windows.cpp
 
-# What answers the same declarations where there is no desktop to enumerate.
+# What answers the same declarations where there is no desktop to enumerate,
+# and -- for ocr -- no inference runtime to load a model into.
 [sources.other]
-include = explore-unsupported.cpp targets-unsupported.cpp
+include = explore-unsupported.cpp ocr-unsupported.cpp targets-unsupported.cpp

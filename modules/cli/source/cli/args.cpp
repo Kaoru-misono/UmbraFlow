@@ -75,6 +75,53 @@ namespace uf::cli
 
         constexpr auto k_openProjectFlag = std::string_view{"--project"};
 
+        enum class OcrFlag : uint8
+        {
+            Image,
+            OcrModels,
+            Rect,
+            Layout,
+            MaximumLines,
+        };
+
+        struct OcrFlagSpec final
+        {
+            std::string_view name{};
+            OcrFlag          flag{OcrFlag::Image};
+        };
+
+        constexpr auto k_ocrFlags = std::array{
+            OcrFlagSpec{"--image", OcrFlag::Image},
+            OcrFlagSpec{"--ocr-models", OcrFlag::OcrModels},
+            OcrFlagSpec{"--rect", OcrFlag::Rect},
+            OcrFlagSpec{"--layout", OcrFlag::Layout},
+            OcrFlagSpec{"--max-lines", OcrFlag::MaximumLines},
+        };
+
+        [[nodiscard]]
+        auto findOcrFlag(std::string_view name) noexcept -> std::optional<OcrFlag>
+        {
+            auto const found = std::ranges::find(
+                k_ocrFlags,
+                name,
+                &OcrFlagSpec::name
+            );
+            if (found == k_ocrFlags.end()) return std::nullopt;
+            return found->flag;
+        }
+
+        struct OcrLayoutSpec final
+        {
+            std::string_view name{};
+            ocr::TextLayout  layout{ocr::TextLayout::Block};
+        };
+
+        // The whole vocabulary of --layout, and the only place it is spelled.
+        constexpr auto k_ocrLayouts = std::array{
+            OcrLayoutSpec{"block", ocr::TextLayout::Block},
+            OcrLayoutSpec{"single-line", ocr::TextLayout::SingleLine},
+        };
+
         [[nodiscard]]
         auto invalid(std::string message) -> std::unexpected<Error>
         {
@@ -180,6 +227,92 @@ namespace uf::cli
                 return invalid(std::format("missing required argument {}", flag));
             }
             return *std::move(value);
+        }
+
+        [[nodiscard]]
+        auto parseUnsigned32(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<uint32>
+        {
+            UF_TRY_VALUE(parsed, parseUnsigned(value, flag));
+            auto const narrowed = checkedCast<uint32>(parsed);
+            if (!narrowed)
+            {
+                return invalid(
+                    std::format("{} value {} does not fit in 32 bits", flag, parsed)
+                );
+            }
+            return *narrowed;
+        }
+
+        [[nodiscard]]
+        auto parseLayout(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<ocr::TextLayout>
+        {
+            auto const found = std::ranges::find(
+                k_ocrLayouts,
+                value,
+                &OcrLayoutSpec::name
+            );
+            if (found == k_ocrLayouts.end())
+            {
+                return invalid(
+                    std::format(
+                        "{} expects block or single-line, got \"{}\"",
+                        flag,
+                        value
+                    )
+                );
+            }
+            return found->layout;
+        }
+
+        // x,y,width,height in the image's own pixels. Four components exactly:
+        // a caller that wrote three has not described a rectangle, and
+        // defaulting the missing one would read a region nobody asked for.
+        [[nodiscard]]
+        auto parseRect(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<PixelRect>
+        {
+            auto fields    = std::array<uint32, 4>{};
+            auto remaining = value;
+            for (auto index = std::size_t{0}; index < fields.size(); ++index)
+            {
+                auto const last      = index + 1U == fields.size();
+                auto const separator = remaining.find(',');
+                if (last != (separator == std::string_view::npos))
+                {
+                    return invalid(
+                        std::format(
+                            "{} expects x,y,width,height, got \"{}\"",
+                            flag,
+                            value
+                        )
+                    );
+                }
+
+                UF_TRY_VALUE(
+                    parsed,
+                    parseUnsigned32(remaining.substr(0U, separator), flag)
+                );
+                fields[index] = parsed;
+                if (!last)
+                {
+                    remaining = remaining.substr(separator + 1U);
+                }
+            }
+
+            UF_TRY_VALUE_CONTEXT(
+                rect,
+                PixelRect::create(fields[0], fields[1], fields[2], fields[3]),
+                std::string{flag}
+            );
+            return rect;
         }
     }
 
@@ -326,6 +459,75 @@ namespace uf::cli
         return OpenArgs{.project = std::move(requiredProject)};
     }
 
+    auto parseOcrArguments(std::span<std::string const> raw) -> Result<OcrArgs>
+    {
+        auto image     = std::optional<std::filesystem::path>{};
+        auto ocrModels = std::optional<std::filesystem::path>{};
+
+        auto rect         = std::optional<PixelRect>{};
+        auto layout       = ocr::TextLayout::Block;
+        auto maximumLines = std::optional<uint32>{};
+
+        auto index = std::size_t{0};
+        while (index < raw.size())
+        {
+            auto const& name = raw[index];
+            auto const flag  = findOcrFlag(name);
+            if (!flag)
+            {
+                return invalid(std::format("unknown argument \"{}\"", name));
+            }
+            if (index + 1U >= raw.size())
+            {
+                return invalid(std::format("missing value for {}", name));
+            }
+            auto const& value = raw[index + 1U];
+
+            switch (*flag)
+            {
+            case OcrFlag::Image:
+                image = std::filesystem::path{value};
+                break;
+            case OcrFlag::OcrModels:
+                ocrModels = std::filesystem::path{value};
+                break;
+            case OcrFlag::Rect:
+            {
+                UF_TRY_VALUE(parsed, parseRect(value, name));
+                rect = parsed;
+                break;
+            }
+            case OcrFlag::Layout:
+            {
+                UF_TRY_VALUE(parsed, parseLayout(value, name));
+                layout = parsed;
+                break;
+            }
+            case OcrFlag::MaximumLines:
+            {
+                UF_TRY_VALUE(parsed, parseUnsigned32(value, name));
+                maximumLines = parsed;
+                break;
+            }
+            }
+            index += 2U;
+        }
+
+        UF_TRY_VALUE(requiredImage, requirePath(std::move(image), "--image"));
+        UF_TRY_VALUE(
+            requiredModels,
+            requirePath(std::move(ocrModels), "--ocr-models")
+        );
+
+        return OcrArgs{
+            .image        = std::move(requiredImage),
+            .ocrModels    = std::move(requiredModels),
+            .rect         = rect,
+            .layout       = layout,
+            .maximumLines = maximumLines,
+        };
+    }
+
     auto exploreUsageText() noexcept -> std::string_view
     {
         return
@@ -373,6 +575,36 @@ namespace uf::cli
             "but a deployment's plugin does not register.\n";
     }
 
+    auto ocrUsageText() noexcept -> std::string_view
+    {
+        return
+            "Usage:\n"
+            "  umbra-flow ocr --image FILE --ocr-models DIR [options]\n"
+            "\n"
+            "Reads a PNG already on disk and prints one JSON object on stdout:\n"
+            "the image extent, and every line found, each with its text, its\n"
+            "rectangle in image pixels and its confidence in basis points. The\n"
+            "output is RFC 8785 canonical, so two runs over the same pixels\n"
+            "produce the same bytes and a caller may hash or diff it.\n"
+            "\n"
+            "It reaches no target and opens no capture. Measuring rectangles is\n"
+            "what a caller reading a screenshot cannot do for itself; naming\n"
+            "what one means is what it can.\n"
+            "\n"
+            "Required:\n"
+            "  --image FILE                 PNG to read\n"
+            "  --ocr-models DIR             Directory holding\n"
+            "                               ppocr-v6-small-rec and\n"
+            "                               ppocr-v6-small-det\n"
+            "\n"
+            "Options:\n"
+            "  --rect X,Y,W,H               Region to read; default: all of it\n"
+            "  --layout block|single-line   Locate every line, or read the rect\n"
+            "                               as exactly one; default: block\n"
+            "  --max-lines N                Refuse, rather than truncate, past\n"
+            "                               N lines\n";
+    }
+
     auto targetsUsageText() noexcept -> std::string_view
     {
         return
@@ -389,6 +621,8 @@ namespace uf::cli
     auto usageText() -> std::string
     {
         auto text = std::string{exploreUsageText()};
+        text += '\n';
+        text += ocrUsageText();
         text += '\n';
         text += openUsageText();
         text += '\n';

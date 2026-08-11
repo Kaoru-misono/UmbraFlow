@@ -4,6 +4,10 @@
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
+#include <domain/space.hpp>
+
+#include <ocr/engine.hpp>
+
 #include <chrono>
 #include <filesystem>
 #include <optional>
@@ -84,6 +88,36 @@ namespace uf::cli
     auto parseOpenArguments(std::span<std::string const> raw) -> Result<OpenArgs>;
 
     [[nodiscard]] auto openUsageText() noexcept -> std::string_view;
+
+    // One PNG already on disk, and how hard to look at it. There is no target
+    // and no project: this verb measures a file, which is what makes it usable
+    // by a caller that cannot reach a desktop at all.
+    //
+    // The model directory is required rather than optional as it is for
+    // `explore`. platform::bindOcrEngine answers an absent directory with a
+    // null engine, and a null engine here would read every image as holding no
+    // text -- a fail-open answer indistinguishable from a correct one.
+    struct OcrArgs final
+    {
+        std::filesystem::path image{};
+        std::filesystem::path ocrModels{};
+
+        // Absent reads the whole image. Present is the caller stating where the
+        // text is, and it is refused when it leaves the image rather than
+        // clamped.
+        std::optional<PixelRect> rect{};
+
+        ocr::TextLayout layout{ocr::TextLayout::Block};
+
+        std::optional<uint32> maximumLines{};
+
+        auto operator==(OcrArgs const&) const -> bool = default;
+    };
+
+    [[nodiscard]]
+    auto parseOcrArguments(std::span<std::string const> raw) -> Result<OcrArgs>;
+
+    [[nodiscard]] auto ocrUsageText() noexcept -> std::string_view;
 
     // The target listing takes no arguments because it discovers the handle
     // required by the privileged exploration entry point.
