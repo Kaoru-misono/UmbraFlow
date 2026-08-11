@@ -436,6 +436,32 @@ with the row present the check prints
 `model.schema_hash does not match exact schema/umbraflow-runtime-v2.schema.json bytes`,
 and with the row removed the *same* flipped pin prints `repository surface: PASS`.
 
+The eighth is in that same file and is the same shape one level up: a rule whose
+name covers a set and whose reader covers one member of it.
+`FORBIDDEN_BUSINESS_GLOBALS` named 23 privileged and direct-action spellings, and
+`business_global_errors` inspected the single first-party definition of
+`frameworkProjectGlobals()` and nothing else. That function returns `{}`, so the
+rule was satisfied by an empty body while **four other lists published project
+globals entirely unread** — `explorationProjectGlobals()`,
+`runtimeProjectGlobals()`, `scriptProjectGlobals()` and `k_projectStandardGlobals`
+in `modules/script/source/script/ffi/environment.cpp` — as was anything a boot
+site wrote inline at `.projectGlobals` or `.frameworkProjectGlobals`. Promoting
+`key` from a method of the cycle view `explore` hands out to a published global in
+any of them was green. Closed 2026-08-12: `published_global_errors` reads all five
+lists from their own definitions, holds each to the forbidden set minus the names
+that one list may publish, refuses a list whose entries it cannot resolve, refuses
+an allowance the source has stopped exercising, and fails when no boot site
+assigns the member at all. Measured one mutation at a time against a mirrored
+tree: **8 of 8 red at the assertion naming the rule, with the superseded checker
+green on 7 of the 8** — the negative control that says the widening is what
+catches them rather than something already in the file. Two zeros are carried
+rather than closed, and both are named at the declaration: the rule reads a
+binding and never the members of the table bound to it, which is why `key`,
+`drag`, `scroll`, `long_press` and `move_pointer` are in the forbidden set and
+legal as cycle-view methods at the same time; and the boot-site denominator fires
+only when the member vanishes from every site, so one VM of several dropping its
+publication is measured green.
+
 **Detection is a denominator.** "clang-tidy passed" means nothing without how
 many objects it analyzed; "the format check passed" means nothing without which
 roots it walked; "`ctest` passed" means nothing without how many compiled cases

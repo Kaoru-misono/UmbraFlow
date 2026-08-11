@@ -83,7 +83,26 @@ RETIRED_COMMANDS = frozenset({"check", "replay", "run"})
 # terms: it measures a PNG already on disk, opens no capture and posts no
 # input, so it cannot reach a window at all.
 ALLOWED_COMMANDS = frozenset({"explore", "ocr", "open", "targets"})
-FORBIDDEN_BUSINESS_GLOBALS = frozenset(
+# Names that must not be bound in a project script's global table.
+#
+# WHAT THIS RULE READS AND WHAT IT DOES NOT. A project environment's globals are
+# exactly three lists: the standard-library whitelist, `EngineConfig::
+# projectGlobals` and `EngineConfig::frameworkProjectGlobals`
+# (script/ffi/environment.cpp, installProjectEnvironmentPrototype). Every list
+# is read below, from its own definition, in every environment -- and NOTHING
+# ELSE IS. A global is a table, and this rule says nothing about that table's
+# members: `key`, `drag`, `scroll`, `long_press` and `move_pointer` are methods
+# of the cycle view `explore` hands out (modules/task/runtime/explore.luau) and
+# are legal there, which is why they appear below and the gate is green. What
+# the rule forbids is any of these names becoming a BINDING a project script can
+# reach without going through the module that owns it.
+#
+# Three of these names are published on purpose, each by exactly one list, so
+# each is allowed there by PUBLISHED_GLOBAL_AUTHORITIES and nowhere else. That
+# is the property worth having: `explore` in the exploration environment is the
+# authoring surface, and `explore` in any other list is business execution
+# opening without an Operator.
+FORBIDDEN_PROJECT_GLOBALS = frozenset(
     {
         "action",
         "click",
@@ -109,6 +128,32 @@ FORBIDDEN_BUSINESS_GLOBALS = frozenset(
         "scroll",
         "type_text",
     }
+)
+
+# Every list whose contents become project globals, with the forbidden names
+# that list alone may publish. The allowance is written here rather than read
+# out of the source, so a name added to a whitelist is a failure rather than an
+# agreement between the check and the thing it checks; an allowance the source
+# stops exercising is a failure too, so a retired publication cannot leave a
+# licence behind for the next one.
+#
+# `kind` picks the definition's spelling: "function" for the four whitelist
+# functions, "array" for the standard-library table environment.cpp holds as a
+# constant. Both are read from the single first-party definition of that name.
+PUBLISHED_GLOBAL_AUTHORITIES = (
+    ("k_projectStandardGlobals", "array", frozenset()),
+    ("frameworkProjectGlobals", "function", frozenset()),
+    ("scriptProjectGlobals", "function", frozenset()),
+    ("explorationProjectGlobals", "function", frozenset({"explore"})),
+    ("runtimeProjectGlobals", "function", frozenset({"observe", "project"})),
+)
+
+# The tokens a whitelist body may carry besides its own names. Anything else is
+# an expression this rule cannot read, and it is reported rather than ignored:
+# a whitelist that resolves its entries somewhere this gate cannot follow is a
+# published surface nobody audits, which is the defect the rule exists for.
+GLOBALS_BODY_SCAFFOLDING = frozenset(
+    {"auto", "return", "std", "string", "string_view", "to_array", "vector"}
 )
 FORBIDDEN_SCHEMA_WORDS = frozenset(
     {
@@ -200,10 +245,14 @@ STRING_CONSTANT_PATTERN = re.compile(
     r"\b(?:constexpr\s+)?(?:auto|char\s+(?:const\s+)?)\s+"
     r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\"([^\"\\]*)\""
 )
-FRAMEWORK_GLOBALS_DEFINITION_PATTERN = re.compile(
-    r"\bauto\s+frameworkProjectGlobals\s*\(\s*\)\s*"
-    r"(?:noexcept\s*)?->[^;{]+\{"
+# Where a VM is handed a published-globals list. The rule reads the boot sites
+# as well as the whitelists, because a list is only one of the two ways a name
+# reaches a project environment: the other is an initializer written inline at
+# the site, which no whitelist function would ever carry.
+PUBLICATION_MEMBER_PATTERN = re.compile(
+    r"\.(projectGlobals|frameworkProjectGlobals)\s*=\s*"
 )
+IDENTIFIER_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 RETIRED_CLI_SYMBOL_PATTERN = re.compile(
     r"\b(?:CheckArgs|ReplayArgs|RunArgs|dispatchCheck|dispatchReplay|dispatchRun|"
     r"parseCheckArguments|parseReplayArguments|parseRunArguments|checkProduct|"
@@ -384,43 +433,143 @@ def extract_braced_body(text: str, body_at: int) -> str | None:
     return None
 
 
-def business_global_errors(root: Path) -> list[str]:
-    definitions: list[tuple[Path, str, str]] = []
-    for path in first_party_sources(root):
-        if path.suffix.lower() not in {".cpp", ".cc", ".c"}:
-            continue
-        text = CPP_COMMENT_PATTERN.sub("", read_text(path))
-        for match in FRAMEWORK_GLOBALS_DEFINITION_PATTERN.finditer(text):
-            body = extract_braced_body(text, match.end() - 1)
-            if body is not None:
-                definitions.append((path, body, text))
+def authority_definition_pattern(name: str, kind: str) -> re.Pattern[str]:
+    if kind == "array":
+        return re.compile(
+            rf"\bconstexpr\s+auto\s+{re.escape(name)}\s*=\s*"
+            rf"std::to_array<std::string_view>\s*\(\s*\{{"
+        )
+    return re.compile(
+        rf"\bauto\s+{re.escape(name)}\s*\(\s*\)\s*(?:noexcept\s*)?->[^;{{]+\{{"
+    )
 
-    if len(definitions) != 1:
-        return [
-            "frameworkProjectGlobals must have exactly one first-party definition; "
-            f"found {len(definitions)}"
-        ]
 
-    path, body, source = definitions[0]
+def read_published_names(source: str, body: str) -> tuple[set[str], set[str]]:
+    """The names a whitelist body publishes, and the tokens it could not read.
+
+    A string constant declared anywhere in the same translation unit and named
+    in the body counts as published under its value, so a whitelist spelling its
+    entry as a constant is read exactly like one spelling it inline.
+    """
     published = {
         match.group(1).lower() for match in STRING_LITERAL_PATTERN.finditer(body)
     }
-    constants = {
-        match.group(1): match.group(2).lower()
-        for match in STRING_CONSTANT_PATTERN.finditer(source)
+    residue = STRING_LITERAL_PATTERN.sub(" ", body)
+    for match in STRING_CONSTANT_PATTERN.finditer(source):
+        name = match.group(1)
+        if re.search(rf"\b{re.escape(name)}\b", residue) is None:
+            continue
+        published.add(match.group(2).lower())
+        residue = re.sub(rf"\b{re.escape(name)}\b", " ", residue)
+    unread = {
+        token
+        for token in IDENTIFIER_PATTERN.findall(residue)
+        if token not in GLOBALS_BODY_SCAFFOLDING
     }
-    published.update(
-        value
-        for name, value in constants.items()
-        if re.search(rf"\b{re.escape(name)}\b", body) is not None
+    return published, unread
+
+
+def read_initializer(text: str, start: int) -> str:
+    """The initializer expression beginning at `start`, up to its own comma."""
+    depth = 0
+    index = start
+    while index < len(text):
+        character = text[index]
+        if character == '"':
+            match = STRING_LITERAL_PATTERN.match(text, index)
+            index = index + 1 if match is None else match.end()
+            continue
+        if character in "({[":
+            depth += 1
+        elif character in ")}]":
+            if depth == 0:
+                return text[start:index]
+            depth -= 1
+        elif character == "," and depth == 0:
+            return text[start:index]
+        index += 1
+    return text[start:]
+
+
+def published_global_errors(root: Path) -> list[str]:
+    errors: list[str] = []
+    authority_names = {name for name, _, _ in PUBLISHED_GLOBAL_AUTHORITIES}
+    for name, kind, allowed in PUBLISHED_GLOBAL_AUTHORITIES:
+        pattern = authority_definition_pattern(name, kind)
+        definitions: list[tuple[Path, str, str]] = []
+        for path in first_party_sources(root):
+            if path.suffix.lower() not in {".cpp", ".cc", ".c"}:
+                continue
+            text = CPP_COMMENT_PATTERN.sub("", read_text(path))
+            for match in pattern.finditer(text):
+                body = extract_braced_body(text, match.end() - 1)
+                if body is not None:
+                    definitions.append((path, body, text))
+
+        if len(definitions) != 1:
+            errors.append(
+                f"{name} must have exactly one first-party definition this rule "
+                f"can read; found {len(definitions)}"
+            )
+            continue
+
+        path, body, source = definitions[0]
+        relative = path.relative_to(root).as_posix()
+        published, unread = read_published_names(source, body)
+        if unread:
+            errors.append(
+                f"{relative}: {name} resolves its entries through "
+                f"{', '.join(sorted(unread))}, which this rule cannot read, so "
+                "what it publishes is unaudited"
+            )
+        forbidden = sorted((published & FORBIDDEN_PROJECT_GLOBALS) - allowed)
+        if forbidden:
+            errors.append(
+                f"{relative}: {name} publishes privileged or direct-action "
+                f"project globals: {', '.join(forbidden)}"
+            )
+        stale = sorted(allowed - published)
+        if stale:
+            errors.append(
+                f"{name} no longer publishes {', '.join(stale)}, so its "
+                "allowance in PUBLISHED_GLOBAL_AUTHORITIES licenses a name "
+                "nothing publishes"
+            )
+
+    # The boot sites. Without them a new environment could publish a forbidden
+    # name in an initializer written where no whitelist function can see it.
+    sites = {"projectGlobals": 0, "frameworkProjectGlobals": 0}
+    for path in first_party_sources(root):
+        if path.suffix.lower() not in {".cpp", ".cc", ".c", ".h", ".hpp"}:
+            continue
+        text = CPP_COMMENT_PATTERN.sub("", read_text(path))
+        relative = path.relative_to(root).as_posix()
+        for match in PUBLICATION_MEMBER_PATTERN.finditer(text):
+            sites[match.group(1)] += 1
+            initializer = read_initializer(text, match.end())
+            literals, unread = read_published_names(source="", body=initializer)
+            if unread & authority_names:
+                continue
+            if unread:
+                errors.append(
+                    f"{relative}: .{match.group(1)} is initialized from "
+                    f"{', '.join(sorted(unread))}, which is neither a whitelist "
+                    "this rule reads nor a list of names it can see"
+                )
+                continue
+            forbidden = sorted(literals & FORBIDDEN_PROJECT_GLOBALS)
+            if forbidden:
+                errors.append(
+                    f"{relative}: .{match.group(1)} publishes privileged or "
+                    f"direct-action project globals: {', '.join(forbidden)}"
+                )
+    errors.extend(
+        f"no first-party source assigns .{member}, so the publication rule read "
+        "no environment at all"
+        for member, count in sorted(sites.items())
+        if count == 0
     )
-    forbidden = sorted(published & FORBIDDEN_BUSINESS_GLOBALS)
-    if not forbidden:
-        return []
-    return [
-        f"{path.relative_to(root).as_posix()}: business globals publish privileged "
-        f"or direct-action names: {', '.join(forbidden)}"
-    ]
+    return errors
 
 
 def retired_runtime_errors(root: Path) -> list[str]:
@@ -692,7 +841,7 @@ def main() -> int:
         {
             *retired_path_errors(root),
             *cli_surface_errors(root),
-            *business_global_errors(root),
+            *published_global_errors(root),
             *retired_runtime_errors(root),
             *trusted_parser_errors(root),
             *snapshot_identity_errors(root),

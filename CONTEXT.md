@@ -225,15 +225,20 @@ script may CLICK and excluded the identify-only ones that do the recognising),
 the rename touched only this script root, never the product names `UmbraFlow` and
 `umbra-flow` or any schema id), `bot` (superseded draft wording).
 
-**Project globals** — what a project script may name. Three publishers exist and
-they differ:
-`frameworkProjectGlobals()` returns `{}` on purpose, so business execution
-publishes nothing; `explorationProjectGlobals()` returns `{"explore"}`; and
-`TaskHost::bootTrustedRuntime` (`modules/task/source/task/task-host.cpp`) passes
-`{"jcs", "observe", "project"}` inline for the trusted runtime VM. The first two
+**Project globals** — what a project script may name. Five lists reach a project
+environment and they differ: `k_projectStandardGlobals`
+(`modules/script/source/script/ffi/environment.cpp`) is the deterministic
+standard-library floor every environment gets; `scriptProjectGlobals()` returns
+`{}`, so no host table is published; and of the three framework whitelists in
+`modules/task/source/task/framework-bundle.cpp`, `frameworkProjectGlobals()`
+returns `{}` on purpose so business execution publishes nothing,
+`explorationProjectGlobals()` returns `{"explore"}`, and
+`runtimeProjectGlobals()` returns `{"jcs", "observe", "project"}` for the trusted
+runtime VM `TaskHost::bootTrustedRuntime` boots. The first two framework lists
 are asserted in `tests/task/test-framework-bundle.cpp`, which also proves `ctx`,
 `explore`, `model`, `observe`, `project`, `navigation`, `input` and `receipt` are
-all nil in a business VM.
+all nil in a business VM. All five, and every boot site that assigns one, are
+read by `published_global_errors` in `tests/test-runtime-surface.py`.
 
 **Private capability surface** — the host-built table of primitives only trusted
 Luau can reach. What makes it private is that it has no name in either
@@ -416,9 +421,13 @@ back:
 `find_element`, `mint_hit`, `resolve_page` (`RETIRED_RUNTIME_SYMBOL_PATTERN`);
 declaring a type named `Element`, `Hit`, `Page` or `UFR`
 (`RETIRED_TYPE_DECLARATION_PATTERN`); the `check`/`replay`/`run` CLI verbs and
-their argument and dispatch symbols (`RETIRED_CLI_*`); and every business global
-in `FORBIDDEN_BUSINESS_GLOBALS`, including `ctx`, `click`, `model`, `observe`,
-`project` and `receipt`.
+their argument and dispatch symbols (`RETIRED_CLI_*`); and every name in
+`FORBIDDEN_PROJECT_GLOBALS` — `ctx`, `click`, `model` and `receipt` among them —
+as a project global in any of the five lists that publish one, except that
+`explore`, `observe` and `project` are each allowed in the one list that
+publishes them today (`PUBLISHED_GLOBAL_AUTHORITIES`). The rule reads a binding
+and not a table's members, so `key`, `drag` and `scroll` remain legal as methods
+of the cycle view `explore` hands out.
 
 **Retired schema ids.** `umbraflow-authoring/v4`, `umbraflow-annotations/v3`,
 every earlier spelling of both, and the constants that carried them,

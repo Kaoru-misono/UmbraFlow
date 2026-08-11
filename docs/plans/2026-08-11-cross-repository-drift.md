@@ -399,11 +399,15 @@ extracting every `receiver:method(` pair, not by searching for `ctx`. Exactly
 (6, `daily.luau`:191), `project_write` (4, `daily.luau`:3099).
 
 **Framework.** `ctx` is not merely absent — it is forbidden and CI-enforced.
-`tests/test-runtime-surface.py`:69 defines `FORBIDDEN_BUSINESS_GLOBALS`
-containing `ctx`, `key`, `move_pointer`, `click`, `action`, `input`, `press`,
-`model`, `observe`, gated as `check-repository-surface` under `ctest -L CI`.
-The current surface is seven `explore_*` verbs at
-`modules/task/source/task/ffi/uf-tables.cpp`:623-629.
+`tests/test-runtime-surface.py` defines `FORBIDDEN_PROJECT_GLOBALS` containing
+`ctx`, `key`, `move_pointer`, `click`, `action`, `input`, `press`, `model`,
+`observe`, gated as `check-repository-surface` under `ctest -L CI`. Since
+2026-08-12 that rule reads every list that publishes a project global rather
+than the business one alone. The current private surface is the sixteen
+`explore_*` verbs `buildAnnotationSurface` installs in
+`modules/task/source/task/ffi/uf-tables.cpp`; `key`, `drag`, `scroll`,
+`long_press` and `move_pointer` reach a chunk only as methods of the cycle view
+`explore` hands out, never as globals.
 
 **Which side is wrong.** The consumer. **Correction:** rewrite against the Explore
 surface and the Operator tool path. Two secondary hits in the same family:
