@@ -84,16 +84,24 @@ the four same-day specifications conflict.
 ## Current plans
 
 The first six below were the reading order; the dated decisions after them build
-on it. One of the six, the annotation model, was superseded on 2026-08-11 and is
-kept for its record rather than for reading order.
+on it. Two of the six, the annotation model and layer ownership, were superseded
+on 2026-08-11 and 2026-08-12 and are kept for their record rather than for
+reading order.
 [`plans/README.md`](plans/README.md) carries each plan's status and is the
 canonical listing — this section is its short form, and it lists the 2026-08-09
 rewrite design set that this section does not. Everything else is archived.
 
 - Target form — three layers plus the Agent operator (approved 2026-08-01):
   [Three layers and the Agent operator](plans/2026-08-01-three-layers-and-agent-operator.md)
-- Layer ownership — element and page move up to trusted Luau (ruled 2026-07-31,
-  reconciled 2026-08-01 in §十二); the migration now in progress:
+- Superseded 2026-08-12, kept as the record of a decision that was real when
+  made (ruled 2026-07-31): element and page did leave C++ for trusted Luau, and
+  the runtime model is now defined jointly by
+  [`schema/umbraflow-runtime-v2.schema.json`](../schema/umbraflow-runtime-v2.schema.json),
+  the normative form, and
+  [Runtime model contract v1](plans/2026-08-09-runtime-model-contract.md), the
+  field-level prose. Its §九 retirement list is executed and owes nothing, and
+  §十's page-graph shape is answered by the schema's `transitions`; the two §十
+  questions nothing answers are named in [`plans/README.md`](plans/README.md):
   [Script-owned page model](plans/2026-07-31-script-owned-page-model.md)
 - Current product direction:
   [Product form and Roadmap](plans/2026-07-21-product-form-and-roadmap.md)

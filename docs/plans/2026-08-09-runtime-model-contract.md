@@ -4,6 +4,22 @@ Status: frozen for P0 implementation
 
 Date: 2026-08-09
 
+> **Amended 2026-08-12 for `a1140a4`, which added readings to the runtime
+> model.** The amended passages are §2.6, §2.7, §3 and §4, each marked where it
+> starts. Two facts about the document as a whole belong with them, because the
+> amendments are written in names the rest of it does not use. The field-shape
+> authority is
+> [`umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json),
+> whose exact bytes the runtime-model file reader in `modules/task/` pins as
+> `k_runtimeModelSchemaHash`; the four v1 schema files listed below were deleted
+> with the surface they described, and `tests/test-runtime-surface.py` keeps
+> them deleted. And the
+> record vocabulary of §2 and §4 is the pre-v2 spelling — `Context`, `Target`,
+> `Identity`, `schema_version = 1` — while a model on disk is
+> `schema_version = 2` over `ui_target`, `locator`, `reader`, `binding`,
+> `surface` and `transition`. The amendments use the schema's names. Reconciling
+> the rest of §2 and §4 to them is a separate change and has not been made.
+
 This document is the field-level contract for the annotation-system rewrite.
 It deliberately does not preserve the old `Page`, `Element`, `Reference`,
 `CapabilitySet`, `holding`, `exercised`, `screen`, or `expect` runtime model.
@@ -155,6 +171,17 @@ presence  { id, target, kind, confidence_floor }
 `newline` or `space`. A measured confidence below `confidence_floor` produces
 `Unknown`, never `Absent`.
 
+> **Amended 2026-08-12 (`a1140a4`).** A Reader's value now leaves the resolver.
+> A Binding names Readers in `reads` (§2.7), and a resolved state reports the
+> normalised value of every such Reader it measured, attributed to the UiTarget
+> that Binding names. `confidence_floor` therefore decides reporting as well as
+> evidence: a measurement below the floor is absent from the reported readings
+> rather than reported with a reason and a score. The floor is the trusted
+> Reader's judgement, and a caller handed the failure could re-decide it. A
+> Reader costs one Host read out of the observation cycle's pool, so a model
+> that declares more `reads` than one cycle can pay for reports fewer readings
+> and never a wrong one.
+
 ### 2.7 Binding
 
 ```text
@@ -200,6 +227,14 @@ An identity predicate is either:
 ```
 
 The reader in a text predicate must belong to the binding target.
+
+> **Amended 2026-08-12 (`a1140a4`).** A Binding also carries `reads`: the IDs of
+> the Readers whose value it reports once its own predicates measure it present.
+> `reads` is optional and absent is the empty list — requiring it would put a
+> field on every Binding to record that it reports nothing. Every ID must name a
+> declared Reader, and no ID may repeat. A Reader named in `reads` reports and
+> never decides: it takes no part in this Binding's identity, which remains the
+> three predicate lists above.
 
 ### 2.8 Action
 
@@ -273,6 +308,42 @@ search order: interrupt, compatible overlays, scene. Within a layer, a tie or
 insufficient evidence margin produces `Ambiguous`. Context and `covers` rules
 must be satisfied before a candidate can enter the stack.
 
+> **Amended 2026-08-12 (`a1140a4`): readings.** A `Resolved` result also reports
+> what it read, through a second verb over the same open cycle. One reading is
+>
+> ```text
+> Reading { ui_target, reader, text }
+> ```
+>
+> and the list is sorted by `ui_target` then `reader`, so one world produces one
+> document. The schema calls the list `state_readings` and one entry
+> `binding_reading`.
+>
+> A reading is attributed to the UiTarget and not to the Binding that carried
+> it, because a Binding is a UiTarget plus a visual variant: the variant a hover
+> or a highlight selects differs between two captures of one semantic instance,
+> and the serialized resolution is hashed into `state_resolution_hash` and
+> through it into `decision_basis_hash`, so a binding ID would move the decision
+> on a hover. The confidence score is excluded for the same
+> reason and not for economy — a score differs between two captures of one
+> unchanged screen, and a recapture that is semantically equal must remain one
+> decision. The measured rectangle and the pre-normalisation text are excluded
+> with it; the raw read is what the Reader exists to narrow.
+>
+> A Binding contributes a reading only while its own predicates measure it
+> present, because a Reader reads that Binding's rectangle and reading through a
+> Binding that is not showing returns whatever is at those pixels instead. Two
+> present Bindings that share a UiTarget report nothing for it: which instance
+> is on screen is exactly what an ambiguity means, and resolution already
+> refuses to guess it. A reading that did not clear its Reader's
+> `confidence_floor`, or that was unreadable, is absent from the list rather
+> than present with a reason.
+>
+> A reading is not evidence. It carries no evidence ID, it never appears in a
+> receipt's `evidence_ids`, and it authorizes nothing. `Ambiguous` and
+> `UnknownResolution` report no readings, because a state that resolved no
+> Surface has nothing to attribute one to.
+
 Only a framework-minted `Resolved` result can mint a `Receipt`. A receipt is:
 
 ```text
@@ -322,6 +393,14 @@ All record IDs are unique within their record type. Unknown fields are a
 validation error. Empty arrays are explicit: `locator_variant`, `reader`, and
 `transition` may be empty; the other runtime record collections have the
 minimums in the machine schema.
+
+> **Amended 2026-08-12 (`a1140a4`).** A binding record may carry
+> `reads = ["reader_id", ...]`. It is the one authored field readings add: it is
+> optional, absent is the empty list, every ID must name a declared reader
+> record, and a repeated ID is a validation error. A reading itself is a runtime
+> value and is never written to `page-model.toml`. The fragment below predates
+> the v2 model and the current schema rejects it; write `reads` against the
+> schema named at the head of this document, not against the fragment.
 
 The following is a complete valid fragment:
 

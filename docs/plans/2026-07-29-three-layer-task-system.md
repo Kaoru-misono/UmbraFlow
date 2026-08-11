@@ -8,6 +8,12 @@
 > [`2026-07-31-script-owned-page-model.md`](2026-07-31-script-owned-page-model.md)
 > 为准,该文尚未实施。
 
+> **2026-08-12。** 上面那条注记的最后一句已经过期两次:那份文档于 2026-08-12 作废,
+> 而它写的退役早已执行——`resolvePage`、`findAction`、`cycle_page`、`cycle_find`
+> 与 `modules/annotation` 都不在树里。本文那几处现在以
+> [`schema/umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json)
+> 与[运行时模型合同](2026-08-09-runtime-model-contract.md)为准。
+
 > **词汇统一(2026-07-31)。** 本文正文已按新词汇改写:脚本能力根表
 > `uf.recognizers` 改名 `uf.elements`,trace 字段 `recognizerId` 改名 `elementId`,
 > 合并 trace schema 随之升到 `umbraflow-trace/v2`。裁决与理由见

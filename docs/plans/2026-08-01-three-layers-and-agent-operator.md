@@ -11,6 +11,12 @@
 >
 > **2026-08-01 晚**:与[页面模型上移到脚本层](2026-07-31-script-owned-page-model.md)
 > 融合修订过一轮,修订已折进正文,不另立注记。
+>
+> **2026-08-12**:那份文档已作废。正文 §一、§五、§七、§十 里「归属以那份为准」几处
+> 记的是当时的裁决,按当时读;运行时模型现在由
+> [`schema/umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json)
+> 与[运行时模型合同](2026-08-09-runtime-model-contract.md)共同定义,§九 的退役清单
+> 已执行完毕。
 
 ## 一、系统是什么
 

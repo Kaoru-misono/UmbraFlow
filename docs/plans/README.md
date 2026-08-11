@@ -174,12 +174,35 @@ superseded wherever they conflict with the current authority above.
   modelling trichotomy, and the full verb surface. Amends the three-layer plan below; does not
   overturn it.
 - [Script-owned page model](2026-07-31-script-owned-page-model.md) — developer-ruled
-  2026-07-31, reconciled with the target form in §十二, **migration in progress**. `element`
-  and `page` move up to the trusted Luau framework; C++ keeps primitives only (`cycle_match`,
-  `cycle_read`, `cycle_click`, project file I/O) plus the ticket ledger that makes acting on an
-  observation safe. Amends the layer-one boundary of the three-layer plan and relocates the
-  annotation model — its design conclusions stand, its implementation location does not. §九 is
-  the retirement list; §十 holds the undecided page-graph shape that currently blocks layer two.
+  2026-07-31, **superseded 2026-08-12** and kept as the record of that decision. The runtime
+  model is now defined jointly by
+  [`schema/umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json),
+  the normative form, whose exact bytes the runtime-model file reader in `modules/task/` pins as
+  `k_runtimeModelSchemaHash`, and by
+  [the runtime model contract](2026-08-09-runtime-model-contract.md), the field-level prose,
+  frozen for P0. What it ruled outlives it: `element` and `page` are not C++ types, C++ keeps
+  the primitives plus the ticket ledger that makes acting on an observation safe, and the model
+  is a project file the trusted framework owns. **§九 owes nothing** — `modules/annotation`,
+  `entry/workbench`, `entry/authoring`, `CapabilitySurface`, `resolvePage` and `findAction` are
+  all absent from the tree, and the `docs/TODO.md` ticket that tracked the retirement went with
+  the 2026-08-09 rewrite of that file. **§十's page-graph shape is answered in the schema**:
+  `runtime_model` requires `transitions`, and `transition` / `transition_trigger` make an edge a
+  declared move between two legal Surface stacks triggered by one named Binding action, which
+  `modules/task/runtime/model.luau` validates on both stacks and on the trigger. It is answered
+  differently from §十's own 2026-08-01 ruling: there is no `kind = navigate|push|pop` and no
+  `via = key|spontaneous`, a Binding action is the only trigger, and layering is carried by the
+  Surface stack and `covers` rather than by an edge kind. The `catch_all` flag that §十's
+  2026-08-04 follow-up added does not exist either — the surface kinds are `scene`, `overlay`
+  and `interrupt`, and every Surface must name a positive identity Binding, so an authored
+  catch-all cannot be written at all. Two more of §十's five items are closed: the batch-matching
+  cost, measured inside the document itself and ruled against a batch primitive, and the explicit
+  interrupt-page kind, which exists as the `interrupt` surface kind. **The remaining two are
+  answered nowhere.** The confirm-versus-recognise split has no verb — `resolve_state` is the
+  only entry and nothing verifies one expected Surface against one marker, which leaves what to
+  do after a failed confirmation moot rather than settled. Element granularity in a scrolling
+  grid is not representable: `ui_target.kind` is `control` or `region`, there is no collection
+  kind and no items read, which
+  [the test matrix](2026-08-09-annotation-v2-test-matrix.md) records as T07.
 - [Product form and Roadmap](2026-07-21-product-form-and-roadmap.md) — product direction,
   P0–P3 scope and exit criteria.
 - [Three-layer task system](2026-07-29-three-layer-task-system.md) — developer-approved

@@ -9,6 +9,14 @@
 > (`frames/menu-to-menu5.jsonl`,21154 行 trace)与同日多次失败运行的教训。
 > 本文每一节结尾给证伪方式;没有证伪方式的段落只是措辞,可以随便改。
 > 工程仓库即 `uf-chaos`(2026-08-04 由 chaos-daily 更名,旧文档里的旧名指同一工程)。
+>
+> **2026-08-12**:上面两份上位文档都已作废(标注模型 2026-08-11,script-owned
+> 2026-08-12)。它们给本文的那两条前提不变——模型不是 C++ 类型,住工程文件——但运行时
+> 模型的定义现在是
+> [`schema/umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json)
+> 与[运行时模型合同](2026-08-09-runtime-model-contract.md)。本文 §3.4 那条
+> `catch_all` 标志不在 v2 模型里:surface 只有 `scene` / `overlay` / `interrupt`,
+> 而且每个 Surface 都必须有正向识别 Binding,写不出 catch-all。
 
 ## 一、真跑量出来的形状
 
