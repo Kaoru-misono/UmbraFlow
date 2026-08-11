@@ -28,7 +28,7 @@
 
 #include <operator/manifest.hpp>
 
-#include <task/page-model-file.hpp>
+#include <task/runtime-model-file.hpp>
 
 #include <doctest/doctest.h>
 
@@ -117,7 +117,7 @@ namespace uf::deployment
                 {
                     writeDeployment(deployment);
                 }
-                write(m_root / "runtime/artifact/page-model.toml", "[[page]]\n");
+                write(m_root / "runtime/artifact/runtime-model.toml", "[[page]]\n");
                 write(m_root / "runtime/probe-frame.png", probeFramePng());
                 write(m_root / "umbraflow-project.json", projectManifest());
                 write(m_root / "umbraflow-conformance.json", conformanceManifest());

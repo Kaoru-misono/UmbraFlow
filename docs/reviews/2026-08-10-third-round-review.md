@@ -887,7 +887,7 @@ Recorded so the next round does not spend the time again.
   key ordering (`utf16Units`/`unitsLess`, `:102-128`) is genuinely UTF-16
   code-unit order and agrees with `jcs.py`'s `utf-16be` sort. Every hand-written
   member order on the C++ side (`manifest.cpp:95-111`, `ledger.cpp:870-892`,
-  `runtime-installation.cpp:251-284`, `page-model-file.cpp:325-363`) was checked
+  `runtime-installation.cpp:251-284`, `runtime-model-file.cpp:325-363`) was checked
   against that rule and is correct today.
 
 ## What would move this to PASS

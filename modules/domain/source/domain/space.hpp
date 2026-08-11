@@ -285,7 +285,7 @@ namespace uf
     //
     // It lives in domain rather than beside the model that states it, because
     // the model is a Luau value: the script-owned page model declares its
-    // geometry at the top of page-model.toml and hands it down. The engine
+    // geometry at the top of runtime-model.toml and hands it down. The engine
     // compares a live measurement against whatever its caller supplied, and that
     // comparison must not drag the model's vocabulary into the engine.
     class ProjectFingerprint final

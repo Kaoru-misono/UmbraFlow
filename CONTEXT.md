@@ -49,13 +49,13 @@ rather than relocated. The rename moved the Operator DDL fingerprint to
 the same 23 tables, so an `operator-runtime.sqlite` from before it is refused at
 open and deleted, never migrated.
 
-**RuntimeArtifact** — a verified manifest, one `page-model.toml`, and the
+**RuntimeArtifact** — a verified manifest, one `runtime-model.toml`, and the
 manifest-listed assets under `assets/`. Pinned as
 `k_runtimeArtifactManifestFileName`, `k_runtimeModelFileName` and
-`k_runtimeAssetDirectoryName` in `modules/task/source/task/page-model-file.hpp`.
+`k_runtimeAssetDirectoryName` in `modules/task/source/task/runtime-model-file.hpp`.
 Never an annotation screenshot bundle.
 
-**RuntimeModel** — the schema-owned tree inside `page-model.toml`. Its nouns are
+**RuntimeModel** — the schema-owned tree inside `runtime-model.toml`. Its nouns are
 `ui_target`, `locator`, `reader`, `binding`, `surface` and `transition`, and its
 top level also carries `schema_version`, `base_resolution` and `base_dpi`.
 `$defs.runtime_model` in `schema/umbraflow-runtime-v2.schema.json`; built,
@@ -71,7 +71,7 @@ UiTarget and variant. Its record is exactly
 `{kind = "fixed", rect, action_point?}`, and `action_point` is present exactly
 when `actions` is non-empty — enforced on both sides, in `model.luau` and by the
 schema's `allOf`. `RuntimeModelBinding`
-(`modules/task/source/task/page-model-file.hpp`) is a different thing: the
+(`modules/task/source/task/runtime-model-file.hpp`) is a different thing: the
 host's handle to one loaded model, not one row of it.
 
 **Variant** — the named visual form of one binding. `$defs.identifier` under
@@ -182,7 +182,7 @@ _Avoid_: executable conformance resolution.
 **The RuntimeModel id does not travel.** `umbraflow-runtime/v2` occurs exactly
 twice in the tree, as `model.schema` and `project.schema` in
 `modules/task/runtime/{model,project}.luau`, and nothing reads either back. What
-actually travels in `page-model.toml` and is validated is the integer
+actually travels in `runtime-model.toml` and is validated is the integer
 `schema_version`, required to be `2` by `model.luau` and by
 `$defs.runtime_model` alike.
 

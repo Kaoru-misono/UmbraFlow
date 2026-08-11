@@ -481,7 +481,7 @@ namespace uf::operator_runtime
             test_support::writeFile(artifact / task::k_runtimeModelFileName, model);
             auto const manifest = std::format(
                 "{{\"assets\":[],\"manifest_schema_hash\":\"{}\","
-                "\"page_model\":{{\"path\":\"page-model.toml\",\"sha256\":\"{}\","
+                "\"page_model\":{{\"path\":\"runtime-model.toml\",\"sha256\":\"{}\","
                 "\"size\":{}}},\"runtime_model_schema_hash\":\"{}\"}}",
                 task::k_runtimeArtifactSchemaHash,
                 hashOf(model).hex(),
@@ -523,7 +523,7 @@ namespace uf::operator_runtime
             test_support::writeFile(artifact / task::k_runtimeModelFileName, model);
             auto const manifest = std::format(
                 "{{\"assets\":[],\"manifest_schema_hash\":\"{}\","
-                "\"page_model\":{{\"path\":\"page-model.toml\",\"sha256\":\"{}\","
+                "\"page_model\":{{\"path\":\"runtime-model.toml\",\"sha256\":\"{}\","
                 "\"size\":{}}},\"runtime_model_schema_hash\":\"{}\"}}",
                 task::k_runtimeArtifactSchemaHash,
                 hashOf(model).hex(),
@@ -1117,7 +1117,7 @@ namespace uf::operator_runtime
         // behind. Nothing ever removed it before, because the staging token is
         // in no row and the filesystem cannot say whose it is.
         auto const staging = production / "runtime-artifacts" / ".staging" / "0123abcd";
-        test_support::writeFile(staging / "page-model.toml", "half a deployment");
+        test_support::writeFile(staging / "runtime-model.toml", "half a deployment");
 
         auto const reclaimed = coordinator->reclaimUnreferencedRuntimeArtifacts();
         REQUIRE(reclaimed.has_value());

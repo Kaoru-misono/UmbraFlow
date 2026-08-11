@@ -78,7 +78,7 @@ namespace uf::cli
 
         // Nothing else: a skeleton that invented a page model would be a model
         // nobody wrote, stating geometry that is a fact about the target.
-        CHECK_FALSE(std::filesystem::exists(directory.path() / "page-model.toml"));
+        CHECK_FALSE(std::filesystem::exists(directory.path() / "runtime-model.toml"));
     }
 
     TEST_CASE("laying out a skeleton twice changes nothing the first run made")

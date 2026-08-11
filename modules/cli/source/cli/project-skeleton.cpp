@@ -20,7 +20,7 @@ namespace uf::cli
         // file goes: privileged annotation writes crops into assets/templates,
         // assets/screens holds its offline corpus, and frames holds the captures a
         // session worked from. Nothing else belongs
-        // here: page-model.toml is content and not layout.
+        // here: runtime-model.toml is content and not layout.
         constexpr auto k_skeletonDirectories = std::array<std::string_view, 3>{
             "assets/templates",
             "assets/screens",

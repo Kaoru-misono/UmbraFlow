@@ -509,7 +509,7 @@ class SchemaAndJcsTests(unittest.TestCase):
         valid = {
             "manifest_schema_hash": sha,
             "runtime_model_schema_hash": sha,
-            "page_model": {"path": "page-model.toml", "size": 1, "sha256": sha},
+            "page_model": {"path": "runtime-model.toml", "size": 1, "sha256": sha},
             "assets": [],
         }
         self.assertEqual(validate_contract("umbraflow-runtime-artifact-v1.schema.json", valid), [])
@@ -1218,7 +1218,7 @@ class PublicationBoundaryTests(WorkspaceTestCase):
             files,
             {
                 "release.manifest.json",
-                "runtime-artifact/page-model.toml",
+                "runtime-artifact/runtime-model.toml",
                 "runtime-artifact/runtime-artifact.manifest.json",
                 "runtime-artifact/assets/templates/confirm.png",
             },

@@ -25,10 +25,10 @@ namespace uf::task
 {
     inline constexpr auto k_runtimeArtifactManifestFileName =
         std::string_view{"runtime-artifact.manifest.json"};
-    inline constexpr auto k_runtimeModelFileName = std::string_view{"page-model.toml"};
+    inline constexpr auto k_runtimeModelFileName = std::string_view{"runtime-model.toml"};
     inline constexpr auto k_runtimeAssetDirectoryName = std::string_view{"assets"};
     inline constexpr auto k_runtimeArtifactSchemaHash = std::string_view{
-        "57432151740401a245eac9c5f3e813438c97014a3739b18853ebf0bc19f46fe9"
+        "af9d5dd9b1499359b165dd72694bb13a479dd5c5543b139ff7d22419d1855350"
     };
     inline constexpr auto k_runtimeModelSchemaHash = std::string_view{
         "a2d14589104bcf878aa49ed09033198a161159e5916870449ee86e9380593f1a"
@@ -50,7 +50,7 @@ namespace uf::task
     // A confined, byte-frozen deployment artifact. Construction is available
     // only through loadRuntimeArtifact(), which verifies the trusted root hash,
     // exact canonical manifest, complete file closure and every declared size and
-    // digest. The handle interprets no page-model.toml semantics.
+    // digest. The handle interprets no runtime-model.toml semantics.
     class RuntimeArtifactHandle final
     {
     public:

@@ -123,7 +123,7 @@ Ambiguous
 UnknownResolution
 ~~~
 
-3. Runtime page-model.toml schema.
+3. Runtime runtime-model.toml schema.
 4. Offline CandidateModel schema.
 5. Annotation backend/UI API contract.
 6. C++ pre-VM envelope contract.
@@ -149,7 +149,7 @@ Owner: Runtime Model Agent
 
 ### Scope
 
-Implement the new trusted Luau model and compile the new page-model.toml.
+Implement the new trusted Luau model and compile the new runtime-model.toml.
 
 ### Write set
 
@@ -203,10 +203,10 @@ Update the C++ pre-VM reader to understand only the new model envelope.
 ### Write set
 
 ~~~text
-modules/task/source/task/page-model-file.hpp
-modules/task/source/task/page-model-file.cpp
+modules/task/source/task/runtime-model-file.hpp
+modules/task/source/task/runtime-model-file.cpp
 modules/task/source/task/task-host.cpp
-tests/task/test-page-model-file.cpp
+tests/task/test-runtime-model-file.cpp
 tests/task/test-script-validator.cpp
 ~~~
 
@@ -231,7 +231,7 @@ selection, or transition semantics. Those belong to Luau.
 
 ### Acceptance
 
-- a new page-model.toml envelope is accepted;
+- a new runtime-model.toml envelope is accepted;
 - duplicate target/surface names fail before VM startup;
 - model hash remains stable over the exact file bytes;
 - C++ never needs annotation screenshots;

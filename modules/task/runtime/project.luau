@@ -6,7 +6,7 @@ local model = model
 
 local project = {}
 project.schema = "umbraflow-runtime/v2"
-project.file_name = "page-model.toml"
+project.file_name = "runtime-model.toml"
 
 local hostBindings: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
 local loadedModel: any = nil

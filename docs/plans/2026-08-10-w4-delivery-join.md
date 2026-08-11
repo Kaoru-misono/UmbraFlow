@@ -260,7 +260,7 @@ read from the manifests:
 | `operator` | `core domain task` | `trace script operator_sqlite3` |
 
 `operator -> task` already exists and is public; `ledger.hpp` already includes
-`<task/page-model-file.hpp>`. The reverse edge `task -> operator` would produce
+`<task/runtime-model-file.hpp>`. The reverse edge `task -> operator` would produce
 the cycle `task -> operator -> task` and fail `check_modules.py`.
 
 **Therefore `operator` owns the join.** Concretely:

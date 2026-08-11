@@ -97,7 +97,7 @@ offline authoring
       -> production installed generation
 
 production
-  RuntimeArtifact (page-model.toml + manifest-listed assets)
+  RuntimeArtifact (runtime-model.toml + manifest-listed assets)
   operator-runtime.sqlite
 ```
 

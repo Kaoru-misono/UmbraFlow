@@ -426,8 +426,8 @@ already spells exactly `ProjectRegistrationClaims`' members, and its digest is
 what `manifest_schema_hash` names. A project owns no registration schema either.
 
 `runtime_artifact` names a directory, not a file: the installer already reads
-`page-model.toml` and `runtime-artifact.manifest.json` from a root by those
-fixed names (`modules/task/source/task/page-model-file.hpp:25-27`), so the
+`runtime-model.toml` and `runtime-artifact.manifest.json` from a root by those
+fixed names (`modules/task/source/task/runtime-model-file.hpp:25-27`), so the
 manifest names the root and the artifact's own manifest names its contents. One
 RuntimeArtifact per project, shared by every deployment — which is what uf-chaos
 already has: `runtimeArtifact()` and `probeFrame()` return byte-identical values
@@ -757,7 +757,7 @@ sentence above had not accounted for it.** The RuntimeArtifact's own
 artifact root hash — so the same rule applies to it, and what it must be exact
 in is the artifact reader's fixed spelling rather than RFC 8785: `parseManifest`
 walks literal separators and refuses a BOM, whitespace, or any trailing byte
-(`modules/task/source/task/page-model-file.cpp:340-376`). Nobody writes it by
+(`modules/task/source/task/runtime-model-file.cpp:340-376`). Nobody writes it by
 hand either; it is emitted, and its digest is what the deployment names.
 
 *And a repository that normalizes text does not own a project directory.*
@@ -1283,7 +1283,7 @@ parser already publishes `base_resolution` and `base_dpi` into the frozen table
 (`modules/task/runtime/model.luau:626-627`), so what is added is a wider
 `runtime_model_finalize` arity and a `ProjectFingerprint` on the binding beside
 the `DeclaredRuntimeUi` (`modules/task/source/task/ffi/uf-tables.cpp:955-1002`,
-`modules/task/source/task/page-model-file.hpp:178-221`). It lands here rather
+`modules/task/source/task/runtime-model-file.hpp:178-221`). It lands here rather
 than with the loader because it belongs to `task`, and it must land before step 6
 or the loader has no fingerprint to give the suite. Unit tests only.
 
@@ -1483,7 +1483,7 @@ two journal manifests drop `plugin_id`, and the catalogs drop
 `tool_precondition_schema` (§2.4). One dies —
 `registration-v1.schema.json`, which Q3 left nothing to validate (§2.6).
 
-**The RuntimeArtifact is kept and is verified more strictly.** `page-model.toml`,
+**The RuntimeArtifact is kept and is verified more strictly.** `runtime-model.toml`,
 `runtime-artifact.manifest.json` and the nine PNGs under
 `runtime/artifact/assets/` are correct data and are not touched. What improves is
 that the Host verifies the project's own manifest bytes: today the suite
@@ -1761,7 +1761,7 @@ than assumed.** Its trusted-parser rule scans first-party C++ for
 trusted parser already computed introduces none of them and adds no parser. The
 comment that could have objected — `DeclaredRuntimeUi`'s "a reader may ask
 whether a name is in one of them, which is identity, and cannot ask what the
-name means" (`modules/task/source/task/page-model-file.hpp:159-167`) — is
+name means" (`modules/task/source/task/runtime-model-file.hpp:159-167`) — is
 unaffected, because the fingerprint is a sibling of `DeclaredRuntimeUi` on the
 binding rather than a fourth vocabulary inside it.
 
@@ -1807,7 +1807,7 @@ resolves nothing, and `requireResolvedSurface` can only print the resolution
 (`observation-fixture.hpp:576-582`). The mechanism exists —
 `model.luau:626-627` already publishes both values into the same frozen table as
 `declared_surface_ids` (`:635-637`), which already crosses the private native
-surface into `DeclaredRuntimeUi` (`page-model-file.hpp:158-172`). **The
+surface into `DeclaredRuntimeUi` (`runtime-model-file.hpp:158-172`). **The
 counter-argument is real:** `DeclaredRuntimeUi`'s comment says a reader "may ask
 whether a name is in one of them, which is identity, and cannot ask what the name
 means", and `tests/test-runtime-surface.py` enforces that the Operator reads no

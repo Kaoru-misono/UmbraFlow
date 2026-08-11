@@ -1,4 +1,4 @@
-#include "page-model-file.hpp"
+#include "runtime-model-file.hpp"
 
 #include "platform/confined-file.hpp"
 
@@ -775,7 +775,7 @@ namespace uf::task
         }
         if (manifest.pageModel.path != k_runtimeModelFileName)
         {
-            return refuse("runtime artifact page_model must be root page-model.toml");
+            return refuse("runtime artifact page_model must be root runtime-model.toml");
         }
         if (manifest.pageModel.size == 0U)
         {

@@ -42,7 +42,7 @@ offline frames / OCR / Agent proposals / review
                          |
                          | validate + accept + compile
                          v
-page-model.toml + content-addressed locator assets
+runtime-model.toml + content-addressed locator assets
                          |
                          v
 Umbraflow runtime
@@ -54,7 +54,7 @@ observation cycle may hold a temporary live frame, but that frame is not the
 offline corpus.
 
 `umbraflow-runtime-v1.schema.json` is the single field-shape authority for
-the `RuntimeModel` encoded by `page-model.toml`, runtime model values,
+the `RuntimeModel` encoded by `runtime-model.toml`, runtime model values,
 resolution values, and receipts. The
 Luau compiler is the single semantic validator. Python and TypeScript consume
 the schema and compiler protocol; they do not maintain independent enums.
@@ -371,7 +371,7 @@ same cycle. `Ambiguous` and `UnknownResolution` never mint a receipt.
 The JSON shape is not a construction authority. User Lua tables with the same
 fields are not receipts; minting remains private to the trusted framework.
 
-## 4. `page-model.toml` field contract
+## 4. `runtime-model.toml` field contract
 
 The TOML file maps directly to `RuntimeModel`:
 
@@ -398,7 +398,7 @@ minimums in the machine schema.
 > `reads = ["reader_id", ...]`. It is the one authored field readings add: it is
 > optional, absent is the empty list, every ID must name a declared reader
 > record, and a repeated ID is a validation error. A reading itself is a runtime
-> value and is never written to `page-model.toml`. The fragment below predates
+> value and is never written to `runtime-model.toml`. The fragment below predates
 > the v2 model and the current schema rejects it; write `reads` against the
 > schema named at the head of this document, not against the fragment.
 
@@ -623,7 +623,7 @@ The UI is a decision queue, not a raw TOML editor. It must show supporting
 frames, competing Surface candidates, semantic patch, expected runtime effect,
 blast radius, conflicts, and validation state. It must not expose the deleted
 Page/Element/Reference vocabulary. `write=false` is the default compile mode;
-the backend writes `page-model.toml` only after the candidate is accepted and
+the backend writes `runtime-model.toml` only after the candidate is accepted and
 validation succeeds.
 
 ## 7. C++ pre-VM envelope
@@ -634,7 +634,7 @@ Before a VM exists, C++ reads only the facts represented by
 ```text
 PreVmFacts {
     schema_version,
-    content_hash,       // SHA-256 of exact page-model.toml bytes
+    content_hash,       // SHA-256 of exact runtime-model.toml bytes
     base_resolution,
     base_dpi,
     target_ids[],
@@ -691,7 +691,7 @@ The following cases are mandatory for downstream agents:
 10. A stale CandidateModel revision cannot accept or reject a patch.
 11. C++ can extract target/surface names and geometry without interpreting
     binding semantics.
-12. `page-model.toml` contains no offline screenshot or assertion records.
+12. `runtime-model.toml` contains no offline screenshot or assertion records.
 
 ## 10. Non-blocking open questions
 

@@ -36,7 +36,7 @@ exports:
   release.manifest.json
   runtime-artifact/
     runtime-artifact.manifest.json
-    page-model.toml
+    runtime-model.toml
     assets/**
 ```
 
@@ -127,7 +127,7 @@ frame retention has run out fails the publication closed; nothing is exported.
 Both halves are inlined into one `ReplayGate` document whose hash is the
 release manifest's `replay_gate_hash`.
 
-Publication compiles canonical `page-model.toml`, closes over every referenced
+Publication compiles canonical `runtime-model.toml`, closes over every referenced
 asset, builds the two-gate `ReplayGate`, stages a RuntimeArtifact, then
 performs one short SQLite transaction. That transaction checks the candidate
 head and predecessor, inserts the two UI replay attestations, the

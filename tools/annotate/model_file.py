@@ -1,6 +1,6 @@
 """Canonical RuntimeModel v2 validation and TOML compilation.
 
-This module compiles page-model.toml and never reads one back. The only reader
+This module compiles runtime-model.toml and never reads one back. The only reader
 of that file is the trusted Luau parser in modules/task/runtime/project.luau; a
 Python reader here would be a second parser for the same bytes.
 """

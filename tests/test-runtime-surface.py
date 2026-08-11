@@ -159,12 +159,12 @@ SCHEMA_AUTHORITIES = (
         "schema/umbraflow-trace-v2.schema.json",
     ),
     (
-        "modules/task/source/task/page-model-file.hpp",
+        "modules/task/source/task/runtime-model-file.hpp",
         "k_runtimeArtifactSchemaHash",
         "schema/umbraflow-runtime-artifact-v1.schema.json",
     ),
     (
-        "modules/task/source/task/page-model-file.hpp",
+        "modules/task/source/task/runtime-model-file.hpp",
         "k_runtimeModelSchemaHash",
         "schema/umbraflow-runtime-v2.schema.json",
     ),
@@ -437,7 +437,7 @@ def trusted_parser_errors(root: Path) -> list[str]:
                 )
             continue
 
-        if "RuntimeModel" in original or "page-model.toml" in original:
+        if "RuntimeModel" in original or "runtime-model.toml" in original:
             luau_parsers.extend(
                 relative for _ in LUAU_RUNTIME_PARSER_PATTERN.finditer(text)
             )

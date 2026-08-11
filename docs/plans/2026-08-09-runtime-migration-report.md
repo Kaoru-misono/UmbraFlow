@@ -290,7 +290,7 @@ The retained regression binaries own these capabilities:
 | v1/UFR/envelope schemas | DELETE | keep deleted; no reader, alias, optional fallback, or dual spelling |
 | old `ctx/hits/navigation/mint/oracle/recognition/replay/regress` runtime semantics | DELETE | remove files and framework exports; rebuild only named v2 modules |
 | current Runtime v2 schema/model/evidence/observe/resolution/project | REWRITE | implement RA/RM ownership, unique parser, UiTarget/Binding split, Host binding |
-| current page-model interception and public manifest acceptance | REWRITE | exact root `page-model.toml`, confinement first, private finalize capability |
+| current page-model interception and public manifest acceptance | REWRITE | exact root `runtime-model.toml`, confinement first, private finalize capability |
 | current Receipt/click FFI | REWRITE | opaque Host ledger and one `Host.deliver`; no raw coordinate mint API |
 | `tools/annotate/store.py` and `publication.py` | REWRITE | minimal AW SQLite, immutable release, replay gate, separate deployment activation |
 | current reduced Host/Task/Trace tests | REWRITE | restore primitive assertions, then add exact contract IDs above |

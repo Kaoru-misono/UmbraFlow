@@ -1,4 +1,4 @@
-#include <task/page-model-file.hpp>
+#include <task/runtime-model-file.hpp>
 
 #include <domain/content-hash.hpp>
 
@@ -71,7 +71,7 @@ namespace uf::task
         {
             return std::format(
                 "{{\"assets\":[],\"manifest_schema_hash\":\"{}\","
-                "\"page_model\":{{\"path\":\"page-model.toml\",\"sha256\":\"{}\","
+                "\"page_model\":{{\"path\":\"runtime-model.toml\",\"sha256\":\"{}\","
                 "\"size\":{}}},\"runtime_model_schema_hash\":\"{}\"}}",
                 k_runtimeArtifactSchemaHash,
                 digest(model).hex(),

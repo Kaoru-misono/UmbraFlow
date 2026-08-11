@@ -85,7 +85,7 @@ base subject: docs: publish annotation runtime ownership contract
 关键文件：
 
 ```text
-modules/task/source/task/page-model-file.hpp/.cpp
+modules/task/source/task/runtime-model-file.hpp/.cpp
 modules/task/source/task/task-host.hpp/.cpp
 modules/task/source/task/task-context.hpp/.cpp
 modules/task/runtime/*.luau
@@ -353,7 +353,7 @@ modules/operator/source/operator/runtime-installation.cpp
 
 ### P1-2：RuntimeArtifact loader / installer 的 handle-based confinement 需复核
 
-`modules/task/source/task/page-model-file.cpp` 和 `modules/operator/source/operator/runtime-installation.cpp` 当前主要使用 `std::filesystem::symlink_status/canonical` 后再 `ifstream/ofstream`。冻结 bytes + exact hash 能阻止大部分身份替换，但 v1.7 明确要求 confinement-open 并拒绝 Windows junction/reparse point。
+`modules/task/source/task/runtime-model-file.cpp` 和 `modules/operator/source/operator/runtime-installation.cpp` 当前主要使用 `std::filesystem::symlink_status/canonical` 后再 `ifstream/ofstream`。冻结 bytes + exact hash 能阻止大部分身份替换，但 v1.7 明确要求 confinement-open 并拒绝 Windows junction/reparse point。
 
 必须判断并测试 hostile mutable directory 下的 check/open race；若当前实现不能证明安全，应使用平台 handle-based no-reparse open，不能仅增加一次重复 `canonical()`。不要把 authoring root 或 handoff root 假设为可信而弱化已写入规范的不变量。
 

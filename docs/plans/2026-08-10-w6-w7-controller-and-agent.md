@@ -127,7 +127,7 @@ stands.
 |---|---|
 | No controller facade, no `ControllerKind`, no `ControllerCapability` in C++ | `grep ControllerCapability modules/` returns nothing |
 | `ProjectSnapshot`, `SubscriptionCursor`, `AgentBudget` are schema-only | same; only the four schema-shape tests name them |
-| The operator module has **no production caller** | `grep -rl OperatorCoordinator entry/ modules/ tools/` → only `modules/operator/**` and a forward-declared `friend` at `modules/task/source/task/page-model-file.hpp:20,138` |
+| The operator module has **no production caller** | `grep -rl OperatorCoordinator entry/ modules/ tools/` → only `modules/operator/**` and a forward-declared `friend` at `modules/task/source/task/runtime-model-file.hpp:20,138` |
 | Every call site is under `tests/operator/` | 27 call sites across four files plus `project-fixture.hpp` |
 | `command_fingerprint` excludes `client_request_id` | `modules/operator/source/operator/ledger.cpp:2617-2625` |
 | The database schema fingerprint is an unnamed inline literal | `modules/operator/source/operator/ledger.cpp:371` |

@@ -14,7 +14,7 @@
 
 #include <image/png.hpp>
 
-#include <task/page-model-file.hpp>
+#include <task/runtime-model-file.hpp>
 #include <task/platform/confined-file.hpp>
 
 #include <algorithm>
@@ -131,7 +131,7 @@ namespace uf::deployment
         "$comment": {"type": "string"},
         "schema": {"const": "umbraflow-project/v1"},
         "runtime_artifact": {
-            "$comment": "A directory, not a file: the installer reads page-model.toml and runtime-artifact.manifest.json out of a root by those fixed names.",
+            "$comment": "A directory, not a file: the installer reads runtime-model.toml and runtime-artifact.manifest.json out of a root by those fixed names.",
             "$ref": "#/$defs/Path"
         },
         "primary_deployment": {"$ref": "#/$defs/DeploymentName"},

@@ -16,16 +16,27 @@ offline exploration, screenshots, OCR observations, and review
         |
         | Agent analysis, human decisions, validation, compilation
         v
-page-model.toml + runtime locator assets
+runtime-model.toml + runtime locator assets
         |
         v
 Umbraflow runtime
 ~~~
 
-page-model.toml remains the runtime contract file name, but its schema is
+The runtime contract file keeps its place in the boundary, but its schema is
 redesigned from scratch. The old Page, Element, Reference, CapabilitySet,
 holding, exercised, screen, and expect semantics are not retained through a
 compatibility layer.
+
+> Amended 2026-08-12: this section originally ruled that `page-model.toml`
+> keeps its name across the v2 redesign. That ruling is reversed. Dropping every
+> Page concept left the file name as the only surviving mention of one, so the
+> file is now `runtime-model.toml` and this document is spelled that way
+> throughout. There is no compatibility path: `k_runtimeModelFileName` in
+> `modules/task/source/task/runtime-model-file.hpp` is the single spelling, the
+> `path` const in `schema/umbraflow-runtime-artifact-v1.schema.json` moved with
+> it, and `k_runtimeArtifactSchemaHash` was re-pinned to the schema's new
+> digest. Consumer projects must rename the file in their own artifact and
+> republish; an artifact still carrying the old name is refused at load.
 
 An offline one-time data extraction tool may reuse existing project material,
 but the runtime and authoring system do not support the old schema.
@@ -288,7 +299,7 @@ runtime policy.
 
 ## 6. Runtime model file
 
-page-model.toml contains only deployment information:
+runtime-model.toml contains only deployment information:
 
 ~~~text
 schema version
@@ -666,7 +677,7 @@ surface selection.
 - project-specific naming hints;
 - action policy decisions;
 - project transitions;
-- accepted page-model.toml;
+- accepted runtime-model.toml;
 - project task scripts;
 - domain-specific Agent prompts and labels.
 
@@ -697,8 +708,8 @@ Split or relocate offline-only behavior from:
 
 Update:
 
-- modules/task/source/task/page-model-file.hpp
-- modules/task/source/task/page-model-file.cpp
+- modules/task/source/task/runtime-model-file.hpp
+- modules/task/source/task/runtime-model-file.cpp
 - modules/task/source/task/task-host.cpp
 - related task model tests
 
@@ -823,7 +834,7 @@ documentation, and old project-specific workarounds.
 The design is complete only when:
 
 - runtime packages contain no annotation screenshots;
-- page-model.toml contains only deployment data;
+- runtime-model.toml contains only deployment data;
 - Surface resolution is not first-match;
 - unknown and ambiguous states cannot receive an actionable receipt;
 - overlay stacks are represented explicitly;

@@ -178,15 +178,15 @@ Neither is a second trusted object: `TaskHost` and `OperatorCoordinator` already
 exist, and each new value's only constructor is private to the one that already
 owns that state kind. The pattern is `ValidatedToolInvocation`
 (`modules/operator/source/operator/tool-invocation.hpp:43-79`) and, on the task
-side, `RuntimeModelBinding` (`modules/task/source/task/page-model-file.hpp:159-193`),
+side, `RuntimeModelBinding` (`modules/task/source/task/runtime-model-file.hpp:159-193`),
 whose single friend is `TaskHost`.
 
 ### 2.1 `task::UiObservationSnapshot`
 
 New header `modules/task/source/task/ui-observation.hpp` with
 `ui-observation.cpp` beside it. It is a separate header rather than an addition
-to `page-model-file.hpp` because an observation is not an artifact concept;
-`page-model-file.hpp` already forward-declares across the boundary the same way.
+to `runtime-model-file.hpp` because an observation is not an artifact concept;
+`runtime-model-file.hpp` already forward-declares across the boundary the same way.
 
 ```cpp
 #pragma once
