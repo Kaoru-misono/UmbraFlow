@@ -6,6 +6,7 @@
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
+#include <core/safety/checked-access.hpp>
 #include <core/text/json-text.hpp>
 
 #include <domain/content-hash.hpp>
@@ -1056,10 +1057,9 @@ namespace uf::deployment
             {
                 for (auto second = first + 1U; second < entries.size(); ++second)
                 {
-                    if (
-                        entries[first].p_entry->payload
-                        != entries[second].p_entry->payload
-                    )
+                    auto const& earlier = checkedAt(entries, first);
+                    auto const& later   = checkedAt(entries, second);
+                    if (earlier.p_entry->payload != later.p_entry->payload)
                     {
                         continue;
                     }
@@ -1068,8 +1068,8 @@ namespace uf::deployment
                         "did not name is provably absent from the reducer's "
                         "input only while the four payloads differ",
                         role,
-                        entries[first].member,
-                        entries[second].member
+                        earlier.member,
+                        later.member
                     ));
                 }
             }

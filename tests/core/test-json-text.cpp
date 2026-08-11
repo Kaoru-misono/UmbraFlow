@@ -197,6 +197,7 @@ namespace uf
 
             auto const bytes = decodeField(value);
             REQUIRE(bytes.has_value());
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             return Expectation{.outcome = Outcome::Bytes, .bytes = *bytes};
         }
 
@@ -292,6 +293,7 @@ namespace uf
             // A vector file that failed to load, or loaded short, would make
             // every assertion below pass by having nothing to assert.
             REQUIRE(declaredCount.has_value());
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             REQUIRE(rows.size() == *declaredCount);
             return rows;
         }
@@ -333,6 +335,7 @@ namespace uf
                 ? std::optional<std::string>{row.cpp->bytes}
                 : row.fields[1];
             REQUIRE(expected.has_value());
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             CHECK(escaped(*row.fields[0]) == *expected);
             ++checked;
         }
@@ -363,6 +366,7 @@ namespace uf
             for (auto const& field : row.fields | std::views::drop(1))
             {
                 REQUIRE(field.has_value());
+                // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
                 names.push_back(*field);
             }
             REQUIRE(names.size() >= 2U);
@@ -397,6 +401,7 @@ namespace uf
             }
             CAPTURE(row.label);
             REQUIRE(row.cpp.has_value());
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             CHECK(row.cpp->outcome == Outcome::Absent);
             ++checked;
         }

@@ -12,13 +12,17 @@
 
 #include <operator/ledger.hpp>
 
+#include <core/safety/annotations.hpp>
+
 #include <doctest/doctest.h>
 
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -99,12 +103,19 @@ namespace uf::operator_runtime::test_support
         {
             auto const* p_name = sqlite3_column_text(statement.get(), 0);
             REQUIRE(p_name != nullptr);
-            columns.emplace_back(
-                std::string{
-                    p_name,
-                    p_name + sqlite3_column_bytes(statement.get(), 0),
-                }
-            );
+            // SAFETY: SQLite answers with a pointer and a byte count, and
+            // sqlite3_column_bytes reports the length of the very column
+            // sqlite3_column_text just returned. A span is what names that
+            // pair without a raw pointer standing for a buffer.
+            UF_UNSAFE_BUFFER_BEGIN
+            auto const name = std::span{
+                p_name,
+                static_cast<std::size_t>(
+                    sqlite3_column_bytes(statement.get(), 0)
+                ),
+            };
+            UF_UNSAFE_BUFFER_END
+            columns.emplace_back(name.begin(), name.end());
             step = sqlite3_step(statement.get());
         }
         REQUIRE(step == SQLITE_DONE);

@@ -235,6 +235,9 @@ namespace uf::operator_runtime
     // so that two submissions can be proved to be one command -- by whom is
     // deliberately not among the hashed bytes, which is what makes the shared
     // Operation path provable -- and it is not a field any caller may state.
+    //
+    // No in-class initializer for the hash: ContentHash has no default state.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct AcceptedCommand final
     {
         StoredOperation operation;
@@ -244,6 +247,9 @@ namespace uf::operator_runtime
     // What one frozen plan settled. Every member is derived inside freezePlan's
     // transaction from bytes the ledger already held, so a caller reads them
     // here and can no longer state them anywhere.
+    //
+    // No in-class initializer for the hashes: ContentHash has no default state.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct FrozenPlan final
     {
         StoredOperation operation;
@@ -275,6 +281,9 @@ namespace uf::operator_runtime
     // authority: they live there and are read from there, because the value the
     // Host is handed and the value the ledger later matches its own rows
     // against must be one value and not two that agree today.
+    //
+    // No in-class initializer for the hashes: ContentHash has no default state.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct DispatchReservation final
     {
         task::DispatchAuthority authority;

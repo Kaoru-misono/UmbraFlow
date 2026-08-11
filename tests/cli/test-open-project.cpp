@@ -200,6 +200,7 @@ namespace uf::cli
         auto const* const p_alpha = findOpened(*opened, "alpha");
         REQUIRE(p_alpha != nullptr);
         REQUIRE(p_alpha->refusal.has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(p_alpha->refusal->contains("entry point"));
 
         // The registration moved rather than being refused, which is what says

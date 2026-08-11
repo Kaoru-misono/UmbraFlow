@@ -158,6 +158,10 @@ namespace uf::json
         {
             for (auto index = std::size_t{1}; index < k_keywords.size(); ++index)
             {
+                // Both subscripts stay under k_keywords.size(), and this runs
+                // only under constant evaluation, where a stray index is a
+                // compile error.
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
                 if (!(k_keywords[index - 1U].name < k_keywords[index].name))
                 {
                     return false;
@@ -167,6 +171,7 @@ namespace uf::json
             {
                 for (auto right = left + 1U; right < k_keywords.size(); ++right)
                 {
+                    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
                     if (k_keywords[left].keyword == k_keywords[right].keyword)
                     {
                         return false;
@@ -187,6 +192,10 @@ namespace uf::json
             auto names = std::array<std::string_view, k_keywords.size()>{};
             for (auto index = std::size_t{0}; index < k_keywords.size(); ++index)
             {
+                // Both subscripts stay under k_keywords.size(), and this runs
+                // only under constant evaluation, where a stray index is a
+                // compile error.
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
                 names[index] = k_keywords[index].name;
             }
             return names;
@@ -1594,6 +1603,9 @@ namespace uf::json
 
         auto state      = State{};
         state.resources = std::move(compiler).resources();
+        // Not a use after move: the two rvalue-qualified accessors move out
+        // disjoint members, and neither reads the other's.
+        // NOLINTNEXTLINE(bugprone-use-after-move)
         state.patterns  = std::move(compiler).patterns();
         return Schema{std::make_shared<State const>(std::move(state))};
     }

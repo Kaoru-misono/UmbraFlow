@@ -1,6 +1,7 @@
 #include "controller.hpp"
 
 #include <core/error/contracts.hpp>
+#include <core/safety/checked-access.hpp>
 
 #include <domain/error.hpp>
 
@@ -13,9 +14,8 @@ namespace uf::operator_runtime
 {
     auto controllerProfile(ControllerKind kind) -> ControllerProfile
     {
-        auto const index = static_cast<std::size_t>(kind);
-        UF_CHECK(index < k_controllerProfiles.size());
-        auto const profile = k_controllerProfiles[index];
+        auto const index   = static_cast<std::size_t>(kind);
+        auto const profile = checkedAt(k_controllerProfiles, index);
         // The table is indexed by the enumerator's own value, so a reordered or
         // extended enum must fail here rather than answer with another kind's
         // row. A profile is a ceiling; reading the wrong one silently widens it.

@@ -508,6 +508,11 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
             m_context.emplace(*std::move(session), *m_recorder);
         }
 
+        // The constructor emplaces m_context on every path that produces an
+        // object, so no reachable state has it disengaged. That is a class
+        // invariant, which the check reasons per function and cannot see;
+        // value() is reported identically, so it buys nothing here.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
         [[nodiscard]] auto context() noexcept -> TaskContext& { return *m_context; }
         [[nodiscard]] auto actions() noexcept -> ActionSink& { return *m_pActions; }
     };

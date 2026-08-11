@@ -3,6 +3,7 @@
 #include "error.hpp"
 
 #include <core/error/contracts.hpp>
+#include <core/safety/annotations.hpp>
 #include <core/text/json-text.hpp>
 #include <core/text/utf8.hpp>
 #include <core/types/integer.hpp>
@@ -297,11 +298,18 @@ namespace uf::json
 
             auto const token  = m_text.substr(start, m_at - start);
             auto       value  = double{0.0};
+            // SAFETY: std::from_chars names its range as a pointer pair, which
+            // is the one shape a bounded view cannot express. Both ends come
+            // from token's own extent, so no caller states a bound and the
+            // computed address is token's one-past-the-end.
+            UF_UNSAFE_BUFFER_BEGIN
             auto const parsed = std::from_chars(
                 token.data(),
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
                 token.data() + token.size(),
                 value
             );
+            UF_UNSAFE_BUFFER_END
             // The scan above already accepted the grammar, so the only failure
             // left is a magnitude with no double: too large to represent, or
             // too small to tell from zero. Both are refused rather than folded,
@@ -311,13 +319,18 @@ namespace uf::json
             // it would fold to, so requireExactCanonical would refuse it one
             // step later anyway. One rule covers both; a branch that folded the
             // second would be a second spelling of zero.
+            // SAFETY: the same end std::from_chars was given, restated to ask
+            // whether it consumed the whole token.
+            UF_UNSAFE_BUFFER_BEGIN
             if (
                 parsed.ec != std::errc{}
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
                 || parsed.ptr != token.data() + token.size()
             )
             {
                 return syntax("a JSON number has no double this reader represents");
             }
+            UF_UNSAFE_BUFFER_END
 
             return Value::ofNumber(value);
         }
@@ -470,13 +483,20 @@ namespace uf::json
                 magnitudeOf = -value;
             }
 
-            auto       buffer  = std::array<char, k_numberBufferSize>{};
+            auto buffer = std::array<char, k_numberBufferSize>{};
+            // SAFETY: std::to_chars names its range as a pointer pair, which is
+            // the one shape a bounded array cannot express. Both ends come from
+            // buffer's own extent, so the computed address is its
+            // one-past-the-end.
+            UF_UNSAFE_BUFFER_BEGIN
             auto const written = std::to_chars(
                 buffer.data(),
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
                 buffer.data() + buffer.size(),
                 magnitudeOf,
                 std::chars_format::scientific
             );
+            UF_UNSAFE_BUFFER_END
             UF_CHECK(written.ec == std::errc{});
 
             auto const text = std::string_view{
@@ -506,11 +526,19 @@ namespace uf::json
             }
 
             auto exponentMagnitude = 0;
+            // SAFETY: std::from_chars names its range as a pointer pair.
+            // exponentDigitsAt is a position inside text -- the 'e' the
+            // UF_CHECK above found, plus at most one sign character -- and the
+            // end comes from text's own extent.
+            UF_UNSAFE_BUFFER_BEGIN
             static_cast<void>(std::from_chars(
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
                 text.data() + exponentDigitsAt,
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
                 text.data() + text.size(),
                 exponentMagnitude
             ));
+            UF_UNSAFE_BUFFER_END
 
             auto const k = static_cast<int>(digits.size());
             auto const n =

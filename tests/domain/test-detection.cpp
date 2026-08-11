@@ -84,6 +84,7 @@ namespace uf
         {
             auto const result = instant.checkedAdd(duration);
             REQUIRE(result.has_value());
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             return *result;
         }
 

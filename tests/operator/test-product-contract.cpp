@@ -408,6 +408,7 @@ namespace uf::operator_runtime
         );
         REQUIRE(first.has_value());
         REQUIRE(first->operationId.has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(*first->operationId == inFlight->operation.operationId);
         CHECK(
             first->invalidatedSnapshotRevision == prepared.snapshot.snapshotRevision
@@ -469,6 +470,7 @@ namespace uf::operator_runtime
         // The revalidated Operation was in flight again, so the second finding
         // froze the same one.
         REQUIRE(second->operationId.has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(*second->operationId == inFlight->operation.operationId);
     }
 

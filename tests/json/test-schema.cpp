@@ -4,6 +4,8 @@
 #include <json/schema.hpp>
 #include <json/value.hpp>
 
+#include <core/safety/checked-access.hpp>
+
 #include <doctest/doctest.h>
 
 #include <array>
@@ -125,7 +127,7 @@ namespace uf::json
         REQUIRE(implemented.size() == k_expected.size());
         for (auto index = std::size_t{0}; index < k_expected.size(); ++index)
         {
-            CHECK(implemented[index] == k_expected[index]);
+            CHECK(implemented[index] == checkedAt(k_expected, index));
         }
     }
 

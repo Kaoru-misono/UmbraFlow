@@ -1111,6 +1111,7 @@ namespace uf::engine
         auto under = matchingSession(
             fingerprint,
             baseConfig(fingerprint),
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             *capturedAt,
             TargetWorld::Live
         );
@@ -1146,6 +1147,7 @@ namespace uf::engine
         auto under = matchingSession(
             fingerprint,
             baseConfig(fingerprint),
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             *capturedAt,
             TargetWorld::Recorded
         );

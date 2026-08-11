@@ -374,8 +374,12 @@ namespace uf::deployment
 
             auto const example = text.substr(begin, closed - begin);
             auto const judged  = validateFrameworkFormat(example);
-            auto const complaint =
-                judged.has_value() ? std::string{} : judged.error().message();
+            // Both arms are std::string: message() answers with a view into the
+            // Error, and a conditional mixing it with a std::string temporary
+            // takes the view as its type and outlives what backs it.
+            auto const complaint = judged.has_value()
+                ? std::string{}
+                : std::string{judged.error().message()};
             INFO(complaint);
             CHECK(judged.has_value());
         }
