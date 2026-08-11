@@ -1,5 +1,7 @@
 #pragma once
 
+#include <operator-contract/host-delivery-fixture.hpp>
+
 #include <operator/journal-entry.hpp>
 #include <operator/manifest.hpp>
 #include <operator/project-plugin.hpp>
@@ -8,6 +10,7 @@
 
 #include <core/types/integer.hpp>
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
@@ -19,6 +22,36 @@ namespace uf::operator_runtime::contract
     {
         std::string eventType{};
         std::string payload{};
+    };
+
+    // One file inside a RuntimeArtifact: the artifact-relative path a locator
+    // names, and the exact bytes stored there.
+    struct ArtifactFile final
+    {
+        std::string            path{};
+        std::vector<std::byte> bytes{};
+    };
+
+    // One project's published RuntimeArtifact: the RuntimeModel its annotation
+    // front end produced, and the complete asset closure that model's locators
+    // name. The suite installs these bytes and carries no model of its own,
+    // because a suite that substituted one would answer whether ITS model
+    // satisfies the contract rather than whether this project's does.
+    //
+    // This is not `artifactBlobs` below, and the two must not be merged. Those
+    // are the PR:`project_artifact_roots` the registration pins: project content
+    // the plugin reads, named by the registration hash. A RuntimeArtifact is
+    // named by the session manifest's runtime_model_artifact_root_hash, is
+    // installed by the Operator and is read by the Host, never by the plugin.
+    //
+    // The model must resolve against the frame the suite captures, which is
+    // fixed and documented beside it: `resolvedFramePixels()` over
+    // `observationFingerprint()` in observation-fixture.hpp. A model that frame
+    // satisfies no surface of installs and then resolves to nothing.
+    struct ProjectRuntimeArtifact final
+    {
+        std::string               model{};
+        std::vector<ArtifactFile> assets{};
     };
 
     // Every project document the suite is allowed to use. The suite invents no
@@ -69,6 +102,21 @@ namespace uf::operator_runtime::contract
         // must echo the tool it was invoked for; otherwise the case reaches the
         // tool check instead of the property it is about.
         std::string approvalRequiredPlanTool{};
+
+        // The one UI action the suite drives against this project's
+        // RuntimeModel, in that model's own vocabulary. Only the project can
+        // name it: a suite could pick some clickable binding out of a model, but
+        // which binding a contract run may drive is a project decision, and a
+        // model offering none would then fail as "no binding anywhere" rather
+        // than as the thing it is.
+        //
+        // The project's own next_step must name this surface and this target in
+        // the OP:`UIActionIntent` it returns, or the suite drives something the
+        // plan never asked for. Nothing downstream enforces that agreement:
+        // task::DispatchAuthority carries no UI identifier, and the ledger
+        // stores the intent bytes without reading their surface_id or
+        // ui_target_id. Keeping the two the same is the project's own duty.
+        task::UiActionUnderTest uiAction{};
     };
 
     // Everything the suite needs from one project's trusted deployment. The
@@ -93,6 +141,12 @@ namespace uf::operator_runtime::contract
         // would not prove that these bytes are the ones the registration names.
         std::string                                       pluginBytes;
         std::vector<ProjectPluginRegistrar::ArtifactBlob> artifactBlobs;
+
+        // The RuntimeArtifact this project's sessions are pinned to. The suite
+        // publishes a release carrying exactly these bytes and installs it, so
+        // every observation the suite composes a snapshot from was resolved
+        // through this project's model.
+        ProjectRuntimeArtifact runtimeArtifact;
 
         // Where the deployment's document validator records the exact bytes it
         // last saw as a Reduce input. Shared and mutable because the validator

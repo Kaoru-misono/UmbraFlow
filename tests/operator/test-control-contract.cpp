@@ -401,6 +401,7 @@ namespace uf::operator_runtime
             auto fencedHost = contract::DeliveringHost{
                 *std::move(installed),
                 controlFence(movedFence),
+                test_support::k_fixtureUiAction,
             };
             fencedAuthority.runtimeGeneration = fencedHost.generation();
             CHECK_FALSE(prepared.store.recordDeliveryOutcome(

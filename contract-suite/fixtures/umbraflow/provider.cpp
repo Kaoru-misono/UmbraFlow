@@ -58,6 +58,8 @@ namespace uf::operator_runtime::contract
                 // One more mutating tool, told apart by the plan this project's
                 // plugin answers it with.
                 .approvalRequiredPlanTool = "approval-plan",
+
+                .uiAction = test_support::k_fixtureUiAction,
             };
         }
     }
@@ -83,6 +85,7 @@ namespace uf::operator_runtime::contract
             .reconcileSchemaOwner   = std::move(fixture.reconcileSchemaOwner),
             .pluginBytes            = pluginBytes,
             .artifactBlobs          = {},
+            .runtimeArtifact        = test_support::umbraflowRuntimeArtifact(),
             .observedReduceInput    = std::move(fixture.lastReduceInput),
             .observedDeriveInput    = std::move(fixture.lastDeriveInput),
             .vocabulary             = vocabulary(),

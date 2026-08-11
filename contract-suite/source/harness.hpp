@@ -79,13 +79,17 @@ namespace uf::operator_runtime::contract
     ) -> SessionManifest;
 
     // A RuntimeArtifact handoff on disk. Its shape is the Operator's, not the
-    // project's, so the suite writes it rather than asking the deployment for
-    // one. It carries a real RuntimeModel because a snapshot is composed from
-    // an observation the Host resolved through that model.
+    // project's, so the suite writes the handoff rather than asking the
+    // deployment for one -- but the RuntimeModel and assets inside it are the
+    // project's own, because a snapshot is composed from an observation the Host
+    // resolved through that model.
     using RuntimeRelease = ObservationRelease;
 
     [[nodiscard]]
-    auto runtimeRelease(std::filesystem::path const& root) -> RuntimeRelease;
+    auto runtimeRelease(
+        std::filesystem::path const& root,
+        ProjectRuntimeArtifact const& artifact
+    ) -> RuntimeRelease;
 
     // A coordinator holding one installed runtime artifact, one registered and
     // provisioned project, one pinned write session, one lease and one

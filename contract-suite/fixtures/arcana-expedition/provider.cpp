@@ -11,6 +11,7 @@
 // header, build the five authorities out of the deployment's own validators,
 // and define projectUnderTest.
 
+#include <operator-contract/observation-fixture.hpp>
 #include <operator-contract/operator-protocol.hpp>
 #include <operator-contract/project-under-test.hpp>
 
@@ -158,6 +159,61 @@ return {
     reduce = function(_input) return '{"turn":0}' end,
 }
 )LUAU"};
+
+        // This project's RuntimeModel. Nothing in it is shared with the
+        // umbraflow fixture: different surface, target, locator, binding and
+        // action ids, and different asset file names. The step intent above
+        // names expedition.surface, expedition.target and expedition.press, and
+        // so does this, because a plan that named UI this model does not define
+        // would be planning against a world that does not exist.
+        constexpr auto k_runtimeModel = std::string_view{R"toml(schema_version = 2
+base_resolution = [3, 1]
+base_dpi = [96, 96]
+
+[[ui_target]]
+id = "expedition.camp"
+kind = "region"
+
+[[ui_target]]
+id = "expedition.target"
+kind = "control"
+
+[[locator]]
+id = "expedition.banner"
+kind = "template"
+asset_path = "assets/expedition-banner.png"
+threshold = 1
+
+[[locator]]
+id = "expedition.march-mark"
+kind = "template"
+asset_path = "assets/expedition-march.png"
+threshold = 1
+
+[[binding]]
+id = "expedition.camp.banner"
+surface = "expedition.surface"
+ui_target = "expedition.camp"
+variant = "primary"
+placement = { kind = "fixed", rect = [0, 0, 1, 1] }
+detector = { all = [{ kind = "locator_present", locator = "expedition.banner" }], any = [], none = [] }
+actions = []
+
+[[binding]]
+id = "expedition.target.primary"
+surface = "expedition.surface"
+ui_target = "expedition.target"
+variant = "primary"
+placement = { kind = "fixed", rect = [1, 0, 1, 1], action_point = [1, 0] }
+detector = { all = [{ kind = "locator_present", locator = "expedition.march-mark" }], any = [], none = [] }
+actions = [{ id = "expedition.press", kind = "click", proof_locator = "expedition.march-mark" }]
+
+[[surface]]
+id = "expedition.surface"
+kind = "scene"
+covers = []
+identity = { all = ["expedition.camp.banner"], any = [], none = [] }
+)toml"};
 
         constexpr auto k_artifactRootName = std::string_view{"map"};
         constexpr auto k_artifactBytes = std::string_view{"expedition-map-bytes"};
@@ -365,6 +421,32 @@ return {
                 // Five more mutating tools, told apart by the plan this
                 // project's plugin answers each of them with.
                 .approvalRequiredPlanTool = "expedition.approval",
+
+                .uiAction = task::UiActionUnderTest{
+                    .surface  = "expedition.surface",
+                    .uiTarget = "expedition.target",
+                    .action   = "expedition.press",
+                },
+            };
+        }
+
+        // The closure this model's two template locators name, authored against
+        // the grays the suite's probe frame carries.
+        [[nodiscard]]
+        auto runtimeArtifact() -> ProjectRuntimeArtifact
+        {
+            auto assets = std::vector<ArtifactFile>{};
+            assets.emplace_back(ArtifactFile{
+                .path  = "assets/expedition-banner.png",
+                .bytes = templatePng(k_anchorGray),
+            });
+            assets.emplace_back(ArtifactFile{
+                .path  = "assets/expedition-march.png",
+                .bytes = templatePng(k_actionGray),
+            });
+            return ProjectRuntimeArtifact{
+                .model  = std::string{k_runtimeModel},
+                .assets = std::move(assets),
             };
         }
 
@@ -815,6 +897,7 @@ return {
                 .reconcileSchemaOwner   = *std::move(reconcileSchemaOwner),
                 .pluginBytes            = std::string{identity.pluginSource},
                 .artifactBlobs          = std::move(artifactBlobs),
+                .runtimeArtifact        = runtimeArtifact(),
                 .observedReduceInput    = std::move(observedReduce),
                 .observedDeriveInput    = std::move(observedDerive),
                 .vocabulary             = vocabularyOf(identity),

@@ -152,9 +152,12 @@ namespace uf::operator_runtime::contract
         return *result;
     }
 
-    auto runtimeRelease(std::filesystem::path const& root) -> RuntimeRelease
+    auto runtimeRelease(
+        std::filesystem::path const& root,
+        ProjectRuntimeArtifact const& artifact
+    ) -> RuntimeRelease
     {
-        return observationRelease(root, observationRuntimeModel());
+        return observationRelease(root, artifact);
     }
 
     auto prepareStore(std::filesystem::path const& root) -> PreparedStore
@@ -169,7 +172,10 @@ namespace uf::operator_runtime::contract
             == project.registration.baselineEventType()
         );
 
-        auto const release = runtimeRelease(root / "session-handoff");
+        auto const release = runtimeRelease(
+            root / "session-handoff",
+            project.runtimeArtifact
+        );
         auto storeResult   = OperatorCoordinator::open(root / "production");
         REQUIRE(storeResult.has_value());
         auto store     = *std::move(storeResult);
@@ -231,7 +237,12 @@ namespace uf::operator_runtime::contract
         // "operator" is the exact operator protocol schema sessionManifest
         // above pins. The authority hashes the bytes and compares, so a suite
         // that named the wrong ones could not build one at all.
-        auto authority = planAuthority(project.registration, manifest, "operator");
+        auto authority = planAuthority(
+            project.registration,
+            manifest,
+            "operator",
+            project.vocabulary.uiAction
+        );
         REQUIRE(authority.has_value());
         return PreparedStore{
             .store                   = std::move(store),
@@ -255,7 +266,8 @@ namespace uf::operator_runtime::contract
             prepared.store,
             prepared.lease,
             prepared.installedGeneration,
-            prepared.runtimeArtifactRootHash
+            prepared.runtimeArtifactRootHash,
+            prepared.project.vocabulary.uiAction
         );
     }
 

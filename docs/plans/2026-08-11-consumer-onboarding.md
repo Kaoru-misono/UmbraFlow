@@ -240,6 +240,37 @@ correctly" from "this project's page model resolves" is a defensible split. But
 it is undocumented, and it means **the suite pass a consumer earns is weaker
 than the yardstick implies.** Ruling needed: Q6.
 
+> **Closed 2026-08-11: the seam now exists.** `ProjectUnderTest` carries a
+> `ProjectRuntimeArtifact` — RuntimeModel bytes and the asset closure — and
+> `prepareStore` installs those. `observationRuntimeModel()` and
+> `observationAssets()` are gone: the suite has no model to substitute. Both
+> in-tree fixtures now ship one of their own, and the measurement above was
+> right about both — arcana's `expedition.surface`/`expedition.target`/
+> `expedition.press` and umbraflow's `fixture.surface`/`fixture.target` had
+> never resolved against anything. Mutating either model so it stops defining
+> the driven surface or target now turns the run red; the same mutation was
+> green before this change.
+>
+> `k_authorizeClickSource` became `authorizeClickSource(UiActionUnderTest)`, and
+> which surface, target and action a contract run drives is a new
+> `ProjectVocabulary` member. It is vocabulary rather than something derived
+> from the model because a model offers many clickable bindings and only the
+> project knows which one a contract run may drive; a suite that guessed would
+> report "no binding anywhere" for a model that simply orders them differently.
+>
+> One half of the gap is still open, and it is the Operator's rather than the
+> suite's: nothing outside the suite reads an OP:`UIActionIntent`'s
+> `surface_id`, `ui_target_id` or `action_id`. `StepIntentClaims` carries
+> `step_key` and `kind`; the ledger stores and hashes the intent bytes without
+> parsing them; `task::DispatchAuthority` carries no UI identifier at all, and
+> the Host is driven by a Receipt the trusted chunk minted from the model. So a
+> *production* plan may still name UI no RuntimeModel defines. The suite refuses
+> it — `planAuthority` now takes the project's UI action and its step-intent
+> reader rejects a UI-action step naming anything else — but that refusal is the
+> suite's own, and `contract-runtime-u06` claims nothing about it: u06 is about
+> `ReceiptRef`/`DeliveryOutcome`, and the Receipt is minted from the model, so
+> u06 was never evidence that a step intent's identifiers were checked.
+
 ## 5. What moves into the framework, and what stays
 
 Design constraint, taken as given: prefer moving code *into* the framework over
@@ -1019,6 +1050,16 @@ no for now, and that the header say so.* Adding a `RuntimeArtifact` member to
 run a single Operator contract case, which inverts the dependency the attestation
 document's §7 relies on. But the current silence is worse than either answer:
 today a consumer can believe its UI vocabulary was exercised when it was not.
+
+> **Answered 2026-08-11, against this recommendation: yes, the suite takes it.**
+> The recommendation weighed the consumer's cost and missed that the alternative
+> is a green result promising more than it verifies, which is the defect this
+> block spent three days removing elsewhere. A suite that substitutes its own
+> model answers a different question than the one it is asked. The cost the
+> recommendation feared is smaller than it looks: what a consumer owes is a
+> contract-scale RuntimeArtifact its own annotation pipeline can publish, not
+> its production page model, and the suite documents the one probe frame such a
+> model must resolve against. See the amendment closing §4.2.
 
 **Q7 — do the five plan-shape tools belong in a shipping tool catalog?** §5.4.
 They are inside `tool_catalog_hash`, therefore inside

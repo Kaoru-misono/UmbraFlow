@@ -258,7 +258,8 @@ namespace uf::operator_runtime
             auto planAuthority = contract::planAuthority(
                 project.registration,
                 manifest,
-                "operator"
+                "operator",
+                test_support::k_fixtureUiAction
             );
             REQUIRE(planAuthority.has_value());
             return PreparedStore{
@@ -284,7 +285,8 @@ namespace uf::operator_runtime
                 prepared.store,
                 prepared.lease,
                 prepared.installedGeneration,
-                prepared.runtimeArtifactRootHash
+                prepared.runtimeArtifactRootHash,
+                test_support::k_fixtureUiAction
             );
         }
 
@@ -1425,7 +1427,8 @@ namespace uf::operator_runtime
         auto foreignAuthority = contract::planAuthority(
             foreign.registration,
             foreignManifest,
-            "operator"
+            "operator",
+            test_support::k_fixtureUiAction
         );
         REQUIRE(foreignAuthority.has_value());
 

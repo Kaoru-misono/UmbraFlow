@@ -35,15 +35,6 @@ namespace uf::task
 {
     namespace
     {
-        constexpr auto k_authorizeSource = std::string_view{R"lua(
-            local cycle = observe.open(project.load_project())
-            local state = cycle:resolve_state()
-            local binding = cycle:resolve_binding(state, "confirm")
-            local receipt, reason = cycle:authorize(binding, "activate")
-            if receipt == nil then error(reason) end
-            return 1
-        )lua"};
-
         [[nodiscard]]
         auto runText(
             TaskHost& host,
@@ -227,14 +218,14 @@ namespace uf::task
             host,
             generation,
             runtime.context(),
-            k_authorizeSource
+            authorizeClickSource(k_runtimeUiAction)
         );
         REQUIRE(minted.has_value());
         CHECK(minted->number() == std::optional<double>{1.0});
         CHECK(runtime.actions().clicks() == 0U);
         CHECK(TaskHostTestAccess::pendingSemanticHash(host) != hash(runtimeModel()));
 
-        auto const receipt = TaskHostTestAccess::pendingReceipt(host);
+        auto const receipt = TaskHostTestAccess::pendingReceipt(host, k_runtimeUiAction);
         auto const delivered = TaskHostTestAccess::deliver(
             host,
             authority,
@@ -280,7 +271,7 @@ namespace uf::task
             host,
             generation,
             runtime.context(),
-            k_authorizeSource
+            authorizeClickSource(k_runtimeUiAction)
         );
         REQUIRE(reminted.has_value());
         auto other = RuntimeContext{
@@ -303,7 +294,7 @@ namespace uf::task
         auto const refused = TaskHostTestAccess::deliver(
             host,
             authority,
-            TaskHostTestAccess::pendingReceipt(host),
+            TaskHostTestAccess::pendingReceipt(host, k_runtimeUiAction),
             other.context()
         );
         REQUIRE(refused.has_value());
@@ -348,10 +339,10 @@ namespace uf::task
                 host,
                 generation,
                 runtime.context(),
-                k_authorizeSource
+                authorizeClickSource(k_runtimeUiAction)
             ).has_value()
         );
-        auto const receipt = TaskHostTestAccess::pendingReceipt(host);
+        auto const receipt = TaskHostTestAccess::pendingReceipt(host, k_runtimeUiAction);
         auto const authority = dispatchAuthority(fence, generation);
 
         // One forgery per checked field: a Host that compared only three of the
@@ -408,7 +399,7 @@ namespace uf::task
                 host,
                 generation,
                 unfenced.context(),
-                k_authorizeSource
+                authorizeClickSource(k_runtimeUiAction)
             ).has_value()
         );
         CHECK(unfenced.actions().clicks() == 0U);
@@ -437,7 +428,7 @@ namespace uf::task
                 fencedHost,
                 fencedGeneration,
                 fenced.context(),
-                k_authorizeSource
+                authorizeClickSource(k_runtimeUiAction)
             ).has_value()
         );
     }
@@ -504,10 +495,10 @@ namespace uf::task
                 host,
                 generation,
                 runtime.context(),
-                k_authorizeSource
+                authorizeClickSource(k_runtimeUiAction)
             ).has_value()
         );
-        auto const receipt = TaskHostTestAccess::pendingReceipt(host);
+        auto const receipt = TaskHostTestAccess::pendingReceipt(host, k_runtimeUiAction);
 
         auto const seized = controlFence(8);
         REQUIRE(TaskHostTestAccess::adoptControlFence(host, seized).has_value());
@@ -552,7 +543,7 @@ namespace uf::task
                 host,
                 generation,
                 runtime.context(),
-                k_authorizeSource
+                authorizeClickSource(k_runtimeUiAction)
             ).has_value()
         );
 
@@ -560,7 +551,7 @@ namespace uf::task
         auto const report = TaskHostTestAccess::deliver(
             host,
             dispatchAuthority(fence, generation),
-            TaskHostTestAccess::pendingReceipt(host),
+            TaskHostTestAccess::pendingReceipt(host, k_runtimeUiAction),
             runtime.context()
         );
         REQUIRE(report.has_value());

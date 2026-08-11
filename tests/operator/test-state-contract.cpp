@@ -292,7 +292,10 @@ namespace uf::operator_runtime
 
         auto const otherRelease = contract::observationRelease(
             foreignTemporary.path() / "other-handoff",
-            contract::ambiguousRuntimeModel()
+            contract::ProjectRuntimeArtifact{
+                .model  = test_support::ambiguousRuntimeModel(),
+                .assets = test_support::umbraflowRuntimeAssets(),
+            }
         );
         CHECK(otherRelease.artifactRootHash != reading.artifactRootHash());
         auto otherInstalled = foreignPrepared.store.installRuntimeArtifact(

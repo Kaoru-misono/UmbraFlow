@@ -1,5 +1,7 @@
 #pragma once
 
+#include <operator-contract/host-delivery-fixture.hpp>
+
 #include <operator/effective-plan.hpp>
 
 #include <core/error/result.hpp>
@@ -628,14 +630,60 @@ namespace uf::operator_runtime::contract
         return StepIntentClaims{.stepKey = *stepKey, .kind = *kind};
     }
 
+    // The UI one OP:`UIActionIntent` acts on. StepIntentClaims does not carry
+    // it and neither does anything downstream: the ledger stores the intent
+    // bytes and hashes them, and the task::DispatchAuthority the Host is handed
+    // carries no UI identifier at all. A plan naming a surface, target or action
+    // that exists in no RuntimeModel therefore reaches delivery unremarked --
+    // and did, in both in-tree fixtures, until this reader was written.
+    [[nodiscard]]
+    inline auto readStepIntentUi(
+        std::string_view exactStepJcs
+    ) -> std::optional<task::UiActionUnderTest>
+    {
+        auto const members = protocolObjectMembers(exactStepJcs);
+        if (!members.has_value())
+        {
+            return std::nullopt;
+        }
+        auto const action = protocolObjectMembers(
+            protocolMember(*members, "action")
+        );
+        if (!action.has_value())
+        {
+            return std::nullopt;
+        }
+        auto surface  = protocolString(protocolMember(*action, "surface_id"));
+        auto uiTarget = protocolString(protocolMember(*action, "ui_target_id"));
+        auto actionId = protocolString(protocolMember(*action, "action_id"));
+        if (!surface.has_value() || !uiTarget.has_value() || !actionId.has_value())
+        {
+            return std::nullopt;
+        }
+        return task::UiActionUnderTest{
+            .surface  = *std::move(surface),
+            .uiTarget = *std::move(uiTarget),
+            .action   = *std::move(actionId),
+        };
+    }
+
     // The plan authority a deployment builds. The exact operator protocol bytes
     // are the ones the session manifest is pinned to, so an authority that
     // answers for another schema cannot be created at all.
+    //
+    // Its step-intent reader also refuses a UI-action step naming anything but
+    // `uiAction`. A contract run drives exactly one UI action -- the one the
+    // project's ProjectVocabulary names -- so a plan that named another would be
+    // telling the suite two different things about what this Operation does.
+    // The refusal is the suite's, not the Operator's: nothing in the Operator
+    // reads these three members, so production still accepts a plan against UI
+    // no model defines.
     [[nodiscard]]
     inline auto planAuthority(
         VerifiedProjectRegistration const& registration,
         SessionManifest const& manifest,
-        std::string_view exactOperatorProtocolSchemaBytes
+        std::string_view exactOperatorProtocolSchemaBytes,
+        task::UiActionUnderTest const& uiAction
     ) -> Result<OperatorPlanAuthority>
     {
         return OperatorPlanAuthority::create(
@@ -643,7 +691,27 @@ namespace uf::operator_runtime::contract
             manifest,
             exactOperatorProtocolSchemaBytes,
             readPlanProposal,
-            readStepIntent
+            [uiAction](std::string_view exactStepJcs) -> Result<StepIntentClaims>
+            {
+                UF_TRY_VALUE(claims, readStepIntent(exactStepJcs));
+                if (claims.kind != StepKind::UiAction)
+                {
+                    return claims;
+                }
+                auto const named = readStepIntentUi(exactStepJcs);
+                if (
+                    !named.has_value()
+                    || named->surface != uiAction.surface
+                    || named->uiTarget != uiAction.uiTarget
+                    || named->action != uiAction.action
+                )
+                {
+                    return protocolRefusal(
+                        "UIActionIntent naming the project's own UI action"
+                    );
+                }
+                return claims;
+            }
         );
     }
 }

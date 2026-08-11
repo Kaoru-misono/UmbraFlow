@@ -1,6 +1,7 @@
 #pragma once
 
 #include <operator-contract/host-delivery-fixture.hpp>
+#include <operator-contract/project-under-test.hpp>
 
 #include <operator/ledger.hpp>
 #include <operator/runtime-installation.hpp>
@@ -57,16 +58,14 @@
 // suite -- has to drive a Host through one real observation cycle.
 namespace uf::operator_runtime::contract
 {
-    // The two grays the fixture model's locators match on. They are distinct so
-    // that a frame carrying one and not the other resolves to a different state.
+    // The two grays the probe frame below carries. Every supplied RuntimeModel
+    // matches its locators against that frame, so a project authoring a model
+    // for the suite authors its template assets from these: templatePng() turns
+    // one into the one-pixel PNG a template locator matches. They are distinct
+    // so that a frame carrying one and not the other resolves to a different
+    // state.
     inline constexpr auto k_anchorGray = uint8{2};
     inline constexpr auto k_actionGray = uint8{5};
-
-    struct ArtifactFile final
-    {
-        std::string            path{};
-        std::vector<std::byte> bytes{};
-    };
 
     [[nodiscard]]
     inline auto observationHash(std::span<std::byte const> value) -> ContentHash
@@ -142,101 +141,6 @@ namespace uf::operator_runtime::contract
         return *std::move(encoded);
     }
 
-    // One scene with one activatable binding. It is the smallest model whose
-    // resolver output is a resolved state, which is what an Operator snapshot
-    // has to be composed from.
-    [[nodiscard]]
-    inline auto observationRuntimeModel() -> std::string
-    {
-        return R"toml(schema_version = 2
-base_resolution = [3, 1]
-base_dpi = [96, 96]
-
-[[ui_target]]
-id = "screen-marker"
-kind = "region"
-
-[[ui_target]]
-id = "confirm"
-kind = "control"
-
-[[locator]]
-id = "screen-anchor"
-kind = "template"
-asset_path = "assets/anchor.png"
-threshold = 1
-
-[[locator]]
-id = "confirm-mark"
-kind = "template"
-asset_path = "assets/confirm.png"
-threshold = 1
-
-[[binding]]
-id = "screen.anchor"
-surface = "screen"
-ui_target = "screen-marker"
-variant = "primary"
-placement = { kind = "fixed", rect = [0, 0, 1, 1] }
-detector = { all = [{ kind = "locator_present", locator = "screen-anchor" }], any = [], none = [] }
-actions = []
-
-[[binding]]
-id = "confirm.primary"
-surface = "screen"
-ui_target = "confirm"
-variant = "primary"
-placement = { kind = "fixed", rect = [1, 0, 1, 1], action_point = [1, 0] }
-detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] }
-actions = [{ id = "activate", kind = "click", proof_locator = "confirm-mark" }]
-
-[[surface]]
-id = "screen"
-kind = "scene"
-covers = []
-identity = { all = ["screen.anchor"], any = [], none = [] }
-)toml";
-    }
-
-    // The same model with a second scene the same frame also satisfies, so the
-    // resolver reports an ambiguous state and the state_resolution_hash moves
-    // without any Operator-held column moving with it.
-    [[nodiscard]]
-    inline auto ambiguousRuntimeModel() -> std::string
-    {
-        return observationRuntimeModel() + R"toml(
-[[binding]]
-id = "panel.anchor"
-surface = "panel"
-ui_target = "screen-marker"
-variant = "primary"
-placement = { kind = "fixed", rect = [1, 0, 1, 1] }
-detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] }
-actions = []
-
-[[surface]]
-id = "panel"
-kind = "scene"
-covers = []
-identity = { all = ["panel.anchor"], any = [], none = [] }
-)toml";
-    }
-
-    [[nodiscard]]
-    inline auto observationAssets() -> std::vector<ArtifactFile>
-    {
-        return {
-            ArtifactFile{
-                .path  = "assets/anchor.png",
-                .bytes = templatePng(k_anchorGray),
-            },
-            ArtifactFile{
-                .path  = "assets/confirm.png",
-                .bytes = templatePng(k_actionGray),
-            },
-        };
-    }
-
     [[nodiscard]]
     inline auto artifactManifestRow(ArtifactFile const& file) -> std::string
     {
@@ -292,9 +196,10 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         return observationHash(manifest);
     }
 
-    // A release handoff the Operator's installer accepts, carrying a real
-    // RuntimeArtifact rather than a placeholder: the Host has to parse the model
-    // and match its locators before an observation exists at all.
+    // A release handoff the Operator's installer accepts, carrying the project's
+    // own RuntimeArtifact rather than a placeholder or a model of the suite's:
+    // the Host has to parse those bytes and match their locators before an
+    // observation exists at all.
     struct ObservationRelease final
     {
         std::filesystem::path handoffRoot;
@@ -305,14 +210,14 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
     [[nodiscard]]
     inline auto observationRelease(
         std::filesystem::path const& root,
-        std::string_view model
+        ProjectRuntimeArtifact const& artifact
     ) -> ObservationRelease
     {
         auto const handoff          = root / "release";
         auto const artifactRootHash = publishRuntimeArtifact(
             handoff / "runtime-artifact",
-            model,
-            observationAssets()
+            artifact.model,
+            artifact.assets
         );
         auto const releaseManifest = std::format(
             R"({{"annotation_workspace_schema_hash":"{}",)"
@@ -333,6 +238,10 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         };
     }
 
+    // The world every supplied RuntimeModel is resolved against: three pixels
+    // wide, one high, at 96 DPI. A model the suite is handed must declare
+    // base_resolution = [3, 1] and base_dpi = [96, 96], because the session
+    // refuses a project fingerprint the live one does not match.
     [[nodiscard]]
     inline auto observationFingerprint() -> ProjectFingerprint
     {
@@ -371,8 +280,9 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         return *std::move(result);
     }
 
-    // The frame every scene binding matches, so the resolver reaches a resolved
-    // state.
+    // The probe frame the suite captures. A supplied model reaches a resolved
+    // state exactly when one of its scenes is satisfied by these three pixels,
+    // which is what a project authors its locators and template assets against.
     [[nodiscard]]
     inline auto resolvedFramePixels() -> std::vector<std::byte>
     {
@@ -622,13 +532,18 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         std::unique_ptr<ObservationRuntime> m_other{};
         GenerationId                        m_generation;
 
+        // The action the project named. It is stored rather than passed to each
+        // call because the chunk that mints a Receipt and the check that reads
+        // one must name the same action across a whole dispatch.
+        task::UiActionUnderTest m_action;
+
         auto mint() -> void
         {
             auto const minted = task::TaskHostTestAccess::run(
                 *m_host,
                 m_generation,
                 m_runtime->context(),
-                task::k_authorizeClickSource
+                task::authorizeClickSource(m_action)
             );
             REQUIRE(minted.has_value());
         }
@@ -636,7 +551,8 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
     public:
         DeliveringHost(
             task::InstalledRuntimeArtifact installed,
-            task::ControlFence fence
+            task::ControlFence fence,
+            task::UiActionUnderTest action
         )
             : m_host{std::make_unique<task::TaskHost>()}
             , m_runtime{
@@ -647,6 +563,7 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
             , m_generation{
                   activateDeliveringGeneration(*m_host, std::move(installed))
               }
+            , m_action{std::move(action)}
         {
             // Minting is refused until a ledger fence is adopted, so this is
             // where a Host stops being inert.
@@ -698,7 +615,10 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
             -> Result<task::HostDeliveryReport>
         {
             mint();
-            auto const receipt = task::TaskHostTestAccess::pendingReceipt(*m_host);
+            auto const receipt = task::TaskHostTestAccess::pendingReceipt(
+                *m_host,
+                m_action
+            );
             return task::TaskHostTestAccess::deliver(
                 *m_host,
                 std::move(authority),
@@ -740,7 +660,10 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
                 );
                 REQUIRE(opened.has_value());
             }
-            auto const receipt = task::TaskHostTestAccess::pendingReceipt(*m_host);
+            auto const receipt = task::TaskHostTestAccess::pendingReceipt(
+                *m_host,
+                m_action
+            );
             auto report = task::TaskHostTestAccess::deliver(
                 *m_host,
                 std::move(authority),
@@ -761,7 +684,8 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         OperatorCoordinator& store,
         ControlLease const& lease,
         uint64 installedGeneration,
-        ContentHash const& artifactRootHash
+        ContentHash const& artifactRootHash,
+        task::UiActionUnderTest const& action
     ) -> std::unique_ptr<DeliveringHost>
     {
         auto installed = store.openInstalledRuntimeArtifact(
@@ -771,7 +695,8 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         REQUIRE(installed.has_value());
         return std::make_unique<DeliveringHost>(
             *std::move(installed),
-            controlFence(lease)
+            controlFence(lease),
+            action
         );
     }
 }

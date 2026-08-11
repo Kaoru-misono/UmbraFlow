@@ -959,16 +959,135 @@ namespace uf::operator_runtime::test_support
         REQUIRE(stream.good());
     }
 
-    // The RuntimeArtifact every prepared store installs. It carries a real
-    // RuntimeModel and real template assets rather than a placeholder, because
-    // a snapshot is now composed from an observation the Host resolved through
-    // that model: a placeholder artifact installs, and then nothing observes.
+    // This project's own RuntimeModel: one scene with one activatable binding,
+    // the smallest model whose resolver output is a resolved state. Every id in
+    // it is this project's, and the OP:`UIActionIntent` below names the same
+    // surface, target and action, so a step this project plans and a click the
+    // Host authorizes describe one thing rather than two that never met.
+    [[nodiscard]]
+    inline auto umbraflowRuntimeModel() -> std::string
+    {
+        return R"toml(schema_version = 2
+base_resolution = [3, 1]
+base_dpi = [96, 96]
+
+[[ui_target]]
+id = "fixture.marker"
+kind = "region"
+
+[[ui_target]]
+id = "fixture.target"
+kind = "control"
+
+[[locator]]
+id = "fixture.anchor"
+kind = "template"
+asset_path = "assets/fixture-anchor.png"
+threshold = 1
+
+[[locator]]
+id = "fixture.mark"
+kind = "template"
+asset_path = "assets/fixture-mark.png"
+threshold = 1
+
+[[binding]]
+id = "fixture.surface.anchor"
+surface = "fixture.surface"
+ui_target = "fixture.marker"
+variant = "primary"
+placement = { kind = "fixed", rect = [0, 0, 1, 1] }
+detector = { all = [{ kind = "locator_present", locator = "fixture.anchor" }], any = [], none = [] }
+actions = []
+
+[[binding]]
+id = "fixture.target.primary"
+surface = "fixture.surface"
+ui_target = "fixture.target"
+variant = "primary"
+placement = { kind = "fixed", rect = [1, 0, 1, 1], action_point = [1, 0] }
+detector = { all = [{ kind = "locator_present", locator = "fixture.mark" }], any = [], none = [] }
+actions = [{ id = "fixture.press", kind = "click", proof_locator = "fixture.mark" }]
+
+[[surface]]
+id = "fixture.surface"
+kind = "scene"
+covers = []
+identity = { all = ["fixture.surface.anchor"], any = [], none = [] }
+)toml";
+    }
+
+    // The same model with a second scene the probe frame also satisfies, so the
+    // resolver reports an ambiguous state and the state_resolution_hash moves
+    // without any Operator-held column moving with it. It reuses the mark
+    // locator rather than a third asset because the asset closure is verified
+    // against the manifest.
+    [[nodiscard]]
+    inline auto ambiguousRuntimeModel() -> std::string
+    {
+        return umbraflowRuntimeModel() + R"toml(
+[[binding]]
+id = "fixture.panel.anchor"
+surface = "fixture.panel"
+ui_target = "fixture.marker"
+variant = "primary"
+placement = { kind = "fixed", rect = [1, 0, 1, 1] }
+detector = { all = [{ kind = "locator_present", locator = "fixture.mark" }], any = [], none = [] }
+actions = []
+
+[[surface]]
+id = "fixture.panel"
+kind = "scene"
+covers = []
+identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
+)toml";
+    }
+
+    // The asset closure the model's two template locators name, authored
+    // against the grays the suite's probe frame carries.
+    [[nodiscard]]
+    inline auto umbraflowRuntimeAssets() -> std::vector<contract::ArtifactFile>
+    {
+        return {
+            contract::ArtifactFile{
+                .path  = "assets/fixture-anchor.png",
+                .bytes = contract::templatePng(contract::k_anchorGray),
+            },
+            contract::ArtifactFile{
+                .path  = "assets/fixture-mark.png",
+                .bytes = contract::templatePng(contract::k_actionGray),
+            },
+        };
+    }
+
+    [[nodiscard]]
+    inline auto umbraflowRuntimeArtifact() -> contract::ProjectRuntimeArtifact
+    {
+        return contract::ProjectRuntimeArtifact{
+            .model  = umbraflowRuntimeModel(),
+            .assets = umbraflowRuntimeAssets(),
+        };
+    }
+
+    // The one UI action this project offers a contract run, spelled exactly as
+    // k_fixtureUiActionIntent names it.
+    inline auto const k_fixtureUiAction = task::UiActionUnderTest{
+        .surface  = "fixture.surface",
+        .uiTarget = "fixture.target",
+        .action   = "fixture.press",
+    };
+
+    // The RuntimeArtifact every prepared store installs. It carries this
+    // project's RuntimeModel and its template assets rather than a placeholder,
+    // because a snapshot is now composed from an observation the Host resolved
+    // through that model: a placeholder artifact installs, and then nothing
+    // observes.
     using RuntimeRelease = contract::ObservationRelease;
 
     [[nodiscard]]
     inline auto runtimeRelease(std::filesystem::path const& root) -> RuntimeRelease
     {
-        return contract::observationRelease(root, contract::observationRuntimeModel());
+        return contract::observationRelease(root, umbraflowRuntimeArtifact());
     }
 
     // The trusted plugin a prepared store registers. plugin_id must equal the
@@ -1202,7 +1321,8 @@ namespace uf::operator_runtime::test_support
             prepared.store,
             prepared.lease,
             prepared.installedGeneration,
-            prepared.runtimeArtifactRootHash
+            prepared.runtimeArtifactRootHash,
+            k_fixtureUiAction
         );
     }
 
@@ -1336,7 +1456,8 @@ namespace uf::operator_runtime::test_support
         auto planAuthority = contract::planAuthority(
             project.registration,
             manifest,
-            "operator"
+            "operator",
+            k_fixtureUiAction
         );
         REQUIRE(planAuthority.has_value());
         return PreparedStore{

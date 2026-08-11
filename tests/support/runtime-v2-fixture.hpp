@@ -66,6 +66,14 @@ namespace uf::task
     inline constexpr auto k_anchorGray = uint8{2};
     inline constexpr auto k_actionGray = uint8{5};
 
+    // The one UI action runtimeModel() below offers, named once so the chunk
+    // that mints a Receipt and the check that reads one cannot drift apart.
+    inline auto const k_runtimeUiAction = UiActionUnderTest{
+        .surface  = "screen",
+        .uiTarget = "confirm",
+        .action   = "activate",
+    };
+
     // Owns the directory it created: the destructor removes the whole tree.
     // Copying would leave two owners of one path, and the first destruction
     // would delete the tree the survivor still names -- silently, because
