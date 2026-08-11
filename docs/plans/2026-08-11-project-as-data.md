@@ -1113,6 +1113,45 @@ different one, so the session is refused. That answers the question anyone
 actually has — *did this project change under a running session* — where a
 per-file pin answered one nobody asked. No authoring verb is added.
 
+*Amended 2026-08-11 after an independent review, which found a decisive argument
+this ruling did not have and reversed one of its assumptions.*
+
+**A registration document is not something a human can author at all.** It must
+be exact RFC 8785 JCS: `ProjectRegistration::verifyExact` accepts nothing else,
+and `ProjectRegistrationSchemaOwner` refuses any other serialization. Nobody
+hand-maintains canonical bytes with sorted keys — the first thing any author
+would do is write a script to emit them, and a script-emitted Option A **is
+Option B with a ceremony in front of it**. The evidence is already on disk: the
+only real project in the ecosystem, at
+`E:\umbraflow-projects\uf-chaos\contract\provider.cpp:780-829`, already computes
+every digest from disk bytes and assembles the document in JCS key order, with
+no hash from a human hand. Designing for A would force each project to bring a
+tool that turns A into B.
+
+**And Option A is the one more likely to add a check that cannot fail**, which
+is the opposite of how it reads. Its regeneration script hashes the same disk
+bytes the loader is about to read, so the comparison degrades to
+`hashOf(x) == hashOf(x)` — silently, while keeping the appearance of an
+attestation. B's version of that emptiness is at least visible and named.
+
+Two consequences to carry into implementation:
+
+- **`verifyExact`'s `expectedRootHash` is a real check only when it comes from
+  another time or another source** — the ledger, or a signature. Passing the
+  value just computed, on a first load, is legal and empty. The call site says
+  which case it is in.
+- **The one check with teeth must be proven to have them.** Against a stored
+  session naming hash `H`, flip one byte of a pinned file in the project
+  directory, reload, and resume: the refusal must fire and must print both
+  hashes. If that does not go red, there is no real check anywhere on this
+  chain, and the whole ruling is unfounded. It is a work item, not a hope.
+
+The review's one stated uncertainty, recorded rather than resolved: during a
+first load, with no stored session, a mid-load modification is undetectable. Its
+judgement, which this ruling accepts, is that nothing is owed there — no prior
+commitment exists to violate — and that aligning a first load with an external
+expectation is the signature design's job, not this one's.
+
 **Q5 — yes, after step 6, as its own change.** As recommended.
 
 **Q6 — drop the restated members.** Nothing is released. Under Q3 the loader

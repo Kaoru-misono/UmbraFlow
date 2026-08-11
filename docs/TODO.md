@@ -100,6 +100,28 @@
 > hundred" was W0's reading before `603b0b0`, `cec8898` and `6f8d3a8` cleared
 > everything outside `modules/operator`, `conformance` and `tests/operator`.
 
+## The registration chain must be proven to have teeth
+
+Opened 2026-08-11 by the independent review of the Q3 ruling in
+[the boundary correction](plans/2026-08-11-project-as-data.md) §7.0. Under that
+ruling the loader computes every digest, so **every comparison inside a single
+load is between two quantities the loader itself produced** — structurally
+incapable of failing, deliberately, and named as such. Exactly one check on this
+chain compares values from two different times, and the whole ruling rests on
+it.
+
+- [ ] A mutation case in CI: against a stored session naming
+      `project_registration_hash` `H`, flip one byte of a pinned file in the
+      project directory, reload and resume, and require the refusal to fire and
+      to print both hashes. **If it does not go red, there is no real check
+      anywhere on this chain** and the ruling is unfounded rather than merely
+      untested. Lands with step 3 of §5, not after it.
+- [ ] At every `verifyExact` call site, say in a sentence whether
+      `expectedRootHash` came from another time or another source — the ledger,
+      or a signature — or is the value just computed. The second case is legal
+      and empty, and the reader must not have to work out which one they are
+      looking at.
+
 ## Build-system shape — owed, ordered
 
 Raised by the owner on 2026-08-11: a manifest is how a target is declared, so
