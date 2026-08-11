@@ -1,13 +1,14 @@
 # A project is a directory of data, not a C++ library
 
-Status: specification proposal. Nothing here is implemented. Ten questions in
-§7 need a ruling, one of them (`evaluate-core-capability` on a JSON value tree)
-before any code moves.
+Status: specification, ruled. All ten questions are answered in §7.0, and §2, §4
+and §5 below are written as those rulings left them. Step 1 of §5 has landed as
+`modules/json` (`a0ae304`); nothing else here is implemented.
 Date: 2026-08-11
 Scope: `umbraflow-cpp`, plus a statement of what the correction costs
 `E:\umbraflow-projects\uf-chaos`. Both trees were read only; no file outside
 this one was written and no git command that writes was run in either.
-Framework read at `6bfe1d6`; consumer read at `95d9668` with a dirty tree.
+Framework read at `6bfe1d6` and reconciled against `319bdb1`; consumer read at
+`95d9668` with a dirty tree.
 
 Related: [consumer onboarding](2026-08-11-consumer-onboarding.md) measured what
 a consuming repository writes today and proposed moving 626 of 880 lines
@@ -25,7 +26,7 @@ The repository owner ruled on 2026-08-11:
 > uf-chaos depends only on umbraflow's compiled binary, and runs as a plugin
 > inside umbraflow.
 
-A consuming project is therefore a directory of data — a registration document,
+A consuming project is therefore a directory of data — two root manifests,
 schemas, a Luau plugin, a RuntimeArtifact, a probe frame. It has no compiler, no
 CMake and no C++ of its own. Everything below follows from that and from nothing
 else.
@@ -80,8 +81,9 @@ The call-site census is the whole argument. Across both trees, `registerPlugin`
 is called from its own definition, 27 times in
 `tests/operator/test-project-plugin-contract.cpp`, six times across
 `conformance/` (`suite-project-authority.cpp` ×4, `suite-support.cpp` ×1,
-`exemplars/umbraflow/project-fixture.hpp` ×1) — and **zero times in `entry/`.**
-No shipped binary has ever registered a plugin. The same holds one level up:
+`exemplars/umbraflow/project-fixture.hpp` ×1) — and **zero times in `entry/` and
+zero times in `modules/cli`**, which since `319bdb1` are the whole of the
+command surface. No shipped binary has ever registered a plugin. The same holds one level up:
 every call to `ProjectRegistration::verifyExact` or to any of the four owners'
 `create` is in a test fixture or a conformance provider, which is what
 `docs/plans/2026-08-10-w2-w7-reconciliation.md`'s predecessor already recorded as
@@ -122,9 +124,19 @@ registration document at run time by `std::format`, from the nine digests of the
 files it pins. `ProjectSchemaOwner::create` then compares those digests against
 the bytes handed in. Both sides of that comparison are derived from the same
 `hashOf` call, so the comparison cannot fail — it is the ninth costume of the
-defect catalogued in `docs/pitfalls/checks-that-cannot-fail.md`. Making the
-registration a document on disk is what makes the framework's own pin check
-capable of going red.
+defect catalogued in `docs/pitfalls/checks-that-cannot-fail.md`.
+
+That diagnosis stands and its remedy moved. Q3 (§7.0) ruled that a project
+author types no digest at all, so the party that computes the registration from
+the files it just read is the framework's loader rather than a consumer's
+`std::format`: the derivation is adopted, not retired. The comparison inside
+each owner's `create` therefore stays an identity, and this document does not
+claim that putting the registration on disk makes it capable of going red. What
+becomes falsifiable is the comparison the loader does not sit on both sides of.
+A stored session names a `project_registration_hash`; the directory is loaded
+again later, and a directory whose bytes have moved derives a different one, so
+the session is refused. Two independently produced values, and a check that can
+fail. §7.0 records what that costs and what it does not cover.
 
 ## 1. `ProvidedProject`, member by member
 
@@ -189,7 +201,10 @@ Applied to consumer-onboarding's §6.2 test — "for any seam, ask which hash in
 `project_registration_hash` pins the schema being applied" — nothing here fails
 it. Every schema the framework's evaluator applies is one the registration
 already pins (`ProjectRegistrationClaims`, `manifest.hpp:24-37`). The framework
-supplies the engine; `ProjectRegistrationClaims` gains no member.
+supplies the engine; `ProjectRegistrationClaims` gains no member. Q3 changed who
+writes those pins — the loader computes each one from the bytes it read — and
+not which schema is applied, so the test is answered the same way and the answer
+is worth less than it was: see §7.0.
 
 uf-chaos already does exactly this, in the wrong tree. Its `documentValidator`
 (`contract/provider.cpp:1053-1121`) parses the candidate and dispatches to a
@@ -223,7 +238,7 @@ the tree does.
 
 | Member | What it is | Where it already exists in uf-chaos | What the host must do to obtain it from a directory |
 |---|---|---|---|
-| `registration` | `VerifiedProjectRegistration`; private ctor at `manifest.hpp:80-84`, sole mint `ProjectRegistration::verifyExact` (`:120-125`) | **nowhere** — the bytes are `std::format`ted at run time by `registrationBytes` (`contract/provider.cpp:799-829`). Only the *schema* it satisfies is a file: `schema/registration-v1.schema.json` | read the registration document named by the manifest; compile the project's registration schema; build `ProjectRegistrationSchemaOwner::create(sha256(schemaBytes), evaluator)` (`manifest.hpp:65-68`); extract `ProjectRegistrationClaims` from the validated document as `registrationClaims` does today (`provider.cpp:853-906`); call `verifyExact(bytes, sha256(bytes), owner)` |
+| `registration` | `VerifiedProjectRegistration`; private ctor at `manifest.hpp:80-84`, sole mint `ProjectRegistration::verifyExact` (`:120-125`) | **nowhere, and under Q3 nowhere is where it stays** — the bytes are `std::format`ted at run time by `registrationBytes` (`contract/provider.cpp:799-829`), and that derivation moves upstream rather than becoming a file (§2.2) | hash the eight files and the artifact blobs the deployment block names; assemble the registration's canonical JCS from those digests and the block's `plugin_id` and `baseline_event_type`; compile the framework's own `schema/umbraflow-project-registration-v1.schema.json` and build `ProjectRegistrationSchemaOwner::create(sha256(schemaBytes), evaluator)` (`manifest.hpp:65-68`); extract `ProjectRegistrationClaims` from the validated document as `registrationClaims` does today (`provider.cpp:853-906`); call `verifyExact(bytes, sha256(bytes), owner)` |
 | `schemaOwner` | `ProjectSchemaOwner`: three exact schema byte strings plus two callables (`project-plugin.hpp:105-110`, `:138-142`) | the three schemas are files: `schema/<deployment>/project-state-v1.schema.json`, `-/project-observation-v1.schema.json`, `-/tool-precondition-v1.schema.json` | read all three; supply the framework's RFC 8785 canonical validator and the framework's document validator, whose `function × direction` dispatch is fixed (§2.4) and whose project half is the three schemas |
 | `journalSchemaOwner` | registration hash plus `JournalPayloadSchemaValidator` (`journal-entry.hpp:72-92`) | `schema/<deployment>/journal-manifest-v1.json` plus the 13 payload schemas under `schema/journal/` | read the manifest; verify each declared `sha256` against the file it names, as `loadPayloadSchemas` does (`provider.cpp:1005`); build a validator that selects by `namespaced_event_type`, validates, and returns that schema's computed hash |
 | `toolCatalogSchemaOwner` | registration hash, catalog hash, `ToolCatalogValidator` (`tool-invocation.hpp:137-159`) | `schema/<deployment>/tool-catalog-v1.json` | read the catalog; refuse a row whose `argument_schema` is not a `$defs` name in the precondition schema (`provider.cpp:975`); validate arguments against that definition; return `ToolDescriptor` from the row's own `version`/`mutability`/`surface` |
@@ -231,7 +246,7 @@ the tree does.
 | `pluginBytes` | the exact Luau source `plugin_sha256` pins | **nowhere** — `k_dreamPlugin` (`provider.cpp:142-215`) and `k_archivePlugin` (`:217-289`) are C++ raw string literals. (`annotate/plugin.toml` is *not* this: it is the offline annotator's label vocabulary, its own header says runtime code does not load it, and no `CMakeLists.txt` in either tree names it) | read a `.luau` file named by the manifest; `ProjectPluginRegistrar::registerPlugin` (`project-plugin.hpp:232-235`) already checks it against `registration.pluginHash()` |
 | `artifactBlobs` | the named blobs `project_artifact_roots` pins (`provider.hpp:43-47` is emphatic that these are *not* the RuntimeArtifact) | **nowhere** — 34- and 38-byte C++ literals at `provider.cpp:1243-1244` and `:1320-1321` | read one file per named root; the registrar already verifies closure in both directions |
 | `runtimeArtifact` | `ProjectRuntimeArtifact` — the model text plus every asset's bytes (`provider.hpp:51-55`) | `runtime/artifact/` — `page-model.toml`, `runtime-artifact.manifest.json`, nine PNGs under `assets/` | **nothing: the member dies.** The suite's `publishRuntimeArtifact` (`observation-fixture.hpp:139-178`) re-serializes a manifest from those bytes, so today the Host verifies a manifest the *suite* wrote. The loader hands the installer a path, the release carries the project's own manifest bytes, and `runtime_artifact_root_hash` becomes the project's own digest |
-| `probeFrame` | `ProjectFingerprint` plus one PNG (`provider.hpp:74-85`) | `runtime/probe-frame.png` exists. The fingerprint does not: `contract/CMakeLists.txt:185-194` regexes `base_resolution` and `base_dpi` out of `page-model.toml` at configure time | read the PNG; obtain the fingerprint from the trusted model parser rather than from a document — see Q2. `model.luau:626-627` already publishes `base_resolution` and `base_dpi` alongside the `declared_*_ids` at `:635-637` that already cross into C++ |
+| `probeFrame` | one PNG. The `ProjectFingerprint` beside it (`provider.hpp:74-85`) is dropped by Q2 | `runtime/probe-frame.png` exists. The fingerprint does not: `contract/CMakeLists.txt:185-194` regexes `base_resolution` and `base_dpi` out of `page-model.toml` at configure time | read the PNG, and nothing else. Q2 ruled the geometry is published by `RuntimeModelBinding`, so no document restates it: `modules/task/runtime/model.luau:626-627` already publishes `base_resolution` and `base_dpi` into the same frozen table as the `declared_*_ids` at `:635-637`, and `runtime_model_finalize` (`modules/task/source/task/ffi/uf-tables.cpp:955-1002`) is the seam that carries them across. The extent check consequently cannot run in the loader — see §2.7 R8 |
 | `lastReduceInput` | recorder written by the document validator (`provider.cpp:1074`) | **host machinery that never belonged to a project** | own it beside the host's document validator; the loader returns it |
 | `lastDeriveInput` | the same, for Derive (`provider.cpp:1082`) | **host machinery that never belonged to a project** | as above |
 | `vocabulary` | `ProjectVocabulary`, 16 fields (`provider.hpp:90-150`) | **nowhere — must become a new document** (§2.3) | read it, as strings, and refuse anything else |
@@ -267,7 +282,8 @@ nothing `ConfinedRoot` does not already give it.
 ### 2.2 `umbraflow-project.json` — the deployment manifest
 
 This is the document *production* reads. It names one or more deployments and
-the RuntimeArtifact they share.
+the RuntimeArtifact they share, and each deployment block is that deployment's
+registration stated as intent.
 
 ```json
 {
@@ -277,8 +293,8 @@ the RuntimeArtifact they share.
   "deployments": [
     {
       "name": "dream",
-      "registration": "registration/dream.json",
-      "registration_schema": "schema/registration-v1.schema.json",
+      "plugin_id": "chaos.dream",
+      "baseline_event_type": "project.baseline_created",
       "plugin": "plugin/dream.luau",
       "project_state_schema": "schema/dream/project-state-v1.schema.json",
       "project_observation_schema": "schema/dream/project-observation-v1.schema.json",
@@ -287,7 +303,7 @@ the RuntimeArtifact they share.
       "journal_event_schema_manifest": "schema/dream/journal-manifest-v1.json",
       "reconcile_manifest": "schema/dream/reconcile-manifest-v1.json",
       "artifact_blobs": [
-        { "name": "page-model", "path": "registration/dream-page-model.blob" }
+        { "name": "page-model", "path": "blob/dream-page-model.blob" }
       ]
     }
   ]
@@ -295,11 +311,22 @@ the RuntimeArtifact they share.
 ```
 
 Every member is required and `additionalProperties` is false. `deployments` has
-`minItems: 1` and unique `name`s; `primary_deployment` must be one of them. The
-seven schema and document members correspond one-for-one to the seven digests
-`ProjectRegistrationClaims` carries (`manifest.hpp:26-33`) — a hash is not a
-path, so both are stated, and their agreement is checked (§2.7 R5). That check
-is the one §0 showed cannot fail today.
+`minItems: 1` and unique `name`s; `primary_deployment` must be one of them.
+
+**There is no authored registration document, and that is Q3's doing.** The
+seven schema and document members plus `plugin` correspond one-for-one to the
+eight digests `ProjectRegistrationClaims` carries (`manifest.hpp:26-34`), and
+`artifact_blobs` to its `project_artifact_roots`. Once no human types a digest,
+a file that named those eight paths would name what the block above already
+names, which is the second spelling this repository forbids; so the block *is*
+the intent, and the loader derives the registration's canonical JCS from it and
+from the digests of the files it read. `plugin_id` and `baseline_event_type` are
+here because they are the two claims no file can supply.
+
+The document the Operator verifies is therefore derived rather than opened, and
+its shape is the framework's: `schema/umbraflow-project-registration-v1.schema.json`
+already spells exactly `ProjectRegistrationClaims`' members, and its digest is
+what `manifest_schema_hash` names. A project owns no registration schema either.
 
 `runtime_artifact` names a directory, not a file: the installer already reads
 `page-model.toml` and `runtime-artifact.manifest.json` from a root by those
@@ -326,6 +353,12 @@ the catalog does not carry".
 }
 ```
 
+`probe_frame` is a path and nothing else. There is no `fingerprint` member:
+Q2 ruled that `RuntimeModelBinding` publishes `base_resolution` and `base_dpi`,
+so the extent this capture is checked against is the one the Host's trusted
+parser read out of the model, never a number this document restates. What that
+buys and what it costs is §2.7 R8.
+
 Both roles are required, and both carry a vocabulary of their own, because three
 cases reach the foreign one:
 `conformance/source/suite-control-ledger.cpp:445` uses the foreign
@@ -334,7 +367,7 @@ cases reach the foreign one:
 
 **The vocabulary document.** The 16 fields of `ProjectVocabulary`
 (`provider.hpp:90-150`) become 17 JSON members, snake_cased to match the
-spelling the registration document already uses (`plugin_id`,
+spelling the deployment block already uses (`plugin_id`,
 `baseline_event_type`):
 
 | Member | Type | What it means |
@@ -372,6 +405,20 @@ formats (`"schema": "uf-chaos-tool-catalog/v1"` and friends) because its own
 provider read them. Once the host reads them, their format is the framework's,
 and the framework ships a schema for each. Their *content* stays entirely the
 project's.
+
+Two of the three keep a stated `sha256` inside them, and Q3 does not reach it.
+The rule that survives Q3 is narrow: **the loader computes every digest in the
+document it derives, and computes none in a document the project authors.** It
+derives the registration, so the registration's eight digests are its work; it
+does not rewrite a project's files, so a digest inside one of those files stays
+the author's. That is not a preference. The journal manifest's per-schema
+`sha256` is the only path by which the 13 payload schemas' bytes reach
+`journal_event_schema_manifest_hash`, and the reconcile manifest's is the only
+path by which `reconcile-v1.schema.json`'s bytes reach
+`reconcile_payload_schema_manifest_hash`; delete them and editing a payload
+schema changes no hash anywhere, which is exactly the session refusal §0 just
+relocated the falsifiability into. They are also the last digests in the design
+a human types, so R5 is the last rule left that can go red on a mistyped one.
 
 **Tool catalog** — `schema/umbraflow-tool-catalog-v1.schema.json`. uf-chaos's
 existing document is already the right shape: `tools[]` of
@@ -453,17 +500,20 @@ rule the other eight rows now follow:
 
 ### 2.5 Which files are JCS and which are ordinary JSON
 
-Exactly one document in a project directory must be exact RFC 8785 JCS: the
-registration, because `ProjectRegistration::verifyExact` refuses anything else
-and its hash is the project's identity. Every other JSON document in the
-directory — the two root manifests, the three project manifests, the schemas — is
-ordinary UTF-8 JSON, which is what uf-chaos's schemas already are (two-space
-indent, `$comment` members). The vocabulary's payload *strings* carry JCS
-because the framework hands them to `canonicalize()`; the file containing them
-does not.
+**No file in a project directory is exact RFC 8785 JCS.** The one JCS document
+in the design is still the registration, because
+`ProjectRegistration::verifyExact` refuses anything else and its hash is the
+project's identity; under Q3 the loader derives those bytes instead of opening
+them, so JCS became a property of what the loader emits and never of what an
+author types. Every JSON document in the directory — the two root manifests, the
+three project manifests, the schemas — is ordinary UTF-8 JSON, which is what
+uf-chaos's schemas already are (two-space indent, `$comment` members). The
+vocabulary's payload *strings* carry JCS because the framework hands them to
+`canonicalize()`; the file containing them does not.
 
 Stating that is not tolerance of two spellings. It is one rule with one reason:
-a document is JCS exactly when something hashes it and compares.
+a document is JCS exactly when something hashes it and compares. That is true of
+exactly one document, and no human writes it.
 
 ### 2.6 The format is schema-validated, by the framework's own schemas
 
@@ -472,24 +522,31 @@ framework schemas live beside the eight already in `schema/`:
 `umbraflow-project-v1`, `umbraflow-conformance-v1`, `umbraflow-tool-catalog-v1`,
 `umbraflow-journal-manifest-v1`, `umbraflow-reconcile-manifest-v1`.
 
-uf-chaos's `schema/registration-v1.schema.json` is the seed of the idea but not
-of this document, and the difference matters. That file is the *project's* schema
-for the *project's* registration, pinned by `manifest_schema_hash`
-(`manifest.hpp:26`, `:102`), and the Operator never reads it — its own
-`description` says so. The directory-format schemas are framework-owned, and
-consumer-onboarding §6.2's test says why: no member of
-`ProjectRegistrationClaims` pins a directory layout, and none would be added,
-because a layout is not something a project's identity attests to.
+A sixth framework schema starts binding without being written, and it is already
+in the tree: `schema/umbraflow-project-registration-v1.schema.json` spells
+exactly the members of `ProjectRegistrationClaims`. Because Q3 made the
+registration a document the loader derives, its shape is the framework's, and
+that file is what `manifest_schema_hash` names (`manifest.hpp:26`, `:102`).
+uf-chaos's `schema/registration-v1.schema.json` — the *project's* schema for the
+*project's* registration, whose own `description` says the Operator never reads
+it — has nothing left to describe and dies with `contract/`. The
+directory-format schemas are framework-owned for the reason consumer-onboarding
+§6.2 gives: no member of `ProjectRegistrationClaims` pins a directory layout,
+and none would be added, because a layout is not something a project's identity
+attests to.
 
-The evaluator's closed keyword set (`contract/json-schema.hpp:9-16`: `compile()`
-refuses any keyword it does not implement) applies to the framework's five
-schemas too. A framework schema that used `unevaluatedProperties` would fail to
-compile at load rather than be silently under-enforced.
+The evaluator's closed keyword set applies to the framework's schemas too:
+`compile()` refuses any keyword it does not implement
+(`modules/json/source/json/schema.hpp:20-25`), and the set is data a test can
+pin rather than prose (`:83-87`). A framework schema that used
+`unevaluatedProperties` would fail to compile at load rather than be silently
+under-enforced.
 
 ### 2.7 Missing and malformed
 
 There is no "absent means the default" reading anywhere. Eight rules, each a
-refusal that names what it read:
+refusal that names what it read. Seven and a half are the loader's; the half
+R8 keeps outside it is Q2's bill, and R8 says why:
 
 - **R1.** Both root documents are required at their fixed names. Absent → refusal
   naming the absolute path and the two names.
@@ -504,23 +561,33 @@ refusal that names what it read:
   the directory form of `REQUIRE(found != k_schemaFiles.end())`
   (`contract/provider.cpp:311`), and it is only equivalent if the loader errors
   on a missing file rather than skipping it.
-- **R5.** Every stated `sha256` must equal the digest of the bytes it names —
-  the registration's nine digests against the nine files the deployment block
-  names, and the journal manifest's per-schema digests. Disagreement → refusal
-  printing the stated digest, the computed digest and the path.
+- **R5.** Every stated `sha256` must equal the digest of the bytes it names.
+  After Q3 that is two documents rather than three: the journal manifest's
+  per-schema digests and the reconcile manifest's `payload_schema.sha256`
+  (§2.4). The registration states none, so there is nothing about it to check
+  here — its digests are the loader's own arithmetic. Disagreement → refusal
+  printing the stated digest, the computed digest and the path. This is the only
+  rule of the eight that a mistyped digest can make go red, which is the whole
+  of what R5 is now for.
 - **R6.** Every schema must compile under the evaluator's closed keyword set.
   A keyword the evaluator does not implement is a refusal, not a skip
   (`json-schema.hpp:9-16`, enforced today by
   `REQUIRE_MESSAGE(schema.has_value(), path)` at `contract/provider.cpp:330`).
 - **R7.** Both `mutability` and `surface` are required on every catalog row; a
   row omitting one is refused rather than read as `Mutating`/`Privileged`.
-- **R8.** The two cross-document agreements `prepareStore` checks today move into
-  the loader, so they are refused where they are authored rather than where they
-  are used: `baseline_entry.event_type` must equal the registration's
-  `baseline_event_type` (`suite-support.cpp:162-166`), and the probe frame's
-  decoded extent must be the fingerprint's
-  (`requireProbeGeometry`, `observation-fixture.hpp:233-254`, called at
-  `suite-support.cpp:171`).
+- **R8.** Of the two cross-document agreements `prepareStore` checks today, one
+  moves into the loader and one cannot. `baseline_entry.event_type` must equal
+  the deployment block's `baseline_event_type` (`suite-support.cpp:162-165`):
+  both halves are authored, so the loader refuses them where they were written.
+  The probe frame's decoded extent must be the model's (`requireProbeGeometry`,
+  `observation-fixture.hpp:233-254`, called at `suite-support.cpp:171`) — and
+  after Q2 the model's extent does not exist until the Host has activated the
+  artifact, which a loader does not do. That check stays in the conformance run
+  and moves *later* rather than earlier, to just after `activateObservationHost`
+  (`observation-fixture.hpp:540-554`), where the binding first exists. It is the
+  one rule below with no case in `tests/deployment/`, and it is what Q2 cost: a
+  directory can no longer be refused for a probe frame its own model does not
+  fit until something installs and activates the artifact.
 
 One consequence worth stating rather than discovering. `provider.cpp` is a
 doctest translation unit: it includes `<doctest/doctest.h>` and its ~40
@@ -530,8 +597,9 @@ returning `Result<LoadedProject>` collapses those to one assertion in the suite
 — `REQUIRE_MESSAGE(loaded.has_value(), loaded.error().message())` — which is a
 loss only if the forty were ever falsified, and they were not: nothing anywhere
 tests that a malformed uf-chaos directory is refused. The forty become unit
-cases in `tests/deployment/`, one per rule above, each red when its rule is
-removed. That is a strict gain and it is why the rules are enumerated here.
+cases in `tests/deployment/`, one per rule above except R8's second half, each
+red when its rule is removed. That is a strict gain and it is why the rules are
+enumerated here.
 
 ## 3. The binary
 
@@ -547,13 +615,13 @@ occurrences in `observation-fixture.hpp`, 11 in `host-delivery-fixture.hpp`,
 several inside `static` members of friend classes (`:150-168`). A subcommand
 would put doctest's static registration, its argument parser and its summary
 protocol into a binary whose stdout is already a parsed protocol
-(`entry/cli/main.cpp:51-56`), and whose gate would then match on doctest's
+(`entry/cli/main.cpp:52-57`), and whose gate would then match on doctest's
 summary line (`cmake/doctest-gate.cmake:26`). That is a real cost. It is not
 decisive, because it could be paid.
 
 The decisive argument is what the two binaries do. `umbra-flow` exists to reach a
 live target: its two subcommands are `explore` and `targets`
-(`entry/cli/main.cpp:95-98`), and the whole product invariant above it is that it
+(`entry/cli/main.cpp:96-99`), and the whole product invariant above it is that it
 acts on a real window in the background. The conformance run is structurally
 incapable of that and must stay so: its frame source and its action sink both
 declare `TargetWorld::Recorded` (`observation-fixture.hpp:355` and `:436`), and
@@ -567,15 +635,19 @@ Merging them puts a code path that must never reach a target inside the binary
 whose entire job is reaching one, with a subcommand string as the only thing
 between them. Two binaries make that separation a link-time fact.
 
-What the second binary costs is one target and one `main`. It is not a second
-copy of anything: the loader, the five authorities, the modules and the suite
-sources are shared, and the entry point is the only file that is not. The honest
+What the second binary costs is one target and one `main`, and `319bdb1` made
+that literal: `entry/` now holds `main.cpp` and nothing else, because everything
+the commands are made of became `uf::cli` (`entry/CMakeLists.txt:10-16`). A
+second entry point is a second directory beside it. It is not a second copy of
+anything: the loader, the five authorities, the modules and the suite sources
+are shared, and the entry point is the only file that is not. The honest
 cost is that a release now carries two executables and a consumer has to be told
 which to run — paid in documentation, not in code.
 
 One argument must **not** be given for the split, because it will stop being true:
 that `umbra-flow` does not link `uf::operator` and would grow SQLite, stb, Luau
-and the ONNX payload. It does not link it today (`entry/CMakeLists.txt:95`), but
+and the ONNX payload. It does not link it today (`entry/CMakeLists.txt:22`,
+which names `uf::cli` and `uf::core` and nothing else), but
 the decision in §0 says a project runs as a plugin inside umbraflow, so the
 product binary will link the Operator. The separation must rest on the recorded
 world, not on the link graph.
@@ -653,37 +725,47 @@ deployment layer owns, and the framework re-deciding any of it is the framework
 taking back what the header already said was its.
 
 **`E:\umbraflow-projects\uf-chaos\contract\json-value.{hpp,cpp}` (88 + 719) →
-`modules/core/source/core/text/json-value.{hpp,cpp}`, gated on
-`evaluate-core-capability`.** The argument for `core` is the one `core` already
-makes about itself, at `modules/core/source/core/text/json-text.hpp:15-19`:
+`modules/json/source/json/value.{hpp,cpp}`. Landed at `a0ae304`.** The argument
+below was written for `core` and is kept, because it is the record of why this
+facility is the framework's work at all; `evaluate-core-capability` then refused
+`core` as a destination on size and fallibility rather than on that argument
+(§7.0 Q1). The argument for `core` is the one `core` already makes about itself,
+at `modules/core/source/core/text/json-text.hpp:15-19`:
 
 > It lives in core because three components write JSON that a fourth reader
 > compares byte for byte … A second spelling of this transform cannot fail a
 > test — it produces bytes that merely disagree.
 
-`core` holds two of RFC 8785's four rules — the string escape (`json-text.hpp:20`)
+`core` held two of RFC 8785's four rules — the string escape (`json-text.hpp:20`)
 and member-name ordering (`:40-42`) — and
-`docs/reviews/2026-08-10-third-round-review.md:493-500` records that number
-formatting and container framing have no C++ implementation because they need a
-value tree. `json-value.hpp`'s `requireExactCanonicalJson` (`:87`) is exactly
-that missing half, and `tests/vectors/jcs-vectors.txt` is already in this tree as
-the cross-language oracle. This is not a formality: it is a JSON value tree in
-`core`, which is a genuine admission question and the one consumer-onboarding's
-Q3 predicted was most likely to be answered no. **If it is refused, the fallback
-is `modules/deployment/` beside the schema evaluator, and the consequence must be
-stated rather than left implicit: `core`'s JCS story stays half-written and the
-Python and Luau implementations remain the only complete ones.**
+`docs/reviews/2026-08-10-third-round-review.md:493-499` recorded that number
+formatting and container framing had no C++ implementation because they need a
+value tree. `canonicalBytes` and `requireExactCanonical`
+(`modules/json/source/json/value.hpp:114`, `:121`) are that missing half, and
+`tests/vectors/jcs-vectors.txt` was already in this tree as the cross-language
+oracle. **The fallback this document named — `modules/deployment/`, beside the
+schema evaluator — was not available, and the reason is one this document
+missed: `deployment` sits above `operator` and `task`, where two of the four
+hand-rolled readers the facility replaces live
+(`modules/json/manifest.txt:9-14`). A JSON reader placed above either could
+never serve them.** The module sits on `core` alone, which is the lowest place
+that serves every caller, and `core`'s own JCS story is now complete rather than
+half-written.
 
 **`contract/json-schema.{hpp,cpp}` (53 + 828) →
-`modules/deployment/source/deployment/json-schema.{hpp,cpp}`. Not `core`.** The
-destination is argued, not defaulted. A JSON Schema 2020-12 evaluator is not a
-primitive: it is a policy engine over one draft, its keyword set is deliberately
-closed and incomplete (`json-schema.hpp:9-16`; `dependentSchemas`,
-`unevaluatedProperties`, `format` and `$dynamicRef` are all absent and are
-compile errors), and exactly one thing in this tree needs it — the code that
-builds the five authorities. Putting a closed-world evaluator in `core` invites a
-second consumer to widen it, and `core` is the module `scripts/check_modules.py`
-forbids from declaring dependencies. It belongs beside its only caller.
+`modules/json/source/json/schema.{hpp,cpp}`. Not `core`, and landed beside the
+value tree at `a0ae304` rather than in `deployment`.** The destination was
+argued, not defaulted, and the half of the argument that kept it out of `core`
+still holds. A JSON Schema 2020-12 evaluator is not a primitive: it is a policy
+engine over one draft, and its keyword set is deliberately closed and incomplete
+(`modules/json/source/json/schema.hpp:20-25`; the implemented set is data a test
+can pin, `:83-87`). Putting a closed-world evaluator in `core` invites a second
+consumer to widen it, and `core` is the module `scripts/check_modules.py` forbids
+from declaring dependencies. What moved is the other half — "it belongs beside
+its only caller" was written when the value tree was going to `core` and the
+evaluator could not follow it there. The value tree went to `modules/json`
+instead, the evaluator's only dependency is that tree, and the two are one
+module.
 
 **The four Operator envelope readers →
 `modules/deployment/source/deployment/operator-envelope.{hpp,cpp}`.**
@@ -698,12 +780,18 @@ same place, with the suite including them from there rather than owning them.
 This closes consumer-onboarding's Q1 by making it moot: nobody writes an envelope
 reader because nobody writes a provider.
 
-**Registration extraction →
-`modules/deployment/source/deployment/project-registration.{hpp,cpp}`.**
-`registrationClaims` (`contract/provider.cpp:853-906`) maps ten validated JSON
-members onto `ProjectRegistrationClaims`, and `namedHash` (`:831-846`) prefixes
-`"sha256:"` because the registration spells bare hex and `ContentHash::parse`
-wants the algorithm. Both are framework work in a consumer's tree.
+**Registration assembly and extraction →
+`modules/deployment/source/deployment/project-registration.{hpp,cpp}`.** Three
+functions, not two, and the third is what Q3 added. `registrationBytes`
+(`contract/provider.cpp:799-829`) hashes the files a deployment names and
+`std::format`s the registration from those digests; under Q3 that is no longer a
+consumer's shortcut around a document it did not want to maintain, it is the
+only way the registration is ever produced, so it moves here and its output is
+JCS by construction rather than by a comment (§2.5). `registrationClaims`
+(`:853-906`) then maps the validated members onto `ProjectRegistrationClaims`,
+and `namedHash` (`:831-846`) prefixes `"sha256:"` because the registration
+spells bare hex and `ContentHash::parse` wants the algorithm. All three were
+framework work in a consumer's tree.
 
 **`E:\umbraflow-projects\uf-chaos\runtime\check\main.cpp` (587) → the conformance
 binary's `--frames` mode.** Its own comment (`runtime/check/main.cpp:10-13`)
@@ -718,8 +806,9 @@ In this repository:
 - `conformance/include/conformance/provider.hpp:219-220` — `provideProject`,
   and with it `ProjectRole` as an exported type (`:210-214`).
 - The exported include directory itself. `conformance/include/` folds into
-  `conformance/source/`, and `conformance/manifest.txt:17-23` stops describing
-  "first-party C++ on a consumer's include path".
+  `conformance/source/`, and `conformance/manifest.txt:3-9` stops describing
+  "first-party C++ on a consumer's include path" while `:18-22` stops resting
+  its public dependency list on what a consumer compiles against.
 - `ProjectRuntimeArtifact` (`provider.hpp:51-55`) and `ArtifactFile` (`:31-35`),
   and with them `artifactManifestRow` (`observation-fixture.hpp:126-134`) and
   `publishRuntimeArtifact` (`:139-178`) — 60 lines that re-serialize a manifest
@@ -743,6 +832,10 @@ In `E:\umbraflow-projects\uf-chaos`:
   `CMakeLists.txt` (269), `README.md` (401).
 - The root `CMakeLists.txt` (60), whose only job is `add_subdirectory` of the
   framework.
+- `schema/registration-v1.schema.json`, the twenty-sixth schema document. Q3
+  left it nothing to validate: the registration is derived by the loader and
+  the framework's own `schema/umbraflow-project-registration-v1.schema.json` is
+  what judges it (§2.6).
 - `runtime/CMakeLists.txt` (79) and `runtime/check/main.cpp` (587), replaced by
   `--frames`.
 - Both generated headers and the machinery that writes them —
@@ -769,10 +862,10 @@ repository ships.
   and has never had. "Trusted deployment code" (`project-plugin.hpp:90`), "the
   supplying deployment" (`provider.hpp:86-88`), "a deployment builds each one from
   the exact schema bytes its registration pinned" (`:157-159`). Its content: the
-  manifest reader, the directory loader, the JSON Schema evaluator, the envelope
-  readers, the registration extraction, and the construction of all five
-  authorities. Dependencies: `core domain task operator` public, plus `image` for
-  the probe frame.
+  manifest reader, the directory loader, the envelope readers, the registration
+  assembly and extraction, and the construction of all five authorities. Not the
+  JSON Schema evaluator, which landed in `modules/json` (§4.1). Dependencies:
+  `core domain json task operator` public, plus `image` for the probe frame.
 
   §0.1's call-site census is the evidence that it does not exist: no shipped
   binary registers a plugin or mints an authority, and
@@ -783,7 +876,9 @@ repository ships.
 
 - **Five framework schemas** in `schema/`: `umbraflow-project-v1`,
   `umbraflow-conformance-v1`, `umbraflow-tool-catalog-v1`,
-  `umbraflow-journal-manifest-v1`, `umbraflow-reconcile-manifest-v1`.
+  `umbraflow-journal-manifest-v1`, `umbraflow-reconcile-manifest-v1`. A sixth,
+  `umbraflow-project-registration-v1`, is not new — it is already in `schema/`
+  and starts binding rather than starts existing (§2.6).
 - **`entry/conformance/main.cpp`** and the `umbra-flow-conformance` target.
 - **`external/doctest`** and the `uf::doctest` INTERFACE target.
 - **`cmake/conformance-run.cmake`**.
@@ -791,39 +886,52 @@ repository ships.
   units, and remaining what `conformance/CMakeLists.txt:1-6` already calls them:
   documentation a consumer copies.
 - In uf-chaos: `umbraflow-project.json`, `umbraflow-conformance.json`, two
-  registration documents, two `plugin/*.luau` files carrying the bytes that are
-  today C++ raw literals, two artifact-blob files, and two reconcile manifests.
-  Everything else it needs it already has.
+  `plugin/*.luau` files carrying the bytes that are today C++ raw literals, two
+  artifact-blob files, and two reconcile manifests. No registration document:
+  Q3 put the intent in the deployment block and the digests in the loader
+  (§2.2). Everything else it needs it already has.
 
 ## 5. Migration order
 
 Eight steps. Every step leaves this tree building and `scripts/ci-local.ps1`
 green. Where a step breaks the consumer, it is said so explicitly.
 
-**1. Rule on `evaluate-core-capability` for a JSON value tree, then land it.**
-Whichever destination the skill decides, the parser, the value tree and
-`requireExactCanonicalJson` land with `tests/vectors/jcs-vectors.txt` as the
-oracle and a case per vector. Nothing consumes it yet.
+**1. Rule on `evaluate-core-capability` for a JSON value tree, then land it —
+done, at `a0ae304`.** The skill refused `core`, so the parser, the value tree,
+`canonicalBytes` and `requireExactCanonical` landed as `modules/json` on `core`
+alone, with `tests/vectors/jcs-vectors.txt` as the oracle and a case per vector
+(`tests/json/test-value.cpp`, `tests/json/test-schema.cpp`). Nothing consumes it
+yet. It took the JSON Schema evaluator with it, which was half of step 2 as
+written, and step 2 is correspondingly lighter.
 
-**2. Land `modules/deployment/` with the JSON Schema evaluator and the envelope
-readers.** Ported, not rewritten — the closed keyword set and its compile-time
-refusal are the property being preserved. `readPlanProposal` and `readStepIntent`
-move out of `operator-protocol.hpp` in the same change and the suite includes
-them from their new home. Unit tests only; nothing else consumes it.
+**2. Land `modules/deployment/` with the envelope readers, and publish the
+model's geometry on `RuntimeModelBinding`.** Two framework capabilities that
+nothing consumes yet, which is what makes them one step. `readPlanProposal` and
+`readStepIntent` move out of `operator-protocol.hpp` and the suite includes them
+from their new home. Alongside them, Q2's half of the framework: the trusted
+parser already publishes `base_resolution` and `base_dpi` into the frozen table
+(`modules/task/runtime/model.luau:626-627`), so what is added is a wider
+`runtime_model_finalize` arity and a `ProjectFingerprint` on the binding beside
+the `DeclaredRuntimeUi` (`modules/task/source/task/ffi/uf-tables.cpp:955-1002`,
+`modules/task/source/task/page-model-file.hpp:178-221`). It lands here rather
+than with the loader because it belongs to `task`, and it must land before step 6
+or the loader has no fingerprint to give the suite. Unit tests only.
 
 **3. Land the five framework schemas and the directory loader.** The loader
-returns `Result<LoadedProject>` and constructs all five authorities. Its tests
-are `tests/deployment/`, one case per rule R1–R8, each proven red by removing its
-rule. Still nothing consumes it: `provideProject` is untouched and the suite runs
-exactly as before.
+returns `Result<LoadedProject>`, derives each deployment's registration from its
+block and the digests of the files it read, and constructs all five authorities.
+Its tests are `tests/deployment/`, one case per rule R1–R8 except R8's second
+half, each proven red by removing its rule. Still nothing consumes it:
+`provideProject` is untouched and the suite runs exactly as before.
 
 **4. Move doctest to `external/doctest` and define `uf::doctest`.** Three
 hand-spelled paths become one. Mechanical, and independently revertible.
 
 **5. Write uf-chaos's directory documents, in the consumer tree, changing
-nothing else there.** Its two registration documents, two `plugin/*.luau` files,
-two artifact blobs, two reconcile manifests, the reshaped tool catalogs and
-journal manifests, and the two root documents. `contract/` still builds and
+nothing else there.** Two `plugin/*.luau` files, two artifact blobs, two
+reconcile manifests, the reshaped tool catalogs and journal manifests, and the
+two root documents — `umbraflow-project.json` carrying both deployment blocks,
+which is where the registrations went (§2.2). `contract/` still builds and
 `conformance-chaos` still passes; nothing reads the new files. **This step is
 before the framework switch on purpose**: uf-chaos's build points at the
 framework source root (`E:\umbraflow-projects\uf-chaos\CMakeLists.txt:19-21`), so
@@ -833,16 +941,32 @@ first makes that gap one commit wide.
 
 **6. Switch, in one change.** Both in-tree exemplars become directories; the
 suite calls the loader; `provideProject`, `ProjectRole` as an exported type, the
-two recorders, `ProjectRuntimeArtifact`, `cmake/conformance-suite.cmake`, both
-`provider.cpp` files and both exemplar `CMakeLists.txt` are deleted;
-`umbra-flow-conformance` and `cmake/conformance-run.cmake` arrive. It is one
-change rather than two because a tree in which some projects arrive as C++ and
-some as data is two spellings of one thing, and `CLAUDE.md` forbids resting
-there. The evidence that the switch is lossless is assembled in the working tree
-and not committed: each exemplar's registration hash and `tool_catalog_hash`,
-computed both ways, must match before the C++ side is deleted — after the
-deletion there is nothing left to compare against, which is why it is a
-falsification and not a compatibility path.
+two recorders, `ProjectRuntimeArtifact`, `ProjectProbeFrame::fingerprint`,
+`cmake/conformance-suite.cmake`, both `provider.cpp` files and both exemplar
+`CMakeLists.txt` are deleted; `umbra-flow-conformance` and
+`cmake/conformance-run.cmake` arrive. `requireProbeGeometry` moves from the top
+of `prepareStore` (`suite-support.cpp:171`) into `activateObservationHost`
+(`observation-fixture.hpp:540-554`), just after the Host has parsed the model and
+before the `ObservationRuntime` that needs the same fingerprint is built — still
+before any resolution, so `requireResolvedSurface`'s account of which causes can
+reach it (`observation-fixture.hpp:576-582`) survives the move and its wording
+does not. It is one change rather than two because a tree in which some projects
+arrive as C++ and some as data is two spellings of one thing, and `CLAUDE.md`
+forbids resting there.
+
+The evidence that the switch is lossless is assembled in the working tree and not
+committed, and Q3 and Q6 changed what that evidence can be. It cannot be the
+registration hash computed both ways: the C++ side spells its members
+`plugin_sha256` and `registration_schema_sha256`
+(`contract/provider.cpp:799-829`), the derived side spells them `plugin_hash` and
+`manifest_schema_hash` (`schema/umbraflow-project-registration-v1.schema.json`),
+so the two documents are different bytes on purpose and their digests are
+expected to differ. What must match is the *claims*: `plugin_id`,
+`baseline_event_type`, the artifact roots, and each of the eight digests,
+computed both ways and compared member by member, before the C++ side is
+deleted. `tool_catalog_hash` is expected to differ too, by exactly the members
+Q6 dropped. After the deletion there is nothing left to compare against, which
+is why it is a falsification and not a compatibility path.
 
 Two constraints this step must satisfy or the gate goes red for unrelated
 reasons. `tests/CMakeLists.txt:68-128` requires the CTest names
@@ -894,21 +1018,22 @@ registered at `conformance/exemplars/umbraflow/CMakeLists.txt:15-21`. The count 
 checkable: `tests/CMakeLists.txt:178-184` asserts the matrix has 42
 `REQUIRED_CORE` entries; 33 of the 40 `contract-*` gates live in `tests/`, all 19
 `schema-*` gates live in `tests/operator/`, and `A-03` and `A-05` own no
-per-requirement contract gate (`tests/CMakeLists.txt:190-193`). So 35
+per-requirement contract gate (`tests/CMakeLists.txt:192-195`). So 35
 requirements' gates are not touched in any way, and the remaining seven keep
 their assertions and change only where their project comes from.
 
-**uf-chaos's 26 schema documents are kept and are, for the first time, the thing
-that decides.** They are already applied today
+**Twenty-five of uf-chaos's 26 schema documents are kept and are, for the first
+time, the thing that decides.** They are already applied today
 (`contract/provider.cpp:1039-1183` runs a real evaluator against them); what
 changes is that the evaluator lives upstream and the bytes arrive from the files
-rather than from a `constexpr` copy of them. Twenty-three are byte-identical: the
+rather than from a `constexpr` copy of them. Twenty-one are byte-identical: the
 13 journal payload schemas under `schema/journal/`, both
 `project-state-v1.schema.json`, both `project-observation-v1.schema.json`, both
-`tool-precondition-v1.schema.json`, both `reconcile-v1.schema.json`, and
-`registration-v1.schema.json`. Three change shape and only by losing restated
-members: the two tool catalogs and the two journal manifests drop `plugin_id`,
-and the catalogs drop `tool_precondition_schema` (§2.4).
+`tool-precondition-v1.schema.json` and both `reconcile-v1.schema.json`. Four
+change shape and only by losing restated members: the two tool catalogs and the
+two journal manifests drop `plugin_id`, and the catalogs drop
+`tool_precondition_schema` (§2.4). One dies —
+`registration-v1.schema.json`, which Q3 left nothing to validate (§2.6).
 
 **The RuntimeArtifact is kept and is verified more strictly.** `page-model.toml`,
 `runtime-artifact.manifest.json` and the nine PNGs under
@@ -920,9 +1045,11 @@ uf-chaos has to pin the real one by hand
 (`contract/provider.cpp:363-365`) to notice a disagreement.
 
 **The composed probe frame is kept.** `runtime/probe-frame.png` is a real
-capture at the model's own geometry and nothing about it changes; only where its
-fingerprint comes from is at issue, and Q2 argues it should come from the model
-rather than from a second hand-written copy.
+capture at the model's own geometry and nothing about it changes. Only where its
+fingerprint comes from moved: Q2 ruled it comes from the model, published by
+`RuntimeModelBinding`, so no document restates it and `contract/CMakeLists.txt`'s
+TOML regex has nothing left to do. The check that the capture is that extent
+survives and runs later rather than earlier (§2.7 R8).
 
 **The Luau plugin sources are kept byte for byte.** They move from
 `contract/provider.cpp:142-215` and `:217-289` into two files, and
@@ -1007,11 +1134,89 @@ it — the opposite of what this document is for.
 framework work item with the project's measurement attached, never a C++ hatch
 in a project.
 
-**These rulings contradict parts of §2 and §4, which were written before them.**
-Q2, Q3 and Q6 each change what `umbraflow-project.json` and
-`umbraflow-conformance.json` contain, and the loader in §4 gains the hashing the
-registration document loses. Whoever implements step 2 reconciles those sections
-and records here that they did.
+**Reconciled, 2026-08-11, against `319bdb1`.** §0, §1.1, §1.3, §2.2–§2.7, §3,
+§4.1–§4.3, §5 and §6 were amended in place so that no section still describes
+the shape a ruling replaced. What moved: the registration document became the
+deployment block plus a document the loader derives (Q3); the conformance
+document now says in as many words that it carries no `fingerprint`, and where
+the geometry comes from instead (Q2); the three project manifests lost their
+restated members (Q6); §4.1's two
+destination arguments became history, because the value tree and the evaluator
+both landed as `modules/json`; and §5's steps 1, 2, 3, 5 and 6 were rewritten
+around what has landed and what Q2 added. Citations that the tree had moved
+under were corrected: `entry/cli/main.cpp:51-56` and `:95-98` to `:52-57` and
+`:96-99`, `entry/CMakeLists.txt:95` to `:22`, `conformance/manifest.txt:17-23`
+to `:3-9` and `:18-22`, `tests/CMakeLists.txt:190-193` to `:192-195`, and the
+`contract/json-*.hpp` citations to their `modules/json` homes. Two counts were
+wrong before any ruling touched them and are fixed: §2.2's "seven" digests are
+eight, and §6's "twenty-three byte-identical, three reshaped" is twenty-one,
+four and one deleted.
+
+Six things the reconciliation turned up, recorded rather than edited around.
+
+**Q3 leaves a project with no authored registration document at all.** Once no
+human types a digest, a registration file would state the same paths the
+deployment block already states, which is the second spelling `CLAUDE.md`
+forbids. So the block is the intent and the loader derives the registration.
+uf-chaos writes two fewer new documents than §4.3 promised, deletes one schema
+more than §4.2 listed, and the framework's already-shipped
+`schema/umbraflow-project-registration-v1.schema.json` starts binding.
+
+**Q3's surviving check works under one reading of the ruling and fails silently
+under the other.** `VerifiedProjectRegistration::hash()` is the SHA-256 of the
+registration's canonical JCS and nothing else
+(`modules/operator/source/operator/manifest.cpp:302-304`). If the loader hashes
+the *authored* intent document, then editing a pinned schema changes no byte in
+it, `project_registration_hash` does not move, and the session refusal the
+ruling rests on — "a directory whose bytes have changed produces a different
+one" — cannot fire. It fires only if the loader derives the document that
+carries the digests and hashes *that*. §0 and §2.2 are written that way, which
+is the only reading under which Q3 justifies itself.
+
+**The price of that reading is the defect §0 opened with.** With the loader on
+both sides, the comparison inside each owner's `create` is an identity by
+construction — the ninth costume, now worn deliberately by the framework instead
+of accidentally by a consumer. §0 no longer claims that putting the registration
+on disk makes the pin check capable of going red, because it does not. The
+falsifiable check is the session comparison, and it is the only one.
+
+**Q3 must stop at the registration or it removes coverage.** Its reason — a
+digest written beside the file it describes is a second spelling — applies
+verbatim to the journal manifest's per-schema `sha256` and the reconcile
+manifest's `payload_schema.sha256`. Applying it there would put the 13 journal
+payload schemas and `reconcile-v1.schema.json` outside every hash in the design,
+because those two digests are the only path by which their bytes reach
+`project_registration_hash`. §2.4 states the narrow rule that keeps them and
+§2.7 R5 is what is left of the rule that checks them.
+
+**Q2 makes §2.7 R8's second half unenforceable at load time.** R8 promised that
+both cross-document agreements move into the loader, "refused where they are
+authored rather than where they are used". The probe frame's extent cannot: the
+fingerprint does not exist until the Host has activated the artifact, which a
+loader does not do. It moves *later* instead, into `activateObservationHost`,
+and a project directory can no longer be refused for a probe frame its own model
+does not fit without installing the artifact first. That is what deleting the
+restated number cost. It is still worth it — a restatement that can drift buys
+nothing — but R8 no longer claims the check is free.
+
+**Q2 does not trip `tests/test-runtime-surface.py`, which was checked rather
+than assumed.** Its trusted-parser rule scans first-party C++ for
+`RuntimeModelParser`, `parseRuntimeModel`, `parseRuntimeModelEnvelope` and
+`toml::parse`, and counts the trusted Luau parsers
+(`tests/test-runtime-surface.py:205-213`, `:418-447`); carrying two numbers the
+trusted parser already computed introduces none of them and adds no parser. The
+comment that could have objected — `DeclaredRuntimeUi`'s "a reader may ask
+whether a name is in one of them, which is identity, and cannot ask what the
+name means" (`modules/task/source/task/page-model-file.hpp:159-167`) — is
+unaffected, because the fingerprint is a sibling of `DeclaredRuntimeUi` on the
+binding rather than a fourth vocabulary inside it.
+
+One consequence of Q3 and Q6 together lands in §5. Step 6's evidence that the
+switch is lossless was "each exemplar's registration hash and
+`tool_catalog_hash`, computed both ways, must match". Neither can match now: Q6
+deliberately changes the catalog bytes, and Q3 changes the registration's member
+spellings from `plugin_sha256` to `plugin_hash`. The evidence is a member-by-
+member comparison of the claims instead, and step 6 says so.
 
 **Q1 — does `core` gain a JSON value tree and the complete RFC 8785
 canonicaliser?** *Recommend yes, gated on `evaluate-core-capability`, which
@@ -1124,21 +1329,22 @@ the consumer-attestation entry:
   correction that follows from "uf-chaos depends only on umbraflow's compiled
   binary": the exported C++ provider surface is replaced by a project directory
   format and a host-side loader, and conformance becomes a second shipped
-  binary. A consuming project ends with no C++ at all. Proposal only; ten
-  questions await a ruling.
+  binary. A consuming project ends with no C++ at all. All ten questions are
+  ruled in §7.0; step 1 of the migration has landed as `modules/json`.
 ```
 
 For `docs/plans/README.md`, beside the consumer-onboarding entry:
 
 ```markdown
 - [A project is a directory of data](2026-08-11-project-as-data.md) —
-  **specification proposal, nothing implemented.** `ProvidedProject` member by
-  member and which of its thirteen members a data-only project can never supply;
-  the project directory format, its two root documents and the vocabulary
-  document that does not exist today; why conformance is a second binary rather
-  than a subcommand; why the plugin mechanism is already finished and the loader
-  is the only missing piece; what dies in both trees, and the eight-step order in
-  which uf-chaos's `contract/` may finally be deleted, leaving a project with no
-  compiler and no CMake. Ten questions in §7 need a ruling, one of them before
-  any code moves.
+  **specification, ruled; step 1 landed.** `ProvidedProject` member by member and
+  which of its thirteen members a data-only project can never supply; the project
+  directory format, its two root documents and the vocabulary document that does
+  not exist today; why conformance is a second binary rather than a subcommand;
+  why the plugin mechanism is already finished and the loader is the only missing
+  piece; what dies in both trees, and the eight-step order in which uf-chaos's
+  `contract/` may finally be deleted, leaving a project with no compiler and no
+  CMake. §7.0 rules all ten questions and records what reconciling §2, §4 and §5
+  with them exposed: no project writes a registration document, and a probe
+  frame's geometry can no longer be checked at load time.
 ```
