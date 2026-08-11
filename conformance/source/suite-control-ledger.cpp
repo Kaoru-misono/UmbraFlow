@@ -9,8 +9,6 @@
 #include <operator/ledger.hpp>
 #include <operator/operation.hpp>
 
-#include <core/types/integer.hpp>
-
 #include <doctest/doctest.h>
 
 #include <cstddef>

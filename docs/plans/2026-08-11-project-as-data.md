@@ -768,17 +768,19 @@ instead, the evaluator's only dependency is that tree, and the two are one
 module.
 
 **The four Operator envelope readers →
-`modules/deployment/source/deployment/operator-envelope.{hpp,cpp}`.**
+`modules/deployment/source/deployment/project-deployment.{hpp,cpp}`. Not a file
+of their own: `8277fe3` had already put the envelope schemas there, so there was
+nothing left for an `operator-envelope.{hpp,cpp}` to hold.**
 `requireExactMembers` (`contract/provider.cpp:549-577`), `validateReduceInput`
 (`:595-647`), `validateDeriveInput` (`:649-679`), `validatePlanInput`
 (`:681-723`), `validateStepInput` (`:725-744`) and the null passthrough
 `validateNullableDocument` (`:579-593`) judge documents `ledger.cpp` assembles
 itself; there is no schema file for them anywhere and no project knowledge in the
-question. `readPlanProposal` and `readStepIntent`
-(`operator-protocol.hpp:434`, `:589`) are the same class of thing and move to the
-same place, with the suite including them from there rather than owning them.
-This closes consumer-onboarding's Q1 by making it moot: nobody writes an envelope
-reader because nobody writes a provider.
+question. `readPlanProposal` and `readStepIntent` are the same class of thing
+and went to the same place at `b6c7e72`, out of `operator-protocol.hpp:434` and
+`:589` and into `uf::deployment`, with the suite including them from there
+rather than owning them. This closes consumer-onboarding's Q1 by making it
+moot: nobody writes an envelope reader because nobody writes a provider.
 
 **Registration assembly and extraction →
 `modules/deployment/source/deployment/project-registration.{hpp,cpp}`.** Three
@@ -1191,7 +1193,8 @@ wrong before any ruling touched them and are fixed: §2.2's "seven" digests are
 eight, and §6's "twenty-three byte-identical, three reshaped" is twenty-one,
 four and one deleted.
 
-Six things the reconciliation turned up, recorded rather than edited around.
+Seven things the reconciliation, and the work since it, turned up — recorded
+rather than edited around.
 
 **Q3 leaves a project with no authored registration document at all.** Once no
 human types a digest, a registration file would state the same paths the
@@ -1249,6 +1252,21 @@ whether a name is in one of them, which is identity, and cannot ask what the
 name means" (`modules/task/source/task/page-model-file.hpp:159-167`) — is
 unaffected, because the fingerprint is a sibling of `DeclaredRuntimeUi` on the
 binding rather than a fourth vocabulary inside it.
+
+**The one refusal the suite adds of its own had no case at all.** Moving the two
+readers left `planAuthority` wrapping the step reader in a check that a
+`UIActionIntent` names the run's agreed `uiAction`, and nothing downstream
+repeats it — `task::DispatchAuthority` carries no UI identifier and the ledger
+stores the intent bytes without reading them
+(`conformance/include/conformance/provider.hpp:144-149`). Replacing that check
+with `static_cast<void>(uiAction);` left `conformance-umbraflow`,
+`conformance-arcana`, `test-operator` and `test-contract-operator` green to the
+assertion, because no case ever made the two sides disagree. The case that now
+does is in `conformance/source/suite-project-authority.cpp`, one row per
+identifier, and it disagrees on the *run's* side: a plugin's bytes are the
+project's and are pinned by `plugin_hash`, so a mismatched intent cannot be
+obtained from a plugin at all, and a step minted under the foreign project's
+plugin is refused for the registration it names long before any step is read.
 
 One consequence of Q3 and Q6 together lands in §5. Step 6's evidence that the
 switch is lossless was "each exemplar's registration hash and

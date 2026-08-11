@@ -301,10 +301,10 @@ clamped against `k_workflowCeiling` at mint and written into `operation_plans`,
 and no count is ever compared against them — only `maximum_steps` and
 `maximum_dispatches` refuse. `StepKind::Wait` is never exercised, because
 neither fixture answers `next_step` with a `WaitIntent`, so the wait branch of
-`readStepIntent` and the `kind() == StepKind::UiAction` guard in the ledger are
-untested on that side; W2 §11 questions 4 and 5 are the open design half of
-that. And `ApprovalRequest::policyHash` remains a caller field — `c12`'s
-recorded debt, with `c12` counted done.
+`deployment::readStepIntent` and the `kind() == StepKind::UiAction` guard in the
+ledger are untested on that side; W2 §11 questions 4 and 5 are the open design
+half of that. And `ApprovalRequest::policyHash` remains a caller field —
+`c12`'s recorded debt, with `c12` counted done.
 
 **The last four landings carry more limits of the same kind, and they are this
 block's most valuable output.** Every mutation W4, W6 and W7 specified was

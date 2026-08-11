@@ -334,15 +334,16 @@ them touches authority.
 
 **M1. The four envelope validators.** Export
 `readDeriveEnvelope`, `readReduceEnvelope`, `readPlanEnvelope`,
-`readStepEnvelope` from `conformance/operator-protocol.hpp`, beside the two
-readers already there. This is not a new position; it is the position that header
-already states, at lines 27-31:
+`readStepEnvelope` from
+`modules/deployment/source/deployment/project-deployment.{hpp,cpp}`, beside the
+two readers already there. This is not a new position; it is the position
+`conformance/include/conformance/operator-protocol.hpp` already states, at lines
+24-27:
 
-> They belong to the suite rather than to a project provider because the operator
-> protocol is the Operator's own schema and is the same for every project. What a
-> provider supplies is the documents; what the Operator supplies is the reading of
-> them. **A consumer therefore writes a `ProjectVocabulary` and never a JSON
-> reader.**
+> The two readers are the deployment's, not the suite's: the operator protocol
+> is the Operator's own schema and is the same for every project, so what a
+> provider supplies is the documents and **what a consumer writes is a
+> `ProjectVocabulary` and never a JSON reader.**
 
 Two of the six document families already follow that sentence. Four do not.
 Applying it consistently removes 137 lines per consumer and removes the class of
@@ -579,9 +580,10 @@ did not need to make when every construction site was a fixture.
 
 And the design has already applied the distinction once, deliberately, in the
 sentence quoted in §5.1: `readPlanProposal` and `readStepIntent` are
-framework-supplied readers for framework-owned protocol documents, and the header
-gives that exact reason. The proposal here is to stop making an exception of the
-other four.
+framework-supplied readers for framework-owned protocol documents, which is why
+they sit in `modules/deployment/` and not in a provider, and
+`conformance/include/conformance/operator-protocol.hpp` gives that exact reason.
+The proposal here is to stop making an exception of the other four.
 
 ### 6.3 The stated worry, tested
 
@@ -1063,9 +1065,10 @@ that works and which the consumer will never think about.
 
 Ten. Each carries a recommendation. None is decided here.
 
-**Q1 — do the four envelope readers move into `operator-protocol.hpp`?** §5.1 M1.
-*Recommend yes.* It applies a rule that header already states, removes 137 lines
-per consumer, and no hash in `ProjectRegistrationClaims` pins those shapes. The
+**Q1 — do the four envelope readers move in beside `readPlanProposal` and
+`readStepIntent`?** §5.1 M1. *Recommend yes.* It applies a rule the suite's own
+header already states, removes 137 lines per consumer, and no hash in
+`ProjectRegistrationClaims` pins those shapes. The
 cost is that the Operator's envelope layout becomes a published surface, which it
 effectively already is — both fixtures encode it.
 

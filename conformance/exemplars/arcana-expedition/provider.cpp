@@ -13,7 +13,6 @@
 
 #include "project-schemas.hpp"
 
-#include <conformance/operator-protocol.hpp>
 #include <conformance/provider.hpp>
 
 #include <deployment/project-deployment.hpp>
@@ -35,8 +34,6 @@
 
 #include <doctest/doctest.h>
 
-#include <algorithm>
-#include <array>
 #include <cstddef>
 #include <format>
 #include <memory>

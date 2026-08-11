@@ -338,10 +338,12 @@ as a five-branch string compare over the first member of the object
 #### The sixth mint the suite reaches, not on `ProvidedProject`
 
 `OperatorPlanAuthority::create` is reached through the suite's own
-`planAuthority(...)` helper (`conformance/include/conformance/operator-protocol.hpp:680-715`),
-and it too takes callables — but the suite supplies both of them itself
-(`readPlanProposal` at `:694`, and a lambda closing over `uiAction` at
-`:695-713`). **The project supplies only the `UiActionUnderTest` value.** This
+`planAuthority(...)` helper
+(`conformance/include/conformance/operator-protocol.hpp:37-74`), and it too
+takes callables — but no project supplies either. Both are the deployment's:
+`deployment::readPlanProposal` at `:51`, and `deployment::readStepIntent` inside
+a lambda closing over `uiAction` at `:52-72`, which adds the suite's one refusal
+of its own. **The project supplies only the `UiActionUnderTest` value.** This
 is the existing proof that the pattern can be inverted: the framework already
 owns one of the six validators outright, and takes data for the part that is
 the project's.
@@ -752,8 +754,8 @@ cannot fail a test — it produces bytes that merely disagree."
 | `modules/operator/source/operator/ledger.cpp` | `:6` | `appendJsonString` ×11 (`:1553`-`:1764`, `:3741`, `:3747`) |
 | `modules/operator/source/operator/effective-plan.cpp` | `:4` | `appendJsonString` ×11 (`:64`-`:352`) |
 | `modules/operator/source/operator/manifest.cpp` | `:3` | `appendJsonString` `:27`; `jsonMemberNameLess` `:152` |
-| `entry/cli/explore-protocol.cpp` | `:6` | `appendJsonString` `:393`, `:410`, `:415`, `:420` |
-| `conformance/include/conformance/operator-protocol.hpp` | `:8` | `jsonMemberNameLess` `:219` |
+| `modules/cli/source/cli/explore-protocol.cpp` | `:6` | `appendJsonString` `:393`, `:410`, `:415`, `:420` |
+| `modules/json/source/json/value.cpp` | `:6` | `appendJsonString` `:560`, `:602`; `jsonMemberNameLess` `:589` |
 | `tests/core/test-json-text.cpp` | `:1` | both, `:303`-`:409`, `:372`-`:378` |
 | `E:\umbraflow-projects\uf-chaos\contract\json-value.cpp` | `:3` | `appendJsonString` `:526`; `jsonMemberNameLess` `:555` |
 
