@@ -938,8 +938,80 @@ engine, the trusted Luau runtime, and every one of the 33 `contract-*` and 19
 
 ## 7. Open questions
 
-Ten. Each carries a recommendation and says what it blocks. None is decided
-here.
+Ten. Each carries a recommendation and says what it blocks. **All ten are now
+ruled in §7.0; the questions below are kept as the argument each ruling came
+from, not as anything still open.**
+
+### 7.0 Rulings, 2026-08-11
+
+The owner delegated every one of them with a single criterion: minimise the work
+for the person writing a project and for the person maintaining this framework,
+and do not buy safety with elaborate checking. Clear, correct and safe is the
+bar.
+
+**Q1 and Q4 — settled by measurement rather than by ruling.**
+`evaluate-core-capability` refused `core`: 1,675 lines over 22 files, largest
+file 203, and no header outside `error/` returning `Result` or `Status` at all.
+The fallback this document named, `deployment`, is unavailable for a reason this
+document missed — it sits above `operator` and `task`, where two of the readers
+the facility replaces live. It landed as `modules/json` on `core` alone
+(`a0ae304`). `deployment` keeps the name for the loader.
+
+**Q2 — yes: `RuntimeModelBinding` publishes the geometry.** A base resolution is
+not semantics. `EngineSession::ensureCompatibleFrame` already refuses a capture
+whose extent disagrees with a fingerprint, so the framework already compares
+these two numbers and has never interpreted them; the only question was where
+the fingerprint comes from. A human retyping a number the model already states
+is pure work and pure drift, and this document has already collected two places
+where both trees wrote down that the restatement is a hazard.
+`umbraflow-conformance.json` carries no `fingerprint` member.
+
+**Q3 — nobody maintains them, because the document stops carrying them.**
+Neither option offered was right. Hand-maintaining nine SHA-256 digests is the
+most error-prone thing this design could ask of a project author, and computing
+them from the files just read is the vacuous check §4 objected to. Both are
+wrong for one reason: in a directory there is exactly one source of bytes, so a
+digest written beside the file it describes is a second spelling of one thing.
+
+The registration document declares *intent* — which plugin, which schemas, which
+artifact roots, each by path — and the loader computes every hash from the bytes
+it read, including `project_registration_hash`. The spec's `ProjectRegistration`
+keeps its shape: `plugin_id + plugin_hash`, the tool catalog, the artifact
+roots. What changes is only that no human types a hash.
+
+The check that matters survives, and it can still fail, because it compares two
+independently produced things: a stored session names a
+`project_registration_hash`, and a directory whose bytes have changed produces a
+different one, so the session is refused. That answers the question anyone
+actually has — *did this project change under a running session* — where a
+per-file pin answered one nobody asked. No authoring verb is added.
+
+**Q5 — yes, after step 6, as its own change.** As recommended.
+
+**Q6 — drop the restated members.** Nothing is released. Under Q3 the loader
+recomputes every hash regardless, so uf-chaos's recorded values move once rather
+than twice.
+
+**Q7 — refuse a directory with one deployment.** As recommended: a skipped case
+is a green result promising more than it verified.
+
+**Q8 — keep `--frames`.** It is not new machinery. It is the same loader pointed
+at a directory of captures instead of at one probe frame, and it is the only
+thing that drives a model over real ones. Dropping it would delete a real check,
+and would require the project's host to keep a C++ build alive in order to keep
+it — the opposite of what this document is for.
+
+**Q9 — one function in `conformance/source/`.** As recommended.
+
+**Q10 — recorded, not ruled, and it blocks nothing.** A recognition gap is a
+framework work item with the project's measurement attached, never a C++ hatch
+in a project.
+
+**These rulings contradict parts of §2 and §4, which were written before them.**
+Q2, Q3 and Q6 each change what `umbraflow-project.json` and
+`umbraflow-conformance.json` contain, and the loader in §4 gains the hashing the
+registration document loses. Whoever implements step 2 reconciles those sections
+and records here that they did.
 
 **Q1 — does `core` gain a JSON value tree and the complete RFC 8785
 canonicaliser?** *Recommend yes, gated on `evaluate-core-capability`, which
