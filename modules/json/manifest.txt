@@ -1,0 +1,22 @@
+[module]
+name = json
+type = static
+version = 0.1.0
+
+[build]
+unity_build = false
+
+# core only, and deliberately nothing else. Two of the four hand-rolled
+# positional JSON readers this module exists to replace live in operator and
+# task (operator/journal-entry.cpp, task/page-model-file.cpp), so a JSON reader
+# placed above either of them could never serve them. core is the lowest module
+# every present and foreseeable consumer already depends on, and this module
+# sits directly on it.
+#
+# Why not inside core: docs say core is a kernel of small, non-fallible
+# primitives -- 1,675 lines over 22 files, largest file 203, and no header
+# outside error/ returns Result or Status at all. A parser, an RFC 8785 encoder
+# and a Draft 2020-12 evaluator are ~1,400 lines and introduce core's first
+# fallible API and first error category.
+[dependencies]
+public = core

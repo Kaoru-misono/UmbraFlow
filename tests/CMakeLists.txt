@@ -387,6 +387,15 @@ cpp_add_test(
 )
 
 cpp_add_test(
+    NAME test-json
+    SOURCES
+        json/test-value.cpp
+        json/test-schema.cpp
+    LIBS
+        ${PROJECT_NAME}_json
+)
+
+cpp_add_test(
     NAME test-domain
     SOURCES
         domain/test-detection.cpp
