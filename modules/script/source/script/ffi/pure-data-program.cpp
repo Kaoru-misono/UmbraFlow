@@ -75,6 +75,23 @@ namespace uf::script
         constexpr auto k_maximumValueNodes     = std::size_t{512U} * 1024U;
         constexpr auto k_maximumValueTextBytes = std::size_t{1024U} * 1024U;
 
+        // The same arithmetic applied to the artifact's own byte ceiling,
+        // because an artifact is not a value whose size a plugin controls: the
+        // host registers it, and the ceiling above exists for the 1 MiB
+        // document a plugin does control. Like the depth bound, neither of
+        // these can refuse a value json::parse produced from bytes
+        // k_maximumArtifactBytes already admitted; they are kept, and stated
+        // unfalsifiable, because they are what would notice a value reaching
+        // pushValue from anywhere but that parse. What actually binds an
+        // artifact is the VM memory quota, and artifact.read fails there.
+        constexpr auto k_maximumArtifactValueNodes     = k_maximumArtifactBytes / 2U;
+        constexpr auto k_maximumArtifactValueTextBytes = k_maximumArtifactBytes;
+
+        // Enough for every refusal pushValue spells. artifact.read hands its
+        // text to luaL_error, which does not return, so the copy has to live in
+        // storage that needs no destructor.
+        constexpr auto k_maximumReaderErrorBytes = std::size_t{256U};
+
         constexpr auto k_pureGlobals = std::array{
             std::string_view{"assert"},       std::string_view{"error"},
             std::string_view{"getmetatable"}, std::string_view{"ipairs"},
@@ -98,6 +115,17 @@ namespace uf::script
         constexpr auto k_canonTable       = std::string_view{"canon"};
         constexpr auto k_canonEmptyObject = std::string_view{"emptyObject"};
         constexpr auto k_canonNull        = std::string_view{"null"};
+
+        // What artifact.read answers with, as a version a session manifest can
+        // name. The names above say which functions a plugin can reach; this
+        // says what one of them hands over, which is the half the environment
+        // identity used to miss -- replacing a byte string with a decoded
+        // frozen value left every derived hash unmoved across exactly the
+        // upgrade the pin exists to catch. It states the observable contract,
+        // including that one artifact yields one value per VM however often it
+        // is read, and no implementation detail: a cache layout or a timing
+        // moves nothing here.
+        constexpr auto k_artifactReadContract = std::string_view{"decoded_json_value_v1"};
 
         constexpr auto k_bridgeSource = std::string_view{R"LUAU(
 local safe_type = type
@@ -172,27 +200,52 @@ return {
             lua_State* state{nullptr};
         };
 
+        // One registered artifact after the parse that admission already paid
+        // for. The bytes are gone: the artifact root hash pinned them, the
+        // parse is a pure function of them, and nothing downstream may see the
+        // serialization a value arrived in.
+        struct DecodedArtifact final
+        {
+            std::string name{};
+            json::Value value{};
+        };
+
         // Everything one fresh VM publishes that is not a copied Luau global.
-        // The three references are registry pins created once per VM, so the
-        // bridge environment and the plugin environment share one canon table
-        // and one identity for each sentinel; two environments each minting
-        // their own would make a sentinel the plugin returned unrecognizable to
-        // the host.
+        // The three sentinel references are registry pins created once per VM,
+        // so the bridge environment and the plugin environment share one canon
+        // table and one identity for each sentinel; two environments each
+        // minting their own would make a sentinel the plugin returned
+        // unrecognizable to the host.
         struct PureEnvironment final
         {
-            std::span<PureDataProgram::Artifact const> artifacts{};
+            std::span<DecodedArtifact const> artifacts{};
+
+            // One registry reference per artifact, LUA_NOREF until artifact.read
+            // has built that artifact's value in this VM. It is what makes a
+            // second read answer with the first value rather than a second copy,
+            // so rawequal holds and one artifact is charged against the memory
+            // quota once. It is created and destroyed with the fresh VM, so
+            // nothing it holds survives one call and purity is unaffected.
+            std::vector<int> materialized{};
+
             int nullReference{LUA_NOREF};
             int emptyObjectReference{LUA_NOREF};
             int canonReference{LUA_NOREF};
         };
 
-        // What a value conversion has spent so far. Passed as a mutable
-        // reference because accumulating into it across a recursive walk is the
-        // whole of what it is for.
+        // What a value conversion has spent so far, and what it may spend.
+        // Passed as a mutable reference because accumulating into it across a
+        // recursive walk is the whole of what it is for. The ceilings are
+        // members rather than constants because the two things pushed into a VM
+        // are bounded by different facts: a call's input and output are the
+        // 1 MiB document a plugin controls, while an artifact is host-
+        // registered and bounded by k_maximumArtifactBytes at admission.
         struct ValueBudget final
         {
             std::size_t nodes{0};
             std::size_t textBytes{0};
+            std::size_t nodeCeiling{k_maximumValueNodes};
+            std::size_t textCeiling{k_maximumValueTextBytes};
         };
 
         [[nodiscard]]
@@ -223,14 +276,63 @@ return {
         {
             budget.nodes += 1U;
             budget.textBytes += textBytes;
-            if (budget.nodes > k_maximumValueNodes)
+            if (budget.nodes > budget.nodeCeiling)
             {
                 return refuse("pure data value exceeds its fixed node ceiling");
             }
-            if (budget.textBytes > k_maximumValueTextBytes)
+            if (budget.textBytes > budget.textCeiling)
             {
                 return refuse("pure data value exceeds its fixed byte ceiling");
             }
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto pushValue(lua_State* state,
+                       PureEnvironment const& environment,
+                       json::Value const& value,
+                       std::size_t depth,
+                       ValueBudget& budget) -> Status;
+
+        // A bounded copy of a refusal, in storage nothing has to destroy.
+        // luaL_error leaves its frame without returning to it, so the message
+        // artifact.read reports cannot be held in anything that owns memory.
+        [[nodiscard]]
+        auto boundedText(std::string_view text) -> std::array<char, k_maximumReaderErrorBytes>
+        {
+            auto bounded      = std::array<char, k_maximumReaderErrorBytes>{};
+            auto const length = std::min(text.size(), bounded.size() - 1U);
+            std::ranges::copy(text.substr(0U, length), bounded.begin());
+            return bounded;
+        }
+
+        // The frozen Luau value of one registered artifact, built at most once
+        // in this VM and left on the stack. The second read of an artifact
+        // answers with the first read's value: identity is part of what
+        // artifact.read promises, and rebuilding instead would charge one
+        // artifact against the memory quota once per read.
+        [[nodiscard]]
+        auto materializeArtifact(lua_State* state, PureEnvironment& environment, std::size_t index)
+            -> Status
+        {
+            if (environment.materialized[index] != LUA_NOREF)
+            {
+                lua_getref(state, environment.materialized[index]);
+                return ok();
+            }
+
+            auto budget = ValueBudget{
+                .nodeCeiling = k_maximumArtifactValueNodes,
+                .textCeiling = k_maximumArtifactValueTextBytes,
+            };
+            UF_TRY(pushValue(state, environment, environment.artifacts[index].value, 0U, budget));
+            int const reference = lua_ref(state, -1);
+            if (reference == LUA_NOREF)
+            {
+                return fail(AutomationErrorKind::InternalInvariant,
+                            "pure data VM could not pin a materialized artifact");
+            }
+            environment.materialized[index] = reference;
             return ok();
         }
 
@@ -246,7 +348,7 @@ return {
             // SAFETY: upvalue 1 is installed only by pushArtifactReader and points
             // to the PureEnvironment owned by runFresh. That object outlives
             // every callback and the VM is closed before it leaves scope.
-            auto const* p_environment = static_cast<PureEnvironment const*>(
+            auto* p_environment = static_cast<PureEnvironment*>(
                 lua_tolightuserdata(state, lua_upvalueindex(1)));
             if (p_environment == nullptr || p_name == nullptr || nameLength > 256U)
             {
@@ -256,15 +358,33 @@ return {
             auto const name = std::string_view{p_name, nameLength};
             auto const found = std::ranges::find(p_environment->artifacts,
                                                  name,
-                                                 &PureDataProgram::Artifact::name);
+                                                 &DecodedArtifact::name);
             if (found == p_environment->artifacts.end())
             {
                 luaL_error(state, "artifact.read rejected an unknown root");
             }
 
-            // Luau strings are immutable. This copies only the requested blob
-            // into the quota-bound fresh VM; no artifact is eagerly materialized.
-            lua_pushlstring(state, found->bytes.data(), found->bytes.size());
+            // Nothing partial is published and nothing falls back: a value this
+            // VM cannot hold ends the call at this call site rather than
+            // reaching the plugin as bytes, as nil, or half built.
+            auto refusalText = std::array<char, k_maximumReaderErrorBytes>{};
+            auto refused     = false;
+            {
+                auto const index = static_cast<std::size_t>(
+                    found - p_environment->artifacts.begin());
+                auto const materialized = materializeArtifact(state, *p_environment, index);
+                refused = !materialized.has_value();
+                if (refused)
+                {
+                    refusalText = boundedText(materialized.error().message());
+                }
+            }
+            if (refused)
+            {
+                luaL_error(state,
+                           "artifact.read could not materialize its value: %s",
+                           refusalText.data());
+            }
             return 1;
         }
 
@@ -795,17 +915,67 @@ return {
             return readValue(thread, environment, 1, 0U, outputBudget);
         }
 
+        // The second stage of admission: every registered artifact is built
+        // once inside the VM this plugin has already loaded, so a call is never
+        // the first thing to discover that one of them cannot be. Each is
+        // released before the next, because what this answers for is one
+        // artifact's cost -- a call that reads several may still exhaust its
+        // headroom, and artifact.read is where that fails. An artifact the
+        // module's own initialization already read is skipped: that read is the
+        // same proof.
+        //
+        // The call is protected because exhausting the memory quota unwinds
+        // through Luau rather than returning a value, and outside a protected
+        // call that ends the process instead of refusing the registration.
+        [[nodiscard]]
+        auto proveArtifactsMaterialize(lua_State* state, PureEnvironment& environment) -> Status
+        {
+            for (auto index = std::size_t{0}; index < environment.artifacts.size(); ++index)
+            {
+                if (environment.materialized[index] != LUA_NOREF)
+                {
+                    continue;
+                }
+                if (lua_checkstack(state, 3) == 0)
+                {
+                    return fail(AutomationErrorKind::InternalInvariant,
+                                "pure data VM cannot reserve stack to admit its artifacts");
+                }
+
+                auto const& name = environment.artifacts[index].name;
+                lua_pushlightuserdata(state, &environment);
+                lua_pushcclosure(state, &readArtifact, "artifact.read", 1);
+                lua_pushlstring(state, name.data(), name.size());
+                if (lua_pcall(state, 1, 1, 0) != LUA_OK)
+                {
+                    auto message = "pure data artifact cannot be materialized inside its VM quota: "
+                                 + name + ": " + topError(state);
+                    lua_pop(state, 1);
+                    return refuse(std::move(message));
+                }
+
+                lua_pop(state, 1);
+                lua_unref(state, environment.materialized[index]);
+                environment.materialized[index] = LUA_NOREF;
+                lua_gc(state, LUA_GCCOLLECT, 0);
+            }
+            return ok();
+        }
+
         [[nodiscard]]
         auto runFresh(std::string_view bridgeBytecode,
                       std::string_view pluginBytecode,
                       std::string_view moduleId,
                       std::span<std::string const> entryPoints,
-                      std::span<PureDataProgram::Artifact const> artifacts,
+                      std::span<DecodedArtifact const> artifacts,
                       std::string_view entryPoint,
                       json::Value const& input,
                       bool invoke) -> Result<json::Value>
         {
-            auto environment = PureEnvironment{.artifacts = artifacts};
+            auto environment = PureEnvironment{
+                .artifacts    = artifacts,
+                .materialized = std::vector<int>(artifacts.size(), LUA_NOREF),
+            };
             auto vm  = VmRun{};
             vm.state = createStateWithQuota(&vm.quota);
             if (vm.state == nullptr)
@@ -834,7 +1004,10 @@ return {
             int const plugin = lua_gettop(vm.state);
             UF_TRY(inspectModule(vm.state, bridge, plugin, moduleId, entryPoints, vm.control));
             if (!invoke)
+            {
+                UF_TRY(proveArtifactsMaterialize(vm.state, environment));
                 return json::Value{};
+            }
             return invokeModule(vm.state,
                                 bridge,
                                 plugin,
@@ -858,48 +1031,16 @@ return {
             });
         }
 
-        // The exact bytes the environment's identity is taken over, as one
-        // canonical JSON object: the bridge that wraps every call, the frozen
-        // tables published beside the whitelist, and the whitelist itself.
-        [[nodiscard]]
-        auto pluginEnvironmentMaterial() -> std::string
-        {
-            auto output = std::string{"{\"bridge_source\":"};
-            appendJsonString(output, k_bridgeSource);
-            output += ",\"frozen_tables\":{";
-            appendJsonString(output, k_artifactTable);
-            output += ":[";
-            appendJsonString(output, k_artifactRead);
-            output += "],";
-            appendJsonString(output, k_canonTable);
-            output += ":[";
-            appendJsonString(output, k_canonEmptyObject);
-            output += ',';
-            appendJsonString(output, k_canonNull);
-            output += "]},\"globals\":[";
-            auto separated = false;
-            for (auto const name : k_pureGlobals)
-            {
-                if (separated)
-                {
-                    output += ',';
-                }
-                separated = true;
-                appendJsonString(output, name);
-            }
-            output += "]}";
-            return output;
-        }
     } // namespace
 
     class PureDataProgram::State final
     {
     public:
-        std::string              moduleId{};
-        std::vector<std::string> entryPoints{};
-        std::vector<Artifact>    artifacts{};
-        std::string              bridgeBytecode{};
-        std::string              pluginBytecode{};
+        std::string                  moduleId{};
+        std::vector<std::string>     entryPoints{};
+        std::vector<DecodedArtifact> artifacts{};
+        std::string                  bridgeBytecode{};
+        std::string                  pluginBytecode{};
     };
 
     PureDataProgram::PureDataProgram(std::shared_ptr<State const> p_state) noexcept
@@ -952,6 +1093,27 @@ return {
             return refuse("pure data artifact root names must be unique");
         }
 
+        // The first stage of admission. An artifact the plugin environment
+        // cannot express is not data to a project that ships no C++, so the
+        // parse is a condition of registration rather than a step a call
+        // repeats: these bytes are pinned by the artifact root hash, so their
+        // value is a fact about the registration.
+        auto decodedArtifacts = std::vector<DecodedArtifact>{};
+        decodedArtifacts.reserve(artifacts.size());
+        for (auto& artifact : artifacts)
+        {
+            auto parsed = json::parse(artifact.bytes);
+            if (!parsed.has_value())
+            {
+                return refuse("pure data artifact is not JSON: " + artifact.name + ": "
+                              + std::string{parsed.error().message()});
+            }
+            decodedArtifacts.emplace_back(DecodedArtifact{
+                .name  = std::move(artifact.name),
+                .value = *std::move(parsed),
+            });
+        }
+
         auto ownedEntryPoints = std::vector<std::string>{};
         ownedEntryPoints.reserve(entryPoints.size());
         for (auto const entryPoint : entryPoints)
@@ -974,7 +1136,7 @@ return {
                         pluginBytecode,
                         moduleId,
                         ownedEntryPoints,
-                        artifacts,
+                        decodedArtifacts,
                         {},
                         json::Value{},
                         false));
@@ -982,7 +1144,7 @@ return {
         auto state = std::make_shared<State>(State{
             .moduleId       = std::string{moduleId},
             .entryPoints    = std::move(ownedEntryPoints),
-            .artifacts      = std::move(artifacts),
+            .artifacts      = std::move(decodedArtifacts),
             .bridgeBytecode = std::move(bridgeBytecode),
             .pluginBytecode = std::move(pluginBytecode),
         });
@@ -1009,6 +1171,47 @@ return {
     auto pureEnvironmentGlobals() -> std::span<std::string_view const>
     {
         return k_pureGlobals;
+    }
+
+    // The exact bytes the environment's identity is taken over, as one
+    // canonical JSON object: the bridge that wraps every call, the versioned
+    // contract each published function answers to, the frozen tables published
+    // beside the whitelist, and the whitelist itself. Members are in JCS order,
+    // so the object is canonical as written.
+    auto pluginEnvironmentMaterial() -> std::string
+    {
+        auto const artifactReadName =
+            std::string{k_artifactTable} + '.' + std::string{k_artifactRead};
+
+        auto output = std::string{"{\"bridge_source\":"};
+        appendJsonString(output, k_bridgeSource);
+        output += ",\"contracts\":{";
+        appendJsonString(output, artifactReadName);
+        output += ':';
+        appendJsonString(output, k_artifactReadContract);
+        output += "},\"frozen_tables\":{";
+        appendJsonString(output, k_artifactTable);
+        output += ":[";
+        appendJsonString(output, k_artifactRead);
+        output += "],";
+        appendJsonString(output, k_canonTable);
+        output += ":[";
+        appendJsonString(output, k_canonEmptyObject);
+        output += ',';
+        appendJsonString(output, k_canonNull);
+        output += "]},\"globals\":[";
+        auto separated = false;
+        for (auto const name : k_pureGlobals)
+        {
+            if (separated)
+            {
+                output += ',';
+            }
+            separated = true;
+            appendJsonString(output, name);
+        }
+        output += "]}";
+        return output;
     }
 
     auto pluginEnvironmentHash() -> Result<ContentHash>

@@ -115,8 +115,12 @@ Reading order: target form, then layer ownership, then the model semantics.
   **largely landed.** The plugin receives a decoded frozen value rather than
   bytes, which removed every `string.match` over a serialised envelope — one of
   which matched the first `tool_name` anywhere in the document — and shrank one
-  fixture plugin by 63%. `plugin_environment_hash` pins the bridge that wraps
-  every plugin call and was covered by nothing. Its `canon.encode` was not built:
+  fixture plugin by 63%. `artifact.read` answers the same way, so a registered
+  artifact is a JSON document the host parses once at registration and hands
+  over frozen, built at most once per VM. `plugin_environment_hash` pins the
+  bridge that wraps every plugin call and was covered by nothing; it now also
+  pins what each published function returns, because a preimage over member
+  names alone left that change invisible. Its `canon.encode` was not built:
   no caller survived the ruling that the host mints instance ids. It also carries
   the answer to whether the schemas earn their complexity — keep all three
   categories, delete about 60% of the project payload schemas' bytes and none of

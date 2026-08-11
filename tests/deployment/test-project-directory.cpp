@@ -284,9 +284,12 @@ namespace uf::deployment
                     m_root / "plugin" / (std::string{name} + ".luau"),
                     "return {plugin_id = \"fixture." + std::string{name} + "\"}\n"
                 );
+                // An artifact root is a JSON document: what a plugin reaches is
+                // the value it denotes, and bytes that are not one are refused
+                // when the plugin is registered.
                 write(
                     m_root / "blob" / (std::string{name} + ".blob"),
-                    "fixture-" + std::string{name} + "-blob"
+                    R"({"blob":"fixture-)" + std::string{name} + R"("})"
                 );
             }
         };

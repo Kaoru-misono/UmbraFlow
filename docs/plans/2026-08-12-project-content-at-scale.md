@@ -217,10 +217,18 @@ Recognition can address **550 encounters, 953,988 projected bytes**; the other
 
 ### 2.4 The ceiling that actually binds
 
-It is not the artifact cap. Reading an artifact copies its bytes into the VM as
-a Luau string (`pure-data-program.cpp:204`, `lua_pushlstring`), and everything
-the plugin then builds is charged to the same 16 MiB `k_memoryQuotaBytes`
-allocator (`allocator.hpp`, `createStateWithQuota`).
+It is not the artifact cap. Everything a read puts into the VM is charged to the
+same 16 MiB `k_memoryQuotaBytes` allocator (`allocator.hpp`,
+`createStateWithQuota`).
+
+> **Superseded 2026-08-12 on the mechanism, not on the arithmetic.**
+> `artifact.read` no longer pushes bytes. Every registered artifact is parsed at
+> registration and a read builds the decoded value directly, frozen, once per
+> VM. So the decode below is not something a plugin does inside the tick budget
+> — it is what a read *is*, and its cost is the table figures in this section
+> rather than those figures plus the source string. Two consequences for the
+> numbers here: the "add the source string itself" line no longer applies, and
+> a plugin that reads one artifact twice pays once.
 
 Costing a decode against Luau's own object sizes (`VM/src/lobject.h`: `TValue`
 16 B, `LuaNode` 32 B, table header ~72 B, `TString` header 32 B + length; and
@@ -251,6 +259,13 @@ Finally, the sandbox has no JSON decoder. `k_pureGlobals`
 `bit32`, `math`, `string`, `table`, `utf8` and the base functions. A plugin that
 wants structure out of bytes writes a decoder in Luau, against that 2,000,000-tick
 budget.
+
+> **Closed 2026-08-12, and this paragraph is why.** The whitelist still has no
+> decoder and must not grow one. What changed is that no plugin needs one:
+> `artifact.read` answers with the decoded value, so an artifact carrying JSON
+> is data rather than a capability nothing in the environment can express. The
+> tick budget no longer bounds a hand-written scan of the pack, because there
+> is no scan.
 
 ## 3. The budget, weighed
 
@@ -453,6 +468,15 @@ every project.
 writes one in Luau under a 2,000,000-tick budget. That is infrastructure
 re-derived per game, and it is precisely where a project will get it wrong.
 
+> **Answered 2026-08-12, and neither shape below was built.** `artifact.read`
+> returns the decoded frozen value, so the header and the record bodies of a
+> pack arrive as tables and there is nothing for a prelude to decode and
+> nothing for a slice to avoid materialising. What survives of this section is
+> the *container's* value: a directory of `(key, offset, length)` bought
+> per-candidate cost, and under a value boundary the whole pack is built on the
+> first read of that root instead. If a pack ever approaches the quota that
+> trade returns, and `artifact.slice` is the answer then, not now.
+
 [What the pure plugin environment owes a project](2026-08-12-plugin-pure-helpers.md)
 was written the same day and asks this question from the other side — what the
 23-name environment should expose at all. **That document owns the ruling; this
@@ -484,6 +508,15 @@ several-hundred-KiB pack, has the plugin seek one record by key and return a
 value derived from it, proves a path that today is proven nowhere. Per the
 falsification discipline: it must be shown red when the record is removed or its
 offset corrupted, or it guards nothing.
+
+> **Partly discharged 2026-08-12, and this item is still owed.** The value
+> boundary landed with cases that read an artifact and return what came back,
+> each shown red on its own property — decoded, frozen, and one value per VM —
+> plus a registration refusal measured on a document that parses and cannot be
+> built inside the quota (`tests/script/test-pure-data-boundary.cpp`,
+> `tests/operator/test-project-plugin-contract.cpp`). What is still owed is the
+> half this section names: a **conformance** case, on a real several-hundred-KiB
+> pack, driven from a consuming project rather than a fixture.
 
 ## 7. What `uf-chaos`'s build must emit differently
 

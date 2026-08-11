@@ -958,8 +958,9 @@ recommendations.
 **J2 — the `attestations` root already has a seam, and it has a trap.** The
 attestation set is proposed as one entry in `project_artifact_roots`. A consumer
 whose registration names that root must also supply the blob to the suite, via
-`ProvidedProject::artifactBlobs` — arcana already supplies one such blob (`map`
-/ `expedition-map-bytes`), so the mechanism works. But `verifyArtifactClosure`
+`ProvidedProject::artifactBlobs` — arcana already supplies one such blob (`map`,
+a small JSON document since 2026-08-12, when every artifact became one), so the
+mechanism works. But `verifyArtifactClosure`
 enforces exact closure in both directions, so a consumer that adds the
 `attestations` root to its registration and forgets the blob fails at
 `loadPlugin`, inside `prepareStore`, with a message about artifact closure rather

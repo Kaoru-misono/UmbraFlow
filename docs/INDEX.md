@@ -66,11 +66,12 @@ the four same-day specifications conflict.
   proposal, and a compact projection shipped instead. Its lasting finding is the
   one it was not sent for: **no observed string reaches the plugin at all.**
 - [What the pure plugin environment owes](plans/2026-08-12-plugin-pure-helpers.md)
-  — the plugin now receives a decoded frozen value rather than bytes, and
-  `plugin_environment_hash` pins what wraps every call. Also the answer to
-  whether the schemas are worth their complexity: keep all three categories,
-  delete about 60% of the project payload schemas' bytes and none of their
-  checks.
+  — the plugin now receives a decoded frozen value rather than bytes, for its
+  call input and for `artifact.read` alike, and `plugin_environment_hash` pins
+  what wraps every call together with the versioned contract each published
+  function answers to. Also the answer to whether the schemas are worth their
+  complexity: keep all three categories, delete about 60% of the project payload
+  schemas' bytes and none of their checks.
 - [The journal record binding](plans/2026-08-11-journal-record-binding.md) —
   landed 2026-08-11. The `journal_events` and `project_state` rows now carry the
   member names of the journal records they store, the framework validates

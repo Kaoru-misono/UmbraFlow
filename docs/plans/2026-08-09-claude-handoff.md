@@ -212,6 +212,12 @@ d445c811b9469a58ff116df4763d4e7f1acd80b6a3392639d7eb257321916753
 - 每次调用新建 VM；调用方修改原 blob 不影响已注册 handle。
 - 限制：64 roots、单 blob 4 MiB、总计 16 MiB、输入/输出 1 MiB、错误文本 4 KiB。
 
+> **2026-08-12 修订：`artifact.read` 交出的是解码后的 frozen 值。** 每个
+> artifact 必须是 JSON 文档，在注册时解析并证明能在 fresh VM 里构建出来；一次
+> 调用里同一 artifact 只构建一次，两次读取 `rawequal` 相等。上面的 blob 字节
+> 上限仍然成立，但输入/输出的 1 MiB 值上限**不**适用于 artifact——那条上限是给
+> plugin 能决定大小的值用的，artifact 的大小由 host 注册决定。
+
 关键文件：
 
 ```text

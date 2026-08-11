@@ -152,18 +152,25 @@ The coordinator's count is exact: 27 in the plugin contract test, 6 across
 plugin *bytes* rather than a plugin object
 (`project-plugin.hpp:232-235`: `std::string exactPluginBytes`,
 `std::vector<ArtifactBlob> exactArtifactBlobs`), and the thing those bytes
-become is `script::PureDataProgram` — `modules/script/source/script/pure-data-program.hpp:19-48`,
-whose header states the shape at `:13-18`: "Compilation and exact export
-validation happen once in `compile()`; `invoke()` loads those bytes into a
-fresh quota-bound VM and passes one immutable string in and one immutable
-string out. A frozen `artifact.read(name)` reader lazily copies only registered
-immutable blobs into that VM. No host installer or native capability seam is
-part of this API." Its two entry points are
-`compile(moduleId, source, entryPoints, artifacts)` (`:41-44`) and
-`invoke(entryPoint, immutableInput) -> Result<std::string>` (`:46-47`).
+become is `script::PureDataProgram` — `modules/script/source/script/pure-data-program.hpp`,
+whose header states the shape: compilation and exact export validation happen
+once in `compile()`; `invoke()` loads those bytes into a fresh quota-bound VM
+and passes one decoded JSON value in and one decoded JSON value out; a frozen
+`artifact.read(name)` reader answers with the decoded, frozen value of a
+registered artifact, built at most once per VM; no host installer or native
+capability seam is part of this API. Its two entry points are
+`compile(moduleId, source, entryPoints, artifacts)` and
+`invoke(entryPoint, immutableInput) -> Result<json::Value>`.
+
+> **Restated 2026-08-12.** This paragraph quoted a header that said "one
+> immutable string in and one immutable string out" and that
+> `artifact.read` "lazily copies only registered immutable blobs". Both halves
+> moved to a value — the call boundary first, the artifact reader after — so the
+> quotation is paraphrased above rather than reproduced, and the `file:line`
+> ranges are dropped because they were the drifting part.
 
 So **the plugin half of a project is already data-shaped end to end** —
-bytes in, string in, string out — and has never been assembled anywhere but a
+bytes in, value in, value out — and has never been assembled anywhere but a
 fixture or a provider. The five authorities are the only half that is not.
 
 ### A.2 The five C++-construction members, with the exact mechanism

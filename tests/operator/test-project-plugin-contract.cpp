@@ -25,6 +25,16 @@ namespace uf::operator_runtime
         constexpr auto k_catalogueOutput = std::string_view{"{\"kind\":\"catalogue\"}"};
         constexpr auto k_workflowOutput = std::string_view{"{\"kind\":\"workflow\"}"};
 
+        // Artifact bytes. Every artifact is a JSON document now, so a fixture
+        // spelling one as a bare token would be refused at admission and no
+        // case using it would measure what it names.
+        constexpr auto k_contentRoot = std::string_view{"{\"root\":\"content\"}"};
+        constexpr auto k_otherRoot = std::string_view{"{\"root\":\"different\"}"};
+        constexpr auto k_countBlob = std::string_view{"{\"blob\":\"count-1\"}"};
+        constexpr auto k_safeBlob = std::string_view{"{\"blob\":\"safe-true\"}"};
+        constexpr auto k_payloadBlob = std::string_view{"{\"nested\":[1,2],\"safe\":true}"};
+        constexpr auto k_emptyBlob = std::string_view{"{}"};
+
         constexpr auto k_cataloguePlugin = std::string_view{R"LUAU(
 return {
     plugin_id = "fixture.catalogue",
@@ -519,6 +529,10 @@ return {
         }
     }
 
+    // Every blob below is valid JSON even where the closure rule is what must
+    // refuse it. An artifact that is not JSON is refused at admission, so
+    // non-JSON fixtures here would leave each of these cases red for a reason
+    // it does not name.
     TEST_CASE("ProjectPlugin registrar requires an exact artifact blob closure")
     {
         SUBCASE("missing blob is rejected")
@@ -526,7 +540,7 @@ return {
             auto registrar = ProjectPluginRegistrar{};
             auto fixture = registrationFixture("fixture.catalogue",
                                                k_cataloguePlugin,
-                                               {artifactRoot("content", "content-root")});
+                                               {artifactRoot("content", k_contentRoot)});
             CHECK_FALSE(registrar
                             .registerPlugin(fixture.registration,
                                             std::string{k_cataloguePlugin},
@@ -542,7 +556,7 @@ return {
             CHECK_FALSE(registrar
                             .registerPlugin(fixture.registration,
                                             std::string{k_cataloguePlugin},
-                                            {artifactBlob("extra", "content-root")},
+                                            {artifactBlob("extra", std::string{k_contentRoot})},
                                             fixture.schemaOwner)
                             .has_value());
         }
@@ -552,11 +566,11 @@ return {
             auto registrar = ProjectPluginRegistrar{};
             auto fixture = registrationFixture("fixture.catalogue",
                                                k_cataloguePlugin,
-                                               {artifactRoot("content", "expected")});
+                                               {artifactRoot("content", k_contentRoot)});
             CHECK_FALSE(registrar
                             .registerPlugin(fixture.registration,
                                             std::string{k_cataloguePlugin},
-                                            {artifactBlob("content", "different")},
+                                            {artifactBlob("content", std::string{k_otherRoot})},
                                             fixture.schemaOwner)
                             .has_value());
         }
@@ -566,13 +580,13 @@ return {
             auto registrar = ProjectPluginRegistrar{};
             auto fixture = registrationFixture("fixture.catalogue",
                                                k_cataloguePlugin,
-                                               {artifactRoot("content", "content-root")});
+                                               {artifactRoot("content", k_contentRoot)});
             CHECK_FALSE(registrar
                             .registerPlugin(fixture.registration,
                                             std::string{k_cataloguePlugin},
                                             {
-                                                artifactBlob("content", "content-root"),
-                                                artifactBlob("content", "content-root"),
+                                                artifactBlob("content", std::string{k_contentRoot}),
+                                                artifactBlob("content", std::string{k_contentRoot}),
                                             },
                                             fixture.schemaOwner)
                             .has_value());
@@ -583,6 +597,10 @@ return {
     {
         SUBCASE("initialization and calls read immutable blobs in fresh VMs")
         {
+            // Each function returns the artifact's own value, so the assertions
+            // below are red if what artifact.read hands over is anything but
+            // the decoded document -- a byte string would canonicalize to a
+            // quoted JSON string rather than to the object itself.
             auto const source = std::string{R"LUAU(
 local initialized = artifact.read("initial")
 local count = 0
@@ -591,9 +609,9 @@ return {
     derive = function(_input)
         count += 1
         if count ~= 1 then return canon.emptyObject end
-        return { blob = initialized }
+        return initialized
     end,
-    plan = function(_input) return { blob = artifact.read("runtime") } end,
+    plan = function(_input) return artifact.read("runtime") end,
     next_step = function(input) return input end,
     reconcile = function(input) return input end,
     reduce = function(input) return input end,
@@ -603,12 +621,12 @@ return {
             auto fixture = registrationFixture("fixture.artifacts",
                                                source,
                                                {
-                                                   artifactRoot("initial", "count-1"),
-                                                   artifactRoot("runtime", "safe-true"),
+                                                   artifactRoot("initial", k_countBlob),
+                                                   artifactRoot("runtime", k_safeBlob),
                                                });
             auto blobs = std::vector<ProjectPluginRegistrar::ArtifactBlob>{
-                artifactBlob("runtime", "safe-true"),
-                artifactBlob("initial", "count-1"),
+                artifactBlob("runtime", std::string{k_safeBlob}),
+                artifactBlob("initial", std::string{k_countBlob}),
             };
             auto const plugin =
                 registrar.registerPlugin(fixture.registration, source, blobs, fixture.schemaOwner);
@@ -648,19 +666,29 @@ return {
             CHECK_FALSE(plugin->derive(inputFor(fixture.schemaOwner)).has_value());
         }
 
-        SUBCASE("reader and returned bytes cannot be replaced or enumerated")
+        SUBCASE("reader and returned value cannot be replaced or enumerated")
         {
+            // The returned value is a frozen table, so the probe that used to
+            // write into a Lua string writes into the table and its nested
+            // array instead; a value that is merely immutable-by-type would
+            // satisfy the first and not these.
             auto const source = std::string{R"LUAU(
 local reader = artifact
-local bytes = reader.read("payload")
+local value = reader.read("payload")
 local assign_ok = pcall(function()
-    reader.read = function() return '{}' end
+    reader.read = function() return {} end
 end)
 local rawset_ok = pcall(function()
-    rawset(reader, "payload", '{}')
+    rawset(reader, "payload", {})
 end)
-local bytes_write_ok = pcall(function()
-    bytes[1] = "x"
+local value_write_ok = pcall(function()
+    value.safe = false
+end)
+local value_rawset_ok = pcall(function()
+    rawset(value, "extra", 1)
+end)
+local nested_write_ok = pcall(function()
+    value.nested[1] = 9
 end)
 local leaked_root = false
 for key in pairs(reader) do
@@ -671,8 +699,12 @@ artifact = {}
 return {
     plugin_id = "fixture.frozen-artifact",
     derive = function(_input)
-        local safe = not assign_ok and not rawset_ok and not bytes_write_ok
-            and not leaked_root and reader.read("payload") == 'safe-true'
+        local safe = not assign_ok and not rawset_ok and not value_write_ok
+            and not value_rawset_ok and not nested_write_ok
+            and not leaked_root
+            and type(value) == "table" and value.safe == true
+            and value.nested[1] == 1
+            and rawequal(reader.read("payload"), value)
         if safe then return { safe = true } end
         return canon.emptyObject
     end,
@@ -685,11 +717,11 @@ return {
             auto registrar = ProjectPluginRegistrar{};
             auto fixture = registrationFixture("fixture.frozen-artifact",
                                                source,
-                                               {artifactRoot("payload", "safe-true")});
+                                               {artifactRoot("payload", k_payloadBlob)});
             auto const plugin =
                 registrar.registerPlugin(fixture.registration,
                                          source,
-                                         {artifactBlob("payload", "safe-true")},
+                                         {artifactBlob("payload", std::string{k_payloadBlob})},
                                          fixture.schemaOwner);
             REQUIRE(plugin.has_value());
             auto const result = plugin->derive(inputFor(fixture.schemaOwner));
@@ -708,8 +740,8 @@ return {
             {
                 auto const name =
                     std::string{"root-"} + (index < 10U ? "0" : "") + std::to_string(index);
-                roots.push_back(artifactRoot(name, ""));
-                blobs.push_back(artifactBlob(name, ""));
+                roots.push_back(artifactRoot(name, k_emptyBlob));
+                blobs.push_back(artifactBlob(name, std::string{k_emptyBlob}));
             }
             auto registrar = ProjectPluginRegistrar{};
             auto fixture =
@@ -724,7 +756,10 @@ return {
 
         SUBCASE("single artifact bytes are bounded")
         {
-            auto oversized = std::string(4U * 1024U * 1024U + 1U, 'x');
+            // A JSON string document one byte past the per-artifact ceiling.
+            // Repeated bytes alone are not a document, so a ceiling removed
+            // here would leave admission refusing on the parse instead.
+            auto oversized = "\"" + std::string(4U * 1024U * 1024U, 'x') + "\"";
             auto registrar = ProjectPluginRegistrar{};
             auto fixture = registrationFixture("fixture.catalogue",
                                                k_cataloguePlugin,
@@ -739,7 +774,11 @@ return {
 
         SUBCASE("total artifact bytes are bounded")
         {
-            auto const bytes = std::string(std::size_t{4U} * 1024U * 1024U, 'x');
+            // Five documents of exactly the per-artifact ceiling, so only the
+            // total can refuse them, and each is a JSON string document so only
+            // a ceiling can.
+            auto const bytes =
+                "\"" + std::string(std::size_t{4U} * 1024U * 1024U - 2U, 'x') + "\"";
             auto roots = std::vector<NamedArtifactRoot>{};
             auto blobs = std::vector<ProjectPluginRegistrar::ArtifactBlob>{};
             for (auto index = std::size_t{0}; index < 5U; ++index)
@@ -761,41 +800,34 @@ return {
 
         SUBCASE("artifact reads remain inside the fresh VM memory quota")
         {
-            auto const source = std::string{R"LUAU(
-local a = artifact.read("root-a")
-local b = artifact.read("root-b")
-local c = artifact.read("root-c")
-local d = artifact.read("root-d")
-return {
-    plugin_id = "fixture.artifact-memory",
-    derive = function(_input)
-        if #a + #b + #c + #d > 0 then return { safe = true } end
-        return canon.emptyObject
-    end,
-    plan = function(input) return input end,
-    next_step = function(input) return input end,
-    reconcile = function(input) return input end,
-    reduce = function(input) return input end,
-}
-)LUAU"};
-            auto roots = std::vector<NamedArtifactRoot>{};
-            auto blobs = std::vector<ProjectPluginRegistrar::ArtifactBlob>{};
-            for (auto index = std::size_t{0}; index < 4U; ++index)
+            // 400,000 empty arrays: 1.14 MiB of text, inside every byte
+            // ceiling, and one Luau table each, which is past what the fresh
+            // VM may allocate. The blobs this case used to carry were 4 MiB of
+            // one repeated byte, which under a value boundary is refused by the
+            // parse -- leaving the case green while never reaching the quota it
+            // is named for.
+            auto wide = std::string{"["};
+            for (auto index = std::size_t{0}; index < 400000U; ++index)
             {
-                auto const name = std::string{"root-"} + static_cast<char>('a' + index);
-                auto bytes = std::string(std::size_t{4U} * 1024U * 1024U,
-                                         static_cast<char>('a' + index));
-                roots.push_back(artifactRoot(name, bytes));
-                blobs.push_back(artifactBlob(name, std::move(bytes)));
+                wide += index == 0U ? "[]" : ",[]";
             }
+            wide += "]";
+
             auto registrar = ProjectPluginRegistrar{};
-            auto fixture   = registrationFixture("fixture.artifact-memory", source, std::move(roots));
-            CHECK_FALSE(registrar
-                            .registerPlugin(fixture.registration,
-                                            source,
-                                            std::move(blobs),
-                                            fixture.schemaOwner)
-                            .has_value());
+            auto fixture   = registrationFixture("fixture.catalogue",
+                                                 k_cataloguePlugin,
+                                                 {artifactRoot("wide", wide)});
+            auto const registered =
+                registrar.registerPlugin(fixture.registration,
+                                         std::string{k_cataloguePlugin},
+                                         {artifactBlob("wide", std::move(wide))},
+                                         fixture.schemaOwner);
+            REQUIRE_FALSE(registered.has_value());
+            CHECK(
+                std::string{registered.error().message()}
+                    .find("cannot be materialized inside its VM quota")
+                != std::string::npos
+            );
         }
 
         SUBCASE("registration initialization is instruction bounded")
@@ -844,6 +876,12 @@ return {
 
         SUBCASE("artifact output bytes are bounded inside the trusted wrapper")
         {
+            // An artifact this VM can hold and this boundary will not hand
+            // back: one JSON string a byte past the returned value's text
+            // ceiling. The refusal is asserted by name because the minted
+            // canonical bytes carry a ceiling of their own, and a case that
+            // asked only whether the call failed would be satisfied by that
+            // one instead.
             auto const source = std::string{R"LUAU(
 return {
     plugin_id = "fixture.large",
@@ -854,7 +892,7 @@ return {
     reduce = function(input) return input end,
 }
 )LUAU"};
-            auto bytes     = std::string(1024U * 1024U + 1U, 'x');
+            auto bytes     = "\"" + std::string(1024U * 1024U + 1U, 'x') + "\"";
             auto registrar = ProjectPluginRegistrar{};
             auto fixture =
                 registrationFixture("fixture.large", source, {artifactRoot("large", bytes)});
@@ -863,7 +901,12 @@ return {
                                                          {artifactBlob("large", std::move(bytes))},
                                                          fixture.schemaOwner);
             REQUIRE(plugin.has_value());
-            CHECK_FALSE(plugin->derive(inputFor(fixture.schemaOwner)).has_value());
+            auto const derived = plugin->derive(inputFor(fixture.schemaOwner));
+            REQUIRE_FALSE(derived.has_value());
+            CHECK(
+                std::string{derived.error().message()}.find("fixed byte ceiling")
+                != std::string::npos
+            );
         }
     }
 } // namespace uf::operator_runtime

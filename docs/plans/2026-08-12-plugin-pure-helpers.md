@@ -9,6 +9,19 @@ search found no other, in either tree, after the six plugins were migrated. So
 `canon` carries two frozen empty tables and no functions. Read §5 as the record
 of an argument that a later ruling made unnecessary, not as work owed.
 
+**Extended 2026-08-12 to the other half of the boundary.** §5 moved the *call*
+input and output to a value and left `artifact.read` returning bytes. That
+half-measure was the same defect one step out: a project ships no C++ and the
+whitelist has no decoder, so an artifact carrying JSON was a capability no
+plugin could express. `artifact.read` now answers with the decoded, frozen
+value; every registered artifact is parsed and admitted at registration, where
+the artifact's own byte ceilings apply and the call-input `ValueBudget`
+deliberately does not; and one artifact yields one value per VM however often it
+is read. §4's pin was extended with it — the preimage now carries a versioned
+contract descriptor per published function, because a preimage over member
+*names* left this exact upgrade invisible to `plugin_environment_hash` and to
+every `session_manifest_hash` and `decision_basis_hash` beneath it.
+
 Two questions are answered together because they are the same boundary from
 opposite sides: §1–§7 decide what a plugin is handed, and §8 decides what is
 checked at the moment it is handed over.

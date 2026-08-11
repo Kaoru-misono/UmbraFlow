@@ -41,12 +41,23 @@ namespace uf::script
         }
 
         [[nodiscard]]
+        auto artifactOf(std::string name, std::string bytes) -> PureDataProgram::Artifact
+        {
+            return PureDataProgram::Artifact{
+                .name  = std::move(name),
+                .bytes = std::move(bytes),
+            };
+        }
+
+        [[nodiscard]]
         auto derive(std::string_view moduleId,
                     std::string_view deriveBody,
-                    json::Value const& input) -> Result<json::Value>
+                    json::Value const& input,
+                    std::vector<PureDataProgram::Artifact> artifacts = {}) -> Result<json::Value>
         {
             auto const source = pluginReturning(moduleId, deriveBody);
-            auto const program = PureDataProgram::compile(moduleId, source, k_entryPoints, {});
+            auto const program =
+                PureDataProgram::compile(moduleId, source, k_entryPoints, std::move(artifacts));
             REQUIRE(program.has_value());
             return program->invoke("derive", input);
         }
@@ -54,9 +65,10 @@ namespace uf::script
         [[nodiscard]]
         auto deriveBytes(std::string_view moduleId,
                          std::string_view deriveBody,
-                         json::Value const& input) -> std::string
+                         json::Value const& input,
+                         std::vector<PureDataProgram::Artifact> artifacts = {}) -> std::string
         {
-            auto const output = derive(moduleId, deriveBody, input);
+            auto const output = derive(moduleId, deriveBody, input, std::move(artifacts));
             REQUIRE(output.has_value());
             return json::canonicalBytes(*output);
         }
@@ -69,6 +81,19 @@ namespace uf::script
             auto const output = derive(moduleId, deriveBody, input);
             REQUIRE_FALSE(output.has_value());
             return std::string{output.error().message()};
+        }
+
+        // A registration that must not succeed, which refusal() cannot express:
+        // that one requires a program and refuses the call it then makes.
+        [[nodiscard]]
+        auto admissionRefusal(std::string_view moduleId,
+                              std::vector<PureDataProgram::Artifact> artifacts) -> std::string
+        {
+            auto const source = pluginReturning(moduleId, "        return input");
+            auto const program =
+                PureDataProgram::compile(moduleId, source, k_entryPoints, std::move(artifacts));
+            REQUIRE_FALSE(program.has_value());
+            return std::string{program.error().message()};
         }
     } // namespace
 
@@ -265,9 +290,88 @@ namespace uf::script
         );
     }
 
+    // What a plugin is handed when it reads an artifact. The environment
+    // publishes no JSON decoder and a consuming project ships no C++, so bytes
+    // carrying JSON were a capability no plugin could express. Each half of
+    // what replaced them is probed on its own: one plugin returning three flags
+    // goes red at the same assertion whichever of the three broke.
+    TEST_CASE("an artifact is handed over decoded, frozen, and once per VM")
+    {
+        constexpr auto k_map =
+            std::string_view{R"({"depth":{"summit":3},"regions":["harbour","pass"]})"};
+        auto const empty = parsed("{}");
+
+        constexpr auto decoded = std::string_view{
+            R"(        local map = artifact.read("map")
+        return {
+            decoded = type(map) == "table" and map.regions[2] == "pass"
+                and map.depth.summit == 3,
+        })"
+        };
+        CHECK(
+            deriveBytes("fixture.decoded", decoded, empty, {artifactOf("map", std::string{k_map})})
+            == R"({"decoded":true})"
+        );
+
+        constexpr auto frozen = std::string_view{
+            R"(        local map = artifact.read("map")
+        local wrote = pcall(function() map.regions[1] = "moved" end)
+        local raw_wrote = pcall(function() rawset(map, "extra", 1) end)
+        local nested = pcall(function() map.depth.summit = 9 end)
+        return { frozen = not wrote and not raw_wrote and not nested })"
+        };
+        CHECK(
+            deriveBytes("fixture.frozen-map", frozen, empty, {artifactOf("map", std::string{k_map})})
+            == R"({"frozen":true})"
+        );
+
+        // One artifact is one value per VM, so a plugin that reads it twice
+        // gets the object it already holds rather than a second copy charged
+        // against the same memory quota.
+        constexpr auto once = std::string_view{
+            R"(        return { same = rawequal(artifact.read("map"), artifact.read("map")) })"
+        };
+        CHECK(
+            deriveBytes("fixture.once", once, empty, {artifactOf("map", std::string{k_map})})
+            == R"({"same":true})"
+        );
+    }
+
+    // Admission is two-stage and this is the first stage. Registration is where
+    // a document that cannot become a value is refused, because the bytes are
+    // pinned by the artifact root hash: their value is a fact about the
+    // registration, so a call must never be the first to discover there is not
+    // one.
+    TEST_CASE("an artifact is admitted only if it is JSON this VM can build")
+    {
+        CHECK(
+            admissionRefusal("fixture.notjson",
+                             {artifactOf("map", "expedition-map-bytes")})
+                .find("pure data artifact is not JSON")
+            != std::string::npos
+        );
+
+        // Valid JSON, inside every byte ceiling, and beyond what a fresh VM may
+        // allocate: 400,000 empty arrays are 1.14 MiB of text and one Luau
+        // table each. Repeated bytes would have been refused by the parse
+        // instead, which is a refusal this case is not about.
+        auto wide = std::string{"["};
+        for (auto index = std::size_t{0}; index < 400000U; ++index)
+        {
+            wide += index == 0U ? "[]" : ",[]";
+        }
+        wide += "]";
+        CHECK(
+            admissionRefusal("fixture.wide-artifact", {artifactOf("map", std::move(wide))})
+                .find("cannot be materialized inside its VM quota")
+            != std::string::npos
+        );
+    }
+
     // The pin change 2 rests on. The literal is what a framework upgrade has to
-    // move deliberately: the bridge source, the whitelist and the frozen table
-    // surface are its whole preimage, so one byte anywhere in them lands here.
+    // move deliberately: the bridge source, the whitelist, the frozen table
+    // surface and the contract each published function answers to are its whole
+    // preimage, so one byte anywhere in them lands here.
     TEST_CASE("the plugin environment has one pinned identity")
     {
         auto const first  = pluginEnvironmentHash();
@@ -275,9 +379,20 @@ namespace uf::script
         REQUIRE(first.has_value());
         REQUIRE(second.has_value());
         CHECK(*first == *second);
+
+        // That the digest moved is one claim; what it covers is another, and
+        // only this one names it. A preimage over published NAMES alone leaves
+        // a build that changed what artifact.read RETURNS with an unmoved
+        // digest, and every session_manifest_hash and decision_basis_hash
+        // beneath it unmoved with it -- exactly the upgrade the pin exists to
+        // catch.
+        CHECK(
+            pluginEnvironmentMaterial().find(R"("artifact.read":"decoded_json_value_v1")")
+            != std::string::npos
+        );
         CHECK(
             first->hex()
-            == "20b21d032b338843941d27d302a751a126179cf0fc025907e8e66b529ab37e15"
+            == "6f6c3f87e140d29f2f5a34f91f7b90a9557f57f2dd4530c1f9d3ec187f986b66"
         );
     }
 } // namespace uf::script

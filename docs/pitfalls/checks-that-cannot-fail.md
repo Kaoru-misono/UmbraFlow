@@ -199,6 +199,22 @@ that used to succeed are now refusals, measured verbatim on the real uf-chaos
 corpus, and **every "check deleted" run has the load succeeding**, which is what
 proves no second mechanism was doing the refusing.
 
+**Adding a gate upstream disarms every fixture that is invalid to it, and the
+disarming is silent.** 2026-08-12 moved `artifact.read` from bytes to a decoded
+JSON value, which put a parse in front of every artifact case. "artifact reads
+remain inside the fresh VM memory quota" registered four 4 MiB blobs of one
+repeated byte and required registration to fail; it still failed — at
+`json::parse` — and stayed **green while never reaching the quota it is named
+for**. Two sibling cases carried equally invalid bytes and went red instead,
+which is the only reason the third was looked at. The rule is cheap to apply and
+it is the one worth carrying: **a fixture whose bytes must reach a late check
+has to be valid input to every earlier one.** That case now registers 400,000
+empty JSON arrays, which parse, sit inside every byte ceiling, and exhaust the
+VM allocator; and each artifact ceiling in that file was measured by removing it
+in a mirror and observing the same registration succeed — including the two
+ceilings that are spelled twice, in `script` and in `operator`, where removing
+one spelling leaves the other refusing and proves nothing.
+
 ## An assertion another refusal already satisfies
 
 A weaker relative of the last, and it hides better, because the case does contain
@@ -396,6 +412,15 @@ filter matches no test**, so a prose-named case, a typo or a renamed gate reads
 exactly like a pass; four results were falsely green on one campaign's first
 pass. A mutation harness is a gate and needs its own positive control before its
 results mean anything.
+
+**doctest's `--test-case` has the same hole, and a comma is enough to open it.**
+`--test-case=` takes a comma-separated filter list, so a prose case name
+containing a comma — "an artifact is handed over decoded, frozen, and once per
+VM" — is read as three patterns, none of which matches. The run prints
+`0 passed | 0 failed | 50 skipped` and `Status: SUCCESS!`, and exits 0. Three
+mutations of 2026-08-12 were reported green that way and had to be re-measured
+against a comma-free filter. **Read the denominator line, not the status line**:
+`0 passed` is the tell, and it is one line above the word SUCCESS.
 
 The seventh is a regex narrower than the set it was meant to cover.
 `SCHEMA_AUTHORITIES` in `tests/test-runtime-surface.py` held
