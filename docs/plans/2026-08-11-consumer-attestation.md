@@ -6,7 +6,9 @@ Six questions in §10 need a ruling from the repository owner.
 Date: 2026-08-11
 Scope: `umbraflow-cpp` only. It defines a document format and a recording
 location that a consumer repository fills in; no consumer-project writes.
-Bundle: v1.9, root `c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`
+Bundle: v1.12, root `b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5`
+(specified against v1.9; brought current 2026-08-12. Nothing this document
+proposes moved with the bundle; §9's corrections cite rows that did not change.)
 
 ## 1. The gap, verified
 
@@ -708,9 +710,12 @@ ownership and test map" in the same change as this document. Nothing landed is
 rewritten to match; the notes are dated and name the deciding artifact.
 
 **`D-09` is `PHASED`, not `PROJECT_CONTRACT`.** The next block §1 said
-"`D-01`-`D-09` are `PROJECT_CONTRACT`". The deciding artifact is the v1.9
+"`D-01`-`D-09` are `PROJECT_CONTRACT`". The deciding artifact is the
 requirements matrix, `requirements-traceability.md` §4 row `D-09`, under bundle
-root `c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`. Read
+root `b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5`. The
+read was made on 2026-08-11 against v1.9, root `c4760bb5…bfb6a966`; §4 is
+byte-identical at v1.12, which changed only that document's version line, §9's
+G0 row and its new change record. Read
 directly: eight rows carry `PROJECT_CONTRACT` and `D-09` carries `PHASED`, the
 only row in the matrix that does. §1 of the matrix defines `PHASED` as
 "架构已确定，但按垂直切片逐步开放" — the architecture is settled but opens by

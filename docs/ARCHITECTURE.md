@@ -1,6 +1,6 @@
 # Architecture
 
-> Amended 2026-08-09: the v1.7 spec bundle and
+> Amended 2026-08-09: the v1.9 spec bundle and
 > [breaking rewrite authority](plans/2026-08-09-runtime-hardening-rewrite.md)
 > replace the former Context/Page/Target runtime description. This file now
 > records module ownership only and deliberately does not duplicate wire
@@ -14,10 +14,20 @@ Read in this order:
 2. [migration report](plans/2026-08-09-runtime-migration-report.md);
 3. checked-in schemas named by that report.
 
-The read-only consumer bundle is v1.9; its root is
-`c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`.
+The read-only consumer bundle is v1.12; its root is
+`b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5`.
 No game entity, tool name, state field, Journal event, or content schema belongs
 in this repository's generic core.
+
+> Amended 2026-08-12: the bundle moved three times in three days and this file
+> tracked none of them. It read v1.9, root `c4760bb5…bfb6a966`, which was stale
+> from v1.10 (2026-08-12, the project-layer amendment), through v1.11 (the
+> dual-game waiver, recorded nowhere), to v1.12 (the co-versioned amendment that
+> carried that waiver into the upstream design). The `:3` note above said v1.7,
+> which was already wrong when written; the correction to v1.9 is
+> [cross-repository drift](plans/2026-08-11-cross-repository-drift.md) F-14,
+> applied here. `scripts/check_spec_bundle.py` and its authority document still
+> pin v1.10 — see [TODO](TODO.md) G0.
 
 ## Module direction
 

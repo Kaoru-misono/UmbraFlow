@@ -357,7 +357,17 @@ shape: `entry/<name>/main.cpp` plus `modules/<name>`, `type = static`.
 ## G0 — contract and inherited baseline
 
 - [x] Pin the four-document consumer bundle at root
-      `c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`.
+      `b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5`
+      (v1.12). Was `c4760bb5…bfb6a966` (v1.9), stale from v1.10 on 2026-08-12;
+      v1.11 was never written down anywhere.
+- [ ] Re-pin the gate at v1.12. `scripts/check_spec_bundle.py`'s `FROZEN_BUNDLE`
+      and the five digest lines it cross-checks in
+      [the hardening rewrite](plans/2026-08-09-runtime-hardening-rewrite.md):10-18
+      still state v1.10 root `adb7f29f…51049f`. The two copies agree with each
+      other, so `check-spec-pins` stays green while asserting a bundle two
+      versions behind; reading the real directory reports `NOT VERIFIED`, which
+      is the gate working. Both copies move in one change, which is a source
+      change and was out of scope for the 2026-08-12 documentation pass.
 - [x] Record base commit, rejected stash and the 101-entry dirty baseline
       manifest.
 - [x] Assign exactly one disposition to all 101 inherited dirty paths

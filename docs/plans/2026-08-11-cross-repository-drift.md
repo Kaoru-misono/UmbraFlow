@@ -52,6 +52,32 @@ to the repository root.
 > §8.3 — because this change does not own either string. `CONTEXT.md` carries
 > the full map.
 
+> **Read note, 2026-08-12 — the bundle this audit verified is three versions
+> old, and every root hash below is left as written.** This audit read v1.9,
+> root `c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`, and
+> §0's byte-for-byte verification is a record of that read. It is not rewritten,
+> because rewriting the number would claim the audit hashed bytes it never saw.
+> After 2026-08-12 the v1.9 root survives here and, truncated, in
+> [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md) — both as
+> evidence in a dated record, neither as a pin. Every statement of the pin now
+> carries the current root.
+>
+> The bundle is at **v1.12**, root
+> `b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5`. It moved
+> on 2026-08-12: v1.10 amended the project-layer design in seven places, v1.11
+> recorded the owner's waiver of the dual-game prerequisite for the first
+> mutation, and v1.12 co-versioned that waiver into
+> `umbraflow-game-automation-final-design.md` §15 Phase 4 and repaired the
+> version statements the earlier bumps left behind. Two findings read
+> differently now:
+>
+> - **F-14** (`ARCHITECTURE.md` names two bundle versions seven lines apart) is
+>   **applied**: `:3` now reads v1.9, which is the correction this document
+>   ruled, and `:17` reads v1.12.
+> - **§1's (b), "nothing checks the pin"**, already carried its 2026-08-11
+>   closure note. The gate it names now pins **v1.10** and has not been moved to
+>   v1.12; the re-pin is [TODO](../TODO.md) G0.
+
 ---
 
 ## 0. The pin: VERIFIED, byte for byte

@@ -33,7 +33,9 @@ consumer-side work is a different stage and is specified in
 Date: 2026-08-10 (revised the same day, against the landed tree; requirement
 state brought current 2026-08-11, and again after the last four landings)
 Scope: `umbraflow-cpp` only. No consumer-project writes.
-Bundle: v1.9, root `c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`
+Bundle: v1.12, root `b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5`
+(specified against v1.9; brought current 2026-08-12, when the dual-game waiver
+was co-versioned into the upstream design. No requirement in §2 moved with it.)
 
 This plan is derived from the requirement matrix, not from what happened to be
 found. Every `REQUIRED_CORE` requirement appears in §2 exactly once, with the

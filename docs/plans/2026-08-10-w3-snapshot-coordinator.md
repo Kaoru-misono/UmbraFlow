@@ -18,8 +18,10 @@ Coordinator publishes a complete snapshot atomically)
 Depends on: W2 (`docs/plans/2026-08-10-w2-effective-plan.md`), specified in
 parallel. Every assumption about it is listed in §8 and nowhere else.
 Authority: [`2026-08-09-runtime-hardening-rewrite.md`](2026-08-09-runtime-hardening-rewrite.md)
-and the frozen v1.9 bundle it pins, root
-`c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`.
+and the frozen bundle, now v1.12, root
+`b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5`
+(specified and landed against v1.9; brought current 2026-08-12. The authority
+document itself still pins v1.10 — see [TODO](../TODO.md) G0.)
 
 The work item is [`2026-08-10-next-block.md`](2026-08-10-next-block.md) §3 row
 W3. Its two requirements are §2 rows `s01` (**absent** — `ProjectObservation`

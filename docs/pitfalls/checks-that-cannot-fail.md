@@ -443,6 +443,15 @@ the bundle would have been another instance rather than the fix for one.
 **Detection is grepping the pin outside `docs/`.** A number that appears only in
 prose is enforced by a human remembering.
 
+**2026-08-12: the two independent copies are also two things to forget.** The
+bundle moved through v1.10, v1.11 and v1.12 in one day. Both of the gate's copies
+were left at v1.10, so they still agree with each other and `check-spec-pins`
+stays green while asserting a bundle two versions old — the gate cannot detect
+its own staleness, only a disagreement between its halves, and a full run against
+the real directory is what reports it. Duplication for independence buys
+detection of an edited pin at the price of a pin nobody edits. Re-pinning is
+[TODO](../TODO.md) G0.
+
 ## Two spellings, each tested against itself
 
 Where one rule is implemented twice, each implementation's own tests pass and the
