@@ -7,13 +7,13 @@ Scope: `umbraflow-cpp` only; consumer projects are read-only
 
 ## Frozen product authority
 
-The normative product input is the read-only v1.9 bundle at
+The normative product input is the read-only v1.10 bundle at
 `E:/umbraflow-projects/uf-chaos/docs/architecture/`.
 
 - bundle manifest: `spec-bundle.manifest.json`
-- bundle root SHA-256: `c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`
+- bundle root SHA-256: `adb7f29f52dc2c0217d888f8d4da815d335db480db64191f0c4e873bda51049f`
 - main design: `3499e87580c0dd9690e5ce5bace446b0198d6270d4e4706d1f6accb575ee0b44`
-- project-layer design: `c2e920a1201e24bf4026ae95a7ae50a02e760ab5f42517991012a3307f110687`
+- project-layer design: `bb4fa64165c61bddfb795a1a0b8cc6158bea6669bf0ef5c45a40fd4986d77177`
 - requirements: `2b725e81ffcdac30f38dcd9f77cb2513dca6251b3fdbb1cbe42346324724196c`
 - failure/recovery audit: `aad291c97157fd8e6c63a3c05b1bf91361188aa8353f783795548a1f80b00e55`
 
