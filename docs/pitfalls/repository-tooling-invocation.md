@@ -21,7 +21,7 @@ nobody notices until someone else's edit misses.
 
 `scripts/fix_format.py` defaults to "all first-party text" when given no path
 arguments, and `scripts/check_cpp_format.py --fix` walks its own fixed
-`SOURCE_ROOTS` — `modules`, `entry`, `tests`, `contract-suite`. Neither knows
+`SOURCE_ROOTS` — `modules`, `entry`, `tests`, `conformance`. Neither knows
 about a path split; there is nothing to know, because the split lives in the
 agents' instructions and not in the repository.
 

@@ -2,9 +2,9 @@
 // controlled target, one dispatch per Operation, one reconciliation authority,
 // and a reducer input nobody outside the Operator can choose.
 
-#include "harness.hpp"
+#include "suite-support.hpp"
 
-#include <operator-contract/project-under-test.hpp>
+#include <conformance/provider.hpp>
 
 #include <operator/ledger.hpp>
 #include <operator/operation.hpp>
@@ -18,7 +18,7 @@
 #include <string>
 #include <string_view>
 
-namespace uf::operator_runtime::contract
+namespace uf::operator_runtime::conformance
 {
     TEST_CASE("contract-control-c01")
     {
@@ -430,7 +430,7 @@ namespace uf::operator_runtime::contract
 
         // An outcome minted against another registration is refused as well,
         // however confident the conclusion it carries.
-        auto const foreign      = projectUnderTest(ProjectRole::Foreign);
+        auto const foreign      = provideProject(ProjectRole::Foreign);
         auto foreignCommit      = confirmedCommit(
             prepared,
             operation,
@@ -500,12 +500,12 @@ namespace uf::operator_runtime::contract
         auto const root   = TemporaryDirectory{"reducer-input"};
         auto prepared     = prepareStore(root.path());
         auto const& words = prepared.project.vocabulary;
-        REQUIRE(prepared.project.observedReduceInput != nullptr);
+        REQUIRE(prepared.project.lastReduceInput != nullptr);
 
         constexpr auto eventTypeKey = std::string_view{"\"namespaced_event_type\""};
 
         // Provisioning reduces its own baseline event against no prior state.
-        auto const baselineInput = *prepared.project.observedReduceInput;
+        auto const baselineInput = *prepared.project.lastReduceInput;
         CHECK(occurrences(baselineInput, eventTypeKey) == std::size_t{1});
         CHECK(baselineInput.find(words.baselineEntry.payload) != std::string::npos);
         CHECK(baselineInput.find(words.provenance) != std::string::npos);
@@ -525,7 +525,7 @@ namespace uf::operator_runtime::contract
         // ProjectState the database already held, so a caller who wanted the
         // reducer to see something else has nowhere to put it: neither the
         // baseline payload nor any entry the commit did not name is in there.
-        auto const commitInput = *prepared.project.observedReduceInput;
+        auto const commitInput = *prepared.project.lastReduceInput;
         CHECK(occurrences(commitInput, eventTypeKey) == std::size_t{1});
         CHECK(commitInput.find(words.progressEntry.payload) != std::string::npos);
         CHECK(commitInput.find(words.baselineEntry.payload) == std::string::npos);
@@ -537,9 +537,9 @@ namespace uf::operator_runtime::contract
     {
         auto const root = TemporaryDirectory{"derive-input"};
         auto prepared   = prepareStore(root.path());
-        REQUIRE(prepared.project.observedDeriveInput != nullptr);
+        REQUIRE(prepared.project.lastDeriveInput != nullptr);
 
-        auto const first = *prepared.project.observedDeriveInput;
+        auto const first = *prepared.project.lastDeriveInput;
         REQUIRE_FALSE(first.empty());
 
         // The Snapshot Coordinator assembles the envelope rather than accepting
@@ -575,7 +575,7 @@ namespace uf::operator_runtime::contract
         // freshSnapshot captures again, so this is a second occasion over an
         // unchanged world.
         prepared.snapshot = freshSnapshot(prepared);
-        auto const second = *prepared.project.observedDeriveInput;
+        auto const second = *prepared.project.lastDeriveInput;
         CHECK(second != first);
 
         // The next derivation is handed the reading before it, so the prior is

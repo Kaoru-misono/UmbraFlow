@@ -4,7 +4,7 @@ Status: specification proposal. Nothing here is implemented. Ten questions in
 §11 need a ruling. Every file-level claim was read at `c23efd3`; the counts in
 §2 are reproducible from that tree.
 Date: 2026-08-11
-Scope: `umbraflow-cpp` only. It proposes moving code into `contract-suite/`,
+Scope: `umbraflow-cpp` only. It proposes moving code into `conformance/`,
 `cmake/` and possibly `modules/core`; it writes nothing in a consumer tree and
 specifies no consumer-side artifact.
 
@@ -26,14 +26,14 @@ that question splits cleanly along a line the registration itself already draws.
 Two facts in the brief this document answers are stale, and both matter to the
 arithmetic.
 
-**`contract-suite/fixtures/arcana-expedition/provider.cpp` is 880 lines, not
+**`conformance/exemplars/arcana-expedition/provider.cpp` is 880 lines, not
 660.** It gained 192 lines in `848e390` (the EffectivePlan mint) and 5 more in
 `93698b4`. Any description of this surface written before `93698b4` understates
 it by a quarter.
 
 **The suite is four sources and four headers, not one header.** The exported
-include directory is `contract-suite/include/operator-contract/` and holds
-`project-under-test.hpp` (140), `operator-protocol.hpp` (649),
+include directory is `conformance/include/conformance/` and holds
+`provider.hpp` (140), `operator-protocol.hpp` (649),
 `observation-fixture.hpp` (777) and `host-delivery-fixture.hpp` (139). A
 consumer's provider includes only the first two. The other two are compiled into
 the consumer's binary regardless, and one of them is why the fixtures need a
@@ -41,7 +41,7 @@ the consumer's binary regardless, and one of them is why the fixtures need a
 
 ## 2. The measurement
 
-`contract-suite/fixtures/arcana-expedition/provider.cpp`, every block, in file
+`conformance/exemplars/arcana-expedition/provider.cpp`, every block, in file
 order. Line spans are exact and sum to 880.
 
 Classes:
@@ -79,8 +79,8 @@ Classes:
 | 599–653 | 55 | `journalPayloadValidator` (4-row table) | 20 | | 35 | | |
 | 655–742 | 88 | `toolCatalogValidator` (8-row catalog + args literal) | 43 | | 45 | | |
 | 744–790 | 47 | `dispositionReader` (4-row mapping) | 18 | | 29 | | |
-| 792–859 | 68 | `makeProject` — build the four owners, return `ProjectUnderTest` | | 68 | | | |
-| 862–879 | 18 | `projectUnderTest` — two identities + role switch | 12 | 6 | | | |
+| 792–859 | 68 | `makeProject` — build the four owners, return `ProvidedProject` | | 68 | | | |
+| 862–879 | 18 | `provideProject` — two identities + role switch | 12 | 6 | | | |
 | — | 21 | blank lines between blocks | | | | | 21 |
 | 860–861, 880 | 3 | namespace close | | | | | 3 |
 | **Total** | **880** | | **213** | **360** | **208** | **58** | **41** |
@@ -122,7 +122,7 @@ consumer's surface that should be allowed to grow.
 
 ## 3. The second implementation, and what the two share
 
-`contract-suite/fixtures/umbraflow/` does the same job a second time, split
+`conformance/exemplars/umbraflow/` does the same job a second time, split
 across two files because one of them is also the Operator's own test fixture:
 
 | File | Lines | Of which is the same job as arcana's provider |
@@ -133,7 +133,7 @@ across two files because one of them is also the Operator's own test fixture:
 The remaining ~760 lines of `project-fixture.hpp` are `PreparedStore`,
 `prepareStore`, `addController`, `createReadyOperation`, `reconcilingOperation`,
 `agentProfileFor`, `TemporaryDirectory` and friends — machinery for
-`tests/operator/*`, which the suite's own `harness.hpp`/`harness.cpp` duplicates
+`tests/operator/*`, which the suite's own `suite-support.hpp`/`suite-support.cpp` duplicates
 for suite use. That is a third spelling of the same store setup, but it is not
 consumer work and is out of scope here.
 
@@ -211,7 +211,7 @@ helps with that. See prediction **R7**.
 ### 4.2 The `RuntimeArtifact` seam does not exist
 
 The yardstick lists the consumer's page model and assets as consumer-owned.
-The suite does not ask for one. `contract-suite/source/harness.cpp:155-158`:
+The suite does not ask for one. `conformance/source/suite-support.cpp:155-158`:
 
 ```cpp
 auto runtimeRelease(std::filesystem::path const& root) -> RuntimeRelease
@@ -222,9 +222,9 @@ auto runtimeRelease(std::filesystem::path const& root) -> RuntimeRelease
 
 `observationRuntimeModel()` and `observationAssets()` are the *suite's* model and
 the suite's PNGs, defined in
-`contract-suite/include/operator-contract/observation-fixture.hpp:149` and `:226`.
+`conformance/include/conformance/observation-fixture.hpp:149` and `:226`.
 `prepareStore` installs that artifact, activates a Host over it, and composes
-every snapshot from it. `ProjectUnderTest` has no member for a RuntimeArtifact.
+every snapshot from it. `ProvidedProject` has no member for a RuntimeArtifact.
 
 The consequence is visible in arcana's own bytes. Its `next_step` returns
 `surface_id: "expedition.surface"`, `ui_target_id: "expedition.target"`,
@@ -240,7 +240,7 @@ correctly" from "this project's page model resolves" is a defensible split. But
 it is undocumented, and it means **the suite pass a consumer earns is weaker
 than the yardstick implies.** Ruling needed: Q6.
 
-> **Closed 2026-08-11: the seam now exists.** `ProjectUnderTest` carries a
+> **Closed 2026-08-11: the seam now exists.** `ProvidedProject` carries a
 > `ProjectRuntimeArtifact` — RuntimeModel bytes and the asset closure — and a
 > `ProjectProbeFrame` — the `ProjectFingerprint` the model declares and one PNG
 > capture at that extent — and `prepareStore` installs and resolves those.
@@ -254,6 +254,13 @@ than the yardstick implies.** Ruling needed: Q6.
 > never resolved against anything. Mutating either model so it stops defining
 > the driven surface or target now turns the run red; the same mutation was
 > green before this change.
+>
+> **The code block above no longer exists, as of 2026-08-11.** `RuntimeRelease`
+> was an alias for `ObservationRelease` and `runtimeRelease` forwarded to
+> `observationRelease` with nothing in between; both are deleted and
+> `prepareStore` calls `observationRelease` directly. `docs/ARCHITECTURE.md`
+> lists "no compatibility alias, fallback, dual spelling or dual write" among
+> deliberate absences, and that pair was one of each.
 >
 > `k_authorizeClickSource` became `authorizeClickSource(UiActionUnderTest)`, and
 > which surface, target and action a contract run drives is a new
@@ -327,7 +334,7 @@ them touches authority.
 
 **M1. The four envelope validators.** Export
 `readDeriveEnvelope`, `readReduceEnvelope`, `readPlanEnvelope`,
-`readStepEnvelope` from `operator-contract/operator-protocol.hpp`, beside the two
+`readStepEnvelope` from `conformance/operator-protocol.hpp`, beside the two
 readers already there. This is not a new position; it is the position that header
 already states, at lines 27-31:
 
@@ -348,12 +355,12 @@ The two project literals inside `looksLikeReduceEnvelope` (the accepted
 a predicate parameter.
 
 **M2. `hashOf`, `refuse`, `TemporaryDirectory`.** `hashOf` is already declared at
-`contract-suite/source/harness.hpp:41`, in `source/` rather than `include/`, so
+`conformance/source/suite-support.hpp:41`, in `source/` rather than `include/`, so
 no consumer can reach it through the public header set — and both fixtures
 re-implement it identically. Move the declaration to
-`operator-contract/project-under-test.hpp` or a new
-`operator-contract/provider-support.hpp`. 12 lines per consumer, and it removes
-the incentive to `#include "harness.hpp"` (prediction **R4**).
+`conformance/provider.hpp` or a new
+`conformance/provider-support.hpp`. 12 lines per consumer, and it removes
+the incentive to `#include "suite-support.hpp"` (prediction **R4**).
 
 **M3. Registration assembly.** `registrationBytes` + `verifiedRegistration` +
 `makeProject` = 149 lines that do one thing: turn a set of hashes and a schema
@@ -370,7 +377,7 @@ that disagree with the schema hash or that carry mis-ordered artifact roots. The
 framework is not deciding anything; it is calling functions in a fixed order.
 
 **M4. The second role.** Delete `ProjectRole` from the provider's problem.
-`ProjectUnderTest` should carry the plugin as `pluginSourceFor(std::string_view
+`ProvidedProject` should carry the plugin as `pluginSourceFor(std::string_view
 pluginId) -> std::string` rather than as fixed bytes, and the suite should derive
 the foreign registration itself by re-salting. This removes the 58-line duplicate,
 the `ProjectIdentity` struct, and the role switch — 87 lines — and it removes the
@@ -418,17 +425,17 @@ writes.
 five plan shapes, and they oblige a real project to add five tools to its
 *catalog* that its game does not have, and five plans to its *plugin* that
 nothing will ever invoke. That is a real cost and the header is honest about why
-it is paid (`project-under-test.hpp:61-80`): the suite must not carry a proposal
+it is paid (`provider.hpp:61-80`): the suite must not carry a proposal
 no plugin produced.
 
 > **Tested and partly confirmed, 2026-08-11 (`07abc3e`). Four of the five are
 > gone; one stands.** The objection recorded here and at R10/Q7 was acted on:
 > `mismatchedPlanTool`, `oversizedPlanTool`, `twoStepPlanTool` and
 > `reorderedEffectsTool` are removed from the public header and from the tree
-> entirely — zero occurrences anywhere under `contract-suite/`, `tests/` or
+> entirely — zero occurrences anywhere under `conformance/`, `tests/` or
 > `modules/`. `approvalRequiredPlanTool` remains, at
-> `project-under-test.hpp:61-71`, and is still read by both fixtures and by
-> `contract-suite/source/suite-control-ledger.cpp`. So `ProjectVocabulary` is
+> `provider.hpp:61-71`, and is still read by both fixtures and by
+> `conformance/source/suite-control-ledger.cpp`. So `ProjectVocabulary` is
 > **16 fields, one of them a synthetic tool**, not 20 and five.
 >
 > **The deciding test was not the objection but a falsification.** Each of the
@@ -522,7 +529,7 @@ in the same form — `tool-invocation.hpp:150-153`, `journal-entry.hpp:82-85`,
 > an owner is bound to a registration whose `tool_catalog_hash` it never has to
 > satisfy, and any validator at all could answer for that catalog.
 
-The suite's own half, `project-under-test.hpp:24-26` and `:93-96`:
+The suite's own half, `provider.hpp:24-26` and `:93-96`:
 
 > The suite invents no project bytes: the schemas that judge them belong to the
 > supplying deployment, so the documents that satisfy them must come from there
@@ -734,12 +741,12 @@ framework-schema seams, and that is the intended outcome.
 
 ### 7.1 What the framework offers today
 
-One function: `uf_add_operator_contract_suite(TARGET PROJECT SOURCES LIBS
-CASES)` in `cmake/operator-contract-suite.cmake:91`. It builds an executable from
+One function: `uf_add_conformance_suite(TARGET PROJECT SOURCES LIBS
+CASES)` in `cmake/conformance-suite.cmake:91`. It builds an executable from
 the suite's four sources plus the consumer's provider, applies
 `cpp_apply_safety_profile` and `cpp_apply_utf8_manifest`, links
 `${PROJECT_NAME}_operator`, stages the ONNX runtime DLLs, and registers a CTest
-named `contract-suite-<PROJECT>` guarded by `uf_require_executed_assertions`.
+named `conformance-<PROJECT>` guarded by `uf_require_executed_assertions`.
 
 That is the entire offer. There is no `install()` rule anywhere in the tree, no
 exported package config, and no `PROJECT_IS_TOP_LEVEL` or `BUILD_TESTING` guard
@@ -758,7 +765,7 @@ to `.clang-tidy`); `entry/CMakeLists.txt:128`; and about ten sites in
 `tests/CMakeLists.txt`. Configure fails at the first one.
 
 **B2 — `${PROJECT_NAME}` is re-expanded inside the function at call time.**
-`cmake/operator-contract-suite.cmake:204` reads
+`cmake/conformance-suite.cmake:204` reads
 `if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)`. Called from a consumer's directory,
 `PROJECT_NAME` is the consumer's, the target does not exist, the branch is not
 taken, and `cpp_stage_runtime_libraries` silently does not run. The binary links
@@ -767,7 +774,7 @@ check that cannot fail, in the ninth costume:** the staging step is present, nam
 correctly, and unconditionally skipped for exactly the caller it exists for.
 
 The same trap is in the documentation the fixtures constitute:
-`contract-suite/fixtures/arcana-expedition/CMakeLists.txt` is headed "Everything
+`conformance/exemplars/arcana-expedition/CMakeLists.txt` is headed "Everything
 a consuming repository writes to run the suite, in full" and writes
 `LIBS ${PROJECT_NAME}_image`. A real consumer copying that line gets
 `<Consumer>_image`, which does not exist, and the link fails on
@@ -776,7 +783,7 @@ written for.**
 
 **B3 — doctest lives under `tests/`.** `UF_CONTRACT_SUITE_DOCTEST_DIR` is
 `"${CMAKE_CURRENT_LIST_DIR}/../tests/external/doctest"`
-(`operator-contract-suite.cmake:25`), so the suite that was deliberately placed
+(`conformance-suite.cmake:25`), so the suite that was deliberately placed
 outside `tests/` still requires `tests/` to be present. It is vendored in-tree
 (three tracked files), not a submodule.
 
@@ -806,7 +813,7 @@ way. A consumer would still be running two commands before configuring.
 ### 7.4 The binary-package finding still holds — but the recorded reason is
 imprecise
 
-`cmake/operator-contract-suite.cmake:13-16` says:
+`cmake/conformance-suite.cmake:13-16` says:
 
 > A test binary must be built with the consumer's own safety profile and
 > sanitizers to mean anything, and this repository installs nothing today — the
@@ -844,12 +851,12 @@ repository's cache variables. Q8.
 ### 7.5 One more `add_subdirectory` consequence worth stating
 
 `enable_testing()` at `CMakeLists.txt:65` is unconditional, `add_subdirectory(tests)`
-is gated on `CPP_BUILD_TESTS` (default ON), and `contract-suite` is added
+is gated on `CPP_BUILD_TESTS` (default ON), and `conformance` is added
 unconditionally whenever `${PROJECT_NAME}_operator` exists — deliberately outside
 `CPP_BUILD_TESTS`, per the comment at lines 68-73. So a consumer that adds this
 repository as a subdirectory acquires, in its own CTest, this repository's entire
-test suite *and* both in-tree contract-suite runs (`contract-suite-umbraflow`,
-`contract-suite-arcana`) alongside its own. Recommendation: leave `contract-suite`
+test suite *and* both in-tree conformance runs (`conformance-umbraflow`,
+`conformance-arcana`) alongside its own. Recommendation: leave `conformance`
 unconditional (that is the point) but gate the two in-tree fixture runs on
 `PROJECT_IS_TOP_LEVEL`, so a consumer gets the suite and not this repository's
 two rehearsals of it.
@@ -867,7 +874,7 @@ two rehearsals of it.
 | `scripts/ci-local.*` | runs the four, then configures/builds/`ctest -L CI` against `build/$Preset` | **No.** Hard-codes this repository's preset names and binary-dir convention. |
 
 All four hard-code this repository's layout — `SOURCE_ROOTS = ("modules",
-"entry", "tests", "contract-suite")` in two of them, `root / "modules"` in a
+"entry", "tests", "conformance")` in two of them, `root / "modules"` in a
 third, the literal substring `"modules/core"` in a fourth. They take `--root`,
 but the directory *names* are baked in.
 
@@ -939,13 +946,13 @@ recommendations.
 **J2 — the `attestations` root already has a seam, and it has a trap.** The
 attestation set is proposed as one entry in `project_artifact_roots`. A consumer
 whose registration names that root must also supply the blob to the suite, via
-`ProjectUnderTest::artifactBlobs` — arcana already supplies one such blob (`map`
+`ProvidedProject::artifactBlobs` — arcana already supplies one such blob (`map`
 / `expedition-map-bytes`), so the mechanism works. But `verifyArtifactClosure`
 enforces exact closure in both directions, so a consumer that adds the
 `attestations` root to its registration and forgets the blob fails at
 `loadPlugin`, inside `prepareStore`, with a message about artifact closure rather
 than about attestations. That is a loud failure in an unhelpful place. Worth one
-sentence in `project-under-test.hpp`.
+sentence in `provider.hpp`.
 
 **J3 — `A-04`'s project half, and where the vocabulary should grow.** The
 attestation document's Q4 recommends gating `A-04`'s project half by adding an
@@ -977,9 +984,9 @@ would hit them. A prediction that turns out wrong is the useful outcome.
   reference to anything in this repository. §7.2 B2. **This is the prediction I
   am most confident about and the one that will cost the most time**, because
   nothing in the failure names the cause.
-- **R4.** The consumer reaches past `include/operator-contract/` into
-  `contract-suite/source/` — most likely for `hashOf`, which every provider needs
-  and which is declared only at `harness.hpp:41`. The suite's own CMake puts
+- **R4.** The consumer reaches past `include/conformance/` into
+  `conformance/source/` — most likely for `hashOf`, which every provider needs
+  and which is declared only at `suite-support.hpp:41`. The suite's own CMake puts
   `source/` on the include path, so this compiles and looks intended.
 - **R5.** Before any of the above: the ONNX payload (~47 MB, via
   `scripts/fetch_external.py --module ocr`) and the Luau submodule are both
@@ -999,16 +1006,16 @@ would hit them. A prediction that turns out wrong is the useful outcome.
   its own six-file load-and-hash step. **I expect this to be the single largest
   block of code the real attempt writes that neither fixture contains.** §4.1.
 - **R8.** The consumer looks for where to supply its own RuntimeArtifact / page
-  model, finds no member on `ProjectUnderTest`, and either concludes the suite
+  model, finds no member on `ProvidedProject`, and either concludes the suite
   does not test that (correct, §4.2) or spends time looking. Its
   `ui_target_id` / `surface_id` / `action_id` values will be accepted while
   corresponding to nothing. **Both halves resolved (2026-08-11).**
-  `ProjectUnderTest::runtimeArtifact` is where the model goes, and a
+  `ProvidedProject::runtimeArtifact` is where the model goes, and a
   `next_step` naming a surface, target or action that model does not define is
   now refused by `mintStep` — so those values no longer correspond to nothing,
   and a consumer whose plan and model disagree fails the suite instead of
   passing it.
-- **R9.** `projectUnderTest(ProjectRole::Foreign)` is satisfied by duplicating
+- **R9.** `provideProject(ProjectRole::Foreign)` is satisfied by duplicating
   the plugin source with one identifier changed, reproducing arcana's 56-of-58
   copy — unless the consumer independently invents umbraflow's
   `pluginSource(pluginId)` parameterisation, which the exemplar does not show.
@@ -1028,7 +1035,7 @@ would hit them. A prediction that turns out wrong is the useful outcome.
   fixtures, because writing RFC 8785 in C++ for one suite run is not worth it —
   and the consumer will not notice that this means its suite run proves nothing
   about canonicality. §6.4.
-- **R12.** The `observedReduceInput` / `observedDeriveInput` recorders are missed
+- **R12.** The `lastReduceInput` / `lastDeriveInput` recorders are missed
   on the first pass: nothing in the type system requires the document validator
   to write to them, and the failure surfaces as a suite case comparing against an
   empty string.
@@ -1067,7 +1074,7 @@ disposition)?** §5.2. *Recommend yes, as composers over consumer-supplied
 tables.* The project keeps every row; the framework supplies the `find_if`. The
 risk is that a composer with a convenient default argument becomes a default
 table; the mitigation is that the composer must have no defaulted parameter, the
-same reason `ProjectUnderTest` carries no in-class initialiser.
+same reason `ProvidedProject` carries no in-class initialiser.
 
 **Q3 — does `core` gain a complete RFC 8785 canonicaliser?** §6.4. *Recommend
 yes, gated on `evaluate-core-capability`.* Three-and-a-half spellings exist and
@@ -1082,7 +1089,7 @@ canonical validator is an allowlist, and no consumer's suite run proves anything
 about canonicality.
 
 **Q4 — is the two-role duplication fixed by parameterising the plugin source?**
-§5.1 M4. *Recommend yes:* `ProjectUnderTest` carries `pluginSourceFor(pluginId)`
+§5.1 M4. *Recommend yes:* `ProvidedProject` carries `pluginSourceFor(pluginId)`
 and the suite derives the foreign registration. Removes 87 lines and a silent
 drift. The cost is that a consumer whose plugin source genuinely cannot be
 parameterised by id has to fake it — I know of no such case.
@@ -1094,7 +1101,7 @@ is that every consumer rediscovers R1–R3.
 
 **Q6 — should the suite take the consumer's RuntimeArtifact?** §4.2. *Recommend
 no for now, and that the header say so.* Adding a `RuntimeArtifact` member to
-`ProjectUnderTest` would make every consumer produce a page model before it can
+`ProvidedProject` would make every consumer produce a page model before it can
 run a single Operator contract case, which inverts the dependency the attestation
 document's §7 relies on. But the current silence is worse than either answer:
 today a consumer can believe its UI vocabulary was exercised when it was not.
@@ -1116,7 +1123,7 @@ today a consumer can believe its UI vocabulary was exercised when it was not.
 > a capture whose extent is not the project fingerprint's, and C++ parses no
 > RuntimeModel, so the suite could not derive the fingerprint either. A
 > consumer with a 1600x900 model at 144 DPI installed and resolved through this
-> framework could not run one observation case. `ProjectUnderTest` now carries
+> framework could not run one observation case. `ProvidedProject` now carries
 > a `ProjectProbeFrame` — the fingerprint the model declares and one PNG
 > capture at that extent — and the suite holds neither.
 
@@ -1160,7 +1167,7 @@ existing set — the mechanism specified in
 **Q10 — are the two in-tree fixture runs gated on `PROJECT_IS_TOP_LEVEL`?**
 §7.5. *Recommend yes.* A consumer should get the suite, not this repository's two
 rehearsals of it in its own CTest namespace. The cost is one guard; the
-alternative is that `contract-suite-arcana` appears in a consumer's test report
+alternative is that `conformance-arcana` appears in a consumer's test report
 and nobody can say why.
 
 ## 12. Index entry
@@ -1174,7 +1181,7 @@ For `docs/INDEX.md`, after the Consumer attestation entry (currently line 25):
 ```markdown
 - [Consumer onboarding](plans/2026-08-11-consumer-onboarding.md) — what a
   consuming repository actually has to write, measured block by block against
-  the exported contract suite: 213 of 880 lines are project facts and 626 are
+  the exported conformance suite: 213 of 880 lines are project facts and 626 are
   framework work. Proposal only; ten questions await a ruling.
 ```
 
@@ -1183,7 +1190,7 @@ For `docs/plans/README.md`, beside the Consumer attestation entry:
 ```markdown
 - [Consumer onboarding](2026-08-11-consumer-onboarding.md) — **specification
   proposal, nothing implemented.** The line-by-line measurement of
-  `contract-suite/fixtures/arcana-expedition/provider.cpp` and of the second
+  `conformance/exemplars/arcana-expedition/provider.cpp` and of the second
   fixture doing the same job, what moves into the framework and what stays, the
   validator-authority ruling and the test that decides it, why
   `add_subdirectory` does not work today and what it costs to fix, why the four

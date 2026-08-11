@@ -1,0 +1,23 @@
+# The exported Operator conformance suite.
+#
+# This is not a module and the autoloader never sees it: CPP_MODULE_ROOTS names
+# modules/ only, and these translation units are compiled into a consuming
+# repository's own executable rather than into a library here. The manifest
+# exists so that scripts/check_modules.py has a node for the suite, because
+# without one the suite was outside the module graph entirely -- first-party C++
+# on a consumer's include path that could close a dependency cycle while the
+# check still printed OK over a count that was never all the C++.
+#
+# The dependency list is what the suite's own headers and sources name, and it
+# is public because every entry is named by include/conformance/, which a
+# consumer compiles against. image is the one that is not reachable through
+# operator: it is private to task and to vision, so cmake/conformance-suite.cmake
+# links uf::image itself.
+
+[module]
+name = conformance
+type = sources
+version = 0.1.0
+
+[dependencies]
+public = core domain engine image operator script task trace

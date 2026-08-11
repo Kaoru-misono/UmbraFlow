@@ -1,10 +1,10 @@
 // What a ProjectRegistration's five authorities decide, and what no caller can
 // decide for them. Every case here runs against whatever project the consuming
-// repository supplied through projectUnderTest.
+// repository supplied through provideProject.
 
-#include "harness.hpp"
+#include "suite-support.hpp"
 
-#include <operator-contract/project-under-test.hpp>
+#include <conformance/provider.hpp>
 
 #include <operator/journal-entry.hpp>
 #include <operator/project-plugin.hpp>
@@ -20,7 +20,7 @@
 #include <string_view>
 #include <type_traits>
 
-namespace uf::operator_runtime::contract
+namespace uf::operator_runtime::conformance
 {
     namespace
     {
@@ -53,7 +53,7 @@ namespace uf::operator_runtime::contract
 
     TEST_CASE("the Tool Catalog owns mutability and tool version")
     {
-        auto const project = projectUnderTest(ProjectRole::UnderTest);
+        auto const project = provideProject(ProjectRole::UnderTest);
         auto const& words  = project.vocabulary;
 
         auto const mutating = toolInvocation(project, words.mutatingTool);
@@ -82,7 +82,7 @@ namespace uf::operator_runtime::contract
 
     TEST_CASE("a schema owner cannot answer for a schema its registration never named")
     {
-        auto const project = projectUnderTest(ProjectRole::UnderTest);
+        auto const project = provideProject(ProjectRole::UnderTest);
 
         // Every authority takes the exact bytes it answers for, and the hash in
         // the registration is what decides. A validator for some other catalog,
@@ -125,8 +125,8 @@ namespace uf::operator_runtime::contract
 
     TEST_CASE("authority does not cross ProjectRegistrations")
     {
-        auto const project = projectUnderTest(ProjectRole::UnderTest);
-        auto const foreign = projectUnderTest(ProjectRole::Foreign);
+        auto const project = provideProject(ProjectRole::UnderTest);
+        auto const foreign = provideProject(ProjectRole::Foreign);
         REQUIRE(foreign.registration.hash() != project.registration.hash());
 
         // A second registration mints its own documents perfectly well. What it
@@ -162,8 +162,8 @@ namespace uf::operator_runtime::contract
 
     TEST_CASE("a ProjectPlugin cannot be registered against foreign bytes")
     {
-        auto const project = projectUnderTest(ProjectRole::UnderTest);
-        auto const foreign = projectUnderTest(ProjectRole::Foreign);
+        auto const project = provideProject(ProjectRole::UnderTest);
+        auto const foreign = provideProject(ProjectRole::Foreign);
 
         auto registrar = ProjectPluginRegistrar{};
 

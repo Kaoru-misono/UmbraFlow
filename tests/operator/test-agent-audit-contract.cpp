@@ -913,7 +913,7 @@ namespace uf::operator_runtime
         auto const moved = prepared.store.createSnapshot(
             stuckLease,
             prepared.plugin,
-            contract::observeOnce(unresolvedHost)
+            conformance::observeOnce(unresolvedHost)
         );
         REQUIRE(moved.has_value());
         REQUIRE(moved->decisionBasisHash != stuckSnapshot->decisionBasisHash);

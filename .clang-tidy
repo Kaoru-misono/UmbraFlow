@@ -54,6 +54,6 @@ WarningsAsErrors: '*'
 # clang-tidy therefore does not narrow this configuration, it deletes it, and
 # the analysis lane goes green having checked none of it. See
 # docs/pitfalls/checks-that-cannot-fail.md.
-HeaderFilterRegex: '[/\\](modules|entry|tests|contract-suite)[/\\]'
+HeaderFilterRegex: '[/\\](modules|entry|tests|conformance)[/\\]'
 ExcludeHeaderFilterRegex: '[/\\](external|third_party|build|\.?worktrees)[/\\]'
 FormatStyle: none

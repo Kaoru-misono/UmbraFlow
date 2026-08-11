@@ -1,4 +1,4 @@
-// This repository's own project, supplied to the exported contract suite the
+// This repository's own project, supplied to the exported conformance suite the
 // way a consuming repository supplies its game.
 //
 // project-fixture.hpp sits beside this file rather than under tests/, so the
@@ -7,7 +7,7 @@
 // tests include it through the directory tests/CMakeLists.txt adds. A second
 // spelling of the same registration would be a second thing to keep true.
 
-#include <operator-contract/project-under-test.hpp>
+#include <conformance/provider.hpp>
 
 #include "project-fixture.hpp"
 
@@ -16,7 +16,7 @@
 #include <string>
 #include <utility>
 
-namespace uf::operator_runtime::contract
+namespace uf::operator_runtime::conformance
 {
     namespace
     {
@@ -64,7 +64,7 @@ namespace uf::operator_runtime::contract
         }
     }
 
-    auto projectUnderTest(ProjectRole role) -> ProjectUnderTest
+    auto provideProject(ProjectRole role) -> ProvidedProject
     {
         // Two registrations of the same shape under two plugin ids, so the
         // foreign one can mint documents of its own rather than merely failing
@@ -77,7 +77,7 @@ namespace uf::operator_runtime::contract
         auto fixture = test_support::makeProject(pluginId, pluginBytes);
         REQUIRE(fixture.lastReduceInput != nullptr);
         REQUIRE(fixture.lastDeriveInput != nullptr);
-        return ProjectUnderTest{
+        return ProvidedProject{
             .registration           = std::move(fixture.registration),
             .schemaOwner            = std::move(fixture.schemaOwner),
             .journalSchemaOwner     = std::move(fixture.journalSchemaOwner),
@@ -87,8 +87,8 @@ namespace uf::operator_runtime::contract
             .artifactBlobs          = {},
             .runtimeArtifact        = test_support::umbraflowRuntimeArtifact(),
             .probeFrame             = test_support::umbraflowProbeFrame(),
-            .observedReduceInput    = std::move(fixture.lastReduceInput),
-            .observedDeriveInput    = std::move(fixture.lastDeriveInput),
+            .lastReduceInput        = std::move(fixture.lastReduceInput),
+            .lastDeriveInput        = std::move(fixture.lastDeriveInput),
             .vocabulary             = vocabulary(),
         };
     }

@@ -1,7 +1,7 @@
 #pragma once
 
-#include <operator-contract/observation-fixture.hpp>
-#include <operator-contract/operator-protocol.hpp>
+#include <conformance/observation-fixture.hpp>
+#include <conformance/operator-protocol.hpp>
 
 #include <operator/agent-profile.hpp>
 #include <operator/effective-plan.hpp>
@@ -447,8 +447,8 @@ namespace uf::operator_runtime::test_support
                     && !looksLikeDeriveEnvelope(candidateJcs)
                     && !looksLikePlanEnvelope(candidateJcs)
                     && !looksLikeStepEnvelope(candidateJcs)
-                    && !contract::readPlanProposal(candidateJcs).has_value()
-                    && !contract::readStepIntent(candidateJcs).has_value()
+                    && !conformance::readPlanProposal(candidateJcs).has_value()
+                    && !conformance::readStepIntent(candidateJcs).has_value()
                 )
                 {
                     return fail(
@@ -503,10 +503,10 @@ namespace uf::operator_runtime::test_support
                         valid = candidateJcs == "{}";
                         break;
                     case ProjectPluginFunction::Plan:
-                        valid = contract::readPlanProposal(candidateJcs).has_value();
+                        valid = conformance::readPlanProposal(candidateJcs).has_value();
                         break;
                     case ProjectPluginFunction::NextStep:
-                        valid = contract::readStepIntent(candidateJcs).has_value();
+                        valid = conformance::readStepIntent(candidateJcs).has_value();
                         break;
                     }
                 }
@@ -1079,14 +1079,14 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
     // The asset closure the model's two template locators name, authored
     // against the grays this project's probe frame carries.
     [[nodiscard]]
-    inline auto umbraflowRuntimeAssets() -> std::vector<contract::ArtifactFile>
+    inline auto umbraflowRuntimeAssets() -> std::vector<conformance::ArtifactFile>
     {
         return {
-            contract::ArtifactFile{
+            conformance::ArtifactFile{
                 .path  = "assets/fixture-anchor.png",
                 .bytes = templatePng(k_anchorGray),
             },
-            contract::ArtifactFile{
+            conformance::ArtifactFile{
                 .path  = "assets/fixture-mark.png",
                 .bytes = templatePng(k_actionGray),
             },
@@ -1094,9 +1094,9 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
     }
 
     [[nodiscard]]
-    inline auto umbraflowRuntimeArtifact() -> contract::ProjectRuntimeArtifact
+    inline auto umbraflowRuntimeArtifact() -> conformance::ProjectRuntimeArtifact
     {
-        return contract::ProjectRuntimeArtifact{
+        return conformance::ProjectRuntimeArtifact{
             .model  = umbraflowRuntimeModel(),
             .assets = umbraflowRuntimeAssets(),
         };
@@ -1156,9 +1156,9 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
 
     // The frame this project's model resolves its one scene on.
     [[nodiscard]]
-    inline auto umbraflowProbeFrame() -> contract::ProjectProbeFrame
+    inline auto umbraflowProbeFrame() -> conformance::ProjectProbeFrame
     {
-        return contract::ProjectProbeFrame{
+        return conformance::ProjectProbeFrame{
             .fingerprint = umbraflowFingerprint(),
             .png         = umbraflowProbePng(k_anchorGray, k_actionGray),
         };
@@ -1167,9 +1167,9 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
     // The same world with the scene anchor absent, so the resolver reports an
     // unknown state and the observation's state_resolution_hash differs.
     [[nodiscard]]
-    inline auto umbraflowUnresolvedProbeFrame() -> contract::ProjectProbeFrame
+    inline auto umbraflowUnresolvedProbeFrame() -> conformance::ProjectProbeFrame
     {
-        return contract::ProjectProbeFrame{
+        return conformance::ProjectProbeFrame{
             .fingerprint = umbraflowFingerprint(),
             .png         = umbraflowProbePng(0, k_actionGray),
         };
@@ -1188,12 +1188,11 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
     // because a snapshot is now composed from an observation the Host resolved
     // through that model: a placeholder artifact installs, and then nothing
     // observes.
-    using RuntimeRelease = contract::ObservationRelease;
-
     [[nodiscard]]
-    inline auto runtimeRelease(std::filesystem::path const& root) -> RuntimeRelease
+    inline auto runtimeRelease(std::filesystem::path const& root)
+        -> conformance::ObservationRelease
     {
-        return contract::observationRelease(root, umbraflowRuntimeArtifact());
+        return conformance::observationRelease(root, umbraflowRuntimeArtifact());
     }
 
     // The trusted plugin a prepared store registers. plugin_id must equal the
@@ -1368,7 +1367,7 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         // part of the prepared state rather than built per case because
         // TaskHost owns an activated generation, and a second Host over the
         // same artifact would be a second observer of one world.
-        contract::ObservationHost  observation;
+        conformance::ObservationHost  observation;
 
         // What a delivering Host is activated from. A dispatch needs a Host that
         // can act, and the observing one above cannot serve a second
@@ -1418,12 +1417,12 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
     }
 
     // A Host that can act under the store's current lease. It is a separate
-    // Host per call on purpose; see contract::DeliveringHost.
+    // Host per call on purpose; see conformance::DeliveringHost.
     [[nodiscard]]
     inline auto deliveringHost(PreparedStore& prepared)
-        -> std::unique_ptr<contract::DeliveringHost>
+        -> std::unique_ptr<conformance::DeliveringHost>
     {
-        return contract::deliveringHostFor(
+        return conformance::deliveringHostFor(
             prepared.store,
             prepared.lease,
             prepared.installedGeneration,
@@ -1439,7 +1438,7 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
     [[nodiscard]]
     inline auto observeAgain(PreparedStore& prepared) -> task::UiObservationSnapshot
     {
-        return contract::observeOnce(prepared.observation);
+        return conformance::observeOnce(prepared.observation);
     }
 
     // A second Host over the SAME installed RuntimeArtifact, looking at a
@@ -1450,18 +1449,18 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
     [[nodiscard]]
     inline auto secondObservationHost(
         PreparedStore& prepared,
-        contract::ProjectProbeFrame const& probe,
+        conformance::ProjectProbeFrame const& probe,
         FrameId frameId
-    ) -> contract::ObservationHost
+    ) -> conformance::ObservationHost
     {
         auto const artifactRootHash =
-            contract::observeOnce(prepared.observation).artifactRootHash();
+            conformance::observeOnce(prepared.observation).artifactRootHash();
         auto installed = prepared.store.openInstalledRuntimeArtifact(
             1U,
             artifactRootHash
         );
         REQUIRE(installed.has_value());
-        return contract::activateObservationHost(
+        return conformance::activateObservationHost(
             *std::move(installed),
             probe,
             frameId
@@ -1546,13 +1545,13 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         REQUIRE(controller.has_value());
         auto lease = store.acquireLease(*controller);
         REQUIRE(lease.has_value());
-        auto observation = contract::activateObservationHost(
+        auto observation = conformance::activateObservationHost(
             *std::move(installed),
             umbraflowProbeFrame(),
             FrameId{101}
         );
-        auto const reading = contract::observeOnce(observation);
-        contract::requireResolvedSurface(reading, k_fixtureUiAction.surface);
+        auto const reading = conformance::observeOnce(observation);
+        conformance::requireResolvedSurface(reading, k_fixtureUiAction.surface);
         auto snapshot = store.createSnapshot(
             *lease,
             projectPlugin,
@@ -1567,7 +1566,7 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
             observation.generation
         );
         REQUIRE(runtimeModel.has_value());
-        auto planAuthority = contract::planAuthority(
+        auto planAuthority = conformance::planAuthority(
             project.registration,
             manifest,
             *runtimeModel,

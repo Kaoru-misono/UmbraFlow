@@ -1,8 +1,8 @@
 #pragma once
 
-#include <operator-contract/observation-fixture.hpp>
-#include <operator-contract/operator-protocol.hpp>
-#include <operator-contract/project-under-test.hpp>
+#include <conformance/observation-fixture.hpp>
+#include <conformance/operator-protocol.hpp>
+#include <conformance/provider.hpp>
 
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
@@ -17,7 +17,7 @@
 #include <string>
 #include <string_view>
 
-namespace uf::operator_runtime::contract
+namespace uf::operator_runtime::conformance
 {
     // A directory the suite owns for the duration of one case. Cases run in one
     // process against real SQLite files, so each needs a private root and a
@@ -45,28 +45,28 @@ namespace uf::operator_runtime::contract
     // property left to test and the first refusal is the whole diagnosis.
     [[nodiscard]]
     auto canonical(
-        ProjectUnderTest const& project,
+        ProvidedProject const& project,
         std::string value
     ) -> CanonicalJson;
 
     [[nodiscard]]
     auto journalEntry(
-        ProjectUnderTest const& project,
+        ProvidedProject const& project,
         JournalDocument const& document
     ) -> ValidatedJournalEntryData;
 
     [[nodiscard]]
     auto toolInvocation(
-        ProjectUnderTest const& project,
+        ProvidedProject const& project,
         std::string toolName
     ) -> ValidatedToolInvocation;
 
     [[nodiscard]]
-    auto loadPlugin(ProjectUnderTest const& project) -> ProjectPluginHandle;
+    auto loadPlugin(ProvidedProject const& project) -> ProjectPluginHandle;
 
     [[nodiscard]]
     auto reconcileOutcome(
-        ProjectUnderTest const& project,
+        ProvidedProject const& project,
         ProjectPluginHandle const& plugin,
         std::string operationId,
         std::string input
@@ -78,19 +78,6 @@ namespace uf::operator_runtime::contract
         ContentHash const& runtimeArtifactRootHash
     ) -> SessionManifest;
 
-    // A RuntimeArtifact handoff on disk. Its shape is the Operator's, not the
-    // project's, so the suite writes the handoff rather than asking the
-    // deployment for one -- but the RuntimeModel and assets inside it are the
-    // project's own, because a snapshot is composed from an observation the Host
-    // resolved through that model.
-    using RuntimeRelease = ObservationRelease;
-
-    [[nodiscard]]
-    auto runtimeRelease(
-        std::filesystem::path const& root,
-        ProjectRuntimeArtifact const& artifact
-    ) -> RuntimeRelease;
-
     // A coordinator holding one installed runtime artifact, one registered and
     // provisioned project, one pinned write session, one lease and one
     // snapshot: the state every ledger case starts from.
@@ -98,7 +85,7 @@ namespace uf::operator_runtime::contract
     {
         OperatorCoordinator store;
         ProjectPluginHandle plugin;
-        ProjectUnderTest    project;
+        ProvidedProject     project;
         SessionManifest     manifest;
 
         // The sole mint for an EffectivePlan. It is part of the prepared state

@@ -1,4 +1,4 @@
-#include "harness.hpp"
+#include "suite-support.hpp"
 
 #include <operator/runtime-installation.hpp>
 
@@ -24,7 +24,7 @@
 #include <system_error>
 #include <utility>
 
-namespace uf::operator_runtime::contract
+namespace uf::operator_runtime::conformance
 {
     namespace
     {
@@ -35,7 +35,7 @@ namespace uf::operator_runtime::contract
         static auto s_sequence = std::atomic<uint64>{1};
         m_path = std::filesystem::temp_directory_path()
             / std::format(
-                "umbraflow-contract-suite-{}-{}-{}",
+                "umbraflow-conformance-{}-{}-{}",
                 label,
                 std::chrono::steady_clock::now().time_since_epoch().count(),
                 s_sequence.fetch_add(1, std::memory_order_relaxed)
@@ -65,7 +65,7 @@ namespace uf::operator_runtime::contract
     }
 
     auto canonical(
-        ProjectUnderTest const& project,
+        ProvidedProject const& project,
         std::string value
     ) -> CanonicalJson
     {
@@ -75,7 +75,7 @@ namespace uf::operator_runtime::contract
     }
 
     auto journalEntry(
-        ProjectUnderTest const& project,
+        ProvidedProject const& project,
         JournalDocument const& document
     ) -> ValidatedJournalEntryData
     {
@@ -89,7 +89,7 @@ namespace uf::operator_runtime::contract
     }
 
     auto toolInvocation(
-        ProjectUnderTest const& project,
+        ProvidedProject const& project,
         std::string toolName
     ) -> ValidatedToolInvocation
     {
@@ -101,7 +101,7 @@ namespace uf::operator_runtime::contract
         return *result;
     }
 
-    auto loadPlugin(ProjectUnderTest const& project) -> ProjectPluginHandle
+    auto loadPlugin(ProvidedProject const& project) -> ProjectPluginHandle
     {
         auto registrar = ProjectPluginRegistrar{};
         auto result    = registrar.registerPlugin(
@@ -115,7 +115,7 @@ namespace uf::operator_runtime::contract
     }
 
     auto reconcileOutcome(
-        ProjectUnderTest const& project,
+        ProvidedProject const& project,
         ProjectPluginHandle const& plugin,
         std::string operationId,
         std::string input
@@ -152,17 +152,9 @@ namespace uf::operator_runtime::contract
         return *result;
     }
 
-    auto runtimeRelease(
-        std::filesystem::path const& root,
-        ProjectRuntimeArtifact const& artifact
-    ) -> RuntimeRelease
-    {
-        return observationRelease(root, artifact);
-    }
-
     auto prepareStore(std::filesystem::path const& root) -> PreparedStore
     {
-        auto const project = projectUnderTest(ProjectRole::UnderTest);
+        auto const project = provideProject(ProjectRole::UnderTest);
 
         // The provider decides the baseline entry and the registration decides
         // the baseline event type. When they disagree nothing below can run,
@@ -178,7 +170,7 @@ namespace uf::operator_runtime::contract
         // their disagreement in numbers.
         requireProbeGeometry(project.probeFrame);
 
-        auto const release = runtimeRelease(
+        auto const release = observationRelease(
             root / "session-handoff",
             project.runtimeArtifact
         );

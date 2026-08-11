@@ -183,8 +183,8 @@ Assertion counts, per binary, baseline `ab97e2d` to now:
 | `test-contract-operator` | 4512 | 4624 |
 | `test-operator` | 2454 | 2454 |
 | `test-contract-runtime` | 612 | 612 |
-| `contract-suite-umbraflow` | 1309 | 1309 |
-| `contract-suite-arcana` | 1471 | 1471 |
+| `conformance-umbraflow` | 1309 | 1309 |
+| `conformance-arcana` | 1471 | 1471 |
 
 The whole `+112` is inside the two cases that changed — `contract-state-s06`
 went to 219 and `contract-agent-a04` to 228, and the other cases in that binary

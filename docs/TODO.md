@@ -16,11 +16,11 @@
 > [the next block](plans/2026-08-10-next-block.md), of which W1 (behavioural
 > cases for `c02 c04 s03 s06 a04 a06`), W5 (Replay Bundle and both publication
 > gates), W8 (runtime-artifact reclamation by database refcount, which closed
-> A-F8) and the exported contract suite landed on this date. Two consequences
+> A-F8) and the exported conformance suite landed on this date. Two consequences
 > reach the boxes below: the Operator ledger DDL fingerprint changed, so an
 > operator database written before this date is refused at open and recreated
 > rather than migrated; and `ctest -N` now also lists
-> `contract-suite-umbraflow` and `contract-suite-arcana`. Every tick below
+> `conformance-umbraflow` and `conformance-arcana`. Every tick below
 > predates those changes and has not been re-run against them.
 >
 > The same day, W0's merge-readiness run found that the ticked Windows gate is
@@ -94,11 +94,11 @@
 > `schema-*` without updating the migration report, which then named CTests
 > `ctest -N` cannot produce; the report now carries all 47 gates — 28
 > `contract-*` and 19 `schema-*` — over 42 requirements. `ctest -N` gained four
-> `CONTRACT-SUITE` aggregates rather than two: `test-contract-operator` and
-> `test-contract-runtime` as well as `contract-suite-umbraflow` and
-> `contract-suite-arcana`. And W11 is a scope rather than a count — "well over a
+> `CONFORMANCE` aggregates rather than two: `test-contract-operator` and
+> `test-contract-runtime` as well as `conformance-umbraflow` and
+> `conformance-arcana`. And W11 is a scope rather than a count — "well over a
 > hundred" was W0's reading before `603b0b0`, `cec8898` and `6f8d3a8` cleared
-> everything outside `modules/operator`, `contract-suite` and `tests/operator`.
+> everything outside `modules/operator`, `conformance` and `tests/operator`.
 
 ## G0 — contract and inherited baseline
 
@@ -130,7 +130,7 @@
       controller input/DPI, VM limits, TaskHost lifecycle and generic Trace.
 - [x] Restore reduced regression assertions and register every planned contract
       in CTest before claiming coverage.
-- [x] Register `contract-repository-surface` to reject retired files,
+- [x] Register `check-repository-surface` to reject retired files,
       commands, globals, parser duplication, consumer symbols and unconsumed
       Receipt proof fields.
 
@@ -159,11 +159,11 @@
 - [x] Implement exact ProjectRegistrationManifest and SessionManifest JCS roots.
 - [x] Implement lease/fence, opaque snapshots, idempotent commands, EffectivePlan,
       single-use approval, Operation transitions and reconciliation transaction.
-- [x] Run one contract suite over two structurally different fixture plugins;
+- [x] Run one conformance suite over two structurally different fixture plugins;
       core must contain no game symbol or branch. Since 2026-08-10 that suite is
-      also the one a consumer runs: `cmake/operator-contract-suite.cmake` exports
-      `uf_add_operator_contract_suite()` and the two fixtures under
-      `contract-suite/fixtures/` reach it exactly as an outside repository would.
+      also the one a consumer runs: `cmake/conformance-suite.cmake` exports
+      `uf_add_conformance_suite()` and the two exemplars under
+      `conformance/exemplars/` reach it exactly as an outside repository would.
 - [x] Pass all local `contract-product-*`,
       `contract-state-*`, `contract-control-*` and `contract-agent-*`.
 

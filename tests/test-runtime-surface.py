@@ -138,7 +138,7 @@ REQUIRED_TEST_TARGETS = frozenset(
         "test-trace",
     }
 )
-REQUIRED_CONTRACT_TARGETS = frozenset({"contract-repository-surface"})
+REQUIRED_CHECK_TARGETS = frozenset({"check-repository-surface"})
 
 SCHEMA_AUTHORITIES = (
     (
@@ -591,8 +591,8 @@ def test_registration_errors(root: Path) -> list[str]:
     registered = set(
         re.findall(r"\bNAME\s+(test-[a-z0-9-]+)\b", cmake)
     )
-    registered_contracts = set(
-        re.findall(r"\bNAME\s+(contract-[a-z0-9-]+)\b", cmake)
+    registered_checks = set(
+        re.findall(r"\bNAME\s+(check-[a-z0-9-]+)\b", cmake)
     )
     errors: list[str] = []
     missing = sorted(REQUIRED_TEST_TARGETS - registered)
@@ -600,11 +600,10 @@ def test_registration_errors(root: Path) -> list[str]:
         errors.append(
             "required existing CTest targets were removed: " + ", ".join(missing)
         )
-    missing_contracts = sorted(REQUIRED_CONTRACT_TARGETS - registered_contracts)
-    if missing_contracts:
+    missing_checks = sorted(REQUIRED_CHECK_TARGETS - registered_checks)
+    if missing_checks:
         errors.append(
-            "required contract CTest targets were removed: "
-            + ", ".join(missing_contracts)
+            "required check CTest targets were removed: " + ", ".join(missing_checks)
         )
     if "function(cpp_add_contract_suite)" not in cmake:
         errors.append("the concrete contract CTest registration helper was removed")

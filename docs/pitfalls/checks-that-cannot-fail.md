@@ -15,16 +15,18 @@ gate.
 ## They are one family, not a run of coincidences
 
 Four separate instances were found on 2026-08-10, in four unrelated files, and
-six more on 2026-08-11 — one in a database column, three in the harness that
+eight more on 2026-08-11 — one in a database column, three in the harness that
 was running the mutations meant to catch the rest, one in the exported
-contract suite itself, and one between a schema file and the DDL that stores
-what it describes. They are the same defect wearing ten costumes: **a name
+conformance suite itself, one between a schema file and the DDL that stores what
+it describes, and two in the repository's own gate wiring: a module-graph check
+that could not see the exported suite, and a CTest label whose regex over-matched
+the one beside it. They are the same defect wearing twelve costumes: **a name
 exists, the name promises something, and nothing verifies the promise.**
 
 | Instance | The name that promised | What verified it |
 |---|---|---|
 | `HeaderFilterRegex` in `.clang-tidy` | "headers outside `tests/external` are analyzed" | nothing — the pattern matched no path, so every header diagnostic was dropped as non-user code |
-| `SOURCE_ROOTS` in `scripts/check_cpp_format.py` and `scripts/check_safety.py` | "every first-party C++ source is formatted and safety-checked" | nothing — `contract-suite/` was absent from the tuple, so an entire exported module was unscanned |
+| `SOURCE_ROOTS` in `scripts/check_cpp_format.py` and `scripts/check_safety.py` | "every first-party C++ source is formatted and safety-checked" | nothing — `conformance/` was absent from the tuple, so an entire exported module was unscanned |
 | `test-annotate-backend` | "the authoring authority is gated" | nothing — the suite existed and ran in no CTest at all |
 | `cpp_add_contract_suite` | "these cases run" | nothing — the helper builds the binary `NO_CTEST` and registers one CTest per `CASES` entry, so seven compiled cases in `tests/operator/test-project-plugin-contract.cpp` executed in no gate |
 | `authority_decisions.decision_basis_hash` (found 2026-08-11) | "the ledger records which decision basis authorised this dispatch" | nothing — the column is written and never read. `reserveDispatch` takes the basis from `operation_plans`, and no public surface reads `authority_decisions` back, so corrupting the stored value turns no test red |
@@ -32,13 +34,17 @@ exists, the name promises something, and nothing verifies the promise.**
 | restoring the mutated file (found 2026-08-11) | "the tree is back to its original state" | nothing — the restore preserved the file's original modification time, so Ninja saw nothing newer than its output and skipped the rebuild. Every run after the first tested a mutation that had supposedly been reverted |
 | three refusal assertions in one new case (found 2026-08-11) | "the budget refuses this" | nothing — the fixture named an instance that already had an active write session, so a unique index refused all three regardless, and the mutation they existed to catch came back green |
 | `JournalProvenanceValidator` (found 2026-08-11, **closed 2026-08-11**) | "this document conforms to the fixed `JournalProvenance` schema" — the type's own comment, the call site's `UF_TRY_CONTEXT` string, and both fixtures' refusal messages all say so | nothing — the framework hands the check to the project and never cross-checks it against `schema/umbraflow-journal-v1.schema.json`. Both shipped validators compare bytes to the one literal they ship, and **both literals violate that schema**: `{"kind":"fixture"}` fails the `kind` enum and omits three required members, `{"witness":"suite"}` omits all four and breaks `additionalProperties: false`. A suite run is green either way |
+| `root / "modules"` in `scripts/check_modules.py` (found 2026-08-11, **closed 2026-08-11**) | "the first-party dependency graph is acyclic and `core` is a leaf" — the run printed `OK (11 modules)`, and 11 was correct | nothing, for `conformance/`. The glob was `modules/*/manifest.txt`, and the autoloader only builds a library from a directory carrying `manifest.txt`, so the exported suite — first-party C++ on every consumer's include path — had no manifest and was not in the graph. Adding a dependency that closes a cycle through it passes at `109f2cf` and fails now. `tests/support/` is still in that position |
+| `LABELS "CI;CONTRACT-SUITE"` on the four aggregates (found 2026-08-11, **closed 2026-08-11**) | "`ctest -L CONTRACT` selects the gates that would go red without the behaviour and nothing else" — the comment beside the label says exactly that | nothing — `-L` is a regex and `CONTRACT` prefixes `CONTRACT-SUITE`, so the selection was 44 where 40 is meant. It is the one entry here that reports a *number* rather than a pass, and a measurement had already been taken against the wrong one. An aggregate label must share no substring with a per-case label |
 | The record-shape half of `contract-state-s06` and `contract-agent-a04` (found 2026-08-11, **closed 2026-08-11**) | "JR:`ProjectState` and JR:`JournalEvent` are the shapes the store holds" | nothing — both gates asserted the shape by searching the schema *text* for member names, and nothing anywhere compared the schema with the DDL that stores those records. Four of the nineteen column names had drifted from their member names, one of them (`journal_events.canonical_event`) naming bytes that are not an event, and every gate was green throughout |
 
 Note what they are *not*. None is a bug in a check's logic; every one of the
-ten works correctly on the inputs it receives. The defect is upstream of the
+twelve works correctly on the inputs it receives. The defect is upstream of the
 logic, in what reaches it — an unmatchable filter, a missing root, an
 unregistered binary, an un-run case, a stale object file, a fixture nothing can
-succeed against — or downstream of it, in a result nothing consumes. That
+succeed against, a manifest that was never written — or downstream of it, in a
+result nothing consumes, or in a selector that quietly answers a wider question
+than it was asked. That
 is why review does not catch them: reading the check tells you nothing, because
 the check is fine.
 

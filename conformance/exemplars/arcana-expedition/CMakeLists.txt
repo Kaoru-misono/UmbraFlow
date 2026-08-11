@@ -1,7 +1,7 @@
 # Everything a consuming repository writes to run the suite, in full.
-uf_add_operator_contract_suite(
-    TARGET  contract-suite-arcana
+uf_add_conformance_suite(
+    TARGET  conformance-arcana
     PROJECT arcana
     SOURCES provider.cpp
-    LIBS    ${PROJECT_NAME}_image
+    LIBS    uf::image
 )

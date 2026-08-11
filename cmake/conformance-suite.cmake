@@ -1,15 +1,15 @@
-# The exported Operator contract suite.
+# The exported Operator conformance suite.
 #
 # Requirement P-05 is uf-chaos and a second game reaching the Operator through
-# one contract suite. That is only true if a repository other than this one can
+# one conformance suite. That is only true if a repository other than this one can
 # run the suite against its own ProjectRegistration and its own plugin, so the
 # suite is parameterized by a project rather than by a fixture: the consumer
 # writes one translation unit defining
-# uf::operator_runtime::contract::projectUnderTest, and calls the function
+# uf::operator_runtime::conformance::provideProject, and calls the function
 # below.
 #
 # A consuming repository never includes this file. It adds this repository with
-# add_subdirectory, which defines uf_add_operator_contract_suite for every
+# add_subdirectory, which defines uf_add_conformance_suite for every
 # directory in the build, and calls it. Nothing here is left in a directory
 # scope for that reason: a variable set while this file is read reaches this
 # repository's own directories and no consumer's, and include_guard(GLOBAL)
@@ -35,7 +35,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/safety-profile.cmake")
 
 # One run of the suite against one project.
 #
-#   PROJECT  names the run and its CTest gate: contract-suite-<PROJECT>.
+#   PROJECT  names the run and its CTest gate: conformance-<PROJECT>.
 #   SOURCES  the consumer's provider translation units.
 #   LIBS     anything the provider needs beyond what the suite already links.
 #   CASES    contract IDs this run also registers one CTest each for, on top of
@@ -43,41 +43,41 @@ include("${CMAKE_CURRENT_LIST_DIR}/safety-profile.cmake")
 #            or none of them: at most one run may claim, because two projects
 #            cannot both own the CTest name contract-control-c01, so requiring
 #            the claiming run to claim all of them is what turns a new case in
-#            contract-suite/source/ into a configure error rather than a case
+#            conformance/source/ into a configure error rather than a case
 #            that only ever runs inside an aggregate. This repository's own run
 #            claims; every other run is the single gate a consumer gets.
-function(uf_add_operator_contract_suite)
+function(uf_add_conformance_suite)
     cmake_parse_arguments(ARG "" "TARGET;PROJECT" "SOURCES;LIBS;CASES" ${ARGN})
 
     if(ARG_UNPARSED_ARGUMENTS)
         message(FATAL_ERROR
-            "uf_add_operator_contract_suite received unknown arguments: ${ARG_UNPARSED_ARGUMENTS}"
+            "uf_add_conformance_suite received unknown arguments: ${ARG_UNPARSED_ARGUMENTS}"
         )
     endif()
     if(NOT ARG_TARGET)
-        message(FATAL_ERROR "uf_add_operator_contract_suite requires TARGET")
+        message(FATAL_ERROR "uf_add_conformance_suite requires TARGET")
     endif()
     if(NOT ARG_PROJECT)
         message(FATAL_ERROR
-            "uf_add_operator_contract_suite(${ARG_TARGET}) requires PROJECT"
+            "uf_add_conformance_suite(${ARG_TARGET}) requires PROJECT"
         )
     endif()
     if(NOT ARG_SOURCES)
         message(FATAL_ERROR
-            "uf_add_operator_contract_suite(${ARG_TARGET}) requires the provider SOURCES "
-            "that define uf::operator_runtime::contract::projectUnderTest"
+            "uf_add_conformance_suite(${ARG_TARGET}) requires the provider SOURCES "
+            "that define uf::operator_runtime::conformance::provideProject"
         )
     endif()
     if(NOT TARGET uf::operator)
         message(FATAL_ERROR
-            "uf_add_operator_contract_suite(${ARG_TARGET}) needs uf::operator, which "
+            "uf_add_conformance_suite(${ARG_TARGET}) needs uf::operator, which "
             "this build does not define. Add this repository with add_subdirectory "
             "before calling it."
         )
     endif()
 
     cmake_path(SET SUITE_ROOT NORMALIZE
-        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../contract-suite"
+        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../conformance"
     )
     cmake_path(SET SUITE_DOCTEST_DIR NORMALIZE
         "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../tests/external/doctest"
@@ -90,14 +90,14 @@ function(uf_add_operator_contract_suite)
     # quietly left the build.
     set(SUITE_SOURCES
         "${SUITE_SOURCE_DIR}/suite-main.cpp"
-        "${SUITE_SOURCE_DIR}/harness.cpp"
+        "${SUITE_SOURCE_DIR}/suite-support.cpp"
         "${SUITE_SOURCE_DIR}/suite-control-ledger.cpp"
         "${SUITE_SOURCE_DIR}/suite-project-authority.cpp"
     )
     foreach(SUITE_SOURCE IN LISTS SUITE_SOURCES)
         if(NOT EXISTS "${SUITE_SOURCE}")
             message(FATAL_ERROR
-                "the Operator contract suite is missing a source: ${SUITE_SOURCE}"
+                "the Operator conformance suite is missing a source: ${SUITE_SOURCE}"
             )
         endif()
     endforeach()
@@ -130,7 +130,7 @@ function(uf_add_operator_contract_suite)
     list(LENGTH UNIQUE_SUITE_DECLARED_CASES UNIQUE_SUITE_DECLARED_CASE_COUNT)
     if(NOT SUITE_DECLARED_CASE_COUNT EQUAL UNIQUE_SUITE_DECLARED_CASE_COUNT)
         message(FATAL_ERROR
-            "the Operator contract suite declares duplicate contract TEST_CASE names: "
+            "the Operator conformance suite declares duplicate contract TEST_CASE names: "
             "[${SUITE_DECLARED_CASES}]"
         )
     endif()
@@ -141,7 +141,7 @@ function(uf_add_operator_contract_suite)
     list(LENGTH UNIQUE_SUITE_CASES UNIQUE_SUITE_CASE_COUNT)
     if(NOT SUITE_CASE_COUNT EQUAL UNIQUE_SUITE_CASE_COUNT)
         message(FATAL_ERROR
-            "uf_add_operator_contract_suite(${ARG_TARGET}) contains duplicate CASES"
+            "uf_add_conformance_suite(${ARG_TARGET}) contains duplicate CASES"
         )
     endif()
 
@@ -152,7 +152,7 @@ function(uf_add_operator_contract_suite)
         list(SORT SORTED_SUITE_DECLARED_CASES)
         if(NOT SORTED_SUITE_CASES STREQUAL SORTED_SUITE_DECLARED_CASES)
             message(FATAL_ERROR
-                "uf_add_operator_contract_suite(${ARG_TARGET}) CASES do not exactly match "
+                "uf_add_conformance_suite(${ARG_TARGET}) CASES do not exactly match "
                 "the suite's TEST_CASE declarations; "
                 "requested=[${SORTED_SUITE_CASES}], declared=[${SORTED_SUITE_DECLARED_CASES}]"
             )
@@ -163,20 +163,20 @@ function(uf_add_operator_contract_suite)
     foreach(SUITE_CASE IN LISTS ARG_CASES)
         if(NOT SUITE_CASE MATCHES "^(contract|schema)-")
             message(FATAL_ERROR
-                "uf_add_operator_contract_suite(${ARG_TARGET}) rejects a gate outside "
+                "uf_add_conformance_suite(${ARG_TARGET}) rejects a gate outside "
                 "the contract-/schema- vocabulary: ${SUITE_CASE}"
             )
         endif()
         list(FIND REGISTERED_CONTRACT_CASES "${SUITE_CASE}" REGISTERED_CASE_INDEX)
         if(NOT REGISTERED_CASE_INDEX EQUAL -1)
             message(FATAL_ERROR
-                "uf_add_operator_contract_suite(${ARG_TARGET}) duplicates registered CTest: "
+                "uf_add_conformance_suite(${ARG_TARGET}) duplicates registered CTest: "
                 "${SUITE_CASE}"
             )
         endif()
         if(TEST "${SUITE_CASE}")
             message(FATAL_ERROR
-                "uf_add_operator_contract_suite(${ARG_TARGET}) collides with existing CTest: "
+                "uf_add_conformance_suite(${ARG_TARGET}) collides with existing CTest: "
                 "${SUITE_CASE}"
             )
         endif()
@@ -190,7 +190,7 @@ function(uf_add_operator_contract_suite)
         endif()
         if(NOT EXISTS "${PROVIDER_SOURCE_PATH}")
             message(FATAL_ERROR
-                "uf_add_operator_contract_suite(${ARG_TARGET}) provider source does not exist: "
+                "uf_add_conformance_suite(${ARG_TARGET}) provider source does not exist: "
                 "${PROVIDER_SOURCE}"
             )
         endif()
@@ -223,7 +223,7 @@ function(uf_add_operator_contract_suite)
     target_include_directories(${ARG_TARGET} SYSTEM PRIVATE
         "${SUITE_DOCTEST_DIR}"
     )
-    # uf::image is the suite's own dependency, not the provider's: harness.cpp
+    # uf::image is the suite's own dependency, not the provider's: suite-support.cpp
     # reaches observation-fixture.hpp, which encodes the fixture's template
     # assets with <image/png.hpp>, and the Operator does not link image.
     target_link_libraries(${ARG_TARGET} PRIVATE
@@ -243,12 +243,17 @@ function(uf_add_operator_contract_suite)
     # The aggregate runs every case, including the ones named in prose that no
     # migration report ID covers, so it stays even when CASES names some of them
     # individually.
-    add_test(NAME contract-suite-${ARG_PROJECT} COMMAND ${ARG_TARGET})
-    set_tests_properties(contract-suite-${ARG_PROJECT} PROPERTIES
+    #
+    # CONFORMANCE shares no substring with CONTRACT or SCHEMA, and must not: -L
+    # is a regex, so the former CONTRACT-SUITE label made `ctest -L CONTRACT`
+    # report 44 where 40 is meant and a measurement was taken against the wrong
+    # number before anyone noticed.
+    add_test(NAME conformance-${ARG_PROJECT} COMMAND ${ARG_TARGET})
+    set_tests_properties(conformance-${ARG_PROJECT} PROPERTIES
         TIMEOUT 120
-        LABELS "CI;CONTRACT-SUITE"
+        LABELS "CI;CONFORMANCE"
     )
-    uf_require_executed_assertions(contract-suite-${ARG_PROJECT})
+    uf_require_executed_assertions(conformance-${ARG_PROJECT})
 
     foreach(SUITE_CASE IN LISTS ARG_CASES)
         add_test(

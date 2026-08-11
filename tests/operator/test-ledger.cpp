@@ -2,8 +2,8 @@
 // installation and reclamation, and the exact reduce envelope its journal
 // builds. The properties a project's registration decides -- catalog
 // mutability, schema-owner binding, who owns a disposition -- are the exported
-// contract suite's, because a consuming repository proves them against its own
-// project; see contract-suite/source/. No property is asserted in both places.
+// conformance suite's, because a consuming repository proves them against its own
+// project; see conformance/source/. No property is asserted in both places.
 
 #include <operator/ledger.hpp>
 #include <operator/manifest.hpp>
@@ -189,10 +189,10 @@ namespace uf::operator_runtime
 
             // The authenticated controller every entry point is reached
             // through. bindController is its only mint.
-            ControllerBinding         controller;
-            ControlLease              lease;
-            SnapshotRecord            snapshot;
-            contract::ObservationHost observation;
+            ControllerBinding            controller;
+            ControlLease                 lease;
+            SnapshotRecord               snapshot;
+            conformance::ObservationHost observation;
 
             // What a delivering Host is activated from. The observing Host above
             // cannot serve a second TaskContext, so a dispatch opens the same
@@ -262,7 +262,7 @@ namespace uf::operator_runtime
             REQUIRE(controller.has_value());
             auto lease = store.acquireLease(*controller);
             REQUIRE(lease.has_value());
-            auto observation = contract::activateObservationHost(
+            auto observation = conformance::activateObservationHost(
                 *std::move(installed),
                 test_support::umbraflowProbeFrame(),
                 FrameId{201}
@@ -270,14 +270,14 @@ namespace uf::operator_runtime
             auto snapshot = store.createSnapshot(
                 *lease,
                 projectPlugin,
-                contract::observeOnce(observation)
+                conformance::observeOnce(observation)
             );
             REQUIRE(snapshot.has_value());
             auto runtimeModel = observation.host->runtimeModelBinding(
                 observation.generation
             );
             REQUIRE(runtimeModel.has_value());
-            auto planAuthority = contract::planAuthority(
+            auto planAuthority = conformance::planAuthority(
                 project.registration,
                 manifest,
                 *runtimeModel,
@@ -302,9 +302,9 @@ namespace uf::operator_runtime
         // A Host that can act under this store's current lease.
         [[nodiscard]]
         auto deliveringHost(PreparedStore& prepared)
-            -> std::unique_ptr<contract::DeliveringHost>
+            -> std::unique_ptr<conformance::DeliveringHost>
         {
-            return contract::deliveringHostFor(
+            return conformance::deliveringHostFor(
                 prepared.store,
                 prepared.lease,
                 prepared.installedGeneration,
@@ -390,7 +390,7 @@ namespace uf::operator_runtime
 
         // A plan authority carrying nothing but the Operator's own protocol
         // readers, which is what a production deployment builds.
-        // contract::planAuthority wraps the step reader in a check that the
+        // conformance::planAuthority wraps the step reader in a check that the
         // step names the run's one agreed UI action, and that check would
         // answer the cases below before the Operator did.
         [[nodiscard]]
@@ -412,8 +412,8 @@ namespace uf::operator_runtime
                 ),
                 *runtimeModel,
                 "operator",
-                contract::readPlanProposal,
-                contract::readStepIntent
+                conformance::readPlanProposal,
+                conformance::readStepIntent
             );
         }
 
@@ -473,7 +473,7 @@ namespace uf::operator_runtime
             std::filesystem::path const& root,
             std::string_view annotationWorkspaceSchemaHash,
             std::string_view workspaceSqliteSchemaHash
-        ) -> test_support::RuntimeRelease
+        ) -> conformance::ObservationRelease
         {
             auto const handoff  = root / "release";
             auto const artifact = handoff / "runtime-artifact";
@@ -505,7 +505,7 @@ namespace uf::operator_runtime
                 workspaceSqliteSchemaHash
             );
             test_support::writeFile(handoff / "release.manifest.json", releaseManifest);
-            return test_support::RuntimeRelease{
+            return conformance::ObservationRelease{
                 .handoffRoot         = handoff,
                 .releaseManifestHash = hashOf(releaseManifest),
                 .artifactRootHash    = artifactRootHash,
@@ -516,7 +516,7 @@ namespace uf::operator_runtime
         auto releaseWithModel(
             std::filesystem::path const& root,
             std::string_view model
-        ) -> test_support::RuntimeRelease
+        ) -> conformance::ObservationRelease
         {
             auto const handoff  = root / "release";
             auto const artifact = handoff / "runtime-artifact";
@@ -547,7 +547,7 @@ namespace uf::operator_runtime
                 detail::k_workspaceSqliteSchemaHash
             );
             test_support::writeFile(handoff / "release.manifest.json", releaseManifest);
-            return test_support::RuntimeRelease{
+            return conformance::ObservationRelease{
                 .handoffRoot         = handoff,
                 .releaseManifestHash = hashOf(releaseManifest),
                 .artifactRootHash    = artifactRootHash,
@@ -556,7 +556,7 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         auto installRequest(
-            test_support::RuntimeRelease const& release,
+            conformance::ObservationRelease const& release,
             uint64 expectedInstalledGeneration
         ) -> RuntimeArtifactInstallRequest
         {
@@ -932,7 +932,7 @@ namespace uf::operator_runtime
         CHECK_FALSE(prepared.store.createSnapshot(
             prepared.lease,
             prepared.plugin,
-            contract::observeOnce(prepared.observation)
+            conformance::observeOnce(prepared.observation)
         ).has_value());
     }
 
@@ -1510,7 +1510,7 @@ namespace uf::operator_runtime
             prepared.observation.generation
         );
         REQUIRE(runtimeModel.has_value());
-        auto foreignAuthority = contract::planAuthority(
+        auto foreignAuthority = conformance::planAuthority(
             foreign.registration,
             foreignManifest,
             *runtimeModel,
@@ -1626,9 +1626,9 @@ namespace uf::operator_runtime
         // A second model differing only by one further scene, so its declared
         // vocabulary still contains every identifier the plan names and the
         // artifact root is the only thing left that can decide.
-        auto const second = contract::observationRelease(
+        auto const second = conformance::observationRelease(
             temporary.path() / "second",
-            contract::ProjectRuntimeArtifact{
+            conformance::ProjectRuntimeArtifact{
                 .model  = test_support::ambiguousRuntimeModel(),
                 .assets = test_support::umbraflowRuntimeAssets(),
             }
@@ -1640,7 +1640,7 @@ namespace uf::operator_runtime
         auto const secondRootHash = installed->rootHash();
         REQUIRE(secondRootHash != prepared.runtimeArtifactRootHash);
 
-        auto secondHost = contract::activateObservationHost(
+        auto secondHost = conformance::activateObservationHost(
             *std::move(installed),
             test_support::umbraflowProbeFrame(),
             FrameId{909}
@@ -1659,8 +1659,8 @@ namespace uf::operator_runtime
             ),
             *secondModel,
             "operator",
-            contract::readPlanProposal,
-            contract::readStepIntent
+            conformance::readPlanProposal,
+            conformance::readStepIntent
         );
         REQUIRE(authority.has_value());
         CHECK_FALSE(mintStepUnder(prepared, *authority).has_value());

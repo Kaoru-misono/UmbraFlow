@@ -1,9 +1,9 @@
 // The half of the Operator control contracts this repository owns outright: the
 // shape its own schema documents must have, and the transitions OperationMachine
 // decides on its own. The project-parameterised half of C-01, C-06 and C-09
-// through C-13 belongs to the exported contract suite, which a consuming
+// through C-13 belongs to the exported conformance suite, which a consuming
 // repository runs against its own registration; see
-// contract-suite/source/suite-control-ledger.cpp. No property is asserted in
+// conformance/source/suite-control-ledger.cpp. No property is asserted in
 // both places.
 //
 // A case named schema-* below asserts only that a schema definition exists with
@@ -398,7 +398,7 @@ namespace uf::operator_runtime
                 prepared.runtimeArtifactRootHash
             );
             REQUIRE(installed.has_value());
-            auto fencedHost = contract::DeliveringHost{
+            auto fencedHost = conformance::DeliveringHost{
                 *std::move(installed),
                 controlFence(movedFence),
                 test_support::k_fixtureUiAction,

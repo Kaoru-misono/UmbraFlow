@@ -290,9 +290,9 @@ namespace uf::operator_runtime
         auto foreignReading = test_support::observeAgain(foreignPrepared);
         CHECK(foreignReading.artifactRootHash() == reading.artifactRootHash());
 
-        auto const otherRelease = contract::observationRelease(
+        auto const otherRelease = conformance::observationRelease(
             foreignTemporary.path() / "other-handoff",
-            contract::ProjectRuntimeArtifact{
+            conformance::ProjectRuntimeArtifact{
                 .model  = test_support::ambiguousRuntimeModel(),
                 .assets = test_support::umbraflowRuntimeAssets(),
             }
@@ -306,12 +306,12 @@ namespace uf::operator_runtime
             }
         );
         REQUIRE(otherInstalled.has_value());
-        auto otherHost = contract::activateObservationHost(
+        auto otherHost = conformance::activateObservationHost(
             *std::move(otherInstalled),
             test_support::umbraflowProbeFrame(),
             FrameId{909}
         );
-        auto const otherReading = contract::observeOnce(otherHost);
+        auto const otherReading = conformance::observeOnce(otherHost);
         CHECK(otherReading.artifactRootHash() != reading.artifactRootHash());
         CHECK_FALSE(prepared.store.createSnapshot(
             prepared.lease,
@@ -388,7 +388,7 @@ namespace uf::operator_runtime
             test_support::umbraflowUnresolvedProbeFrame(),
             FrameId{707}
         );
-        auto const unresolved = contract::observeOnce(unresolvedHost);
+        auto const unresolved = conformance::observeOnce(unresolvedHost);
         CHECK(unresolved.stateResolutionHash() != prepared.snapshot.stateResolutionHash);
         auto const different = prepared.store.createSnapshot(
             prepared.lease,
@@ -480,7 +480,7 @@ namespace uf::operator_runtime
 
         // The positive control. Without it the two refusals below would prove
         // only that something in this fixture stopped working.
-        contract::requireResolvedSurface(
+        conformance::requireResolvedSurface(
             test_support::observeAgain(prepared),
             test_support::k_fixtureUiAction.surface
         );
@@ -500,7 +500,7 @@ namespace uf::operator_runtime
                 wider,
                 FrameId{811}
             );
-            CHECK(contract::observeOnce(host).canonicalJcs().contains(
+            CHECK(conformance::observeOnce(host).canonicalJcs().contains(
                 R"("kind":"unknown_state")"
             ));
         }
@@ -520,7 +520,7 @@ namespace uf::operator_runtime
                 misdeclared,
                 FrameId{812}
             );
-            CHECK(contract::observeOnce(host).canonicalJcs().contains(
+            CHECK(conformance::observeOnce(host).canonicalJcs().contains(
                 R"("kind":"unknown_state")"
             ));
         }

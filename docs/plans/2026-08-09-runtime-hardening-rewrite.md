@@ -19,10 +19,20 @@ The normative product input is the read-only v1.9 bundle at
 
 If any byte differs, implementation stops. Umbraflow does not modify that
 consumer repository. This file is the upstream execution profile and records
-four executable conformance resolutions derived from explicit v1.9 clauses; it
+four executable specification resolutions derived from explicit v1.9 clauses; it
 does not add product behavior or import consumer-specific schemas into core.
 
-## Executable conformance resolutions
+## Executable specification resolutions
+
+> Renamed 2026-08-11 from "executable conformance resolutions". `conformance`
+> now names one thing in this repository, the exported suite under
+> `conformance/`, and a word given both to a test suite and to a class of
+> specification fork is the defect that rename exists to remove. The suite took
+> the word because every future consumer reads its name while this term is read
+> by this repository's maintainers, and because a resolution of a contradiction
+> inside a frozen specification is what these four are. Nothing about their
+> content changed. Deciding artifact: the conformance rename of 2026-08-11; the
+> term is recorded in `CONTEXT.md`.
 
 These are not a second product authority:
 
@@ -111,7 +121,7 @@ shape, and consumer payloads remain schema-validated opaque data.
 
 Two structurally different upstream fixture plugins are the local framework
 gate only. They do not satisfy the real dual-game gate. That later cross-repo
-attestation must run the same contract suite against two real, independently
+attestation must run the same conformance suite against two real, independently
 owned registrations, record both exact `project_registration_hash` values,
 and pass before either consumer opens production mutation. It is deliberately
 not claimed or executed by this worktree.

@@ -38,19 +38,26 @@ image      -> {core, domain}
 facility requires the repository's core-capability review; Runtime/Operator
 types do not move there merely because two modules use them.
 
-`contract-suite/` (added 2026-08-10) is the one first-party source tree outside
-`modules/`, `entry/` and `tests/`, and the loader does not turn it into a
-library. It is the exported Operator contract suite: a consumer repository
-includes `cmake/operator-contract-suite.cmake`, writes one translation unit
-defining `uf::operator_runtime::contract::projectUnderTest` against the single
-public header `contract-suite/include/operator-contract/project-under-test.hpp`,
-and calls `uf_add_operator_contract_suite()`. The suite's own sources compile
-into the consumer's executable rather than shipping as a library, because a
-contract run means nothing unless it carries the consumer's safety profile and
-sanitizers. Nothing under `contract-suite/source/` or `include/` names a
-project; the two fixtures in `contract-suite/fixtures/` are ordinary consumers
-of the same entry point, and this repository is one run of the suite rather
-than its home.
+`conformance/` (added 2026-08-10, renamed from `contract-suite/` on 2026-08-11)
+is the one first-party source tree outside `modules/`, `entry/` and `tests/`,
+and the loader does not turn it into a library. It is the exported Operator
+conformance suite: a consumer repository includes `cmake/conformance-suite.cmake`,
+writes one translation unit defining
+`uf::operator_runtime::conformance::provideProject` against the single public
+header `conformance/include/conformance/provider.hpp`, and calls
+`uf_add_conformance_suite()`. The suite's own sources compile into the
+consumer's executable rather than shipping as a library, because a conformance
+run means nothing unless it carries the consumer's safety profile and
+sanitizers. Nothing under `conformance/source/` or `include/` names a project;
+the two exemplars in `conformance/exemplars/` are ordinary consumers of the same
+entry point, and this repository is one run of the suite rather than its home.
+
+It carries a `manifest.txt` and is not a module. The autoloader never reads it —
+`CPP_MODULE_ROOTS` names `modules/` only — but `scripts/check_modules.py` does,
+so the suite is a node in the dependency graph rather than first-party C++
+outside it. Before 2026-08-11 a dependency that closed a cycle through the suite
+passed while the check printed a module count that was never all the C++.
+`tests/support/` is still in that position and declares no manifest.
 
 ## Ownership
 
@@ -64,7 +71,7 @@ than its home.
 | lease/fence, snapshots, plans, policy, approvals, Operation and reconciliation | `operator` |
 | generic immutable audit events | `trace` |
 | offline evidence, candidates, review, replay and publication | `tools/annotate` |
-| the Operator contract a consumer must satisfy, as runnable cases | `contract-suite` |
+| the Operator contract a consumer must satisfy, as runnable cases | `conformance` |
 | game semantics and payload schemas | external ProjectPlugin consumer |
 
 Host delivery is one trusted call chain:

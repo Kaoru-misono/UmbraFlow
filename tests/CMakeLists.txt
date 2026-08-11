@@ -338,12 +338,16 @@ function(cpp_add_contract_suite)
     # report ID names. Without it the per-CASE gates are the only execution, and
     # a TEST_CASE outside CASES is compiled, linked, and run by nothing --
     # test-contract-operator carried seven such cases and 416 assertions until
-    # 2026-08-10. uf_add_operator_contract_suite already registers the same gate
+    # 2026-08-10. uf_add_conformance_suite already registers the same gate
     # for the exported suite; this is the sibling that was missing it.
+    #
+    # CONFORMANCE shares no substring with CONTRACT or SCHEMA, and must not: -L
+    # is a regex, so the former CONTRACT-SUITE label made `ctest -L CONTRACT`
+    # report 44 where 40 is meant.
     add_test(NAME ${ARG_TARGET} COMMAND ${ARG_TARGET})
     set_tests_properties(${ARG_TARGET} PROPERTIES
         TIMEOUT 120
-        LABELS "CI;CONTRACT-SUITE"
+        LABELS "CI;CONFORMANCE"
     )
     uf_require_executed_assertions(${ARG_TARGET})
 
@@ -422,11 +426,11 @@ cpp_add_test(
 )
 
 # The project registration every Operator test builds on lives beside the
-# contract suite's umbraflow provider, which adapts the same header. Adding its
-# directory keeps the dependency running from tests/ into the exported suite and
-# leaves every #include "project-fixture.hpp" spelled the same way.
+# conformance suite's umbraflow exemplar, whose provider adapts the same header.
+# Adding its directory keeps the dependency running from tests/ into the exported
+# suite and leaves every #include "project-fixture.hpp" spelled the same way.
 set(UF_OPERATOR_FIXTURE_DIR
-    "${PROJECT_SOURCE_DIR}/contract-suite/fixtures/umbraflow"
+    "${PROJECT_SOURCE_DIR}/conformance/exemplars/umbraflow"
 )
 if(NOT EXISTS "${UF_OPERATOR_FIXTURE_DIR}/project-fixture.hpp")
     message(FATAL_ERROR
@@ -441,12 +445,12 @@ endif()
 # template assets as PNG, which is the one library the Operator does not already
 # link publicly.
 set(UF_OPERATOR_CONTRACT_INCLUDE_DIR
-    "${PROJECT_SOURCE_DIR}/contract-suite/include"
+    "${PROJECT_SOURCE_DIR}/conformance/include"
 )
-if(NOT EXISTS "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}/operator-contract/observation-fixture.hpp")
+if(NOT EXISTS "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}/conformance/observation-fixture.hpp")
     message(FATAL_ERROR
         "the Operator observation fixture is missing: "
-        "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}/operator-contract/observation-fixture.hpp"
+        "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}/conformance/observation-fixture.hpp"
     )
 endif()
 
@@ -737,7 +741,7 @@ auto main(int argc, char** argv) -> int
         )
     endif()
 
-    # Concrete paths, never a glob, for the same reason the contract suite uses
+    # Concrete paths, never a glob, for the same reason the conformance suite uses
     # concrete sources: a contract that stops running must be a visible deletion
     # here. The coverage check below is the other half of that -- a hand-written
     # list silently stops covering the directory the moment somebody adds a file
@@ -843,8 +847,13 @@ if(EXISTS ${PROJECT_SOURCE_DIR}/tests/assets/real-regression)
 endif()
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+# check-, not contract-: this runs a script over the tree, owns no requirement
+# id and compiles no doctest, so it is a sibling of check-modules and
+# check-safety rather than of the behavioural gates. It carried the contract-
+# name only because a bare add_test bypasses uf_add_conformance_suite, which
+# refuses a gate outside the contract-/schema- vocabulary.
 add_test(
-    NAME contract-repository-surface
+    NAME check-repository-surface
     COMMAND
         ${Python3_EXECUTABLE}
         ${PROJECT_SOURCE_DIR}/tests/test-runtime-surface.py
@@ -872,7 +881,7 @@ add_test(
     COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/check_spec_bundle.py --pins-only
 )
 set_tests_properties(
-    contract-repository-surface
+    check-repository-surface
     check-modules
     check-safety
     check-spec-pins
@@ -966,6 +975,6 @@ if(NOT SHAPE_ONLY_REQUIREMENTS STREQUAL SORTED_SCHEMA_ONLY_REQUIREMENTS)
         "registered=[${SHAPE_ONLY_REQUIREMENTS}]"
     )
 endif()
-if(NOT TEST contract-repository-surface)
-    message(FATAL_ERROR "contract-repository-surface was not registered")
+if(NOT TEST check-repository-surface)
+    message(FATAL_ERROR "check-repository-surface was not registered")
 endif()

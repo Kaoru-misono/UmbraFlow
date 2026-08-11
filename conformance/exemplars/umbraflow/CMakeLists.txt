@@ -6,11 +6,11 @@
 # schema shape stayed in tests/operator, where it is registered under the
 # schema- name, so the contract- name belongs to the case that goes red when the
 # ledger stops enforcing them.
-uf_add_operator_contract_suite(
-    TARGET  contract-suite-umbraflow
+uf_add_conformance_suite(
+    TARGET  conformance-umbraflow
     PROJECT umbraflow
     SOURCES provider.cpp
-    LIBS    ${PROJECT_NAME}_image
+    LIBS    uf::image
     CASES
         contract-control-c01
         contract-control-c06

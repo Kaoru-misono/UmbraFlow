@@ -451,7 +451,7 @@ answer; the others are why the schedule has no gap.
 
 What happened physically at `t1` is not recoverable: a click that reached the
 target cannot be un-clicked. The contract's answer is the one the frozen
-authority already specifies — executable conformance resolution 1 of
+authority already specifies — executable specification resolution 1 of
 `2026-08-09-runtime-hardening-rewrite.md`: the Operation goes to `reconciling`
 with its mutation chain still locked, and only reconciliation may establish a
 business terminal disposition. `transport_unknown` is the honest record, and
@@ -752,12 +752,12 @@ struct DispatchReservation final
 | `tests/operator/test-ledger.cpp` | 618, 756, 765, 855, 1133 | same two changes |
 | `tests/operator/test-state-contract.cpp` | 231, 338 | same two changes |
 | `tests/operator/test-agent-audit-contract.cpp` | 236 | same |
-| `contract-suite/source/harness.cpp` | `reconcilingOperation` (302-334) | same as the in-repo fixture |
-| `contract-suite/source/suite-control-ledger.cpp` | 28, 97, 293 | same |
+| `conformance/source/suite-support.cpp` | `reconcilingOperation` (302-334) | same as the in-repo fixture |
+| `conformance/source/suite-control-ledger.cpp` | 28, 97, 293 | same |
 | `tests/CMakeLists.txt` | `test-contract-operator` (300-345) | add `${PROJECT_NAME}_image` and the shared Host fixture source |
 
-The exported contract suite (`contract-suite/`) is a separate consumer of this
-API and is not optional: `cmake/operator-contract-suite.cmake` lists its sources
+The exported conformance suite (`conformance/`) is a separate consumer of this
+API and is not optional: `cmake/conformance-suite.cmake` lists its sources
 concretely and `tests/CMakeLists.txt:352` includes it, so a missed call site is
 a configure-time or compile-time failure, not a silent skip.
 
@@ -851,7 +851,7 @@ Two of these need a real `TaskHost`. The delivering fixture already exists in
 `tests/task/test-runtime-v2-contract.cpp` (the Runtime v2 artifact, the fake
 `FrameSource`/`ActionSink`, `RuntimeContext`, `loadedRuntime`,
 `k_authorizeSource`, and `TaskHostTestAccess`). W4 extracts it into
-`tests/support/runtime-host-fixture.{hpp,cpp}` and both contract suites use it;
+`tests/support/runtime-host-fixture.{hpp,cpp}` and both conformance suites use it;
 copying it would be the second spelling of one thing. This extraction, not the
 ledger work, is the reason W4 is larger than the one-line "3 days" in
 `2026-08-10-next-block.md` §3.
@@ -953,7 +953,7 @@ About W3 (`docs/plans/2026-08-10-w3-snapshot-coordinator.md`):
   dispatch is in flight, or resolve it the way a takeover does? A release is
   voluntary and a takeover is not, which argues for refusing — but that is a new
   rule, not a W4 consequence.
-- **Q4.** The exported contract suite loses the ability to assert `Delivered`,
+- **Q4.** The exported conformance suite loses the ability to assert `Delivered`,
   because only a Host can produce that value and the suite has no Host. §7 keeps
   its coverage by driving `reconciling` through a takeover instead. Is that
   enough for `P-05`, or must the exported suite grow a Host fixture — which

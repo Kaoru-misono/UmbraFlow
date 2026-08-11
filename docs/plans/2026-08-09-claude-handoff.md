@@ -98,7 +98,7 @@ tests/task/test-runtime-v2-contract.cpp
 - 旧 JSON scanner/replay source/text API 已删除。
 - Engine 使用 `TraceEventSpec`。
 - 旧 `check/run/replay`、file-frame source 和相关测试已删除；CLI 只保留安全的 `explore/targets` 面。
-- `tests/CMakeLists.txt` 预计注册 42 个 doctest contract case，加 `contract-repository-surface` 共 43 个 contract gates。
+- `tests/CMakeLists.txt` 预计注册 42 个 doctest contract case，加 `check-repository-surface` 共 43 个 contract gates。
 - Trace schema hash 已集中为 `trace::k_traceSchemaHash`，并由 repository surface test 对 checked-in exact bytes 做校验。
 
 ### 4.3 Annotation workspace / publication
@@ -441,9 +441,9 @@ ctest --test-dir build -N
 
 实际 build directory 以 skill/script 输出为准。`ctest -N` 必须能列出全部 43 个 contract gates；不要只数普通 test executable。
 
-> 2026-08-10：43 仍然是 42 个需求 gate 加 `contract-repository-surface`，这条保持
+> 2026-08-10：43 仍然是 42 个需求 gate 加 `check-repository-surface`，这条保持
 > 原样。P-05 的可消费契约套件落地后，`ctest -N` 另外列出
-> `contract-suite-umbraflow` 和 `contract-suite-arcana`（label `CONTRACT-SUITE`），
+> `conformance-umbraflow` 和 `conformance-arcana`（label `CONFORMANCE`），
 > 所以列表长于 43 不是回归。见 [next block](2026-08-10-next-block.md) 第五节。
 
 > 2026-08-11：43 这个数字已经不能再当计数用了，上面两条保持原样。W10 把 gate 拆成

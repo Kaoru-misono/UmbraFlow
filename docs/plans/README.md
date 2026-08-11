@@ -23,7 +23,7 @@ Reading order: target form, then layer ownership, then the model semantics.
   the live record of what remains. It established that the tree was mid Phase 2A
   rather than past it, that this branch has never been pushed and so has never
   been through CI, and ordered the deferred work by dependency. W1, W5, W8 and
-  the contract suite it raised as unowned landed on 2026-08-10; W3, W2, W4, W6
+  the conformance suite it raised as unowned landed on 2026-08-10; W3, W2, W4, W6
   and W7 landed on 2026-08-11, closing every `REQUIRED_CORE` requirement but one.
   Open: `a07`, reopened on 2026-08-11 (`07abc3e`) because its gate proves one of
   its two acceptance clauses and nothing implements the other — 39 of 42 closed,
@@ -63,7 +63,7 @@ Reading order: target form, then layer ownership, then the model semantics.
   proposal, nothing implemented.** What `attest-consumer-d01`-`d09` are, what
   each of the nine requirements must attest, who signs and what that does and
   does not prove, where a set is recorded and how it is refused, and how it
-  relates to `attest-dual-game-p05` and the exported contract suite. It changes
+  relates to `attest-dual-game-p05` and the exported conformance suite. It changes
   no schema and no compiled hash here; six questions in its §10 need a ruling.
   It also carries the 2026-08-11 correction that `D-09` is `PHASED` and that
   `C-11` and `A-04` carry `PROJECT_CONTRACT`.

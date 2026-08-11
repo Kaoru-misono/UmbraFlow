@@ -1044,7 +1044,7 @@ still needs all twenty-one.
 
 ### `ProjectVocabulary`
 
-`contract-suite/include/operator-contract/project-under-test.hpp:27-60` must
+`conformance/include/conformance/provider.hpp:27-60` must
 gain the plan documents. The suite may not invent project bytes, and after W2
 `plugin.plan` and `plugin.next_step` produce documents the deployment's own
 validator must accept:
@@ -1074,23 +1074,23 @@ re-run these three commands before starting, because the files are moving:
 
 ```bash
 rg -n "reserveDispatch|createSnapshot|issueApproval|transitionOperation" \
-  --glob '!modules/operator/source/**' tests/ contract-suite/
-rg -n "ApprovalRequest\{" tests/ contract-suite/
-rg -n "hashOf\(\"(plan|step|decision|snapshot)" tests/ contract-suite/
+  --glob '!modules/operator/source/**' tests/ conformance/
+rg -n "ApprovalRequest\{" tests/ conformance/
+rg -n "hashOf\(\"(plan|step|decision|snapshot)" tests/ conformance/
 ```
 
 | File | `reserveDispatch` | `createSnapshot` | `issueApproval` | `transitionOperation` |
 |---|---|---|---|---|
-| `contract-suite/source/harness.cpp` | 1 | 1 | 0 | 1 |
-| `contract-suite/source/suite-control-ledger.cpp` | 6 | 1 | 1 | 3 |
+| `conformance/source/suite-support.cpp` | 1 | 1 | 0 | 1 |
+| `conformance/source/suite-control-ledger.cpp` | 6 | 1 | 1 | 3 |
 | `tests/operator/project-fixture.hpp` | 1 | 1 | 0 | 1 |
 | `tests/operator/test-ledger.cpp` | 5 | 2 | 1 | 5 |
 | `tests/operator/test-control-contract.cpp` | 0 | 2 | 0 | 0 |
 
 Also required:
 
-- `contract-suite/fixtures/umbraflow/provider.cpp` and
-  `contract-suite/fixtures/arcana-expedition/provider.cpp` — both must supply
+- `conformance/exemplars/umbraflow/provider.cpp` and
+  `conformance/exemplars/arcana-expedition/provider.cpp` — both must supply
   the new `ProjectVocabulary` members, and both fixture plugins currently return
   `'{}'` from `plan` and `next_step`
   (`tests/operator/project-fixture.hpp:654-655` shows the same in the unit
@@ -1098,7 +1098,7 @@ Also required:
   `Plan`/`NextStep` outputs (`project-fixture.hpp:251-253`,
   `arcana-expedition/provider.cpp:375-377,393-395`); both must accept the real
   documents instead. Not "as well as" — the old spelling goes.
-- `tests/operator/project-fixture.hpp` and `contract-suite/source/harness.cpp` —
+- `tests/operator/project-fixture.hpp` and `conformance/source/suite-support.cpp` —
   `prepareStore` must build an `OperatorPlanAuthority` and the helpers
   (`createReadyOperation`, `readyOperation`, `reconcilingOperation`) must drive
   `freezePlan` and `mintNextStep` instead of `transitionOperation` +

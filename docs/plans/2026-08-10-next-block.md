@@ -3,7 +3,7 @@
 Status: **the requirement block is closed except `a07`.** Every work item that
 closes a requirement — W1 through W8, with W10 folded into them — has landed,
 and all 42 `REQUIRED_CORE` requirements are implemented. W1, W5, W8 and the
-contract suite raised in §5 landed on 2026-08-10; W3 (`7cef402`, `4b955de`), W2
+conformance suite raised in §5 landed on 2026-08-10; W3 (`7cef402`, `4b955de`), W2
 (`848e390`), W4 (`e64c143`, `25f57f9`), W6 (`93698b4`) and W7 (`c23efd3`) landed
 on 2026-08-11. W0 ran on 2026-08-10 and returned half a pass, which opened W11.
 
@@ -116,7 +116,7 @@ gate whose assertions only read a schema file. Anyone who reads "59 and 42" as a
 mistake and tries to reconcile the two numbers will delete a real gate.
 
 The whole run is 83 registered tests, of which 40 carry `CONTRACT` and 19 carry
-`SCHEMA`; the rest are the four `CONTRACT-SUITE` aggregates, the module
+`SCHEMA`; the rest are the four `CONFORMANCE` aggregates, the module
 regression binaries, the four Luau contracts and the Python gates.
 
 The 40 requirements owning a `contract-*` gate are the Done list in §2 plus
@@ -211,7 +211,7 @@ private, whose only friend is `TaskHostTestAccess`
 production or in test.** Every one of `adoptControlFence`'s call sites passes
 either a literal — `controlFence(7)`, `controlFence(8)` in
 `tests/task/test-runtime-v2-contract.cpp` — or, in
-`contract-suite/include/operator-contract/observation-fixture.hpp:651-658`, the
+`conformance/include/conformance/observation-fixture.hpp:651-658`, the
 lease that existed when the fixture was built, once, in `DeliveringHost`'s
 constructor. Not one of them takes a fence from a `takeoverLease` return. The
 one bridging API, `operator::controlFence(ControlLease const&)`
@@ -479,11 +479,11 @@ when this plan first quoted them** (recorded 2026-08-10 after
 [the third adversarial round](../reviews/2026-08-10-third-round-review.md),
 R3-F11). The order matters: `603b0b0` landed before this plan was written and
 had already cleared everything outside `modules/operator`,
-`modules/task/.../platform` and `contract-suite` — 77 of 106 unique sites over
+`modules/task/.../platform` and `conformance` — 77 of 106 unique sites over
 137 objects, taken to 0. `cec8898` then compiled `modules/task/.../platform`
 clean at full `-Werror` under both clang 23 and g++ 15, and `6f8d3a8` cleared
 what `7cef402`'s new translation unit made visible. What is left is
-`modules/operator`, `contract-suite` and `tests/operator`, and an agent is
+`modules/operator`, `conformance` and `tests/operator`, and an agent is
 clearing it. State the property and the date of the reading; a count written
 into a plan is wrong by the next landing, and W0's `90` and `603b0b0`'s `29`
 were never shown to count the same thing — one site can emit several
@@ -520,17 +520,17 @@ What the three landed items actually left behind:
   `tests/operator/test-project-plugin-contract.cpp`, which compile, link and are
   executed by nothing. The cause is an asymmetry between two CMake helpers:
   `cpp_add_contract_suite` builds its binary `NO_CTEST` and registers one test per
-  `CASES` entry and nothing else, while `uf_add_operator_contract_suite`
-  additionally registers a `contract-suite-<project>` aggregate that runs the
+  `CASES` entry and nothing else, while `uf_add_conformance_suite`
+  additionally registers a `conformance-<project>` aggregate that runs the
   whole binary. **Ruled: `cpp_add_contract_suite` gains the aggregate**, and
   `dcc43b5` applied it on 2026-08-10: `test-contract-operator` and
-  `test-contract-runtime` are now registered CTests under the `CONTRACT-SUITE`
+  `test-contract-runtime` are now registered CTests under the `CONFORMANCE`
   label, so flipping an assertion in one of the seven turns the suite red while
   every per-case gate stays green.
 
   That is the fourth instance found on 2026-08-10 of one defect — a name exists,
   the name promises something, and nothing verifies the promise. The other three
-  are the dead `HeaderFilterRegex`, `contract-suite/` missing from `SOURCE_ROOTS`
+  are the dead `HeaderFilterRegex`, `conformance/` missing from `SOURCE_ROOTS`
   in the format and safety checkers, and `test-annotate-backend` running in no
   gate. [Checks that cannot fail](../pitfalls/checks-that-cannot-fail.md) records
   them as one family, which is worth more than any of the four separately.
@@ -687,21 +687,21 @@ owes is the one pass over the remaining 15, not a permanent re-litigation.
 
 ## 5. Outside these work items
 
-- **Publishing a consumable contract suite — done 2026-08-10.** It was raised
-  here as unowned; it is no longer. `cmake/operator-contract-suite.cmake`
-  exports `uf_add_operator_contract_suite()`, and
-  `contract-suite/include/operator-contract/project-under-test.hpp` is the
+- **Publishing a consumable conformance suite — done 2026-08-10.** It was raised
+  here as unowned; it is no longer. `cmake/conformance-suite.cmake`
+  exports `uf_add_conformance_suite()`, and
+  `conformance/include/conformance/provider.hpp` is the
   single public header a consumer implements: it supplies a
-  `ProjectUnderTest` — its registration, plugin, a vocabulary of tool and
+  `ProvidedProject` — its registration, plugin, a vocabulary of tool and
   Journal documents its own schemas accept, its RuntimeArtifact, and the probe
   frame that model resolves against (added 2026-08-11) — and the suite invents
   no project bytes of its own. The suite's translation units compile into the
   consumer's executable rather than shipping as a library, so a run carries the
   consumer's safety profile and sanitizers. Two structurally unrelated fixtures
-  under `contract-suite/fixtures/` exercise it, each written the way a consuming
+  under `conformance/exemplars/` exercise it, each written the way a consuming
   repository writes its own: one `CMakeLists.txt` calling the function and one
-  provider translation unit. They register as `contract-suite-umbraflow` and
-  `contract-suite-arcana`. This unblocks Phase 2C; it does not satisfy the
+  provider translation unit. They register as `conformance-umbraflow` and
+  `conformance-arcana`. This unblocks Phase 2C; it does not satisfy the
   dual-game gate below, which still needs two real, independently owned
   registrations.
 - Phases 2B, 2C, 3, 4 and anything in a consumer repository.
@@ -732,7 +732,7 @@ proves one of its requirement's two acceptance clauses, and `a07` is reopened in
 in both directions at the level of a gate — no gate overstates what it asserts,
 and none understates it. What W10's vocabulary does not reach, and `a07` is the
 demonstration, is a gate that asserts exactly what it claims about a requirement
-that asks for more. The exported contract suite (§5)
+that asks for more. The exported conformance suite (§5)
 shipped, so a consuming repository can run the store contracts against its own
 project. Along the way the block found and recorded nine instances of one
 defect — a name that promises something nothing verifies — three of them inside
@@ -856,7 +856,7 @@ reach the `scripts/check_safety.py` half — renaming ten rules from
 from `UNSAFE_DIRECTORY_NAMES`, and adding
 `test_a_vendored_directory_is_never_a_boundary_directory` touch no `TEST_CASE`
 name, no CMake list and no CTest registration. Only
-`SOURCE_ROOTS += "contract-suite"` in the two Python gates needed the new
+`SOURCE_ROOTS += "conformance"` in the two Python gates needed the new
 directory to exist.
 
 R3-F6 is wrong about the artifact-reclamation half, and the correction is the

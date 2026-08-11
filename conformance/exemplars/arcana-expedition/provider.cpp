@@ -9,10 +9,10 @@
 //
 // It is written the way a consumer writes one: include the suite's public
 // header, build the five authorities out of the deployment's own validators,
-// and define projectUnderTest.
+// and define provideProject.
 
-#include <operator-contract/operator-protocol.hpp>
-#include <operator-contract/project-under-test.hpp>
+#include <conformance/operator-protocol.hpp>
+#include <conformance/provider.hpp>
 
 #include <operator/journal-entry.hpp>
 #include <operator/manifest.hpp>
@@ -42,7 +42,7 @@
 #include <utility>
 #include <vector>
 
-namespace uf::operator_runtime::contract
+namespace uf::operator_runtime::conformance
 {
     namespace
     {
@@ -739,12 +739,12 @@ identity = { all = ["expedition.camp.banner"], any = [], none = [] }
 
         [[nodiscard]]
         auto documentValidator(
-            std::shared_ptr<std::string> observedReduceInput,
-            std::shared_ptr<std::string> observedDeriveInput
+            std::shared_ptr<std::string> lastReduceInput,
+            std::shared_ptr<std::string> lastDeriveInput
         ) -> ProjectDocumentValidator
         {
-            return [observedReduceInput = std::move(observedReduceInput),
-                    observedDeriveInput = std::move(observedDeriveInput)](
+            return [lastReduceInput = std::move(lastReduceInput),
+                    lastDeriveInput = std::move(lastDeriveInput)](
                        ProjectPluginFunction function,
                        ProjectDocumentDirection direction,
                        std::string_view candidateJcs
@@ -756,7 +756,7 @@ identity = { all = ["expedition.camp.banner"], any = [], none = [] }
                     switch (function)
                     {
                     case ProjectPluginFunction::Reduce:
-                        *observedReduceInput = std::string{candidateJcs};
+                        *lastReduceInput = std::string{candidateJcs};
                         valid = looksLikeReduceEnvelope(candidateJcs);
                         break;
                     case ProjectPluginFunction::Reconcile:
@@ -764,7 +764,7 @@ identity = { all = ["expedition.camp.banner"], any = [], none = [] }
                             && candidateJcs.ends_with("\"}");
                         break;
                     case ProjectPluginFunction::Derive:
-                        *observedDeriveInput = std::string{candidateJcs};
+                        *lastDeriveInput = std::string{candidateJcs};
                         valid = looksLikeDeriveEnvelope(candidateJcs);
                         break;
                     case ProjectPluginFunction::Plan:
@@ -979,7 +979,7 @@ identity = { all = ["expedition.camp.banner"], any = [], none = [] }
         }
 
         [[nodiscard]]
-        auto makeProject(ProjectIdentity const& identity) -> ProjectUnderTest
+        auto makeProject(ProjectIdentity const& identity) -> ProvidedProject
         {
             auto const schemas  = schemasOf(identity);
             auto registration   = verifiedRegistration(identity, schemas);
@@ -1025,7 +1025,7 @@ identity = { all = ["expedition.camp.banner"], any = [], none = [] }
                 .bytes = std::string{k_artifactBytes},
             });
 
-            return ProjectUnderTest{
+            return ProvidedProject{
                 .registration           = std::move(registration),
                 .schemaOwner            = *std::move(schemaOwner),
                 .journalSchemaOwner     = *std::move(journalSchemaOwner),
@@ -1035,14 +1035,14 @@ identity = { all = ["expedition.camp.banner"], any = [], none = [] }
                 .artifactBlobs          = std::move(artifactBlobs),
                 .runtimeArtifact        = runtimeArtifact(),
                 .probeFrame             = probeFrame(),
-                .observedReduceInput    = std::move(observedReduce),
-                .observedDeriveInput    = std::move(observedDerive),
+                .lastReduceInput        = std::move(observedReduce),
+                .lastDeriveInput        = std::move(observedDerive),
                 .vocabulary             = vocabularyOf(identity),
             };
         }
     }
 
-    auto projectUnderTest(ProjectRole role) -> ProjectUnderTest
+    auto provideProject(ProjectRole role) -> ProvidedProject
     {
         constexpr auto expedition = ProjectIdentity{
             .pluginId          = "arcana.expedition",

@@ -815,16 +815,16 @@ Tests and the exported suite:
 - `tests/operator/test-control-contract.cpp:155`, `181`, `211`.
 - `tests/operator/test-ledger.cpp:243` (that file has its own `prepareStore`),
   `621`.
-- `contract-suite/source/harness.cpp:258`.
-- `contract-suite/source/suite-control-ledger.cpp:37`.
-- `contract-suite/fixtures/arcana-expedition/provider.cpp:371-397` — the second
+- `conformance/source/suite-support.cpp:258`.
+- `conformance/source/suite-control-ledger.cpp:37`.
+- `conformance/exemplars/arcana-expedition/provider.cpp:371-397` — the second
   fixture's `Derive`/`Input` validator accepts one exact string and needs the
   same envelope predicate. Its `Derive`/`Output` branch is unaffected.
-- `contract-suite/fixtures/umbraflow/provider.cpp` adapts
+- `conformance/exemplars/umbraflow/provider.cpp` adapts
   `tests/operator/project-fixture.hpp` and needs no edit of its own.
-- `contract-suite/include/operator-contract/project-under-test.hpp` — add
-  `std::shared_ptr<std::string> observedDeriveInput;` beside
-  `observedReduceInput`, with the same single-threaded contract. A consuming
+- `conformance/include/conformance/provider.hpp` — add
+  `std::shared_ptr<std::string> lastDeriveInput;` beside
+  `lastReduceInput`, with the same single-threaded contract. A consuming
   repository must supply it, so this is a real break of the exported surface and
   belongs in the commit message.
 
@@ -871,7 +871,7 @@ Mutation B: change it to `auto const nextRevision = storedRevision;`
 **T3 — the derived reading is bound to the registration that produced it.**
 Property: `createSnapshot` refuses a `ProjectPluginHandle` for a different
 registration, even when that handle is itself valid. Use the `Foreign` project
-role the contract suite already provides.
+role the conformance suite already provides.
 Mutation: delete the line
 `|| plugin.projectRegistrationHash().hex() != columnText(sessionQuery.get(), N)`
 from the step-4 check.
@@ -922,7 +922,7 @@ the tear §3.5 describes.
 
 **T8 — `createSnapshot` has no identity parameter.**
 Property: compile-time. It is not a doctest case; it is the
-`contract-repository-surface` gate's job. Add a rule to
+`check-repository-surface` gate's job. Add a rule to
 `tests/test-runtime-surface.py` that `createSnapshot` must not name a parameter
 whose identifier ends in `identityHash` or `IdentityHash`.
 Mutation: reintroduce the parameter in the declaration. Red.

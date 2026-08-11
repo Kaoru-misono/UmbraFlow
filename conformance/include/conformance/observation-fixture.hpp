@@ -1,7 +1,7 @@
 #pragma once
 
-#include <operator-contract/host-delivery-fixture.hpp>
-#include <operator-contract/project-under-test.hpp>
+#include <conformance/host-delivery-fixture.hpp>
+#include <conformance/provider.hpp>
 
 #include <operator/ledger.hpp>
 #include <operator/runtime-installation.hpp>
@@ -55,7 +55,7 @@
 // task::UiObservationSnapshot.
 //
 // Nothing here describes a world. The model, the geometry it was authored at
-// and the capture that satisfies it all arrive in ProjectUnderTest, because a
+// and the capture that satisfies it all arrive in ProvidedProject, because a
 // suite holding any one of the three would be asking whether ITS world resolves
 // rather than whether the supplying project's does.
 //
@@ -64,7 +64,7 @@
 // TaskHost: no test can assemble one, so every caller of createSnapshot -- this
 // repository's unit tests and every consuming repository's run of the exported
 // suite -- has to drive a Host through one real observation cycle.
-namespace uf::operator_runtime::contract
+namespace uf::operator_runtime::conformance
 {
     [[nodiscard]]
     inline auto observationHash(std::span<std::byte const> value) -> ContentHash
@@ -466,9 +466,9 @@ namespace uf::operator_runtime::contract
             auto recorder = trace::TraceRecorder::create(
                 std::make_unique<ObservationTraceSink>(),
                 trace::TraceStreamSpec{
-                    .sessionId           = "operator-contract-observation",
+                    .sessionId           = "conformance-observation",
                     .sessionManifestHash = observationHash("observation-manifest"),
-                    .producer            = "operator-contract",
+                    .producer            = "conformance",
                 }
             );
             REQUIRE(recorder.has_value());
@@ -652,7 +652,7 @@ namespace uf::operator_runtime::contract
         // The project's own capture, kept because deliverIntoAnotherCycle builds
         // a second runtime over it on demand. Owned rather than borrowed: a
         // DeliveringHost outlives the call that made it, so a view of the
-        // caller's ProjectUnderTest would be a stored borrow with no contract.
+        // caller's ProvidedProject would be a stored borrow with no contract.
         ProjectProbeFrame m_probe;
 
         auto mint() -> void

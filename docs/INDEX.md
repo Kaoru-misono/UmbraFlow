@@ -115,12 +115,13 @@ knowledge stays in [Pitfalls](pitfalls/README.md).
 ## Repository guidance
 
 - [Domain glossary](../CONTEXT.md)
-- Exported Operator contract suite: what a consuming repository writes is
+- Exported Operator conformance suite: what a consuming repository writes is
   documented at the top of
-  [`cmake/operator-contract-suite.cmake`](../cmake/operator-contract-suite.cmake),
+  [`cmake/conformance-suite.cmake`](../cmake/conformance-suite.cmake),
   and the surface it implements is
-  [`contract-suite/include/operator-contract/project-under-test.hpp`](../contract-suite/include/operator-contract/project-under-test.hpp).
-  Added 2026-08-10; see [Architecture](ARCHITECTURE.md) for where it sits.
+  [`conformance/include/conformance/provider.hpp`](../conformance/include/conformance/provider.hpp).
+  Added 2026-08-10 and renamed from `contract-suite/` on 2026-08-11; see
+  [Architecture](ARCHITECTURE.md) for where it sits.
 - Architecture decision records: the two ADRs under `adr/` were deleted on
   2026-07-29 and the directory is empty. Their reasoning is preserved in
   [Three-layer task system](plans/2026-07-29-three-layer-task-system.md) — script

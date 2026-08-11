@@ -1,6 +1,6 @@
 #pragma once
 
-#include <operator-contract/host-delivery-fixture.hpp>
+#include <conformance/host-delivery-fixture.hpp>
 
 #include <operator/journal-entry.hpp>
 #include <operator/manifest.hpp>
@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-namespace uf::operator_runtime::contract
+namespace uf::operator_runtime::conformance
 {
     // One Journal entry a project's own event schemas accept.
     struct JournalDocument final
@@ -158,7 +158,12 @@ namespace uf::operator_runtime::contract
     // No member carries an in-class initializer. Every one of them must come
     // from the deployment, and a defaulted authority would be an authority
     // nobody granted.
-    struct ProjectUnderTest final
+    //
+    // Provided, not "under test": what a run tests is this framework's Operator,
+    // and this is the material it is tested with. Nothing about the project is
+    // being judged, the Foreign role below is deliberately not under test at
+    // all, and one of these is one registration rather than one repository.
+    struct ProvidedProject final
     {
         VerifiedProjectRegistration   registration;
         ProjectSchemaOwner            schemaOwner;
@@ -188,13 +193,13 @@ namespace uf::operator_runtime::contract
         // last saw as a Reduce input. Shared and mutable because the validator
         // writes it and the suite reads it; the suite drives one project from
         // one thread, so no synchronization is implied or permitted.
-        std::shared_ptr<std::string> observedReduceInput;
+        std::shared_ptr<std::string> lastReduceInput;
 
         // The same, for the Derive input. The Snapshot Coordinator assembles
         // that envelope rather than accepting one, so the only way to assert
         // what the plugin was handed is to record what the deployment's own
         // validator saw.
-        std::shared_ptr<std::string> observedDeriveInput;
+        std::shared_ptr<std::string> lastDeriveInput;
 
         ProjectVocabulary vocabulary;
     };
@@ -212,5 +217,5 @@ namespace uf::operator_runtime::contract
     // default and no registry: a consumer that does not define it fails to
     // link, rather than running a suite against nothing.
     [[nodiscard]]
-    auto projectUnderTest(ProjectRole role) -> ProjectUnderTest;
+    auto provideProject(ProjectRole role) -> ProvidedProject;
 }

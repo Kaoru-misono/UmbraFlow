@@ -342,8 +342,8 @@ alone. The report is `{tool, expected_digest, observed_digest,
 journal_entry_ids[], project_state_revision_before, ..._after}` per case, plus
 the count of tools with no such case, which must be zero.
 
-The `contract-suite` case "the reducer is handed exactly the Journal prefix that
-is appended" in `contract-suite/source/suite-control-ledger.cpp` is the upstream
+The `conformance` case "the reducer is handed exactly the Journal prefix that
+is appended" in `conformance/source/suite-control-ledger.cpp` is the upstream
 half of the same property and is already gated. D-08 is the project half.
 
 ### D-09 — the first phase types only what it needs
@@ -526,7 +526,7 @@ changes that file's bytes, therefore its SHA-256, therefore:
 
 1. `k_annotationWorkspaceSchemaHash` in
    `modules/operator/source/operator/runtime-installation.hpp` must change in the
-   same commit — `contract-repository-surface`
+   same commit — `check-repository-surface`
    (`tests/test-runtime-surface.py`) recomputes the file's digest and compares
    it to the constant, so the two cannot drift;
 2. `parseReleaseManifest` in `runtime-installation.cpp` is a hand-written
@@ -583,11 +583,11 @@ other. A fixture may move neither.
 
 ## 7. What a consumer does first
 
-**The exported contract suite is a precondition of `D-08` and of nothing else.**
+**The exported conformance suite is a precondition of `D-08` and of nothing else.**
 
-`contract-suite/include/operator-contract/project-under-test.hpp` is the one
+`conformance/include/conformance/provider.hpp` is the one
 mechanism that already turns a consumer's claim into something this repository
-can refuse. A consumer supplies a `ProjectUnderTest`: a
+can refuse. A consumer supplies a `ProvidedProject`: a
 `VerifiedProjectRegistration`, four schema owners, the exact plugin bytes and
 artifact blobs the registration pinned, a `ProjectVocabulary` of documents its
 own schemas accept, the `ProjectRuntimeArtifact` its sessions are pinned to, and
@@ -648,7 +648,7 @@ inlines both halves.
 **One thing the suite pass is not.** The consumer design §12.5 already rules it:
 "同一套上游 contract suite 分别对 fixture plugin 和 `uf-chaos` 真实插件运行；fixture
 那次运行不能代替真实插件那次，也不能代替项目 C0-C3." The two in-tree fixture runs,
-`contract-suite-umbraflow` and `contract-suite-arcana`, substitute for neither the
+`conformance-umbraflow` and `conformance-arcana`, substitute for neither the
 real-plugin run nor the project's own gates.
 
 ## 8. Obligations outside the `D-*` block
@@ -678,12 +678,12 @@ The two halves are not in the same state, and the difference matters:
 
 - **`C-11`'s project half is already covered by something a consumer runs.**
   `contract-control-c11` is a case in the exported suite,
-  `contract-suite/source/suite-control-ledger.cpp`, so it compiles into every
+  `conformance/source/suite-control-ledger.cpp`, so it compiles into every
   consumer's binary and runs there. Only this repository's own fixture names it
   as a per-requirement CTest; a consumer's `CASES` list is empty by design —
-  `contract-suite/fixtures/arcana-expedition/CMakeLists.txt` is "everything a
+  `conformance/exemplars/arcana-expedition/CMakeLists.txt` is "everything a
   consuming repository writes to run the suite, in full" and names none, so the
-  case runs under the single `contract-suite-<project>` aggregate. Either way a
+  case runs under the single `conformance-<project>` aggregate. Either way a
   consumer that passes the suite has exercised its own disposition mapping. The
   suite is explicit that the project owns it: `ProjectVocabulary` requires
   `continueInput`, `confirmedInput`, `rejectedInput` and `ambiguousInput`,
@@ -751,7 +751,7 @@ cannot invent a shape upstream will later agree to. *Recommend shipping
 `schema/umbraflow-project-attestation-v1.schema.json` with no C++ reader and no
 CTest gate, listed in the migration report's schema table as `PA`.* The risk is
 that a schema in `schema/` looks gated when it is not; the mitigation is one
-sentence in the schema's own `description`, and `contract-repository-surface`
+sentence in the schema's own `description`, and `check-repository-surface`
 already refuses game symbols in generic schemas. **This is the question most
 likely to be answered differently by the owner**, because it trades a real
 documentation gain against the "checks that cannot fail" family.
@@ -771,7 +771,7 @@ document and every consumer to supply one; (c) leave it, and record it as a know
 gap. *Recommend (b).* It is the same shape as `C-11`'s vocabulary entries, it
 turns a claim into a run, and the cost is one field on a struct that is not yet
 consumed by anyone outside this tree. It is not this document's to execute —
-`project-under-test.hpp` is a header, and this document owns `docs/` only.
+`provider.hpp` is a header, and this document owns `docs/` only.
 
 **Q5 — does the attestation set need a `predecessor_set_id`?** The release
 manifest carries `predecessor_publication_id`, and §3's `D-05` entry already

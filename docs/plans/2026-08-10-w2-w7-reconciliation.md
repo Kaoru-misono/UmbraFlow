@@ -21,7 +21,7 @@ specification for detail.
 
 Every file-level claim below was read out of the tree on 2026-08-10 at branch
 `design/annotation-system-v2`. Other agents were editing the same tree while it
-was written — `tests/CMakeLists.txt`, `tests/operator/*` and `contract-suite/`
+was written — `tests/CMakeLists.txt`, `tests/operator/*` and `conformance/`
 all moved during the reading pass. §8 says exactly what could not be pinned.
 Line numbers are anchors, not addresses.
 
@@ -61,7 +61,7 @@ changes a design decision; all of them change what an implementer will find.
 
 ### 1.1 `tests/operator/project-fixture.hpp` no longer exists
 
-It is `contract-suite/fixtures/umbraflow/project-fixture.hpp`, 867 lines, reached
+It is `conformance/exemplars/umbraflow/project-fixture.hpp`, 867 lines, reached
 by `target_include_directories(... "${UF_OPERATOR_FIXTURE_DIR}")` in
 `tests/CMakeLists.txt`, so every `#include "project-fixture.hpp"` still spells the
 same thing. W2 §8, W3 §6.1, W4 §5.4 and W6/W7 §7.2 all name the old path.
@@ -73,7 +73,7 @@ both the input and output branches. So the content claims hold and only the path
 are stale.
 
 Consequence for all four: an edit to the fixture is an edit to the **exported**
-contract suite, which a consuming repository compiles. It belongs in the commit
+conformance suite, which a consuming repository compiles. It belongs in the commit
 message as a break of the consumer-visible surface, not as a test tweak.
 
 ### 1.2 The `contract-*` gates these items planned to rewrite are now `schema-*`
@@ -90,7 +90,7 @@ gates over 42 requirements: 28 `contract-*` (label `CI;CONTRACT`) and 19
 `schema-control-cNN` in `tests/operator/test-control-contract.cpp` for the schema
 symbol the migration report defines that ID by, and a `contract-control-cNN` in
 the exported suite for the store behaviour, now running from
-`contract-suite-umbraflow`. One requirement owning two gates that guard different
+`conformance-umbraflow`. One requirement owning two gates that guard different
 things is exactly what R6 permits; what the vocabulary forbids is a name that
 overstates what its case proves. A reader who sees "47 gates, 42 requirements"
 and assumes an arithmetic slip will try to correct it, so the two counts are
@@ -115,12 +115,12 @@ W2 §8's "`tests/CMakeLists.txt` — no change" is therefore false, and so is W3
 §7's "already registered in `tests/CMakeLists.txt`".
 
 A second consequence W2 did not see: the behavioural halves of `c09`-`c13` now
-live in `contract-suite/source/suite-control-ledger.cpp`, not in
+live in `conformance/source/suite-control-ledger.cpp`, not in
 `tests/operator/test-control-contract.cpp`. W2's T14 ("`contract-control-c12`
 must be rewritten to take its hashes from real mints") targets a case in the
-exported suite. That case is parameterised by `ProjectUnderTest`, so W2's new
+exported suite. That case is parameterised by `ProvidedProject`, so W2's new
 `ProjectVocabulary` members are a break of
-`contract-suite/include/operator-contract/project-under-test.hpp` that both
+`conformance/include/conformance/provider.hpp` that both
 fixtures must satisfy.
 
 ### 1.3 Seven compiled cases run in no gate
@@ -134,8 +134,8 @@ executes them.
 
 The cause is an asymmetry between two CMake helpers.
 `cpp_add_contract_suite` calls `cpp_add_test(NO_CTEST ...)` and then registers one
-CTest per `CASES` entry and nothing else, while `uf_add_operator_contract_suite`
-additionally registers a `contract-suite-<project>` aggregate that runs the whole
+CTest per `CASES` entry and nothing else, while `uf_add_conformance_suite`
+additionally registers a `conformance-<project>` aggregate that runs the whole
 binary. A case whose name is outside the `contract-`/`schema-` vocabulary is
 therefore reachable in the exported suite and unreachable in the in-repo one.
 
@@ -143,7 +143,7 @@ therefore reachable in the exported suite and unreachable in the in-repo one.
 helper has one.** The W2+W3 agent is applying it. This matters to W2, W3, W4 and
 W6/W7 directly: all four plan behavioural cases with prose names, and W4 §7 and
 W2 §9 both say to put them in `tests/operator/test-ledger.cpp` because a
-prose-named case in a contract-suite source "would never run". After the
+prose-named case in a conformance source "would never run". After the
 aggregate lands that reasoning changes — such a case runs under the aggregate,
 though still without a per-requirement ID. Until it lands, the existing advice
 stands.
@@ -161,15 +161,15 @@ records the family rather than the four instances separately.
 | `snapshots` DDL | 625-631 | 625-631 | — | — | **626-632** |
 | `dispatches` DDL | — | — | 690-699 | — | **691-700** |
 | `SessionManifest::operatorProtocolSchemaHash` | 135 | — | — | — | **133** (`policyArtifactHash` is 135) |
-| contract-suite include site | — | — | `tests/CMakeLists.txt:352` | — | **`CMakeLists.txt:74-76`**, before `add_subdirectory(tests)` |
+| conformance include site | — | — | `tests/CMakeLists.txt:352` | — | **`CMakeLists.txt:74-76`**, before `add_subdirectory(tests)` |
 
 Everything else spot-checked matched: the operator schema's `PlanProposal` (483),
 `EffectivePlan` (510, twelve members, six echoed and six derived),
 `DecisionBasis` (363, four inputs plus the result), `SnapshotParts` (281, fifteen
 members), `SnapshotIdentity` (319, those fifteen plus `token_id`, `session_id`,
 `snapshot_revision`), `ProjectSnapshot.available_tools` (419) and `event_cursor`
-(424); `ProjectVocabulary` at `project-under-test.hpp:27-60`;
-`observedReduceInput` at `:89`; `k_liveControllerJoin` at `ledger.cpp:892`;
+(424); `ProjectVocabulary` at `provider.hpp:27-60`;
+`lastReduceInput` at `:89`; `k_liveControllerJoin` at `ledger.cpp:892`;
 `sqlite3_busy_timeout(database, 5'000)` at `:402`.
 
 ## 2. The rulings, recorded
@@ -187,7 +187,7 @@ land. `2026-08-10-next-block.md` §2 named one item and now names both.
 **R2 — W2 and W3 land as one change.** Both rewrite `createSnapshot` and both
 rewrite the `snapshots` table. W3 §8.1.2 already requires the columns to be
 unioned and the fingerprint recomputed once. Landed separately they cost two
-fingerprint recomputations, two rounds of contract-suite fixture updates, and an
+fingerprint recomputations, two rounds of conformance fixture updates, and an
 intermediate state that does not build, because W2's `ObservedSnapshotParts`
 parameter is deleted by W3 before any caller has been converted to it. W4 is a
 separate change after them.
@@ -508,12 +508,12 @@ item between the four and it is not a detail: all three are product fields.
 
 W2 §7 adds six `ProjectVocabulary` members (`planProposal`,
 `mismatchedPlanProposal`, `uiActionIntent`, `waitIntent`, `oversizedPlanProposal`,
-`twoStepPlanProposal`). W3 §6.1 adds `observedDeriveInput` to `ProjectUnderTest`
-beside `observedReduceInput` (verified at `project-under-test.hpp:89`).
+`twoStepPlanProposal`). W3 §6.1 adds `lastDeriveInput` to `ProvidedProject`
+beside `lastReduceInput` (verified at `provider.hpp:89`).
 
 No conflict, but they land in one file in one change under R2, and both fixture
-providers (`contract-suite/fixtures/umbraflow/provider.cpp`,
-`contract-suite/fixtures/arcana-expedition/provider.cpp`) must satisfy both at
+providers (`conformance/exemplars/umbraflow/provider.cpp`,
+`conformance/exemplars/arcana-expedition/provider.cpp`) must satisfy both at
 once. Their `ProjectDocumentValidator`s accept only `"{}"` for `Derive`, `Plan`
 and `NextStep` on both the input and output branches; all of those must accept
 the real documents **instead**, not as well.
@@ -1048,7 +1048,7 @@ for one literal is a merge conflict on the thing R5 exists to protect.
   > [journal record binding](2026-08-11-journal-record-binding.md).)*
 - **W4's `Host::deliver` line anchors** (`task-host.hpp:126-130, 190, 205, 248,
   257, 263`) were checked and match. Its `ledger.cpp` anchors were spot-checked
-  and are within a line or two. The `contract-suite/fixtures/arcana-expedition/provider.cpp`
+  and are within a line or two. The `conformance/exemplars/arcana-expedition/provider.cpp`
   anchors in W2 and W3 were not individually checked.
 - ~~**Whether any of the fifteen W2, eight W3, sixteen W4 or twenty-three W6/W7
   falsifying mutations actually turn their case red.**~~ **Discharged

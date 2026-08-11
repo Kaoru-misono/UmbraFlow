@@ -1,6 +1,6 @@
 #pragma once
 
-#include <operator-contract/host-delivery-fixture.hpp>
+#include <conformance/host-delivery-fixture.hpp>
 
 #include <task/host-delivery.hpp>
 #include <task/page-model-file.hpp>
@@ -59,7 +59,7 @@
 // the two spellings would silently pin different worlds.
 //
 // TaskHostTestAccess itself is not here: it is in
-// operator-contract/host-delivery-fixture.hpp, because the Operator's contracts
+// conformance/host-delivery-fixture.hpp, because the Operator's contracts
 // need the same privilege and uf::task may hold only one type of that name.
 namespace uf::task
 {

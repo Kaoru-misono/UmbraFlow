@@ -124,6 +124,41 @@ name (`ControlLease` and `SessionManifest` do); `OperatorSession` has none, and
 `modules/task/source/task/framework-bundle.cpp` keeps business execution closed
 until it does.
 
+**Conformance suite** — the exported Operator gate a consuming repository runs
+against its own registration, plugin, vocabulary, RuntimeModel and capture. One
+word in every position, ruled 2026-08-11: tree `conformance/`, include prefix
+`<conformance/...>`, namespace `uf::operator_runtime::conformance`, CMake
+function `uf_add_conformance_suite`, CTest name `conformance-<project>`, CTest
+label `CONFORMANCE`. The label shares no substring with the per-case labels
+`CONTRACT` and `SCHEMA` and must not: `ctest -L` is a regex, and the previous
+`CONTRACT-SUITE` made `-L CONTRACT` report 44 gates where 40 exist.
+`conformance/exemplars/` holds the two in-tree runs; each is written the way a
+consumer writes its own, which is why they are exemplars and not fixtures.
+_Avoid_: contract suite, `contract-suite`, `contract-suite-<project>`,
+`operator-contract/`, `uf_add_operator_contract_suite`, label `CONTRACT-SUITE`,
+`contract-suite/fixtures/` (all retired 2026-08-11). Keep `contract-<area>-<id>`
+and `schema-<area>-<id>`: those name individual gates, not the suite.
+
+**ProvidedProject** — everything one project's trusted deployment hands the
+conformance suite, minted by `provideProject(ProjectRole)` in the consumer's own
+`provider.cpp` against `<conformance/provider.hpp>`. Provided, not "under test":
+a run tests this framework's Operator using the project's documents as input,
+the `Foreign` role is deliberately not under test, and one of these is one
+registration rather than one repository. `ProjectRole::UnderTest` keeps the
+phrase, because it is honest about which of the two registrations a run
+observes.
+_Avoid_: `ProjectUnderTest`, `projectUnderTest`, `project-under-test.hpp`
+(retired 2026-08-11). `task::UiActionUnderTest` is unrelated and current: it is
+the action a run drives.
+
+**Executable specification resolution** — one of the four places
+[the hardening rewrite](docs/plans/2026-08-09-runtime-hardening-rewrite.md)
+picks one side of a contradiction inside the frozen v1.9 bundle and freezes that
+choice upstream. Renamed from "executable conformance resolution" on 2026-08-11,
+when `conformance` was given to the suite: the wider audience wins the word, and
+these are resolutions of a specification conflict, which the new name says.
+_Avoid_: executable conformance resolution.
+
 ## Schema ids
 
 **One id travels in band and is re-read.** `umbraflow-trace/v2`:
@@ -355,7 +390,7 @@ that meeting it in an old plan, an old commit or a proposal costs a lookup rathe
 than a re-derivation. Nothing here may define a current API, schema or type.
 
 **Enforced retirements.** `tests/test-runtime-surface.py` refuses these, and it
-runs under `ctest -L CI` as `contract-repository-surface`, so they cannot creep
+runs under `ctest -L CI` as `check-repository-surface`, so they cannot creep
 back:
 `ContextDetector`, `ContextResolution`, `ContextTruth`, `RuntimeState`, `UFR`,
 `context_detector`, `context_resolution`, `context_truth`, `.ufr`,

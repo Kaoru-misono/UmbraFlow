@@ -46,7 +46,7 @@ commit that was supposed to stop that class of breakage.
 | R3-F1 | high | `contract-state-s05`'s only executed assertion is that manifest minting is deterministic; seven of the eight fields can leave `SessionManifest`'s canonical form with every gate green | `tests/operator/test-state-contract.cpp:251`, `modules/operator/source/operator/manifest.cpp:88` |
 | R3-F2 | high | `PublicationHold` / `runtime_publications` — the third leg of the reclamation refcount — is observed by no test, and the design claim that protects it is not supported by the code | `modules/operator/source/operator/ledger.cpp:924`, `:1052`, `:1411`, `tests/operator/test-ledger.cpp:473` |
 | R3-F3 | high | 14 requirement rows name CTest IDs that no longer exist, in violation of the report's own stop condition 2; the commit whose job was to correct unenforced claims left them | `docs/plans/2026-08-09-runtime-migration-report.md:41`, `dcc43b5`, `5bb281d` |
-| R3-F4 | medium-high | a registered per-case gate whose `TEST_CASE` is compiled out passes forever; the configure-time guard is textual and doctest exits 0 on an empty selection | `tests/CMakeLists.txt`, `cmake/operator-contract-suite.cmake` |
+| R3-F4 | medium-high | a registered per-case gate whose `TEST_CASE` is compiled out passes forever; the configure-time guard is textual and doctest exits 0 on an empty selection | `tests/CMakeLists.txt`, `cmake/conformance-suite.cmake` |
 | R3-F5 | medium | the `contract-`/`schema-` split is enforced only by the spelling of the name; the list that claims to forbid a shape-only `contract-` gate is a list of names | `tests/CMakeLists.txt:47` |
 | R3-F6 | medium | `dcc43b5`'s "one landing, cannot be split" claim is false for at least two of its parts | `dcc43b5` |
 | R3-F7 | medium | the Python workspace SQLite schema root hash is pinned nowhere; its only test cannot fail, and the cross-boundary check compares Python against itself | `tools/annotate/store.py:480` and `:2247`, `tools/annotate/tests/test_backend.py:588` |
@@ -58,7 +58,7 @@ commit that was supposed to stop that class of breakage.
 | R3-F13 | low | `fix_format.py` rewrites bytes inside raw string literals, and the documented remedy for the resulting red fingerprint is the action that silently breaks every database | `scripts/fix_format.py`, `modules/operator/source/operator/ledger.cpp:340` |
 | R3-F14 | low | `f0b351b`'s closing claim names a gate the same block documents as not compiling; the `static_assert` proof was not committed, and the suppressions are per-record | `f0b351b`, `.clang-tidy` |
 | R3-F15 | low | `.clang-tidy` and the Python gates disagree on the vendored vocabulary, and `ExcludeHeaderFilterRegex` is version-gated on the unpinned Windows lane | `.clang-tidy` |
-| R3-F16 | low | `uf_add_operator_contract_suite` does not enforce the CASES↔declared exact match its sibling does — the property `dcc43b5` cites as the reason for one landing | `cmake/operator-contract-suite.cmake` |
+| R3-F16 | low | `uf_add_conformance_suite` does not enforce the CASES↔declared exact match its sibling does — the property `dcc43b5` cites as the reason for one landing | `cmake/conformance-suite.cmake` |
 | R3-F17 | low | the depth-ceiling case's comment states an all-or-nothing removal property that does not hold once a tree has siblings | `tests/task/test-confined-file.cpp` |
 
 ---
@@ -114,7 +114,7 @@ is green. The same holds for `journal_envelope_schema_hash`,
 `host_protocol_schema_hash`, `operator_protocol_schema_hash` and
 `agent_profile_hash`.
 
-**Nothing else catches it.** `git grep` over `tests/` and `contract-suite/` finds
+**Nothing else catches it.** `git grep` over `tests/` and `conformance/` finds
 exactly one place in the tree that varies a `SessionManifestSpec` field and
 compares hashes — `tests/operator/test-product-contract.cpp:228-233`, which
 varies `policyArtifactHash` only. So one of the eight fields is covered and
@@ -141,7 +141,7 @@ Two of those three legs are exercised. The third is not.
 
 ### (a) No test ever observes a non-empty `runtime_publications`
 
-`git grep -n "runtime_publications\|PublicationHold" HEAD -- tests contract-suite entry`
+`git grep -n "runtime_publications\|PublicationHold" HEAD -- tests conformance entry`
 returns **nothing**. The four reclamation cases
 (`tests/operator/test-ledger.cpp:473, 514, 546, 568`) each drive a single
 `OperatorCoordinator` and call `reclaimUnreferencedRuntimeArtifacts()` only after
@@ -252,8 +252,8 @@ they gained a real `contract-` gate in the exported suite, so their rows remain
 true.)
 
 `5bb281d`, whose subject is *"docs: correct the claims that no gate was
-enforcing"*, touched this file — it added `contract-suite-umbraflow` and
-`contract-suite-arcana` to the retained-CTest list, with the justification
+enforcing"*, touched this file — it added `conformance-umbraflow` and
+`conformance-arcana` to the retained-CTest list, with the justification
 "recorded here because stop condition 2 requires this report to carry every local
 CTest ID" — and left all 14 wrong rows in place. It also did not record
 `test-contract-operator` and `test-contract-runtime`, the two new aggregate CTest
@@ -282,7 +282,7 @@ string(REGEX MATCHALL
     ...
 ```
 
-`cmake/operator-contract-suite.cmake` even names the hazard the check is meant to
+`cmake/conformance-suite.cmake` even names the hazard the check is meant to
 close:
 
 > A CASES entry outside this set would register a CTest whose `--test-case` filter
@@ -374,7 +374,7 @@ reach two other parts of the same commit:
   range is `ConfinedRoot::removeTree`, which arrives in `cec8898` — a *later*
   commit, so at `dcc43b5` this half already stands alone.
 
-Only `SOURCE_ROOTS += "contract-suite"` in the two Python gates genuinely needs
+Only `SOURCE_ROOTS += "conformance"` in the two Python gates genuinely needs
 the new directory to exist.
 
 This matters beyond tidiness: a 3,888-line commit with a stated
@@ -520,7 +520,7 @@ the parse path at `:381`).
 `tests/task/test-jcs.luau`'s header says the expected bytes "were produced by an
 ECMAScript reference … and cross-checked against `tools/annotate/jcs.py`". That
 was a manual act; nothing in the tree re-runs it. `git grep -rln "jcs|8785" HEAD
--- tests contract-suite` returns three files, none of which invokes another
+-- tests conformance` returns three files, none of which invokes another
 implementation. The remedy the commit itself names — one shared vector file read
 by all three — is not implemented, and cannot be until C++ gains a value-tree
 entry point.
@@ -590,7 +590,7 @@ Order within the block: `603b0b0` lands second, `eadaef9` fifth, `5bb281d` sixth
 
 `603b0b0` reports: "106 unique clang-tidy sites over 137 objects, of which 77
 were in scope here and are now 0 … The remaining 29 sites and 11 compile errors
-are all in `modules/operator`, `modules/task/.../platform` and `contract-suite`."
+are all in `modules/operator`, `modules/task/.../platform` and `conformance`."
 
 `eadaef9` then writes W11 (`docs/plans/2026-08-10-next-block.md:155` and
 `:190-196`): "about 14 `-Werror` failures … and roughly 90 fatal clang-tidy
@@ -752,7 +752,7 @@ no automated check currently reaches these members at all.
 **VERIFIED by reading.**
 
 ```yaml
-HeaderFilterRegex: '[/\\](modules|entry|tests|contract-suite)[/\\]'
+HeaderFilterRegex: '[/\\](modules|entry|tests|conformance)[/\\]'
 ExcludeHeaderFilterRegex: '[/\\](external|build|\.worktrees)[/\\]'
 ```
 
@@ -785,14 +785,14 @@ exclusion is currently sound — verified against `CMakePresets.json`.
 
 `cpp_add_contract_suite` (`tests/CMakeLists.txt`) requires
 `SORTED_REQUESTED_CONTRACT_CASES STREQUAL SORTED_DECLARED_CONTRACT_CASES` — exact
-set equality. `uf_add_operator_contract_suite`
-(`cmake/operator-contract-suite.cmake`) only requires each requested case to be
+set equality. `uf_add_conformance_suite`
+(`cmake/conformance-suite.cmake`) only requires each requested case to be
 *in* the declared set; there is no reverse check.
 
 For a consumer that registers no CASES this is correct and deliberate. It is
 recorded because `dcc43b5`'s stated reason for landing as one commit is exactly
 the exact-match property, and that property holds for one of the two helpers it
-introduces. A `contract-*` case added to `contract-suite/source/*.cpp` and never
+introduces. A `contract-*` case added to `conformance/source/*.cpp` and never
 registered runs only under the aggregates, which is the pre-`dcc43b5` situation
 the commit set out to end.
 

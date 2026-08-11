@@ -1,6 +1,6 @@
 #pragma once
 
-#include <operator-contract/host-delivery-fixture.hpp>
+#include <conformance/host-delivery-fixture.hpp>
 
 #include <operator/effective-plan.hpp>
 
@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-namespace uf::operator_runtime::contract
+namespace uf::operator_runtime::conformance
 {
     // Readers for the operator protocol documents a ProjectPlugin returns:
     // OP:`PlanProposal`, OP:`UIActionIntent` and OP:`WaitIntent`.

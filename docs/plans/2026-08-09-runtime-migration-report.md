@@ -8,7 +8,7 @@ This report binds the v1.9 spec root
 `c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`
 to the inherited upstream baseline rooted at
 `55444b02a8ace9fe7493e5175618ef0a67d87402087874b7972187ac71ed8ac7`.
-The executable conformance resolutions derived from the product bundle are
+The executable specification resolutions derived from the product bundle are
 fixed by
 [`2026-08-09-runtime-hardening-rewrite.md`](2026-08-09-runtime-hardening-rewrite.md).
 
@@ -52,7 +52,7 @@ fixtures cannot satisfy them.
 > R3-F3. The registrations are the authority:
 > `UF_REQUIRED_DOCTEST_CONTRACTS` in `tests/CMakeLists.txt` and the `CASES`
 > lists in `tests/CMakeLists.txt` and
-> `contract-suite/fixtures/umbraflow/CMakeLists.txt`.
+> `conformance/exemplars/umbraflow/CMakeLists.txt`.
 
 > **Amended 2026-08-11: five requirements gained a `contract-` gate, so the
 > totals are 52 gates over 42 requirements — 33 `contract-*` and 19
@@ -201,25 +201,25 @@ Where the 59 gates are declared, as of 2026-08-11:
 - `tests/operator/test-agent-audit-contract.cpp` — `contract-agent-a01`, `a02`,
   `a04`, `a06`, `a07`, `a08` and `schema-agent-a01`, `a02`, `a03`, `a05`,
   `a07`;
-- `contract-suite/source/suite-control-ledger.cpp` — `contract-control-c01`,
+- `conformance/source/suite-control-ledger.cpp` — `contract-control-c01`,
   `c06`, `c09`-`c13`, the store behaviour a consuming repository runs against
   its own project.
 
 ## Repository surface and retained primitive gates
 
 The requirement rows above are necessary but not sufficient. These additional
-local CTest IDs prevent a complete-looking contract suite from hiding deleted
+local CTest IDs prevent a complete-looking conformance suite from hiding deleted
 regressions or forbidden compatibility surface. Stop condition 2 requires this
 report to carry every local CTest ID, so the list below is the whole of
 `ctest -N` that the 59 gates above do not already name. With them it is 83
 registered tests, which is what a green run must report:
 
-- CTEST `contract-repository-surface`
-- Four aggregates under the `CONTRACT-SUITE` label, each running every compiled
+- CTEST `check-repository-surface`
+- Four aggregates under the `CONFORMANCE` label, each running every compiled
   case in its binary including the ones no requirement ID names:
   CTEST `test-contract-operator`, CTEST `test-contract-runtime`,
-  CTEST `contract-suite-umbraflow` and CTEST `contract-suite-arcana`. The last
-  two were added 2026-08-10 with the exported Operator contract suite (see
+  CTEST `conformance-umbraflow` and CTEST `conformance-arcana`. The last
+  two were added 2026-08-10 with the exported Operator conformance suite (see
   [the next block](2026-08-10-next-block.md) §5); they run cases through the
   public entry point a consumer uses, so a change that keeps the in-tree
   fixtures green but breaks the exported surface is visible. The first two
@@ -244,7 +244,7 @@ registered tests, which is what a green run must report:
   `tests/assets/real-regression`, and carries the `REAL` label rather than
   `CI`. It is the one ID `ctest -N` may legitimately not list.
 
-`contract-repository-surface` is implemented by
+`check-repository-surface` is implemented by
 `tests/test-runtime-surface.py` and registered directly with CTest. It fails
 when a retired file/schema/CLI command reappears, a business global exports a
 Runtime/Receipt/input capability, C++ contains RuntimeModel TOML field

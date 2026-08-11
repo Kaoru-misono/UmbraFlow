@@ -14,6 +14,33 @@ Locators are `path:line`. Bundle paths are relative to
 `E:\umbraflow-projects\uf-chaos\docs\architecture\`; framework paths are relative
 to the repository root.
 
+> **Read note, 2026-08-11 — the conformance rename landed after this audit was
+> written, and this document is not rewritten to match.** Two substitutions
+> apply throughout, and no finding changes:
+>
+> - **"executable conformance resolution" now reads "executable specification
+>   resolution"** (§1.2, F-12, §7.3). The suite took the word `conformance`;
+>   the four bundle forks took `specification resolution`, which is what they
+>   are. `2026-08-09-runtime-hardening-rewrite.md` §"Executable specification
+>   resolutions" is the live authority.
+> - **Framework paths and identifiers were re-spelled** where they appear here:
+>   `contract-suite/` → `conformance/`, `contract-suite/fixtures/` →
+>   `conformance/exemplars/`, `operator-contract/` → `conformance/`,
+>   `cmake/operator-contract-suite.cmake` → `cmake/conformance-suite.cmake`,
+>   `uf_add_operator_contract_suite` → `uf_add_conformance_suite`,
+>   `contract-suite-<project>` → `conformance-<project>`, label `CONTRACT-SUITE`
+>   → `CONFORMANCE`, `ProjectUnderTest` → `ProvidedProject`,
+>   `projectUnderTest` → `provideProject`, `contract-repository-surface` →
+>   `check-repository-surface`.
+>
+> **§8.3's quotation of uf-chaos `contract/CMakeLists.txt` was re-spelled with
+> them and is therefore not that file's current text.** uf-chaos still writes
+> `uf_add_operator_contract_suite(TARGET contract-suite-chaos …)` until it
+> applies the rename. Two quotations were left exactly as written — the `317d05f`
+> commit subject at §1.4 and uf-chaos's own root `CMakeLists.txt` comment at
+> §8.3 — because this change does not own either string. `CONTEXT.md` carries
+> the full map.
+
 ---
 
 ## 0. The pin: VERIFIED, byte for byte
@@ -159,8 +186,8 @@ about the tree it audited.**
 
 The framework work lives in `E:\github\umbraflow-cpp-annotation-design`, which has
 `modules/operator/` (including `journal-entry.hpp`, `ProjectPluginHandle`,
-`ProjectPluginFunction::{Plan,NextStep,Reduce}`), `contract-suite/`, and
-`cmake/operator-contract-suite.cmake`. All four things `:301` calls missing exist
+`ProjectPluginFunction::{Plan,NextStep,Reduce}`), `conformance/`, and
+`cmake/conformance-suite.cmake`. All four things `:301` calls missing exist
 there.
 
 So the freeze is stale because the consumer is now pointed at a **different
@@ -205,7 +232,7 @@ descriptor 风险上界**、scope 不匹配或 payload schema hash 不一致的 
 three members — `modules/operator/source/operator/tool-invocation.hpp`:52-64,
 `{toolVersion, mutability, surface}`. `effect_bounds`, `ui_action_bounds` and
 `required_capabilities` return **zero hits** across `schema/`, `modules/`,
-`tests/` and `contract-suite/`.
+`tests/` and `conformance/`.
 
 **The four substitutes.** Each exists because the descriptor does not:
 
@@ -305,7 +332,7 @@ extracting every `receiver:method(` pair, not by searching for `ctx`. Exactly
 **Framework.** `ctx` is not merely absent — it is forbidden and CI-enforced.
 `tests/test-runtime-surface.py`:69 defines `FORBIDDEN_BUSINESS_GLOBALS`
 containing `ctx`, `key`, `move_pointer`, `click`, `action`, `input`, `press`,
-`model`, `observe`, gated as `contract-repository-surface` under `ctest -L CI`.
+`model`, `observe`, gated as `check-repository-surface` under `ctest -L CI`.
 The current surface is seven `explore_*` verbs at
 `modules/task/source/task/ffi/uf-tables.cpp`:623-629.
 
@@ -391,12 +418,12 @@ manifests is a choice, not a quotation.
 ### F-8 — `A-04`'s project half is gated by nothing a consumer runs, and uf-chaos is now really a consumer
 
 **`C-11`'s project half runs everywhere.** `TEST_CASE("contract-control-c11")` at
-`contract-suite/source/suite-control-ledger.cpp`:155, a hard-coded member of
-`UF_CONTRACT_SUITE_SOURCES` at `cmake/operator-contract-suite.cmake`:34, compiled
-into every `uf_add_operator_contract_suite()` call, and genuinely
-project-parameterised — `contract-suite/source/harness.cpp`:162 calls
-`projectUnderTest(ProjectRole::UnderTest)`. The aggregate CTest
-`contract-suite-<PROJECT>` (`:211-216`, `LABELS "CI;CONTRACT-SUITE"`) runs every
+`conformance/source/suite-control-ledger.cpp`:155, a hard-coded member of
+`UF_CONTRACT_SUITE_SOURCES` at `cmake/conformance-suite.cmake`:34, compiled
+into every `uf_add_conformance_suite()` call, and genuinely
+project-parameterised — `conformance/source/suite-support.cpp`:162 calls
+`provideProject(ProjectRole::UnderTest)`. The aggregate CTest
+`conformance-<PROJECT>` (`:211-216`, `LABELS "CI;CONFORMANCE"`) runs every
 case with no `--test-case` filter.
 
 **`A-04`'s does not run anywhere a consumer can reach.**
@@ -404,12 +431,12 @@ case with no `--test-case` filter.
 registered at `tests/CMakeLists.txt`:520 inside the framework-internal
 `test-contract-operator`. It is **not** project-parameterised: it includes
 `project-fixture.hpp` (`:4`) — the framework's own fixture — never
-`projectUnderTest()`. `contract-suite/` contains zero occurrences of `a04`. The
+`provideProject()`. `conformance/` contains zero occurrences of `a04`. The
 whole `tests/` tree sits behind `CPP_BUILD_TESTS` (`CMakeLists.txt`:79-81), which
 a consumer building only the suite never sets.
 
 **No longer hypothetical.** uf-chaos builds the suite: `contract/CMakeLists.txt`:12
-calls `uf_add_operator_contract_suite(TARGET contract-suite-chaos PROJECT chaos
+calls `uf_add_conformance_suite(TARGET conformance-chaos PROJECT chaos
 SOURCES provider.cpp LIBS ${PROJECT_NAME}_image)` with **no `CASES`**, taking the
 single aggregate. Its root `CMakeLists.txt`:33 calls itself "the first repository
 outside umbraflow to run the Operator contract suite". So uf-chaos runs `C-11`'s
@@ -419,7 +446,7 @@ project half and can never run `A-04`'s.
 framework (`LABELS "CI;CONTRACT"`); the accurate claim is that it is gated by
 nothing a **consumer** runs. And "exported" is source-level only: `install(` and
 `export(` appear nowhere in the framework's CMake, by design
-(`cmake/operator-contract-suite.cmake`:11-16).
+(`cmake/conformance-suite.cmake`:11-16).
 
 **Which side is wrong.** Neither. A framework gap, already correctly identified at
 [the consumer attestation](2026-08-11-consumer-attestation.md):687-696 with open
@@ -640,7 +667,7 @@ Framework wrong at `:3`. Correction: v1.9.
 ### F-15 — Framework documents still name a deleted function and a superseded fingerprint
 
 **`createOrLoadOperation`**, removed in `93698b4`, has zero occurrences in
-`modules/`, `entry/`, `tests/`, `contract-suite/`. It survives in
+`modules/`, `entry/`, `tests/`, `conformance/`. It survives in
 `docs/plans/2026-08-09-claude-handoff.md`:281,288;
 `docs/plans/2026-08-10-w2-effective-plan.md`:136,160,638;
 `docs/plans/2026-08-10-w2-w7-reconciliation.md`:726;
@@ -1002,7 +1029,7 @@ unlooked-at forever.
   construction (all `receiver:method(` pairs extracted, not just `ctx:`), but no
   task logic was read.
 - uf-chaos `contract/provider.cpp` (1,146 lines) — includes, type declarations and
-  the `projectUnderTest` signature; bodies unread.
+  the `provideProject` signature; bodies unread.
 
 **Not reached — the honest gaps:**
 
@@ -1015,10 +1042,10 @@ unlooked-at forever.
   own admission rather than on tracing production call paths.
 - Whether uf-chaos's 1,146-line `provider.cpp` compiles against framework HEAD. No
   build was run (correctly forbidden); the match is a static read of `ToolSurface`,
-  `ProjectVocabulary` and `projectUnderTest` against current headers.
+  `ProjectVocabulary` and `provideProject` against current headers.
 
   **Settled 2026-08-11, and the answer is no.** It is pinned to framework
-  `4662eed` and owes three repairs, each a member `ProjectUnderTest` gained
+  `4662eed` and owes three repairs, each a member `ProvidedProject` gained
   since. Nothing is optional: the two struct members carry no in-class
   initializer that could stand in, and `ProjectFingerprint` has no default
   state at all, so an aggregate initialisation omitting the third does not
@@ -1096,7 +1123,7 @@ bundle locations, state that the bundle disagrees with itself, and be listed for
 the next bundle version — which B-1's wording does not currently do.
 
 **4. What the consumer owes and whether it is actually gated → the framework's
-CMake, not either repository's prose.** `cmake/operator-contract-suite.cmake` and
+CMake, not either repository's prose.** `cmake/conformance-suite.cmake` and
 `tests/CMakeLists.txt` are the only artifacts that cannot lie about what runs. F-8
 was invisible in prose from both sides and obvious in twelve lines of CMake. A
 marking is a claim; a registered test is a gate.
