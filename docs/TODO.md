@@ -100,6 +100,41 @@
 > hundred" was W0's reading before `603b0b0`, `cec8898` and `6f8d3a8` cleared
 > everything outside `modules/operator`, `conformance` and `tests/operator`.
 
+## Build-system shape — owed, ordered
+
+Raised by the owner on 2026-08-11: a manifest is how a target is declared, so
+everything carrying one belongs under `modules/`, examples belong in a directory
+of their own, and `cli` was never made a module at all. All three still stand
+after [the boundary correction](plans/2026-08-11-project-as-data.md); that
+document makes them simpler rather than moot, because a `sources` module kind, a
+nameable doctest target, `EXCLUDE_FROM_ALL` for consumers and a portable
+`UF_FRAMEWORK_ROOT` default were all symptoms of a consumer compiling this
+source tree, and no consumer does that any more.
+
+- [ ] `entry/cli/` becomes `modules/cli/`, `type = static`. Independent of the
+      boundary work and blocked only on `tests/CMakeLists.txt` contention. Its
+      130 hand-written lines declare exactly what a manifest declares, its
+      headers are included as `"args.hpp"` where every other module is included
+      as `<task/task-host.hpp>`, and it is invisible to `scripts/check_modules.py`
+      — so its public dependencies on `engine` and `task` could close a cycle
+      today with the check still printing OK. Needs the `[sources.windows]` /
+      `[sources.other]` manifest grammar for its platform split.
+- [ ] `conformance/` becomes `modules/conformance/`, `type = static`, its
+      `include/` collapsed into `source/conformance/` like every other module.
+      Waits on the boundary, which decides whether it is a library or a binary;
+      moving first means moving twice.
+- [ ] `conformance/exemplars/*` become project **directories** under `examples/`.
+      Data a project author copies, not C++ a consumer links.
+- [ ] `scripts/check_modules.py` drops `DECLARED_SOURCE_TREES` and returns to a
+      single root once nothing carries a manifest outside `modules/`.
+- [ ] Decide the fate of the uncommitted `cmake/manifest.cmake` and
+      `cmake/build.cmake` work. Its `[sources.*]` platform grammar is still
+      needed by the `cli` row above and its promotion of an unknown module type
+      from `message(WARNING)` to `FATAL_ERROR` is wanted regardless — that
+      warning never fired, which is how `type = sources` sat unread in
+      `conformance/manifest.txt`. The `sources` module kind itself now has no
+      user and must not land.
+
 ## G0 — contract and inherited baseline
 
 - [x] Pin the four-document consumer bundle at root
