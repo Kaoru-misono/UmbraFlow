@@ -992,20 +992,4 @@ namespace uf::task
     {
         return m_terminal;
     }
-
-    void TaskContext::latchTraceFailure() noexcept
-    {
-        m_traceFailed = true;
-    }
-
-    auto TaskContext::traceFailed() const noexcept -> bool
-    {
-        return m_traceFailed;
-    }
-
-    auto TaskContext::emitTrace(trace::TraceEventSpec const& event) -> Status
-    {
-        return m_recorder.emit(event);
-    }
-
 }

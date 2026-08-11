@@ -183,9 +183,10 @@ namespace uf::script
         // bundle included -- has run: the framework environment chains __index
         // to the main globals, so a module loaded earlier could bind
         // `local getfenv = getfenv` and hold that reference past the nilling.
-        // Nothing in the bundle wants any of them; time and randomness reach the
-        // framework through the private capability surface, and the host uses
-        // coroutines and debug only from C.
+        // Nothing in the bundle wants any of them; the host uses coroutines and
+        // debug only from C, and neither private capability surface carries a
+        // clock or a generator, so no framework module has a second source for
+        // either.
         //
         // These are the globals luaL_sandbox does NOT remove (verified on
         // 0.730). A script that spawns its own coroutine escapes the
@@ -214,9 +215,11 @@ namespace uf::script
         nilLibraryField(state, "os", "clock");
         nilLibraryField(state, "os", "date");
         nilLibraryField(state, "math", "random");
-        // randomseed is inert once random is gone, but it is still an RNG entry
-        // point: leaving it would hand the seeded ctx:random a second, unaudited
-        // way to be reseeded from script.
+        // randomseed is inert once random is gone and goes with it anyway. No
+        // host RNG exists on either private capability surface for it to
+        // reseed, so the floor here is "no randomness in the VM at all" rather
+        // than "one audited source", and an RNG entry point left standing is
+        // the name a later generator would be reached through.
         nilLibraryField(state, "math", "randomseed");
 
         // The framework runs under its own environment, so trusted code never

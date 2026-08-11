@@ -20,7 +20,6 @@
 
 #include <engine/session.hpp>
 
-#include <trace/event.hpp>
 #include <trace/recorder.hpp>
 
 #include <vision/frame-analysis.hpp>
@@ -167,8 +166,9 @@ namespace uf::task
     // destroyed first on every path, and non-movable so its address cannot drift
     // while the context borrows it. Any other owner MUST reproduce both
     // properties. It is the SAME recorder the owned EngineSession borrows, which
-    // is what puts task.native_call and the engine.* events it caused into one
-    // ordered stream.
+    // is what puts this context's own annotation.* lines, the engine.* events
+    // the same call produced, and the host's surrounding run.started and
+    // run.finished into one ordered stream.
     class TaskContext final
     {
     public:
@@ -247,8 +247,6 @@ namespace uf::task
         ProjectFileStore m_projectFiles;
 
         std::optional<AutomationErrorKind> m_terminal{};
-
-        bool m_traceFailed{false};
 
         [[nodiscard]]
         auto requireReceiptCycle(
@@ -339,15 +337,17 @@ namespace uf::task
         //     region this frame was already read at, which is false. So the
         //     budget bounds ENGINE reads per cycle, which is the cost it was
         //     always standing in for.
-        //   - A SERVED ANSWER WRITES NO engine.text_read AND STILL WRITES ITS
-        //     task.native_call. The two halves of the stream answer two
-        //     questions: the native call is what the script asked and was told,
-        //     which happened, and the engine line is inference that did not. An
-        //     engine line here would carry a duration and an engine id no call
-        //     produced. That the two counts now differ IS the memoisation, and it
-        //     is readable straight off the stream. The FFI layer writes the
-        //     native call and knows nothing of this cache, so neither half can
-        //     drift from the other by anyone forgetting.
+        //   - A SERVED ANSWER WRITES NOTHING. This verb records no line of its
+        //     own on either path, so the single engine.text_read the first read
+        //     produced is the whole record of this rectangle of this frame. That
+        //     is the right record: a repeat hands back those same bytes and runs
+        //     no inference, and a second engine line would carry a duration and
+        //     an engine id no read produced.
+        //     What the stream therefore does NOT hold is how many times a chunk
+        //     asked. That count is a fact about the chunk's control flow rather
+        //     than about the host or the target, nothing in this repository reads
+        //     it back, and recovering it would need a per-primitive event this
+        //     tree does not have.
         [[nodiscard]]
         auto cycleRead(
             CycleTicket ticket,
@@ -624,23 +624,5 @@ namespace uf::task
         // and returned normally.
         [[nodiscard]]
         auto terminalKind() const noexcept -> std::optional<AutomationErrorKind>;
-
-        // Latches that a trace event could not be recorded. A verb that is
-        // already failing cannot raise the sink's failure instead of its own --
-        // that would let a broken sink downgrade a cancellation into an error a
-        // script can catch -- so it latches here and raises its real cause.
-        void latchTraceFailure() noexcept;
-
-        [[nodiscard]]
-        auto traceFailed() const noexcept -> bool;
-
-        // Records one event through the run's recorder, which stamps the sequence,
-        // run id and generation id. A sink failure returns the error so the caller
-        // can abort the operation whose evidence was lost. The observation and
-        // action verbs call this at their exit to emit task.native_call; the
-        // owning host emits the surrounding run.* events on the same recorder.
-        [[nodiscard]]
-        auto emitTrace(trace::TraceEventSpec const& event) -> Status;
-
     };
 }
