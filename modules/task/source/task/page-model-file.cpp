@@ -700,12 +700,14 @@ namespace uf::task
         GenerationId generation,
         std::shared_ptr<RuntimeArtifactHandle const> artifact,
         ContentHash semanticHash,
-        DeclaredRuntimeUi declaredUi
+        DeclaredRuntimeUi declaredUi,
+        ProjectFingerprint fingerprint
     ) noexcept
         : m_generation{generation}
         , m_artifact{std::move(artifact)}
         , m_semanticHash{semanticHash}
         , m_declaredUi{std::move(declaredUi)}
+        , m_fingerprint{fingerprint}
     {
     }
 
@@ -733,6 +735,11 @@ namespace uf::task
     auto RuntimeModelBinding::declaredUi() const noexcept -> DeclaredRuntimeUi const&
     {
         return m_declaredUi;
+    }
+
+    auto RuntimeModelBinding::fingerprint() const noexcept -> ProjectFingerprint
+    {
+        return m_fingerprint;
     }
 
     auto loadRuntimeArtifact(

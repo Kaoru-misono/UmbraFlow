@@ -6,6 +6,7 @@
 
 #include <domain/content-hash.hpp>
 #include <domain/ids.hpp>
+#include <domain/space.hpp>
 
 #include <cstddef>
 #include <filesystem>
@@ -181,12 +182,14 @@ namespace uf::task
         std::shared_ptr<RuntimeArtifactHandle const> m_artifact;
         ContentHash                                  m_semanticHash;
         DeclaredRuntimeUi                            m_declaredUi;
+        ProjectFingerprint                           m_fingerprint;
 
         RuntimeModelBinding(
             GenerationId generation,
             std::shared_ptr<RuntimeArtifactHandle const> artifact,
             ContentHash semanticHash,
-            DeclaredRuntimeUi declaredUi
+            DeclaredRuntimeUi declaredUi,
+            ProjectFingerprint fingerprint
         ) noexcept;
 
         friend class TaskHost;
@@ -218,6 +221,14 @@ namespace uf::task
         [[nodiscard]]
         auto declaredUi() const noexcept UF_LIFETIME_BOUND
             -> DeclaredRuntimeUi const&;
+
+        // The geometry this generation's model declares. It sits beside
+        // declaredUi() rather than inside it: those are names, answerable only
+        // by membership, while this is a measurement compared against a live
+        // capture's extent. Every model states both base_resolution and
+        // base_dpi and the trusted parser refuses one that does not, so there
+        // is no absent case here and no default resolution below it.
+        [[nodiscard]] auto fingerprint() const noexcept -> ProjectFingerprint;
     };
 
     [[nodiscard]]

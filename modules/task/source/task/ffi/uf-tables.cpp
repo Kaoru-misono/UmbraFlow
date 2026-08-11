@@ -764,6 +764,37 @@ namespace uf::task
             return result;
         }
 
+        // One element of a dense two-integer array standing on the stack.
+        // base_resolution and base_dpi are both that shape in the model, so
+        // they cross as the two pairs the model declares rather than as four
+        // loose numbers, and the native arity stays equal to the field count
+        // the trusted parser reads.
+        [[nodiscard]]
+        static auto pairElement(
+            lua_State* state,
+            int index,
+            int element,
+            std::string_view name
+        ) -> uint32
+        {
+            if (
+                lua_type(state, index) != LUA_TTABLE
+                || lua_objlen(state, index) != 2U
+            )
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    std::string{name} + " must contain exactly two integers"
+                );
+            }
+            auto const absolute = lua_absindex(state, index);
+            lua_rawgeti(state, absolute, element);
+            auto const value = unsignedInteger(state, -1, name);
+            lua_pop(state, 1);
+            return value;
+        }
+
         [[nodiscard]]
         static auto tableRect(
             lua_State* state,
@@ -955,7 +986,7 @@ namespace uf::task
         static auto finalizeModel(lua_State* state) -> int
         {
             auto& self = bound(state);
-            self.requireArity(state, 6, "runtime_model_finalize");
+            self.requireArity(state, 8, "runtime_model_finalize");
             auto encoded = std::string{"sha256:"};
             encoded += stringAt(state, 1, "runtime model schema hash");
             auto schemaHash = ContentHash::parse(encoded);
@@ -992,6 +1023,21 @@ namespace uf::task
                     "RuntimeModel.declared_action_ids"
                 ),
             };
+            // The geometry the model states, carried rather than interpreted:
+            // ProjectFingerprint is four numbers a capture is measured against,
+            // and nothing here reads what any of them mean. Its create refuses
+            // a zero in any of the four, which is the last place a model that
+            // named an empty extent can be stopped.
+            auto geometry = ProjectFingerprint::create(
+                pairElement(state, 7, 1, "RuntimeModel.base_resolution"),
+                pairElement(state, 7, 2, "RuntimeModel.base_resolution"),
+                pairElement(state, 8, 1, "RuntimeModel.base_dpi"),
+                pairElement(state, 8, 2, "RuntimeModel.base_dpi")
+            );
+            if (!geometry)
+            {
+                raiseFromError(state, nullptr, geometry.error());
+            }
             auto finalized = self.m_pHost->finalizeRuntimeModel(
                 self.m_generation,
                 TrustedRuntimeFinalize{
@@ -999,6 +1045,7 @@ namespace uf::task
                     .semanticHash     = *semantic,
                     .assetReferences  = std::move(assets),
                     .declaredUi       = std::move(declaredUi),
+                    .fingerprint      = *geometry,
                 }
             );
             if (!finalized)

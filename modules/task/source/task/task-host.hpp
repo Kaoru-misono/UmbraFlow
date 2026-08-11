@@ -159,6 +159,7 @@ namespace uf::task
             ContentHash              semanticHash;
             std::vector<std::string> assetReferences{};
             DeclaredRuntimeUi        declaredUi{};
+            ProjectFingerprint       fingerprint;
         };
 
         struct TrustedReceiptIntent final

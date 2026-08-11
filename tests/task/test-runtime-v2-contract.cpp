@@ -13,6 +13,7 @@
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
 #include <domain/ids.hpp>
+#include <domain/space.hpp>
 
 #include <engine/session.hpp>
 
@@ -66,6 +67,46 @@ namespace uf::task
                 .recognitionTimeout = std::chrono::seconds{1},
                 .tracePath          = std::move(tracePath),
             };
+        }
+
+        // The fixture's model with `geometry` standing in for the two lines it
+        // declares, and its body reused byte for byte. Every rectangle in that
+        // body sits within 2x1, so any extent at or above the fixture's own
+        // accepts the same bindings and the declared geometry is the only thing
+        // that varies between the models below.
+        [[nodiscard]] auto modelDeclaring(std::string_view geometry) -> std::string
+        {
+            auto const fixture = runtimeModel();
+            auto const body    = fixture.find("\n\n[[ui_target]]");
+            REQUIRE(body != std::string::npos);
+            return "schema_version = 2\n" + std::string{geometry}
+                + fixture.substr(body);
+        }
+
+        [[nodiscard]]
+        auto activateDeclaring(
+            TaskHost& host,
+            TemporaryDirectory const& directory,
+            std::string_view geometry
+        ) -> Result<GenerationId>
+        {
+            auto const model = modelDeclaring(geometry);
+            auto const rootHash = publish(directory.path(), model, runtimeAssets());
+            return TaskHostTestAccess::activate(host, directory.path(), rootHash);
+        }
+
+        [[nodiscard]]
+        auto bindingDeclaring(
+            TaskHost& host,
+            TemporaryDirectory const& directory,
+            std::string_view geometry
+        ) -> RuntimeModelBinding
+        {
+            auto const generation = activateDeclaring(host, directory, geometry);
+            REQUIRE(generation.has_value());
+            auto binding = host.runtimeModelBinding(*generation);
+            REQUIRE(binding.has_value());
+            return *std::move(binding);
         }
     }
 
@@ -796,5 +837,97 @@ namespace uf::task
         );
         CHECK_FALSE(runtime.context().hasOpenCycle());
         CHECK(host.observe(generation, runtime.context()).has_value());
+    }
+
+    // Three models differing only in the geometry they declare. The first pins
+    // each of the four components separately, so a fingerprint that transposed
+    // an extent into a DPI passes none of them; the second changes only the
+    // extent and the third only the DPI, so a constant, or a value carrying
+    // half of what the model states, cannot satisfy all three.
+    TEST_CASE("RuntimeModelBinding publishes the geometry its model declares")
+    {
+        auto const declaredDirectory = TemporaryDirectory{};
+        auto declaredHost = TaskHost{};
+        auto const declared = bindingDeclaring(
+            declaredHost,
+            declaredDirectory,
+            "base_resolution = [1920, 1080]\nbase_dpi = [96, 120]\n"
+        );
+        CHECK(declared.fingerprint().width() == 1920U);
+        CHECK(declared.fingerprint().height() == 1080U);
+        CHECK(declared.fingerprint().dpiX() == 96U);
+        CHECK(declared.fingerprint().dpiY() == 120U);
+
+        // The geometry travels beside the three vocabularies and not inside
+        // them: a fourth name here would be the Operator gaining a way to ask
+        // what a name means, which is what DeclaredRuntimeUi exists to refuse.
+        CHECK(declared.declaredUi().surfaces == std::vector<std::string>{"screen"});
+        CHECK(
+            declared.declaredUi().uiTargets
+            == std::vector<std::string>{"confirm", "screen-marker"}
+        );
+        CHECK(declared.declaredUi().actions == std::vector<std::string>{"activate"});
+
+        // Both extent components above 16 bits: a fingerprint that crossed the
+        // native seam through a narrower integer arrives truncated rather than
+        // merely different, and equality on the whole value would not say which.
+        auto const wideDirectory = TemporaryDirectory{};
+        auto wideHost = TaskHost{};
+        auto const wide = bindingDeclaring(
+            wideHost,
+            wideDirectory,
+            "base_resolution = [70000, 66000]\nbase_dpi = [96, 120]\n"
+        );
+        CHECK(wide.fingerprint().width() == 70000U);
+        CHECK(wide.fingerprint().height() == 66000U);
+        CHECK(wide.fingerprint() != declared.fingerprint());
+
+        auto const dpiDirectory = TemporaryDirectory{};
+        auto dpiHost = TaskHost{};
+        auto const dpi = bindingDeclaring(
+            dpiHost,
+            dpiDirectory,
+            "base_resolution = [1920, 1080]\nbase_dpi = [144, 144]\n"
+        );
+        CHECK(dpi.fingerprint().dpiX() == 144U);
+        CHECK(dpi.fingerprint().dpiY() == 144U);
+        CHECK(dpi.fingerprint() != declared.fingerprint());
+    }
+
+    // What a model may not leave out. Both halves are required and neither has
+    // a default, so a model stating one and omitting the other is refused where
+    // the omission is, and a zero component is not an extent. Each case reads
+    // the whole refusal and not just the field it names: every rectangle in the
+    // model is bounds-checked against base_resolution and says so, so a
+    // substring stopping at the field name would go green off that second
+    // refusal and prove nothing about this one.
+    TEST_CASE("A RuntimeModel declaring one half of its geometry is refused")
+    {
+        auto const refusal = [](std::string_view geometry, std::string_view refused)
+        {
+            auto const directory = TemporaryDirectory{};
+            auto host = TaskHost{};
+            auto const activated = activateDeclaring(host, directory, geometry);
+            REQUIRE_FALSE(activated.has_value());
+            CHECK(activated.error().message().find(refused) != std::string::npos);
+        };
+
+        refusal("", "RuntimeModel.base_resolution must be a table");
+        refusal(
+            "base_resolution = [1920, 1080]\n",
+            "RuntimeModel.base_dpi must be a table"
+        );
+        refusal(
+            "base_dpi = [96, 120]\n",
+            "RuntimeModel.base_resolution must be a table"
+        );
+        refusal(
+            "base_resolution = [1920, 0]\nbase_dpi = [96, 120]\n",
+            "RuntimeModel.base_resolution[2] must be positive"
+        );
+        refusal(
+            "base_resolution = [1920, 1080]\nbase_dpi = [96, 0]\n",
+            "RuntimeModel.base_dpi[2] must be positive"
+        );
     }
 }

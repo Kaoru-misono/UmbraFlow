@@ -480,12 +480,18 @@ namespace uf::task
         // insensitive to order and repetition, so no ordering rule is asserted
         // here either -- one nothing could violate would be a check that cannot
         // fail.
+        //
+        // The declared geometry travels on the same terms and for the same
+        // reason. It is already a ProjectFingerprint by the time it arrives, so
+        // the only refusal it could carry -- a zero extent or DPI -- has been
+        // spent at the native seam that built it.
         auto binding = std::make_shared<RuntimeModelBinding const>(
             RuntimeModelBinding{
                 generation,
                 artifact,
                 trusted.semanticHash,
                 std::move(trusted.declaredUi),
+                trusted.fingerprint,
             }
         );
         return p_generation->installBinding(std::move(binding));
