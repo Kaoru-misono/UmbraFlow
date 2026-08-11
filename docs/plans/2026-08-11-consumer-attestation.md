@@ -589,14 +589,20 @@ other. A fixture may move neither.
 mechanism that already turns a consumer's claim into something this repository
 can refuse. A consumer supplies a `ProjectUnderTest`: a
 `VerifiedProjectRegistration`, four schema owners, the exact plugin bytes and
-artifact blobs the registration pinned, and a `ProjectVocabulary` of documents
-its own schemas accept. The header states the discipline — "The suite invents no
+artifact blobs the registration pinned, a `ProjectVocabulary` of documents its
+own schemas accept, the `ProjectRuntimeArtifact` its sessions are pinned to, and
+the `ProjectProbeFrame` that artifact's model is resolved against — the
+fingerprint the model declares and one PNG capture at that extent. The last two
+are additions of 2026-08-11; before them the suite substituted a model and a
+world of its own, and a consumer's UI vocabulary was never exercised. The header
+states the discipline — "The suite invents no
 project bytes", "No member carries an in-class initializer… a defaulted authority
 would be an authority nobody granted", and there is "deliberately no default and
 no registry: a consumer that does not define it fails to link, rather than
 running a suite against nothing." A consumer that passes it has demonstrated that
-its registration, plugin, schemas and vocabulary are real and that the Operator
-accepted them.
+its registration, plugin, schemas and vocabulary are real, that its own
+RuntimeModel resolves the surface its plans name on a capture of its own target,
+and that the Operator accepted all of it.
 
 That is a strong precondition and it is the wrong one for eight of the nine.
 

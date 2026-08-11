@@ -1016,6 +1016,36 @@ unlooked-at forever.
 - Whether uf-chaos's 1,146-line `provider.cpp` compiles against framework HEAD. No
   build was run (correctly forbidden); the match is a static read of `ToolSurface`,
   `ProjectVocabulary` and `projectUnderTest` against current headers.
+
+  **Settled 2026-08-11, and the answer is no.** It is pinned to framework
+  `4662eed` and owes three repairs, each a member `ProjectUnderTest` gained
+  since. Nothing is optional: the two struct members carry no in-class
+  initializer that could stand in, and `ProjectFingerprint` has no default
+  state at all, so an aggregate initialisation omitting the third does not
+  compile.
+
+  1. `vocabulary.uiAction` (`e1f1b78`) — the surface, target and action id a
+     contract run may drive. uf-chaos's step intents already name
+     `event`/`event.option_1` and `recruit`/`shop.product_1`; the repair is
+     copying one of those triples into the vocabulary.
+  2. `runtimeArtifact` (`e1f1b78`) — RuntimeModel bytes and the asset closure.
+     uf-chaos has both, published and verified: `runtime/artifact/`, whose
+     `runtime/check/main.cpp` already drives them through this framework's own
+     release reader, publisher and Host.
+  3. `probeFrame` — the `ProjectFingerprint` its model declares
+     (`base_resolution = [1600, 900]`, `base_dpi = [144, 144]`) and one PNG
+     capture at exactly that extent, on which `event` resolves.
+
+  Only the third costs anything new, and the cost is a file rather than work:
+  `runtime/check/main.cpp` reads its frames from `assets/screens/`, which is
+  gitignored and exists only on the annotation machine, so the bytes a provider
+  needs are not in that repository. Two ways out, both theirs to choose —
+  commit one 1600x900 screen, or compose one from what is already committed,
+  since `runtime/tools/build-artifact.py` records the source rect of every
+  asset and each binding's placement is a fixed rect, so pasting the committed
+  assets onto a 1600x900 canvas at those rects reproduces a frame the model
+  resolves without the corpus. The `event` surface needs exactly one of the
+  three speed variants present, which a composite satisfies by pasting one.
 - uf-chaos `encounters/source/**`, `content/compiled/**`, `assets/screens/**` —
   bulk data, excluded deliberately.
 - Every claim about what CTest *would* run is read from CMake, not from a

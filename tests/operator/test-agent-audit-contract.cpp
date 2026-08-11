@@ -907,7 +907,7 @@ namespace uf::operator_runtime
         // state fingerprint IS.
         auto unresolvedHost = test_support::secondObservationHost(
             prepared,
-            contract::unresolvedFramePixels(),
+            test_support::umbraflowUnresolvedProbeFrame(),
             FrameId{909}
         );
         auto const moved = prepared.store.createSnapshot(

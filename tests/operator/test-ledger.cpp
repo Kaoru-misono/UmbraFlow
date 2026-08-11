@@ -264,7 +264,7 @@ namespace uf::operator_runtime
             REQUIRE(lease.has_value());
             auto observation = contract::activateObservationHost(
                 *std::move(installed),
-                contract::resolvedFramePixels(),
+                test_support::umbraflowProbeFrame(),
                 FrameId{201}
             );
             auto snapshot = store.createSnapshot(
@@ -309,7 +309,8 @@ namespace uf::operator_runtime
                 prepared.lease,
                 prepared.installedGeneration,
                 prepared.runtimeArtifactRootHash,
-                test_support::k_fixtureUiAction
+                test_support::k_fixtureUiAction,
+                test_support::umbraflowProbeFrame()
             );
         }
 
@@ -1641,7 +1642,7 @@ namespace uf::operator_runtime
 
         auto secondHost = contract::activateObservationHost(
             *std::move(installed),
-            contract::resolvedFramePixels(),
+            test_support::umbraflowProbeFrame(),
             FrameId{909}
         );
         auto secondModel = secondHost.host->runtimeModelBinding(

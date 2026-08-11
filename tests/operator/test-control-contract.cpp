@@ -402,6 +402,7 @@ namespace uf::operator_runtime
                 *std::move(installed),
                 controlFence(movedFence),
                 test_support::k_fixtureUiAction,
+                test_support::umbraflowProbeFrame(),
             };
             fencedAuthority.runtimeGeneration = fencedHost.generation();
             CHECK_FALSE(prepared.store.recordDeliveryOutcome(

@@ -692,12 +692,13 @@ owes is the one pass over the remaining 15, not a permanent re-litigation.
   exports `uf_add_operator_contract_suite()`, and
   `contract-suite/include/operator-contract/project-under-test.hpp` is the
   single public header a consumer implements: it supplies a
-  `ProjectUnderTest` — its registration, plugin and a vocabulary of tool and
-  Journal documents its own schemas accept — and the suite invents no project
-  bytes of its own. The suite's translation units compile into the consumer's
-  executable rather than shipping as a library, so a run carries the consumer's
-  safety profile and sanitizers. Two structurally unrelated fixtures under
-  `contract-suite/fixtures/` exercise it, each written the way a consuming
+  `ProjectUnderTest` — its registration, plugin, a vocabulary of tool and
+  Journal documents its own schemas accept, its RuntimeArtifact, and the probe
+  frame that model resolves against (added 2026-08-11) — and the suite invents
+  no project bytes of its own. The suite's translation units compile into the
+  consumer's executable rather than shipping as a library, so a run carries the
+  consumer's safety profile and sanitizers. Two structurally unrelated fixtures
+  under `contract-suite/fixtures/` exercise it, each written the way a consuming
   repository writes its own: one `CMakeLists.txt` calling the function and one
   provider translation unit. They register as `contract-suite-umbraflow` and
   `contract-suite-arcana`. This unblocks Phase 2C; it does not satisfy the

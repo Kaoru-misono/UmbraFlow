@@ -13,6 +13,7 @@
 #include <task/ui-observation.hpp>
 
 #include <core/error/result.hpp>
+#include <core/numeric/checked-arithmetic.hpp>
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
@@ -26,6 +27,7 @@
 #include <engine/ports.hpp>
 #include <engine/session.hpp>
 
+#include <image/pixels.hpp>
 #include <image/png.hpp>
 
 #include <trace/event.hpp>
@@ -48,8 +50,14 @@
 #include <utility>
 #include <vector>
 
-// A real RuntimeArtifact, a real EngineSession over a synthetic frame, and the
-// TaskHost that turns the two into one task::UiObservationSnapshot.
+// A real RuntimeArtifact, a real EngineSession over the frame the supplying
+// project captured, and the TaskHost that turns the two into one
+// task::UiObservationSnapshot.
+//
+// Nothing here describes a world. The model, the geometry it was authored at
+// and the capture that satisfies it all arrive in ProjectUnderTest, because a
+// suite holding any one of the three would be asking whether ITS world resolves
+// rather than whether the supplying project's does.
 //
 // It is shared rather than duplicated because createSnapshot composes an
 // observation the Host minted, and UiObservationSnapshot's only friend is
@@ -58,15 +66,6 @@
 // suite -- has to drive a Host through one real observation cycle.
 namespace uf::operator_runtime::contract
 {
-    // The two grays the probe frame below carries. Every supplied RuntimeModel
-    // matches its locators against that frame, so a project authoring a model
-    // for the suite authors its template assets from these: templatePng() turns
-    // one into the one-pixel PNG a template locator matches. They are distinct
-    // so that a frame carrying one and not the other resolves to a different
-    // state.
-    inline constexpr auto k_anchorGray = uint8{2};
-    inline constexpr auto k_actionGray = uint8{5};
-
     [[nodiscard]]
     inline auto observationHash(std::span<std::byte const> value) -> ContentHash
     {
@@ -121,24 +120,6 @@ namespace uf::operator_runtime::contract
             path,
             std::as_bytes(std::span{value.data(), value.size()})
         );
-    }
-
-    [[nodiscard]]
-    inline auto templatePng(uint8 gray) -> std::vector<std::byte>
-    {
-        auto encoded = image::encodeRgbaPng(
-            "contract-observation-template.png",
-            1,
-            1,
-            std::vector<std::byte>{
-                static_cast<std::byte>(gray),
-                static_cast<std::byte>(gray),
-                static_cast<std::byte>(gray),
-                std::byte{255},
-            }
-        );
-        REQUIRE(encoded.has_value());
-        return *std::move(encoded);
     }
 
     [[nodiscard]]
@@ -238,30 +219,34 @@ namespace uf::operator_runtime::contract
         };
     }
 
-    // The world every supplied RuntimeModel is resolved against: three pixels
-    // wide, one high, at 96 DPI. A model the suite is handed must declare
-    // base_resolution = [3, 1] and base_dpi = [96, 96], because the session
-    // refuses a project fingerprint the live one does not match.
-    [[nodiscard]]
-    inline auto observationFingerprint() -> ProjectFingerprint
-    {
-        auto result = ProjectFingerprint::create(3, 1, 96, 96);
-        REQUIRE(result.has_value());
-        return *result;
-    }
-
+    // The project's own capture, decoded into the Bgra8 shape a live one has.
+    //
+    // The extent is the PNG's rather than the fingerprint's, deliberately: a
+    // capture is whatever the target produced, and it is EngineSession's
+    // ensureCompatibleFrame -- not this fixture -- that decides whether it
+    // describes the same pixels the model was authored in. Stamping the
+    // fingerprint's extent onto a differently sized buffer would hide exactly
+    // the disagreement that check exists to report.
     [[nodiscard]]
     inline auto observationFrame(
-        std::vector<std::byte> pixels,
+        ProjectProbeFrame const& probe,
         FrameId id
     ) -> Frame
     {
+        auto decoded = image::decodePng(probe.png, "contract-probe-frame.png");
+        REQUIRE(decoded.has_value());
+        auto const width  = decoded->width;
+        auto const height = decoded->height;
+
+        auto pixels = image::rgba8ToBgra8(std::move(decoded->pixels));
+        REQUIRE(pixels.has_value());
+
         auto transform = CoordinateTransform::create(
             Point<DesktopSpace>{0.0F, 0.0F},
-            3.0F,
-            1.0F,
-            3,
-            1
+            static_cast<float>(width),
+            static_cast<float>(height),
+            width,
+            height
         );
         REQUIRE(transform.has_value());
         auto result = Frame::create(
@@ -269,40 +254,37 @@ namespace uf::operator_runtime::contract
             CaptureSessionId{7},
             TargetGeneration::fromValue(3),
             MonotonicInstant::now(),
-            3,
-            1,
-            3,
-            PixelFormat::Gray8,
-            std::make_shared<FrameBuffer const>(std::move(pixels)),
+            width,
+            height,
+            static_cast<std::size_t>(width) * 4U,
+            PixelFormat::Bgra8,
+            std::make_shared<FrameBuffer const>(*std::move(pixels)),
             *transform
         );
         REQUIRE(result.has_value());
         return *std::move(result);
     }
 
-    // The probe frame the suite captures. A supplied model reaches a resolved
-    // state exactly when one of its scenes is satisfied by these three pixels,
-    // which is what a project authors its locators and template assets against.
+    // The comparison ceiling one observation runs under.
+    //
+    // One search costs the searched rectangle's candidate positions times the
+    // template's pixels, and both are RuntimeModel fields C++ never reads, so
+    // the suite cannot state a budget in comparisons that fits every project's
+    // model. What it can state is the ceiling no search over a frame of this
+    // extent can exceed -- at most one candidate position per frame pixel, at
+    // most one template pixel per frame pixel -- which leaves the deadline as
+    // the bound that actually stops a runaway search.
     [[nodiscard]]
-    inline auto resolvedFramePixels() -> std::vector<std::byte>
+    inline auto observationComparisonCeiling(Frame const& frame) -> uint64
     {
-        return {
-            static_cast<std::byte>(k_anchorGray),
-            static_cast<std::byte>(k_actionGray),
-            std::byte{0},
-        };
-    }
-
-    // The frame the scene anchor does not match, so the resolver reports an
-    // unknown state and the observation's state_resolution_hash differs.
-    [[nodiscard]]
-    inline auto unresolvedFramePixels() -> std::vector<std::byte>
-    {
-        return {
-            std::byte{0},
-            static_cast<std::byte>(k_actionGray),
-            std::byte{0},
-        };
+        auto const pixels = checkedMultiply(
+            uint64{frame.width()},
+            uint64{frame.height()}
+        );
+        REQUIRE(pixels.has_value());
+        auto const ceiling = checkedMultiply(*pixels, *pixels);
+        REQUIRE(ceiling.has_value());
+        return *ceiling;
     }
 
     class ObservationFrameSource final : public engine::IFrameSource
@@ -418,8 +400,10 @@ namespace uf::operator_runtime::contract
         std::optional<task::TaskContext>      m_context{};
 
     public:
-        explicit ObservationRuntime(Frame value)
+        ObservationRuntime(ProjectProbeFrame const& probe, FrameId frameId)
         {
+            auto frame = observationFrame(probe, frameId);
+
             auto recorder = trace::TraceRecorder::create(
                 std::make_unique<ObservationTraceSink>(),
                 trace::TraceStreamSpec{
@@ -433,15 +417,28 @@ namespace uf::operator_runtime::contract
 
             auto actions = std::make_unique<ObservationActionSink>();
             m_pActions   = actions.get();
+
+            auto const comparisonCeiling = observationComparisonCeiling(frame);
             auto session = engine::EngineSession::create(
-                std::make_unique<ObservationFrameSource>(std::move(value)),
+                std::make_unique<ObservationFrameSource>(std::move(frame)),
                 std::move(actions),
                 *m_recorder,
                 engine::EngineSessionConfig{
-                    .liveFingerprint    = observationFingerprint(),
-                    .projectFingerprint = observationFingerprint(),
-                    .maximumPixelComparisons = 1'000U,
-                    .recognitionTimeout      = std::chrono::seconds{1},
+                    // Both fingerprints are the project's own: the suite has no
+                    // live target to measure, so the capture it was handed IS
+                    // the live geometry. What ensureCompatibleFrame still
+                    // decides here is whether that capture's extent matches the
+                    // resolution the model declares, which is the disagreement a
+                    // suite carrying a frame of its own could never produce.
+                    .liveFingerprint    = probe.fingerprint,
+                    .projectFingerprint = probe.fingerprint,
+
+                    // Ten seconds rather than one: a project's frame may be a
+                    // real client area, and the matcher converts all of it to
+                    // gray once per search. The CTest timeout is what bounds a
+                    // matcher that never finishes.
+                    .maximumPixelComparisons = comparisonCeiling,
+                    .recognitionTimeout      = std::chrono::seconds{10},
                 }
             );
             REQUIRE(session.has_value());
@@ -478,7 +475,7 @@ namespace uf::operator_runtime::contract
     [[nodiscard]]
     inline auto activateObservationHost(
         task::InstalledRuntimeArtifact installed,
-        std::vector<std::byte> framePixels,
+        ProjectProbeFrame const& probe,
         FrameId frameId
     ) -> ObservationHost
     {
@@ -486,10 +483,8 @@ namespace uf::operator_runtime::contract
         auto generation = host->activateRuntimeArtifact(std::move(installed));
         REQUIRE(generation.has_value());
         return ObservationHost{
-            .host    = std::move(host),
-            .runtime = std::make_unique<ObservationRuntime>(
-                observationFrame(std::move(framePixels), frameId)
-            ),
+            .host       = std::move(host),
+            .runtime    = std::make_unique<ObservationRuntime>(probe, frameId),
             .generation = *generation,
         };
     }
@@ -503,6 +498,48 @@ namespace uf::operator_runtime::contract
         );
         REQUIRE(result.has_value());
         return *std::move(result);
+    }
+
+    // Fails the running case unless `snapshot` resolved `surface`.
+    //
+    // Every property the suite goes on to test is downstream of this: a plan is
+    // frozen against a resolved state and a dispatch is delivered against a
+    // binding of it. Without this check a probe frame the model does not
+    // satisfy -- an extent the fingerprint disagrees with, a capture of the
+    // wrong screen, an asset that no longer crops the same pixels -- reaches the
+    // case as some later refusal about authority or delivery, which is the
+    // diagnosis the supplying project cannot act on.
+    inline auto requireResolvedSurface(
+        task::UiObservationSnapshot const& snapshot,
+        std::string_view surface
+    ) -> void
+    {
+        auto const& resolution = snapshot.canonicalJcs();
+        REQUIRE_MESSAGE(
+            resolution.contains(R"("kind":"resolved_state")"),
+            "the supplied probe frame resolved no surface: ",
+            resolution
+        );
+
+        constexpr auto stackMember = std::string_view{
+            R"("ordered_surface_stack":[)"
+        };
+        auto const opened = resolution.find(stackMember);
+        REQUIRE(opened != std::string::npos);
+        auto const from   = opened + stackMember.size();
+        auto const closed = resolution.find(']', from);
+        REQUIRE(closed != std::string::npos);
+
+        auto const stack = std::string_view{resolution}.substr(
+            from,
+            closed - from
+        );
+        REQUIRE_MESSAGE(
+            stack.contains(std::format(R"("{}")", surface)),
+            "the supplied probe frame resolved another surface than the one "
+            "this project's uiAction names: ",
+            resolution
+        );
     }
 
     [[nodiscard]]
@@ -537,6 +574,12 @@ namespace uf::operator_runtime::contract
         // one must name the same action across a whole dispatch.
         task::UiActionUnderTest m_action;
 
+        // The project's own capture, kept because deliverIntoAnotherCycle builds
+        // a second runtime over it on demand. Owned rather than borrowed: a
+        // DeliveringHost outlives the call that made it, so a view of the
+        // caller's ProjectUnderTest would be a stored borrow with no contract.
+        ProjectProbeFrame m_probe;
+
         auto mint() -> void
         {
             auto const minted = task::TaskHostTestAccess::run(
@@ -552,18 +595,16 @@ namespace uf::operator_runtime::contract
         DeliveringHost(
             task::InstalledRuntimeArtifact installed,
             task::ControlFence fence,
-            task::UiActionUnderTest action
+            task::UiActionUnderTest action,
+            ProjectProbeFrame probe
         )
             : m_host{std::make_unique<task::TaskHost>()}
-            , m_runtime{
-                  std::make_unique<ObservationRuntime>(
-                      observationFrame(resolvedFramePixels(), FrameId{701})
-                  )
-              }
+            , m_runtime{std::make_unique<ObservationRuntime>(probe, FrameId{701})}
             , m_generation{
                   activateDeliveringGeneration(*m_host, std::move(installed))
               }
             , m_action{std::move(action)}
+            , m_probe{std::move(probe)}
         {
             // Minting is refused until a ledger fence is adopted, so this is
             // where a Host stops being inert.
@@ -648,7 +689,8 @@ namespace uf::operator_runtime::contract
             if (!m_other)
             {
                 m_other = std::make_unique<ObservationRuntime>(
-                    observationFrame(resolvedFramePixels(), FrameId{702})
+                    m_probe,
+                    FrameId{702}
                 );
                 // The other context must hold a cycle of its own, or the refusal
                 // proves only that it has none.
@@ -685,7 +727,8 @@ namespace uf::operator_runtime::contract
         ControlLease const& lease,
         uint64 installedGeneration,
         ContentHash const& artifactRootHash,
-        task::UiActionUnderTest const& action
+        task::UiActionUnderTest const& action,
+        ProjectProbeFrame const& probe
     ) -> std::unique_ptr<DeliveringHost>
     {
         auto installed = store.openInstalledRuntimeArtifact(
@@ -696,7 +739,8 @@ namespace uf::operator_runtime::contract
         return std::make_unique<DeliveringHost>(
             *std::move(installed),
             controlFence(lease),
-            action
+            action,
+            probe
         );
     }
 }

@@ -228,10 +228,17 @@ namespace uf::operator_runtime::contract
         REQUIRE(lease.has_value());
         auto observation = activateObservationHost(
             *std::move(installed),
-            resolvedFramePixels(),
+            project.probeFrame,
             FrameId{301}
         );
-        auto snapshot = store.createSnapshot(*lease, plugin, observeOnce(observation));
+        auto const reading = observeOnce(observation);
+
+        // Checked once, here, rather than per case: every case below plans on a
+        // resolved state, so a probe frame this project's model does not satisfy
+        // must be named where it was supplied.
+        requireResolvedSurface(reading, project.vocabulary.uiAction.surface);
+
+        auto snapshot = store.createSnapshot(*lease, plugin, reading);
         REQUIRE(snapshot.has_value());
 
         // "operator" is the exact operator protocol schema sessionManifest
@@ -278,7 +285,8 @@ namespace uf::operator_runtime::contract
             prepared.lease,
             prepared.installedGeneration,
             prepared.runtimeArtifactRootHash,
-            prepared.project.vocabulary.uiAction
+            prepared.project.vocabulary.uiAction,
+            prepared.project.probeFrame
         );
     }
 

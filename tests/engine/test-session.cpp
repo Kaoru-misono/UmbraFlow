@@ -974,6 +974,57 @@ namespace uf::engine
         );
     }
 
+    // The other half of ensureCompatibleFrame, and the half a session whose two
+    // fingerprints agree is the only way to reach: the capture itself is not the
+    // extent the project declares. A model's rectangles are measured in the
+    // resolution it was authored at, so a frame of another extent describes
+    // other places and must not be searched for the model's templates.
+    TEST_CASE("engine session fails closed when the capture extent is not the project's")
+    {
+        auto const projectPrint = fingerprintOf(3, 1, 96);
+
+        // The same width and DPI, one row taller. Nothing about the session
+        // disagrees with itself; only the pixels that arrived do.
+        auto frames = std::vector<Frame>{};
+        frames.emplace_back(
+            grayFrame(
+                fingerprintOf(3, 2, 96),
+                std::vector<std::byte>{
+                    asByte(0),
+                    asByte(k_presentGray),
+                    asByte(0),
+                    asByte(0),
+                    asByte(0),
+                    asByte(0),
+                },
+                FrameId{18},
+                MonotonicInstant::now()
+            )
+        );
+        auto under = makeSession(std::move(frames), baseConfig(projectPrint));
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+
+        auto const found = session.matchTemplate(
+            *observation,
+            grayTemplate(k_presentGray),
+            pixelRectOf(0, 0, 3, 1)
+        );
+        REQUIRE_FALSE(found.has_value());
+        requireErrorKind(
+            found.error(),
+            AutomationErrorKind::TargetCompatibilityUnverified
+        );
+        CHECK(
+            std::string{found.error().message()}.contains(
+                "frame extent 3x2 does not match project 3x1"
+            )
+        );
+    }
+
     TEST_CASE("engine session refuses a click whose observation lease has expired")
     {
         auto const fingerprint = fingerprintOf(3, 1, 96);

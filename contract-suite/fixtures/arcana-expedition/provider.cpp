@@ -11,7 +11,6 @@
 // header, build the five authorities out of the deployment's own validators,
 // and define projectUnderTest.
 
-#include <operator-contract/observation-fixture.hpp>
 #include <operator-contract/operator-protocol.hpp>
 #include <operator-contract/project-under-test.hpp>
 
@@ -22,14 +21,19 @@
 #include <operator/tool-invocation.hpp>
 
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
+#include <domain/space.hpp>
+
+#include <image/png.hpp>
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <format>
 #include <memory>
 #include <span>
@@ -160,15 +164,51 @@ return {
 }
 )LUAU"};
 
+        // The geometry this project's model was authored at, and the one its
+        // capture is taken at. It is deliberately nothing like the umbraflow
+        // fixture's three-by-one at 96 DPI: two projects whose worlds happen to
+        // agree cannot show that the geometry travels from the project, because
+        // every value would be right by coincidence. These are the numbers a
+        // real consumer reports -- a 16:9 client area at a scaled DPI.
+        constexpr auto k_frameWidth  = uint32{1600};
+        constexpr auto k_frameHeight = uint32{900};
+        constexpr auto k_frameDpi    = uint32{144};
+
+        // Where each template sits in that frame. The model states the search
+        // rectangles that contain them, so these numbers appear twice; the
+        // suite's requireResolvedSurface is what keeps the two from drifting,
+        // because a patch that moved out of its rectangle resolves nothing.
+        //
+        // The two are far apart so that a frame carrying one and not the other
+        // resolves differently, and each rectangle is larger than its patch so
+        // the matcher has somewhere to look.
+        constexpr auto k_patch   = uint32{8};
+        constexpr auto k_bannerX = uint32{112};
+        constexpr auto k_bannerY = uint32{96};
+        constexpr auto k_marchX  = uint32{1288};
+        constexpr auto k_marchY  = uint32{742};
+
+        // The two grays those patches carry. Both are exact under the matcher's
+        // luma weights, which sum to 256, so an equal-valued crop scores zero
+        // and clears a threshold of 1.
+        constexpr auto k_bannerGray = uint8{37};
+        constexpr auto k_marchGray  = uint8{211};
+
         // This project's RuntimeModel. Nothing in it is shared with the
         // umbraflow fixture: different surface, target, locator, binding and
-        // action ids, and different asset file names. The step intent above
-        // names expedition.surface, expedition.target and expedition.press, and
-        // so does this, because a plan that named UI this model does not define
-        // would be planning against a world that does not exist.
+        // action ids, different asset file names, and a resolution and DPI of
+        // its own. The step intent above names expedition.surface,
+        // expedition.target and expedition.press, and so does this, because a
+        // plan that named UI this model does not define would be planning
+        // against a world that does not exist.
+        //
+        // base_resolution and base_dpi here and the ProjectProbeFrame's
+        // fingerprint below are one fact stated twice, and must not drift: C++
+        // parses no RuntimeModel, so nothing but this comment holds them
+        // together. EngineSession refuses the capture when they disagree.
         constexpr auto k_runtimeModel = std::string_view{R"toml(schema_version = 2
-base_resolution = [3, 1]
-base_dpi = [96, 96]
+base_resolution = [1600, 900]
+base_dpi = [144, 144]
 
 [[ui_target]]
 id = "expedition.camp"
@@ -195,7 +235,7 @@ id = "expedition.camp.banner"
 surface = "expedition.surface"
 ui_target = "expedition.camp"
 variant = "primary"
-placement = { kind = "fixed", rect = [0, 0, 1, 1] }
+placement = { kind = "fixed", rect = [108, 92, 16, 16] }
 detector = { all = [{ kind = "locator_present", locator = "expedition.banner" }], any = [], none = [] }
 actions = []
 
@@ -204,7 +244,7 @@ id = "expedition.target.primary"
 surface = "expedition.surface"
 ui_target = "expedition.target"
 variant = "primary"
-placement = { kind = "fixed", rect = [1, 0, 1, 1], action_point = [1, 0] }
+placement = { kind = "fixed", rect = [1284, 738, 16, 16], action_point = [1292, 746] }
 detector = { all = [{ kind = "locator_present", locator = "expedition.march-mark" }], any = [], none = [] }
 actions = [{ id = "expedition.press", kind = "click", proof_locator = "expedition.march-mark" }]
 
@@ -430,19 +470,115 @@ identity = { all = ["expedition.camp.banner"], any = [], none = [] }
             };
         }
 
-        // The closure this model's two template locators name, authored against
-        // the grays the suite's probe frame carries.
+        // One solid patch of one gray, PNG-encoded: this project's crop of its
+        // own screen, the way an annotation front end would have cut it.
+        [[nodiscard]]
+        auto patchPng(uint8 gray) -> std::vector<std::byte>
+        {
+            auto pixels = std::vector<std::byte>{};
+            pixels.reserve(std::size_t{k_patch} * k_patch * 4U);
+            for (auto index = uint32{0}; index < k_patch * k_patch; ++index)
+            {
+                pixels.emplace_back(static_cast<std::byte>(gray));
+                pixels.emplace_back(static_cast<std::byte>(gray));
+                pixels.emplace_back(static_cast<std::byte>(gray));
+                pixels.emplace_back(std::byte{255});
+            }
+            auto encoded = image::encodeRgbaPng(
+                "expedition-patch.png",
+                k_patch,
+                k_patch,
+                pixels
+            );
+            REQUIRE(encoded.has_value());
+            return *std::move(encoded);
+        }
+
+        // The buffer with one patch written into it. The pixels are taken by
+        // value and handed back rather than mutated through a parameter: the
+        // caller composes a frame by stamping one patch after another.
+        [[nodiscard]]
+        auto withPatch(
+            std::vector<std::byte> pixels,
+            uint32 left,
+            uint32 top,
+            uint8 gray
+        ) -> std::vector<std::byte>
+        {
+            REQUIRE(left + k_patch <= k_frameWidth);
+            REQUIRE(top + k_patch <= k_frameHeight);
+            for (auto row = uint32{0}; row < k_patch; ++row)
+            {
+                for (auto column = uint32{0}; column < k_patch; ++column)
+                {
+                    auto const at = (
+                        (std::size_t{top + row} * k_frameWidth)
+                        + (left + column)
+                    ) * 4U;
+                    pixels[at]      = static_cast<std::byte>(gray);
+                    pixels[at + 1U] = static_cast<std::byte>(gray);
+                    pixels[at + 2U] = static_cast<std::byte>(gray);
+                }
+            }
+            return pixels;
+        }
+
+        // This project's capture: an opaque client area of its own size,
+        // carrying the two patches its locators name at the coordinates its
+        // model searches.
+        [[nodiscard]]
+        auto probePng() -> std::vector<std::byte>
+        {
+            auto pixels = std::vector<std::byte>(
+                std::size_t{k_frameWidth} * k_frameHeight * 4U,
+                std::byte{0}
+            );
+            for (auto at = std::size_t{3}; at < pixels.size(); at += 4U)
+            {
+                pixels[at] = std::byte{255};
+            }
+            pixels = withPatch(std::move(pixels), k_bannerX, k_bannerY, k_bannerGray);
+            pixels = withPatch(std::move(pixels), k_marchX, k_marchY, k_marchGray);
+
+            auto encoded = image::encodeRgbaPng(
+                "expedition-probe.png",
+                k_frameWidth,
+                k_frameHeight,
+                pixels
+            );
+            REQUIRE(encoded.has_value());
+            return *std::move(encoded);
+        }
+
+        [[nodiscard]]
+        auto probeFrame() -> ProjectProbeFrame
+        {
+            auto fingerprint = ProjectFingerprint::create(
+                k_frameWidth,
+                k_frameHeight,
+                k_frameDpi,
+                k_frameDpi
+            );
+            REQUIRE(fingerprint.has_value());
+            return ProjectProbeFrame{
+                .fingerprint = *fingerprint,
+                .png         = probePng(),
+            };
+        }
+
+        // The closure this model's two template locators name, cropped from the
+        // capture above.
         [[nodiscard]]
         auto runtimeArtifact() -> ProjectRuntimeArtifact
         {
             auto assets = std::vector<ArtifactFile>{};
             assets.emplace_back(ArtifactFile{
                 .path  = "assets/expedition-banner.png",
-                .bytes = templatePng(k_anchorGray),
+                .bytes = patchPng(k_bannerGray),
             });
             assets.emplace_back(ArtifactFile{
                 .path  = "assets/expedition-march.png",
-                .bytes = templatePng(k_actionGray),
+                .bytes = patchPng(k_marchGray),
             });
             return ProjectRuntimeArtifact{
                 .model  = std::string{k_runtimeModel},
@@ -898,6 +1034,7 @@ identity = { all = ["expedition.camp.banner"], any = [], none = [] }
                 .pluginBytes            = std::string{identity.pluginSource},
                 .artifactBlobs          = std::move(artifactBlobs),
                 .runtimeArtifact        = runtimeArtifact(),
+                .probeFrame             = probeFrame(),
                 .observedReduceInput    = std::move(observedReduce),
                 .observedDeriveInput    = std::move(observedDerive),
                 .vocabulary             = vocabularyOf(identity),

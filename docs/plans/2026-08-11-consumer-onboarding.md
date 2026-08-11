@@ -241,9 +241,13 @@ it is undocumented, and it means **the suite pass a consumer earns is weaker
 than the yardstick implies.** Ruling needed: Q6.
 
 > **Closed 2026-08-11: the seam now exists.** `ProjectUnderTest` carries a
-> `ProjectRuntimeArtifact` — RuntimeModel bytes and the asset closure — and
-> `prepareStore` installs those. `observationRuntimeModel()` and
-> `observationAssets()` are gone: the suite has no model to substitute. Both
+> `ProjectRuntimeArtifact` — RuntimeModel bytes and the asset closure — and a
+> `ProjectProbeFrame` — the `ProjectFingerprint` the model declares and one PNG
+> capture at that extent — and `prepareStore` installs and resolves those.
+> `observationRuntimeModel()` and `observationAssets()` are gone, and so are
+> `observationFingerprint()`, `resolvedFramePixels()`, `unresolvedFramePixels()`
+> and `templatePng()`: the suite has neither a model nor a world to substitute.
+> Both
 > in-tree fixtures now ship one of their own, and the measurement above was
 > right about both — arcana's `expedition.surface`/`expedition.target`/
 > `expedition.press` and umbraflow's `fixture.surface`/`fixture.target` had
@@ -1102,8 +1106,19 @@ today a consumer can believe its UI vocabulary was exercised when it was not.
 > model answers a different question than the one it is asked. The cost the
 > recommendation feared is smaller than it looks: what a consumer owes is a
 > contract-scale RuntimeArtifact its own annotation pipeline can publish, not
-> its production page model, and the suite documents the one probe frame such a
-> model must resolve against. See the amendment closing §4.2.
+> its production page model. See the amendment closing §4.2.
+>
+> **Corrected 2026-08-11: the suite documents no probe frame, because it has
+> none.** The sentence above said the suite states the one frame a supplied
+> model must resolve against, which was true of the synthetic 3x1 Gray8 capture
+> at 96 DPI it then held. That capture was the second half of the same defect:
+> a real model declares its own base resolution and DPI, EngineSession refuses
+> a capture whose extent is not the project fingerprint's, and C++ parses no
+> RuntimeModel, so the suite could not derive the fingerprint either. A
+> consumer with a 1600x900 model at 144 DPI installed and resolved through this
+> framework could not run one observation case. `ProjectUnderTest` now carries
+> a `ProjectProbeFrame` — the fingerprint the model declares and one PNG
+> capture at that extent — and the suite holds neither.
 
 **Q7 — do the five plan-shape tools belong in a shipping tool catalog?** §5.4.
 They are inside `tool_catalog_hash`, therefore inside

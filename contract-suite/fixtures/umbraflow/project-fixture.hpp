@@ -20,6 +20,9 @@
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
+#include <domain/space.hpp>
+
+#include <image/png.hpp>
 
 #include <doctest/doctest.h>
 
@@ -28,6 +31,7 @@
 #include <atomic>
 #include <charconv>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -38,6 +42,7 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace uf::operator_runtime::test_support
 {
@@ -1043,19 +1048,47 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
 )toml";
     }
 
+    // The two grays this project's probe frame carries. Its template assets are
+    // authored from them, and they are distinct so that a frame carrying one and
+    // not the other resolves to a different state.
+    inline constexpr auto k_anchorGray = uint8{2};
+    inline constexpr auto k_actionGray = uint8{5};
+
+    // One pixel of one gray. The three-pixel frame below leaves no room for a
+    // larger crop, which is the whole point of this world: it is the smallest
+    // one a resolver can reach a resolved state in, so nothing a case observes
+    // is incidental to the picture.
+    [[nodiscard]]
+    inline auto templatePng(uint8 gray) -> std::vector<std::byte>
+    {
+        auto encoded = image::encodeRgbaPng(
+            "umbraflow-fixture-template.png",
+            1,
+            1,
+            std::vector<std::byte>{
+                static_cast<std::byte>(gray),
+                static_cast<std::byte>(gray),
+                static_cast<std::byte>(gray),
+                std::byte{255},
+            }
+        );
+        REQUIRE(encoded.has_value());
+        return *std::move(encoded);
+    }
+
     // The asset closure the model's two template locators name, authored
-    // against the grays the suite's probe frame carries.
+    // against the grays this project's probe frame carries.
     [[nodiscard]]
     inline auto umbraflowRuntimeAssets() -> std::vector<contract::ArtifactFile>
     {
         return {
             contract::ArtifactFile{
                 .path  = "assets/fixture-anchor.png",
-                .bytes = contract::templatePng(contract::k_anchorGray),
+                .bytes = templatePng(k_anchorGray),
             },
             contract::ArtifactFile{
                 .path  = "assets/fixture-mark.png",
-                .bytes = contract::templatePng(contract::k_actionGray),
+                .bytes = templatePng(k_actionGray),
             },
         };
     }
@@ -1066,6 +1099,79 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         return contract::ProjectRuntimeArtifact{
             .model  = umbraflowRuntimeModel(),
             .assets = umbraflowRuntimeAssets(),
+        };
+    }
+
+    [[nodiscard]]
+    inline auto umbraflowFingerprint() -> ProjectFingerprint
+    {
+        auto result = ProjectFingerprint::create(3, 1, 96, 96);
+        REQUIRE(result.has_value());
+        return *result;
+    }
+
+    // One row of grays, encoded the way a real capture arrives.
+    [[nodiscard]]
+    inline auto umbraflowProbeRow(std::span<uint8 const> grays)
+        -> std::vector<std::byte>
+    {
+        auto pixels = std::vector<std::byte>{};
+        pixels.reserve(grays.size() * 4U);
+        for (auto const gray : grays)
+        {
+            pixels.emplace_back(static_cast<std::byte>(gray));
+            pixels.emplace_back(static_cast<std::byte>(gray));
+            pixels.emplace_back(static_cast<std::byte>(gray));
+            pixels.emplace_back(std::byte{255});
+        }
+        auto encoded = image::encodeRgbaPng(
+            "umbraflow-fixture-probe.png",
+            static_cast<uint32>(grays.size()),
+            1,
+            pixels
+        );
+        REQUIRE(encoded.has_value());
+        return *std::move(encoded);
+    }
+
+    // A three-pixel capture of this project's world. `left` is the pixel the
+    // scene anchor matches and `middle` the one the action's proof locator
+    // matches.
+    [[nodiscard]]
+    inline auto umbraflowProbePng(uint8 left, uint8 middle) -> std::vector<std::byte>
+    {
+        auto const grays = std::array{left, middle, uint8{0}};
+        return umbraflowProbeRow(grays);
+    }
+
+    // The same world captured one pixel wider than the model declares, which is
+    // the only difference from umbraflowProbeFrame(): both marks are still at
+    // the coordinates the model searches.
+    [[nodiscard]]
+    inline auto umbraflowWiderProbePng() -> std::vector<std::byte>
+    {
+        auto const grays = std::array{k_anchorGray, k_actionGray, uint8{0}, uint8{0}};
+        return umbraflowProbeRow(grays);
+    }
+
+    // The frame this project's model resolves its one scene on.
+    [[nodiscard]]
+    inline auto umbraflowProbeFrame() -> contract::ProjectProbeFrame
+    {
+        return contract::ProjectProbeFrame{
+            .fingerprint = umbraflowFingerprint(),
+            .png         = umbraflowProbePng(k_anchorGray, k_actionGray),
+        };
+    }
+
+    // The same world with the scene anchor absent, so the resolver reports an
+    // unknown state and the observation's state_resolution_hash differs.
+    [[nodiscard]]
+    inline auto umbraflowUnresolvedProbeFrame() -> contract::ProjectProbeFrame
+    {
+        return contract::ProjectProbeFrame{
+            .fingerprint = umbraflowFingerprint(),
+            .png         = umbraflowProbePng(0, k_actionGray),
         };
     }
 
@@ -1322,7 +1428,8 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
             prepared.lease,
             prepared.installedGeneration,
             prepared.runtimeArtifactRootHash,
-            k_fixtureUiAction
+            k_fixtureUiAction,
+            umbraflowProbeFrame()
         );
     }
 
@@ -1343,7 +1450,7 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
     [[nodiscard]]
     inline auto secondObservationHost(
         PreparedStore& prepared,
-        std::vector<std::byte> framePixels,
+        contract::ProjectProbeFrame const& probe,
         FrameId frameId
     ) -> contract::ObservationHost
     {
@@ -1356,7 +1463,7 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         REQUIRE(installed.has_value());
         return contract::activateObservationHost(
             *std::move(installed),
-            std::move(framePixels),
+            probe,
             frameId
         );
     }
@@ -1441,13 +1548,15 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         REQUIRE(lease.has_value());
         auto observation = contract::activateObservationHost(
             *std::move(installed),
-            contract::resolvedFramePixels(),
+            umbraflowProbeFrame(),
             FrameId{101}
         );
+        auto const reading = contract::observeOnce(observation);
+        contract::requireResolvedSurface(reading, k_fixtureUiAction.surface);
         auto snapshot = store.createSnapshot(
             *lease,
             projectPlugin,
-            contract::observeOnce(observation)
+            reading
         );
         REQUIRE(snapshot.has_value());
         // "operator" is the exact operator protocol schema this fixture's

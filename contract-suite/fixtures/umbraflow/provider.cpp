@@ -86,6 +86,7 @@ namespace uf::operator_runtime::contract
             .pluginBytes            = pluginBytes,
             .artifactBlobs          = {},
             .runtimeArtifact        = test_support::umbraflowRuntimeArtifact(),
+            .probeFrame             = test_support::umbraflowProbeFrame(),
             .observedReduceInput    = std::move(fixture.lastReduceInput),
             .observedDeriveInput    = std::move(fixture.lastDeriveInput),
             .vocabulary             = vocabulary(),

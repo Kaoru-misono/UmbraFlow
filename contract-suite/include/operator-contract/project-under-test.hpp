@@ -10,6 +10,8 @@
 
 #include <core/types/integer.hpp>
 
+#include <domain/space.hpp>
+
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -44,14 +46,42 @@ namespace uf::operator_runtime::contract
     // named by the session manifest's runtime_model_artifact_root_hash, is
     // installed by the Operator and is read by the Host, never by the plugin.
     //
-    // The model must resolve against the frame the suite captures, which is
-    // fixed and documented beside it: `resolvedFramePixels()` over
-    // `observationFingerprint()` in observation-fixture.hpp. A model that frame
-    // satisfies no surface of installs and then resolves to nothing.
+    // The model is resolved against the ProjectProbeFrame below, which the same
+    // project supplies: the suite captures no world of its own.
     struct ProjectRuntimeArtifact final
     {
         std::string               model{};
         std::vector<ArtifactFile> assets{};
+    };
+
+    // The world this project's RuntimeModel is resolved against.
+    //
+    // Both members are the project's because both are readable only from the
+    // model, and the model is a Luau value: C++ parses no RuntimeModel field, so
+    // the suite can derive neither the geometry the model was authored at nor a
+    // frame that satisfies it. EngineSession refuses a capture whose extent
+    // disagrees with the fingerprint it was given, which is why a suite that
+    // substituted either one could only run against a model of its own.
+    //
+    // One frame, not a set: the suite drives exactly one UI action -- the
+    // `uiAction` its vocabulary names -- against one surface, so a second frame
+    // would be a parameter no case reads. A project whose model covers more
+    // surfaces still supplies the one frame that resolves this action's.
+    //
+    // Only the UnderTest registration's frame is ever observed. The Foreign one
+    // exists to mint documents that must not be accepted elsewhere, and no case
+    // opens a Host on it, so a project may hand both roles the same frame.
+    struct ProjectProbeFrame final
+    {
+        // base_resolution and base_dpi exactly as the model states them.
+        ProjectFingerprint fingerprint;
+
+        // One capture of this project's target, PNG-encoded, whose extent is
+        // that fingerprint's. The suite decodes it, resolves the installed model
+        // against it, and requires the resolution to name `uiAction.surface`;
+        // the action's own binding must resolve on it too, or no dispatch the
+        // suite reserves can be delivered.
+        std::vector<std::byte> png{};
     };
 
     // Every project document the suite is allowed to use. The suite invents no
@@ -147,6 +177,12 @@ namespace uf::operator_runtime::contract
         // every observation the suite composes a snapshot from was resolved
         // through this project's model.
         ProjectRuntimeArtifact runtimeArtifact;
+
+        // The frame that model is resolved against, and the geometry it was
+        // authored at. It carries no in-class initializer and cannot: a
+        // ProjectFingerprint has no default state, so a project that omits it
+        // fails to compile rather than observing a world nobody declared.
+        ProjectProbeFrame probeFrame;
 
         // Where the deployment's document validator records the exact bytes it
         // last saw as a Reduce input. Shared and mutable because the validator

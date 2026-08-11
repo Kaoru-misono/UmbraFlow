@@ -308,7 +308,7 @@ namespace uf::operator_runtime
         REQUIRE(otherInstalled.has_value());
         auto otherHost = contract::activateObservationHost(
             *std::move(otherInstalled),
-            contract::resolvedFramePixels(),
+            test_support::umbraflowProbeFrame(),
             FrameId{909}
         );
         auto const otherReading = contract::observeOnce(otherHost);
@@ -385,7 +385,7 @@ namespace uf::operator_runtime
         // move even though nothing the Operator owns did.
         auto unresolvedHost = test_support::secondObservationHost(
             prepared,
-            contract::unresolvedFramePixels(),
+            test_support::umbraflowUnresolvedProbeFrame(),
             FrameId{707}
         );
         auto const unresolved = contract::observeOnce(unresolvedHost);
@@ -458,6 +458,69 @@ namespace uf::operator_runtime
             command(*afterCommit, "request-fresh"),
             toolInvocation(prepared.project, "observe-1")
         ).has_value());
+    }
+
+    // What a state resolution is resolved FROM. The suite carries no frame and
+    // no geometry of its own: a project supplies both in one ProjectProbeFrame,
+    // and the two halves of it have to agree or the resolver is comparing the
+    // model's rectangles against pixels from somewhere else.
+    //
+    // The consequence is deliberately not an error the caller can read. The
+    // engine's refusal reaches observe.luau as unknown evidence, so a project
+    // that supplied a mismatched pair sees a state that resolved nothing rather
+    // than a message naming the mismatch, which is why the suite asserts the
+    // resolution rather than only that an observation happened.
+    TEST_CASE("an observation is resolved from the frame and geometry one project supplied")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+
+        // The positive control. Without it the two refusals below would prove
+        // only that something in this fixture stopped working.
+        contract::requireResolvedSurface(
+            test_support::observeAgain(prepared),
+            test_support::k_fixtureUiAction.surface
+        );
+
+        auto const declared = test_support::umbraflowProbeFrame();
+
+        SUBCASE("a capture whose extent is not the declared resolution resolves nothing")
+        {
+            // One pixel wider than the model's base_resolution, and otherwise
+            // the same world: the anchor and the mark are still where the model
+            // looks for them.
+            auto wider = declared;
+            wider.png  = test_support::umbraflowWiderProbePng();
+
+            auto host = test_support::secondObservationHost(
+                prepared,
+                wider,
+                FrameId{811}
+            );
+            CHECK(contract::observeOnce(host).canonicalJcs().contains(
+                R"("kind":"unknown_state")"
+            ));
+        }
+
+        SUBCASE("a fingerprint that is not the capture's extent resolves nothing")
+        {
+            // The mirror image: the capture is the one the model was authored
+            // on, and the geometry the project declared for it is not.
+            auto const fingerprint = ProjectFingerprint::create(4, 1, 96, 96);
+            REQUIRE(fingerprint.has_value());
+
+            auto misdeclared        = declared;
+            misdeclared.fingerprint = *fingerprint;
+
+            auto host = test_support::secondObservationHost(
+                prepared,
+                misdeclared,
+                FrameId{812}
+            );
+            CHECK(contract::observeOnce(host).canonicalJcs().contains(
+                R"("kind":"unknown_state")"
+            ));
+        }
     }
 
     TEST_CASE("contract-state-s03")
