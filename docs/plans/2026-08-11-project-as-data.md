@@ -1,8 +1,13 @@
 # A project is a directory of data, not a C++ library
 
-Status: specification, ruled. All ten questions are answered in §7.0, and §2, §4
-and §5 below are written as those rulings left them. Step 1 of §5 has landed as
-`modules/json` (`a0ae304`); nothing else here is implemented.
+Status: specification, ruled, and being built. All ten questions are answered in
+§7.0, and §2, §4 and §5 below are written as those rulings left them. Steps 1 to
+3 of §5 have landed — `modules/json` (`a0ae304`), `modules/deployment` with the
+envelope readers and the deployment's validators (`8277fe3`, `b6c7e72`,
+`b9ef6e7`) and the model's published geometry (`eb238cb`), and the directory
+loader with the framework's own schemas for the format. §2 has been amended in
+place wherever building it decided something §2 had left open; each such place
+says so.
 Date: 2026-08-11
 Scope: `umbraflow-cpp`, plus a statement of what the correction costs
 `E:\umbraflow-projects\uf-chaos`. Both trees were read only; no file outside
@@ -299,9 +304,16 @@ registration stated as intent.
       "project_state_schema": "schema/dream/project-state-v1.schema.json",
       "project_observation_schema": "schema/dream/project-observation-v1.schema.json",
       "tool_precondition_schema": "schema/dream/tool-precondition-v1.schema.json",
-      "tool_catalog": "schema/dream/tool-catalog-v1.json",
-      "journal_event_schema_manifest": "schema/dream/journal-manifest-v1.json",
-      "reconcile_manifest": "schema/dream/reconcile-manifest-v1.json",
+      "reconcile_schema": "schema/dream/reconcile-v1.schema.json",
+      "tool_catalog": "schema/dream/umbraflow-tool-catalog-v1.json",
+      "journal_event_schema_manifest": "schema/dream/umbraflow-journal-manifest-v1.json",
+      "reconcile_manifest": "schema/dream/umbraflow-reconcile-manifest-v1.json",
+      "journal_payload_schemas": [
+        "schema/journal/project.baseline_created-v1.schema.json"
+      ],
+      "effect_payload_schemas": [
+        "schema/dream/effect-run-v1.schema.json"
+      ],
       "artifact_blobs": [
         { "name": "page-model", "path": "blob/dream-page-model.blob" }
       ]
@@ -310,8 +322,9 @@ registration stated as intent.
 }
 ```
 
-Every member is required and `additionalProperties` is false. `deployments` has
-`minItems: 1` and unique `name`s; `primary_deployment` must be one of them.
+Every member is required and `additionalProperties` is false, with the single
+`$comment` exception §2.7 R2 states. `deployments` has `minItems: 1` and unique
+`name`s; `primary_deployment` must be one of them.
 
 **There is no authored registration document, and that is Q3's doing.** The
 seven schema and document members plus `plugin` correspond one-for-one to the
@@ -322,6 +335,36 @@ names, which is the second spelling this repository forbids; so the block *is*
 the intent, and the loader derives the registration's canonical JCS from it and
 from the digests of the files it read. `plugin_id` and `baseline_event_type` are
 here because they are the two claims no file can supply.
+
+**Three members this section did not originally have, and could not do without.**
+`ProjectDeploymentSources` (`modules/deployment/source/deployment/project-deployment.hpp:73-110`)
+takes the reconcile schema, one JSON Schema per journal payload and one per
+`OP:ExpectedEffect` payload, and none of the three is reachable from the block
+this section first published: the reconcile manifest names its schema by
+`sha256` and never by path, the journal manifest does the same for each payload
+schema, and nothing names an effect payload schema at all. So the block names
+the files and the manifests name the bytes. `journal_payload_schemas` has
+`minItems: 1` and `effect_payload_schemas` may be empty, because a project that
+proposes no effect is a project with nothing to pin — but a plugin that emits
+an `OP:ExpectedEffect` naming a digest this list does not supply is refused,
+which is a real bill for uf-chaos (§4.3).
+
+**A project file's name is never load-bearing.** The block names every file by
+path, so nothing in the format reads a filename, and two files whose contents
+differ may sit beside each other under any two names. That answers the collision
+step 5 hits: `contract/CMakeLists.txt` embeds the old-format catalogs and
+journal manifests by exact path, so the reshaped documents cannot share those
+paths while `contract/` still builds. The `umbraflow-` prefix uf-chaos used is
+ratified as the step-5 spelling, and it is an expedient rather than a rule:
+after step 7 nothing embeds anything and the names are the author's again.
+
+**Artifact roots.** `name` is the registration's own `root_name`
+(`^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$`), `path` is an ordinary
+project-relative path, and there is no fixed `blob/` directory. The author
+writes them in any order and the loader sorts them into the JCS order
+`validateClaims` requires (`manifest.cpp:143-163`) and refuses a repeated name.
+Sorting rather than requiring a sorted list is the same decision as deriving the
+digests: an order is not something a project has an opinion about.
 
 The document the Operator verifies is therefore derived rather than opened, and
 its shape is the framework's: `schema/umbraflow-project-registration-v1.schema.json`
@@ -365,10 +408,20 @@ cases reach the foreign one:
 `confirmedInput`, `suite-project-authority.cpp:134-137` its `mutatingTool` and
 `toolArguments`, and `:147-150` its `confirmedEntry` and `provenance`.
 
-**The vocabulary document.** The 16 fields of `ProjectVocabulary`
-(`provider.hpp:90-150`) become 17 JSON members, snake_cased to match the
+`under_test.deployment` and `primary_deployment` may name different deployments
+and nothing checks that they agree, because they answer different questions:
+one is which deployment production runs by default and lives in the document
+production reads, the other is which registration a conformance run drives and
+lives in the document production never opens. Requiring them to agree would put
+a conformance fact into the production manifest. What is checked is that each
+names a declared deployment and that `under_test` and `foreign` do not name the
+same one — which is Q7's refusal, stated where both halves are written.
+
+**The vocabulary document.** The 17 fields of `ProjectVocabulary`
+(`provider.hpp:87-150`) become 17 JSON members, snake_cased to match the
 spelling the deployment block already uses (`plugin_id`,
-`baseline_event_type`):
+`baseline_event_type`). The mapping is one-for-one; an earlier count of 16
+fields here was wrong, and the thirteen rows below name all seventeen:
 
 | Member | Type | What it means |
 |---|---|---|
@@ -420,53 +473,64 @@ schema changes no hash anywhere, which is exactly the session refusal §0 just
 relocated the falsifiability into. They are also the last digests in the design
 a human types, so R5 is the last rule left that can go red on a mistyped one.
 
-**Tool catalog** — `schema/umbraflow-tool-catalog-v1.schema.json`. uf-chaos's
-existing document is already the right shape: `tools[]` of
-`{name, version, mutability, surface, argument_schema}`, where `argument_schema`
-is a `$defs` name resolved inside the deployment's tool-precondition schema. Two
-members are dropped: `plugin_id` restates the registration, and
-`tool_precondition_schema` restates the deployment block, and this repository
-forbids two spellings of one fact. Both `mutability` and `surface` are
-**required** on every row — `ToolDescriptor` defaults them to the restricted
-value in C++ (`tool-invocation.hpp:58`, `:63`), and "absent means the safe
-default" is still "absent means".
+All three landed at `8277fe3`, as schema documents inside
+`modules/deployment/source/deployment/project-deployment.cpp`, and what landed
+differs from what this section first proposed. The landed shapes are the ones
+below, because they are the ones that decide.
 
-**Journal event schema manifest** — `schema/umbraflow-journal-manifest-v1.schema.json`.
-uf-chaos's is already right: `payload_schemas[]` of
-`{namespaced_event_type, path, sha256}`, and the provider already verifies each
-`sha256` against the file it names (`contract/provider.cpp:1005`). `plugin_id`
-is dropped for the reason above.
+**Tool catalog** — `"schema": "umbraflow-tool-catalog/v1"`, an object of
+`{$comment?, plugin_id, schema, tool_precondition_sha256, tools[]}` where each
+row is `{argument_schema, mutability, name, surface, version}` and
+`argument_schema` is a `$defs` name resolved inside the deployment's
+tool-precondition schema. `mutability` is `mutating` or `read_only` and
+`surface` is `semantic` or `privileged`, both lowercase, both **required** on
+every row — `ToolDescriptor` defaults them to the restricted value in C++
+(`tool-invocation.hpp:58`, `:63`), and "absent means the safe default" is still
+"absent means".
 
-**Reconcile payload schema manifest** — `schema/umbraflow-reconcile-manifest-v1.schema.json`.
-This one is new, because uf-chaos has no such document: it pins the reconcile
-*schema* directly and keeps everything else in C++. The manifest carries the
-schema and the four facts the C++ holds:
+Q6 said to drop `plugin_id` and `tool_precondition_schema` as restatements. The
+first half is overruled and the second is answered differently. `plugin_id`
+stays and is checked against the deployment's: a catalog that answered for
+whichever registration presented it would be a catalog no registration owns,
+which is a property of the document rather than a copy of the block. And the
+path `tool_precondition_schema` is replaced by the digest
+`tool_precondition_sha256`, which is not a restatement of anything — it is the
+only route by which the precondition schema's bytes reach `tool_catalog_hash`.
 
-```json
-{
-  "schema": "umbraflow-reconcile-manifest/v1",
-  "payload_schema": { "path": "schema/dream/reconcile-v1.schema.json", "sha256": "…" },
-  "input_definition": "ReconcileRequest",
-  "output_definition": "ReconcileVerdict",
-  "disposition_member": "reconciliation",
-  "disposition_map": {
-    "Continue": "Continue", "Confirmed": "Confirmed", "Rejected": "Rejected",
-    "Ambiguous": "Ambiguous", "Diverged": "Diverged"
-  }
-}
-```
+**Journal event schema manifest** —
+`"schema": "umbraflow-journal-event-schema-manifest/v1"`, named for the
+registration member that pins it. It carries `{$comment?, payload_schemas[],
+plugin_id, schema}` and each entry is `{namespaced_event_type, sha256}` —
+**and no `path`**. Which file carries which payload schema is the deployment
+block's `journal_payload_schemas`; which schema answers for which event type is
+this document's, decided by digest. The two never appear side by side, which is
+what makes the question "what is a manifest `path` relative to" have no answer
+rather than a badly chosen one.
 
-This replaces four hardcoded things: `"ReconcileRequest"`
-(`contract/provider.cpp:1077-1080`), `"ReconcileVerdict"` (`:1096-1099` and
-`:1200-1203`), the positional read `document.object().front().second.string()`
-(`:1204`), and the five literal words (`:1205-1224`). `disposition_member` is a
-**named** member rather than the positional read, deliberately: a positional read
-means a later schema edit that adds a member silently changes which value is
-read. `disposition_map` need not be exhaustive over the five — a project may
-never produce `Diverged` — but every value in it must be one of the five, and a
-document whose value is not a key is refused, as `:1225-1228` refuses it today.
-uf-chaos's map happens to be the identity, and it is still written out, because
-"absent means identity" is a default.
+**Reconcile payload schema manifest** — `"schema": "umbraflow-reconcile-manifest/v1"`,
+carrying `{$comment?, dispositions[], plugin_id, reconcile_schema_sha256,
+request_definition, schema, verdict_definition, verdict_member}`. It replaces
+four hardcoded things: `"ReconcileRequest"` (`contract/provider.cpp:1077-1080`),
+`"ReconcileVerdict"` (`:1096-1099` and `:1200-1203`), the positional read
+`document.object().front().second.string()` (`:1204`), and the five literal
+words (`:1205-1224`). `verdict_member` is a **named** member rather than the
+positional read, deliberately: a positional read means a later schema edit that
+adds a member silently changes which value is read. `dispositions` is a list of
+`{disposition, value}` rather than a map, so that the framework's five words are
+the closed vocabulary on one side and the project's words are free text on the
+other; it need not be exhaustive over the five — a project may never produce
+`diverged` — and a verdict whose value is in no entry is refused. A project
+whose words happen to be the framework's still writes them out, because "absent
+means identity" is a default.
+
+**The four schema identities.** A deployment's project-state, project-observation,
+tool-precondition and reconcile documents must each declare the `$id` the
+framework's own envelope schemas reference them by —
+`https://umbraflow.dev/schema/project/{state,observation,tool-precondition,reconcile}`
+(`project-deployment.hpp:57-64`). Two projects may declare the same four, because
+each project's schemas are compiled into a closed set of their own. A document
+declaring another identity is refused when the deployment is created rather than
+skipped when a document is judged.
 
 The one remaining hardcoded name, `ReconcileRequest` at the *input* seam,
 becomes `input_definition`; nothing else in the document validator's dispatch is
@@ -515,18 +579,41 @@ Stating that is not tolerance of two spellings. It is one rule with one reason:
 a document is JCS exactly when something hashes it and compares. That is true of
 exactly one document, and no human writes it.
 
+**Member order is unspecified everywhere a human writes, and that follows from
+the same rule.** Ordering matters only where bytes are hashed and compared, so
+it matters in the registration and nowhere else, and the loader produces the
+registration's order itself by handing a value to `json::canonicalBytes`. The
+one sequence an author could get wrong — `project_artifact_roots`, which
+`validateClaims` requires in JCS order — is sorted by the loader out of
+`artifact_blobs` (§2.2). Nothing else in a project directory has an order any
+reader depends on.
+
 ### 2.6 The format is schema-validated, by the framework's own schemas
 
-Yes, and by the same evaluator that validates project payloads. Five new
-framework schemas live beside the eight already in `schema/`:
-`umbraflow-project-v1`, `umbraflow-conformance-v1`, `umbraflow-tool-catalog-v1`,
-`umbraflow-journal-manifest-v1`, `umbraflow-reconcile-manifest-v1`.
+Yes, and by the same evaluator that validates project payloads. There are five
+of them: `umbraflow-project/v1` and `umbraflow-conformance/v1` for the two root
+documents, and the three §2.4 names for the deployment's own documents.
 
-A sixth framework schema starts binding without being written, and it is already
-in the tree: `schema/umbraflow-project-registration-v1.schema.json` spells
-exactly the members of `ProjectRegistrationClaims`. Because Q3 made the
-registration a document the loader derives, its shape is the framework's, and
-that file is what `manifest_schema_hash` names (`manifest.hpp:26`, `:102`).
+**They live in `modules/deployment` as exact bytes, not as files in `schema/`,
+and that is a correction of this section rather than a shortcut.** Three of the
+five already landed there at `8277fe3`, beside the seven operator protocol
+schemas the module carries; writing them out again under `schema/` would produce
+a second copy that no code reads and that nothing holds to the enforcing one.
+`schema/*.json` is the published spec-bundle surface — globbed by
+`tests/test-runtime-surface.py:501`, counted by `tests/json/test-schema.cpp:546`
+— and it is not an input to anything at run time. A framework schema that
+judges a project belongs where the judging happens.
+
+A sixth framework schema starts binding without being written, and it is the one
+exception to the paragraph above because it was already published:
+`schema/umbraflow-project-registration-v1.schema.json` spells exactly the
+members of `ProjectRegistrationClaims`. Because Q3 made the registration a
+document the loader derives, its shape is the framework's, and that file is what
+`manifest_schema_hash` names (`manifest.hpp:26`, `:102`). The loader carries its
+exact bytes, and `tests/deployment/test-project-directory.cpp` reads the file and
+requires the two to be byte-identical — so `manifest_schema_hash` is the digest
+of the published document, and a reformatting of that file is red rather than a
+silently moved identity for every project in existence.
 uf-chaos's `schema/registration-v1.schema.json` — the *project's* schema for the
 *project's* registration, whose own `description` says the Operator never reads
 it — has nothing left to describe and dies with `contract/`. The
@@ -553,6 +640,21 @@ R8 keeps outside it is Q2's bill, and R8 says why:
 - **R2.** Every member of every framework-owned document is `required`, and every
   object sets `additionalProperties: false`. A missing member and an unknown
   member are both refusals. No member has a default.
+
+  **With one exception, which the rule as first written silently forbade: every
+  object also admits an optional `$comment` of type string, and no reader reads
+  it.** A closed object rule with no exception leaves a project no place to say
+  why its own document is shaped as it is, and all four documents uf-chaos
+  already carries have such a comment — one of them recording why `chaos.click`
+  is absent from the catalog, which is the entire reason `absent_tool` has a
+  value. A repository whose rule is that a comment states a constraint should
+  not hand its consumers a format in which no constraint can be stated. It is
+  `$comment` rather than a member of the framework's own choosing because JSON
+  Schema already spells it that way and the evaluator already accepts it as an
+  inert keyword, so a project author writes one word in two places rather than
+  two words. Nothing derives meaning from it and nothing may: it is bytes inside
+  a document whose digest a registration pins, which is exactly as much
+  authority as a comment should have.
 - **R3.** Every path member is a manifest spelling in `ConfinedRoot`'s sense
   (`confined-file.hpp:52-55`): forward slashes, no empty, `.` or `..` component.
   Checked before anything is opened.
@@ -561,14 +663,15 @@ R8 keeps outside it is Q2's bill, and R8 says why:
   the directory form of `REQUIRE(found != k_schemaFiles.end())`
   (`contract/provider.cpp:311`), and it is only equivalent if the loader errors
   on a missing file rather than skipping it.
-- **R5.** Every stated `sha256` must equal the digest of the bytes it names.
-  After Q3 that is two documents rather than three: the journal manifest's
-  per-schema digests and the reconcile manifest's `payload_schema.sha256`
+- **R5.** Every stated `sha256` must equal the digest of the bytes it names:
+  the journal manifest's per-schema digests, the reconcile manifest's
+  `reconcile_schema_sha256`, and the catalog's `tool_precondition_sha256`
   (§2.4). The registration states none, so there is nothing about it to check
   here — its digests are the loader's own arithmetic. Disagreement → refusal
-  printing the stated digest, the computed digest and the path. This is the only
+  printing the stated digest and what the deployment carries. This is the only
   rule of the eight that a mistyped digest can make go red, which is the whole
-  of what R5 is now for.
+  of what R5 is now for. None of the three digests sits beside a path, so Q3's
+  reason for removing hand-typed digests does not reach them; see §7.0.
 - **R6.** Every schema must compile under the evaluator's closed keyword set.
   A keyword the evaluator does not implement is a refusal, not a skip
   (`json-schema.hpp:9-16`, enforced today by
@@ -876,11 +979,13 @@ repository ships.
   callers rather than its purpose — which is the reason it is a module rather
   than something under `conformance/`.
 
-- **Five framework schemas** in `schema/`: `umbraflow-project-v1`,
-  `umbraflow-conformance-v1`, `umbraflow-tool-catalog-v1`,
-  `umbraflow-journal-manifest-v1`, `umbraflow-reconcile-manifest-v1`. A sixth,
-  `umbraflow-project-registration-v1`, is not new — it is already in `schema/`
-  and starts binding rather than starts existing (§2.6).
+- **Five framework schemas**, in `modules/deployment` rather than in `schema/`
+  and all five landed: `umbraflow-tool-catalog/v1`,
+  `umbraflow-journal-event-schema-manifest/v1` and
+  `umbraflow-reconcile-manifest/v1` at `8277fe3`, `umbraflow-project/v1` and
+  `umbraflow-conformance/v1` with the loader. §2.6 says why they are not files.
+  A sixth, `schema/umbraflow-project-registration-v1.schema.json`, is not new —
+  it is already published and starts binding rather than starts existing.
 - **`entry/conformance/main.cpp`** and the `umbra-flow-conformance` target.
 - **`external/doctest`** and the `uf::doctest` INTERFACE target.
 - **`cmake/conformance-run.cmake`**.
@@ -891,7 +996,17 @@ repository ships.
   `plugin/*.luau` files carrying the bytes that are today C++ raw literals, two
   artifact-blob files, and two reconcile manifests. No registration document:
   Q3 put the intent in the deployment block and the digests in the loader
-  (§2.2). Everything else it needs it already has.
+  (§2.2). All of that was written at uf-chaos `af3b270`.
+
+  **And one document nobody had counted: an effect payload schema per
+  deployment.** Both plugins emit an `OP:ExpectedEffect` naming
+  `payload_schema_hash` `00…c1` (`plugin/dream.luau:8`), a placeholder no file
+  in either tree provides, and no member of `ProjectRegistrationClaims` pins one
+  — so the digest inside the effect is the only pin, and an effect naming bytes
+  the deployment does not carry is refused (`project-deployment.hpp:104-109`).
+  Until each plugin names the digest of a real schema listed in its block's
+  `effect_payload_schemas`, every Plan output uf-chaos produces is refused. It
+  is uf-chaos's to write and this document's to have said so.
 
 ## 5. Migration order
 
@@ -919,12 +1034,16 @@ the `DeclaredRuntimeUi` (`modules/task/source/task/ffi/uf-tables.cpp:955-1002`,
 than with the loader because it belongs to `task`, and it must land before step 6
 or the loader has no fingerprint to give the suite. Unit tests only.
 
-**3. Land the five framework schemas and the directory loader.** The loader
-returns `Result<LoadedProject>`, derives each deployment's registration from its
-block and the digests of the files it read, and constructs all five authorities.
-Its tests are `tests/deployment/`, one case per rule R1–R8 except R8's second
-half, each proven red by removing its rule. Still nothing consumes it:
-`provideProject` is untouched and the suite runs exactly as before.
+**3. Land the five framework schemas and the directory loader — done.** The
+loader is `modules/deployment/source/deployment/project-directory.hpp`:
+`loadProject(directory, expected) -> Result<LoadedProject>`, which derives each
+deployment's registration from its block and the digests of the files it read
+and constructs all five authorities. Two of the five framework schemas were new
+and three had already landed at `8277fe3` (§2.6). Its tests are
+`tests/deployment/test-project-directory.cpp`, one case per rule R1–R8 except
+R8's second half, each proven red by removing its rule, plus the registration
+chain's teeth case (§7.0 Q3). Nothing consumes it: `provideProject` is
+untouched and the suite runs exactly as before.
 
 **4. Move doctest to `external/doctest` and define `uf::doctest`.** Three
 hand-spelled paths become one. Mechanical, and independently revertible.
@@ -1142,11 +1261,42 @@ Two consequences to carry into implementation:
   another time or another source** — the ledger, or a signature. Passing the
   value just computed, on a first load, is legal and empty. The call site says
   which case it is in.
+
+  *Settled in step 3.* The loader has exactly one `verifyExact` call site, and
+  it is always the empty case: it passes the digest of the bytes it is passing
+  in, and says so. Branching there — the recorded hash when a caller had one,
+  the computed hash otherwise — would have written the same comparison twice
+  and made the empty case hard to see. So the recorded hash is compared once,
+  one line above, in the loader's own refusal, which is the only place that can
+  name both values.
 - **The one check with teeth must be proven to have them.** Against a stored
   session naming hash `H`, flip one byte of a pinned file in the project
   directory, reload, and resume: the refusal must fire and must print both
   hashes. If that does not go red, there is no real check anywhere on this
   chain, and the whole ruling is unfounded. It is a work item, not a hope.
+
+  *Done in step 3, and it goes red.* The case is
+  `tests/deployment/test-project-directory.cpp`, "a project whose bytes moved
+  under a stored session is refused". It records a `SessionManifest`'s
+  `project_registration_hash`, flips one byte of the plugin file, reloads, and
+  requires the refusal to carry both hex digests. The byte is in the plugin
+  deliberately: those bytes reach `project_registration_hash` through
+  `plugin_hash` and through nothing else, so no other rule can refuse the
+  flipped directory — and the case reloads it a third time with no commitment
+  at all and requires that load to *succeed*, which is what proves the refusal
+  came from this check rather than from a second mechanism. Removing the
+  comparison leaves the case green, measured.
+
+  One thing the work item asked for is not in the framework and is not this
+  step's to add: **no refusal in `modules/operator` prints either hash.**
+  `ProjectRegistration::verifyExact` refuses with "ProjectRegistration bytes do
+  not match the expected root hash" (`manifest.cpp:306-309`) and
+  `OperatorCoordinator::pinSession` with "SessionManifest does not bind the
+  selected ProjectRegistration" (`ledger.cpp:2815-2820`) and "Session requires
+  an existing ProjectInstance pinned to the exact registration"
+  (`ledger.cpp:2891-2894`) — all bare literals. Both of those fire on a resume
+  against a moved project, so the chain refuses in three places; only the
+  loader's says what moved.
 
 The review's one stated uncertainty, recorded rather than resolved: during a
 first load, with no stored session, a mid-load modification is undetectable. Its
@@ -1223,13 +1373,25 @@ on disk makes the pin check capable of going red, because it does not. The
 falsifiable check is the session comparison, and it is the only one.
 
 **Q3 must stop at the registration or it removes coverage.** Its reason — a
-digest written beside the file it describes is a second spelling — applies
-verbatim to the journal manifest's per-schema `sha256` and the reconcile
-manifest's `payload_schema.sha256`. Applying it there would put the 13 journal
-payload schemas and `reconcile-v1.schema.json` outside every hash in the design,
-because those two digests are the only path by which their bytes reach
+digest written beside the file it describes is a second spelling — appeared to
+apply verbatim to the journal manifest's per-schema `sha256` and the reconcile
+manifest's schema digest. Applying it there would put the 13 journal payload
+schemas and `reconcile-v1.schema.json` outside every hash in the design, because
+those digests are the only path by which their bytes reach
 `project_registration_hash`. §2.4 states the narrow rule that keeps them and
 §2.7 R5 is what is left of the rule that checks them.
+
+*Resolved rather than excepted, 2026-08-11, while step 3 was implemented.* The
+tension was in the reading, not in the design. After `8277fe3` none of the three
+surviving digests sits beside a path: the journal manifest names an event type
+and a digest, the reconcile manifest names two definitions and a digest, the
+catalog names a digest and no schema at all, and every path in the directory
+lives in the deployment block (§2.2). So a digest and the path of the file it
+describes are never written side by side anywhere in the format, and Q3's reason
+is satisfied throughout rather than suspended for two documents. What a project
+author types is a digest of bytes they own, in the one place where that digest
+is what the document is *for* — which is why R5 remains the one rule a mistyped
+digest can redden, and why it is not an exception to anything.
 
 **Q2 makes §2.7 R8's second half unenforceable at load time.** R8 promised that
 both cross-document agreements move into the loader, "refused where they are

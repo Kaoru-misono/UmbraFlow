@@ -402,11 +402,15 @@ cpp_add_test(
     NAME test-deployment
     SOURCES
         deployment/test-project-deployment.cpp
+        deployment/test-project-directory.cpp
     LIBS
         ${PROJECT_NAME}_deployment
 )
+# tests/ itself, so that the loader's cases reach tests/json/repository-path.hpp
+# rather than becoming a seventh copy of it.
 target_include_directories(test-deployment PRIVATE
     "${PROJECT_SOURCE_DIR}/conformance/exemplars"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
 cpp_add_test(

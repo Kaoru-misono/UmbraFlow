@@ -110,17 +110,40 @@ incapable of failing, deliberately, and named as such. Exactly one check on this
 chain compares values from two different times, and the whole ruling rests on
 it.
 
-- [ ] A mutation case in CI: against a stored session naming
+- [x] A mutation case in CI: against a stored session naming
       `project_registration_hash` `H`, flip one byte of a pinned file in the
       project directory, reload and resume, and require the refusal to fire and
       to print both hashes. **If it does not go red, there is no real check
       anywhere on this chain** and the ruling is unfounded rather than merely
       untested. Lands with step 3 of §5, not after it.
-- [ ] At every `verifyExact` call site, say in a sentence whether
+
+      Landed with step 3, in `tests/deployment/test-project-directory.cpp`, "a
+      project whose bytes moved under a stored session is refused". It goes
+      red: removing the comparison in `commitmentFor` leaves the case green,
+      measured on a mirrored tree. The flipped byte is in the plugin, whose
+      bytes reach `project_registration_hash` through `plugin_hash` and nothing
+      else, and the case reloads the flipped directory a third time with no
+      commitment and requires that load to succeed — so no second mechanism can
+      stand in for the check. **The ruling is founded.**
+
+      One half is owed by a module this step did not own. No refusal in
+      `modules/operator` prints either hash — `manifest.cpp:306-309`,
+      `ledger.cpp:2815-2820` and `ledger.cpp:2891-2894` are bare literals — so
+      the loader's own refusal is the only one on the chain that says what
+      moved. Whoever owns `modules/operator` should decide whether those three
+      grow the two hashes they already hold.
+- [x] At every `verifyExact` call site, say in a sentence whether
       `expectedRootHash` came from another time or another source — the ledger,
       or a signature — or is the value just computed. The second case is legal
       and empty, and the reader must not have to work out which one they are
       looking at.
+
+      Done. The loader's call site
+      (`modules/deployment/source/deployment/project-directory.cpp`) says it is
+      the empty case and why it is always the empty case: the recorded hash is
+      compared one line earlier, where both values can be named. Every other
+      call site in the tree is a test fixture or a conformance provider that
+      passes `hashOf` of the bytes it just assembled, and those die with step 6.
 
 ## Build-system shape — owed, ordered
 

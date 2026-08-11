@@ -1,0 +1,184 @@
+#pragma once
+
+#include "project-deployment.hpp"
+
+#include <operator/journal-entry.hpp>
+#include <operator/manifest.hpp>
+#include <operator/project-plugin.hpp>
+#include <operator/reconcile-outcome.hpp>
+#include <operator/tool-invocation.hpp>
+
+#include <core/error/result.hpp>
+
+#include <domain/content-hash.hpp>
+
+#include <cstddef>
+#include <filesystem>
+#include <memory>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace uf::deployment
+{
+    // The two documents at a project directory's root, at these exact names.
+    // Everything else a project owns is named BY one of them, project-relative,
+    // and opened through task_platform::ConfinedRoot.
+    inline constexpr auto k_projectManifestFileName =
+        std::string_view{"umbraflow-project.json"};
+    inline constexpr auto k_conformanceManifestFileName =
+        std::string_view{"umbraflow-conformance.json"};
+
+    // The exact bytes of schema/umbraflow-project-registration-v1.schema.json,
+    // which is the document manifest_schema_hash names. It is carried rather
+    // than opened because a loader that read it would have to be told where the
+    // framework's own tree is; tests/deployment holds the file and these bytes
+    // to each other, so the published document and the enforcing one cannot
+    // drift apart in silence.
+    [[nodiscard]] auto projectRegistrationSchemaBytes() -> std::string_view;
+
+    // One Journal entry a project's own event schemas accept, as
+    // umbraflow-conformance.json spells it.
+    struct ProjectJournalDocument final
+    {
+        std::string eventType{};
+        std::string payload{};
+    };
+
+    // The one UI action a contract run drives, in the RuntimeModel's own
+    // vocabulary.
+    struct ProjectUiAction final
+    {
+        std::string surface{};
+        std::string uiTarget{};
+        std::string action{};
+    };
+
+    // Every project document a suite is allowed to use, read as strings and
+    // nothing else. Each payload member below carries the project's exact bytes
+    // rather than a nested object, because those bytes are handed to
+    // ProjectSchemaOwner::canonicalize, which refuses anything that is not
+    // exact RFC 8785 JCS. A nested object would make this loader choose a
+    // serialization, and the bytes would stop being the project's.
+    struct ProjectVocabulary final
+    {
+        std::string mutatingTool{};
+        std::string otherMutatingTool{};
+        std::string readOnlyTool{};
+        std::string toolArguments{};
+        std::string refusedToolArguments{};
+        std::string absentTool{};
+
+        ProjectJournalDocument baselineEntry{};
+        ProjectJournalDocument progressEntry{};
+        ProjectJournalDocument confirmedEntry{};
+        ProjectJournalDocument supersededEntry{};
+        std::string            provenance{};
+
+        std::string continueInput{};
+        std::string confirmedInput{};
+        std::string rejectedInput{};
+        std::string ambiguousInput{};
+
+        std::string approvalRequiredPlanTool{};
+
+        ProjectUiAction uiAction{};
+    };
+
+    // One role of a conformance run: which deployment plays it, and the
+    // vocabulary that drives that deployment.
+    struct ProjectConformanceRole final
+    {
+        std::string       deployment{};
+        ProjectVocabulary vocabulary{};
+    };
+
+    // One deployment, loaded: the registration this loader derived from the
+    // deployment's block and the digests of the files it read, and the five
+    // authorities built from it.
+    //
+    // There is no authored registration document anywhere in a project
+    // directory. The block states intent -- which plugin, which schemas, which
+    // artifact roots, each by path -- and every digest in the registration is
+    // this loader's own arithmetic.
+    struct LoadedDeployment final
+    {
+        std::string name{};
+
+        operator_runtime::VerifiedProjectRegistration   registration;
+        operator_runtime::ProjectSchemaOwner            schemaOwner;
+        operator_runtime::ProjectJournalSchemaOwner     journalSchemaOwner;
+        operator_runtime::ProjectToolCatalogSchemaOwner toolCatalogSchemaOwner;
+        operator_runtime::ProjectReconcileSchemaOwner   reconcileSchemaOwner;
+
+        // registerPlugin's other two arguments, as bytes.
+        std::string pluginBytes{};
+
+        std::vector<operator_runtime::ProjectPluginRegistrar::ArtifactBlob>
+            artifactBlobs{};
+    };
+
+    struct LoadedProject final
+    {
+        std::filesystem::path directory{};
+
+        // The RuntimeArtifact root the installer is handed. One per project,
+        // shared by every deployment: the model covers every surface a
+        // deployment drives, and a second root would be a second world.
+        std::filesystem::path runtimeArtifactRoot{};
+
+        // One capture of the project's target, PNG-encoded. Its extent is NOT
+        // checked here and cannot be: after the Q2 ruling the extent it must
+        // match is published by RuntimeModelBinding, which does not exist until
+        // the Host has activated the artifact. See project-as-data.md 2.7 R8.
+        std::vector<std::byte> probeFrame{};
+
+        std::string                   primaryDeployment{};
+        std::vector<LoadedDeployment> deployments{};
+
+        ProjectConformanceRole underTest{};
+        ProjectConformanceRole foreign{};
+
+        // Where each deployment's document validator records the exact bytes it
+        // last saw. They are here rather than on a project because the thing
+        // that writes them is this loader's validator, not the project's: a
+        // directory of data has nowhere to put a value it observes while a
+        // suite runs.
+        std::shared_ptr<std::string> lastReduceInput{};
+        std::shared_ptr<std::string> lastDeriveInput{};
+
+        [[nodiscard]]
+        auto findDeployment(std::string_view name) const
+            -> LoadedDeployment const*;
+    };
+
+    // What a caller already knows one of this directory's deployments must
+    // hash to, because something else recorded it earlier -- a stored
+    // SessionManifest's project_registration_hash.
+    //
+    // This is the only comparison in the design between two values produced at
+    // two different times, and therefore the only one on this chain that can
+    // fail. Every other digest a load compares is one this loader computed on
+    // both sides.
+    struct ExpectedRegistration final
+    {
+        std::string deployment{};
+        ContentHash hash;
+    };
+
+    // Reads a project directory and constructs every deployment's five
+    // authorities.
+    //
+    // `expected` is required rather than optional so that a caller states which
+    // case it is in. A resume passes what the stored session named; a first
+    // load passes an empty span, which says "this caller holds no prior
+    // commitment" rather than leaving a default to be read as one. A name that
+    // matches no deployment is a refusal, so a misspelling cannot silently
+    // disarm the check.
+    [[nodiscard]]
+    auto loadProject(
+        std::filesystem::path const& directory,
+        std::span<ExpectedRegistration const> expected
+    ) -> Result<LoadedProject>;
+}

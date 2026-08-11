@@ -20,8 +20,14 @@ unity_build = false
 # identity is a ContentHash and a refusal is an AutomationErrorKind, both of
 # which this module names directly. core, for Result and the integer aliases.
 #
+# task, because a project directory is opened through
+# task_platform::ConfinedRoot -- the type that exists so a path inspected and
+# then opened by name cannot be two different objects -- and because the
+# RuntimeArtifact root a project names is read by the installer under task's
+# own fixed file names.
+#
 # operator does not depend on this module and must not: an Operator that
 # reached into a deployment for its own validators would be the deployment.
 # The edge runs one way, from the deployment down into the Operator.
 [dependencies]
-public = core domain json operator
+public = core domain json operator task
