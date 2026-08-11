@@ -13,9 +13,7 @@ import member_init
 
 
 SOURCE_EXTENSIONS = {".c", ".cc", ".cpp", ".cxx", ".h", ".hpp"}
-# conformance is first-party C++ that ships to consumers, so it is held to
-# the same boundary rules as everything under modules, entry and tests.
-SOURCE_ROOTS = ("modules", "entry", "tests", "conformance")
+SOURCE_ROOTS = ("modules", "entry", "tests")
 # Exactly the three boundary directories the coding standard names. A vendored
 # directory is never one of them: it is dropped from the scan below, so a
 # vendored name here would advertise a boundary the gate can never reach.

@@ -1,7 +1,7 @@
 #pragma once
 
-#include <conformance/observation-fixture.hpp>
-#include <conformance/operator-protocol.hpp>
+#include "observation-fixture.hpp"
+#include "operator-protocol.hpp"
 
 #include <deployment/project-directory.hpp>
 

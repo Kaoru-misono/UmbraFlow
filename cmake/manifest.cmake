@@ -15,9 +15,9 @@ endfunction()
 # module here compiles into one.
 #
 # An unknown word is fatal rather than STATIC. The warning this replaced never
-# reached a reader, which is how `type = sources` sat in conformance/manifest.txt
-# for a week naming a kind the build had no branch for; a manifest that says one
-# thing while the build does another cannot be read out of the tree.
+# reached a reader, which is how `type = sources` sat in the conformance suite's
+# manifest for a week naming a kind the build had no branch for; a manifest that
+# says one thing while the build does another cannot be read out of the tree.
 function(cpp_manifest_normalize_module_type VALUE OUT_VAR)
     set(TYPE "STATIC")
 

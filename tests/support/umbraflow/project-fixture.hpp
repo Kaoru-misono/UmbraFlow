@@ -50,7 +50,7 @@
 
 // Publishing a RuntimeArtifact from bytes held in C++.
 //
-// This left conformance/include with step 6, because a project directory
+// This left the suite's own headers with step 6, because a project directory
 // publishes its own artifact and the suite installs those bytes rather than
 // re-serializing a manifest. What still needs it is tests/operator, which
 // builds a SECOND artifact -- ambiguousRuntimeModel below -- that no project

@@ -19,12 +19,16 @@
 include_guard(GLOBAL)
 
 # doctest is vendored at external/doctest and belongs to no single module --
-# tests/ and the shipped umbra-flow-conformance both compile against it. It is
-# defined once, here, beside uf_require_executed_assertions below, because this
-# file is already included by both tests/CMakeLists.txt and
-# cmake/conformance-run.cmake; a second CMakeLists.txt under external/doctest
-# would only add a second place to keep in sync with this one. uf::doctest is
-# the only name anything spells for it.
+# tests/ and modules/conformance both compile against it. It is defined once,
+# here, beside uf_require_executed_assertions below; a second CMakeLists.txt
+# under external/doctest would only add a second place to keep in sync with this
+# one. uf::doctest is the only name anything spells for it.
+#
+# The root CMakeLists.txt includes this file before the module autoloader runs,
+# because modules/conformance names uf::doctest in its manifest and a manifest
+# dependency has to be a target by the time the link pass resolves it. The two
+# includes below that one are no-ops through the guard and stay, so neither
+# tests/ nor a conformance run depends on that ordering.
 cmake_path(SET UF_DOCTEST_INCLUDE_DIR NORMALIZE
     "${CMAKE_CURRENT_LIST_DIR}/../external/doctest"
 )

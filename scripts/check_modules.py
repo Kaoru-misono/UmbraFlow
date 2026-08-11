@@ -13,20 +13,12 @@ from pathlib import Path
 
 DEPENDENCY_SECTION_PREFIX = "dependencies"
 
-# Every child of this directory carrying a manifest is one library the CMake
-# autoloader builds, and cmake/build.cmake requires the source/<directory>
-# layout enforced below.
-AUTOLOADED_MODULE_ROOT = "modules"
-
-# First-party C++ that declares a manifest without being one of those. The
-# autoloader never reaches these -- CPP_MODULE_ROOTS names modules/ only -- but
-# they take dependencies on modules, so leaving them out of the graph means a
-# dependency that closes a cycle passes while the count still reads OK. The
-# count was correct and was never all the C++.
-#
-# tests/support/ is in this position too and is not listed: it declares no
-# manifest yet, so its dependencies are still unchecked.
-DECLARED_SOURCE_TREES = ("conformance",)
+# The one root, and every child of it carrying a manifest is one library the
+# CMake autoloader builds; cmake/build.cmake requires the source/<directory>
+# layout enforced below. Nothing outside this directory declares a manifest, so
+# the graph below is all the first-party C++ that can close a cycle. entry/ and
+# tests/ cannot: they compile no library and nothing links them.
+MODULE_ROOT = "modules"
 
 # [embed] declares non-C++ sources compiled into the module. Today the only
 # embeddable kind is Luau: luau_directory names a module-relative tree of .luau
@@ -44,14 +36,13 @@ class Module:
     dependencies: tuple[str, ...]
     embed_luau_directory: str
     embed_luau_version: str
-    autoloaded: bool
 
 
 def split_dependencies(value: str) -> list[str]:
     return [item for item in re.split(r"[,\s]+", value) if item]
 
 
-def load_module(manifest: Path, autoloaded: bool) -> Module:
+def load_module(manifest: Path) -> Module:
     parser = configparser.ConfigParser(interpolation=None)
     parser.read(manifest, encoding="utf-8")
 
@@ -73,7 +64,6 @@ def load_module(manifest: Path, autoloaded: bool) -> Module:
             EMBED_SECTION, "luau_directory", fallback=""
         ).strip(),
         embed_luau_version=parser.get(EMBED_SECTION, "luau_version", fallback="").strip(),
-        autoloaded=autoloaded,
     )
 
 
@@ -150,19 +140,13 @@ def main() -> int:
     arguments = argument_parser.parse_args()
 
     root = arguments.root.resolve()
-    module_root = root / AUTOLOADED_MODULE_ROOT
+    module_root = root / MODULE_ROOT
     errors: list[str] = []
 
     modules = [
-        load_module(manifest, autoloaded=True)
+        load_module(manifest)
         for manifest in sorted(module_root.glob("*/manifest.txt"))
     ]
-    for tree in DECLARED_SOURCE_TREES:
-        manifest = root / tree / "manifest.txt"
-        if not manifest.is_file():
-            errors.append(f"{tree}/manifest.txt is missing")
-            continue
-        modules.append(load_module(manifest, autoloaded=False))
 
     modules_by_name: dict[str, Module] = {}
     for module in modules:
@@ -174,12 +158,10 @@ def main() -> int:
             )
         modules_by_name[module.name] = module
 
-        # The autoloader's layout, and only the autoloader's: cmake/build.cmake
-        # publishes source/<directory> as an include root. A tree it never sees
-        # owes only that its sources are where the manifest says the tree is.
-        expected_source = module.manifest.parent / "source"
-        if module.autoloaded:
-            expected_source = expected_source / module.directory
+        # The autoloader's layout: cmake/build.cmake publishes both source/ and
+        # source/<directory> as include roots, and the second is what makes
+        # <module/header.hpp> resolve.
+        expected_source = module.manifest.parent / "source" / module.directory
         if not expected_source.is_dir():
             errors.append(
                 f"{module.manifest.relative_to(root)}: expected source directory "
@@ -216,11 +198,7 @@ def main() -> int:
             print(f"  {error}", file=sys.stderr)
         return 1
 
-    autoloaded = sum(1 for module in modules if module.autoloaded)
-    print(
-        f"Module graph check OK ({len(modules)} manifests: {autoloaded} modules "
-        f"under {AUTOLOADED_MODULE_ROOT}/, {len(modules) - autoloaded} outside it)."
-    )
+    print(f"Module graph check OK ({len(modules)} modules under {MODULE_ROOT}/).")
     return 0
 
 

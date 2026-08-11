@@ -1,6 +1,6 @@
 #pragma once
 
-#include <conformance/host-delivery-fixture.hpp>
+#include "host-delivery-fixture.hpp"
 
 #include <operator/ledger.hpp>
 #include <operator/runtime-installation.hpp>

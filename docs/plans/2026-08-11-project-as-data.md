@@ -236,7 +236,8 @@ was only ever on `ProvidedProject` because the validator was.
 
 They leave the struct. The host's document validator owns the two recorders, and
 the suite reads them from the loader's result. Two cases read them
-(`conformance/source/suite-control-ledger.cpp:498` and `:536`); nothing else in
+(`modules/conformance/source/conformance/suite-control-ledger.cpp:498` and
+`:536`); nothing else in
 the tree does.
 
 ### 1.3 The table
@@ -463,7 +464,8 @@ enforce even when the number it must match is not yet in existence.
 
 Both roles are required, and both carry a vocabulary of their own, because three
 cases reach the foreign one:
-`conformance/source/suite-control-ledger.cpp:445` uses the foreign
+`modules/conformance/source/conformance/suite-control-ledger.cpp:445` uses the
+foreign
 `confirmedInput`, `suite-project-authority.cpp:134-137` its `mutatingTool` and
 `toolArguments`, and `:147-150` its `confirmedEntry` and `provenance`.
 
@@ -513,7 +515,8 @@ whose criterion they meet.
 Every payload member is a **JSON string whose content is the exact bytes**, not a
 nested JSON object. This is the one non-obvious rule in the format and it is not
 a convenience: those bytes are handed to `schemaOwner.canonicalize()`
-(`conformance/source/suite-support.cpp:72`), which refuses anything that is not
+(`modules/conformance/source/conformance/suite-support.cpp:72`), which refuses
+anything that is not
 exact RFC 8785 JCS. A nested object would make the *loader* choose a
 serialization, and `provider.hpp:86-88` says the suite invents no project bytes.
 A string keeps the project's bytes the project's, and makes the canonical
@@ -720,7 +723,7 @@ project-specific. That dispatch is fixed and needs no data at all:
 
 That table is `contract/provider.cpp:1069-1119` with the project literals lifted
 out. The last two rows are already framework readers today
-(`conformance/include/conformance/operator-protocol.hpp:434`, `:589`) and
+(`modules/conformance/source/conformance/operator-protocol.hpp:434`, `:589`) and
 uf-chaos already calls them (`provider.cpp:1107`, `:1113`) — which is the
 existing proof that the split works. `operator-protocol.hpp:27-33` states the
 rule the other eight rows now follow:
@@ -938,7 +941,7 @@ framework sources only, taking the project directory as an argument. Not a
 subcommand of `umbra-flow`.**
 
 The weaker argument first, so it is not mistaken for the reason. doctest is a
-real cost inside a product binary, and it is not confined to `conformance/source/`:
+real cost inside a product binary, and it is not confined to the suite's cases:
 both exported headers include `<doctest/doctest.h>`
 (`host-delivery-fixture.hpp:15`) and assert inside ordinary functions — 28
 occurrences in `observation-fixture.hpp`, 11 in `host-delivery-fixture.hpp`,
@@ -1006,8 +1009,8 @@ against these headers, so the shape is proven.
 
 **How the directory reaches the cases** is the one admission this design owes.
 doctest gives a `TEST_CASE` no parameters, so the path is a process-scope value
-set once by `main` before `context.run()` and never written after — declared in
-`conformance/source/`, not in a public header, and read through a function rather
+set once by the run before `context.run()` and never written after — declared in
+`modules/conformance`, not in a public header, and read through a function rather
 than a variable. Cases run single-threaded in one process
 (`suite-support.hpp:22-24` already relies on that for temporary directories).
 Q9 asks whether that is acceptable.
@@ -1140,7 +1143,11 @@ In this repository:
 - The exported include directory itself. `conformance/include/` folds into
   `conformance/source/`, and `conformance/manifest.txt:3-9` stops describing
   "first-party C++ on a consumer's include path" while `:18-22` stops resting
-  its public dependency list on what a consumer compiles against.
+  its public dependency list on what a consumer compiles against. **Landed
+  2026-08-12**, one directory deeper than written: the fold is into
+  `modules/conformance/source/conformance/`, which is where a module's headers
+  live, and the manifest — now `modules/conformance/manifest.txt` — rests its
+  public list on what the module's own headers name.
 - `ProjectRuntimeArtifact` (`provider.hpp:51-55`) and `ArtifactFile` (`:31-35`),
   and with them `artifactManifestRow` (`observation-fixture.hpp:126-134`) and
   `publishRuntimeArtifact` (`:139-178`) — 60 lines that re-serialize a manifest
@@ -1155,9 +1162,13 @@ In this repository:
   *Not yet, and deliberately.* Step 6 moved the whole header, and both
   `project-schemas.hpp`, from `conformance/exemplars/` to
   `conformance/fixtures/`, because `tests/operator/*` and `tests/deployment/*`
-  include them and Q5 defers that dependency to its own change. `tests/support/`
-  is still where they belong; nothing in this document is closed until they are
-  there or gone.
+  include them and Q5 defers that dependency to its own change. **They reached
+  `tests/support/` on 2026-08-12**, with the suite's move into
+  `modules/conformance`: `tests/support/umbraflow/project-fixture.hpp`,
+  `tests/support/umbraflow/project-schemas.hpp` and
+  `tests/support/arcana-expedition/project-schemas.hpp`, each include root
+  chosen so no `#include` in `tests/` changed spelling. Their deletion is still
+  Q5's and is what this document is still open on; where they live no longer is.
 
 In `E:\umbraflow-projects\uf-chaos`:
 
@@ -1215,11 +1226,18 @@ repository ships.
   `umbraflow-conformance/v1` with the loader. §2.6 says why they are not files.
   A sixth, `schema/umbraflow-project-registration-v1.schema.json`, is not new —
   it is already published and starts binding rather than starts existing.
-- **`conformance/source/suite-main.cpp`** and the `umbra-flow-conformance`
-  target — landed in step 6. The entry point stayed under `conformance/` rather
-  than becoming `entry/conformance/main.cpp`: it is one `main` either way, and
-  keeping it beside the cases keeps the whole switch inside `conformance/`,
-  `cmake/` and two `CMakeLists.txt`.
+- **`entry/conformance/main.cpp`** and the `umbra-flow-conformance` target. The
+  target landed in step 6; the entry point stayed at
+  `conformance/source/suite-main.cpp`, on the grounds that it is one `main`
+  either way and that keeping it beside the cases kept the whole switch inside
+  `conformance/`, `cmake/` and two `CMakeLists.txt`. **That was scope, not
+  shape, and it was corrected on 2026-08-12**: the file is
+  `entry/conformance/main.cpp` as written here, the cases and fixtures are
+  `modules/conformance` with `type = static`, and the two binaries now differ in
+  nothing but their names. What `main` no longer holds is `runSuite`, which is
+  declared by `modules/conformance/source/conformance/suite-run.hpp` — the entry
+  translation unit converts `argv` and calls one function, exactly as
+  `entry/cli/main.cpp` does.
 - **`external/doctest`** and the `uf::doctest` INTERFACE target.
 - **`cmake/conformance-run.cmake`** — landed in step 6.
 - **Two in-tree exemplar directories**, `examples/umbraflow` and
@@ -1337,16 +1355,24 @@ reaches the resolver through `test_support::secondObservationHost`, which now
 assembles its Host itself rather than through `activateObservationHost`, because
 only a world a case builds can get past the refusal a project directory meets.
 
-**Two things it did not do, and one it placed differently.** The three headers
-`tests/operator` and `tests/deployment` still include — `project-fixture.hpp` and
-the two `project-schemas.hpp` — moved from `conformance/exemplars/` to
-`conformance/fixtures/` rather than dying, because Q5 defers the tests' own move
-onto the loader to a separate change; §4.2 still owes them a home in
-`tests/support/`. `conformance/include/` did not fold into `conformance/source/`,
-for the same reason: `tests/` compiles against it. And the entry point is
-`conformance/source/suite-main.cpp` rather than §4.3's
-`entry/conformance/main.cpp`, which keeps every file this step touches inside
-`conformance/`, `cmake/` and two `CMakeLists.txt`.
+**Two things it did not do, and one it placed differently — all three closed on
+2026-08-12.** The three headers `tests/operator` and `tests/deployment` still
+include — `project-fixture.hpp` and the two `project-schemas.hpp` — moved from
+`conformance/exemplars/` to `conformance/fixtures/` rather than dying, because
+Q5 defers the tests' own move onto the loader to a separate change; §4.2 owed
+them a home in `tests/support/`, and that is where they are. `conformance/include/`
+did not fold into `conformance/source/`, for the same reason: `tests/` compiles
+against it. And the entry point was `conformance/source/suite-main.cpp` rather
+than §4.3's `entry/conformance/main.cpp`, which kept every file that step touched
+inside `conformance/`, `cmake/` and two `CMakeLists.txt`.
+
+The follow-up change took all three at once, and `conformance/` no longer exists:
+the cases and fixtures are `modules/conformance` (`type = static`, `include/`
+folded into `source/conformance/`), the entry point is
+`entry/conformance/main.cpp`, and the fixtures are `tests/support/`. It moved no
+count: 86 CTests with `CONFORMANCE=4 CONTRACT=40 LUAU=4 SCHEMA=19` before and
+after, and 16 cases / 1,303 assertions against `examples/umbraflow`,
+`examples/arcana-expedition` and uf-chaos alike.
 
 **The evidence, re-derived rather than cited.** It was assembled in the working
 tree and not committed: both registrations exist at once only there, because
@@ -1420,7 +1446,8 @@ rewritten will resist the whole design.
 
 **The 15 cases assert the right things and 13 of them do not change at all.**
 Only how the project reaches them changes. The two that change are the two that
-read the recorders — `conformance/source/suite-control-ledger.cpp:498` ("the
+read the recorders —
+`modules/conformance/source/conformance/suite-control-ledger.cpp:498` ("the
 reducer is handed exactly the Journal prefix that is appended") and `:536` ("the
 deriver is handed an envelope no caller could have supplied") — and they change
 by reading the recorder from the loader's result instead of from
@@ -1433,7 +1460,8 @@ deployment instead. The other twelve reach the project only through
 **Seven of the 42 `REQUIRED_CORE` requirements have their behavioural gate inside
 the suite**, and those seven are the whole of the project-acquisition rewiring:
 `C-01`, `C-06`, `C-09`, `C-10`, `C-11`, `C-12`, `C-13`, declared at
-`conformance/source/suite-control-ledger.cpp:23, 49, 83, 125, 155, 247, 349` and
+`modules/conformance/source/conformance/suite-control-ledger.cpp:23, 49, 83,
+125, 155, 247, 349` and
 registered at `conformance/exemplars/umbraflow/CMakeLists.txt:15-21`. The count is
 checkable: `tests/CMakeLists.txt:178-184` asserts the matrix has 42
 `REQUIRED_CORE` entries; 33 of the 40 `contract-*` gates live in `tests/`, all 19
@@ -1605,9 +1633,19 @@ expectation is the signature design's job, not this one's.
 
 **Q5 — yes, after step 6, as its own change.** As recommended.
 
-**Q6 — drop the restated members.** Nothing is released. Under Q3 the loader
-recomputes every hash regardless, so uf-chaos's recorded values move once rather
-than twice.
+**Q6 — ruled "drop the restated members", and overruled by the loader landing.**
+The ruling was: nothing is released, and under Q3 the loader recomputes every
+hash regardless, so uf-chaos's recorded values move once rather than twice. What
+holds now is §2.4, which is where the members are described. `plugin_id` stays in
+the catalog and in the journal manifest and is checked against the deployment's,
+because a catalog that answered for whichever registration presented it would be
+a catalog no registration owns — a property of the document rather than a copy of
+the block. The path `tool_precondition_schema` was answered differently rather
+than dropped: it became the digest `tool_precondition_sha256`, which restates
+nothing and is the only route by which the precondition schema's bytes reach
+`tool_catalog_hash`. Both members are required in
+`examples/*/schema/*/tool-catalog-v1.json` and in uf-chaos's own catalogs, and
+the framework schema forces them.
 
 **Q7 — refuse a directory with one deployment.** As recommended: a skipped case
 is a green result promising more than it verified.
@@ -1618,7 +1656,9 @@ thing that drives a model over real ones. Dropping it would delete a real check,
 and would require the project's host to keep a C++ build alive in order to keep
 it — the opposite of what this document is for.
 
-**Q9 — one function in `conformance/source/`.** As recommended.
+**Q9 — one function in the suite's own sources.** As recommended; it is
+`setProjectDirectory` in `modules/conformance` since 2026-08-12, and `runSuite`
+rather than `main` is what calls it.
 
 **Q10 — recorded, not ruled, and it blocks nothing.** A recognition gap is a
 framework work item with the project's measurement attached, never a C++ hatch
@@ -1629,8 +1669,10 @@ in a project.
 the shape a ruling replaced. What moved: the registration document became the
 deployment block plus a document the loader derives (Q3); the conformance
 document now says in as many words that it carries no `fingerprint`, and where
-the geometry comes from instead (Q2); the three project manifests lost their
-restated members (Q6); §4.1's two
+the geometry comes from instead (Q2); the three project manifests kept
+`plugin_id` and traded the path `tool_precondition_schema` for the digest
+`tool_precondition_sha256`, which is Q6 overruled rather than applied — §2.4 and
+the Q6 ruling both say so; §4.1's two
 destination arguments became history, because the value tree and the evaluator
 both landed as `modules/json`; and §5's steps 1, 2, 3, 5 and 6 were rewritten
 around what has landed and what Q2 added. Citations that the tree had moved
@@ -1641,6 +1683,15 @@ to `:3-9` and `:18-22`, `tests/CMakeLists.txt:190-193` to `:192-195`, and the
 wrong before any ruling touched them and are fixed: §2.2's "seven" digests are
 eight, and §6's "twenty-three byte-identical, three reshaped" is twenty-one,
 four and one deleted.
+
+**Reconciled again, 2026-08-12, against the suite's move into
+`modules/conformance`.** §4.2's two open items and §4.3's entry-point placement
+landed and say so above; the Q6 ruling was rewritten, because it still read
+"drop the restated members" while §2.4 and §5 step 6 both record that the loader
+landing overruled it. Citations to files that moved rather than died were
+repointed at `modules/conformance/source/conformance/`; citations to
+`conformance/include/conformance/provider.hpp` were left alone, because that
+file was deleted and a path is the only thing that can still name it.
 
 Seven things the reconciliation, and the work since it, turned up — recorded
 rather than edited around.
@@ -1723,7 +1774,8 @@ stores the intent bytes without reading them
 with `static_cast<void>(uiAction);` left `conformance-umbraflow`,
 `conformance-arcana`, `test-operator` and `test-contract-operator` green to the
 assertion, because no case ever made the two sides disagree. The case that now
-does is in `conformance/source/suite-project-authority.cpp`, one row per
+does is in `modules/conformance/source/conformance/suite-project-authority.cpp`,
+one row per
 identifier, and it disagrees on the *run's* side: a plugin's bytes are the
 project's and are pinned by `plugin_hash`, so a mismatched intent cannot be
 obtained from a plugin at all, and a step minted under the foreign project's

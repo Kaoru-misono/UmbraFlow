@@ -74,8 +74,8 @@ endfunction()
 #              none of them: at most one run may claim, because two projects
 #              cannot both own the CTest name contract-control-c01, so requiring
 #              the claiming run to claim all of them is what turns a new case in
-#              conformance/source/ into a configure error rather than a case that
-#              only ever runs inside an aggregate.
+#              modules/conformance into a configure error rather than a case
+#              that only ever runs inside an aggregate.
 function(uf_add_conformance_run)
     cmake_parse_arguments(ARG "" "PROJECT;DIRECTORY" "CASES;DECLARED" ${ARGN})
 

@@ -198,6 +198,11 @@ closed. `conformance/` is the only manifest left outside `modules/`, so the
 `DECLARED_SOURCE_TREES` row still waits on the boundary rather than on this
 work. One new row was opened by the falsification the `cli` move was asked for.
 
+Amended 2026-08-12: the `conformance` row and the `DECLARED_SOURCE_TREES` row
+are closed together, because the second existed only for the first. Nothing
+carries a manifest outside `modules/` now, and the two shipped binaries have one
+shape: `entry/<name>/main.cpp` plus `modules/<name>`, `type = static`.
+
 - [x] `entry/cli/` becomes `modules/cli/`, `type = static`. Done 2026-08-11.
       `entry/` keeps `main.cpp`, the generated `application-info.hpp` and the OCR
       payload staging, and links `uf::cli`; there is no alias for
@@ -222,10 +227,46 @@ work. One new row was opened by the falsification the `cli` move was asked for.
       `RETIRED_PATHS`, `REQUIRED_SAFE_PATHS` and executable-text scan all named
       `entry/cli/`; the scan now covers `entry/` and `modules/cli/` both, so a
       retired source cannot come back by being written to the other one.
-- [ ] `conformance/` becomes `modules/conformance/`, `type = static`, its
+- [x] `conformance/` becomes `modules/conformance/`, `type = static`, its
       `include/` collapsed into `source/conformance/` like every other module.
-      Waits on the boundary, which decides whether it is a library or a binary;
-      moving first means moving twice.
+      Done 2026-08-12. **The reason in the row this replaced was wrong by the
+      time it landed.** It said the move was owed because `conformance/` was an
+      exported source library a consumer compiled; the boundary correction
+      killed that — nothing links it and no consumer compiles it. The reason it
+      moved is that it is the logic half of a shipped binary, and this
+      repository has one shape for those: `umbra-flow` is `entry/cli/main.cpp`
+      plus `modules/cli`, so `umbra-flow-conformance` is `entry/conformance/main.cpp`
+      plus `modules/conformance`. §4.3 of
+      [the plan](plans/2026-08-11-project-as-data.md) had said
+      `entry/conformance/main.cpp` and step 6 placed it elsewhere for scope; this
+      closes that gap.
+      What moved with it: `runSuite` left the anonymous namespace for
+      `conformance/suite-run.hpp` so `entry/` has only `main`; the suite's five
+      `<conformance/…>` self-includes became quoted, because the autoloader
+      publishes `source/` and `source/conformance/` and a module spells its own
+      headers with quotes; `cmake/doctest-gate.cmake` is now included from the
+      root before the autoloader, because the manifest names `uf::doctest` and a
+      manifest dependency must be a target by the link pass; and the two runs
+      moved from the deleted `conformance/CMakeLists.txt` into the root's
+      `PROJECT_IS_TOP_LEVEL` guard, reading their declared cases off the module
+      target's `SOURCES` rather than a hand-written list the glob could
+      contradict.
+      **`type = static` needs `WHOLE_ARCHIVE` at the executable, and this was
+      measured rather than assumed.** A `TEST_CASE` registers from the dynamic
+      initializer of an object nothing names, so the linker pulls no member for
+      it: with a plain `uf::conformance` on the link line the binary links,
+      runs, reports `test cases: 0`, and **exits 0**. `uf_require_executed_assertions`
+      catches it — `conformance-umbraflow` goes red on `assertions: 0` — but the
+      binary alone does not say so.
+- [x] The three C++ fixtures move to `tests/support/`. Done 2026-08-12.
+      `project-fixture.hpp` and both `project-schemas.hpp` are included by
+      `tests/operator` and `tests/deployment` and by nothing in the suite, so
+      they were never the suite's; they are now `tests/support/umbraflow/` and
+      `tests/support/arcana-expedition/`, which leaves every
+      `#include "project-fixture.hpp"` and `#include "umbraflow/project-schemas.hpp"`
+      spelled the same way. This is what §4.2 of
+      [the plan](plans/2026-08-11-project-as-data.md) recorded as owed. Their
+      deletion is still Q5's, unchanged.
 - [ ] `conformance/exemplars/*` become project **directories** under `examples/`.
       Data a project author copies, not C++ a consumer links.
       **The data half landed 2026-08-11.** `examples/umbraflow/` (deployments
@@ -266,8 +307,22 @@ work. One new row was opened by the falsification the `cli` move was asked for.
       manifests and the plugin's own `payload_schema_hash` are the C++'s bytes
       with exactly those digests restated; `plugin_id`, `baseline_event_type`
       and the artifact roots are byte-identical to the C++ side.
-- [ ] `scripts/check_modules.py` drops `DECLARED_SOURCE_TREES` and returns to a
-      single root once nothing carries a manifest outside `modules/`.
+- [x] `scripts/check_modules.py` drops `DECLARED_SOURCE_TREES` and returns to a
+      single root once nothing carries a manifest outside `modules/`. Done
+      2026-08-12 with the row above, which is what put the last one inside. The
+      `autoloaded` flag on `Module` went with it, and the two layouts it
+      selected between became one: every manifest now owes `source/<directory>`.
+      The graph did not shrink — it reads `15 modules under modules/` where it
+      read `15 manifests: 14 modules under modules/, 1 outside it`, and the node
+      is load-bearing either way: on a manifest-only replica, giving `operator` a
+      dependency back on `conformance` is green with the node removed (14
+      modules) and red with it present — `module dependency cycle: deployment ->
+      operator -> conformance -> deployment`.
+      `scripts/check_cpp_format.py` and `scripts/check_safety.py` dropped
+      `"conformance"` from `SOURCE_ROOTS` in the same change, for the same
+      reason: it named a directory that no longer exists. Coverage rose rather
+      than fell — 302 files to 304, which is exactly the two files the move
+      added.
 - [x] Decide the fate of the uncommitted `cmake/manifest.cmake` and
       `cmake/build.cmake` work. Settled 2026-08-11. The `[sources.*]` platform
       grammar stays and the `cli` row above is its first user; the promotion of

@@ -11,24 +11,26 @@
 //
 // DOCTEST_CONFIG_IMPLEMENT rather than ..._WITH_MAIN: the project directory has
 // to be set before any case runs, and doctest gives a TEST_CASE no parameters.
+// This is also the translation unit that carries doctest's implementation into
+// the library, and the one entry/conformance/main.cpp names -- so the archive
+// member holding it is pulled in by the reference rather than by /WHOLEARCHIVE.
 
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
 
+#include "suite-run.hpp"
+
 #include "suite-support.hpp"
 
 #include <core/numeric/checked-cast.hpp>
-#include <core/safety/annotations.hpp>
 
 #include <cstddef>
-#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 namespace uf::operator_runtime::conformance
@@ -49,7 +51,7 @@ namespace uf::operator_runtime::conformance
             "--test-case=<name> and nothing here invents a second spelling of it.\n"
         };
 
-        // What main took out of the argument vector, and what it hands on.
+        // What the run took out of the argument vector, and what it hands on.
         struct SuiteArguments final
         {
             std::filesystem::path    project{};
@@ -85,81 +87,37 @@ namespace uf::operator_runtime::conformance
             }
             return parsed;
         }
-
-        [[nodiscard]]
-        auto runSuite(std::span<std::string const> raw) -> int
-        {
-            auto const parsed = parseArguments(raw);
-            if (!parsed)
-            {
-                std::cerr << k_usageText;
-                return 2;
-            }
-            setProjectDirectory(parsed->project);
-
-            // doctest reads its own options out of an argument vector, so the
-            // forwarded arguments are handed back in that shape. The pointers
-            // are into `parsed->forwarded`, which outlives the call.
-            auto arguments = std::vector<char const*>{};
-            arguments.reserve(parsed->forwarded.size() + 1U);
-            arguments.emplace_back("umbra-flow-conformance");
-            for (auto const& one : parsed->forwarded)
-            {
-                arguments.emplace_back(one.c_str());
-            }
-            auto const argumentCount = checkedCast<int>(arguments.size());
-            if (!argumentCount)
-            {
-                std::cerr << "too many arguments\n";
-                return 2;
-            }
-
-            auto context = doctest::Context{};
-            context.applyCommandLine(*argumentCount, arguments.data());
-            return context.run();
-        }
     }
-}
 
-auto main(int argumentCount, char const* const* p_arguments) -> int
-{
-    try
+    auto runSuite(std::span<std::string const> raw) -> int
     {
-        auto const convertedArgumentCount = uf::checkedCast<std::size_t>(
-            argumentCount
-        );
-        if (!convertedArgumentCount || *convertedArgumentCount == 0U)
+        auto const parsed = parseArguments(raw);
+        if (!parsed)
         {
-            std::cerr
-                << "umbra-flow-conformance error: invalid process argument vector\n";
+            std::cerr << k_usageText;
             return 2;
         }
-        // SAFETY: a hosted entry point receives argumentCount argument pointers
-        // followed by a null one ([basic.start.main]/2). That count arrives
-        // beside the pointer rather than within it, so no expression can restate
-        // the bound; this is the single place the C contract becomes a span.
-        UF_UNSAFE_BUFFER_BEGIN
-        auto const arguments = std::span<char const* const>{
-            p_arguments,
-            *convertedArgumentCount
-        };
-        UF_UNSAFE_BUFFER_END
-        auto raw = std::vector<std::string>{};
-        for (auto const* argument : arguments.subspan(1U))
+        setProjectDirectory(parsed->project);
+
+        // doctest reads its own options out of an argument vector, so the
+        // forwarded arguments are handed back in that shape. The pointers are
+        // into `parsed->forwarded`, which outlives the call.
+        auto arguments = std::vector<char const*>{};
+        arguments.reserve(parsed->forwarded.size() + 1U);
+        arguments.emplace_back("umbra-flow-conformance");
+        for (auto const& one : parsed->forwarded)
         {
-            raw.emplace_back(argument);
+            arguments.emplace_back(one.c_str());
+        }
+        auto const argumentCount = checkedCast<int>(arguments.size());
+        if (!argumentCount)
+        {
+            std::cerr << "too many arguments\n";
+            return 2;
         }
 
-        return uf::operator_runtime::conformance::runSuite(raw);
-    }
-    catch (std::exception const& error)
-    {
-        std::cerr << "umbra-flow-conformance exception: " << error.what() << '\n';
-        return 2;
-    }
-    catch (...)
-    {
-        std::cerr << "umbra-flow-conformance exception: unknown failure\n";
-        return 2;
+        auto context = doctest::Context{};
+        context.applyCommandLine(*argumentCount, arguments.data());
+        return context.run();
     }
 }

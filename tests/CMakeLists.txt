@@ -51,7 +51,7 @@ endfunction()
 #                         contract- name.
 #
 # One requirement may own one gate of each kind. C-09 through C-13 do: their
-# store behaviour lives in the exported suite, which registers the contract-
+# store behaviour lives in the conformance suite, which registers the contract-
 # name, while their schema shape stayed in tests/operator and takes the schema-
 # name.
 #
@@ -337,8 +337,8 @@ function(cpp_add_contract_suite)
     # report ID names. Without it the per-CASE gates are the only execution, and
     # a TEST_CASE outside CASES is compiled, linked, and run by nothing --
     # test-contract-operator carried seven such cases and 416 assertions until
-    # 2026-08-10. uf_add_conformance_suite already registers the same gate
-    # for the exported suite; this is the sibling that was missing it.
+    # 2026-08-10. uf_add_conformance_run already registers the same gate for
+    # each conformance run; this is the sibling that was missing it.
     #
     # CONFORMANCE shares no substring with CONTRACT or SCHEMA, and must not: -L
     # is a regex, so the former CONTRACT-SUITE label made `ctest -L CONTRACT`
@@ -397,8 +397,8 @@ cpp_add_test(
 # The deployment's two validators, against both fixtures' real schema bytes.
 # Those schema documents are C++ raw literals rather than files, which is what
 # separates them from examples/: they are the bytes these cases judge a
-# validator with, so the include root is conformance/fixtures and each is named
-# by its own directory.
+# validator with, so the include root is tests/support and each is named by its
+# own directory.
 #
 # image is named here as well as inside the module because the loader decodes
 # what probe_frame names (2.7 R9), so the fixture has to write a PNG the same
@@ -415,7 +415,7 @@ cpp_add_test(
 # tests/ itself, so that the loader's cases reach tests/json/repository-path.hpp
 # rather than becoming a seventh copy of it.
 target_include_directories(test-deployment PRIVATE
-    "${PROJECT_SOURCE_DIR}/conformance/fixtures"
+    "${CMAKE_CURRENT_SOURCE_DIR}/support"
     "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
@@ -462,12 +462,12 @@ cpp_add_test(
 # that still builds a ProjectRegistration in C++: the conformance suite loads one
 # out of examples/umbraflow instead, and Q5 of
 # docs/plans/2026-08-11-project-as-data.md moves these tests onto the same loader
-# as its own change, after which this directory has nothing left in it. Adding
-# the directory here leaves every #include "project-fixture.hpp" spelled the same
-# way; docs/plans/2026-08-11-project-as-data.md 4.2 owes it a home in
-# tests/support/.
+# as its own change, after which this directory has nothing left in it. It lives
+# in tests/support/ because tests/ is its only caller -- the suite includes
+# nothing from it. Adding the directory here leaves every
+# #include "project-fixture.hpp" spelled the same way.
 set(UF_OPERATOR_FIXTURE_DIR
-    "${PROJECT_SOURCE_DIR}/conformance/fixtures/umbraflow"
+    "${CMAKE_CURRENT_SOURCE_DIR}/support/umbraflow"
 )
 if(NOT EXISTS "${UF_OPERATOR_FIXTURE_DIR}/project-fixture.hpp")
     message(FATAL_ERROR
@@ -478,11 +478,15 @@ endif()
 
 # A snapshot is composed from an observation only TaskHost can mint, so every
 # Operator test drives a real Host over a real RuntimeArtifact. The fixture that
-# builds one lives beside the exported suite's own headers and encodes its
-# template assets as PNG, which is the one library the Operator does not already
-# link publicly.
+# builds one is the suite's own and encodes its template assets as PNG, which is
+# the one library the Operator does not already link publicly.
+#
+# The include root rather than uf::conformance, deliberately: what tests/ takes
+# from the module is three header-only fixtures, and the module's own library
+# carries the suite's cases and a second doctest implementation beside them.
+# The dependency runs from tests/ into the module and never back.
 set(UF_OPERATOR_CONTRACT_INCLUDE_DIR
-    "${PROJECT_SOURCE_DIR}/conformance/include"
+    "${PROJECT_SOURCE_DIR}/modules/conformance/source"
 )
 if(NOT EXISTS "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}/conformance/observation-fixture.hpp")
     message(FATAL_ERROR
@@ -677,9 +681,9 @@ if(TARGET ${PROJECT_NAME}_task)
             contract-runtime-u08
     )
     # TaskHostTestAccess is declared a friend of TaskHost once, so uf::task may
-    # hold one type of that name; it lives beside the exported suite because the
+    # hold one type of that name; it lives in modules/conformance because the
     # Operator's delivery contracts need the same privilege. The dependency runs
-    # from tests/ into the suite and never back.
+    # from tests/ into the module and never back.
     target_include_directories(test-contract-runtime PRIVATE
         "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}"
     )
@@ -784,9 +788,9 @@ auto main(int argc, char** argv) -> int
         )
     endif()
 
-    # Concrete paths, never a glob, for the same reason the conformance suite uses
-    # concrete sources: a contract that stops running must be a visible deletion
-    # here. The coverage check below is the other half of that -- a hand-written
+    # Concrete paths, never a glob: a contract that stops running must be a
+    # visible deletion here rather than a file that quietly left the build. The
+    # coverage check below is the other half of that -- a hand-written
     # list silently stops covering the directory the moment somebody adds a file
     # to it, which is how tests/task/test-jcs.luau ran in no gate on 2026-08-10.
     set(TASK_LUAU_TESTS

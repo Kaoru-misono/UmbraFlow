@@ -6,10 +6,9 @@
 // suite's rather than the Operator's: whether a plan names the UI action this
 // run agreed on.
 
+#include "host-delivery-fixture.hpp"
+#include "operator-protocol.hpp"
 #include "suite-support.hpp"
-
-#include <conformance/host-delivery-fixture.hpp>
-#include <conformance/operator-protocol.hpp>
 
 #include <operator/journal-entry.hpp>
 #include <operator/ledger.hpp>

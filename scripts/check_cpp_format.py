@@ -21,7 +21,7 @@ from pathlib import Path
 
 
 SOURCE_EXTENSIONS = {".c", ".cc", ".cpp", ".cxx", ".h", ".hpp"}
-SOURCE_ROOTS = ("modules", "entry", "tests", "conformance")
+SOURCE_ROOTS = ("modules", "entry", "tests")
 VENDORED_DIRECTORY_NAMES = {"external", "third_party"}
 
 CLASS_DECLARATION = re.compile(

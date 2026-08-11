@@ -1,0 +1,38 @@
+# The Operator conformance suite: every case umbra-flow-conformance runs, and
+# the fixtures the cases are built from. entry/ keeps only main.cpp, which is
+# the executable's own translation unit.
+#
+# It is the logic half of a shipped binary, which is why it is a module rather
+# than a tree beside entry/: a project is a directory of data, so a consumer
+# compiles none of this and runs the executable this repository ships. The
+# suite's own sources are still first-party C++ that can close a dependency
+# cycle, and a module is what puts them in the graph scripts/check_modules.py
+# walks.
+#
+# Every dependency is public because the module's headers name it -- these are
+# fixtures, so the type a case receives is the type a header declares.
+# observation-fixture.hpp alone names engine, image and trace; script arrives
+# through host-delivery-fixture.hpp. image and deployment are the two that are
+# not reachable through operator: image is private to task and to vision, and
+# operator must not depend on deployment -- an Operator that reached into a
+# deployment for its own validators would be the deployment.
+#
+# uf::doctest is spelled with its namespace because that is the target's only
+# name: it is an INTERFACE library declared by cmake/doctest-gate.cmake rather
+# than a module, so ${PROJECT_NAME}_doctest does not exist. The root
+# CMakeLists.txt includes that file before the autoloader runs, so the target
+# exists by the time this line is resolved.
+
+[module]
+name = conformance
+type = static
+version = 0.1.0
+
+[dependencies]
+public = core deployment domain engine image operator script task trace uf::doctest
+
+# What tests/CMakeLists.txt gives every test target, for the same reason: these
+# translation units compile doctest.h, and a doctest configured one way here and
+# another way in a binary that includes the same fixture headers is two doctests.
+[defines]
+private = DOCTEST_CONFIG_USE_STD_HEADERS

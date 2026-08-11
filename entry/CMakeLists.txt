@@ -7,9 +7,11 @@ configure_file(
     @ONLY
 )
 
-# Only main.cpp lives here. Everything the commands are made of is uf::cli,
-# declared by modules/cli/manifest.txt: this directory is an executable, and an
-# executable's build declaration is the one thing a module manifest cannot say.
+# Only main.cpp lives here, for each of the two binaries. Everything the
+# commands are made of is uf::cli and everything the suite is made of is
+# uf::conformance, declared by their manifests: this directory is where an
+# executable is declared, and an executable's build declaration is the one thing
+# a module manifest cannot say.
 add_executable(${PROJECT_NAME}
     cli/main.cpp
     "${APPLICATION_INFO_HEADER}"
@@ -82,3 +84,34 @@ if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
     add_custom_target(${PROJECT_NAME}_ocr_payload DEPENDS ${OCR_MODEL_STAGED})
     add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_ocr_payload)
 endif()
+
+# The second shipped binary, and the same shape as the first: one main.cpp here,
+# every case and fixture in uf::conformance. It is a binary rather than a
+# subcommand of umbra-flow because every frame the suite observes and every
+# action it posts declares TargetWorld::Recorded, so a run can never reach a live
+# window while reaching one is the whole job of umbra-flow -- two binaries make
+# that a link-time fact rather than a subcommand string. It takes no
+# application-info.hpp: the version banner is umbra-flow's surface, and a run
+# here is identified by the project directory it names.
+add_executable(umbra-flow-conformance conformance/main.cpp)
+cpp_apply_safety_profile(umbra-flow-conformance)
+cpp_apply_utf8_encoding(umbra-flow-conformance)
+
+# WHOLE_ARCHIVE, without which this binary runs no cases at all. A TEST_CASE
+# registers itself from the dynamic initializer of a namespace-scope object that
+# nothing refers to by name, and a linker pulls a static library's members in to
+# resolve undefined symbols -- so the three translation units that hold nothing
+# but cases are pulled in by nothing. The result is not a link error: the binary
+# links, starts, reports "test cases: 0" and exits 0. This is what stops that;
+# uf_require_executed_assertions on every gate is what would catch it if it ever
+# stopped stopping it.
+target_link_libraries(umbra-flow-conformance PRIVATE
+    "$<LINK_LIBRARY:WHOLE_ARCHIVE,uf::conformance>"
+)
+target_compile_features(umbra-flow-conformance PRIVATE cxx_std_23)
+
+# conformance links task publicly, which links engine and ocr publicly, so this
+# executable resolves onnxruntime.dll from its own directory at process start;
+# see cmake/runtime-payload.cmake. It stages no OCR model payload: no case here
+# reaches the text reader, and `--ocr-models` is umbra-flow's option.
+cpp_stage_runtime_libraries(umbra-flow-conformance ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})

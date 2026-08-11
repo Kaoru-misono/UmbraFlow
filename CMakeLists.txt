@@ -42,6 +42,10 @@ include(cmake/ccache.cmake)
 include(cmake/safety-profile.cmake)
 include(cmake/build.cmake)
 include(cmake/runtime-payload.cmake)
+# Before the autoloader, not beside the test registrations that used to include
+# it: modules/conformance names uf::doctest in its manifest, and a dependency
+# resolved by cpp_link_module has to be a target by the time that pass runs.
+include(cmake/doctest-gate.cmake)
 
 # This repository's own modules. The default is spelled against this file's
 # directory rather than CMAKE_SOURCE_DIR, which is the consuming project's root
@@ -73,19 +77,70 @@ if(PROJECT_IS_TOP_LEVEL)
 
     enable_testing()
 
-    # The Operator conformance suite. It used to be included outside this guard,
-    # so that a consumer's add_subdirectory of this repository reached the
-    # function that compiled the suite into the consumer's own executable. A
-    # project is now a directory of data and the suite is a binary this
-    # repository ships, so no consumer add_subdirectory is left to reach it:
-    # uf-chaos has had no CMake at all since its 4bb6e30.
+    # The Operator conformance suite's runs. The registration used to be included
+    # outside this guard, so that a consumer's add_subdirectory of this
+    # repository reached the function that compiled the suite into the consumer's
+    # own executable. A project is now a directory of data and the suite is a
+    # binary this repository ships, so no consumer add_subdirectory is left to
+    # reach it: uf-chaos has had no CMake at all since its 4bb6e30. The binary
+    # itself is declared in entry/ beside umbra-flow, because both are
+    # executables; only these two runs are this repository rehearsing with it.
     include(cmake/conformance-run.cmake)
 
     # Before tests/, because tests/CMakeLists.txt ends by checking that every
     # migration-report contract ID has a CTest and some of them are registered
-    # by the suite.
-    if(TARGET ${PROJECT_NAME}_operator)
-        add_subdirectory(conformance)
+    # here.
+    if(TARGET umbra-flow-conformance)
+        # Every case the suite compiles, read off the target rather than listed:
+        # modules/conformance is autoloaded, so its file set is the module's
+        # glob and a second list here could only disagree with it. What a
+        # concrete list used to buy -- a case cannot leave the build unnoticed --
+        # is bought instead by the two checks below it: DECLARED is derived from
+        # this same set, uf_add_conformance_run fails the configure when a run's
+        # CASES and the declared TEST_CASEs disagree in either direction, and
+        # uf_require_executed_assertions fails the run when a compiled-out case
+        # leaves a gate with nothing to execute.
+        get_target_property(UF_CONFORMANCE_SOURCES
+            ${PROJECT_NAME}_conformance
+            SOURCES
+        )
+        uf_declared_conformance_cases(
+            UF_CONFORMANCE_DECLARED_CASES
+            ${UF_CONFORMANCE_SOURCES}
+        )
+
+        # This repository's own run. It is the one that claims the migration
+        # report's contract IDs as named CTests, because the IDs describe the
+        # Operator this repository ships; every other run is a consumer's single
+        # aggregate gate.
+        #
+        # C-09 through C-13 are here because their store behaviour is here. Only
+        # their schema shape stayed in tests/operator, where it is registered
+        # under the schema- name, so the contract- name belongs to the case that
+        # goes red when the ledger stops enforcing them.
+        uf_add_conformance_run(
+            PROJECT   umbraflow
+            DIRECTORY "${PROJECT_SOURCE_DIR}/examples/umbraflow"
+            DECLARED  ${UF_CONFORMANCE_DECLARED_CASES}
+            CASES
+                contract-control-c01
+                contract-control-c06
+                contract-control-c09
+                contract-control-c10
+                contract-control-c11
+                contract-control-c12
+                contract-control-c13
+        )
+
+        # Everything a consuming repository writes to run the suite, in full: one
+        # call naming a directory. Both directories here are written the way a
+        # consuming repository writes its own and are documentation a consumer
+        # copies rather than scaffolding the suite needs -- nothing in
+        # modules/conformance knows either of them by name.
+        uf_add_conformance_run(
+            PROJECT   arcana
+            DIRECTORY "${PROJECT_SOURCE_DIR}/examples/arcana-expedition"
+        )
     endif()
 
     if(CPP_BUILD_TESTS)
