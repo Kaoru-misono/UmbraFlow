@@ -11,10 +11,13 @@
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
+#include <image/png.hpp>
+
 #include <task/page-model-file.hpp>
 #include <task/platform/confined-file.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <format>
@@ -914,6 +917,165 @@ namespace uf::deployment
             };
         }
 
+        // R8. Every agreement whose two halves are both authored in this
+        // directory, refused where they were written rather than where a suite
+        // trips over them. A role's vocabulary is the second half of three of
+        // them: the deployment's registered baseline event type, the five tool
+        // names its Tool Catalog either carries or does not, and the four
+        // journal payloads a suite has to be able to tell apart.
+        //
+        // Each is a case that would otherwise pass while proving nothing, and
+        // the directory is the only place both halves exist. R8's one half that
+        // cannot be here is the probe frame's extent: after the Q2 ruling it
+        // does not exist until the Host has activated the artifact. See
+        // project-as-data.md 2.7 R8.
+        [[nodiscard]]
+        auto requireVocabularyAgrees(
+            std::string_view role,
+            ProjectConformanceRole const& played,
+            LoadedDeployment const& deployment,
+            ProjectDeployment const& catalog
+        ) -> Status
+        {
+            auto const& vocabulary = played.vocabulary;
+            auto const  registered = deployment.registration.baselineEventType();
+            if (vocabulary.baselineEntry.eventType != registered)
+            {
+                return refuse(std::format(
+                    "the deployment {} is registered with baseline_event_type "
+                    "{}, and its vocabulary provisions {}",
+                    played.deployment,
+                    registered,
+                    vocabulary.baselineEntry.eventType
+                ));
+            }
+
+            // The four names the catalog must carry, and the mutability each is
+            // provisioned to demonstrate. A name the catalog carries as the
+            // other mutability is worse than a missing one: the suite still
+            // runs, and what it proves is that mutability came from the caller.
+            struct CarriedToolClaim final
+            {
+                std::string_view                 member{};
+                std::string_view                 name{};
+                operator_runtime::ToolMutability mutability{};
+            };
+
+            using operator_runtime::ToolMutability;
+            for (auto const& claim : std::array{
+                     CarriedToolClaim{
+                         .member     = "mutating_tool",
+                         .name       = vocabulary.mutatingTool,
+                         .mutability = ToolMutability::Mutating,
+                     },
+                     CarriedToolClaim{
+                         .member     = "other_mutating_tool",
+                         .name       = vocabulary.otherMutatingTool,
+                         .mutability = ToolMutability::Mutating,
+                     },
+                     CarriedToolClaim{
+                         .member     = "read_only_tool",
+                         .name       = vocabulary.readOnlyTool,
+                         .mutability = ToolMutability::ReadOnly,
+                     },
+                     CarriedToolClaim{
+                         .member     = "approval_required_plan_tool",
+                         .name       = vocabulary.approvalRequiredPlanTool,
+                         .mutability = ToolMutability::Mutating,
+                     },
+                 })
+            {
+                auto const carried = catalog.carriedTool(claim.name);
+                if (!carried.has_value())
+                {
+                    return refuse(std::format(
+                        "{}'s {} names {}, which the deployment {}'s Tool "
+                        "Catalog does not carry",
+                        role,
+                        claim.member,
+                        claim.name,
+                        played.deployment
+                    ));
+                }
+                if (carried->mutability != claim.mutability)
+                {
+                    return refuse(std::format(
+                        "{}'s {} names {}, which the deployment {}'s Tool "
+                        "Catalog carries as {} rather than as {}",
+                        role,
+                        claim.member,
+                        claim.name,
+                        played.deployment,
+                        toolMutabilityWireName(carried->mutability),
+                        toolMutabilityWireName(claim.mutability)
+                    ));
+                }
+            }
+
+            if (vocabulary.otherMutatingTool == vocabulary.mutatingTool)
+            {
+                return refuse(std::format(
+                    "{}'s mutating_tool and other_mutating_tool both name {}; "
+                    "the one-live-chain rule is proven by a second command "
+                    "naming a different tool",
+                    role,
+                    vocabulary.mutatingTool
+                ));
+            }
+
+            if (catalog.carriedTool(vocabulary.absentTool).has_value())
+            {
+                return refuse(std::format(
+                    "{}'s absent_tool names {}, which the deployment {}'s Tool "
+                    "Catalog carries; the member exists so that the catalog's "
+                    "refusal of an unknown tool is falsifiable, and a carried "
+                    "name leaves that case passing with nothing red anywhere",
+                    role,
+                    vocabulary.absentTool,
+                    played.deployment
+                ));
+            }
+
+            // All four journal payloads must differ. The reducer-input case
+            // proves that an entry a commit did not name never reaches the
+            // reducer, and two entries carrying one payload cannot show which
+            // of them arrived.
+            struct ProvisionedEntry final
+            {
+                std::string_view              member{};
+                ProjectJournalDocument const* p_entry{};
+            };
+
+            auto const entries = std::array{
+                ProvisionedEntry{"baseline_entry", &vocabulary.baselineEntry},
+                ProvisionedEntry{"progress_entry", &vocabulary.progressEntry},
+                ProvisionedEntry{"confirmed_entry", &vocabulary.confirmedEntry},
+                ProvisionedEntry{"superseded_entry", &vocabulary.supersededEntry},
+            };
+            for (auto first = std::size_t{0}; first < entries.size(); ++first)
+            {
+                for (auto second = first + 1U; second < entries.size(); ++second)
+                {
+                    if (
+                        entries[first].p_entry->payload
+                        != entries[second].p_entry->payload
+                    )
+                    {
+                        continue;
+                    }
+                    return refuse(std::format(
+                        "{}'s {} and {} carry one payload; an entry a commit "
+                        "did not name is provably absent from the reducer's "
+                        "input only while the four payloads differ",
+                        role,
+                        entries[first].member,
+                        entries[second].member
+                    ));
+                }
+            }
+            return ok();
+        }
+
         // The commitment one deployment is loaded against: what a caller
         // recorded earlier, or -- when no caller recorded anything -- the
         // digest just computed.
@@ -1055,18 +1217,43 @@ namespace uf::deployment
         }
         loaded.runtimeArtifactRoot = directory / artifactRoot;
 
+        auto const framePath = text(conformance, "probe_frame");
         UF_TRY_VALUE(
             frame,
-            readFile(
-                root,
-                "probe_frame",
-                text(conformance, "probe_frame"),
-                k_maximumFrameBytes
-            )
+            readFile(root, "probe_frame", framePath, k_maximumFrameBytes)
         );
         auto const frameBytes = std::as_bytes(std::span{frame});
+
+        // R9. A named file must be what the member names it as, and for the one
+        // member naming a capture that means the bytes decode. Only the decoded
+        // extent is out of reach here (R8); whether there is an image at all is
+        // not, and a project whose probe frame is not one is refused where it
+        // was written rather than several minutes into a suite. The decoded
+        // pixels are dropped on purpose: the capture the Host is handed is the
+        // project's own bytes, and a second copy of them in another encoding
+        // would be a second spelling of the frame.
+        auto const decoded = image::decodePng(frameBytes, framePath);
+        if (!decoded.has_value())
+        {
+            return refuse(std::format(
+                "probe_frame names {}, which is not a PNG capture this "
+                "framework can decode: {}",
+                framePath,
+                decoded.error().message()
+            ));
+        }
         loaded.probeFrame.assign(frameBytes.begin(), frameBytes.end());
 
+        // One deployment's Tool Catalog, kept past the loop that read it. A
+        // conformance role's vocabulary names tools, and which deployment plays
+        // which role is not settled until both roles have been read.
+        struct DeployedCatalog final
+        {
+            std::string       deployment{};
+            ProjectDeployment catalog;
+        };
+
+        auto catalogs = std::vector<DeployedCatalog>{};
         for (auto const& block : member(manifest, "deployments").items())
         {
             auto const name     = text(block, "name");
@@ -1236,6 +1423,10 @@ namespace uf::deployment
                 .pluginBytes            = std::move(files.pluginBytes),
                 .artifactBlobs          = std::move(blobs),
             });
+            catalogs.emplace_back(DeployedCatalog{
+                .deployment = name,
+                .catalog    = *std::move(deployed),
+            });
         }
 
         // A commitment naming a deployment this directory does not declare is a
@@ -1298,26 +1489,36 @@ namespace uf::deployment
         loaded.underTest = std::move(underTest);
         loaded.foreign   = std::move(foreign);
 
-        // R8, the half a loader can answer. Both sides of it are authored, so
-        // the disagreement is refused where it was written rather than where a
-        // suite trips over it. The other half -- that the probe frame's decoded
-        // extent is the model's -- cannot run here: after the Q2 ruling that
-        // extent does not exist until the Host has activated the artifact.
-        for (auto const* p_role : {&loaded.underTest, &loaded.foreign})
+        // R8, the half a loader can answer, for each role in turn. The member
+        // name is carried into the refusal because the two roles carry two
+        // vocabularies and a disagreement in one of them says nothing about the
+        // other.
+        struct PlayedRole final
         {
-            auto const* const p_played = loaded.findDeployment(p_role->deployment);
-            UF_CHECK(p_played != nullptr);
-            auto const declared = p_played->registration.baselineEventType();
-            if (p_role->vocabulary.baselineEntry.eventType != declared)
-            {
-                return refuse(std::format(
-                    "the deployment {} is registered with baseline_event_type "
-                    "{}, and its vocabulary provisions {}",
-                    p_role->deployment,
-                    declared,
-                    p_role->vocabulary.baselineEntry.eventType
-                ));
-            }
+            std::string_view              member{};
+            ProjectConformanceRole const* p_role{};
+        };
+
+        for (auto const& played : std::array{
+                 PlayedRole{"under_test", &loaded.underTest},
+                 PlayedRole{"foreign", &loaded.foreign},
+             })
+        {
+            auto const* const p_deployment =
+                loaded.findDeployment(played.p_role->deployment);
+            UF_CHECK(p_deployment != nullptr);
+            auto const carried = std::ranges::find(
+                catalogs,
+                played.p_role->deployment,
+                &DeployedCatalog::deployment
+            );
+            UF_CHECK(carried != catalogs.end());
+            UF_TRY(requireVocabularyAgrees(
+                played.member,
+                *played.p_role,
+                *p_deployment,
+                carried->catalog
+            ));
         }
 
         return loaded;

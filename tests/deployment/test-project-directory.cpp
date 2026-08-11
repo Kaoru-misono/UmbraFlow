@@ -10,13 +10,19 @@
 // decoded extent must be the model's, and after the Q2 ruling the model's
 // extent does not exist until the Host has activated the artifact -- which a
 // loader does not do. It moved into the conformance run instead; see
-// docs/plans/2026-08-11-project-as-data.md 2.7 R8.
+// docs/plans/2026-08-11-project-as-data.md 2.7 R8. What R9's case covers is
+// the other claim about the same file, that it decodes at all, which is
+// answerable here and was unchecked until 2026-08-11.
 
 #include "umbraflow/project-schemas.hpp"
 
 #include "json/repository-path.hpp"
 
 #include <deployment/project-directory.hpp>
+
+#include <core/types/integer.hpp>
+
+#include <image/png.hpp>
 
 #include <operator/manifest.hpp>
 
@@ -48,6 +54,23 @@ namespace uf::deployment
             REQUIRE(stream.good());
         }
 
+        // The fixture's probe frame, encoded by the framework's own PNG writer.
+        // R9 decodes what probe_frame names, so the eight signature bytes this
+        // fixture used to write are no longer a capture.
+        [[nodiscard]] auto probeFramePng() -> std::string
+        {
+            auto const pixel   = std::array<std::byte, 4>{};
+            auto const encoded = image::encodeRgbaPng("probe frame", 1U, 1U, pixel);
+            REQUIRE(encoded.has_value());
+
+            auto bytes = std::string{};
+            for (auto const value : *encoded)
+            {
+                bytes.push_back(static_cast<char>(std::to_integer<uint8>(value)));
+            }
+            return bytes;
+        }
+
         // One project directory the loader accepts, on disk, with every file
         // written from the exemplar's real schema bytes. Cases mutate a copy of
         // the manifest text and rewrite one file; nothing here is shared
@@ -74,7 +97,7 @@ namespace uf::deployment
                     writeDeployment(deployment);
                 }
                 write(m_root / "runtime/artifact/page-model.toml", "[[page]]\n");
-                write(m_root / "runtime/probe-frame.png", "\x89PNG\r\n\x1a\n");
+                write(m_root / "runtime/probe-frame.png", probeFramePng());
                 write(m_root / "umbraflow-project.json", projectManifest());
                 write(m_root / "umbraflow-conformance.json", conformanceManifest());
             }
@@ -293,6 +316,60 @@ namespace uf::deployment
         CHECK(onDisk == projectRegistrationSchemaBytes());
     }
 
+    // The specification states three documents by worked example, and this is
+    // what keeps an example a document the framework accepts. Without it the
+    // examples are prose beside a C++ string constant, which is the arrangement
+    // that had one consumer writing CamelCase for `mutating` and `semantic`.
+    TEST_CASE("the specification's worked documents are documents this accepts")
+    {
+        constexpr auto k_specification =
+            std::string_view{"docs/plans/2026-08-11-project-as-data.md"};
+        auto const root = json::repositoryRoot(k_specification);
+        REQUIRE_FALSE(root.empty());
+
+        auto       stream = std::ifstream{root / k_specification, std::ios::binary};
+        auto const text   = std::string{
+            std::istreambuf_iterator<char>{stream},
+            std::istreambuf_iterator<char>{},
+        };
+        REQUIRE_FALSE(text.empty());
+
+        for (auto const format : std::array{
+                 std::string_view{"umbraflow-tool-catalog/v1"},
+                 std::string_view{"umbraflow-journal-event-schema-manifest/v1"},
+                 std::string_view{"umbraflow-reconcile-manifest/v1"},
+             })
+        {
+            INFO(format);
+            auto const anchored = text.find(
+                std::string{"<!-- example: "} + std::string{format} + " -->"
+            );
+            REQUIRE(anchored != std::string::npos);
+            auto const opened = text.find("```json\n", anchored);
+            REQUIRE(opened != std::string::npos);
+            auto const begin  = opened + std::string_view{"```json\n"}.size();
+            auto const closed = text.find("\n```", begin);
+            REQUIRE(closed != std::string::npos);
+
+            auto const example = text.substr(begin, closed - begin);
+            auto const judged  = validateFrameworkFormat(example);
+            auto const complaint =
+                judged.has_value() ? std::string{} : judged.error().message();
+            INFO(complaint);
+            CHECK(judged.has_value());
+        }
+
+        // Which schema judges a document is the document's own `schema` member,
+        // so one naming a format this module does not own is refused rather
+        // than judged by whichever schema came first. Without this the loop
+        // above would equally describe a function that accepted anything.
+        CHECK_FALSE(
+            validateFrameworkFormat(R"json({"schema":"umbraflow-project/v1"})json")
+                .has_value()
+        );
+        CHECK_FALSE(validateFrameworkFormat(R"json({"tools":[]})json").has_value());
+    }
+
     // Everything below breaks one thing in this directory, so this case is what
     // says the directory is otherwise whole. It also states what a load
     // produces, because no other case reads the result.
@@ -504,9 +581,11 @@ namespace uf::deployment
         CHECK_FALSE(why(missing).contains("does not hold together"));
     }
 
-    // R5. Every stated sha256 equals the digest of the bytes it names. After
-    // the Q3 ruling this is two documents rather than three, and it is the only
-    // rule of the eight a mistyped digest can make go red.
+    // R5. Every stated sha256 equals the digest of the bytes it names, and the
+    // refusal prints the stated digest and what the deployment carries -- which
+    // is the whole of R5's promise that fixing one is a copy. Each half is
+    // asserted: a case asserting only the stated digest was satisfied by two of
+    // the three sites while neither printed anything to copy.
     TEST_CASE("R5 a stated digest that is not the file's is refused")
     {
         auto const fixture = Fixture{};
@@ -523,6 +602,7 @@ namespace uf::deployment
         auto const journal = fixture.load();
         REQUIRE_FALSE(journal.has_value());
         CHECK(why(journal).contains(std::string(64U, 'a')));
+        CHECK(why(journal).contains(progress));
 
         fixture.rewrite(
             "schema/alpha/journal-manifest.json",
@@ -540,7 +620,35 @@ namespace uf::deployment
         );
         auto const reconcile = fixture.load();
         REQUIRE_FALSE(reconcile.has_value());
-        CHECK(why(reconcile).contains("reconcile"));
+        CHECK(why(reconcile).contains(std::string(64U, 'b')));
+        CHECK(why(reconcile).contains(
+            umbraflow::schemaHashHex(umbraflow::k_reconcileSchema)
+        ));
+    }
+
+    // R5, third site. The Tool Catalog's tool_precondition_sha256 is the only
+    // route by which the precondition schema's bytes reach tool_catalog_hash,
+    // and until this case existed the rule had two of its three sites covered.
+    TEST_CASE("R5 a catalog naming another tool precondition schema is refused")
+    {
+        auto const fixture = Fixture{};
+        REQUIRE(fixture.load().has_value());
+
+        auto const bundle = umbraflow::DeploymentBundle{"fixture.alpha"};
+        fixture.rewrite(
+            "schema/alpha/catalog.json",
+            substituted(
+                bundle.toolCatalog(),
+                umbraflow::schemaHashHex(umbraflow::k_toolPreconditionSchema),
+                std::string(64U, 'c')
+            )
+        );
+        auto const refused = fixture.load();
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(why(refused).contains(std::string(64U, 'c')));
+        CHECK(why(refused).contains(
+            umbraflow::schemaHashHex(umbraflow::k_toolPreconditionSchema)
+        ));
     }
 
     // R6. Every schema must compile under the evaluator's closed keyword set. A
@@ -614,6 +722,170 @@ namespace uf::deployment
         REQUIRE_FALSE(disagreeing.has_value());
         CHECK(why(disagreeing).contains("baseline_event_type"));
         CHECK(why(disagreeing).contains("fixture.progress"));
+    }
+
+    // R8, applied to the five tool names a vocabulary provisions. Each is a
+    // claim about the deployment's Tool Catalog, and each names a case that
+    // runs green while proving nothing when the claim is false -- absent_tool
+    // above all, because a catalog that carries it turns the refusal the field
+    // exists for into a pass with nothing red anywhere.
+    //
+    // Every substitution below names a tool of this project's own catalog, or
+    // no tool at all, so nothing but the agreement itself can refuse it.
+    TEST_CASE("R8 a vocabulary the deployment's Tool Catalog contradicts is refused")
+    {
+        auto const fixture = Fixture{};
+        REQUIRE(fixture.load().has_value());
+
+        auto const refusing =
+            [&fixture](std::string_view from, std::string_view to)
+        {
+            INFO("substituted ", from, " with ", to);
+            fixture.rewrite(
+                "umbraflow-conformance.json",
+                substituted(Fixture::conformanceManifest(), from, to)
+            );
+            auto const refused = fixture.load();
+            REQUIRE_FALSE(refused.has_value());
+            return why(refused);
+        };
+
+        // observe-1 is the catalog's ReadOnly row, so this directory would
+        // otherwise submit a read-only tool wherever the suite needs an
+        // Operation that changes something.
+        auto const readOnly = refusing(
+            R"json("mutating_tool":"command-1")json",
+            R"json("mutating_tool":"observe-1")json"
+        );
+        CHECK(readOnly.contains("mutating_tool"));
+        CHECK(readOnly.contains("read_only"));
+
+        auto const uncarried = refusing(
+            R"json("mutating_tool":"command-1")json",
+            R"json("mutating_tool":"command-absent")json"
+        );
+        CHECK(uncarried.contains("does not carry"));
+        CHECK(uncarried.contains("command-absent"));
+
+        auto const carriedAsMutating = refusing(
+            R"json("read_only_tool":"observe-1")json",
+            R"json("read_only_tool":"command-2")json"
+        );
+        CHECK(carriedAsMutating.contains("read_only_tool"));
+        CHECK(carriedAsMutating.contains("mutating"));
+
+        auto const oneTool = refusing(
+            R"json("other_mutating_tool":"command-2")json",
+            R"json("other_mutating_tool":"command-1")json"
+        );
+        CHECK(oneTool.contains("other_mutating_tool"));
+        CHECK(oneTool.contains("command-1"));
+
+        // command-1 is Mutating and carried, so nothing but absent_tool's own
+        // rule -- that the catalog must NOT carry it -- can refuse this one.
+        auto const carriedAbsent = refusing(
+            R"json("absent_tool":"command-absent")json",
+            R"json("absent_tool":"command-1")json"
+        );
+        CHECK(carriedAbsent.contains("absent_tool names command-1"));
+        CHECK(carriedAbsent.contains("falsifiable"));
+
+        // The foreign role carries a vocabulary of its own, and three suite
+        // cases reach it. Without this the cases above would equally describe a
+        // loader that checked one role and skipped the other.
+        auto const foreign = refusing(
+            R"json("foreign":{"deployment":"beta","vocabulary":{"mutating_tool":"command-1")json",
+            R"json("foreign":{"deployment":"beta","vocabulary":{"mutating_tool":"observe-1")json"
+        );
+        CHECK(foreign.contains("foreign's mutating_tool"));
+    }
+
+    // R8, applied to the four journal payloads. The reducer-input case proves
+    // that an entry a commit did not name never reaches the reducer; two
+    // entries carrying one payload cannot show which of them arrived, so the
+    // agreement is refused where the vocabulary was written.
+    TEST_CASE("R8 two journal entries provisioning one payload are refused")
+    {
+        auto const fixture = Fixture{};
+        REQUIRE(fixture.load().has_value());
+
+        // The event types stay distinct and each keeps a payload schema of its
+        // own, so only the equality of the two payloads is left to refuse this.
+        fixture.rewrite(
+            "umbraflow-conformance.json",
+            substituted(
+                Fixture::conformanceManifest(),
+                R"json("progress_entry":{"event_type":"fixture.progress","payload":"{\"value\":1}"})json",
+                R"json("progress_entry":{"event_type":"fixture.progress","payload":"{\"marker\":\"confirmed\"}"})json"
+            )
+        );
+        auto const equal = fixture.load();
+        REQUIRE_FALSE(equal.has_value());
+        CHECK(why(equal).contains("progress_entry"));
+        CHECK(why(equal).contains("confirmed_entry"));
+    }
+
+    // R8, applied to the two halves of the journal event schema manifest. The
+    // block supplies the files and the manifest names their digests, so a
+    // supplied schema no entry names is refused rather than compiled and never
+    // consulted -- its bytes reach no digest in the design at all.
+    TEST_CASE("R8 a journal payload schema no manifest entry names is refused")
+    {
+        auto const fixture = Fixture{};
+        REQUIRE(fixture.load().has_value());
+
+        // The surplus file is beta's own effect payload schema: a complete
+        // schema this evaluator compiles, carried by the same project, so
+        // nothing but the manifest's silence about it can refuse this.
+        fixture.rewrite(
+            "umbraflow-project.json",
+            substituted(
+                Fixture::projectManifest(),
+                R"json("journal_payload_schemas":["schema/alpha/journal-0.json")json",
+                R"json("journal_payload_schemas":["schema/beta/effect-0.json","schema/alpha/journal-0.json")json"
+            )
+        );
+        auto const surplus = fixture.load();
+        REQUIRE_FALSE(surplus.has_value());
+        CHECK(why(surplus).contains(
+            umbraflow::schemaHashHex(umbraflow::k_effectPayloadSchema)
+        ));
+        CHECK(why(surplus).contains("names under no event type"));
+    }
+
+    // R9. probe_frame names a capture, and a file that does not decode is
+    // refused where it was written rather than minutes into a suite. Only the
+    // extent is out of reach, and R8 says why.
+    TEST_CASE("R9 a probe frame that is not a PNG is refused")
+    {
+        auto const fixture = Fixture{};
+        REQUIRE(fixture.load().has_value());
+
+        // A document this directory already holds and already reads, so the
+        // path resolves and the file exists: R3 and R4 are both satisfied and
+        // only the decode is left.
+        fixture.rewrite(
+            "umbraflow-conformance.json",
+            substituted(
+                Fixture::conformanceManifest(),
+                R"json("probe_frame":"runtime/probe-frame.png")json",
+                R"json("probe_frame":"schema/alpha/state.json")json"
+            )
+        );
+        auto const notAnImage = fixture.load();
+        REQUIRE_FALSE(notAnImage.has_value());
+        CHECK(why(notAnImage).contains("probe_frame"));
+        CHECK(why(notAnImage).contains("schema/alpha/state.json"));
+
+        // A truncated capture is the case a signature check cannot reach: the
+        // first eight bytes are a PNG's and the file is not one.
+        fixture.rewrite(
+            "runtime/probe-frame.png",
+            probeFramePng().substr(0U, 16U)
+        );
+        auto const truncated = fixture.load();
+        REQUIRE_FALSE(truncated.has_value());
+        CHECK(why(truncated).contains("probe_frame"));
     }
 
     // Q7. A directory whose two roles are played by one deployment is refused

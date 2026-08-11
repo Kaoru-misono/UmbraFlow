@@ -397,6 +397,10 @@ cpp_add_test(
 # The deployment's two validators, against both exemplars' real schema bytes.
 # The exemplars' schema documents live beside their providers, so the include
 # root is conformance/exemplars and each is named by its own directory.
+#
+# image is named here as well as inside the module because the loader decodes
+# what probe_frame names (2.7 R9), so the fixture has to write a PNG the same
+# decoder accepts rather than eight signature bytes.
 cpp_add_test(
     NAME test-deployment
     SOURCES
@@ -404,6 +408,7 @@ cpp_add_test(
         deployment/test-project-directory.cpp
     LIBS
         ${PROJECT_NAME}_deployment
+        ${PROJECT_NAME}_image
 )
 # tests/ itself, so that the loader's cases reach tests/json/repository-path.hpp
 # rather than becoming a seventh copy of it.

@@ -128,10 +128,12 @@ namespace uf::deployment
         // deployment drives, and a second root would be a second world.
         std::filesystem::path runtimeArtifactRoot{};
 
-        // One capture of the project's target, PNG-encoded. Its extent is NOT
-        // checked here and cannot be: after the Q2 ruling the extent it must
-        // match is published by RuntimeModelBinding, which does not exist until
-        // the Host has activated the artifact. See project-as-data.md 2.7 R8.
+        // One capture of the project's target, as the project's own PNG bytes.
+        // The load decoded them, so these are an image (2.7 R9); its extent is
+        // NOT checked here and cannot be, because after the Q2 ruling the
+        // extent it must match is published by RuntimeModelBinding, which does
+        // not exist until the Host has activated the artifact. See
+        // project-as-data.md 2.7 R8.
         std::vector<std::byte> probeFrame{};
 
         std::string                   primaryDeployment{};

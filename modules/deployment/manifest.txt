@@ -29,5 +29,11 @@ unity_build = false
 # operator does not depend on this module and must not: an Operator that
 # reached into a deployment for its own validators would be the deployment.
 # The edge runs one way, from the deployment down into the Operator.
+#
+# image is private because it appears in no header here: only project-directory
+# reaches it, to decode the capture a project's probe_frame names and refuse a
+# file that is not one. The bytes this module publishes are still the project's
+# own, so nothing image declares is named by anything this module publishes.
 [dependencies]
 public = core domain json operator task
+private = image

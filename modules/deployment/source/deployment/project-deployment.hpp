@@ -9,6 +9,7 @@
 #include <core/error/result.hpp>
 
 #include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -51,9 +52,10 @@ namespace uf::deployment
     // these identities, so a document that declares another one is refused when
     // the deployment is created rather than skipped when a document is judged.
     //
-    // Two projects may declare the same three identities. Each project's
-    // schemas are compiled into a closed set of their own, so the identity is
-    // only ever resolved among that project's documents.
+    // Two deployments may declare the same four identities, and the two a
+    // project directory needs necessarily do. Each deployment's schemas are
+    // compiled into a closed set of their own, so an identity is only ever
+    // resolved among the documents of the deployment that declared it.
     inline constexpr auto k_projectStateSchemaId =
         std::string_view{"https://umbraflow.dev/schema/project/state"};
     inline constexpr auto k_projectObservationSchemaId =
@@ -109,6 +111,31 @@ namespace uf::deployment
         std::span<std::string_view const> effectPayloadSchemas{};
     };
 
+    // One document whose format is the framework's rather than the project's --
+    // the tool catalog, the journal event schema manifest or the reconcile
+    // payload schema manifest -- judged against the framework schema that
+    // governs it. Which one it is comes from the document's own `schema`
+    // member, so a caller states no choice and cannot state the wrong one.
+    //
+    // It is published for one reason. docs/plans/2026-08-11-project-as-data.md
+    // 2.4 specifies these three by worked example, and an example that nothing
+    // holds to the bytes that decide drifts from them: the last time this
+    // format was stated only as C++ string constants, the first consumer to
+    // write the six documents guessed CamelCase for two wire words and was
+    // wrong. tests/deployment extracts each example from that document and
+    // requires this to accept it.
+    [[nodiscard]]
+    auto validateFrameworkFormat(std::string_view exactBytes) -> Status;
+
+    // The Tool Catalog document's own word for a mutability. That document's
+    // vocabulary belongs to this module -- the framework schema that judges the
+    // catalog and the table that reads it are both here -- so a caller whose
+    // refusal must name a mutability spells it through this rather than as a
+    // third copy of the two words.
+    [[nodiscard]]
+    auto toolMutabilityWireName(operator_runtime::ToolMutability mutability) noexcept
+        -> std::string_view;
+
     // The four schema-bearing validators one ProjectRegistration's authorities
     // are built from. Immutable and copyable: each accessor hands out a
     // std::function that keeps this state alive, so an authority outlives the
@@ -137,6 +164,18 @@ namespace uf::deployment
         [[nodiscard]]
         static auto create(ProjectDeploymentSources const& sources)
             -> Result<ProjectDeployment>;
+
+        // What this deployment's Tool Catalog carries under one name, or
+        // nothing at all.
+        //
+        // Every other reader reaches the catalog through toolCatalogValidator(),
+        // which judges a call and therefore needs its arguments. A document
+        // that names tools without calling them -- a conformance vocabulary --
+        // has no arguments to offer, so this is what lets such a document and a
+        // catalog be held to each other where both were written.
+        [[nodiscard]]
+        auto carriedTool(std::string_view name) const
+            -> std::optional<operator_runtime::ToolDescriptor>;
 
         [[nodiscard]]
         auto documentValidator() const

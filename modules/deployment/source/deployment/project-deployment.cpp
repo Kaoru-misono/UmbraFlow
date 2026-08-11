@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <format>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -585,6 +586,41 @@ namespace uf::deployment
     }
 })json"};
 
+        // One document a deployment authors whose format is the framework's:
+        // the value its `schema` member must carry, the label its refusals are
+        // named by, and the exact bytes that judge it. The three are spelled
+        // once here because two readers need them -- create() below, and
+        // validateFrameworkFormat, which is what holds the specification's
+        // worked examples to these bytes.
+        struct FrameworkDocument final
+        {
+            std::string_view schemaName{};
+            std::string_view label{};
+            std::string_view exactBytes{};
+        };
+
+        constexpr auto k_toolCatalogDocument = FrameworkDocument{
+            .schemaName = "umbraflow-tool-catalog/v1",
+            .label      = "operator/tool-catalog",
+            .exactBytes = k_toolCatalogSchema,
+        };
+        constexpr auto k_journalManifestDocument = FrameworkDocument{
+            .schemaName = "umbraflow-journal-event-schema-manifest/v1",
+            .label      = "operator/journal-event-schema-manifest",
+            .exactBytes = k_journalManifestSchema,
+        };
+        constexpr auto k_reconcileManifestDocument = FrameworkDocument{
+            .schemaName = "umbraflow-reconcile-manifest/v1",
+            .label      = "operator/reconcile-manifest",
+            .exactBytes = k_reconcileManifestSchema,
+        };
+
+        constexpr auto k_frameworkDocuments = std::array{
+            k_journalManifestDocument,
+            k_reconcileManifestDocument,
+            k_toolCatalogDocument,
+        };
+
         [[nodiscard]]
         auto refuse(std::string message) -> std::unexpected<Error>
         {
@@ -891,6 +927,26 @@ namespace uf::deployment
             json::Schema schema;
         };
 
+        // The digests of the bytes this deployment holds, for a refusal that
+        // has to say what the document could have named. R5
+        // (project-as-data.md 2.7) requires a digest disagreement to print the
+        // stated digest and what the deployment carries, and for a set of
+        // schemas named only by digest that set is the whole of the other side.
+        [[nodiscard]]
+        auto carriedDigests(std::span<PayloadSchema const> schemas) -> std::string
+        {
+            auto listed = std::string{};
+            for (auto const& schema : schemas)
+            {
+                if (!listed.empty())
+                {
+                    listed += ", ";
+                }
+                listed += schema.hash.hex();
+            }
+            return listed;
+        }
+
         struct JournalPayload final
         {
             std::string eventType{};
@@ -1139,6 +1195,53 @@ namespace uf::deployment
         }
 
         UF_UNREACHABLE_MSG("unknown ProjectPluginFunction");
+    }
+
+    auto validateFrameworkFormat(std::string_view exactBytes) -> Status
+    {
+        UF_TRY_VALUE(document, parseDocument(exactBytes));
+        auto const* const p_schema = document.find("schema");
+        if (p_schema == nullptr || p_schema->kind() != json::ValueKind::String)
+        {
+            return refuse(
+                "a framework-format document names its own format in a schema "
+                "member, and this one carries no such member"
+            );
+        }
+        auto const named = std::ranges::find(
+            k_frameworkDocuments,
+            p_schema->string(),
+            &FrameworkDocument::schemaName
+        );
+        if (named == k_frameworkDocuments.end())
+        {
+            return refuse(std::format(
+                "no framework document format is named {}",
+                p_schema->string()
+            ));
+        }
+
+        auto const commonOnly = std::array{json::Schema::Document{
+            .label      = "operator/common",
+            .exactBytes = k_commonSchema,
+        }};
+        UF_TRY_VALUE(
+            schema,
+            compile(named->label, named->exactBytes, commonOnly)
+        );
+        return adopt(schema.validate(document), named->schemaName);
+    }
+
+    auto toolMutabilityWireName(operator_runtime::ToolMutability mutability) noexcept
+        -> std::string_view
+    {
+        auto const found = std::ranges::find(
+            k_mutabilities,
+            mutability,
+            &MutabilityName::mutability
+        );
+        UF_CHECK(found != k_mutabilities.end());
+        return found->wire;
     }
 
     auto canonicalJsonValidator() -> operator_runtime::CanonicalJsonValidator
@@ -1402,7 +1505,11 @@ namespace uf::deployment
 
         UF_TRY_VALUE(
             toolCatalogSchema,
-            compile("operator/tool-catalog", k_toolCatalogSchema, commonOnly)
+            compile(
+                k_toolCatalogDocument.label,
+                k_toolCatalogDocument.exactBytes,
+                commonOnly
+            )
         );
         UF_TRY_VALUE(catalog, parseDocument(sources.toolCatalog));
         UF_TRY(adopt(toolCatalogSchema.validate(catalog), "the Tool Catalog"));
@@ -1412,10 +1519,12 @@ namespace uf::deployment
         if (member(catalog, "tool_precondition_sha256").string()
             != toolPreconditionHash.hex())
         {
-            return refuse(
-                "the Tool Catalog names a tool precondition schema other than the "
-                "one this deployment carries"
-            );
+            return refuse(std::format(
+                "the Tool Catalog names tool precondition schema {}, and the "
+                "schema this deployment carries hashes to {}",
+                member(catalog, "tool_precondition_sha256").string(),
+                toolPreconditionHash.hex()
+            ));
         }
         for (auto const& tool : member(catalog, "tools").items())
         {
@@ -1452,8 +1561,8 @@ namespace uf::deployment
         UF_TRY_VALUE(
             journalManifestSchema,
             compile(
-                "operator/journal-event-schema-manifest",
-                k_journalManifestSchema,
+                k_journalManifestDocument.label,
+                k_journalManifestDocument.exactBytes,
                 commonOnly
             )
         );
@@ -1480,9 +1589,12 @@ namespace uf::deployment
             if (found == state->journalPayloadSchemas.end())
             {
                 return refuse(std::format(
-                    "the journal event schema manifest names payload schema {}, "
-                    "which this deployment does not carry",
-                    declared
+                    "the journal event schema manifest names payload schema {} "
+                    "for {}, which this deployment does not carry: its "
+                    "journal_payload_schemas hash to {}",
+                    declared,
+                    member(entry, "namespaced_event_type").string(),
+                    carriedDigests(state->journalPayloadSchemas)
                 ));
             }
             state->journalPayloads.emplace_back(JournalPayload{
@@ -1495,11 +1607,38 @@ namespace uf::deployment
             });
         }
 
+        // The other direction of the same agreement, and it is the direction
+        // that decides whether the bytes are inside any digest at all. A
+        // payload schema no entry names reaches
+        // journal_event_schema_manifest_hash through nothing, so it would be
+        // compiled, held by this deployment, and consulted by no document ever
+        // -- the shape project-as-data.md 7.0 rules out for pinned schemas.
+        // Both halves are authored in one directory, which is R8's criterion.
+        for (auto index = std::size_t{0};
+             index < state->journalPayloadSchemas.size();
+             ++index)
+        {
+            auto const named = std::ranges::find(
+                state->journalPayloads,
+                index,
+                &JournalPayload::schemaIndex
+            );
+            if (named == state->journalPayloads.end())
+            {
+                return refuse(std::format(
+                    "this deployment supplies a journal payload schema hashing "
+                    "to {}, which the journal event schema manifest names under "
+                    "no event type",
+                    state->journalPayloadSchemas[index].hash.hex()
+                ));
+            }
+        }
+
         UF_TRY_VALUE(
             reconcileManifestSchema,
             compile(
-                "operator/reconcile-manifest",
-                k_reconcileManifestSchema,
+                k_reconcileManifestDocument.label,
+                k_reconcileManifestDocument.exactBytes,
                 commonOnly
             )
         );
@@ -1517,10 +1656,12 @@ namespace uf::deployment
         if (member(reconcileManifest, "reconcile_schema_sha256").string()
             != reconcileHash.hex())
         {
-            return refuse(
-                "the reconcile manifest names a reconcile schema other than the "
-                "one this deployment carries"
-            );
+            return refuse(std::format(
+                "the reconcile manifest names reconcile schema {}, and the "
+                "schema this deployment carries hashes to {}",
+                member(reconcileManifest, "reconcile_schema_sha256").string(),
+                reconcileHash.hex()
+            ));
         }
         state->requestDefinition = std::string{
             member(reconcileManifest, "request_definition").string(),
@@ -1560,6 +1701,21 @@ namespace uf::deployment
         }
 
         return ProjectDeployment{std::shared_ptr<State const>{std::move(state)}};
+    }
+
+    auto ProjectDeployment::carriedTool(std::string_view name) const
+        -> std::optional<operator_runtime::ToolDescriptor>
+    {
+        auto const* const p_tool = m_state->findTool(name);
+        if (p_tool == nullptr)
+        {
+            return std::nullopt;
+        }
+        return operator_runtime::ToolDescriptor{
+            .toolVersion = p_tool->version,
+            .mutability  = p_tool->mutability,
+            .surface     = p_tool->surface,
+        };
     }
 
     auto ProjectDeployment::documentValidator() const

@@ -144,3 +144,49 @@ Apply each mutation in the copy and confirm two things: the intended case is
 red, and the run terminates. A mutation whose run has to be killed has not
 proved anything, and its harness needs the escape widened before the result
 counts.
+
+## Restoring the copy with robocopy leaves the mutation in the object
+
+### Symptom
+
+A falsification run reddens the case it aimed at *and* a case belonging to an
+earlier mutation that was already restored. The extra red persists across every
+later run in the campaign and disappears only after an unrelated rebuild, so it
+reads as a real defect that one mutation exposed.
+
+### Root cause
+
+`robocopy /MIR` preserves the source file's timestamp. Restoring a mutated file
+therefore replaces a file whose mtime is *now* with one whose mtime is older
+than the object built from the mutation, and ninja rebuilds only when an input
+is newer than its output. The mutated object stays, and the check the mutation
+deleted stays deleted, for every run until something else touches that source.
+Measured 2026-08-11: one deleted check survived four later runs this way, and
+the four results it contaminated had to be discarded and re-measured.
+
+The same shape catches a harness that rewrites source with Python's
+`write_text`: the default newline translation converts the whole file to CRLF,
+which compiles fine but breaks any test that searches a repository document for
+`"\n"`-delimited text. That one produced a red whose message named an assertion
+the mutation had nothing to do with.
+
+### Fix
+
+Touch every source the campaign mutates after restoring it, so the restored
+file is newer than any object built from a mutation:
+
+```python
+for source in (mirror / "modules" / "<module>").rglob("*"):
+    if source.is_file():
+        source.touch()
+```
+
+Read and write mutated files as bytes, so no newline is rewritten.
+
+### Regression check
+
+Restore the copy, rebuild, and confirm the build actually recompiles the file
+that was mutated -- a build that reports only the link step has restored
+nothing. Then run the suite: it must be fully green before the next mutation is
+applied. A campaign that never observes green between mutations cannot tell
+which run its reds came from.
