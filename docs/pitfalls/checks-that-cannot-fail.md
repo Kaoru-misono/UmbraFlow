@@ -27,6 +27,7 @@ the method before spending a campaign.
 | A stand-in for a validator nobody wrote | Ask what parses a byte, then an input the stand-in accepts and a real validator refuses |
 | A second mechanism refuses first | A negative control: with the check removed, the same input must be **accepted** |
 | An assertion another refusal already satisfies | Reading the failure text, never the colour or the assertion count |
+| A call inside a negative assertion | Mutating the callee's behaviour, never grepping the call site; the control is a case where the same callee must **succeed** |
 | A branch nothing reaches | A positive control — the identical mutation in the sibling branch must be red |
 | A value nothing reads back | Mutation, and only mutation: corrupt the stored value and expect red |
 | A selector that selected nothing | A denominator — `ctest -N`, the file list, the object count |
@@ -222,6 +223,72 @@ mutation is red and the test says it is not claiming the pattern.
 claim about the whole tree's refusal vocabulary, so it has to be checked against
 the whole tree's refusal vocabulary.
 
+## A call inside a negative assertion
+
+The last two are about the check. This one is about the thing the check calls,
+and it is more dangerous than a path nothing reaches at all, because a reader who
+greps for the call site finds one and concludes the subject is covered.
+
+**An invocation inside a negative assertion provides no coverage of the thing
+invoked: the failure mode and the asserted outcome are the same value.** Break
+the callee and it produces a refusal; the case asserts a refusal; the case
+passes.
+
+The instance is the exported Operator conformance suite, and it is the widest one
+recorded here because the suite is what a consuming repository runs to certify
+its own project. The suite drives the deployment in the `UnderTest` role and
+nothing else: `modules/conformance/source/conformance/suite-support.cpp:242-279`
+loads that deployment's plugin, registers it, provisions the instance, pins the
+session and takes the lease, all under one registration. Exactly one case reaches
+the FOREIGN deployment's plugin —
+`suite-control-ledger.cpp:462-478`, "the reconciler owns the disposition, not the
+requester" — where it calls `loadPlugin(prepared.project, ProjectRole::Foreign)`
+and mints an outcome through `reconcileOutcome(..., ProjectRole::Foreign, ...)`.
+
+That call sits inside
+`CHECK_FALSE(prepared.store.commitReconciliation(prepared.plugin, foreignCommit).has_value())`.
+The case asserts that an outcome minted against another registration is refused,
+which is the right rule and a real one — and it is satisfied identically by a
+foreign plugin that cannot answer at all.
+
+Measured 2026-08-12 against `examples/umbraflow`, one mutation at a time, the
+suite observed at 16 of 16 and 1,303 assertions before each:
+
+- foreign `reconcile` rewritten to answer `{"disposition":"rejected"}` whatever
+  it is asked — **16 of 16, 1,303 of 1,303**. This is the one entry point the
+  case actually calls, and its answer is unmeasured.
+- foreign `next_step` rewritten to name a `ui_target_id` no model declares —
+  **16 of 16, 1,303 of 1,303**. Together with `derive`, `plan` and `reduce` it is
+  never called at all, which is the ordinary uninvoked-path form.
+- foreign `plugin_id` changed — **15 of 16**, and this is the sharp part: the red
+  lands at `suite-support.cpp:197`, `REQUIRE(result.has_value())` inside
+  `loadPlugin`, because the registrar refuses to load a module whose id is not
+  the one the registration names. It never lands at the case's own `CHECK_FALSE`.
+  So the only mutation that moves the number moves it in a different mechanism,
+  which under the stronger rule above is not coverage of this case's property
+  either.
+
+**What the suite's green therefore means.** It is an under-test-deployment
+conformance suite with a foreign authority foil, and reporting its green as
+whole-project or all-plugin conformance is broader than what it measures. The
+foreign deployment is measured as bytes and identity — its registration hash, its
+plugin id, its schemas — and not as behaviour. A consumer that wants its second
+deployment's behaviour measured swaps the two roles in that project's
+`umbraflow-conformance.json` and runs the suite again. That is where a consumer
+should look, and it is how the second plugin was actually proven.
+
+One correction belongs here rather than where it was written. `uf-chaos` commit
+`012b15e` states the stronger claim that the suite never invokes the foreign
+plugin at all. That is false — it is invoked, in the case above — and the true
+statement is the weaker and more useful one: it is invoked and the invocation
+covers nothing.
+
+**Detection is mutating the callee, never grepping the call site.** A refusal
+assertion says nothing about what produced the refusal, so the control is a case
+in which the same callee must **succeed** — the negative control of
+`## A second mechanism refuses first`, applied to the invoked component instead
+of to the input.
+
 ## A branch nothing reaches
 
 The code is correct, the case is green, and no input in the estate takes that
@@ -295,7 +362,7 @@ the write site looks correct because it is correct.
 
 The check runs. It runs over an empty set, and an empty set passes.
 
-Six instances, all found in 2026-08-10 and 2026-08-11 and all now closed.
+Seven instances, all found between 2026-08-10 and 2026-08-12 and all now closed.
 `HeaderFilterRegex` in `.clang-tidy` matched no path at all, so every header
 diagnostic was dropped as non-user code (detailed below). `SOURCE_ROOTS` in
 `scripts/check_cpp_format.py:24` and `scripts/check_safety.py:18` omitted
@@ -329,6 +396,20 @@ filter matches no test**, so a prose-named case, a typo or a renamed gate reads
 exactly like a pass; four results were falsely green on one campaign's first
 pass. A mutation harness is a gate and needs its own positive control before its
 results mean anything.
+
+The seventh is a regex narrower than the set it was meant to cover.
+`SCHEMA_AUTHORITIES` in `tests/test-runtime-surface.py` held
+`schema/umbraflow-runtime-v2.schema.json` to its C++ pin, and its pattern
+required `std::string_view{"..."}` — so `model.schema_hash` in
+`modules/task/runtime/model.luau`, which pins the same digest for the trusted
+parser, was outside the scanned set entirely. A stale value there refuses every
+artifact at activation, in a lane no local gate exercises, while
+`check-repository-surface` prints PASS. Closed 2026-08-12: the table carries the
+Luau file and the reader picks the pattern from the suffix. The proof needed the
+negative control, because the same flipped byte reads identically either way —
+with the row present the check prints
+`model.schema_hash does not match exact schema/umbraflow-runtime-v2.schema.json bytes`,
+and with the row removed the *same* flipped pin prints `repository surface: PASS`.
 
 **Detection is a denominator.** "clang-tidy passed" means nothing without how
 many objects it analyzed; "the format check passed" means nothing without which

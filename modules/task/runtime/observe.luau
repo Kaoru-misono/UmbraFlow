@@ -297,6 +297,7 @@ function observe.open(runtimeModel: any): any
                 variant = payload.request.variant,
                 action = payload.request.action,
                 action_kind = payload.request.action_kind,
+                key = payload.request.key,
                 placement = payload.placement,
                 proof_locator = payload.proof_locator,
             })

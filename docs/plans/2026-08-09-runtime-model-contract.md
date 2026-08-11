@@ -248,6 +248,20 @@ within its binding and one of these shapes:
 { id, kind = "drag", locator, destination, preconditions: Predicate[] }
 ```
 
+> **Amended 2026-08-12: two of these four exist.** The shipped shape is
+> `{ id, kind, proof_locator }` plus `key` when `kind` is `"key"`, and `kind` is
+> `"click"` or `"key"` and nothing else — `$defs.binding_action` in
+> `umbraflow-runtime-v2.schema.json`, built by `action()` in
+> `modules/task/runtime/model.luau`. `scroll` and `drag` were never implemented
+> and are proposals here rather than a surface anything refuses.
+>
+> Two consequences the v1 text does not carry. Which key names exist is not
+> decided by this contract: `uf::KeyName` is the single definition, it is applied
+> to every key a model declares before the artifact is bound, and no second copy
+> of the set exists. And `placement.action_point` is present exactly when some
+> action is a `click`, so a Binding granting only keystrokes carries no
+> coordinate at all.
+
 `destination` is a point or locator reference. Preconditions are positive
 locator/text predicates and must all be present in the same observation cycle.
 An unknown precondition denies authorization. An action cannot refer to a
@@ -312,12 +326,19 @@ must be satisfied before a candidate can enter the stack.
 > what it read, through a second verb over the same open cycle. One reading is
 >
 > ```text
-> Reading { ui_target, reader, text }
+> Reading { ui_target, reader, kind, text?, reason? }
 > ```
 >
-> and the list is sorted by `ui_target` then `reader`, so one world produces one
-> document. The schema calls the list `state_readings` and one entry
-> `binding_reading`.
+> with `kind` one of `read`, `absent` or `unknown`, `text` present exactly when
+> it read, and `reason` present exactly when it could not. The list is sorted by
+> `ui_target` then `reader`, so one world produces one document, and it carries
+> one entry per Reader every reporting Binding named — the failures included,
+> because a plugin that cannot separate "nothing is written here" from "this
+> frame was unreadable" has to fail closed on one blurry capture. The score is
+> still not carried: it has already been compared against the Reader's own
+> `confidence_floor`, and it differs between two captures of one unchanged
+> screen while this document is hashed into a decision basis. The schema calls
+> the list `state_readings` and one entry `binding_reading`.
 >
 > A reading is attributed to the UiTarget and not to the Binding that carried
 > it, because a Binding is a UiTarget plus a visual variant: the variant a hover

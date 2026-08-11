@@ -83,8 +83,17 @@ function evidence.absent(cycle: any, proofSource: any): any
     return issue(cycle, { kind = "absent", source = source(proofSource) }, nil)
 end
 
+-- The one vocabulary of Unknown reasons, asked rather than copied. A reported
+-- reading names a reason out of the same closed set as a measurement does, and
+-- the schema gives both the same `$defs/unknown_reason`; a second table in
+-- resolution.luau would be two sets that agree by test rather than by
+-- construction.
+function evidence.is_unknown_reason(value: any): boolean
+    return type(value) == "string" and unknownReasons[value] == true
+end
+
 function evidence.unknown(cycle: any, reason: any, proofSource: any, score: any?): any
-    if type(reason) ~= "string" or not unknownReasons[reason] then
+    if not evidence.is_unknown_reason(reason) then
         error("unsupported Unknown evidence reason", 2)
     end
     return issue(cycle, {

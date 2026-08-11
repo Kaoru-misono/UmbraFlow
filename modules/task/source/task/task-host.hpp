@@ -13,6 +13,7 @@
 #include <domain/detection.hpp>
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
+#include <domain/key.hpp>
 #include <domain/space.hpp>
 
 #include <engine/ports.hpp>
@@ -31,6 +32,7 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace uf::task
@@ -162,16 +164,28 @@ namespace uf::task
             ProjectFingerprint       fingerprint;
         };
 
+        // What one Receipt authorizes the Host to deliver. A sum type because
+        // exactly one of the two is true of any Receipt: a click names the
+        // point the model measured, a keystroke names a key and no point at
+        // all. Two optional members could spell both or neither, and defaulting
+        // a key's coordinate to (0,0) would put a number into the delivery path
+        // that nothing measured.
+        using TrustedReceiptInput = std::variant<PixelPoint, KeyName>;
+
+        // No in-class initializer for the input: neither alternative has a
+        // default state, so the variant has none either and every construction
+        // site supplies it.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
         struct TrustedReceiptIntent final
         {
-            std::string stateIdentity{};
-            std::string surface{};
-            std::string uiTarget{};
-            std::string binding{};
-            std::string variant{};
-            std::string action{};
-            std::string proofLocator{};
-            PixelPoint  point;
+            std::string         stateIdentity{};
+            std::string         surface{};
+            std::string         uiTarget{};
+            std::string         binding{};
+            std::string         variant{};
+            std::string         action{};
+            std::string         proofLocator{};
+            TrustedReceiptInput input;
         };
 
         // No in-class initializers for the generation, the two hashes or the
@@ -245,7 +259,7 @@ namespace uf::task
         [[nodiscard]] auto bootTrustedRuntime(GenerationId generation) -> Status;
 
         [[nodiscard]]
-        auto mintClickReceipt(
+        auto mintReceipt(
             GenerationId generation,
             TaskContext& context,
             CycleTicket cycle,

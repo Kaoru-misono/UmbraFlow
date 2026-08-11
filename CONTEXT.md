@@ -69,8 +69,12 @@ UiTarget and variant. Its record is exactly
 `{id, surface, ui_target, variant, placement, detector, actions}`
 (`$defs.binding`; `bindingBuilder` in `model.luau`). `placement` is
 `{kind = "fixed", rect, action_point?}`, and `action_point` is present exactly
-when `actions` is non-empty — enforced on both sides, in `model.luau` and by the
-schema's `allOf`. `RuntimeModelBinding`
+when some action is a `click` — a Binding granting only keystrokes carries none,
+because a keystroke names no coordinate. Enforced on three sides, in
+`model.luau`, in `tools/annotate/model_file.py`, and by the schema's `allOf`.
+An action is `{id, kind, proof_locator}` plus `key` when `kind` is `"key"`;
+which key names exist is `uf::KeyName`'s and nowhere else's.
+`RuntimeModelBinding`
 (`modules/task/source/task/runtime-model-file.hpp`) is a different thing: the
 host's handle to one loaded model, not one row of it.
 
@@ -96,7 +100,8 @@ is policy and does not.
 Neither is a type in any language. `StateResolution` survives as a word only in
 comments and in `SnapshotRecord::stateResolutionHash`.
 
-**Receipt** — the host-minted, opaque, one-shot authority to deliver one click.
+**Receipt** — the host-minted, opaque, one-shot authority to deliver one input:
+a click at the point the model measured, or one keystroke, which names no point.
 Requested through `cycle:authorize` (`modules/task/runtime/observe.luau`),
 transferred exactly once by `resolution.take_receipt_request`, and minted by the
 `runtime_receipt` native in `modules/task/source/task/ffi/uf-tables.cpp`. At most
@@ -319,8 +324,9 @@ captured frames, not to `engine::EngineSession`.
 _Avoid_: `SessionId` (too generic), engine session id, task session id
 
 **Observation cycle** — the explicit open/close scope around exactly one capture,
-inside which state resolution, binding resolution and a single authorized click
-all read the same frame. `CycleLedger`
+inside which state resolution, binding resolution and a single authorized input
+all read the same frame. A keyboard sequence therefore costs one cycle per
+keystroke, which is the design and not a limit to work around. `CycleLedger`
 (`modules/task/source/task/cycle-ledger.hpp`) holds **at most one** open cycle,
 which is why "the proof and the action came from one frame" is not a check that
 can be forgotten but a state that cannot be expressed. Opening costs one capture;

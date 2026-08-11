@@ -504,6 +504,57 @@ class SchemaAndJcsTests(unittest.TestCase):
                 self.assertEqual(bool(official_errors), not direct.is_valid(value))
         self.assertFalse(hasattr(model_file, "RuntimeSchema"))
 
+    def test_action_point_follows_the_kinds_a_binding_grants(self) -> None:
+        # Two producers of one rule -- the published schema and the backend's
+        # own checks -- held to the same eight answers. Neither is asked about
+        # itself: the rows say what is legal, and both must agree with the rows.
+        schema_path = Path("schema/umbraflow-runtime-v2.schema.json")
+        direct = Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
+        click = {"id": "press", "kind": "click", "proof_locator": "confirm-template"}
+        key = {
+            "id": "commit",
+            "kind": "key",
+            "key": "ENTER",
+            "proof_locator": "confirm-template",
+        }
+
+        def model(actions: list[dict], *, with_point: bool) -> dict:
+            value = runtime_model()
+            binding = value["bindings"][0]
+            binding["actions"] = actions
+            placement = {"kind": "fixed", "rect": [10, 20, 100, 40]}
+            if with_point:
+                placement["action_point"] = [60, 40]
+            binding["placement"] = placement
+            return value
+
+        rows = [
+            ([], False, True),
+            ([], True, False),
+            ([click], True, True),
+            ([click], False, False),
+            ([key], False, True),
+            ([key], True, False),
+            ([key, click], True, True),
+            ([key, click], False, False),
+        ]
+        for actions, with_point, legal in rows:
+            value = model(actions, with_point=with_point)
+            with self.subTest(kinds=[row["kind"] for row in actions], point=with_point):
+                self.assertEqual(direct.is_valid(value), legal)
+                self.assertEqual(not model_file.validate_runtime_model(value), legal)
+
+        # A key with no name and a click carrying one are both refused, which is
+        # what stops the two kinds from sharing a shape.
+        for action in (
+            {"id": "commit", "kind": "key", "proof_locator": "confirm-template"},
+            {**click, "key": "ENTER"},
+        ):
+            value = model([action], with_point=action["kind"] == "click")
+            with self.subTest(action=action):
+                self.assertFalse(direct.is_valid(value))
+                self.assertTrue(model_file.validate_runtime_model(value))
+
     def test_runtime_artifact_schema_accepts_zero_assets_and_enforces_all_ceilings(self) -> None:
         sha = "a" * 64
         valid = {

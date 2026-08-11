@@ -116,17 +116,47 @@ namespace uf::deployment
                     "items": {"$ref": "#/$defs/Identifier"}
                 },
                 "readings": {
-                    "$comment": "Present exactly when ordered_surface_stack is. Each entry is one normalised, confidence-floored reading the trusted Reader produced, attributed to the UiTarget it was read under. It carries no score, no rectangle and no pre-normalisation text, and a reading that did not clear its Reader's floor is absent rather than reported with a reason.",
+                    "$comment": "Present exactly when ordered_surface_stack is, with one entry per Reader every reporting Binding named. read carries the normalised text the trusted Reader produced, absent says that Reader found no text, and unknown says it could not decide and names why out of a closed vocabulary. All three travel because a plugin that cannot tell 'nothing is written here' from 'this frame was unreadable' has to fail closed on one blurry capture. No score, no rectangle and no pre-normalisation text: the score has already been compared against the Reader's own floor and differs between two captures of one unchanged screen, while this document is hashed.",
                     "type": "array",
                     "items": {
                         "type": "object",
                         "additionalProperties": false,
-                        "required": ["reader", "text", "ui_target"],
+                        "required": ["kind", "reader", "ui_target"],
                         "properties": {
+                            "kind": {"enum": ["read", "absent", "unknown"]},
                             "reader": {"$ref": "#/$defs/Identifier"},
+                            "reason": {
+                                "enum": [
+                                    "not_measured",
+                                    "low_confidence",
+                                    "ocr_unreadable",
+                                    "locator_failed",
+                                    "stale_cycle",
+                                    "host_unavailable",
+                                    "internal_error"
+                                ]
+                            },
                             "text": {"type": "string"},
                             "ui_target": {"$ref": "#/$defs/Identifier"}
-                        }
+                        },
+                        "allOf": [
+                            {
+                                "if": {
+                                    "properties": {"kind": {"const": "read"}},
+                                    "required": ["kind"]
+                                },
+                                "then": {"required": ["text"]},
+                                "else": {"not": {"required": ["text"]}}
+                            },
+                            {
+                                "if": {
+                                    "properties": {"kind": {"const": "unknown"}},
+                                    "required": ["kind"]
+                                },
+                                "then": {"required": ["reason"]},
+                                "else": {"not": {"required": ["reason"]}}
+                            }
+                        ]
                     }
                 },
                 "reason": {"type": "string", "minLength": 1}

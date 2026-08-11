@@ -9,8 +9,9 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
 
 - [Checks that cannot fail](checks-that-cannot-fail.md) — a taxonomy of the
   defect this repository keeps finding one instance at a time: a name promises
-  something and nothing verifies the promise. Twelve forms, each with a real
-  instance, and — the part to read first — which method detects which form,
+  something and nothing verifies the promise. One section per form, each with a
+  real instance, and — the part to read first — the table naming which method
+  detects which form,
   since mutation finds fewer than half of them. It carries the stronger
   falsification rule (a red must land at the assertion that names the property,
   and the failure text must be read), and it separates the checks that are

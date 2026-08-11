@@ -391,8 +391,12 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
 
     class ActionSink final : public engine::IActionSink
     {
-        uint32 m_clicks{};
-        bool   m_refuseClicks{};
+        uint32                 m_clicks{};
+        uint32                 m_keys{};
+        std::optional<KeyName> m_lastKey{};
+
+        bool m_refuseClicks{};
+        bool m_refuseKeys{};
 
     public:
         // A refused click is what a real sink cannot describe: the post may have
@@ -413,8 +417,23 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
             return ok();
         }
 
-        [[nodiscard]] auto pressKey(KeyName, TargetGeneration) -> Status override
+        // The last port before the platform adapter, so what arrives here is
+        // exactly what ControllerActionSink would hand to MapVirtualKeyW. The
+        // name is recorded rather than counted, because "a key was delivered"
+        // and "THAT key was delivered" are two claims and only the second says
+        // the model's own spelling survived the whole chain.
+        [[nodiscard]]
+        auto pressKey(KeyName key, TargetGeneration) -> Status override
         {
+            if (m_refuseKeys)
+            {
+                return fail(
+                    AutomationErrorKind::TargetUnavailable,
+                    "the action sink refused this keystroke"
+                );
+            }
+            ++m_keys;
+            m_lastKey = key;
             return ok();
         }
 
@@ -452,7 +471,17 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
 
         [[nodiscard]] auto clicks() const noexcept -> uint32 { return m_clicks; }
 
+        [[nodiscard]] auto keys() const noexcept -> uint32 { return m_keys; }
+
+        [[nodiscard]]
+        auto lastKey() const noexcept -> std::optional<KeyName> { return m_lastKey; }
+
         auto refuseClicks() noexcept -> void { m_refuseClicks = true; }
+
+        // A refused keystroke is what a real sink cannot describe either: the
+        // press may have reached the target before the release failed, and
+        // ControllerActionSink::pressKey drains exactly that case into one Err.
+        auto refuseKeys() noexcept -> void { m_refuseKeys = true; }
 
         // Counts and discards. It must agree with FrameSource above or
         // EngineSession::create refuses the session.

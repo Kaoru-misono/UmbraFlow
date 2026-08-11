@@ -7,6 +7,10 @@ id = "expedition.camp"
 kind = "region"
 
 [[ui_target]]
+id = "expedition.orders"
+kind = "control"
+
+[[ui_target]]
 id = "expedition.target"
 kind = "control"
 
@@ -30,6 +34,15 @@ variant = "primary"
 placement = { kind = "fixed", rect = [108, 92, 16, 16] }
 detector = { all = [{ kind = "locator_present", locator = "expedition.banner" }], any = [], none = [] }
 actions = []
+
+[[binding]]
+id = "expedition.orders.primary"
+surface = "expedition.surface"
+ui_target = "expedition.orders"
+variant = "primary"
+placement = { kind = "fixed", rect = [1200, 738, 16, 16] }
+detector = { all = [{ kind = "locator_present", locator = "expedition.march-mark" }], any = [], none = [] }
+actions = [{ id = "expedition.advance", kind = "key", key = "E", proof_locator = "expedition.march-mark" }]
 
 [[binding]]
 id = "expedition.target.primary"

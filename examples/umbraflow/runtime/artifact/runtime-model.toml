@@ -38,7 +38,7 @@ ui_target = "fixture.target"
 variant = "primary"
 placement = { kind = "fixed", rect = [1, 0, 1, 1], action_point = [1, 0] }
 detector = { all = [{ kind = "locator_present", locator = "fixture.mark" }], any = [], none = [] }
-actions = [{ id = "fixture.press", kind = "click", proof_locator = "fixture.mark" }]
+actions = [{ id = "fixture.commit", kind = "key", key = "ENTER", proof_locator = "fixture.mark" }, { id = "fixture.press", kind = "click", proof_locator = "fixture.mark" }]
 
 [[surface]]
 id = "fixture.surface"

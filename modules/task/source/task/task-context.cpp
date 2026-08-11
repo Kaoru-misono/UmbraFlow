@@ -713,6 +713,15 @@ namespace uf::task
         return m_session.clickPoint(std::move(observation), point);
     }
 
+    auto TaskContext::deliverReceiptKey(
+        CycleTicket ticket,
+        KeyName key
+    ) -> Result<engine::KeyReceipt>
+    {
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+        return m_session.pressKey(std::move(observation), key);
+    }
+
     auto TaskContext::waitUntil(
         MonotonicInstant deadline,
         MonotonicInstant::Duration interval

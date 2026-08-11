@@ -30,6 +30,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace uf::task
@@ -115,6 +116,31 @@ namespace uf::task
             }
         };
 
+        // A Reader that looked and found nothing. It is the only way to reach
+        // the third reading outcome, because EngineSession::readText reports "no
+        // text here" as an empty line list and never as an empty string: a line
+        // whose text is "" is still a line the recogniser produced.
+        class SilentReader final : public ocr::IOcrEngine
+        {
+            uint32 m_calls{};
+
+        public:
+            [[nodiscard]] auto identity() const noexcept -> std::string_view override
+            {
+                return "silent-reader";
+            }
+
+            [[nodiscard]]
+            auto read(BgraImage const&, ocr::ReadSpec const&)
+                -> Result<ocr::Readout> override
+            {
+                ++m_calls;
+                return ocr::Readout{};
+            }
+
+            [[nodiscard]] auto calls() const noexcept -> uint32 { return m_calls; }
+        };
+
         // The fixture's world plus one Binding that reports what a Reader read.
         // Its detector is the confirm mark, so the middle pixel decides whether
         // the reading Binding is present while the anchor still resolves the
@@ -177,6 +203,87 @@ kind = "scene"
 covers = []
 identity = { all = ["screen.anchor"], any = [], none = [] }
 )toml";
+        }
+
+        // The fixture's world with one Binding that grants a keystroke and no
+        // click. Its placement carries no action_point, which is the whole
+        // difference the kind makes to a model, and its detector is the confirm
+        // mark so the middle pixel decides whether that Binding is present
+        // while the anchor still resolves the Surface.
+        [[nodiscard]] auto keyRuntimeModel() -> std::string
+        {
+            return R"toml(schema_version = 2
+base_resolution = [3, 1]
+base_dpi = [96, 96]
+
+[[ui_target]]
+id = "screen-marker"
+kind = "region"
+
+[[ui_target]]
+id = "commit"
+kind = "control"
+
+[[locator]]
+id = "screen-anchor"
+kind = "template"
+asset_path = "assets/anchor.png"
+threshold = 1
+
+[[locator]]
+id = "confirm-mark"
+kind = "template"
+asset_path = "assets/confirm.png"
+threshold = 1
+
+[[binding]]
+id = "screen.anchor"
+surface = "screen"
+ui_target = "screen-marker"
+variant = "primary"
+placement = { kind = "fixed", rect = [0, 0, 1, 1] }
+detector = { all = [{ kind = "locator_present", locator = "screen-anchor" }], any = [], none = [] }
+actions = []
+
+[[binding]]
+id = "commit.primary"
+surface = "screen"
+ui_target = "commit"
+variant = "primary"
+placement = { kind = "fixed", rect = [1, 0, 1, 1] }
+detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] }
+actions = [{ id = "activate", kind = "key", key = "E", proof_locator = "confirm-mark" }]
+
+[[surface]]
+id = "screen"
+kind = "scene"
+covers = []
+identity = { all = ["screen.anchor"], any = [], none = [] }
+)toml";
+        }
+
+        auto const k_runtimeKeyAction = UiActionUnderTest{
+            .surface  = "screen",
+            .uiTarget = "commit",
+            .action   = "activate",
+        };
+
+        [[nodiscard]]
+        auto loadedKeyRuntime(TaskHost& host, TemporaryDirectory const& directory)
+            -> GenerationId
+        {
+            auto const rootHash = publish(
+                directory.path(),
+                keyRuntimeModel(),
+                runtimeAssets()
+            );
+            auto const generation = TaskHostTestAccess::activate(
+                host,
+                directory.path(),
+                rootHash
+            );
+            REQUIRE(generation.has_value());
+            return *generation;
         }
 
         [[nodiscard]]
@@ -383,7 +490,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
             host,
             generation,
             runtime.context(),
-            authorizeClickSource(k_runtimeUiAction)
+            authorizeActionSource(k_runtimeUiAction)
         );
         REQUIRE(minted.has_value());
         CHECK(minted->number() == std::optional<double>{1.0});
@@ -400,7 +507,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         REQUIRE(delivered.has_value());
         CHECK(delivered->outcome() == DeliveryOutcome::Delivered);
         CHECK(delivered->reason().empty());
-        REQUIRE(delivered->act().has_value());
+        REQUIRE(delivered->posted().has_value());
         CHECK(runtime.actions().clicks() == 1U);
 
         // The reservation comes back untouched, which is what lets the ledger
@@ -436,7 +543,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
             host,
             generation,
             runtime.context(),
-            authorizeClickSource(k_runtimeUiAction)
+            authorizeActionSource(k_runtimeUiAction)
         );
         REQUIRE(reminted.has_value());
         auto other = RuntimeContext{
@@ -465,7 +572,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         REQUIRE(refused.has_value());
         CHECK(refused->outcome() == DeliveryOutcome::NotDelivered);
         CHECK_FALSE(refused->reason().empty());
-        CHECK_FALSE(refused->act().has_value());
+        CHECK_FALSE(refused->posted().has_value());
         CHECK(refused->receiptId() != delivered->receiptId());
         CHECK(other.actions().clicks() == 0U);
         CHECK(runtime.actions().clicks() == 1U);
@@ -488,6 +595,148 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
     );
     static_assert(std::is_copy_constructible_v<HostDeliveryReport>);
 
+    // The key path end to end: a model that grants a keystroke and no click, a
+    // Receipt minted for it, and the KeyName that arrives at the last port
+    // before the platform adapter -- the same value ControllerActionSink hands
+    // to MapVirtualKeyW. Naming the key is the point. A case that only counted
+    // one delivery would stay green if every action resolved to the same key,
+    // and a production path that cannot spell "E" cannot end a turn.
+    TEST_CASE("TaskHost::deliver posts the key its Receipt authorized")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const generation = loadedKeyRuntime(host, directory);
+        auto const fence = controlFence(7);
+        REQUIRE(TaskHostTestAccess::adoptControlFence(host, fence).has_value());
+        auto const authority = dispatchAuthority(fence, generation);
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{41}),
+            1'000
+        };
+        auto const minted = TaskHostTestAccess::run(
+            host,
+            generation,
+            runtime.context(),
+            authorizeActionSource(k_runtimeKeyAction)
+        );
+        REQUIRE(minted.has_value());
+        CHECK(runtime.actions().keys() == 0U);
+
+        auto const receipt = TaskHostTestAccess::pendingReceipt(
+            host,
+            k_runtimeKeyAction
+        );
+        auto const delivered = TaskHostTestAccess::deliver(
+            host,
+            authority,
+            receipt,
+            runtime.context()
+        );
+        REQUIRE(delivered.has_value());
+        CHECK(delivered->outcome() == DeliveryOutcome::Delivered);
+        CHECK(delivered->reason().empty());
+        REQUIRE(delivered->posted().has_value());
+
+        // A keystroke names no coordinate, so nothing on this path posts one
+        // and the receipt that comes back is the one carrying no point.
+        CHECK(runtime.actions().clicks() == 0U);
+        CHECK(runtime.actions().keys() == 1U);
+        CHECK(std::holds_alternative<engine::KeyReceipt>(*delivered->posted()));
+
+        auto const posted = runtime.actions().lastKey();
+        REQUIRE(posted.has_value());
+        CHECK(posted->value() == "E");
+    }
+
+    // Every key-path error is TransportUnknown, for the reason the click path's
+    // is: EngineSession::pressKey fails before the sink, at the sink, and after
+    // the press has already gone down -- ControllerActionSink::pressKey drains
+    // exactly that last case into one Err. NotDelivered would claim an absence
+    // this path cannot prove, and only NotDelivered unlocks a Rejected
+    // disposition downstream.
+    //
+    // The case above is its positive control: the same model, the same Receipt
+    // and the same authority deliver, so the refusal here comes from the sink
+    // rather than from anything else in the chain.
+    TEST_CASE("TaskHost::deliver reports a refused keystroke as TransportUnknown")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const generation = loadedKeyRuntime(host, directory);
+        auto const fence = controlFence(7);
+        REQUIRE(TaskHostTestAccess::adoptControlFence(host, fence).has_value());
+        auto const authority = dispatchAuthority(fence, generation);
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{42}),
+            1'000
+        };
+        auto const minted = TaskHostTestAccess::run(
+            host,
+            generation,
+            runtime.context(),
+            authorizeActionSource(k_runtimeKeyAction)
+        );
+        REQUIRE(minted.has_value());
+
+        runtime.actions().refuseKeys();
+        auto const report = TaskHostTestAccess::deliver(
+            host,
+            authority,
+            TaskHostTestAccess::pendingReceipt(host, k_runtimeKeyAction),
+            runtime.context()
+        );
+        REQUIRE(report.has_value());
+        CHECK(report->outcome() == DeliveryOutcome::TransportUnknown);
+        CHECK(
+            report->reason().find("reached the engine and did not complete")
+            != std::string_view::npos
+        );
+        CHECK_FALSE(report->posted().has_value());
+        CHECK(runtime.actions().keys() == 0U);
+    }
+
+    // A model naming a key nothing can press is refused where a model is
+    // checked, rather than at the moment an action is taken. KeyName is the one
+    // definition of which names exist, and "e" is outside it because the set is
+    // spelled in uppercase and stays injective in both directions.
+    TEST_CASE("TaskHost activation refuses a model naming an unresolvable key")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host  = TaskHost{};
+        auto model = keyRuntimeModel();
+
+        auto const at = model.find(R"(key = "E")");
+        REQUIRE(at != std::string::npos);
+        model.replace(at, std::string_view{R"(key = "E")"}.size(), R"(key = "e")");
+
+        auto const rootHash = publish(directory.path(), model, runtimeAssets());
+        auto const refused = TaskHostTestAccess::activate(
+            host,
+            directory.path(),
+            rootHash
+        );
+        REQUIRE_FALSE(refused.has_value());
+        // The phrase is unique to KeyName's own refusal in the whole tree, so a
+        // refusal from anywhere else in activation would not satisfy it.
+        CHECK(
+            std::string{refused.error().message()}
+                .find("spelled in uppercase throughout")
+            != std::string::npos
+        );
+
+        // The positive control: the same publication with the accepted spelling
+        // activates, so the refusal above is the key name and not the model.
+        auto const accepted = TemporaryDirectory{};
+        auto acceptedHost = TaskHost{};
+        CHECK(
+            TaskHostTestAccess::activate(
+                acceptedHost,
+                accepted.path(),
+                publish(accepted.path(), keyRuntimeModel(), runtimeAssets())
+            ).has_value()
+        );
+    }
+
     TEST_CASE("TaskHost::deliver refuses an authority the adopted fence does not name")
     {
         auto const directory = TemporaryDirectory{};
@@ -504,7 +753,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
                 host,
                 generation,
                 runtime.context(),
-                authorizeClickSource(k_runtimeUiAction)
+                authorizeActionSource(k_runtimeUiAction)
             ).has_value()
         );
         auto const receipt = TaskHostTestAccess::pendingReceipt(host, k_runtimeUiAction);
@@ -564,7 +813,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
                 host,
                 generation,
                 unfenced.context(),
-                authorizeClickSource(k_runtimeUiAction)
+                authorizeActionSource(k_runtimeUiAction)
             ).has_value()
         );
         CHECK(unfenced.actions().clicks() == 0U);
@@ -593,7 +842,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
                 fencedHost,
                 fencedGeneration,
                 fenced.context(),
-                authorizeClickSource(k_runtimeUiAction)
+                authorizeActionSource(k_runtimeUiAction)
             ).has_value()
         );
     }
@@ -660,7 +909,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
                 host,
                 generation,
                 runtime.context(),
-                authorizeClickSource(k_runtimeUiAction)
+                authorizeActionSource(k_runtimeUiAction)
             ).has_value()
         );
         auto const receipt = TaskHostTestAccess::pendingReceipt(host, k_runtimeUiAction);
@@ -680,7 +929,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         REQUIRE(report.has_value());
         CHECK(report->outcome() == DeliveryOutcome::NotDelivered);
         CHECK_FALSE(report->reason().empty());
-        CHECK_FALSE(report->act().has_value());
+        CHECK_FALSE(report->posted().has_value());
         CHECK(runtime.actions().clicks() == 0U);
         CHECK_FALSE(
             TaskHostTestAccess::deliver(
@@ -708,7 +957,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
                 host,
                 generation,
                 runtime.context(),
-                authorizeClickSource(k_runtimeUiAction)
+                authorizeActionSource(k_runtimeUiAction)
             ).has_value()
         );
 
@@ -727,7 +976,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         // absence, so a click-path failure must never spell it.
         CHECK(report->outcome() == DeliveryOutcome::TransportUnknown);
         CHECK_FALSE(report->reason().empty());
-        CHECK_FALSE(report->act().has_value());
+        CHECK_FALSE(report->posted().has_value());
         CHECK(runtime.actions().clicks() == 0U);
     }
 
@@ -973,8 +1222,8 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         CHECK(
             observed->canonicalJcs()
             == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
-               R"("readings":[{"reader":"title.reader","text":"Wandering Merchant",)"
-               R"("ui_target":"title"}]})"
+               R"("readings":[{"kind":"read","reader":"title.reader",)"
+               R"("text":"Wandering Merchant","ui_target":"title"}]})"
         );
         CHECK(observed->stateResolutionHash() == hash(observed->canonicalJcs()));
 
@@ -1077,10 +1326,14 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         );
     }
 
-    // Below the floor is not a reading. The plugin sees an empty list, which is
-    // the same answer a Reader that found nothing gives, and never the score or
-    // the reason that decided it.
-    TEST_CASE("TaskHost::observe reports no reading below its Reader's floor")
+    // Below the floor is not a text, and it is not silence either. The plugin is
+    // told the Reader could not decide and why, out of a closed vocabulary, so
+    // it can tell that case apart from a Reader that found nothing and need not
+    // fail closed on one blurry capture. What still never travels is the score:
+    // the floor is the trusted Reader's judgement, a caller handed the rejected
+    // text could re-take it, and a float in a hashed document would make two
+    // captures of one unchanged screen two decisions.
+    TEST_CASE("TaskHost::observe reports an unreadable reading with its reason")
     {
         auto const directory = TemporaryDirectory{};
         auto host = TaskHost{};
@@ -1108,10 +1361,77 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         CHECK(
             observed->canonicalJcs()
             == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
-               R"("readings":[]})"
+               R"("readings":[{"kind":"unknown","reader":"title.reader",)"
+               R"("reason":"low_confidence","ui_target":"title"}]})"
         );
+
+        // The reason is the whole of what the failure adds, so it is asserted on
+        // its own as well: an equality that stopped carrying it would otherwise
+        // be repaired by rewriting the expected document, and this line names
+        // the property instead of the bytes.
+        CHECK(
+            observed->canonicalJcs().find(R"("reason":"low_confidence")")
+            != std::string::npos
+        );
+
+        // The rejected text and the score that rejected it stay behind. `0.1`
+        // is what the ScriptedReader reported; a document carrying either would
+        // hand the caller the judgement the floor already made.
         CHECK(observed->canonicalJcs().find("Wandering") == std::string::npos);
-        CHECK(observed->canonicalJcs().find("low_confidence") == std::string::npos);
+        CHECK(observed->canonicalJcs().find(R"("text")") == std::string::npos);
+        CHECK(observed->canonicalJcs().find(R"("confidence")") == std::string::npos);
+        CHECK(observed->canonicalJcs().find("0.1") == std::string::npos);
+
+        // Two captures of one unchanged screen stay one decision even when the
+        // reading failed, which is the property a score inside the reason would
+        // have broken.
+        auto const again = host.observe(*generation, runtime.context());
+        REQUIRE(again.has_value());
+        CHECK(again->stateResolutionHash() == observed->stateResolutionHash());
+    }
+
+    // A Reader that found no text at all is a third answer and says so. Without
+    // this the reason above could be read as "any failure is unknown", and the
+    // distinction the whole shape exists for -- nothing is written here, versus
+    // this could not be read -- would be untested.
+    TEST_CASE("TaskHost::observe reports an empty reading as absent")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const rootHash = publish(
+            directory.path(),
+            readingRuntimeModel(),
+            runtimeAssets()
+        );
+        auto const generation = TaskHostTestAccess::activate(
+            host,
+            directory.path(),
+            rootHash
+        );
+        REQUIRE(generation.has_value());
+
+        // The rectangle was read and held nothing, which no confidence floor is
+        // consulted about: there is no score because there is no line.
+        auto reader = std::make_unique<SilentReader>();
+        auto* const p_reader = reader.get();
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{36}),
+            1'000,
+            std::move(reader)
+        };
+        auto const observed = host.observe(*generation, runtime.context());
+        REQUIRE(observed.has_value());
+        CHECK(p_reader->calls() == 1U);
+        CHECK(
+            observed->canonicalJcs()
+            == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
+               R"("readings":[{"kind":"absent","reader":"title.reader",)"
+               R"("ui_target":"title"}]})"
+        );
+
+        // Absent is not unknown: it carries no reason, because there is nothing
+        // undecided about a rectangle that was read and held no text.
+        CHECK(observed->canonicalJcs().find(R"("reason")") == std::string::npos);
     }
 
     // A Binding that is not present reads nothing, and the state still resolves.

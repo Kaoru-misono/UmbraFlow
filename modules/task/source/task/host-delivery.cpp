@@ -11,21 +11,21 @@ namespace uf::task
         DeliveryOutcome outcome,
         std::string reason,
         uint64 receiptId,
-        std::optional<engine::ActReceipt> act
+        std::optional<DeliveredInput> posted
     )
         : m_authority{std::move(authority)}
         , m_outcome{outcome}
         , m_reason{std::move(reason)}
         , m_receiptId{receiptId}
-        , m_act{act}
+        , m_posted{std::move(posted)}
     {
-        // The schema admits no fourth shape: delivered carries an act and no
-        // reason, and the other two carry a reason and no act. Checked here
-        // rather than at each producing site, because there is exactly one
-        // producer and this is the value the ledger reads.
-        auto const delivered = m_outcome == DeliveryOutcome::Delivered;
-        UF_CHECK(delivered == m_reason.empty());
-        UF_CHECK(delivered == m_act.has_value());
+        // The schema admits no fourth shape: delivered carries an input receipt
+        // and no reason, and the other two carry a reason and no receipt.
+        // Checked here rather than at each producing site, because there is
+        // exactly one producer and this is the value the ledger reads.
+        auto const isDelivered = m_outcome == DeliveryOutcome::Delivered;
+        UF_CHECK(isDelivered == m_reason.empty());
+        UF_CHECK(isDelivered == m_posted.has_value());
     }
 
     auto HostDeliveryReport::authority() const noexcept -> DispatchAuthority const&
@@ -48,9 +48,9 @@ namespace uf::task
         return m_receiptId;
     }
 
-    auto HostDeliveryReport::act() const noexcept
-        -> std::optional<engine::ActReceipt> const&
+    auto HostDeliveryReport::posted() const noexcept
+        -> std::optional<DeliveredInput> const&
     {
-        return m_act;
+        return m_posted;
     }
 }

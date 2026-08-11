@@ -296,7 +296,8 @@ function project.load_project(): any
         runtimeModel.declared_ui_target_ids,
         runtimeModel.declared_action_ids,
         runtimeModel.base_resolution,
-        runtimeModel.base_dpi
+        runtimeModel.base_dpi,
+        runtimeModel.declared_key_names
     )
     if binding == nil then error("Host rejected RuntimeArtifact binding", 2) end
     hostBindings[runtimeModel] = binding

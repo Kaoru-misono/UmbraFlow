@@ -7,7 +7,7 @@
 
 local model = {}
 model.schema = "umbraflow-runtime/v2"
-model.schema_hash = "a2d14589104bcf878aa49ed09033198a161159e5916870449ee86e9380593f1a"
+model.schema_hash = "4e8a8bb5199823f15021a2e7800c454f9d9287a9900e247a0e96b6c16fbd78c8"
 
 local runtimeModels: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 local semanticBytes: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any
@@ -372,15 +372,42 @@ local function placementBuilder(bounds: { number }): (string, any) -> any
     end
 end
 
+-- One action a Binding grants, in one of the two kinds a target offers.
+--
+-- A click names a coordinate and a keystroke names a key, and neither invents
+-- the other: a key action carries no point, which is why placement.action_point
+-- below is conditional on the kinds present rather than on there being actions
+-- at all.
+--
+-- WHICH key names exist is deliberately not decided here. That vocabulary is
+-- closed and has one definition, in the trusted C++ KeyName, which refuses a
+-- name outside it and prints the whole set it refused against; the Host applies
+-- it to every key this model declares before the artifact is bound. A second
+-- copy of the set in Luau would be two vocabularies agreeing by test rather than
+-- by construction.
 local function action(what: string, value: any): any
     local source = object(what, value)
-    only(what, source, { id = true, kind = true, proof_locator = true })
-    if source.kind ~= "click" then fail(what .. ".kind", "must be click") end
-    return table.freeze({
-        id = identifier(what .. ".id", source.id),
-        kind = "click",
-        proof_locator = identifier(what .. ".proof_locator", source.proof_locator),
-    })
+    if source.kind == "click" then
+        only(what, source, { id = true, kind = true, proof_locator = true })
+        return table.freeze({
+            id = identifier(what .. ".id", source.id),
+            kind = "click",
+            proof_locator = identifier(what .. ".proof_locator", source.proof_locator),
+        })
+    end
+    if source.kind == "key" then
+        only(what, source, { id = true, kind = true, key = true, proof_locator = true })
+        if type(source.key) ~= "string" or #source.key == 0 then
+            fail(what .. ".key", "must name a key")
+        end
+        return table.freeze({
+            id = identifier(what .. ".id", source.id),
+            kind = "key",
+            key = source.key,
+            proof_locator = identifier(what .. ".proof_locator", source.proof_locator),
+        })
+    end
+    fail(what .. ".kind", "must be click or key")
 end
 
 local function bindingBuilder(bounds: { number }): (string, any) -> any
@@ -400,11 +427,19 @@ local function bindingBuilder(bounds: { number }): (string, any) -> any
         local actions = records(what .. ".actions", source.actions, action)
         mapById(what .. ".actions", actions)
         local placement = buildPlacement(what .. ".placement", source.placement)
-        if #actions > 0 and placement.action_point == nil then
-            fail(what .. ".placement", "needs action_point when actions are granted")
+        -- The point exists exactly when something aims at it. A Binding that
+        -- grants only keystrokes is in the same position as one granting no
+        -- action: nothing here is a coordinate, so carrying one would put a
+        -- number in the model that nothing measures and nothing delivers.
+        local aimed = false
+        for _, valueAction in actions do
+            if valueAction.kind == "click" then aimed = true end
         end
-        if #actions == 0 and placement.action_point ~= nil then
-            fail(what .. ".placement.action_point", "is not allowed without an action")
+        if aimed and placement.action_point == nil then
+            fail(what .. ".placement", "needs action_point when a click is granted")
+        end
+        if not aimed and placement.action_point ~= nil then
+            fail(what .. ".placement.action_point", "is not allowed without a click")
         end
         -- Absent reads is the empty list and not a second shape: a Binding that
         -- reports nothing has nothing to say here, and requiring every Binding
@@ -566,9 +601,18 @@ function model.compile(value: any): any
     local uiTargetIds = {}
     for _, valueTarget in uiTargets do table.insert(uiTargetIds, valueTarget.id) end
     local actionIds = {}
+    -- Every key this model would ever press, published for one purpose: the
+    -- Host holds the single definition of which key names exist and refuses the
+    -- artifact here rather than at the moment an action is taken. A deployment
+    -- that can never press its key is a broken deployment, and the artifact
+    -- boundary is where a model is checked.
+    local keyNames = {}
     for _, valueBinding in bindings do
         for _, valueAction in valueBinding.actions do
             table.insert(actionIds, valueAction.id)
+            if valueAction.kind == "key" then
+                table.insert(keyNames, valueAction.key)
+            end
         end
     end
 
@@ -658,6 +702,7 @@ function model.compile(value: any): any
         declared_surface_ids = sortedUnique(surfaceIds),
         declared_ui_target_ids = sortedUnique(uiTargetIds),
         declared_action_ids = sortedUnique(actionIds),
+        declared_key_names = sortedUnique(keyNames),
         ui_target_by_id = targetById,
         locator_by_id = locatorById,
         reader_by_id = readerById,

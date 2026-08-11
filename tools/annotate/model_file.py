@@ -195,17 +195,21 @@ def validate_runtime_model(model: dict[str, Any]) -> list[dict[str, str]]:
                 f"$.bindings[{offset}].placement.action_point",
                 errors,
             )
-        if binding["actions"] and action_point is None:
+        # The point exists exactly when something aims at it. A binding granting
+        # only keystrokes is in the same position as one granting no action at
+        # all: neither names a coordinate, so neither may carry one.
+        aimed = any(action["kind"] == "click" for action in binding["actions"])
+        if aimed and action_point is None:
             errors.append(
                 SchemaIssue(
-                    "an actionable binding requires an action_point",
+                    "a binding granting a click requires an action_point",
                     f"$.bindings[{offset}].placement",
                 )
             )
-        if not binding["actions"] and action_point is not None:
+        if not aimed and action_point is not None:
             errors.append(
                 SchemaIssue(
-                    "a non-actionable binding cannot declare an action_point",
+                    "a binding granting no click cannot declare an action_point",
                     f"$.bindings[{offset}].placement",
                 )
             )

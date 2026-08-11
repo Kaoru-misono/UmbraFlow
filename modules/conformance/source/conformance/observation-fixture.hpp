@@ -684,7 +684,7 @@ namespace uf::operator_runtime::conformance
                 *m_host,
                 m_generation,
                 m_runtime->context(),
-                task::authorizeClickSource(m_action)
+                task::authorizeActionSource(m_action)
             );
             REQUIRE(minted.has_value());
         }

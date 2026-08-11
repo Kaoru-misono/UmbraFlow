@@ -372,13 +372,24 @@ function resolution.reading_targets(
     return freezeList(result)
 end
 
--- What a resolved state reports it read, as `{ ui_target, reader, text }` sorted
--- by UiTarget then Reader.
+-- What a resolved state reports it read: one entry per Reader every reporting
+-- Binding named, sorted by UiTarget then Reader.  Each is
+-- `{ ui_target, reader, kind }` plus `text` when it read and `reason` when it
+-- could not.
 --
--- Only `kind == "read"` survives.  A reading below its Reader's confidence_floor
--- or unreadable at all is absent from the list rather than present with a
--- reason: the floor is the trusted Reader's judgement, and a caller handed the
--- failure could re-decide it.
+-- All three outcomes travel.  A consumer told only about successful reads
+-- cannot separate "nothing is written here" from "this frame was unreadable",
+-- and has to fail closed on a single blurry capture; that is what dropping the
+-- failures cost.  The length of the list is therefore decided by the model and
+-- the resolved stack rather than by what the Host managed to answer, and a
+-- reading nothing supplied is `not_measured` -- the rule evaluateBinding
+-- already applies one function up to a predicate nothing measured.
+--
+-- The score still does not travel.  It has already been compared against the
+-- Reader's confidence_floor, which is the trusted Reader's judgement and not
+-- the caller's to re-take; carrying the number as well would put a value that
+-- differs between two captures of one unchanged screen inside a hashed decision
+-- basis.  A bounded reason is safe there, a float is not.
 function resolution.resolve_readings(
     runtimeModel: any,
     cycle: any,
@@ -396,16 +407,30 @@ function resolution.resolve_readings(
     ) do
         for _, readerId in binding.reads do
             local reading = supplied[model.reading_key(binding.id, readerId)]
-            if type(reading) == "table"
-                and reading.kind == "read"
-                and type(reading.text) == "string"
-            then
-                table.insert(result, table.freeze({
-                    ui_target = binding.ui_target,
-                    reader = readerId,
-                    text = reading.text,
-                }))
+            local kind = "unknown"
+            local text = nil
+            local reason = "not_measured"
+            if type(reading) == "table" then
+                if reading.kind == "read" and type(reading.text) == "string" then
+                    kind = "read"
+                    text = reading.text
+                    reason = nil
+                elseif reading.kind == "absent" then
+                    kind = "absent"
+                    reason = nil
+                elseif reading.kind == "unknown"
+                    and evidence.is_unknown_reason(reading.reason)
+                then
+                    reason = reading.reason
+                end
             end
+            table.insert(result, table.freeze({
+                ui_target = binding.ui_target,
+                reader = readerId,
+                kind = kind,
+                text = text,
+                reason = reason,
+            }))
         end
     end
     table.sort(result, function(left: any, right: any): boolean
@@ -547,6 +572,10 @@ function resolution.authorize(
         variant = resolvedBinding.variant,
         action = selected.id,
         action_kind = selected.kind,
+        -- Absent for a click, which names a coordinate instead. The Host is
+        -- told which key to deliver rather than reading it back out of a model
+        -- it does not interpret.
+        key = selected.key,
         evidence_ids = freezeList(evidenceIds),
     })
     requestLedger[request] = {

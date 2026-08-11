@@ -157,11 +157,25 @@ REQUIRED_TEST_TARGETS = frozenset(
 )
 REQUIRED_CHECK_TARGETS = frozenset({"check-repository-surface"})
 
+# Every place a schema digest is pinned outside the schema file itself, in the
+# spelling its own language uses.
+#
+# The Luau pin is here because it is the one nothing else could notice. A C++
+# pin that drifts is compared inside the load path against a hash the same
+# binary computed, so a mismatch is at least loud somewhere; a stale
+# model.schema_hash is handed to the Host by the trusted parser and refuses
+# every artifact at activation, in a lane no local gate exercises. Before this
+# entry existed the gate printed PASS with that pin stale.
 SCHEMA_AUTHORITIES = (
     (
         "modules/trace/source/trace/event.hpp",
         "k_traceSchemaHash",
         "schema/umbraflow-trace-v2.schema.json",
+    ),
+    (
+        "modules/task/runtime/model.luau",
+        "model.schema_hash",
+        "schema/umbraflow-runtime-v2.schema.json",
     ),
     (
         "modules/task/source/task/runtime-model-file.hpp",
@@ -639,9 +653,17 @@ def schema_authority_errors(root: Path) -> list[str]:
         schema_path = root / schema_name
         if not source_path.is_file() or not schema_path.is_file():
             continue
-        pattern = re.compile(
-            rf'{re.escape(constant_name)}\s*=\s*std::string_view\s*'
-            rf'\{{\s*"([0-9a-f]{{64}})"\s*\}}'
+        # One rule, two spellings, because the pin is written in two languages.
+        # A Luau assignment has no std::string_view around it, and reading it
+        # with the C++ pattern is how a pin can be present, wrong, and reported
+        # as absent -- or, before this branch existed, not read at all.
+        pattern = (
+            re.compile(rf'{re.escape(constant_name)}\s*=\s*"([0-9a-f]{{64}})"')
+            if source_path.suffix == ".luau"
+            else re.compile(
+                rf'{re.escape(constant_name)}\s*=\s*std::string_view\s*'
+                rf'\{{\s*"([0-9a-f]{{64}})"\s*\}}'
+            )
         )
         match = pattern.search(read_text(source_path))
         if match is None:

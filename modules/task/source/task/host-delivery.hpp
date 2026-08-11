@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <variant>
 
 namespace uf::task
 {
@@ -82,8 +83,25 @@ namespace uf::task
         // cannot separate the three, so every click-path error is this and
         // never NotDelivered. Under-claiming is the safe direction: only
         // NotDelivered unlocks a Rejected disposition in reconciliation.
+        //
+        // The keystroke path is the same claim for its own reasons, and it is
+        // not weaker. EngineSession::pressKey refuses before the sink on a
+        // requested stop, a foreign or spent observation and a target instance
+        // that no longer matches; it can fail at the sink; and it can fail
+        // after the key has already gone down, because
+        // ControllerActionSink::pressKey drains a press whose release did not
+        // land. One Result covers all three there too, so every key-path error
+        // is TransportUnknown as well -- a keystroke that reached the target is
+        // exactly as unprovable-absent as a click that did.
         TransportUnknown,
     };
+
+    // What one delivery posted, as the engine described it. A sum type because
+    // a Receipt authorizes one input of one kind and the two carry different
+    // evidence: an ActReceipt names the client-space point, a KeyReceipt names
+    // the key and no point, which is the whole reason engine keeps them apart
+    // rather than inventing a coordinate for a keystroke.
+    using DeliveredInput = std::variant<engine::ActReceipt, engine::KeyReceipt>;
 
     // What one TaskHost::deliver did with one Receipt. Constructible only by
     // TaskHost, so a ledger that demands one cannot be told about a delivery
@@ -95,18 +113,18 @@ namespace uf::task
     {
         friend class TaskHost;
 
-        DispatchAuthority                 m_authority;
-        DeliveryOutcome                   m_outcome;
-        std::string                       m_reason;
-        uint64                            m_receiptId;
-        std::optional<engine::ActReceipt> m_act;
+        DispatchAuthority             m_authority;
+        DeliveryOutcome               m_outcome;
+        std::string                   m_reason;
+        uint64                        m_receiptId;
+        std::optional<DeliveredInput> m_posted;
 
         HostDeliveryReport(
             DispatchAuthority authority,
             DeliveryOutcome outcome,
             std::string reason,
             uint64 receiptId,
-            std::optional<engine::ActReceipt> act
+            std::optional<DeliveredInput> posted
         );
 
     public:
@@ -133,9 +151,14 @@ namespace uf::task
         // Host-private storage and is meaningful only as an identity.
         [[nodiscard]] auto receiptId() const noexcept -> uint64;
 
-        // Engaged exactly when outcome() is Delivered.
+        // Engaged exactly when outcome() is Delivered, and then holding the
+        // alternative matching the kind of action the Receipt authorized.
+        //
+        // TODO(cpp-debt): nothing reads this back today -- ceiling: the value
+        // is unfalsifiable while it has no reader, upgrade: the reconciliation
+        // path that will join a delivered input to its trace line.
         [[nodiscard]]
-        auto act() const noexcept UF_LIFETIME_BOUND
-            -> std::optional<engine::ActReceipt> const&;
+        auto posted() const noexcept UF_LIFETIME_BOUND
+            -> std::optional<DeliveredInput> const&;
     };
 }

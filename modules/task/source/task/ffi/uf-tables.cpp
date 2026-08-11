@@ -13,11 +13,13 @@
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
+#include <domain/key.hpp>
 #include <domain/space.hpp>
 
 #include <script/engine.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <limits>
 #include <memory>
@@ -57,6 +59,21 @@ namespace uf::task
         constexpr auto k_errorType = "uf.error";
         constexpr auto k_errorTag  = 1;
         constexpr auto k_defaultProbeTolerance = uint32{12};
+
+        // The action kinds a Runtime Receipt payload may name, as a table and
+        // an enumerator rather than a chain of string comparisons: a kind the
+        // schema gains has to be given a row here, and the total switch that
+        // reads the result then stops compiling until it is handled.
+        enum class ReceiptActionKind : uint8
+        {
+            Click,
+            Key,
+        };
+
+        constexpr auto k_receiptActionKinds = std::array{
+            std::pair{std::string_view{"click"}, ReceiptActionKind::Click},
+            std::pair{std::string_view{"key"}, ReceiptActionKind::Key},
+        };
 
         struct TierBError final
         {
@@ -129,6 +146,26 @@ namespace uf::task
             lua_setmetatable(state, carrier);
             lua_settop(state, carrier);
             lua_error(state);
+        }
+
+        [[nodiscard]]
+        auto receiptActionKind(lua_State* state, std::string_view name)
+            -> ReceiptActionKind
+        {
+            auto const found = std::ranges::find(
+                k_receiptActionKinds,
+                name,
+                &std::pair<std::string_view, ReceiptActionKind>::first
+            );
+            if (found == k_receiptActionKinds.end())
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "action_kind has an unsupported value"
+                );
+            }
+            return found->second;
         }
 
         [[nodiscard]]
@@ -874,6 +911,37 @@ namespace uf::task
             return value;
         }
 
+        // Refuses a field the payload must not carry at all.
+        //
+        // Unfalsifiable through any model, and kept for the reason every other
+        // re-check on this boundary is kept: the trusted compiler already
+        // forbids a key action's action_point and a click action's key, so the
+        // only writer that reaches here cannot produce either. What this would
+        // notice is a SECOND writer of the payload table -- which is the whole
+        // job of the checks around it, `placement.kind == "fixed"` included.
+        // No mutation of this tree turns it red; that is a fact about the
+        // estate, not evidence that the check is idle.
+        static auto requireAbsentField(
+            lua_State* state,
+            int table,
+            char const* field,
+            std::string_view name
+        ) -> void
+        {
+            auto const absolute = lua_absindex(state, table);
+            lua_rawgetfield(state, absolute, field);
+            auto const present = lua_type(state, -1) != LUA_TNIL;
+            lua_pop(state, 1);
+            if (present)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    std::string{name} + " must not carry " + field
+                );
+            }
+        }
+
         static auto pushUnknown(lua_State* state, std::string_view reason) -> int
         {
             lua_createtable(state, 0, 2);
@@ -986,7 +1054,7 @@ namespace uf::task
         static auto finalizeModel(lua_State* state) -> int
         {
             auto& self = bound(state);
-            self.requireArity(state, 8, "runtime_model_finalize");
+            self.requireArity(state, 9, "runtime_model_finalize");
             auto encoded = std::string{"sha256:"};
             encoded += stringAt(state, 1, "runtime model schema hash");
             auto schemaHash = ContentHash::parse(encoded);
@@ -1037,6 +1105,27 @@ namespace uf::task
             if (!geometry)
             {
                 raiseFromError(state, nullptr, geometry.error());
+            }
+            // Every key the model would ever press, validated and then dropped.
+            // KeyName is the single definition of which key names exist, and
+            // applying it here is what turns "this deployment can never press
+            // its key" from a refusal at the moment an action is taken into a
+            // refusal at the boundary where a model is checked. Nothing is
+            // stored: the name that reaches delivery comes from the Receipt
+            // payload and is re-created there, so a list kept here would be a
+            // second copy nothing compares against.
+            auto const declaredKeys = stringArray(
+                state,
+                9,
+                "RuntimeModel.declared_key_names"
+            );
+            for (auto const& name : declaredKeys)
+            {
+                auto const key = KeyName::create(name);
+                if (!key)
+                {
+                    raiseFromError(state, nullptr, key.error());
+                }
             }
             auto finalized = self.m_pHost->finalizeRuntimeModel(
                 self.m_generation,
@@ -1320,7 +1409,10 @@ namespace uf::task
             auto const variant = requireStringField(state, 3, "variant");
             auto const action = requireStringField(state, 3, "action");
             auto const proofLocator = requireStringField(state, 3, "proof_locator");
-            static_cast<void>(requireStringField(state, 3, "action_kind", "click"));
+            auto const actionKind = receiptActionKind(
+                state,
+                requireStringField(state, 3, "action_kind")
+            );
 
             lua_rawgetfield(state, 3, "placement");
             if (lua_type(state, -1) != LUA_TTABLE)
@@ -1339,29 +1431,78 @@ namespace uf::task
                 "rect",
                 "Runtime Receipt placement rect"
             );
-            auto const point = tablePoint(
-                state,
-                placement,
-                "action_point",
-                "Runtime Receipt action point"
-            );
-            lua_pop(state, 1);
-            if (
-                placementRect != p_proof->searchRect
-                || point.x() < placementRect.x()
-                || point.y() < placementRect.y()
-                || point.x() >= placementRect.right()
-                || point.y() >= placementRect.bottom()
-            )
-            {
-                raiseTierB(
-                    state,
-                    AutomationErrorKind::InvalidResource,
-                    "Runtime Receipt placement is not the measured Binding placement"
-                );
-            }
 
-            auto minted = self.m_pHost->mintClickReceipt(
+            // The rectangle is checked for BOTH kinds and for one reason: it is
+            // the rectangle the proof template was searched in, so a payload
+            // naming another one is not the Binding this cycle measured. A
+            // keystroke aims at nothing inside it and is still tied to it.
+            auto const measuredPlacement = placementRect == p_proof->searchRect;
+            auto input = [&]() -> TrustedReceiptInput
+            {
+                switch (actionKind)
+                {
+                case ReceiptActionKind::Click:
+                {
+                    requireAbsentField(state, 3, "key", "Runtime Receipt click");
+                    auto const point = tablePoint(
+                        state,
+                        placement,
+                        "action_point",
+                        "Runtime Receipt action point"
+                    );
+                    if (
+                        !measuredPlacement
+                        || point.x() < placementRect.x()
+                        || point.y() < placementRect.y()
+                        || point.x() >= placementRect.right()
+                        || point.y() >= placementRect.bottom()
+                    )
+                    {
+                        raiseTierB(
+                            state,
+                            AutomationErrorKind::InvalidResource,
+                            "Runtime Receipt placement is not the measured Binding placement"
+                        );
+                    }
+                    return TrustedReceiptInput{point};
+                }
+                case ReceiptActionKind::Key:
+                {
+                    // A keystroke names no coordinate, so a placement carrying
+                    // one here would be a point nothing authorized and nothing
+                    // would ever notice it was ignored.
+                    requireAbsentField(
+                        state,
+                        placement,
+                        "action_point",
+                        "Runtime Receipt key placement"
+                    );
+                    if (!measuredPlacement)
+                    {
+                        raiseTierB(
+                            state,
+                            AutomationErrorKind::InvalidResource,
+                            "Runtime Receipt placement is not the measured Binding placement"
+                        );
+                    }
+                    // The one definition of which key names exist. A model
+                    // whose key is outside the set was already refused when the
+                    // artifact was bound; this is the same call on the value
+                    // that actually reached the Host.
+                    auto key = KeyName::create(requireStringField(state, 3, "key"));
+                    if (!key)
+                    {
+                        raiseFromError(state, &runtimeContext, key.error());
+                    }
+                    return TrustedReceiptInput{*key};
+                }
+                }
+
+                UF_UNREACHABLE_MSG("Unknown ReceiptActionKind value");
+            }();
+            lua_pop(state, 1);
+
+            auto minted = self.m_pHost->mintReceipt(
                 self.m_generation,
                 runtimeContext,
                 *p_cycle,
@@ -1374,7 +1515,7 @@ namespace uf::task
                     .variant       = variant,
                     .action        = action,
                     .proofLocator  = proofLocator,
-                    .point         = point,
+                    .input         = std::move(input),
                 }
             );
             if (!minted)

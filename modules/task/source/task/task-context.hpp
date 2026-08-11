@@ -15,6 +15,7 @@
 
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
+#include <domain/key.hpp>
 #include <domain/space.hpp>
 
 #include <engine/session.hpp>
@@ -243,6 +244,15 @@ namespace uf::task
         [[nodiscard]]
         auto deliverReceiptClick(CycleTicket ticket, PixelPoint point)
             -> Result<engine::ActReceipt>;
+
+        // deliverReceiptClick's sibling for a Receipt that authorized a
+        // keystroke. Separate verbs rather than one taking a sum, because each
+        // spends the cycle's observation into a different engine verb and the
+        // two return different receipts; the choice between them is made once,
+        // where the Receipt's own intent is read.
+        [[nodiscard]]
+        auto deliverReceiptKey(CycleTicket ticket, KeyName key)
+            -> Result<engine::KeyReceipt>;
 
     public:
         explicit TaskContext(

@@ -259,7 +259,7 @@ local function readValue(text: string): any
     return { kind = "read", text = text, confidence = 0.91 }
 end
 
--- The reported shape: ui_target, reader and text, sorted, and nothing else.
+-- The reported shape: ui_target, reader, kind and text, sorted, and nothing else.
 do
     local cycle = evidence.begin_cycle()
     local records = readingRecords(cycle, "present", "absent", "present")
@@ -276,18 +276,19 @@ do
     for _, row in reported do assert(row.ui_target ~= "dialog_title") end
     assert(#reported == 3)
     assert(reported[1].ui_target == "count" and reported[1].reader == "count.reader")
-    assert(reported[1].text == "3")
+    assert(reported[1].kind == "read" and reported[1].text == "3")
     assert(reported[2].ui_target == "title" and reported[2].reader == "flavour.reader")
     assert(reported[3].ui_target == "title" and reported[3].reader == "name.reader")
-    assert(reported[3].text == "Wandering Merchant")
+    assert(reported[3].kind == "read" and reported[3].text == "Wandering Merchant")
 
-    -- No score, no rectangle, no binding, no variant: three keys and no fourth.
+    -- No score, no rectangle, no binding, no variant, and no reason on a
+    -- reading that succeeded: four keys and no fifth.
     local keys = 0
     for key in reported[3] do
-        assert(key == "ui_target" or key == "reader" or key == "text")
+        assert(key == "ui_target" or key == "reader" or key == "kind" or key == "text")
         keys += 1
     end
-    assert(keys == 3)
+    assert(keys == 4)
     assert(not pcall(function() (reported[3] :: any).text = "forged" end))
     assert(not pcall(function() (reported :: any)[4] = {} end))
     evidence.end_cycle(cycle)
@@ -309,18 +310,17 @@ do
     evidence.end_cycle(cycle)
 end
 
--- Below the floor, unreadable, or never taken: absent from the report rather
--- than present with a reason the caller could re-decide.
+-- Below the floor, empty, or never taken: reported with the outcome and, for an
+-- Unknown, the reason -- and never with the text or the score that decided it.
 do
     local cycle = evidence.begin_cycle()
     local records = readingRecords(cycle, "present", "absent", "present")
     local state = resolution.resolve_state(reading, cycle, records)
     local reported = resolution.resolve_readings(reading, cycle, state, records, reads({
-        -- Carries the text it rejected, so what drops it is the kind and not the
-        -- absence of a string. A reading below the floor is the one shape that
-        -- would be tempting to report "with a warning", and this is the assertion
-        -- that stops it: the floor is the trusted Reader's judgement, and a
-        -- caller handed the rejected text could re-decide it.
+        -- Carries the text it rejected and the score that rejected it, so what
+        -- keeps both out of the report is the kind and not their absence. The
+        -- floor is the trusted Reader's judgement, and a caller handed the
+        -- rejected text could re-take it; the reason says only that it failed.
         { "title.primary", "name.reader", {
             kind = "unknown",
             reason = "low_confidence",
@@ -330,8 +330,46 @@ do
         { "title.primary", "flavour.reader", { kind = "absent" } },
         { "count.primary", "count.reader", readValue("3") },
     }))
-    assert(#reported == 1)
-    assert(reported[1].ui_target == "count")
+    assert(#reported == 3)
+    assert(reported[1].ui_target == "count" and reported[1].kind == "read")
+    assert(reported[2].reader == "flavour.reader" and reported[2].kind == "absent")
+    assert(reported[2].reason == nil and reported[2].text == nil)
+    assert(reported[3].reader == "name.reader" and reported[3].kind == "unknown")
+    assert(reported[3].reason == "low_confidence")
+    assert(reported[3].text == nil)
+    assert((reported[3] :: any).confidence == nil)
+
+    -- Three keys for a failed reading, and the reason is one of them.
+    local keys = 0
+    for key in reported[3] do
+        assert(key == "ui_target" or key == "reader" or key == "kind" or key == "reason")
+        keys += 1
+    end
+    assert(keys == 4)
+    evidence.end_cycle(cycle)
+end
+
+-- A Reader the caller supplied nothing for is `not_measured`, which is what
+-- evaluateBinding already does one function up with a predicate nothing
+-- measured. The list length is the model's answer, not the Host's.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    local reported = resolution.resolve_readings(reading, cycle, state, records, reads({
+        { "count.primary", "count.reader", readValue("3") },
+    }))
+    assert(#reported == 3)
+    assert(reported[2].reader == "flavour.reader" and reported[2].kind == "unknown")
+    assert(reported[2].reason == "not_measured")
+    assert(reported[3].reader == "name.reader" and reported[3].reason == "not_measured")
+
+    -- A reason outside the one closed vocabulary is not carried through: it
+    -- reads as an unknown nothing measured rather than as a new reason.
+    local forged = resolution.resolve_readings(reading, cycle, state, records, reads({
+        { "count.primary", "count.reader", { kind = "unknown", reason = "made_up" } },
+    }))
+    assert(forged[1].kind == "unknown" and forged[1].reason == "not_measured")
     evidence.end_cycle(cycle)
 end
 
@@ -362,7 +400,7 @@ do
     local records = readingRecords(cycle, "present", "absent", "present")
     local state = resolution.resolve_state(reading, cycle, records)
     local values = reads({ { "count.primary", "count.reader", readValue("3") } })
-    assert(#resolution.resolve_readings(reading, cycle, state, records, values) == 1)
+    assert(#resolution.resolve_readings(reading, cycle, state, records, values) == 3)
     assert(resolution.reading_bindings(reading, cycle, {}) == nil)
     assert(#resolution.resolve_readings(reading, cycle, {}, records, values) == 0)
     assert(#resolution.resolve_readings(runtime, cycle, state, records, values) == 0)

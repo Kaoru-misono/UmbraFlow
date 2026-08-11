@@ -150,4 +150,63 @@ rejects(function()
     project.parse(string.gsub(valid, 'variant = "enabled"', 'variant = "enabled"\nvariant = "other"'))
 end)
 
+-- Two action kinds, and the placement rule follows the kinds present rather
+-- than the count. A keystroke names no coordinate, so a Binding granting only
+-- keystrokes carries no action_point and one that carries anyway is refused.
+--
+-- Plain substring replacement rather than gsub: every model fragment below
+-- contains a rectangle, and `[` opens a character class in a Lua pattern.
+local function replace(text: string, from: string, to: string): string
+    local at = string.find(text, from, 1, true)
+    assert(at ~= nil)
+    local start = at :: number
+    return string.sub(text, 1, start - 1) .. to .. string.sub(text, start + #from)
+end
+
+local clickAction = '{ id = "activate", kind = "click", proof_locator = "save.template" }'
+local keyAction = '{ id = "activate", kind = "key", key = "ENTER", proof_locator = "save.template" }'
+local actionPointLine = '  action_point = [1710, 965],\n'
+
+local keyed = project.parse(
+    replace(replace(valid, clickAction, keyAction), actionPointLine, "")
+)
+assert(keyed.binding_by_id["settings.save"].actions[1].kind == "key")
+assert(keyed.binding_by_id["settings.save"].actions[1].key == "ENTER")
+assert(keyed.binding_by_id["settings.save"].placement.action_point == nil)
+
+-- The keys the Host validates against its own single definition of the accepted
+-- set. A model granting no keystroke publishes an empty list rather than none.
+assert(ids(keyed.declared_key_names) == "ENTER")
+assert(ids(runtime.declared_key_names) == "")
+
+-- A key carrying a coordinate, a click without one, a key with no name, a click
+-- carrying one, and a kind nothing delivers: five refusals, one rule each.
+rejects(function() project.parse(replace(valid, clickAction, keyAction)) end)
+rejects(function() project.parse(replace(valid, actionPointLine, "")) end)
+rejects(function()
+    project.parse(replace(
+        replace(
+            valid,
+            clickAction,
+            '{ id = "activate", kind = "key", proof_locator = "save.template" }'
+        ),
+        actionPointLine,
+        ""
+    ))
+end)
+rejects(function()
+    project.parse(replace(
+        valid,
+        clickAction,
+        '{ id = "activate", kind = "click", key = "ENTER", proof_locator = "save.template" }'
+    ))
+end)
+rejects(function()
+    project.parse(replace(
+        valid,
+        clickAction,
+        '{ id = "activate", kind = "scroll", proof_locator = "save.template" }'
+    ))
+end)
+
 return 1

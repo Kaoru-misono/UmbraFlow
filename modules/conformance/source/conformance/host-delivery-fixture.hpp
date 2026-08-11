@@ -79,7 +79,7 @@ namespace uf::task
     // resolve_state does, out of the model -- and checking the surface it
     // reached is pendingReceipt's job.
     [[nodiscard]]
-    inline auto authorizeClickSource(UiActionUnderTest const& action) -> std::string
+    inline auto authorizeActionSource(UiActionUnderTest const& action) -> std::string
     {
         REQUIRE(isRuntimeModelIdentifier(action.uiTarget));
         REQUIRE(isRuntimeModelIdentifier(action.action));

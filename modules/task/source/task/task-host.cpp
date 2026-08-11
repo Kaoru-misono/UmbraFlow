@@ -11,9 +11,11 @@
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 #include <core/utility/scope-exit.hpp>
+#include <core/utility/variant-match.hpp>
 
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
+#include <domain/key.hpp>
 
 #include <script/engine.hpp>
 
@@ -56,6 +58,10 @@ namespace uf::task
         // array when the resolved model declares no reads: an unresolved state
         // has no Surface to attribute a reading to, and §6.2 of the consumer
         // design puts "UI surface resolved" ahead of every read for that reason.
+        // Its length is otherwise decided by the model rather than by what the
+        // Host managed to answer, because a Reader that found nothing and one
+        // that could not decide are both reported with their outcome instead of
+        // being dropped.
         // It is inside this document rather than beside it, which is what puts
         // it inside state_resolution_hash and therefore inside decision_basis_hash
         // without a second member having to be remembered.
@@ -600,7 +606,7 @@ namespace uf::task
         return p_generation->installRuntimeVm(*std::move(vm));
     }
 
-    auto TaskHost::mintClickReceipt(
+    auto TaskHost::mintReceipt(
         GenerationId generation,
         TaskContext& context,
         CycleTicket cycle,
@@ -739,7 +745,7 @@ namespace uf::task
         auto report = [&authority, ordinal = pending.ordinal](
             DeliveryOutcome outcome,
             std::string reason,
-            std::optional<engine::ActReceipt> act
+            std::optional<DeliveredInput> delivered
         ) -> HostDeliveryReport
         {
             return HostDeliveryReport{
@@ -747,7 +753,7 @@ namespace uf::task
                 outcome,
                 std::move(reason),
                 ordinal,
-                act
+                std::move(delivered)
             };
         };
 
@@ -797,23 +803,42 @@ namespace uf::task
             );
         }
 
-        // Past this call the click may already have reached the target, and the
-        // engine's Result cannot say whether it did: clickPoint fails before the
-        // sink, at the sink, and after the click landed. TransportUnknown is the
-        // only honest answer, and it deliberately does not prove absence.
-        auto act = context.deliverReceiptClick(pending.cycle, pending.intent.point);
-        if (!act.has_value())
+        // Past this call the input may already have reached the target, and the
+        // engine's Result cannot say whether it did. clickPoint fails before the
+        // sink, at the sink, and after the click landed; pressKey does the same,
+        // and its post-sink case is real rather than theoretical, because a
+        // press whose release did not land is drained at the controller and
+        // reported as one error. TransportUnknown is the only honest answer for
+        // either kind, and it deliberately does not prove absence.
+        //
+        // Which of the two runs is the Receipt's own intent and is decided here
+        // and nowhere else: an overload set over the sum, so a third kind
+        // cannot be added without this dispatch failing to compile.
+        auto delivered = matchVariant(
+            pending.intent.input,
+            [&context, &pending](PixelPoint point) -> Result<DeliveredInput>
+            {
+                UF_TRY_VALUE(act, context.deliverReceiptClick(pending.cycle, point));
+                return DeliveredInput{act};
+            },
+            [&context, &pending](KeyName key) -> Result<DeliveredInput>
+            {
+                UF_TRY_VALUE(pressed, context.deliverReceiptKey(pending.cycle, key));
+                return DeliveredInput{pressed};
+            }
+        );
+        if (!delivered.has_value())
         {
             return report(
                 DeliveryOutcome::TransportUnknown,
                 std::format(
                     "Host delivery reached the engine and did not complete: {}",
-                    act.error().message()
+                    delivered.error().message()
                 ),
                 std::nullopt
             );
         }
-        return report(DeliveryOutcome::Delivered, {}, *std::move(act));
+        return report(DeliveryOutcome::Delivered, {}, *std::move(delivered));
     }
 
     auto TaskHost::adoptControlFence(ControlFence fence) -> Status
