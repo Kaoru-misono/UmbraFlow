@@ -561,18 +561,24 @@ namespace uf::cli
             "Usage:\n"
             "  umbra-flow open --project DIR\n"
             "\n"
-            "Loads the project directory at DIR, registers every deployment's\n"
-            "plugin with the Operator, and prints what it found. It reaches no\n"
-            "target and runs no plan: what it answers is whether this binary\n"
-            "accepts the directory as a project.\n"
+            "Loads the project directory at DIR, verifies the RuntimeArtifact\n"
+            "it names the way the Operator's installer verifies it, registers\n"
+            "every deployment's plugin with the Operator, and prints what it\n"
+            "found. It reaches no target and runs no plan: what it answers is\n"
+            "whether this binary accepts the directory as a project.\n"
+            "\n"
+            "The artifact report names the root hash the artifact was verified\n"
+            "against and the two schema digests this binary accepted, so a\n"
+            "reader can tell a verified artifact from an unread one.\n"
             "\n"
             "Required:\n"
             "  --project DIR                Project directory holding\n"
             "                               umbraflow-project.json and\n"
             "                               umbraflow-conformance.json\n"
             "\n"
-            "Exits non-zero when the directory is refused, and when it loads\n"
-            "but a deployment's plugin does not register.\n";
+            "Exits non-zero when the directory or its RuntimeArtifact is\n"
+            "refused, and when both load but a deployment's plugin does not\n"
+            "register.\n";
     }
 
     auto ocrUsageText() noexcept -> std::string_view

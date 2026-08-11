@@ -765,13 +765,27 @@ namespace uf::task
         UF_TRY_VALUE(manifest, parseManifest(asString(manifestBytes)));
         UF_TRY_VALUE(expectedManifestSchema, schemaHash(k_runtimeArtifactSchemaHash));
         UF_TRY_VALUE(expectedRuntimeSchema, schemaHash(k_runtimeModelSchemaHash));
+        // Both sides are named, because the whole of the diagnosis is which
+        // digest the artifact states and which one this binary was built to
+        // accept. A refusal that stated only the first leaves the reader
+        // hunting for the second in a header.
         if (manifest.manifestSchemaHash != expectedManifestSchema)
         {
-            return refuse("runtime artifact manifest schema is not supported by this Host");
+            return refuse(std::format(
+                "runtime artifact manifest schema is not supported by this Host: "
+                "the manifest states {} and this Host accepts {}",
+                manifest.manifestSchemaHash.hex(),
+                expectedManifestSchema.hex()
+            ));
         }
         if (manifest.runtimeModelSchemaHash != expectedRuntimeSchema)
         {
-            return refuse("runtime model schema is not supported by this trusted parser");
+            return refuse(std::format(
+                "runtime model schema is not supported by this trusted parser: "
+                "the manifest states {} and this parser accepts {}",
+                manifest.runtimeModelSchemaHash.hex(),
+                expectedRuntimeSchema.hex()
+            ));
         }
         if (manifest.pageModel.path != k_runtimeModelFileName)
         {

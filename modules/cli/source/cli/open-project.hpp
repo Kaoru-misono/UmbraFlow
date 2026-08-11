@@ -59,10 +59,40 @@ namespace uf::cli
         std::string uiAction{};
     };
 
+    // The RuntimeArtifact this project names, as task::loadRuntimeArtifact
+    // verified it. deployment::loadProject deliberately checks only that the
+    // model file exists and is not empty, so without this block the verb would
+    // report a clean open for a directory the same binary refuses the moment it
+    // activates the artifact.
+    struct OpenedArtifact final
+    {
+        // The digest of runtime-artifact.manifest.json, which is what every
+        // other authority names this artifact by. A project directory records
+        // no prior commitment to it, so the value handed to the verifier is
+        // this verb's own arithmetic over the bytes it read -- the legal and
+        // empty comparison of docs/plans/2026-08-11-project-as-data.md 7.0. It
+        // is reported so a later run can be held to the same artifact.
+        std::string rootHash{};
+
+        // The two digests the verifier held against this binary's own pins,
+        // task::k_runtimeArtifactSchemaHash and k_runtimeModelSchemaHash. A
+        // verified artifact carries exactly those, so they are reported rather
+        // than compared a second time here.
+        std::string manifestSchemaHash{};
+        std::string runtimeModelSchemaHash{};
+
+        // The frozen closure: the model at its fixed name, and every asset the
+        // manifest declared, each at the size and digest it declared.
+        std::size_t modelBytes{};
+        std::size_t assets{};
+    };
+
     struct OpenedProject final
     {
         std::filesystem::path directory{};
         std::filesystem::path runtimeArtifactRoot{};
+
+        OpenedArtifact artifact{};
 
         // The decoded capture the conformance manifest names, as the byte count
         // of its file. A report has no use for the pixels; that the loader
@@ -76,11 +106,24 @@ namespace uf::cli
         OpenedRole foreign{};
     };
 
-    // Loads the directory, registers every deployment's plugin through
-    // ProjectPluginRegistrar, and reports both. The registrar is local to the
-    // call: this verb answers whether the directory registers, and a registry
-    // that outlived the answer would be a session, which is the next verb's
-    // job rather than this one's.
+    // Loads the directory, verifies the RuntimeArtifact it names the way the
+    // Operator's installer verifies it, registers every deployment's plugin
+    // through ProjectPluginRegistrar, and reports all three. The registrar is
+    // local to the call: this verb answers whether the directory registers, and
+    // a registry that outlived the answer would be a session, which is the next
+    // verb's job rather than this one's.
+    //
+    // Two failure shapes, and the split is deliberate. A project-wide fact --
+    // either root document, the artifact -- refuses the whole call, because a
+    // project that fails one cannot start at all. A per-deployment fact is
+    // reported per deployment: a plugin the script substrate cannot compile
+    // leaves this call successful with that deployment's `refusal` engaged, so
+    // the report still names every other deployment that would register.
+    //
+    // What is still out of reach: RuntimeModel semantics, and the extent the
+    // model declares. Both need a parsed model, and the trusted parser runs
+    // only inside a Host generation, which task::InstalledRuntimeArtifact
+    // reserves to the Operator's installed-generation CAS.
     [[nodiscard]]
     auto openProjectProduct(OpenArgs const& args) -> Result<OpenedProject>;
 
