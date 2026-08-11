@@ -68,6 +68,23 @@ namespace uf::cli
 
     [[nodiscard]] auto exploreUsageText() noexcept -> std::string_view;
 
+    // The project directory this binary loads a project out of and registers
+    // its deployments' plugins from. One required path and nothing else:
+    // everything else a project owns is named by its two root documents rather
+    // than by a flag, which is what makes a project data rather than a command
+    // line.
+    struct OpenArgs final
+    {
+        std::filesystem::path project{};
+
+        auto operator==(OpenArgs const&) const -> bool = default;
+    };
+
+    [[nodiscard]]
+    auto parseOpenArguments(std::span<std::string const> raw) -> Result<OpenArgs>;
+
+    [[nodiscard]] auto openUsageText() noexcept -> std::string_view;
+
     // The target listing takes no arguments because it discovers the handle
     // required by the privileged exploration entry point.
     [[nodiscard]] auto targetsUsageText() noexcept -> std::string_view;

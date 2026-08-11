@@ -216,10 +216,44 @@ namespace uf::cli
         }
     }
 
-    TEST_CASE("public usage contains only privileged annotation commands")
+    // The verb that turns a project directory into registered plugins takes one
+    // required path and refuses everything else. Each refusal is asserted on its
+    // message rather than only on the failure: parseExploreArguments refuses the
+    // same four shapes with the same kind, so a case asking whether the parse
+    // failed would be satisfied by the wrong parser entirely.
+    TEST_CASE("parseOpenArguments takes one required project directory")
+    {
+        auto const accepted = parseOpenArguments(
+            std::vector<std::string>{"--project", "project-root"}
+        );
+        REQUIRE(accepted.has_value());
+        CHECK(accepted->project == std::filesystem::path{"project-root"});
+
+        auto const missing = parseOpenArguments(std::vector<std::string>{});
+        REQUIRE_FALSE(missing.has_value());
+        CHECK(missing.error().message().contains("--project"));
+
+        auto const noValue = parseOpenArguments(
+            std::vector<std::string>{"--project"}
+        );
+        REQUIRE_FALSE(noValue.has_value());
+        CHECK(noValue.error().message().contains("missing value"));
+
+        // A flag `explore` takes is refused rather than accepted and ignored.
+        // This verb reaches no target, so a caller that spelled one is running
+        // the wrong command and has to be told which word was wrong.
+        auto const foreign = parseOpenArguments(
+            std::vector<std::string>{"--project", "p", "--hwnd", "0x20"}
+        );
+        REQUIRE_FALSE(foreign.has_value());
+        CHECK(foreign.error().message().contains("--hwnd"));
+    }
+
+    TEST_CASE("public usage names every command this binary dispatches")
     {
         auto const usage = usageText();
         CHECK(usage.find("  umbra-flow explore ") != std::string::npos);
+        CHECK(usage.find("  umbra-flow open ") != std::string::npos);
         CHECK(usage.find("  umbra-flow targets\n") != std::string::npos);
         CHECK(usage.find("  umbra-flow run ") == std::string::npos);
         CHECK(usage.find("  umbra-flow check ") == std::string::npos);

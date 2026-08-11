@@ -3,6 +3,7 @@
 #include <cli/args.hpp>
 #include <cli/cli-result.hpp>
 #include <cli/explore.hpp>
+#include <cli/open-project.hpp>
 #include <cli/targets.hpp>
 
 #include <core/numeric/checked-cast.hpp>
@@ -62,6 +63,32 @@ namespace uf::cli
         }
 
         [[nodiscard]]
+        auto dispatchOpen(std::span<std::string const> raw) -> ExitCode
+        {
+            auto const args = parseOpenArguments(raw);
+            if (!args)
+            {
+                std::cerr << formatError(args.error()) << '\n';
+                std::cerr << openUsageText();
+                return exitCodeForError(args.error(), false);
+            }
+
+            auto const opened = openProjectProduct(*args);
+            if (!opened)
+            {
+                std::cerr << formatError(opened.error()) << '\n';
+                return exitCodeForError(opened.error(), false);
+            }
+
+            std::cout << formatOpenedProject(*opened);
+            if (!everyPluginRegistered(*opened))
+            {
+                return ExitCode::Failure;
+            }
+            return ExitCode::Success;
+        }
+
+        [[nodiscard]]
         auto dispatchTargets(std::span<std::string const> raw) -> ExitCode
         {
             if (!raw.empty())
@@ -95,6 +122,7 @@ namespace uf::cli
 
         constexpr auto k_commands = std::array{
             Command{"explore", &dispatchExplore},
+            Command{"open", &dispatchOpen},
             Command{"targets", &dispatchTargets},
         };
 

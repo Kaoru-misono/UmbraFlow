@@ -73,6 +73,8 @@ namespace uf::cli
             return found->flag;
         }
 
+        constexpr auto k_openProjectFlag = std::string_view{"--project"};
+
         [[nodiscard]]
         auto invalid(std::string message) -> std::unexpected<Error>
         {
@@ -297,6 +299,33 @@ namespace uf::cli
         };
     }
 
+    auto parseOpenArguments(std::span<std::string const> raw) -> Result<OpenArgs>
+    {
+        auto project = std::optional<std::filesystem::path>{};
+
+        auto index = std::size_t{0};
+        while (index < raw.size())
+        {
+            auto const& name = raw[index];
+            if (name != k_openProjectFlag)
+            {
+                return invalid(std::format("unknown argument \"{}\"", name));
+            }
+            if (index + 1U >= raw.size())
+            {
+                return invalid(std::format("missing value for {}", name));
+            }
+            project = std::filesystem::path{raw[index + 1U]};
+            index += 2U;
+        }
+
+        UF_TRY_VALUE(
+            requiredProject,
+            requirePath(std::move(project), k_openProjectFlag)
+        );
+        return OpenArgs{.project = std::move(requiredProject)};
+    }
+
     auto exploreUsageText() noexcept -> std::string_view
     {
         return
@@ -324,6 +353,26 @@ namespace uf::cli
             "  --ocr-models DIR             OCR model directory; default: disabled\n";
     }
 
+    auto openUsageText() noexcept -> std::string_view
+    {
+        return
+            "Usage:\n"
+            "  umbra-flow open --project DIR\n"
+            "\n"
+            "Loads the project directory at DIR, registers every deployment's\n"
+            "plugin with the Operator, and prints what it found. It reaches no\n"
+            "target and runs no plan: what it answers is whether this binary\n"
+            "accepts the directory as a project.\n"
+            "\n"
+            "Required:\n"
+            "  --project DIR                Project directory holding\n"
+            "                               umbraflow-project.json and\n"
+            "                               umbraflow-conformance.json\n"
+            "\n"
+            "Exits non-zero when the directory is refused, and when it loads\n"
+            "but a deployment's plugin does not register.\n";
+    }
+
     auto targetsUsageText() noexcept -> std::string_view
     {
         return
@@ -340,6 +389,8 @@ namespace uf::cli
     auto usageText() -> std::string
     {
         auto text = std::string{exploreUsageText()};
+        text += '\n';
+        text += openUsageText();
         text += '\n';
         text += targetsUsageText();
         return text;

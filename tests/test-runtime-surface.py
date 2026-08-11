@@ -51,6 +51,8 @@ RETIRED_PATHS = (
 REQUIRED_SAFE_PATHS = (
     f"{CLI_LIBRARY_SOURCE}/explore.cpp",
     f"{CLI_LIBRARY_SOURCE}/explore.hpp",
+    f"{CLI_LIBRARY_SOURCE}/open-project.cpp",
+    f"{CLI_LIBRARY_SOURCE}/open-project.hpp",
     f"{CLI_LIBRARY_SOURCE}/project-skeleton.cpp",
     f"{CLI_LIBRARY_SOURCE}/project-skeleton.hpp",
     f"{CLI_LIBRARY_SOURCE}/targets.cpp",
@@ -66,12 +68,16 @@ REQUIRED_SAFE_PATHS = (
     "schema/umbraflow-trace-v2.schema.json",
     "tests/cli/test-args.cpp",
     "tests/cli/test-explore-protocol.cpp",
+    "tests/cli/test-open-project.cpp",
     "tests/cli/test-project-skeleton.cpp",
     "tests/cli/test-targets.cpp",
 )
 
 RETIRED_COMMANDS = frozenset({"check", "replay", "run"})
-ALLOWED_COMMANDS = frozenset({"explore", "targets"})
+# open loads a project directory and registers its deployments' plugins. It
+# reaches no target and drives no session, which is why it may share a binary
+# whose whole invariant is acting on a real window.
+ALLOWED_COMMANDS = frozenset({"explore", "open", "targets"})
 FORBIDDEN_BUSINESS_GLOBALS = frozenset(
     {
         "action",

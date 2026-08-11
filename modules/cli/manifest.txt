@@ -13,8 +13,13 @@ version = 0.1.0
 [build]
 unity_build = false
 
+# deployment carries the Operator, and this module is where the product binary
+# reaches its registrar. It is private because open-project.hpp names no type
+# from either: what a load produced is restated there as strings, so a caller
+# reads the report without linking the authorities that answered for it.
 [dependencies]
 public = engine task
+private = deployment
 
 # controller is public because targets.hpp and candidate-selection.hpp name its
 # TargetCandidate, so a caller holding one has to see the type. user32 is
