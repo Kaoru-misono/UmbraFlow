@@ -6,6 +6,13 @@ version = 0.1.0
 [build]
 unity_build = false
 
+# json, because the pure data boundary is a decoded json::Value rather than
+# bytes: PureDataProgram::invoke takes one and returns one, so the type is named
+# in this module's own header. json declares `public = core` only, so the edge
+# closes no cycle. Pushing a value the host already parsed is what removes every
+# project's hand-written JSON reader; a second RFC 8785 spelling inside the VM
+# would have been the alternative, and it would agree with the host's by test
+# rather than by construction.
 [dependencies]
-public = core domain
+public = core domain json
 private = Luau.VM Luau.Compiler

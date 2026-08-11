@@ -103,7 +103,7 @@ namespace uf::deployment
             }
         },
         "StateResolution": {
-            "$comment": "What the trusted Luau resolver serializes: the kind, the ordered surface stack a resolved state carries, and the reason the other kinds failed. Absent members are absent rather than null, so only kind is required.",
+            "$comment": "What the trusted Luau resolver serializes: the kind, the ordered surface stack a resolved state carries, the readings that state reports, and the reason the other kinds failed. Absent members are absent rather than null, so only kind is required.",
             "type": "object",
             "additionalProperties": false,
             "required": ["kind"],
@@ -114,6 +114,20 @@ namespace uf::deployment
                 "ordered_surface_stack": {
                     "type": "array",
                     "items": {"$ref": "#/$defs/Identifier"}
+                },
+                "readings": {
+                    "$comment": "Present exactly when ordered_surface_stack is. Each entry is one normalised, confidence-floored reading the trusted Reader produced, attributed to the UiTarget it was read under. It carries no score, no rectangle and no pre-normalisation text, and a reading that did not clear its Reader's floor is absent rather than reported with a reason.",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["reader", "text", "ui_target"],
+                        "properties": {
+                            "reader": {"$ref": "#/$defs/Identifier"},
+                            "text": {"type": "string"},
+                            "ui_target": {"$ref": "#/$defs/Identifier"}
+                        }
+                    }
                 },
                 "reason": {"type": "string", "minLength": 1}
             }
@@ -1264,9 +1278,17 @@ namespace uf::deployment
 
     auto canonicalJsonValidator() -> operator_runtime::CanonicalJsonValidator
     {
-        return [](std::string_view exactJcs) -> Status
+        return [](std::string_view exactJcs) -> Result<json::Value>
         {
-            return adopt(json::requireExactCanonical(exactJcs), "canonical bytes");
+            // json::requireExactCanonical stays the only statement of RFC 8785
+            // exactness in the tree, and the value is then read out of the same
+            // bytes it accepted. Reading it back is one parse this module would
+            // rather not spend; removing it needs a json::parseExactCanonical,
+            // which belongs to modules/json rather than here, and a second
+            // exactness rule spelled locally would agree with that one by test
+            // instead of by construction.
+            UF_TRY(adopt(json::requireExactCanonical(exactJcs), "canonical bytes"));
+            return parseDocument(exactJcs);
         };
     }
 

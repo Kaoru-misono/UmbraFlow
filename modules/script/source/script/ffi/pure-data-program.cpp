@@ -3,18 +3,22 @@
 #include "allocator.hpp"
 #include "cancellation.hpp"
 
+#include <json/value.hpp>
+
+#include <core/text/json-text.hpp>
 #include <core/text/utf8.hpp>
 #include <core/types/integer.hpp>
 #include <core/utility/scope-exit.hpp>
 
+#include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdlib>
-#include <format>
 #include <memory>
 #include <ranges>
 #include <span>
@@ -51,7 +55,6 @@ namespace uf::script
     {
         constexpr auto k_maximumSourceBytes        = std::size_t{256U} * 1024U;
         constexpr auto k_maximumBytecodeBytes      = std::size_t{1024U} * 1024U;
-        constexpr auto k_maximumDataBytes          = std::size_t{1024U} * 1024U;
         constexpr auto k_maximumArtifactCount      = std::size_t{64U};
         constexpr auto k_maximumArtifactBytes      = std::size_t{4U} * 1024U * 1024U;
         constexpr auto k_maximumTotalArtifactBytes = std::size_t{16U} * 1024U * 1024U;
@@ -59,6 +62,18 @@ namespace uf::script
         constexpr auto k_memoryQuotaBytes          = std::size_t{16U} * 1024U * 1024U;
         constexpr auto k_interruptBudgetTicks      = uint64{2'000'000U};
         constexpr auto k_maximumRuntime            = std::chrono::seconds{2};
+
+        // The data boundary is a value, so its ceilings are the value's:
+        // nesting, node count, and the bytes its strings and member names
+        // occupy. The depth matches json::parse's own bound, so a document the
+        // host accepted cannot be one this refuses to push. The node ceiling is
+        // what a 1 MiB canonical document can spell, since the cheapest node an
+        // array can hold costs two bytes; the text ceiling is that same 1 MiB
+        // applied to the only part of a value whose size a plugin controls
+        // without also spending nodes.
+        constexpr auto k_maximumValueDepth     = std::size_t{64U};
+        constexpr auto k_maximumValueNodes     = std::size_t{512U} * 1024U;
+        constexpr auto k_maximumValueTextBytes = std::size_t{1024U} * 1024U;
 
         constexpr auto k_pureGlobals = std::array{
             std::string_view{"assert"},       std::string_view{"error"},
@@ -75,6 +90,15 @@ namespace uf::script
             std::string_view{"utf8"},
         };
 
+        // The two frozen tables published beside the whitelist, spelled once so
+        // that what pushPureEnvironment publishes and what
+        // pluginEnvironmentHash attests to cannot drift apart.
+        constexpr auto k_artifactTable    = std::string_view{"artifact"};
+        constexpr auto k_artifactRead     = std::string_view{"read"};
+        constexpr auto k_canonTable       = std::string_view{"canon"};
+        constexpr auto k_canonEmptyObject = std::string_view{"emptyObject"};
+        constexpr auto k_canonNull        = std::string_view{"null"};
+
         constexpr auto k_bridgeSource = std::string_view{R"LUAU(
 local safe_type = type
 local safe_error = error
@@ -82,16 +106,14 @@ local safe_pairs = pairs
 local safe_ipairs = ipairs
 local safe_rawget = rawget
 local safe_getmetatable = getmetatable
-local safe_string_len = string.len
 local safe_table_freeze = table.freeze
 
 local canonical = {
     accept = function(value)
-        if safe_type(value) ~= "string" then
-            safe_error("pure data function must exchange canonical JSON bytes", 0)
-        end
-        if safe_string_len(value) == 0 or safe_string_len(value) > 1024 * 1024 then
-            safe_error("canonical JSON bytes exceed the data boundary", 0)
+        local kind = safe_type(value)
+        if kind ~= "table" and kind ~= "string"
+            and kind ~= "number" and kind ~= "boolean" then
+            safe_error("pure data function must exchange decoded JSON values", 0)
         end
         return value
     end,
@@ -150,9 +172,27 @@ return {
             lua_State* state{nullptr};
         };
 
-        struct ArtifactReaderState final
+        // Everything one fresh VM publishes that is not a copied Luau global.
+        // The three references are registry pins created once per VM, so the
+        // bridge environment and the plugin environment share one canon table
+        // and one identity for each sentinel; two environments each minting
+        // their own would make a sentinel the plugin returned unrecognizable to
+        // the host.
+        struct PureEnvironment final
         {
             std::span<PureDataProgram::Artifact const> artifacts{};
+            int nullReference{LUA_NOREF};
+            int emptyObjectReference{LUA_NOREF};
+            int canonReference{LUA_NOREF};
+        };
+
+        // What a value conversion has spent so far. Passed as a mutable
+        // reference because accumulating into it across a recursive walk is the
+        // whole of what it is for.
+        struct ValueBudget final
+        {
+            std::size_t nodes{0};
+            std::size_t textBytes{0};
         };
 
         [[nodiscard]]
@@ -172,6 +212,28 @@ return {
             lua_pop(state, 1);
         }
 
+        auto rawSetField(lua_State* state, int index, std::string_view name) -> void
+        {
+            auto const key = std::string{name};
+            lua_rawsetfield(state, index, key.c_str());
+        }
+
+        [[nodiscard]]
+        auto spendNode(ValueBudget& budget, std::size_t textBytes) -> Status
+        {
+            budget.nodes += 1U;
+            budget.textBytes += textBytes;
+            if (budget.nodes > k_maximumValueNodes)
+            {
+                return refuse("pure data value exceeds its fixed node ceiling");
+            }
+            if (budget.textBytes > k_maximumValueTextBytes)
+            {
+                return refuse("pure data value exceeds its fixed byte ceiling");
+            }
+            return ok();
+        }
+
         auto readArtifact(lua_State* state) -> int
         {
             if (lua_gettop(state) != 1 || lua_type(state, 1) != LUA_TSTRING)
@@ -182,19 +244,20 @@ return {
             std::size_t nameLength = 0;
             char const* p_name = lua_tolstring(state, 1, &nameLength);
             // SAFETY: upvalue 1 is installed only by pushArtifactReader and points
-            // to the ArtifactReaderState owned by runFresh. That object outlives
+            // to the PureEnvironment owned by runFresh. That object outlives
             // every callback and the VM is closed before it leaves scope.
-            auto const* reader = static_cast<ArtifactReaderState const*>(
+            auto const* p_environment = static_cast<PureEnvironment const*>(
                 lua_tolightuserdata(state, lua_upvalueindex(1)));
-            if (reader == nullptr || p_name == nullptr || nameLength > 256U)
+            if (p_environment == nullptr || p_name == nullptr || nameLength > 256U)
             {
                 luaL_error(state, "artifact.read rejected an invalid root name");
             }
 
             auto const name = std::string_view{p_name, nameLength};
-            auto const found =
-                std::ranges::find(reader->artifacts, name, &PureDataProgram::Artifact::name);
-            if (found == reader->artifacts.end())
+            auto const found = std::ranges::find(p_environment->artifacts,
+                                                 name,
+                                                 &PureDataProgram::Artifact::name);
+            if (found == p_environment->artifacts.end())
             {
                 luaL_error(state, "artifact.read rejected an unknown root");
             }
@@ -205,17 +268,61 @@ return {
             return 1;
         }
 
-        auto pushArtifactReader(lua_State* state, ArtifactReaderState* p_reader) -> void
+        auto pushArtifactReader(lua_State* state, PureEnvironment* p_environment) -> void
         {
             lua_createtable(state, 0, 1);
-            lua_pushlightuserdata(state, p_reader);
+            lua_pushlightuserdata(state, p_environment);
             lua_pushcclosure(state, &readArtifact, "artifact.read", 1);
-            lua_rawsetfield(state, -2, "read");
+            rawSetField(state, -2, k_artifactRead);
             lua_setreadonly(state, -1, 1);
         }
 
+        // The two JSON values a Lua table cannot spell for itself: nil is not a
+        // storable member, and an empty table is indistinguishable from an
+        // empty array. Both directions of the boundary compare against these
+        // exact objects, so the round trip is total rather than approximate.
         [[nodiscard]]
-        auto pushPureEnvironment(lua_State* state, ArtifactReaderState* p_reader) -> Status
+        auto createFrozenSentinels(lua_State* state, PureEnvironment& environment) -> Status
+        {
+            if (lua_checkstack(state, 4) == 0)
+            {
+                return fail(AutomationErrorKind::InternalInvariant,
+                            "pure data VM cannot reserve stack for its frozen sentinels");
+            }
+
+            lua_createtable(state, 0, 0);
+            lua_setreadonly(state, -1, 1);
+            environment.nullReference = lua_ref(state, -1);
+            lua_pop(state, 1);
+
+            lua_createtable(state, 0, 0);
+            lua_setreadonly(state, -1, 1);
+            environment.emptyObjectReference = lua_ref(state, -1);
+            lua_pop(state, 1);
+
+            lua_createtable(state, 0, 2);
+            lua_getref(state, environment.emptyObjectReference);
+            rawSetField(state, -2, k_canonEmptyObject);
+            lua_getref(state, environment.nullReference);
+            rawSetField(state, -2, k_canonNull);
+            lua_setreadonly(state, -1, 1);
+            environment.canonReference = lua_ref(state, -1);
+            lua_pop(state, 1);
+
+            if (
+                environment.nullReference == LUA_NOREF
+                || environment.emptyObjectReference == LUA_NOREF
+                || environment.canonReference == LUA_NOREF
+            )
+            {
+                return fail(AutomationErrorKind::InternalInvariant,
+                            "pure data VM could not pin its frozen sentinels");
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto pushPureEnvironment(lua_State* state, PureEnvironment* p_environment) -> Status
         {
             lua_newtable(state);
             int const environment = lua_gettop(state);
@@ -232,12 +339,296 @@ return {
                 lua_rawsetfield(state, environment, key.c_str());
             }
 
-            pushArtifactReader(state, p_reader);
-            lua_rawsetfield(state, environment, "artifact");
+            pushArtifactReader(state, p_environment);
+            rawSetField(state, environment, k_artifactTable);
+
+            lua_getref(state, p_environment->canonReference);
+            rawSetField(state, environment, k_canonTable);
 
             // No metatable is attached. In particular there is no __index path
             // to main globals, the registry, a host table, or another environment.
             return ok();
+        }
+
+        [[nodiscard]]
+        auto pushValue(lua_State* state,
+                       PureEnvironment const& environment,
+                       json::Value const& value,
+                       std::size_t depth,
+                       ValueBudget& budget) -> Status
+        {
+            if (depth > k_maximumValueDepth)
+            {
+                return refuse("pure data value exceeds its fixed nesting ceiling");
+            }
+            if (lua_checkstack(state, 4) == 0)
+            {
+                return refuse("pure data value exceeds the VM stack it must be pushed onto");
+            }
+
+            switch (value.kind())
+            {
+            case json::ValueKind::Null:
+                UF_TRY(spendNode(budget, 0U));
+                lua_getref(state, environment.nullReference);
+                return ok();
+            case json::ValueKind::Boolean:
+                UF_TRY(spendNode(budget, 0U));
+                lua_pushboolean(state, value.boolean() ? 1 : 0);
+                return ok();
+            case json::ValueKind::Number:
+                UF_TRY(spendNode(budget, 0U));
+                lua_pushnumber(state, value.number());
+                return ok();
+            case json::ValueKind::String:
+            {
+                auto const text = value.string();
+                UF_TRY(spendNode(budget, text.size()));
+                lua_pushlstring(state, text.data(), text.size());
+                return ok();
+            }
+            case json::ValueKind::Array:
+            {
+                UF_TRY(spendNode(budget, 0U));
+                auto const items = value.items();
+                lua_createtable(state, static_cast<int>(items.size()), 0);
+                int index = 1;
+                for (auto const& item : items)
+                {
+                    UF_TRY(pushValue(state, environment, item, depth + 1U, budget));
+                    lua_rawseti(state, -2, index);
+                    ++index;
+                }
+                lua_setreadonly(state, -1, 1);
+                return ok();
+            }
+            case json::ValueKind::Object:
+            {
+                UF_TRY(spendNode(budget, 0U));
+                auto const members = value.members();
+                if (members.empty())
+                {
+                    lua_getref(state, environment.emptyObjectReference);
+                    return ok();
+                }
+                lua_createtable(state, 0, static_cast<int>(members.size()));
+                for (auto const& member : members)
+                {
+                    UF_TRY(spendNode(budget, member.first.size()));
+                    UF_TRY(pushValue(state, environment, member.second, depth + 1U, budget));
+                    rawSetField(state, -2, member.first);
+                }
+                lua_setreadonly(state, -1, 1);
+                return ok();
+            }
+            }
+
+            return fail(AutomationErrorKind::InternalInvariant, "unknown json::ValueKind value");
+        }
+
+        [[nodiscard]]
+        auto isSentinel(lua_State* state, int index, int reference) -> bool
+        {
+            lua_getref(state, reference);
+            bool const same = lua_rawequal(state, index, -1) != 0;
+            lua_pop(state, 1);
+            return same;
+        }
+
+        // What one Lua table's keys turn out to be. A JSON value is an array or
+        // an object and never both, so the keys are counted before any of them
+        // is converted: a table carrying one of each is a shape no JSON
+        // document has, and saying so needs the whole key set.
+        struct TableKeys final
+        {
+            std::size_t sequenceCount{0};
+            std::size_t highestSequenceKey{0};
+            std::size_t memberCount{0};
+        };
+
+        [[nodiscard]]
+        auto readTableKeys(lua_State* state, int index) -> Result<TableKeys>
+        {
+            auto keys = TableKeys{};
+            for (int iterator = lua_rawiter(state, index, 0);
+                 iterator >= 0;
+                 iterator = lua_rawiter(state, index, iterator))
+            {
+                int const keyType = lua_type(state, -2);
+                if (keyType == LUA_TNUMBER)
+                {
+                    auto const key = lua_tonumber(state, -2);
+                    if (
+                        !(key >= 1.0)
+                        || key > static_cast<double>(k_maximumValueNodes)
+                        || std::floor(key) != key
+                    )
+                    {
+                        lua_pop(state, 2);
+                        return refuse("pure data value holds a table index no JSON array has");
+                    }
+                    keys.sequenceCount += 1U;
+                    keys.highestSequenceKey =
+                        std::max(keys.highestSequenceKey, static_cast<std::size_t>(key));
+                }
+                else if (keyType == LUA_TSTRING)
+                {
+                    keys.memberCount += 1U;
+                }
+                else
+                {
+                    lua_pop(state, 2);
+                    return refuse("pure data value holds a table key no JSON member name has");
+                }
+                lua_pop(state, 2);
+            }
+
+            if (keys.sequenceCount != 0U && keys.memberCount != 0U)
+            {
+                return refuse("pure data value holds a table that is neither array nor object");
+            }
+            if (keys.sequenceCount != keys.highestSequenceKey)
+            {
+                return refuse("pure data value holds a sparse table no JSON array has");
+            }
+            return keys;
+        }
+
+        [[nodiscard]]
+        auto readValue(lua_State* state,
+                       PureEnvironment const& environment,
+                       int index,
+                       std::size_t depth,
+                       ValueBudget& budget) -> Result<json::Value>;
+
+        [[nodiscard]]
+        auto readTable(lua_State* state,
+                       PureEnvironment const& environment,
+                       int index,
+                       std::size_t depth,
+                       ValueBudget& budget) -> Result<json::Value>
+        {
+            if (isSentinel(state, index, environment.nullReference))
+            {
+                return json::Value{};
+            }
+            if (isSentinel(state, index, environment.emptyObjectReference))
+            {
+                return json::Value::ofObject({});
+            }
+
+            UF_TRY_VALUE(keys, readTableKeys(state, index));
+            if (keys.memberCount == 0U)
+            {
+                auto items = std::vector<json::Value>{};
+                items.reserve(keys.sequenceCount);
+                for (auto position = std::size_t{0}; position < keys.sequenceCount; ++position)
+                {
+                    lua_rawgeti(state, index, static_cast<int>(position) + 1);
+                    auto item = readValue(state, environment, lua_gettop(state), depth + 1U, budget);
+                    lua_pop(state, 1);
+                    if (!item.has_value())
+                    {
+                        return std::unexpected{std::move(item).error()};
+                    }
+                    items.push_back(*std::move(item));
+                }
+                return json::Value::ofArray(std::move(items));
+            }
+
+            auto members = std::vector<json::Member>{};
+            members.reserve(keys.memberCount);
+            for (int iterator = lua_rawiter(state, index, 0);
+                 iterator >= 0;
+                 iterator = lua_rawiter(state, index, iterator))
+            {
+                std::size_t nameLength = 0;
+                // SAFETY: the key was counted as LUA_TSTRING by readTableKeys
+                // over this same table, so lua_tolstring returns the string's
+                // own bytes and converts nothing in place. The bytes are copied
+                // before the next iteration step can move the stack.
+                char const* p_name = lua_tolstring(state, -2, &nameLength);
+                auto const name = p_name == nullptr
+                                      ? std::string_view{}
+                                      : std::string_view{p_name, nameLength};
+                if (p_name == nullptr || !isValidUtf8(name))
+                {
+                    lua_pop(state, 2);
+                    return refuse("pure data value holds a member name that is not UTF-8");
+                }
+                auto memberName = std::string{name};
+                auto nameCost   = spendNode(budget, nameLength);
+                if (!nameCost.has_value())
+                {
+                    lua_pop(state, 2);
+                    return std::unexpected{std::move(nameCost).error()};
+                }
+
+                auto member = readValue(state, environment, lua_gettop(state), depth + 1U, budget);
+                lua_pop(state, 2);
+                if (!member.has_value())
+                {
+                    return std::unexpected{std::move(member).error()};
+                }
+                members.emplace_back(std::move(memberName), *std::move(member));
+            }
+            return json::Value::ofObject(std::move(members));
+        }
+
+        auto readValue(lua_State* state,
+                       PureEnvironment const& environment,
+                       int index,
+                       std::size_t depth,
+                       ValueBudget& budget) -> Result<json::Value>
+        {
+            if (depth > k_maximumValueDepth)
+            {
+                return refuse("pure data value exceeds its fixed nesting ceiling");
+            }
+            if (lua_checkstack(state, 4) == 0)
+            {
+                return refuse("pure data value exceeds the VM stack it must be read from");
+            }
+
+            switch (lua_type(state, index))
+            {
+            case LUA_TBOOLEAN:
+                UF_TRY(spendNode(budget, 0U));
+                return json::Value::ofBoolean(lua_toboolean(state, index) != 0);
+            case LUA_TNUMBER:
+            {
+                UF_TRY(spendNode(budget, 0U));
+                auto const number = lua_tonumber(state, index);
+                if (!std::isfinite(number))
+                {
+                    return refuse("pure data value holds a number no JSON document can spell");
+                }
+                return json::Value::ofNumber(number);
+            }
+            case LUA_TSTRING:
+            {
+                std::size_t length = 0;
+                // SAFETY: the value was checked as a string, so lua_tolstring
+                // returns its own bytes without converting anything in place,
+                // and they are copied before the fresh VM is closed.
+                char const* p_text = lua_tolstring(state, index, &length);
+                if (p_text == nullptr)
+                {
+                    return refuse("pure data value holds an unreadable string");
+                }
+                auto const text = std::string_view{p_text, length};
+                UF_TRY(spendNode(budget, length));
+                if (!isValidUtf8(text))
+                {
+                    return refuse("pure data value holds a string that is not UTF-8");
+                }
+                return json::Value::ofString(std::string{text});
+            }
+            case LUA_TTABLE:
+                UF_TRY(spendNode(budget, 0U));
+                return readTable(state, environment, index, depth, budget);
+            default: return refuse("pure data value holds a type no JSON document has");
+            }
         }
 
         [[nodiscard]]
@@ -305,10 +696,10 @@ return {
         auto loadModule(lua_State* mainState,
                         std::string_view bytecode,
                         std::string_view label,
-                        ArtifactReaderState* p_reader,
+                        PureEnvironment* p_environment,
                         InterruptState& control) -> Status
         {
-            UF_TRY(pushPureEnvironment(mainState, p_reader));
+            UF_TRY(pushPureEnvironment(mainState, p_environment));
             int const environment = lua_gettop(mainState);
             lua_State* thread = lua_newthread(mainState);
 
@@ -378,8 +769,9 @@ return {
                           std::string_view moduleId,
                           std::span<std::string const> entryPoints,
                           std::string_view entryPoint,
-                          std::string_view input,
-                          InterruptState& control) -> Result<std::string>
+                          json::Value const& input,
+                          PureEnvironment const& environment,
+                          InterruptState& control) -> Result<json::Value>
         {
             lua_State* thread = lua_newthread(mainState);
             lua_rawgetfield(mainState, bridge, "invoke");
@@ -389,22 +781,18 @@ return {
             lua_pushlstring(thread, moduleId.data(), moduleId.size());
             pushEntryPoints(thread, entryPoints);
             lua_pushlstring(thread, entryPoint.data(), entryPoint.size());
-            lua_pushlstring(thread, input.data(), input.size());
+
+            auto inputBudget = ValueBudget{};
+            UF_TRY_CONTEXT(pushValue(thread, environment, input, 0U, inputBudget),
+                           "pushing the decoded ProjectPlugin input");
             UF_TRY(resume(thread, 5, control));
-            if (lua_gettop(thread) != 1 || lua_isstring(thread, 1) == 0)
+            if (lua_gettop(thread) != 1)
             {
-                return refuse("pure data program returned a non-string value");
+                return refuse("pure data program returned other than one value");
             }
 
-            std::size_t length = 0;
-            // SAFETY: the value was checked as a string and is copied before
-            // the fresh VM is closed.
-            char const* p_output = lua_tolstring(thread, 1, &length);
-            if (length == 0U || length > k_maximumDataBytes)
-            {
-                return refuse("pure data output exceeds its fixed byte ceiling");
-            }
-            return std::string{p_output, length};
+            auto outputBudget = ValueBudget{};
+            return readValue(thread, environment, 1, 0U, outputBudget);
         }
 
         [[nodiscard]]
@@ -414,10 +802,10 @@ return {
                       std::span<std::string const> entryPoints,
                       std::span<PureDataProgram::Artifact const> artifacts,
                       std::string_view entryPoint,
-                      std::string_view input,
-                      bool invoke) -> Result<std::string>
+                      json::Value const& input,
+                      bool invoke) -> Result<json::Value>
         {
-            auto artifactReader = ArtifactReaderState{.artifacts = artifacts};
+            auto environment = PureEnvironment{.artifacts = artifacts};
             auto vm  = VmRun{};
             vm.state = createStateWithQuota(&vm.quota);
             if (vm.state == nullptr)
@@ -433,19 +821,20 @@ return {
             nilLibraryField(vm.state, "string", "dump");
             installInterrupt(vm.state, &vm.control);
             luaL_sandbox(vm.state);
+            UF_TRY(createFrozenSentinels(vm.state, environment));
             vm.control.beginUnitOfScript(k_maximumRuntime);
 
             UF_TRY(loadModule(vm.state,
                               bridgeBytecode,
                               "pure-data-bridge",
-                              &artifactReader,
+                              &environment,
                               vm.control));
             int const bridge = lua_gettop(vm.state);
-            UF_TRY(loadModule(vm.state, pluginBytecode, moduleId, &artifactReader, vm.control));
+            UF_TRY(loadModule(vm.state, pluginBytecode, moduleId, &environment, vm.control));
             int const plugin = lua_gettop(vm.state);
             UF_TRY(inspectModule(vm.state, bridge, plugin, moduleId, entryPoints, vm.control));
             if (!invoke)
-                return std::string{};
+                return json::Value{};
             return invokeModule(vm.state,
                                 bridge,
                                 plugin,
@@ -453,6 +842,7 @@ return {
                                 entryPoints,
                                 entryPoint,
                                 input,
+                                environment,
                                 vm.control);
         }
 
@@ -466,6 +856,39 @@ return {
             return std::ranges::none_of(value, [](char character) {
                 return static_cast<unsigned char>(character) < 0x20U;
             });
+        }
+
+        // The exact bytes the environment's identity is taken over, as one
+        // canonical JSON object: the bridge that wraps every call, the frozen
+        // tables published beside the whitelist, and the whitelist itself.
+        [[nodiscard]]
+        auto pluginEnvironmentMaterial() -> std::string
+        {
+            auto output = std::string{"{\"bridge_source\":"};
+            appendJsonString(output, k_bridgeSource);
+            output += ",\"frozen_tables\":{";
+            appendJsonString(output, k_artifactTable);
+            output += ":[";
+            appendJsonString(output, k_artifactRead);
+            output += "],";
+            appendJsonString(output, k_canonTable);
+            output += ":[";
+            appendJsonString(output, k_canonEmptyObject);
+            output += ',';
+            appendJsonString(output, k_canonNull);
+            output += "]},\"globals\":[";
+            auto separated = false;
+            for (auto const name : k_pureGlobals)
+            {
+                if (separated)
+                {
+                    output += ',';
+                }
+                separated = true;
+                appendJsonString(output, name);
+            }
+            output += "]}";
+            return output;
         }
     } // namespace
 
@@ -553,7 +976,7 @@ return {
                         ownedEntryPoints,
                         artifacts,
                         {},
-                        {},
+                        json::Value{},
                         false));
 
         auto state = std::make_shared<State>(State{
@@ -566,14 +989,9 @@ return {
         return PureDataProgram{std::shared_ptr<State const>{std::move(state)}};
     }
 
-    auto PureDataProgram::invoke(std::string_view entryPoint, std::string_view immutableInput) const
-        -> Result<std::string>
+    auto PureDataProgram::invoke(std::string_view entryPoint,
+                                 json::Value const& immutableInput) const -> Result<json::Value>
     {
-        if (immutableInput.empty() || immutableInput.size() > k_maximumDataBytes ||
-            !isValidUtf8(immutableInput))
-        {
-            return refuse("pure data input must be non-empty bounded UTF-8");
-        }
         if (!std::ranges::binary_search(m_state->entryPoints, entryPoint))
         {
             return refuse("pure data entry point is not registered");
@@ -586,5 +1004,16 @@ return {
                         entryPoint,
                         immutableInput,
                         true);
+    }
+
+    auto pureEnvironmentGlobals() -> std::span<std::string_view const>
+    {
+        return k_pureGlobals;
+    }
+
+    auto pluginEnvironmentHash() -> Result<ContentHash>
+    {
+        auto const material = pluginEnvironmentMaterial();
+        return sha256(std::as_bytes(std::span{material}));
     }
 } // namespace uf::script

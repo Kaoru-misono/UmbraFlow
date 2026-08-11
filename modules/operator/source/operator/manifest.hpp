@@ -125,6 +125,11 @@ namespace uf::operator_runtime
         ) -> Result<VerifiedProjectRegistration>;
     };
 
+    // Everything about a session a caller states. The manifest binds one more
+    // value than this -- plugin_environment_hash -- and it is deliberately not
+    // here: it is a fact about the framework binary rather than a choice, so a
+    // caller that could state it could also state a stale one, and a caller
+    // that forgot would pin nothing while still producing a manifest.
     struct SessionManifestSpec final
     {
         ContentHash hostProtocolSchemaHash;
@@ -140,11 +145,13 @@ namespace uf::operator_runtime
     class SessionManifest final
     {
         SessionManifestSpec m_spec;
+        ContentHash         m_pluginEnvironmentHash;
         std::string         m_canonicalBytes;
         ContentHash         m_hash;
 
         SessionManifest(
             SessionManifestSpec spec,
+            ContentHash pluginEnvironmentHash,
             std::string canonicalBytes,
             ContentHash hash
         );
@@ -170,5 +177,13 @@ namespace uf::operator_runtime
         // so that the ceilings an Agent binding runs under are the ones this
         // manifest attests to and not ones a caller stated.
         [[nodiscard]] auto agentProfileHash() const -> ContentHash;
+
+        // The pure plugin environment this session's plugin calls run inside:
+        // the trusted Luau bridge that wraps every call, the global whitelist,
+        // and the frozen tables published beside it. Without it a framework
+        // upgrade that changed the bridge would change what every plugin does
+        // under a session manifest that had not moved, and every hash derived
+        // from that manifest would still agree.
+        [[nodiscard]] auto pluginEnvironmentHash() const -> ContentHash;
     };
 }

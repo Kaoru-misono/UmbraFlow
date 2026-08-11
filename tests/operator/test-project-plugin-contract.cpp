@@ -1,5 +1,7 @@
 #include <operator/project-plugin.hpp>
 
+#include <json/value.hpp>
+
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
@@ -26,22 +28,22 @@ namespace uf::operator_runtime
         constexpr auto k_cataloguePlugin = std::string_view{R"LUAU(
 return {
     plugin_id = "fixture.catalogue",
-    derive = function(_input) return '{"kind":"catalogue"}' end,
-    plan = function(_input) return '{"kind":"catalogue"}' end,
-    next_step = function(_input) return '{"kind":"catalogue"}' end,
-    reconcile = function(_input) return '{"kind":"catalogue"}' end,
-    reduce = function(_input) return '{"kind":"catalogue"}' end,
+    derive = function(_input) return { kind = "catalogue" } end,
+    plan = function(_input) return { kind = "catalogue" } end,
+    next_step = function(_input) return { kind = "catalogue" } end,
+    reconcile = function(_input) return { kind = "catalogue" } end,
+    reduce = function(_input) return { kind = "catalogue" } end,
 }
 )LUAU"};
 
         constexpr auto k_workflowPlugin = std::string_view{R"LUAU(
 return {
     plugin_id = "fixture.workflow",
-    derive = function(_input) return '{"kind":"workflow"}' end,
-    plan = function(_input) return '{"kind":"workflow"}' end,
-    next_step = function(_input) return '{"kind":"workflow"}' end,
-    reconcile = function(_input) return '{"kind":"workflow"}' end,
-    reduce = function(_input) return '{"kind":"workflow"}' end,
+    derive = function(_input) return { kind = "workflow" } end,
+    plan = function(_input) return { kind = "workflow" } end,
+    next_step = function(_input) return { kind = "workflow" } end,
+    reconcile = function(_input) return { kind = "workflow" } end,
+    reduce = function(_input) return { kind = "workflow" } end,
 }
 )LUAU"};
 
@@ -50,6 +52,22 @@ return {
             VerifiedProjectRegistration registration;
             ProjectSchemaOwner          schemaOwner;
         };
+
+        // A canonical validator answers with the value the accepted bytes
+        // denote, because the ProjectPlugin boundary is that value. The fixtures
+        // here judge by an allowlist rather than by RFC 8785, so the parse is
+        // separate from the judgement.
+        [[nodiscard]]
+        auto parseCanonical(std::string_view exactJcs) -> Result<json::Value>
+        {
+            auto parsed = json::parse(exactJcs);
+            if (!parsed.has_value())
+            {
+                return fail(AutomationErrorKind::InvalidResource,
+                            "fixture canonical validator was handed non-JSON");
+            }
+            return *std::move(parsed);
+        }
 
         [[nodiscard]]
         auto hashOf(std::string_view value) -> ContentHash
@@ -165,12 +183,14 @@ return {
                     .projectObservation = "observation",
                     .toolPrecondition   = "precondition",
                 },
-                [](std::string_view candidateJcs) -> Status {
+                [](std::string_view candidateJcs) -> Result<json::Value> {
                     constexpr auto accepted = std::array{
                         k_input,
                         k_catalogueOutput,
                         k_workflowOutput,
                         std::string_view{"{\"count\":1}"},
+                        std::string_view{"{\"blob\":\"count-1\"}"},
+                        std::string_view{"{\"blob\":\"safe-true\"}"},
                         std::string_view{"{\"safe\":true}"},
                         std::string_view{"{}"},
                     };
@@ -179,7 +199,7 @@ return {
                         return fail(AutomationErrorKind::InvalidResource,
                                     "fixture canonical validator rejected bytes");
                     }
-                    return ok();
+                    return parseCanonical(candidateJcs);
                 },
                 [](ProjectPluginFunction,
                    ProjectDocumentDirection direction,
@@ -357,8 +377,8 @@ return {
             or collectgarbage ~= nil or string.dump ~= nil
             or math.random ~= nil or math.randomseed ~= nil
             or getfenv ~= nil or setfenv ~= nil
-        if forbidden then return '{"safe":false}' end
-        return '{"safe":true}'
+        if forbidden then return { safe = false } end
+        return { safe = true }
     end,
     plan = function(input) return input end,
     next_step = function(input) return input end,
@@ -385,8 +405,8 @@ return {
     plugin_id = "fixture.fresh",
     derive = function(_input)
         count += 1
-        if count == 1 then return '{"count":1}' end
-        return '{}'
+        if count == 1 then return { count = 1 } end
+        return canon.emptyObject
     end,
     plan = function(input) return input end,
     next_step = function(input) return input end,
@@ -443,7 +463,9 @@ return {
                     .projectObservation = "observation",
                     .toolPrecondition   = "precondition",
                 },
-                [](std::string_view) -> Status { return ok(); },
+                [](std::string_view candidateJcs) -> Result<json::Value> {
+                    return parseCanonical(candidateJcs);
+                },
                 [](ProjectPluginFunction,
                    ProjectDocumentDirection direction,
                    std::string_view) -> Status {
@@ -479,7 +501,9 @@ return {
                     .projectObservation = "observation",
                     .toolPrecondition   = "precondition",
                 },
-                [](std::string_view) -> Status { return ok(); },
+                [](std::string_view candidateJcs) -> Result<json::Value> {
+                    return parseCanonical(candidateJcs);
+                },
                 [](ProjectPluginFunction, ProjectDocumentDirection, std::string_view) -> Status {
                     return ok();
                 });
@@ -566,10 +590,10 @@ return {
     plugin_id = "fixture.artifacts",
     derive = function(_input)
         count += 1
-        if count ~= 1 then return '{}' end
-        return initialized
+        if count ~= 1 then return canon.emptyObject end
+        return { blob = initialized }
     end,
-    plan = function(_input) return artifact.read("runtime") end,
+    plan = function(_input) return { blob = artifact.read("runtime") } end,
     next_step = function(input) return input end,
     reconcile = function(input) return input end,
     reduce = function(input) return input end,
@@ -579,19 +603,19 @@ return {
             auto fixture = registrationFixture("fixture.artifacts",
                                                source,
                                                {
-                                                   artifactRoot("initial", "{\"count\":1}"),
-                                                   artifactRoot("runtime", "{\"safe\":true}"),
+                                                   artifactRoot("initial", "count-1"),
+                                                   artifactRoot("runtime", "safe-true"),
                                                });
             auto blobs = std::vector<ProjectPluginRegistrar::ArtifactBlob>{
-                artifactBlob("runtime", "{\"safe\":true}"),
-                artifactBlob("initial", "{\"count\":1}"),
+                artifactBlob("runtime", "safe-true"),
+                artifactBlob("initial", "count-1"),
             };
             auto const plugin =
                 registrar.registerPlugin(fixture.registration, source, blobs, fixture.schemaOwner);
             REQUIRE(plugin.has_value());
 
-            blobs[0].bytes.assign("{}");
-            blobs[1].bytes.assign("{}");
+            blobs[0].bytes.assign("moved");
+            blobs[1].bytes.assign("moved");
             auto const input = inputFor(fixture.schemaOwner);
             auto const first = plugin->derive(input);
             auto const second = plugin->derive(input);
@@ -599,9 +623,9 @@ return {
             REQUIRE(first.has_value());
             REQUIRE(second.has_value());
             REQUIRE(runtime.has_value());
-            CHECK(first->bytes() == "{\"count\":1}");
+            CHECK(first->bytes() == "{\"blob\":\"count-1\"}");
             CHECK(*first == *second);
-            CHECK(runtime->bytes() == "{\"safe\":true}");
+            CHECK(runtime->bytes() == "{\"blob\":\"safe-true\"}");
         }
 
         SUBCASE("unknown root is rejected even when the root set is empty")
@@ -648,9 +672,9 @@ return {
     plugin_id = "fixture.frozen-artifact",
     derive = function(_input)
         local safe = not assign_ok and not rawset_ok and not bytes_write_ok
-            and not leaked_root and reader.read("payload") == '{"safe":true}'
-        if safe then return '{"safe":true}' end
-        return '{}'
+            and not leaked_root and reader.read("payload") == 'safe-true'
+        if safe then return { safe = true } end
+        return canon.emptyObject
     end,
     plan = function(input) return input end,
     next_step = function(input) return input end,
@@ -661,11 +685,11 @@ return {
             auto registrar = ProjectPluginRegistrar{};
             auto fixture = registrationFixture("fixture.frozen-artifact",
                                                source,
-                                               {artifactRoot("payload", "{\"safe\":true}")});
+                                               {artifactRoot("payload", "safe-true")});
             auto const plugin =
                 registrar.registerPlugin(fixture.registration,
                                          source,
-                                         {artifactBlob("payload", "{\"safe\":true}")},
+                                         {artifactBlob("payload", "safe-true")},
                                          fixture.schemaOwner);
             REQUIRE(plugin.has_value());
             auto const result = plugin->derive(inputFor(fixture.schemaOwner));
@@ -745,8 +769,8 @@ local d = artifact.read("root-d")
 return {
     plugin_id = "fixture.artifact-memory",
     derive = function(_input)
-        if #a + #b + #c + #d > 0 then return '{"safe":true}' end
-        return '{}'
+        if #a + #b + #c + #d > 0 then return { safe = true } end
+        return canon.emptyObject
     end,
     plan = function(input) return input end,
     next_step = function(input) return input end,

@@ -6,6 +6,11 @@ version = 0.1.0
 [build]
 unity_build = false
 
+# json, because a CanonicalJson now carries the value its bytes denote as well
+# as the bytes: the schema owner parsed the document to judge its canonical
+# form, and the ProjectPlugin boundary is that value. Naming json::Value in
+# project-plugin.hpp is what keeps the parse from happening a second time
+# further down. json declares `public = core` only, so the edge closes no cycle.
 [dependencies]
-public = core domain task
+public = core domain json task
 private = trace script operator_sqlite3

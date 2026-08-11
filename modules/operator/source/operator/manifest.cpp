@@ -1,5 +1,7 @@
 #include "manifest.hpp"
 
+#include <script/pure-data-program.hpp>
+
 #include <core/text/json-text.hpp>
 #include <core/text/utf8.hpp>
 
@@ -89,7 +91,8 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         auto canonicalSessionManifest(
-            SessionManifestSpec const& spec
+            SessionManifestSpec const& spec,
+            ContentHash const& pluginEnvironmentHash
         ) -> std::string
         {
             auto output = std::string{"{\"agent_profile_hash\":"};
@@ -100,6 +103,8 @@ namespace uf::operator_runtime
             appendHash(output, spec.journalEnvelopeSchemaHash);
             output += ",\"operator_protocol_schema_hash\":";
             appendHash(output, spec.operatorProtocolSchemaHash);
+            output += ",\"plugin_environment_hash\":";
+            appendHash(output, pluginEnvironmentHash);
             output += ",\"policy_artifact_hash\":";
             appendHash(output, spec.policyArtifactHash);
             output += ",\"project_registration_hash\":";
@@ -329,10 +334,12 @@ namespace uf::operator_runtime
 
     SessionManifest::SessionManifest(
         SessionManifestSpec spec,
+        ContentHash pluginEnvironmentHash,
         std::string canonicalBytes,
         ContentHash hash
     )
         : m_spec{spec}
+        , m_pluginEnvironmentHash{pluginEnvironmentHash}
         , m_canonicalBytes{std::move(canonicalBytes)}
         , m_hash{hash}
     {
@@ -342,13 +349,18 @@ namespace uf::operator_runtime
         SessionManifestSpec const& spec
     ) -> Result<SessionManifest>
     {
-        auto canonicalBytes = canonicalSessionManifest(spec);
+        // Read from the framework rather than accepted from the caller: the
+        // plugin environment is a property of this binary, and a manifest that
+        // let a caller name it would attest to whatever the caller remembered.
+        UF_TRY_VALUE(pluginEnvironment, script::pluginEnvironmentHash());
+        auto canonicalBytes = canonicalSessionManifest(spec, pluginEnvironment);
         UF_TRY_VALUE(
             hash,
             sha256(std::as_bytes(std::span{canonicalBytes}))
         );
         return SessionManifest{
             spec,
+            pluginEnvironment,
             std::move(canonicalBytes),
             hash,
         };
@@ -382,5 +394,10 @@ namespace uf::operator_runtime
     auto SessionManifest::agentProfileHash() const -> ContentHash
     {
         return m_spec.agentProfileHash;
+    }
+
+    auto SessionManifest::pluginEnvironmentHash() const -> ContentHash
+    {
+        return m_pluginEnvironmentHash;
     }
 }

@@ -2,6 +2,8 @@
 
 #include <script/pure-data-program.hpp>
 
+#include <json/value.hpp>
+
 #include <core/error/contracts.hpp>
 #include <core/text/utf8.hpp>
 
@@ -143,8 +145,8 @@ namespace uf::operator_runtime
         ProjectSchemaOwner          schemaOwner;
     };
 
-    CanonicalJson::CanonicalJson(ContentHash contentHash, std::string bytes)
-        : m_contentHash{contentHash}, m_bytes{std::move(bytes)}
+    CanonicalJson::CanonicalJson(ContentHash contentHash, std::string bytes, json::Value value)
+        : m_contentHash{contentHash}, m_bytes{std::move(bytes)}, m_value{std::move(value)}
     {
     }
 
@@ -156,6 +158,11 @@ namespace uf::operator_runtime
     auto CanonicalJson::bytes() const noexcept -> std::string const&
     {
         return m_bytes;
+    }
+
+    auto CanonicalJson::value() const noexcept -> json::Value const&
+    {
+        return m_value;
     }
 
     ValidatedDocument::ValidatedDocument(ContentHash projectRegistrationHash,
@@ -243,15 +250,32 @@ namespace uf::operator_runtime
         {
             return refuse("canonical JSON must be non-empty bounded UTF-8");
         }
-        UF_TRY_CONTEXT(m_state->validateCanonicalJson(exactJcs), "verifying exact RFC 8785 JCS");
+        UF_TRY_VALUE_CONTEXT(value,
+                             m_state->validateCanonicalJson(exactJcs),
+                             "verifying exact RFC 8785 JCS");
         UF_TRY_VALUE(contentHash, sha256(std::as_bytes(std::span{exactJcs})));
-        return CanonicalJson{contentHash, std::move(exactJcs)};
+        return CanonicalJson{contentHash, std::move(exactJcs), std::move(value)};
+    }
+
+    auto ProjectSchemaOwner::canonicalizeValue(json::Value value) const -> Result<CanonicalJson>
+    {
+        auto exactJcs = json::canonicalBytes(value);
+        if (exactJcs.empty() || exactJcs.size() > k_maximumCanonicalBytes)
+        {
+            return refuse("canonical JSON must be non-empty bounded UTF-8");
+        }
+        UF_TRY_VALUE(contentHash, sha256(std::as_bytes(std::span{exactJcs})));
+        return CanonicalJson{contentHash, std::move(exactJcs), std::move(value)};
     }
 
     auto ProjectSchemaOwner::validate(ProjectPluginFunction function,
                                       ProjectDocumentDirection direction,
                                       CanonicalJson const& document) const -> Status
     {
+        // The value this re-parse produces is discarded on purpose: the
+        // document already carries the one its own mint computed. What is
+        // wanted here is the refusal, which is what stops a CanonicalJson minted
+        // by a laxer owner from reaching this owner's document validator.
         UF_TRY_CONTEXT(m_state->validateCanonicalJson(document.bytes()),
                        "revalidating exact JCS at the ProjectPlugin call boundary");
         UF_TRY_CONTEXT(m_state->validateDocument(function, direction, document.bytes()),
@@ -328,10 +352,11 @@ namespace uf::operator_runtime
         // CanonicalJson carries no schema authority and cannot be promoted by a
         // caller attaching a hash label.
         UF_TRY(m_state->schemaOwner.validate(function, ProjectDocumentDirection::Input, input));
-        UF_TRY_VALUE_CONTEXT(outputBytes,
-                             m_state->program.invoke(functionName(function), input.bytes()),
+        UF_TRY_VALUE_CONTEXT(outputValue,
+                             m_state->program.invoke(functionName(function), input.value()),
                              "running isolated ProjectPlugin data function");
-        UF_TRY_VALUE(canonicalOutput, m_state->schemaOwner.canonicalize(std::move(outputBytes)));
+        UF_TRY_VALUE(canonicalOutput,
+                     m_state->schemaOwner.canonicalizeValue(std::move(outputValue)));
         return m_state->schemaOwner.validateOutput(function, std::move(canonicalOutput));
     }
 

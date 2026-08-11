@@ -535,6 +535,11 @@ if(TARGET ${PROJECT_NAME}_operator)
             # declares it links the amalgamation itself.
             ${PROJECT_NAME}_operator_sqlite3
             ${PROJECT_NAME}_deployment
+            # contract-state-s05 asks whether the session manifest binds the
+            # plugin environment the framework actually runs. The Operator keeps
+            # script private, so the gate that compares the manifest's ninth
+            # value against the module that mints it names the module itself.
+            ${PROJECT_NAME}_script
         CASES
             contract-product-p01
             contract-product-p02
@@ -639,6 +644,7 @@ if(TARGET ${PROJECT_NAME}_script)
             script/test-script.cpp
             script/test-adversarial-substrate.cpp
             script/test-environments.cpp
+            script/test-pure-data-boundary.cpp
             script/test-veto-suite.cpp
         LIBS
             ${PROJECT_NAME}_script

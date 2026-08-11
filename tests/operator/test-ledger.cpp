@@ -47,10 +47,10 @@ namespace uf::operator_runtime
         inline auto rejectedReducePluginSource() -> std::string
         {
             auto source        = test_support::pluginSource("fixture.alpha");
-            auto const accepted = std::string{"return '{\"revision\":1}'"};
+            auto const accepted = std::string{"return { revision = 1 }"};
             auto const at      = source.find(accepted);
             REQUIRE(at != std::string::npos);
-            return source.replace(at, accepted.size(), "return '{\"value\":99}'");
+            return source.replace(at, accepted.size(), "return { value = 99 }");
         }
 
         // The same plugin except that its OP:`UIActionIntent` names one
@@ -740,6 +740,63 @@ namespace uf::operator_runtime
         );
         CHECK(disagreeing.error().message().contains(manifestRegistration.hex()));
         CHECK(disagreeing.error().message().contains(pinRegistration.hex()));
+    }
+
+    // What the SessionManifest pin buys. A session row stores the manifest hash
+    // it was pinned under, and a later pin of the same session is refused
+    // unless it presents the same one. The manifest binds the plugin
+    // environment (contract-state-s05), so a framework whose Luau bridge or
+    // global whitelist moved mints a different hash for the same spec and every
+    // session stored under the old one stops being re-pinnable -- which is the
+    // whole reason the environment is in the manifest at all.
+    TEST_CASE("a session stored under one manifest is refused under another")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const samePin = SessionPin{
+            .sessionId                 = "session-1",
+            .authenticatedControllerId = "controller-1",
+            .idempotencyNamespace      = "controller-1",
+            .projectRegistrationHash   = prepared.project.registration.hash(),
+            .capabilityProfileHash     = hashOf("capability"),
+            .controlledTargetId        = "target-1",
+            .projectInstanceKey        = "instance-1",
+            .mode                      = SessionMode::Write,
+            .kind                      = ControllerKind::Script,
+        };
+
+        // The positive control: the stored session accepts its own manifest,
+        // so the refusal below is about the manifest and not about re-pinning.
+        auto const stored = sessionManifest(
+            prepared.project.registration,
+            prepared.runtimeArtifactRootHash,
+            hashOf("agent")
+        );
+        REQUIRE(prepared.store.pinSession(samePin, stored, std::nullopt).has_value());
+
+        auto movedResult = SessionManifest::create(
+            SessionManifestSpec{
+                .hostProtocolSchemaHash       = hashOf("host"),
+                .runtimeModelSchemaHash       = hashOf("runtime-schema"),
+                .runtimeModelArtifactRootHash = prepared.runtimeArtifactRootHash,
+                .operatorProtocolSchemaHash   = hashOf("operator"),
+                .projectRegistrationHash      = prepared.project.registration.hash(),
+                .policyArtifactHash           = hashOf("a policy this session was not pinned to"),
+                .journalEnvelopeSchemaHash    = hashOf("journal-envelope"),
+                .agentProfileHash             = hashOf("agent"),
+            }
+        );
+        REQUIRE(movedResult.has_value());
+        auto const moved = *std::move(movedResult);
+        REQUIRE(moved.hash() != stored.hash());
+        auto const refused = prepared.store.pinSession(samePin, moved, std::nullopt);
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(
+            refused.error().message().contains(
+                "already names a different immutable session tuple"
+            )
+        );
     }
 
     TEST_CASE(
@@ -1736,18 +1793,18 @@ namespace uf::operator_runtime
         auto const undefined = std::array{
             UndefinedUi{
                 "surface_id",
-                R"("surface_id":"fixture.surface")",
-                R"("surface_id":"fixture.absent")",
+                R"(surface_id = "fixture.surface")",
+                R"(surface_id = "fixture.absent")",
             },
             UndefinedUi{
                 "ui_target_id",
-                R"("ui_target_id":"fixture.target")",
-                R"("ui_target_id":"fixture.absent")",
+                R"(ui_target_id = "fixture.target")",
+                R"(ui_target_id = "fixture.absent")",
             },
             UndefinedUi{
                 "action_id",
-                R"("action_id":"fixture.press")",
-                R"("action_id":"fixture.absent")",
+                R"(action_id = "fixture.press")",
+                R"(action_id = "fixture.absent")",
             },
         };
         for (auto const& named : undefined)

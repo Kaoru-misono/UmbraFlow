@@ -2,6 +2,8 @@
 
 #include "manifest.hpp"
 
+#include <json/value.hpp>
+
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
@@ -38,12 +40,19 @@ namespace uf::operator_runtime
     // Immutable exact JCS with no schema authority. It proves canonical bytes
     // and their content hash only; it does not claim that any field is valid for
     // a ProjectPlugin function.
+    //
+    // It carries the value those bytes denote beside them. Deciding that the
+    // bytes are exact RFC 8785 requires parsing them, so the value is a result
+    // the owner already computed rather than a second reading of the document;
+    // holding it is what lets the ProjectPlugin boundary be a value without the
+    // document being parsed again to get one.
     class CanonicalJson final
     {
         ContentHash m_contentHash;
         std::string m_bytes;
+        json::Value m_value;
 
-        CanonicalJson(ContentHash contentHash, std::string bytes);
+        CanonicalJson(ContentHash contentHash, std::string bytes, json::Value value);
 
         friend class ProjectSchemaOwner;
 
@@ -52,6 +61,9 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         auto bytes() const noexcept UF_LIFETIME_BOUND -> std::string const&;
+
+        [[nodiscard]]
+        auto value() const noexcept UF_LIFETIME_BOUND -> json::Value const&;
 
         auto operator==(CanonicalJson const&) const -> bool = default;
     };
@@ -88,11 +100,15 @@ namespace uf::operator_runtime
     };
 
     // These validators are trusted deployment code. The canonical validator
-    // must reject anything other than exact RFC 8785 JCS. The document validator
-    // must validate the complete function-specific JSON Schema, including every
-    // project-owned nested payload. Neither callable is passed to plugin code or
-    // published in a business VM.
-    using CanonicalJsonValidator = std::function<Status(std::string_view exactJcs)>;
+    // must reject anything other than exact RFC 8785 JCS, and returns the value
+    // those exact bytes denote -- it had to build one to answer, and returning
+    // it is what keeps the ProjectPlugin boundary from parsing the same
+    // document again. The document validator must validate the complete
+    // function-specific JSON Schema, including every project-owned nested
+    // payload. Neither callable is passed to plugin code or published in a
+    // business VM.
+    using CanonicalJsonValidator =
+        std::function<Result<json::Value>(std::string_view exactJcs)>;
     using ProjectDocumentValidator = std::function<Status(ProjectPluginFunction function,
                                                           ProjectDocumentDirection direction,
                                                           std::string_view exactJcs)>;
@@ -123,6 +139,14 @@ namespace uf::operator_runtime
         auto validate(ProjectPluginFunction function,
                       ProjectDocumentDirection direction,
                       CanonicalJson const& document) const -> Status;
+
+        // Mints canonical bytes from a value rather than judging bytes a caller
+        // spelled. A plugin returns a value, so its output has no serialization
+        // of its own to be refused: RFC 8785 is applied here, once, and the
+        // canonical form is a fact about the mint rather than a claim about the
+        // plugin.
+        [[nodiscard]]
+        auto canonicalizeValue(json::Value value) const -> Result<CanonicalJson>;
 
         [[nodiscard]]
         auto validateOutput(ProjectPluginFunction function, CanonicalJson document) const

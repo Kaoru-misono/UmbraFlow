@@ -247,9 +247,15 @@ namespace uf::operator_runtime::test_support
 
     // The OP:`PlanProposal` the fixture plugin returns for each mutating tool,
     // and the OP:`UIActionIntent` it returns for every next_step. They are
-    // plugin bytes -- the plugin is what produces them, and prepareStore
+    // plugin source -- the plugin is what produces them, and prepareStore
     // installs the plugin -- so they are spelled once here and read nowhere
-    // else in C++ except by the validator that must accept them.
+    // else in C++.
+    //
+    // Luau table literals rather than JSON text: a plugin exchanges decoded
+    // values now, so what it returns is a value it constructs rather than bytes
+    // it spells. Nothing here has to agree with a serializer any more, which is
+    // the point -- the fixture cannot emit a non-canonical proposal because it
+    // no longer emits a proposal's bytes at all.
     [[nodiscard]]
     inline auto fixturePlanProposal(
         std::string_view toolName,
@@ -257,14 +263,16 @@ namespace uf::operator_runtime::test_support
         std::string_view limits
     ) -> std::string
     {
-        auto proposal = std::string{"{\"allowed_ui_actions\":[\"fixture.step\"],"};
-        proposal += "\"canonical_args\":{\"value\":1},\"effects\":";
+        auto proposal = std::string{"{\n            allowed_ui_actions = { \"fixture.step\" },"};
+        proposal += "\n            canonical_args = { value = 1 },";
+        proposal += "\n            effects = ";
         proposal += effects;
-        proposal += ",\"tool_name\":\"";
+        proposal += ",\n            tool_name = \"";
         proposal += toolName;
-        proposal += "\",\"tool_version\":\"1\",\"workflow_limits\":";
+        proposal += "\",\n            tool_version = \"1\",";
+        proposal += "\n            workflow_limits = ";
         proposal += limits;
-        proposal.push_back('}');
+        proposal += ",\n        }";
         return proposal;
     }
 
@@ -274,15 +282,15 @@ namespace uf::operator_runtime::test_support
         std::string_view risk
     ) -> std::string
     {
-        auto effect = std::string{"{\"namespaced_type\":\"fixture.write\","};
-        effect += "\"opaque_project_payload\":{\"value\":1},";
-        effect += "\"payload_schema_hash\":\"";
+        auto effect = std::string{"{ namespaced_type = \"fixture.write\", "};
+        effect += "opaque_project_payload = { value = 1 }, ";
+        effect += "payload_schema_hash = \"";
         effect += effectPayloadSchemaHex();
-        effect += "\",\"risk\":\"";
+        effect += "\", risk = \"";
         effect += risk;
-        effect += "\",\"scope_key\":\"";
+        effect += "\", scope_key = \"";
         effect += scopeKey;
-        effect += "\",\"scope_kind\":\"instance\"}";
+        effect += "\", scope_kind = \"instance\" }";
         return effect;
     }
 
@@ -292,23 +300,24 @@ namespace uf::operator_runtime::test_support
         std::string_view maximumDispatches
     ) -> std::string
     {
-        auto limits = std::string{"{\"maximum_dispatches\":"};
+        auto limits = std::string{"{ maximum_dispatches = "};
         limits += maximumDispatches;
-        limits += ",\"maximum_elapsed_ms\":60000,\"maximum_observations\":16,";
-        limits += "\"maximum_steps\":";
+        limits += ", maximum_elapsed_ms = 60000, maximum_observations = 16, ";
+        limits += "maximum_steps = ";
         limits += maximumSteps;
-        limits += ",\"maximum_waits\":4}";
+        limits += ", maximum_waits = 4 }";
         return limits;
     }
 
     inline auto const k_fixtureUiActionIntent = std::string{
-        "{\"action\":{\"action_id\":\"fixture.press\","
-        "\"canonical_parameters\":{\"value\":1},"
-        "\"surface_id\":\"fixture.surface\",\"ui_target_id\":\"fixture.target\"},"
-        "\"binding_variant_constraints\":[],\"delivery_class\":\"delivery_safe\","
-        "\"expected_ui_postconditions\":[],\"required_ui_preconditions\":[],"
-        "\"step_key\":\"fixture.step\","
-        "\"timeout_policy\":{\"maximum_elapsed_ms\":5000,\"on_timeout\":\"reobserve\"}}"
+        "{\n        action = { action_id = \"fixture.press\","
+        " canonical_parameters = { value = 1 },"
+        " surface_id = \"fixture.surface\", ui_target_id = \"fixture.target\" },"
+        "\n        binding_variant_constraints = {}, delivery_class = \"delivery_safe\","
+        "\n        expected_ui_postconditions = {}, required_ui_preconditions = {},"
+        "\n        step_key = \"fixture.step\","
+        "\n        timeout_policy = { maximum_elapsed_ms = 5000, on_timeout = \"reobserve\" },"
+        "\n    }"
     };
 
     [[nodiscard]]
@@ -911,11 +920,11 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
     [[nodiscard]]
     inline auto pluginSource(std::string_view pluginId) -> std::string
     {
-        auto const ordinaryEffects = "[" + fixtureEffect("alpha", "low") + ","
-            + fixtureEffect("beta", "medium") + "]";
-        auto const reorderedEffects = "[" + fixtureEffect("beta", "medium") + ","
-            + fixtureEffect("alpha", "low") + "]";
-        auto const highRiskEffects = "[" + fixtureEffect("alpha", "high") + "]";
+        auto const ordinaryEffects = "{ " + fixtureEffect("alpha", "low") + ", "
+            + fixtureEffect("beta", "medium") + " }";
+        auto const reorderedEffects = "{ " + fixtureEffect("beta", "medium") + ", "
+            + fixtureEffect("alpha", "low") + " }";
+        auto const highRiskEffects = "{ " + fixtureEffect("alpha", "high") + " }";
         auto const ordinaryLimits  = fixtureWorkflowLimits("8", "8");
 
         // The proposals are a module-local table rather than a field of the
@@ -976,35 +985,36 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         {
             source += "        [\"";
             source += proposal.invokedTool;
-            source += "\"] = '";
+            source += "\"] = ";
             source += fixturePlanProposal(
                 proposal.proposedTool,
                 proposal.effects,
                 proposal.limits
             );
-            source += "',\n";
+            source += ",\n";
         }
         source += "}\n\nreturn {\n    plugin_id = \"";
         source += pluginId;
         source += R"LUAU(",
-    derive = function(_input) return '{}' end,
+    derive = function(_input) return canon.emptyObject end,
     plan = function(input)
-        local tool = string.match(input, '"tool_name":"([^"]*)"')
-        local proposal = proposals[tool]
+        local proposal = proposals[input.tool_name]
         if proposal == nil then
-            error("fixture plugin has no plan for " .. tostring(tool))
+            error("fixture plugin has no plan for " .. tostring(input.tool_name))
         end
         return proposal
     end,
-    next_step = function(_input) return ')LUAU";
+    next_step = function(_input) return )LUAU";
         source += k_fixtureUiActionIntent;
-        source += R"LUAU(' end,
+        source += R"LUAU( end,
     reconcile = function(input) return input end,
     reduce = function(input)
-        if string.find(input, 'fixture.confirmed', 1, true) ~= nil then
-            return '{"revision":1}'
+        for _, event in ipairs(input.journal_events) do
+            if event.namespaced_event_type == "fixture.confirmed" then
+                return { revision = 1 }
+            end
         end
-        return '{"revision":0}'
+        return { revision = 0 }
     end,
 }
 )LUAU";
