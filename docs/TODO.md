@@ -49,8 +49,10 @@
 > (`93698b4`) and W7 (`c23efd3`) landed, closing `c03`, `p01`, `p02`,
 > `p03`, `a01` and `a02` — every `REQUIRED_CORE` requirement is now implemented.
 > Four consequences reach the boxes below. The gate map is **59 gates over 42
-> requirements, 40 `contract-*` and 19 `schema-*`**, and a green run is 83
-> registered tests. `a03` and `a05` are the only requirements without a
+> requirements, 40 `contract-*` and 19 `schema-*`**, and a green run was 83
+> registered tests on that date — it is 86 as of 2026-08-11, the three added by
+> `test-json`, `test-deployment` and the `open` verb's surface pin, none of which
+> changes the gate map above. `a03` and `a05` are the only requirements without a
 > per-requirement behavioural ID; both are implemented and both run under the
 > aggregate `test-annotate-backend`, so that is a naming gap and not a coverage
 > gap. The Operator DDL fingerprint moved four more times and is now
@@ -85,6 +87,23 @@
 > `canonical_state` to `canonical_opaque_payload`. No table added or dropped,
 > hence the same 23 tables. See
 > [journal record binding](plans/2026-08-11-journal-record-binding.md).
+>
+> Corrected 2026-08-11 (`bed456f`), reversing the correction two paragraphs
+> above: the reopening at `07abc3e` misread the acceptance text it was reopened
+> against. The frozen bundle's row puts both consequences inside `a07`'s 验收,
+> not one in its 需求 and one in its 验收: `contract-agent-a07` already proved
+> the second (an in-flight dispatch is explicitly reported), and the first —
+> `reserveDispatch`'s live-lease predicate, `requireLiveLease`, run inside the
+> same `BEGIN IMMEDIATE` serialization `takeoverLease` commits in — was already
+> implemented before the reopening. What was missing was not a call edge but a
+> test that ran the schedule: no case took over and then attempted a
+> reservation on the displaced lease. `contract-agent-a07` was extended, not
+> joined by a second case, and both halves are now falsified by mutation.
+> **42 of 42 `REQUIRED_CORE` requirements are closed by a behavioural gate**;
+> the gate map is unchanged, 40 `contract-*` and 19 `schema-*`. See
+> [the next block](plans/2026-08-10-next-block.md) §2, which is the current
+> record — the two paragraphs above it record the misreading and its
+> correction, not the requirement's state.
 >
 > Amended 2026-08-10, after the third adversarial round. It returned FAIL with
 > 17 findings — [the record](reviews/2026-08-10-third-round-review.md) — so the

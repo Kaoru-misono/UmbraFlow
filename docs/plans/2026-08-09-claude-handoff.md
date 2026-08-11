@@ -189,6 +189,18 @@ d445c811b9469a58ff116df4763d4e7f1acd80b6a3392639d7eb257321916753
 > `$defs.JournalEvent`/`$defs.ProjectState` 已经在用的成员名，此前建好的
 > 数据库打开时会被拒绝并删除，不做迁移。详见
 > [journal record binding](2026-08-11-journal-record-binding.md)。
+>
+> 2026-08-11 三度更正（`bed456f`）：`a07` 那段的读法本身是错的。冻结包那一行把两个
+> 后果都放在验收里——「takeover 返回后旧 fence 不可开始新 dispatch；在途 dispatch
+> 被明确报告」——不是一个在需求、一个在验收。第一条子句是 `reserveDispatch` 的
+> live-lease 判断 `requireLiveLease`，在重新打开之前就已经跑在 `takeoverLease`
+> 提交所在的同一个 `BEGIN IMMEDIATE` 序列化里；缺的不是调用边，是一个真正跑过这条
+> schedule 的测试——没有用例在 takeover 之后拿被替换的 lease 去尝试一次 reservation。
+> `contract-agent-a07` 被扩展（不是新增用例）去跑这条 schedule，两个子句现在都能被
+> mutation 证伪。**42 条需求全部由行为 gate 关闭**，gate 数不变，仍是 40 个
+> `contract-*` 加 19 个 `schema-*`。详见
+> [next block](2026-08-10-next-block.md) §2，那里是当前记录；上面两段关于 `a07` 的
+> 更正留作误读及其更正的记录，不代表需求现状。
 
 ### 4.5 ProjectPlugin
 

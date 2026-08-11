@@ -318,6 +318,32 @@ counted closed against half its acceptance text is worse than one left open.
 > text quoted above. F-4 remains the finding; this note only records that it was
 > acted on rather than accepted.
 
+> **Corrected 2026-08-11 (`bed456f`), later the same day: the second branch was
+> not needed, and F-4 is not what closed or reopened `a07`.** The paragraph
+> above reads `A-07`'s acceptance text as reachable only by delivering the
+> Host-side fence install into production. It is not: both clauses of `A-07`'s
+> 验收 close at the ledger layer — `reserveDispatch`'s live-lease predicate
+> refuses the displaced lease, `recordDeliveryOutcome` reports the in-flight
+> dispatch — and neither needs `adoptControlFence` to run anywhere but the test
+> harness. `contract-agent-a07` was extended to run that schedule and `a07`
+> closed again the same day; 42 of 42 `REQUIRED_CORE` requirements are closed
+> by a behavioural gate, correcting the 39-of-42 stated two paragraphs above.
+> **F-4 itself is not closed by that, and it was never a reopened requirement —
+> it is a design divergence, not the reason `a07` was ever open.** The bundle's
+> own mechanism for the 需求 sentence is one function holding one mutex
+> (`umbraflow-game-automation-final-design.md`:226-227); W4 §1.2 deliberately
+> replaced it with SQLite commit order plus a bracket and ruled operation 2 out
+> of the database. Under the replacement a Host's fence is a cache no takeover
+> refreshes, and what keeps that safe is `TaskHost::deliver`'s privacy, not a
+> production wiring of `adoptControlFence`; `host-delivery.hpp` understated
+> that and was corrected at the declaration in `bed456f`. Neither branch offered
+> above was the right fix: the first was never available — nothing in
+> production holds both a lease and a Host — and the second, reopening `A-07`,
+> was a false necessity, because invariant I-02 as this finding states it was
+> never `A-07`'s acceptance text to begin with. **F-4 stays open**, as that
+> divergence. See [the next block](2026-08-10-next-block.md) §2, "The residue,
+> stated once so nobody re-derives it."
+
 ---
 
 ### F-5 — The consumer's whole Luau task layer targets a host surface the framework bans in CI

@@ -3,7 +3,8 @@
 Status: **landed 2026-08-11** — additive half `e64c143`, ledger join `25f57f9`.
 Everything below is the pre-landing specification and is left as written.
 Date: 2026-08-10 (landed 2026-08-11)
-Closes: `c03`. **`a07` is reopened — see the note directly below.**
+Closes: `c03 a07`. **`a07` was reopened and closed again the same day — see the
+note directly below.**
 
 > **Reopened 2026-08-11 (`07abc3e`): this document closed `c03` and half of
 > `a07`, and Q5 said so before the row was marked closed.** `a07`'s acceptance
@@ -29,6 +30,31 @@ Closes: `c03`. **`a07` is reopened — see the note directly below.**
 > ways it closes, and the rule proposed so the next concession does not die the
 > same way are in [the next block](2026-08-10-next-block.md) §2 and §6.1. Nothing
 > below is rewritten; Q5 was right when written and is still the finding.
+>
+> **Closed again 2026-08-11 (`bed456f`), the same day, on a corrected reading.**
+> The reopening above substituted `a07`'s 需求 sentence — "human takeover and
+> Host delivery share one target serialization" — for the first of its two
+> 验收 clauses. Both clauses live in the 验收: "takeover 返回后旧 fence 不可开始
+> 新 dispatch；在途 dispatch 被明确报告." The first clause is `reserveDispatch`'s
+> live-lease predicate, not a call edge into `TaskHost`. `requireLiveLease`
+> already ran inside the same `BEGIN IMMEDIATE` serialization `takeoverLease`
+> commits in, before this reopening; what was missing was a test that ran the
+> schedule — no case took over and then attempted a reservation on the
+> displaced lease. `contract-agent-a07` was extended to do exactly that, and the
+> case falsifies both halves by mutation. **`a07` is closed; 42 of 42
+> `REQUIRED_CORE` requirements are.**
+>
+> Q5's own finding stands and is separate from this: no production code adopts
+> a control fence at all, so the Host side of the takeover/delivery join is
+> proved by tests and reachable by nothing else. That is not a gap in `a07` —
+> both its acceptance clauses close at the ledger layer, inside
+> `reserveDispatch` and `recordDeliveryOutcome`, without needing a Host to
+> adopt anything — it is
+> [F-4 in the cross-repository drift review](2026-08-11-cross-repository-drift.md),
+> a deliberate divergence from the bundle's one-function-one-mutex mechanism
+> (W4 §1.2 relocated the linearization to SQLite commit order) rather than an
+> unmet acceptance clause. See [the next block](2026-08-10-next-block.md) §2,
+> "The residue, stated once so nobody re-derives it."
 Depends on: W2 (hard, see §8), W3 (sequencing only, see §8)
 Scope: `umbraflow-cpp` only. No consumer-project writes.
 
@@ -963,14 +989,26 @@ About W3 (`docs/plans/2026-08-10-w3-snapshot-coordinator.md`):
   is the natural owner. Until then the Host half of `a07` is proved by tests
   and exercised by nothing else, which is correct but worth stating in the
   requirement matrix rather than leaving implied.
-  > **Carried 2026-08-11 (`07abc3e`), twenty hours late.** This question was
-  > right, W6 landed without answering it, and the matrix row was marked closed
-  > with no caveat. It is now the reason `a07` is reopened; the row, the two ways
-  > it closes and the deciding argument are in
-  > [the next block](2026-08-10-next-block.md) §2. Q5 is also the worked example
-  > behind the rule proposed in §6.1 there — an open question that names a
-  > requirement blocks that requirement's row — because it names `a07` in its own
-  > text and would have been caught by reading two lines.
+  > **Carried 2026-08-11 (`07abc3e`), twenty hours late — and then misapplied.**
+  > This question was right: W6 landed without wiring `adoptControlFence` onto a
+  > production path, and the matrix row was marked closed with no caveat. The
+  > carry reached the requirement matrix, exactly as asked, but the matrix used
+  > it to declare `a07`'s first acceptance clause unimplemented. It is not: that
+  > clause is `reserveDispatch`'s live-lease predicate, closed at the ledger
+  > layer with no Host involved at all. What Q5 actually names — no production
+  > code adopts a fence, so the Host side of the takeover/delivery join is
+  > proved by tests and reachable by nothing else — is real, is still true, and
+  > is [F-4 in the cross-repository drift review](2026-08-11-cross-repository-drift.md),
+  > a deliberate divergence from the bundle's design rather than a gap in `a07`.
+  > The true gap in `a07` was narrower than either reading: no case ran the
+  > schedule of taking over and then attempting a reservation on the displaced
+  > lease. `contract-agent-a07` was extended to run it and closed `a07` again on
+  > 2026-08-11 (`bed456f`); see
+  > [the next block](2026-08-10-next-block.md) §2. Q5 is still the worked
+  > example behind the rule proposed in §6.1 there — an open question that names
+  > a requirement blocks that requirement's row — but the second lesson is that
+  > the concession must also name the acceptance clause it threatens, or the
+  > next reader re-scopes it by guess, which is what happened here.
 - **Q6.** §5.2 binds one `TaskHost` to one `controlled_target_key` at its first
   fence adoption. Is that the intended shape, or will one Host serve several
   targets — in which case `m_fence` becomes a per-target map and every

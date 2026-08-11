@@ -1030,12 +1030,18 @@ explaining that the suite is not a module, then `[module]` (`:17-20`) and
   contains zero occurrences of `a04`" — and it sits behind `CPP_BUILD_TESTS`,
   which a consumer never sets. C-11's project half *is* covered, because its
   closer is inside the suite.
-- **A-07 is reopened.** `contract-agent-a07` exists
-  (`tests/CMakeLists.txt:531`, `tests/operator/test-agent-audit-contract.cpp:156`)
-  but `runtime-migration-report.md:183` states "both gates exist and the
-  requirement is reopened" — the case proves the second acceptance clause only.
-  So 39 of 42 `REQUIRED_CORE` own a closing gate (32 in `tests/` + 7 in the
-  suite), consistent with `docs/INDEX.md:24`.
+- **A-07 was reopened when this was measured, and the reopening was wrong.**
+  `contract-agent-a07` existed (`tests/operator/test-agent-audit-contract.cpp`)
+  and proved the second acceptance clause only, which is what this row recorded.
+  What it inherited from `runtime-migration-report.md` was a misreading: the
+  frozen bundle puts *both* consequences inside `a07`'s 验收, and `07abc3e`
+  substituted its 需求 sentence for the first of them, reading a clause as
+  unimplemented when it was only untested — `requireLiveLease`, called from
+  `reserveDispatch`, had implemented it all along. `bed456f` extended that same
+  gate to run the schedule and closed it. **42 of 42 `REQUIRED_CORE` own a
+  closing gate**, of which 40 are per-requirement and `a03`/`a05` share an
+  aggregate. *(Corrected 2026-08-11; this row read 39 of 42 and cited
+  `docs/INDEX.md:24`, which no longer says that.)*
 - **A-03 and A-05: not established.** The migration report (`:179`, `:181`)
   calls them behaviourally covered by the aggregate CTest
   `test-annotate-backend` (`tests/CMakeLists.txt:898-902`). The CTest and the

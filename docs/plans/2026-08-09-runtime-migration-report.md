@@ -90,6 +90,19 @@ fixtures cannot satisfy them.
 > is how the row stayed unqualified. See
 > [the next block](2026-08-10-next-block.md) §2 and §6.1.
 
+> **Corrected again 2026-08-11 (`bed456f`): the correction above also misread
+> the acceptance text.** The frozen bundle's row places both consequences
+> inside `A-07`'s 验收 — "takeover 返回后旧 fence 不可开始新 dispatch；在途
+> dispatch 被明确报告" — not one in its 需求 and one in its 验收. The first
+> clause is `reserveDispatch`'s live-lease predicate, `requireLiveLease`, which
+> already ran inside the same `BEGIN IMMEDIATE` serialization `takeoverLease`
+> commits in, before the reopening; what was missing was a test that ran the
+> schedule, not a call edge. `contract-agent-a07` was extended, not joined by a
+> second case, and both clauses are now falsified by mutation. **All 40
+> `contract-*` gates close their requirement in full, and 42 of 42 requirements
+> are closed by a behavioural gate.** `A-07`'s row below is corrected to match.
+> See [the next block](2026-08-10-next-block.md) §2.
+
 > **Forty of the forty-two requirements now own a behavioural gate, and the two
 > that do not are not open work.** `A-03` and `A-05` are implemented — the
 > Replay Bundle closure and both publication gates landed in `25520a3` on the
@@ -180,7 +193,7 @@ fixtures cannot satisfy them.
 | A-04 | Reconciliation coordinator | JR:`JournalEvent` | CTEST `contract-agent-a04` — since 2026-08-11 it also binds the `journal_events` column set to `JR:JournalEvent`'s `required` list and drives six provenance documents that each violate one rule of the fixed `JR:JournalProvenance`, which the framework now enforces itself; see [the journal record binding](2026-08-11-journal-record-binding.md) |
 | A-05 | Publication gates | AW:`ReplayGate` + PR:`plugin_hash` | CTEST `schema-agent-a05`; behaviour under the aggregate CTEST `test-annotate-backend`, with no per-requirement ID |
 | A-06 | Deployment boundary | AW:`AuthoringCapabilityRoot` + RA | CTEST `contract-agent-a06` |
-| A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `contract-agent-a07` and CTEST `schema-agent-a07` — **both gates exist and the requirement is reopened**: `contract-agent-a07` proves the second acceptance clause (an in-flight dispatch is explicitly reported) and nothing implements the first (takeover and Host delivery share one target serialization). See [the next block](2026-08-10-next-block.md) §2, 2026-08-11 (`07abc3e`) |
+| A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `contract-agent-a07` and CTEST `schema-agent-a07` — **closed**: `contract-agent-a07` proves both acceptance clauses — the displaced lease is refused a reservation the live lease is then granted, and a second Host still carrying the displaced fence cannot deliver it — after being extended 2026-08-11 (`bed456f`) to run the schedule the first clause needed. Reopened earlier the same day (`07abc3e`) on a misreading that substituted the 需求 sentence for the first 验收 clause. See [the next block](2026-08-10-next-block.md) §2 |
 | A-08 | Operator recovery | OP:`ExternalInputFinding/OperationState` | CTEST `contract-agent-a08` |
 
 Where the 59 gates are declared, as of 2026-08-11:
