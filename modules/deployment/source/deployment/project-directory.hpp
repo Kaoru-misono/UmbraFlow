@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
@@ -131,6 +132,26 @@ namespace uf::deployment
             artifactBlobs{};
     };
 
+    // The exact ProjectPlugin input bytes observed by the loader's document
+    // validator. Validator callbacks retain a shared owner because LoadedProject
+    // may move after they are installed. Every mutation and read is serialized,
+    // and reads return copies so no borrow escapes the lock.
+    class ProjectDocumentInputLog final
+    {
+        mutable std::mutex m_mutex{};
+        std::string        m_lastReduceInput{};
+        std::string        m_lastDeriveInput{};
+
+    public:
+        auto record(
+            operator_runtime::ProjectPluginFunction function,
+            std::string_view exactJcs
+        ) -> void;
+
+        [[nodiscard]] auto lastReduceInput() const -> std::string;
+        [[nodiscard]] auto lastDeriveInput() const -> std::string;
+    };
+
     struct LoadedProject final
     {
         std::filesystem::path directory{};
@@ -143,13 +164,12 @@ namespace uf::deployment
         std::string                   primaryDeployment{};
         std::vector<LoadedDeployment> deployments{};
 
-        // Where each deployment's document validator records the exact bytes it
-        // last saw. They are here rather than on a project because the thing
-        // that writes them is this loader's validator, not the project's: a
-        // directory of data has nowhere to put a value it observes while a
-        // suite runs.
-        std::shared_ptr<std::string> lastReduceInput{};
-        std::shared_ptr<std::string> lastDeriveInput{};
+        // Shared with every deployment's retained document validator. The log
+        // owns and synchronizes its mutable state; the shared pointer supplies
+        // only the callback lifetime.
+        std::shared_ptr<ProjectDocumentInputLog> documentInputLog{
+            std::make_shared<ProjectDocumentInputLog>()
+        };
 
         [[nodiscard]]
         auto findDeployment(std::string_view name) const

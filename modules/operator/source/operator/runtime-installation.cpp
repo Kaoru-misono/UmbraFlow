@@ -341,7 +341,7 @@ namespace uf::operator_runtime::detail
             bytes.reserve(text.size());
             for (auto const value : text)
             {
-                bytes.push_back(
+                bytes.emplace_back(
                     static_cast<std::byte>(static_cast<unsigned char>(value))
                 );
             }

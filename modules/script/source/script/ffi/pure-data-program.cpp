@@ -288,11 +288,13 @@ return {
         }
 
         [[nodiscard]]
-        auto pushValue(lua_State* state,
-                       PureEnvironment const& environment,
-                       json::Value const& value,
-                       std::size_t depth,
-                       ValueBudget& budget) -> Status;
+        auto pushValue(
+            lua_State* state,
+            PureEnvironment const& environment,
+            json::Value const& value,
+            std::size_t depth,
+            ValueBudget& budget
+        ) -> Status;
 
         // A bounded copy of a refusal, in storage nothing has to destroy.
         // luaL_error leaves its frame without returning to it, so the message
@@ -471,11 +473,13 @@ return {
         }
 
         [[nodiscard]]
-        auto pushValue(lua_State* state,
-                       PureEnvironment const& environment,
-                       json::Value const& value,
-                       std::size_t depth,
-                       ValueBudget& budget) -> Status
+        auto pushValue(
+            lua_State* state,
+            PureEnvironment const& environment,
+            json::Value const& value,
+            std::size_t depth,
+            ValueBudget& budget
+        ) -> Status
         {
             if (depth > k_maximumValueDepth)
             {
@@ -615,18 +619,22 @@ return {
         }
 
         [[nodiscard]]
-        auto readValue(lua_State* state,
-                       PureEnvironment const& environment,
-                       int index,
-                       std::size_t depth,
-                       ValueBudget& budget) -> Result<json::Value>;
+        auto readValue(
+            lua_State* state,
+            PureEnvironment const& environment,
+            int index,
+            std::size_t depth,
+            ValueBudget& budget
+        ) -> Result<json::Value>;
 
         [[nodiscard]]
-        auto readTable(lua_State* state,
-                       PureEnvironment const& environment,
-                       int index,
-                       std::size_t depth,
-                       ValueBudget& budget) -> Result<json::Value>
+        auto readTable(
+            lua_State* state,
+            PureEnvironment const& environment,
+            int index,
+            std::size_t depth,
+            ValueBudget& budget
+        ) -> Result<json::Value>
         {
             if (isSentinel(state, index, environment.nullReference))
             {
@@ -651,7 +659,7 @@ return {
                     {
                         return std::unexpected{std::move(item).error()};
                     }
-                    items.push_back(*std::move(item));
+                    items.emplace_back(*std::move(item));
                 }
                 return json::Value::ofArray(std::move(items));
             }
@@ -695,11 +703,13 @@ return {
             return json::Value::ofObject(std::move(members));
         }
 
-        auto readValue(lua_State* state,
-                       PureEnvironment const& environment,
-                       int index,
-                       std::size_t depth,
-                       ValueBudget& budget) -> Result<json::Value>
+        auto readValue(
+            lua_State* state,
+            PureEnvironment const& environment,
+            int index,
+            std::size_t depth,
+            ValueBudget& budget
+        ) -> Result<json::Value>
         {
             if (depth > k_maximumValueDepth)
             {
@@ -813,11 +823,13 @@ return {
         }
 
         [[nodiscard]]
-        auto loadModule(lua_State* mainState,
-                        std::string_view bytecode,
-                        std::string_view label,
-                        PureEnvironment* p_environment,
-                        InterruptState& control) -> Status
+        auto loadModule(
+            lua_State* mainState,
+            std::string_view bytecode,
+            std::string_view label,
+            PureEnvironment* p_environment,
+            InterruptState& control
+        ) -> Status
         {
             UF_TRY(pushPureEnvironment(mainState, p_environment));
             int const environment = lua_gettop(mainState);
@@ -863,12 +875,14 @@ return {
         }
 
         [[nodiscard]]
-        auto inspectModule(lua_State* mainState,
-                           int bridge,
-                           int plugin,
-                           std::string_view moduleId,
-                           std::span<std::string const> entryPoints,
-                           InterruptState& control) -> Status
+        auto inspectModule(
+            lua_State* mainState,
+            int bridge,
+            int plugin,
+            std::string_view moduleId,
+            std::span<std::string const> entryPoints,
+            InterruptState& control
+        ) -> Status
         {
             lua_State* thread = lua_newthread(mainState);
             lua_rawgetfield(mainState, bridge, "inspect");
@@ -883,15 +897,17 @@ return {
         }
 
         [[nodiscard]]
-        auto invokeModule(lua_State* mainState,
-                          int bridge,
-                          int plugin,
-                          std::string_view moduleId,
-                          std::span<std::string const> entryPoints,
-                          std::string_view entryPoint,
-                          json::Value const& input,
-                          PureEnvironment const& environment,
-                          InterruptState& control) -> Result<json::Value>
+        auto invokeModule(
+            lua_State* mainState,
+            int bridge,
+            int plugin,
+            std::string_view moduleId,
+            std::span<std::string const> entryPoints,
+            std::string_view entryPoint,
+            json::Value const& input,
+            PureEnvironment const& environment,
+            InterruptState& control
+        ) -> Result<json::Value>
         {
             lua_State* thread = lua_newthread(mainState);
             lua_rawgetfield(mainState, bridge, "invoke");
@@ -963,14 +979,16 @@ return {
         }
 
         [[nodiscard]]
-        auto runFresh(std::string_view bridgeBytecode,
-                      std::string_view pluginBytecode,
-                      std::string_view moduleId,
-                      std::span<std::string const> entryPoints,
-                      std::span<DecodedArtifact const> artifacts,
-                      std::string_view entryPoint,
-                      json::Value const& input,
-                      bool invoke) -> Result<json::Value>
+        auto runFresh(
+            std::string_view bridgeBytecode,
+            std::string_view pluginBytecode,
+            std::string_view moduleId,
+            std::span<std::string const> entryPoints,
+            std::span<DecodedArtifact const> artifacts,
+            std::string_view entryPoint,
+            json::Value const& input,
+            bool invoke
+        ) -> Result<json::Value>
         {
             auto environment = PureEnvironment{
                 .artifacts    = artifacts,
@@ -994,11 +1012,15 @@ return {
             UF_TRY(createFrozenSentinels(vm.state, environment));
             vm.control.beginUnitOfScript(k_maximumRuntime);
 
-            UF_TRY(loadModule(vm.state,
-                              bridgeBytecode,
-                              "pure-data-bridge",
-                              &environment,
-                              vm.control));
+            UF_TRY(
+                loadModule(
+                    vm.state,
+                    bridgeBytecode,
+                    "pure-data-bridge",
+                    &environment,
+                    vm.control
+                )
+            );
             int const bridge = lua_gettop(vm.state);
             UF_TRY(loadModule(vm.state, pluginBytecode, moduleId, &environment, vm.control));
             int const plugin = lua_gettop(vm.state);
@@ -1008,15 +1030,17 @@ return {
                 UF_TRY(proveArtifactsMaterialize(vm.state, environment));
                 return json::Value{};
             }
-            return invokeModule(vm.state,
-                                bridge,
-                                plugin,
-                                moduleId,
-                                entryPoints,
-                                entryPoint,
-                                input,
-                                environment,
-                                vm.control);
+            return invokeModule(
+                vm.state,
+                bridge,
+                plugin,
+                moduleId,
+                entryPoints,
+                entryPoint,
+                input,
+                environment,
+                vm.control
+            );
         }
 
         [[nodiscard]]
@@ -1048,10 +1072,12 @@ return {
     {
     }
 
-    auto PureDataProgram::compile(std::string_view moduleId,
-                                  std::string_view source,
-                                  std::span<std::string_view const> entryPoints,
-                                  std::vector<Artifact> artifacts) -> Result<PureDataProgram>
+    auto PureDataProgram::compile(
+        std::string_view moduleId,
+        std::string_view source,
+        std::span<std::string_view const> entryPoints,
+        std::vector<Artifact> artifacts
+    ) -> Result<PureDataProgram>
     {
         if (!validIdentifier(moduleId))
         {
@@ -1132,14 +1158,18 @@ return {
 
         UF_TRY_VALUE(bridgeBytecode, compileBytecode(k_bridgeSource, "bridge"));
         UF_TRY_VALUE(pluginBytecode, compileBytecode(source, moduleId));
-        UF_TRY(runFresh(bridgeBytecode,
-                        pluginBytecode,
-                        moduleId,
-                        ownedEntryPoints,
-                        decodedArtifacts,
-                        {},
-                        json::Value{},
-                        false));
+        UF_TRY(
+            runFresh(
+                bridgeBytecode,
+                pluginBytecode,
+                moduleId,
+                ownedEntryPoints,
+                decodedArtifacts,
+                {},
+                json::Value{},
+                false
+            )
+        );
 
         auto state = std::make_shared<State>(State{
             .moduleId       = std::string{moduleId},
@@ -1151,21 +1181,25 @@ return {
         return PureDataProgram{std::shared_ptr<State const>{std::move(state)}};
     }
 
-    auto PureDataProgram::invoke(std::string_view entryPoint,
-                                 json::Value const& immutableInput) const -> Result<json::Value>
+    auto PureDataProgram::invoke(
+        std::string_view entryPoint,
+        json::Value const& immutableInput
+    ) const -> Result<json::Value>
     {
         if (!std::ranges::binary_search(m_state->entryPoints, entryPoint))
         {
             return refuse("pure data entry point is not registered");
         }
-        return runFresh(m_state->bridgeBytecode,
-                        m_state->pluginBytecode,
-                        m_state->moduleId,
-                        m_state->entryPoints,
-                        m_state->artifacts,
-                        entryPoint,
-                        immutableInput,
-                        true);
+        return runFresh(
+            m_state->bridgeBytecode,
+            m_state->pluginBytecode,
+            m_state->moduleId,
+            m_state->entryPoints,
+            m_state->artifacts,
+            entryPoint,
+            immutableInput,
+            true
+        );
     }
 
     auto pureEnvironmentGlobals() -> std::span<std::string_view const>

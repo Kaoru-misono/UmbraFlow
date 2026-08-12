@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <format>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
@@ -711,31 +712,23 @@ namespace uf::deployment
         [[nodiscard]]
         auto recordingValidator(
             operator_runtime::ProjectDocumentValidator judge,
-            std::shared_ptr<std::string> lastReduceInput,
-            std::shared_ptr<std::string> lastDeriveInput
+            std::shared_ptr<ProjectDocumentInputLog> p_inputLog
         ) -> operator_runtime::ProjectDocumentValidator
         {
-            return [judge           = std::move(judge),
-                    lastReduceInput = std::move(lastReduceInput),
-                    lastDeriveInput = std::move(lastDeriveInput)](
-                       operator_runtime::ProjectPluginFunction function,
-                       operator_runtime::ProjectDocumentDirection direction,
-                       std::string_view exactJcs
-                   ) -> Status
+            return [
+                judge    = std::move(judge),
+                inputLog = std::move(p_inputLog)
+            ](
+                operator_runtime::ProjectPluginFunction function,
+                operator_runtime::ProjectDocumentDirection direction,
+                std::string_view exactJcs
+            ) -> Status
             {
                 using operator_runtime::ProjectDocumentDirection;
-                using operator_runtime::ProjectPluginFunction;
 
                 if (direction == ProjectDocumentDirection::Input)
                 {
-                    if (function == ProjectPluginFunction::Reduce)
-                    {
-                        *lastReduceInput = std::string{exactJcs};
-                    }
-                    else if (function == ProjectPluginFunction::Derive)
-                    {
-                        *lastDeriveInput = std::string{exactJcs};
-                    }
+                    inputLog->record(function, exactJcs);
                 }
                 return judge(function, direction, exactJcs);
             };
@@ -1146,6 +1139,54 @@ namespace uf::deployment
         return k_registrationSchema;
     }
 
+    auto ProjectDocumentInputLog::record(
+        operator_runtime::ProjectPluginFunction function,
+        std::string_view exactJcs
+    ) -> void
+    {
+        using operator_runtime::ProjectPluginFunction;
+
+        // Only the state-reducing and observation-deriving inputs are contract
+        // evidence. The table makes that subset explicit without a conditional
+        // chain over the closed ProjectPluginFunction vocabulary.
+        constexpr auto targets = std::array{
+            std::pair{
+                ProjectPluginFunction::Derive,
+                &ProjectDocumentInputLog::m_lastDeriveInput
+            },
+            std::pair{
+                ProjectPluginFunction::Reduce,
+                &ProjectDocumentInputLog::m_lastReduceInput
+            },
+        };
+        auto const target = std::ranges::find_if(
+            targets,
+            [function](auto const& candidate)
+            {
+                return candidate.first == function;
+            }
+        );
+        if (target == targets.end())
+        {
+            return;
+        }
+
+        auto lock = std::lock_guard{m_mutex};
+        (this->*target->second) = std::string{exactJcs};
+    }
+
+    auto ProjectDocumentInputLog::lastReduceInput() const -> std::string
+    {
+        auto lock = std::lock_guard{m_mutex};
+        return m_lastReduceInput;
+    }
+
+    auto ProjectDocumentInputLog::lastDeriveInput() const -> std::string
+    {
+        auto lock = std::lock_guard{m_mutex};
+        return m_lastDeriveInput;
+    }
+
     auto LoadedProject::findDeployment(std::string_view name) const
         -> LoadedDeployment const*
     {
@@ -1196,8 +1237,6 @@ namespace uf::deployment
             .runtimeArtifactRoot = {},
             .primaryDeployment   = text(manifest, "primary_deployment"),
             .deployments         = {},
-            .lastReduceInput     = std::make_shared<std::string>(),
-            .lastDeriveInput     = std::make_shared<std::string>(),
         };
 
         // The RuntimeArtifact root is named rather than fixed, and what proves
@@ -1346,8 +1385,7 @@ namespace uf::deployment
                 canonicalJsonValidator(),
                 recordingValidator(
                     deployed->documentValidator(),
-                    loaded.lastReduceInput,
-                    loaded.lastDeriveInput
+                    loaded.documentInputLog
                 )
             );
             if (!projectSchemaOwner.has_value())

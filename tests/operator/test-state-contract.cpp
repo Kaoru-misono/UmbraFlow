@@ -206,13 +206,13 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
-        REQUIRE(prepared.project.lastDeriveInput != nullptr);
+        REQUIRE(prepared.project.documentInputLog != nullptr);
 
         // The UI observation and the ProjectState reach the plugin as two
         // separate members. Project state is not writable back as UI evidence
         // because neither member is a caller's to supply.
         auto const reading     = test_support::observeAgain(prepared);
-        auto const deriveInput = *prepared.project.lastDeriveInput;
+        auto const deriveInput = prepared.project.documentInputLog->lastDeriveInput();
         CHECK(deriveInput.find("\"ui_snapshot\":" + reading.canonicalJcs()) != std::string::npos);
         CHECK(deriveInput.find("\"project_state\":{\"revision\":0}") != std::string::npos);
         CHECK(deriveInput.find("\"prior_project_observation\":null") != std::string::npos);
@@ -338,9 +338,9 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
-        REQUIRE(prepared.project.lastDeriveInput != nullptr);
+        REQUIRE(prepared.project.documentInputLog != nullptr);
 
-        auto const envelope = *prepared.project.lastDeriveInput;
+        auto const envelope = prepared.project.documentInputLog->lastDeriveInput();
         auto const at       = envelope.find("\"ui_snapshot\":");
         REQUIRE(at != std::string::npos);
 

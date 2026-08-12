@@ -1691,7 +1691,7 @@ namespace uf::operator_runtime
 
         // The baseline reduces its own creation event against no prior state.
         CHECK(
-            *prepared.project.lastReduceInput
+            prepared.project.documentInputLog->lastReduceInput()
             == "{\"journal_events\":[{\"namespaced_event_type\":\"fixture.baseline\","
                "\"opaque_project_payload\":{\"kind\":\"baseline\"},"
                "\"provenance\":" + std::string{k_fixtureProvenance} + "}],"
@@ -1708,7 +1708,7 @@ namespace uf::operator_runtime
         // state, so a caller that wanted the reducer to see something else has
         // nowhere to put it: the payload below is the one the Journal recorded.
         CHECK(
-            *prepared.project.lastReduceInput
+            prepared.project.documentInputLog->lastReduceInput()
             == "{\"journal_events\":[{\"namespaced_event_type\":\"fixture.confirmed\","
                "\"opaque_project_payload\":{\"value\":1},"
                "\"provenance\":" + std::string{k_fixtureProvenance} + "}],"

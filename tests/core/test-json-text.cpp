@@ -101,7 +101,7 @@ namespace uf
             {
                 if (character == '\n')
                 {
-                    lines.push_back(line);
+                    lines.emplace_back(line);
                     line.clear();
                     continue;
                 }
@@ -112,7 +112,7 @@ namespace uf
             }
             if (!line.empty())
             {
-                lines.push_back(line);
+                lines.emplace_back(line);
             }
             return lines;
         }
@@ -131,13 +131,13 @@ namespace uf
                 }
                 if (!token.empty())
                 {
-                    tokens.push_back(token);
+                    tokens.emplace_back(token);
                     token.clear();
                 }
             }
             if (!token.empty())
             {
-                tokens.push_back(token);
+                tokens.emplace_back(token);
             }
             return tokens;
         }
@@ -246,7 +246,7 @@ namespace uf
                 auto const assignment = token.find('=');
                 if (assignment == std::string::npos)
                 {
-                    row.fields.push_back(decodeField(token));
+                    row.fields.emplace_back(decodeField(token));
                     continue;
                 }
 
@@ -287,7 +287,7 @@ namespace uf
 
                 auto row = parseRow(tokens);
                 REQUIRE(!row.fields.empty());
-                rows.push_back(std::move(row));
+                rows.emplace_back(std::move(row));
             }
 
             // A vector file that failed to load, or loaded short, would make
@@ -367,7 +367,7 @@ namespace uf
             {
                 REQUIRE(field.has_value());
                 // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
-                names.push_back(*field);
+                names.emplace_back(*field);
             }
             REQUIRE(names.size() >= 2U);
 

@@ -522,11 +522,10 @@ namespace uf::deployment
                         )
                         .has_value());
 
-        // The recorders exist and are empty until a validator writes them.
-        REQUIRE(loaded->lastReduceInput != nullptr);
-        CHECK(loaded->lastReduceInput->empty());
-        REQUIRE(loaded->lastDeriveInput != nullptr);
-        CHECK(loaded->lastDeriveInput->empty());
+        // The record log exists and is empty until a validator writes it.
+        REQUIRE(loaded->documentInputLog != nullptr);
+        CHECK(loaded->documentInputLog->lastReduceInput().empty());
+        CHECK(loaded->documentInputLog->lastDeriveInput().empty());
     }
 
     // The conformance load is the production load plus a layer, so this states

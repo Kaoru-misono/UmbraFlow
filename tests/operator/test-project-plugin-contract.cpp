@@ -740,8 +740,8 @@ return {
             {
                 auto const name =
                     std::string{"root-"} + (index < 10U ? "0" : "") + std::to_string(index);
-                roots.push_back(artifactRoot(name, k_emptyBlob));
-                blobs.push_back(artifactBlob(name, std::string{k_emptyBlob}));
+                roots.emplace_back(artifactRoot(name, k_emptyBlob));
+                blobs.emplace_back(artifactBlob(name, std::string{k_emptyBlob}));
             }
             auto registrar = ProjectPluginRegistrar{};
             auto fixture =
@@ -784,8 +784,8 @@ return {
             for (auto index = std::size_t{0}; index < 5U; ++index)
             {
                 auto const name = std::string{"root-"} + std::to_string(index);
-                roots.push_back(artifactRoot(name, bytes));
-                blobs.push_back(artifactBlob(name, bytes));
+                roots.emplace_back(artifactRoot(name, bytes));
+                blobs.emplace_back(artifactBlob(name, bytes));
             }
             auto registrar = ProjectPluginRegistrar{};
             auto fixture =

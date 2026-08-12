@@ -5,7 +5,7 @@
 #include <conformance/observation-fixture.hpp>
 #include <conformance/operator-protocol.hpp>
 
-#include <deployment/project-deployment.hpp>
+#include <deployment/project-directory.hpp>
 
 #include <operator/agent-profile.hpp>
 #include <operator/effective-plan.hpp>
@@ -184,12 +184,11 @@ namespace uf::operator_runtime::test_support
         // because such an owner is bound to their hash.
         std::string toolCatalogBytes;
 
-        // The exact bytes the document validator last saw as a Reduce input,
-        // and as a Derive input. The fixture records them because the property
-        // under test is that the Operator decides those bytes and no caller
-        // can.
-        std::shared_ptr<std::string> lastReduceInput;
-        std::shared_ptr<std::string> lastDeriveInput;
+        // The exact bytes the document validator last saw as a Reduce or Derive
+        // input. The synchronized log is shared with the retained validator
+        // because the property under test is that the Operator decides those
+        // bytes and no caller can.
+        std::shared_ptr<deployment::ProjectDocumentInputLog> documentInputLog;
     };
 
     // The one conforming JR:`JournalProvenance` this fixture project mints, and
@@ -408,8 +407,8 @@ namespace uf::operator_runtime::test_support
         );
         REQUIRE(registration.has_value());
 
-        auto lastReduceInput = std::make_shared<std::string>();
-        auto lastDeriveInput = std::make_shared<std::string>();
+        auto documentInputLog =
+            std::make_shared<deployment::ProjectDocumentInputLog>();
         auto schemaOwner = ProjectSchemaOwner::create(
             *registration,
             ProjectDocumentSchemaBytes{
@@ -421,22 +420,18 @@ namespace uf::operator_runtime::test_support
             // The deployment's own document validator, with the two envelopes
             // the suite asserts against recorded on the way in. Recording is the
             // fixture's; deciding is the deployment's.
-            [validate = deployed->documentValidator(),
-             lastReduceInput,
-             lastDeriveInput](ProjectPluginFunction function,
-               ProjectDocumentDirection direction,
-               std::string_view candidateJcs) -> Status
+            [
+                validate = deployed->documentValidator(),
+                documentInputLog
+            ](
+                ProjectPluginFunction function,
+                ProjectDocumentDirection direction,
+                std::string_view candidateJcs
+            ) -> Status
             {
                 if (direction == ProjectDocumentDirection::Input)
                 {
-                    if (function == ProjectPluginFunction::Reduce)
-                    {
-                        *lastReduceInput = std::string{candidateJcs};
-                    }
-                    if (function == ProjectPluginFunction::Derive)
-                    {
-                        *lastDeriveInput = std::string{candidateJcs};
-                    }
+                    documentInputLog->record(function, candidateJcs);
                 }
                 return validate(function, direction, candidateJcs);
             }
@@ -471,8 +466,7 @@ namespace uf::operator_runtime::test_support
             .toolCatalogSchemaOwner = *toolCatalogSchemaOwner,
             .reconcileSchemaOwner   = *reconcileSchemaOwner,
             .toolCatalogBytes       = bundle.toolCatalog(),
-            .lastReduceInput        = std::move(lastReduceInput),
-            .lastDeriveInput        = std::move(lastDeriveInput),
+            .documentInputLog       = std::move(documentInputLog),
         };
     }
 

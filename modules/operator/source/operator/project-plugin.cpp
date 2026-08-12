@@ -53,17 +53,25 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto functionName(ProjectPluginFunction function) -> std::string_view
         {
-            auto const found = std::ranges::find_if(k_functions, [function](auto const& entry) {
-                return entry.first == function;
-            });
+            auto const found = std::ranges::find_if(
+                k_functions,
+                [function](auto const& entry)
+                {
+                    return entry.first == function;
+                }
+            );
             if (found != k_functions.end())
+            {
                 return found->second;
+            }
             UF_UNREACHABLE_MSG("unknown ProjectPluginFunction");
         }
 
         [[nodiscard]]
-        auto verifyArtifactClosure(VerifiedProjectRegistration const& registration,
-                                   std::vector<ProjectPluginRegistrar::ArtifactBlob> exactBlobs)
+        auto verifyArtifactClosure(
+            VerifiedProjectRegistration const& registration,
+            std::vector<ProjectPluginRegistrar::ArtifactBlob> exactBlobs
+        )
             -> Result<std::vector<script::PureDataProgram::Artifact>>
         {
             auto const& roots = registration.projectArtifactRoots();
@@ -120,7 +128,7 @@ namespace uf::operator_runtime
                 {
                     return refuse("ProjectPlugin artifact bytes do not match their verified root");
                 }
-                verified.push_back(script::PureDataProgram::Artifact{
+                verified.emplace_back(script::PureDataProgram::Artifact{
                     .name = root.name,
                     .bytes = std::move(found->second),
                 });
@@ -145,8 +153,14 @@ namespace uf::operator_runtime
         ProjectSchemaOwner          schemaOwner;
     };
 
-    CanonicalJson::CanonicalJson(ContentHash contentHash, std::string bytes, json::Value value)
-        : m_contentHash{contentHash}, m_bytes{std::move(bytes)}, m_value{std::move(value)}
+    CanonicalJson::CanonicalJson(
+        ContentHash contentHash,
+        std::string bytes,
+        json::Value value
+    )
+        : m_contentHash{contentHash}
+        , m_bytes{std::move(bytes)}
+        , m_value{std::move(value)}
     {
     }
 
@@ -165,12 +179,16 @@ namespace uf::operator_runtime
         return m_value;
     }
 
-    ValidatedDocument::ValidatedDocument(ContentHash projectRegistrationHash,
-                                         ProjectPluginFunction function,
-                                         ProjectDocumentDirection direction,
-                                         CanonicalJson canonicalJson)
-        : m_projectRegistrationHash{projectRegistrationHash}, m_function{function},
-          m_direction{direction}, m_canonicalJson{std::move(canonicalJson)}
+    ValidatedDocument::ValidatedDocument(
+        ContentHash projectRegistrationHash,
+        ProjectPluginFunction function,
+        ProjectDocumentDirection direction,
+        CanonicalJson canonicalJson
+    )
+        : m_projectRegistrationHash{projectRegistrationHash}
+        , m_function{function}
+        , m_direction{direction}
+        , m_canonicalJson{std::move(canonicalJson)}
     {
     }
 
@@ -204,10 +222,12 @@ namespace uf::operator_runtime
     {
     }
 
-    auto ProjectSchemaOwner::create(VerifiedProjectRegistration const& registration,
-                                    ProjectDocumentSchemaBytes const& exactSchemas,
-                                    CanonicalJsonValidator validateCanonicalJson,
-                                    ProjectDocumentValidator validateDocument)
+    auto ProjectSchemaOwner::create(
+        VerifiedProjectRegistration const& registration,
+        ProjectDocumentSchemaBytes const& exactSchemas,
+        CanonicalJsonValidator validateCanonicalJson,
+        ProjectDocumentValidator validateDocument
+    )
         -> Result<ProjectSchemaOwner>
     {
         if (!validateCanonicalJson || !validateDocument)
@@ -250,9 +270,11 @@ namespace uf::operator_runtime
         {
             return refuse("canonical JSON must be non-empty bounded UTF-8");
         }
-        UF_TRY_VALUE_CONTEXT(value,
-                             m_state->validateCanonicalJson(exactJcs),
-                             "verifying exact RFC 8785 JCS");
+        UF_TRY_VALUE_CONTEXT(
+            value,
+            m_state->validateCanonicalJson(exactJcs),
+            "verifying exact RFC 8785 JCS"
+        );
         UF_TRY_VALUE(contentHash, sha256(std::as_bytes(std::span{exactJcs})));
         return CanonicalJson{contentHash, std::move(exactJcs), std::move(value)};
     }
@@ -268,23 +290,31 @@ namespace uf::operator_runtime
         return CanonicalJson{contentHash, std::move(exactJcs), std::move(value)};
     }
 
-    auto ProjectSchemaOwner::validate(ProjectPluginFunction function,
-                                      ProjectDocumentDirection direction,
-                                      CanonicalJson const& document) const -> Status
+    auto ProjectSchemaOwner::validate(
+        ProjectPluginFunction function,
+        ProjectDocumentDirection direction,
+        CanonicalJson const& document
+    ) const -> Status
     {
         // The value this re-parse produces is discarded on purpose: the
         // document already carries the one its own mint computed. What is
         // wanted here is the refusal, which is what stops a CanonicalJson minted
         // by a laxer owner from reaching this owner's document validator.
-        UF_TRY_CONTEXT(m_state->validateCanonicalJson(document.bytes()),
-                       "revalidating exact JCS at the ProjectPlugin call boundary");
-        UF_TRY_CONTEXT(m_state->validateDocument(function, direction, document.bytes()),
-                       "validating complete ProjectPlugin document schema");
+        UF_TRY_CONTEXT(
+            m_state->validateCanonicalJson(document.bytes()),
+            "revalidating exact JCS at the ProjectPlugin call boundary"
+        );
+        UF_TRY_CONTEXT(
+            m_state->validateDocument(function, direction, document.bytes()),
+            "validating complete ProjectPlugin document schema"
+        );
         return ok();
     }
 
-    auto ProjectSchemaOwner::validateOutput(ProjectPluginFunction function,
-                                            CanonicalJson document) const
+    auto ProjectSchemaOwner::validateOutput(
+        ProjectPluginFunction function,
+        CanonicalJson document
+    ) const
         -> Result<ValidatedDocument>
     {
         UF_TRY(validate(function, ProjectDocumentDirection::Output, document));
@@ -329,7 +359,7 @@ namespace uf::operator_runtime
         hashes.reserve(roots.size());
         for (auto const& root : roots)
         {
-            hashes.push_back(root.rootHash);
+            hashes.emplace_back(root.rootHash);
         }
         return hashes;
     }
@@ -345,18 +375,24 @@ namespace uf::operator_runtime
         return m_state->schemaOwner.canonicalize(std::move(exactJcs));
     }
 
-    auto ProjectPluginHandle::invoke(ProjectPluginFunction function,
-                                     CanonicalJson const& input) const -> Result<ValidatedDocument>
+    auto ProjectPluginHandle::invoke(
+        ProjectPluginFunction function,
+        CanonicalJson const& input
+    ) const -> Result<ValidatedDocument>
     {
         // Validation is intentionally repeated at the call boundary. A
         // CanonicalJson carries no schema authority and cannot be promoted by a
         // caller attaching a hash label.
         UF_TRY(m_state->schemaOwner.validate(function, ProjectDocumentDirection::Input, input));
-        UF_TRY_VALUE_CONTEXT(outputValue,
-                             m_state->program.invoke(functionName(function), input.value()),
-                             "running isolated ProjectPlugin data function");
-        UF_TRY_VALUE(canonicalOutput,
-                     m_state->schemaOwner.canonicalizeValue(std::move(outputValue)));
+        UF_TRY_VALUE_CONTEXT(
+            outputValue,
+            m_state->program.invoke(functionName(function), input.value()),
+            "running isolated ProjectPlugin data function"
+        );
+        UF_TRY_VALUE(
+            canonicalOutput,
+            m_state->schemaOwner.canonicalizeValue(std::move(outputValue))
+        );
         return m_state->schemaOwner.validateOutput(function, std::move(canonicalOutput));
     }
 
@@ -387,10 +423,12 @@ namespace uf::operator_runtime
         return invoke(ProjectPluginFunction::Reduce, input);
     }
 
-    auto ProjectPluginRegistrar::registerPlugin(VerifiedProjectRegistration const& registration,
-                                                std::string exactPluginBytes,
-                                                std::vector<ArtifactBlob> exactArtifactBlobs,
-                                                ProjectSchemaOwner schemaOwner)
+    auto ProjectPluginRegistrar::registerPlugin(
+        VerifiedProjectRegistration const& registration,
+        std::string exactPluginBytes,
+        std::vector<ArtifactBlob> exactArtifactBlobs,
+        ProjectSchemaOwner schemaOwner
+    )
         -> Result<ProjectPluginHandle>
     {
         if (schemaOwner.projectRegistrationHash() != registration.hash())
@@ -409,33 +447,44 @@ namespace uf::operator_runtime
             return refuse("exact ProjectPlugin registration is immutable");
         }
 
-        UF_TRY_VALUE(verifiedArtifacts,
-                     verifyArtifactClosure(registration, std::move(exactArtifactBlobs)));
+        UF_TRY_VALUE(
+            verifiedArtifacts,
+            verifyArtifactClosure(registration, std::move(exactArtifactBlobs))
+        );
 
-        UF_TRY_VALUE_CONTEXT(program,
-                             script::PureDataProgram::compile(registration.pluginId(),
-                                                              exactPluginBytes,
-                                                              k_entryPoints,
-                                                              std::move(verifiedArtifacts)),
-                             "precompiling exact ProjectPlugin bytes");
+        UF_TRY_VALUE_CONTEXT(
+            program,
+            script::PureDataProgram::compile(
+                registration.pluginId(),
+                exactPluginBytes,
+                k_entryPoints,
+                std::move(verifiedArtifacts)
+            ),
+            "precompiling exact ProjectPlugin bytes"
+        );
         auto state = std::make_shared<ProjectPluginHandle::State>(ProjectPluginHandle::State{
             .registration = registration,
             .program      = std::move(program),
             .schemaOwner  = std::move(schemaOwner),
         });
         auto handle = ProjectPluginHandle{
-            std::shared_ptr<ProjectPluginHandle::State const>{std::move(state)}};
+            std::shared_ptr<ProjectPluginHandle::State const>{std::move(state)}
+        };
         auto const [position, inserted] = m_plugins.emplace(key, handle);
         if (!inserted)
         {
-            return fail(AutomationErrorKind::InternalInvariant,
-                        "ProjectPlugin registry changed during startup");
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "ProjectPlugin registry changed during startup"
+            );
         }
         return position->second;
     }
 
-    auto ProjectPluginRegistrar::findExact(std::string const& pluginId,
-                                           ContentHash projectRegistrationHash) const
+    auto ProjectPluginRegistrar::findExact(
+        std::string const& pluginId,
+        ContentHash projectRegistrationHash
+    ) const
         -> Result<ProjectPluginHandle>
     {
         auto const found = m_plugins.find(std::pair{pluginId, projectRegistrationHash});

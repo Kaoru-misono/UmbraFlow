@@ -48,13 +48,17 @@ namespace uf::operator_runtime
     // document being parsed again to get one.
     class CanonicalJson final
     {
+        friend class ProjectSchemaOwner;
+
         ContentHash m_contentHash;
         std::string m_bytes;
         json::Value m_value;
 
-        CanonicalJson(ContentHash contentHash, std::string bytes, json::Value value);
-
-        friend class ProjectSchemaOwner;
+        CanonicalJson(
+            ContentHash contentHash,
+            std::string bytes,
+            json::Value value
+        );
 
     public:
         [[nodiscard]] auto contentHash() const -> ContentHash;
@@ -72,17 +76,19 @@ namespace uf::operator_runtime
     // function, and direction. No schema hash label is exposed or accepted.
     class ValidatedDocument final
     {
+        friend class ProjectSchemaOwner;
+
         ContentHash              m_projectRegistrationHash;
         ProjectPluginFunction    m_function;
         ProjectDocumentDirection m_direction;
         CanonicalJson            m_canonicalJson;
 
-        ValidatedDocument(ContentHash projectRegistrationHash,
-                          ProjectPluginFunction function,
-                          ProjectDocumentDirection direction,
-                          CanonicalJson canonicalJson);
-
-        friend class ProjectSchemaOwner;
+        ValidatedDocument(
+            ContentHash projectRegistrationHash,
+            ProjectPluginFunction function,
+            ProjectDocumentDirection direction,
+            CanonicalJson canonicalJson
+        );
 
     public:
         [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
@@ -107,11 +113,14 @@ namespace uf::operator_runtime
     // function-specific JSON Schema, including every project-owned nested
     // payload. Neither callable is passed to plugin code or published in a
     // business VM.
-    using CanonicalJsonValidator =
-        std::function<Result<json::Value>(std::string_view exactJcs)>;
-    using ProjectDocumentValidator = std::function<Status(ProjectPluginFunction function,
-                                                          ProjectDocumentDirection direction,
-                                                          std::string_view exactJcs)>;
+    using CanonicalJsonValidator = std::function<Result<json::Value>(std::string_view exactJcs)>;
+    using ProjectDocumentValidator = std::function<
+        Status(
+            ProjectPluginFunction function,
+            ProjectDocumentDirection direction,
+            std::string_view exactJcs
+        )
+    >;
 
     // The exact bytes of the three schemas this owner answers for. They are
     // required for the same reason the Journal, Tool Catalog and reconcile
@@ -129,16 +138,18 @@ namespace uf::operator_runtime
     {
         class State;
 
+        friend class ProjectPluginHandle;
+
         std::shared_ptr<State const> m_state;
 
         explicit ProjectSchemaOwner(std::shared_ptr<State const> p_state) noexcept;
 
-        friend class ProjectPluginHandle;
-
         [[nodiscard]]
-        auto validate(ProjectPluginFunction function,
-                      ProjectDocumentDirection direction,
-                      CanonicalJson const& document) const -> Status;
+        auto validate(
+            ProjectPluginFunction function,
+            ProjectDocumentDirection direction,
+            CanonicalJson const& document
+        ) const -> Status;
 
         // Mints canonical bytes from a value rather than judging bytes a caller
         // spelled. A plugin returns a value, so its output has no serialization
@@ -149,7 +160,10 @@ namespace uf::operator_runtime
         auto canonicalizeValue(json::Value value) const -> Result<CanonicalJson>;
 
         [[nodiscard]]
-        auto validateOutput(ProjectPluginFunction function, CanonicalJson document) const
+        auto validateOutput(
+            ProjectPluginFunction function,
+            CanonicalJson document
+        ) const
             -> Result<ValidatedDocument>;
 
     public:
@@ -160,10 +174,12 @@ namespace uf::operator_runtime
         ~ProjectSchemaOwner() = default;
 
         [[nodiscard]]
-        static auto create(VerifiedProjectRegistration const& registration,
-                           ProjectDocumentSchemaBytes const& exactSchemas,
-                           CanonicalJsonValidator validateCanonicalJson,
-                           ProjectDocumentValidator validateDocument) -> Result<ProjectSchemaOwner>;
+        static auto create(
+            VerifiedProjectRegistration const& registration,
+            ProjectDocumentSchemaBytes const& exactSchemas,
+            CanonicalJsonValidator validateCanonicalJson,
+            ProjectDocumentValidator validateDocument
+        ) -> Result<ProjectSchemaOwner>;
 
         [[nodiscard]]
         auto canonicalize(std::string exactJcs) const -> Result<CanonicalJson>;
@@ -186,7 +202,10 @@ namespace uf::operator_runtime
         explicit ProjectPluginHandle(std::shared_ptr<State const> p_state) noexcept;
 
         [[nodiscard]]
-        auto invoke(ProjectPluginFunction function, CanonicalJson const& input) const
+        auto invoke(
+            ProjectPluginFunction function,
+            CanonicalJson const& input
+        ) const
             -> Result<ValidatedDocument>;
 
     public:
@@ -243,8 +262,6 @@ namespace uf::operator_runtime
     // schema owner bound to the same root.
     class ProjectPluginRegistrar final
     {
-        std::map<std::pair<std::string, ContentHash>, ProjectPluginHandle> m_plugins{};
-
     public:
         struct ArtifactBlob final
         {
@@ -252,14 +269,23 @@ namespace uf::operator_runtime
             std::string bytes{};
         };
 
+    private:
+        std::map<std::pair<std::string, ContentHash>, ProjectPluginHandle> m_plugins{};
+
+    public:
         [[nodiscard]]
-        auto registerPlugin(VerifiedProjectRegistration const& registration,
-                            std::string exactPluginBytes,
-                            std::vector<ArtifactBlob> exactArtifactBlobs,
-                            ProjectSchemaOwner schemaOwner) -> Result<ProjectPluginHandle>;
+        auto registerPlugin(
+            VerifiedProjectRegistration const& registration,
+            std::string exactPluginBytes,
+            std::vector<ArtifactBlob> exactArtifactBlobs,
+            ProjectSchemaOwner schemaOwner
+        ) -> Result<ProjectPluginHandle>;
 
         [[nodiscard]]
-        auto findExact(std::string const& pluginId, ContentHash projectRegistrationHash) const
+        auto findExact(
+            std::string const& pluginId,
+            ContentHash projectRegistrationHash
+        ) const
             -> Result<ProjectPluginHandle>;
     };
 } // namespace uf::operator_runtime

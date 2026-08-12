@@ -4919,7 +4919,7 @@ namespace uf::operator_runtime
             auto const sequence = static_cast<uint64>(
                 sqlite3_column_int64(events.get(), 0)
             );
-            batch.events.push_back(LedgerEvent{
+            batch.events.emplace_back(LedgerEvent{
                 .sequence           = SubscriptionCursor{sequence},
                 .kind               = kind,
                 .controlledTargetId = columnText(events.get(), 2),

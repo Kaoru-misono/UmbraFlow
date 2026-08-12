@@ -35,12 +35,6 @@ namespace uf::script
     // API.
     class PureDataProgram final
     {
-        class State;
-
-        std::shared_ptr<State const> m_state;
-
-        explicit PureDataProgram(std::shared_ptr<State const> p_state) noexcept;
-
     public:
         // The exact bytes one artifact root pins. They are an input to
         // compile() and are not retained: what a call reaches is the value
@@ -52,6 +46,14 @@ namespace uf::script
             std::string bytes{};
         };
 
+    private:
+        class State;
+
+        std::shared_ptr<State const> m_state;
+
+        explicit PureDataProgram(std::shared_ptr<State const> p_state) noexcept;
+
+    public:
         PureDataProgram(PureDataProgram const&) noexcept = default;
         PureDataProgram(PureDataProgram&&) noexcept = default;
         auto operator=(PureDataProgram const&) noexcept -> PureDataProgram& = default;
@@ -59,13 +61,18 @@ namespace uf::script
         ~PureDataProgram() = default;
 
         [[nodiscard]]
-        static auto compile(std::string_view moduleId,
-                            std::string_view source,
-                            std::span<std::string_view const> entryPoints,
-                            std::vector<Artifact> artifacts) -> Result<PureDataProgram>;
+        static auto compile(
+            std::string_view moduleId,
+            std::string_view source,
+            std::span<std::string_view const> entryPoints,
+            std::vector<Artifact> artifacts
+        ) -> Result<PureDataProgram>;
 
         [[nodiscard]]
-        auto invoke(std::string_view entryPoint, json::Value const& immutableInput) const
+        auto invoke(
+            std::string_view entryPoint,
+            json::Value const& immutableInput
+        ) const
             -> Result<json::Value>;
     };
 
