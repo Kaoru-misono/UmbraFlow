@@ -24,6 +24,12 @@ target_include_directories(${PROJECT_NAME} PRIVATE "${APPLICATION_INFO_DIRECTORY
 target_link_libraries(${PROJECT_NAME} PRIVATE uf::cli uf::core)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 
+add_executable(project project/main.cpp)
+cpp_apply_safety_profile(project)
+cpp_apply_utf8_encoding(project)
+target_link_libraries(project PRIVATE uf::project uf::core)
+target_compile_features(project PRIVATE cxx_std_23)
+
 # cli links engine publicly, and engine links ocr publicly, so this executable
 # resolves onnxruntime.dll from its own directory at process start; see
 # cmake/runtime-payload.cmake for why that copy cannot be left to some other

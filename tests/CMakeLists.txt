@@ -648,6 +648,25 @@ if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
     cpp_stage_runtime_libraries(test-cli ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
 endif()
 
+cpp_add_test(
+    NAME test-project
+    SOURCES
+        project/test-project-kit.cpp
+    LIBS
+        ${PROJECT_NAME}_project
+)
+add_test(
+    NAME test-project-cli
+    COMMAND ${CMAKE_COMMAND}
+        -DUF_PROJECT_EXECUTABLE=$<TARGET_FILE:project>
+        -DUF_PROJECT_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/project-cli-fixture
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/project/test-project-cli.cmake
+)
+set_tests_properties(test-project-cli PROPERTIES
+    TIMEOUT 30
+    LABELS "CI"
+)
+
 if(TARGET ${PROJECT_NAME}_script)
     cpp_add_test(
         NAME test-script

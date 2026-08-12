@@ -1,0 +1,12 @@
+# The offline Project Kit build boundary. It owns source input declarations and
+# generated build receipts; later Project Kit stages extend this module without
+# making generated files inputs to the next build.
+
+[module]
+name = project
+type = static
+version = 0.1.0
+
+[dependencies]
+public = core
+private = domain
