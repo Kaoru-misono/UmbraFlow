@@ -350,5 +350,6 @@ deviation is consistent. Either rename or amend the standard via
   infinite-loop/quota test until the interrupt wave lands
   (`TODO(cpp-debt)` at `script/ffi/engine.cpp:44-47`).
 - Workbench snapshot-before-edit discipline defuses the use-after-free class
-  recorded in `docs/pitfalls/workbench-authoring-ui.md`; `EditPage` handles
+  recorded in the since-deleted Workbench pitfall (available in Git history);
+  `EditPage` handles
   are non-copyable/non-movable and re-resolve ids per call.

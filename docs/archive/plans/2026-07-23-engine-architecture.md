@@ -30,7 +30,7 @@
 > 每步都重新观察、重新解析页面才肯投递,引擎内仍无循环(`act` 即作废 Observation)。
 > 走查另外暴露 7 个 workbench 缺口(recognizer 不可重选、page 不可见不可删、完全没有删除、
 > 类型切换互锁、默认名必撞、成功编辑不留痕、属性面板 use-after-free),均已修复,
-> 见 `docs/pitfalls/workbench-authoring-ui.md` 与
+> 见 Git history 中已删除的 Workbench pitfall 与
 > `docs/pitfalls/page-modeling-and-multi-step.md`。
 
 ## Context

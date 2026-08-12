@@ -534,10 +534,11 @@ has nothing left to refuse. Every other document keeps it.
 ### 8.2 Framework-owned document formats — keep
 
 Also not contested, and the record supports it more strongly than argument does.
-The one live victim in `docs/pitfalls/checks-that-cannot-fail.md` — a real
-consumer's suite green while producing provenance documents the framework's own
-schema would reject — was *statable as a defect only because the schema
-existed*. `JournalProvenance` in `schema/umbraflow-journal-v1.schema.json` named
+The historical provenance incident that motivated the schema row in the
+[false-green detector matrix](../pitfalls/checks-that-cannot-fail.md) — a real
+consumer's suite green while producing documents the framework's own schema
+would reject — was *statable as a defect only because the schema existed*.
+`JournalProvenance` in `schema/umbraflow-journal-v1.schema.json` named
 four required members and a five-value `kind` enum; both shipped validators were
 one byte comparison. Without the schema there is no fact the validators could be
 compared against.
@@ -705,21 +706,23 @@ that the code does not make anywhere.
 
 ### 8.5 What would actually have caught something
 
-Checked against `docs/pitfalls/checks-that-cannot-fail.md`, which is the record
-of this question. The hypothesis mostly holds, with one correction that matters.
+Checked against the current
+[false-green detector matrix](../pitfalls/checks-that-cannot-fail.md). The
+hypothesis mostly holds, with one correction that matters; the incidents below
+remain historical evidence rather than current pitfall instructions.
 
-No defect in that record was found by a project payload schema refusing a
+None of those defects was found by a project payload schema refusing a
 document. The provenance defect (§8.2) was found by reading code; the journal
 DDL drift by comparing a schema against a database; the effect-payload digest
 gap (`df5a73d`) by flipping a byte and finding no hash moved.
 
-The correction: the two recorded schema failures are both the form "**a schema
-file nothing compares against**" (`checks-that-cannot-fail.md:581-600`). The
-rule that record derives is to name, for every schema, the producer, the
-consumer, and the assertion holding them together. Applied to the 23: the
+The correction: the relevant schema failure shape is “a schema file nothing
+compares against”. The [detector matrix](../pitfalls/checks-that-cannot-fail.md)
+requires every schema to name its producer, consumer, and executable joining
+assertion. Applied to the 23: the
 producer is the plugin, the consumer is the Operator, and the assertion is
 `ProjectSchemaOwner::validate`, which runs on every call. **Category 3 passes
-the test the recorded failures failed.** What it fails is the falsification test
+the test that failure shape requires.** What it fails is the falsification test
 in Finding 4 — different defect, different repair.
 
 So the evidence says: these schemas are not the recorded failure mode, they have

@@ -80,7 +80,7 @@ Nothing below is a design question. In rough order of what stops what:
   [a project is a directory of data](plans/2026-08-11-project-as-data.md) is the
   ordered migration, and `examples/umbraflow` and `examples/arcana-expedition`
   are two project directories written the way a consumer writes its own.
-- The read-only consumer bundle is **v1.12**, root `b3306dde…de51cda5`, pinned in
+- The read-only consumer bundle is **v1.13**, root `c8e559a1…ec6e5f0`, pinned in
   two independent copies that `check-spec-pins` holds to each other. Agreement
   between the two copies is not freshness.
 
@@ -88,9 +88,8 @@ Nothing below is a design question. In rough order of what stops what:
 
 [Pitfalls](pitfalls/README.md) is required reading before diagnosing anything,
 and a new non-obvious root cause is recorded there once it is understood. Start
-with [checks that cannot fail](pitfalls/checks-that-cannot-fail.md): it is the
-taxonomy of the defect this repository keeps finding one instance at a time, and
-the table naming which method detects which form is the part to read first.
+with [checks that cannot fail](pitfalls/checks-that-cannot-fail.md): its detector
+matrix identifies what kind of evidence each false-green shape requires.
 
 ## Everything else
 
