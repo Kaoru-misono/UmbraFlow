@@ -1360,8 +1360,15 @@ namespace uf::task
                     .value_or(AutomationErrorKind::InternalInvariant)
             )
             {
+            // Every producer of this kind is a ceiling the host declined to
+            // spend past: the cycle's read and crop budgets, the remainder a
+            // block read is handed, and the matcher's comparison budget. So it
+            // is never a locator that looked and did not find -- a completed
+            // match that hits nothing is `absent` and carries no error at all
+            // -- and locator_failed would tell a consumer failing closed on it
+            // that a region nobody looked at holds nothing.
             case AutomationErrorKind::RecognitionIncomplete:
-                return "locator_failed";
+                return "budget_exhausted";
             case AutomationErrorKind::StaleObservation:
                 return "stale_cycle";
             case AutomationErrorKind::CaptureUnavailable:

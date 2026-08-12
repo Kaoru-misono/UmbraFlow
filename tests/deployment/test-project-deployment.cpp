@@ -171,6 +171,27 @@ namespace uf::deployment
             return envelope;
         }
 
+        // One derive envelope whose ui_snapshot reports a single undecided
+        // reading. Only the reason varies, so nothing but the reason vocabulary
+        // can separate two of these.
+        [[nodiscard]]
+        auto deriveEnvelopeReading(std::string_view reason) -> std::string
+        {
+            auto envelope = std::string{
+                "{\"pending_operation_transition\":null,"
+                "\"pinned_project_artifact_identities\":[],"
+                "\"prior_project_observation\":null,"
+                "\"project_state\":{\"revision\":0},"
+                "\"ui_snapshot\":{\"kind\":\"resolved_state\","
+                "\"ordered_surface_stack\":[\"fixture.surface\"],"
+                "\"readings\":[{\"kind\":\"unknown\",\"reader\":\"fixture.reader\","
+                "\"reason\":\""
+            };
+            envelope += reason;
+            envelope += "\",\"ui_target\":\"fixture.target\"}]}}";
+            return envelope;
+        }
+
         [[nodiscard]]
         auto planEnvelope(std::string_view canonicalArgs) -> std::string
         {
@@ -435,6 +456,25 @@ namespace uf::deployment
             "\"pinned_project_artifact_identities\":[],"
             "\"prior_project_observation\":null,\"project_state\":{\"revision\":0},"
             "\"ui_snapshot\":{\"kind\":\"invented_state\"}}"
+        ).has_value());
+
+        // The framework's Unknown-reason vocabulary is spelled three times --
+        // schema/umbraflow-runtime-v2.schema.json, modules/task/runtime/
+        // evidence.luau, and this module's own StateResolution definition --
+        // and nothing else holds the three together. budget_exhausted is what
+        // TaskHost::observe reports when a cycle stops reading, so a deployment
+        // that refused it here would refuse the documents the Host produces.
+        // The second row is the control: a validator that never read `reason`
+        // would accept both.
+        CHECK(validate(
+            ProjectPluginFunction::Derive,
+            ProjectDocumentDirection::Input,
+            deriveEnvelopeReading("budget_exhausted")
+        ).has_value());
+        CHECK_FALSE(validate(
+            ProjectPluginFunction::Derive,
+            ProjectDocumentDirection::Input,
+            deriveEnvelopeReading("budget_spent")
         ).has_value());
     }
 

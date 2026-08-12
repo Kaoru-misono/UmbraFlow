@@ -7,7 +7,7 @@
 
 local model = {}
 model.schema = "umbraflow-runtime/v2"
-model.schema_hash = "4e8a8bb5199823f15021a2e7800c454f9d9287a9900e247a0e96b6c16fbd78c8"
+model.schema_hash = "7acfdc4561c42d85eef2d22d3a52bd1903bbbc35bbf8066c91a16c41dfc65d11"
 
 local runtimeModels: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 local semanticBytes: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any

@@ -47,10 +47,4 @@ namespace uf::task
     {
         return m_receiptId;
     }
-
-    auto HostDeliveryReport::posted() const noexcept
-        -> std::optional<DeliveredInput> const&
-    {
-        return m_posted;
-    }
 }

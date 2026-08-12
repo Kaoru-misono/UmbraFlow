@@ -10,6 +10,7 @@ local records: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
 
 local unknownReasons = {
     not_measured = true,
+    budget_exhausted = true,
     low_confidence = true,
     ocr_unreadable = true,
     locator_failed = true,

@@ -30,7 +30,6 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
-#include <variant>
 #include <vector>
 
 namespace uf::task
@@ -202,6 +201,38 @@ id = "screen"
 kind = "scene"
 covers = []
 identity = { all = ["screen.anchor"], any = [], none = [] }
+)toml";
+        }
+
+        // The reading world with a SECOND reporting Binding over the third
+        // pixel. Two rectangles are what a read budget can be exhausted against:
+        // a cycle memoises per rectangle, so two Readers on one Binding cost one
+        // read however they are spelled. It reuses the confirm mark rather than
+        // a third asset because the asset closure is verified against the
+        // manifest, and title.primary stays declared first, which is the order
+        // reading_bindings walks and therefore which of the two spends the read.
+        [[nodiscard]] auto budgetedReadingRuntimeModel() -> std::string
+        {
+            return readingRuntimeModel() + R"toml(
+[[ui_target]]
+id = "subtitle"
+kind = "region"
+
+[[reader]]
+id = "subtitle.reader"
+kind = "text"
+confidence_floor = 0.5
+normalization = "collapse_whitespace"
+
+[[binding]]
+id = "subtitle.primary"
+surface = "screen"
+ui_target = "subtitle"
+variant = "primary"
+placement = { kind = "fixed", rect = [2, 0, 1, 1] }
+detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] }
+actions = []
+reads = ["subtitle.reader"]
 )toml";
         }
 
@@ -507,7 +538,6 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         REQUIRE(delivered.has_value());
         CHECK(delivered->outcome() == DeliveryOutcome::Delivered);
         CHECK(delivered->reason().empty());
-        REQUIRE(delivered->posted().has_value());
         CHECK(runtime.actions().clicks() == 1U);
 
         // The reservation comes back untouched, which is what lets the ledger
@@ -572,7 +602,6 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         REQUIRE(refused.has_value());
         CHECK(refused->outcome() == DeliveryOutcome::NotDelivered);
         CHECK_FALSE(refused->reason().empty());
-        CHECK_FALSE(refused->posted().has_value());
         CHECK(refused->receiptId() != delivered->receiptId());
         CHECK(other.actions().clicks() == 0U);
         CHECK(runtime.actions().clicks() == 1U);
@@ -635,13 +664,13 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         REQUIRE(delivered.has_value());
         CHECK(delivered->outcome() == DeliveryOutcome::Delivered);
         CHECK(delivered->reason().empty());
-        REQUIRE(delivered->posted().has_value());
 
-        // A keystroke names no coordinate, so nothing on this path posts one
-        // and the receipt that comes back is the one carrying no point.
+        // A keystroke names no coordinate, so nothing on this path posts one.
+        // Measured at the port rather than on the report, which is where the
+        // claim belongs: a dispatch that took the click branch would arrive as
+        // a click here whatever the report said about itself.
         CHECK(runtime.actions().clicks() == 0U);
         CHECK(runtime.actions().keys() == 1U);
-        CHECK(std::holds_alternative<engine::KeyReceipt>(*delivered->posted()));
 
         auto const posted = runtime.actions().lastKey();
         REQUIRE(posted.has_value());
@@ -691,7 +720,6 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
             report->reason().find("reached the engine and did not complete")
             != std::string_view::npos
         );
-        CHECK_FALSE(report->posted().has_value());
         CHECK(runtime.actions().keys() == 0U);
     }
 
@@ -929,7 +957,6 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         REQUIRE(report.has_value());
         CHECK(report->outcome() == DeliveryOutcome::NotDelivered);
         CHECK_FALSE(report->reason().empty());
-        CHECK_FALSE(report->posted().has_value());
         CHECK(runtime.actions().clicks() == 0U);
         CHECK_FALSE(
             TaskHostTestAccess::deliver(
@@ -976,7 +1003,6 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         // absence, so a click-path failure must never spell it.
         CHECK(report->outcome() == DeliveryOutcome::TransportUnknown);
         CHECK_FALSE(report->reason().empty());
-        CHECK_FALSE(report->posted().has_value());
         CHECK(runtime.actions().clicks() == 0U);
     }
 
@@ -1432,6 +1458,122 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         // Absent is not unknown: it carries no reason, because there is nothing
         // undecided about a rectangle that was read and held no text.
         CHECK(observed->canonicalJcs().find(R"("reason")") == std::string::npos);
+    }
+
+    // A Host that stopped on its own read budget did not look, and must not say
+    // a locator did. Both readings travel in one document: title spends the
+    // cycle's single read and comes back with the Reader's text, subtitle is
+    // refused before the recogniser is reached, and the budget is the only thing
+    // that differs between them.
+    TEST_CASE("TaskHost::observe names a spent read budget as the reason it stopped")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const rootHash = publish(
+            directory.path(),
+            budgetedReadingRuntimeModel(),
+            runtimeAssets()
+        );
+        auto const generation = TaskHostTestAccess::activate(
+            host,
+            directory.path(),
+            rootHash
+        );
+        REQUIRE(generation.has_value());
+
+        auto reader = std::make_unique<ScriptedReader>("Wandering Merchant", 9'100);
+        auto* const p_reader = reader.get();
+        auto runtime = RuntimeContext{
+            frame(
+                {
+                    std::byte{k_anchorGray},
+                    std::byte{k_actionGray},
+                    std::byte{k_actionGray},
+                },
+                FrameId{43}
+            ),
+            1'000,
+            std::move(reader),
+            1
+        };
+        auto const observed = host.observe(*generation, runtime.context());
+        REQUIRE(observed.has_value());
+        CHECK(
+            observed->canonicalJcs()
+            == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
+               R"("readings":[{"kind":"unknown","reader":"subtitle.reader",)"
+               R"("reason":"budget_exhausted","ui_target":"subtitle"},)"
+               R"({"kind":"read","reader":"title.reader",)"
+               R"("text":"Wandering Merchant","ui_target":"title"}]})"
+        );
+
+        // The reason on its own, because it is the whole of what this case
+        // claims: an equality that stopped carrying it would be repaired by
+        // rewriting the expected bytes rather than by fixing anything.
+        CHECK(
+            observed->canonicalJcs().find(R"("reason":"budget_exhausted")")
+            != std::string::npos
+        );
+
+        // The two answers this refusal must never wear. locator_failed says a
+        // locator looked and did not find; not_measured says nobody asked. The
+        // Host asked, was told to stop, and both spellings would send a consumer
+        // that fails closed to the wrong conclusion about the subtitle pixels.
+        CHECK(observed->canonicalJcs().find("locator_failed") == std::string::npos);
+        CHECK(observed->canonicalJcs().find("not_measured") == std::string::npos);
+
+        // The budget is charged before the engine, so the refused read cost no
+        // inference. One call is the whole of what this cycle paid.
+        CHECK(p_reader->calls() == 1U);
+    }
+
+    // The control for the case above, and what makes its refusal mean anything:
+    // the same model, the same frame and the same Reader, with the budget raised
+    // by one, read BOTH rectangles. Without it the subtitle refusal is equally
+    // consistent with a second Binding this world cannot measure at all.
+    TEST_CASE("TaskHost::observe reads both rectangles once the budget covers them")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const rootHash = publish(
+            directory.path(),
+            budgetedReadingRuntimeModel(),
+            runtimeAssets()
+        );
+        auto const generation = TaskHostTestAccess::activate(
+            host,
+            directory.path(),
+            rootHash
+        );
+        REQUIRE(generation.has_value());
+
+        auto reader = std::make_unique<ScriptedReader>("Wandering Merchant", 9'100);
+        auto* const p_reader = reader.get();
+        auto runtime = RuntimeContext{
+            frame(
+                {
+                    std::byte{k_anchorGray},
+                    std::byte{k_actionGray},
+                    std::byte{k_actionGray},
+                },
+                FrameId{44}
+            ),
+            1'000,
+            std::move(reader),
+            2
+        };
+        auto const observed = host.observe(*generation, runtime.context());
+        REQUIRE(observed.has_value());
+        CHECK(
+            observed->canonicalJcs()
+            == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
+               R"("readings":[{"kind":"read","reader":"subtitle.reader",)"
+               R"("text":"Wandering Merchant","ui_target":"subtitle"},)"
+               R"({"kind":"read","reader":"title.reader",)"
+               R"("text":"Wandering Merchant","ui_target":"title"}]})"
+        );
+        CHECK(observed->canonicalJcs().find(R"("reason")") == std::string::npos);
+        CHECK(p_reader->calls() == 2U);
     }
 
     // A Binding that is not present reads nothing, and the state still resolves.

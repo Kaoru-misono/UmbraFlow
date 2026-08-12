@@ -109,6 +109,15 @@ namespace uf::task
     // TaskHost's privates and can therefore call deliver, but a harness able to
     // fabricate what deliver returns would make every test over this value
     // unfalsifiable. Copyable because the Operator stores it by value.
+    //
+    // m_posted is stored and published to nobody. It is the constructor
+    // invariant's other half: TaskHost passes the engine's own receipt on the
+    // one path that succeeded and nothing on every other, so requiring it
+    // engaged exactly for Delivered is what stops a future edit reporting a
+    // delivery the engine never confirmed. An accessor would be a public
+    // surface with no reader, which is untestable by construction; the
+    // reconciliation path that eventually joins a delivered input to its trace
+    // line adds one then, shaped by what it needs.
     class HostDeliveryReport final
     {
         friend class TaskHost;
@@ -150,15 +159,5 @@ namespace uf::task
         // The opaque ordinal of the one Receipt this report consumed. It names
         // Host-private storage and is meaningful only as an identity.
         [[nodiscard]] auto receiptId() const noexcept -> uint64;
-
-        // Engaged exactly when outcome() is Delivered, and then holding the
-        // alternative matching the kind of action the Receipt authorized.
-        //
-        // TODO(cpp-debt): nothing reads this back today -- ceiling: the value
-        // is unfalsifiable while it has no reader, upgrade: the reconciliation
-        // path that will join a delivered input to its trace line.
-        [[nodiscard]]
-        auto posted() const noexcept UF_LIFETIME_BOUND
-            -> std::optional<DeliveredInput> const&;
     };
 }

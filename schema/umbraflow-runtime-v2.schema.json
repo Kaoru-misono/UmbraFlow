@@ -373,9 +373,10 @@
       ]
     },
     "unknown_reason": {
-      "$comment": "Why one measurement could not be decided. One closed vocabulary, referenced by everything that reports an Unknown, because a reason spelled twice is two vocabularies that agree by test rather than by construction.",
+      "$comment": "Why one measurement could not be decided. One closed vocabulary, referenced by everything that reports an Unknown, because a reason spelled twice is two vocabularies that agree by test rather than by construction. Nothing-was-measured is not one reason, because a consumer that fails closed acts differently on each: not_measured is that nobody asked, budget_exhausted is that the Host stopped looking inside a ceiling the caller can raise or spend over a fresh cycle, stale_cycle is that the frame it would have measured had expired, and host_unavailable is that it could not look at all. None of them is locator_failed, which claims something looked and did not find.",
       "enum": [
         "not_measured",
+        "budget_exhausted",
         "low_confidence",
         "ocr_unreadable",
         "locator_failed",

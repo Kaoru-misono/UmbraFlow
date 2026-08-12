@@ -593,8 +593,9 @@ namespace uf::operator_runtime::conformance
     // delivery, which is the diagnosis the supplying project cannot act on.
     //
     // What it prints is the resolution itself, which is all it has: the reasons
-    // a resolver records are a closed script-visible vocabulary, so a locator
-    // that failed says `locator_failed` and nothing about which pixels differed.
+    // a resolver records are a closed script-visible vocabulary, and a locator
+    // that ran and matched nothing is `absent` and carries no reason at all, so
+    // nothing here can say which pixels differed.
     // The one cause that could be named precisely -- a capture whose extent is
     // not the model's -- is named by requireProbeGeometry above, which
     // activateObservationHost runs before any resolution, and is therefore not

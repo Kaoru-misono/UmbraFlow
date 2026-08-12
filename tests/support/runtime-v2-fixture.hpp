@@ -511,10 +511,16 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
         // a session built without one refuses readText rather than inventing a
         // reading -- which is what keeps those cases' documents free of readings
         // by construction instead of by omission.
+        //
+        // `maximumReadsPerCycle` is a parameter because the budget cannot be
+        // exhausted at its default here: a cycle memoises per rectangle and this
+        // world's frame is three pixels wide, so no model can ask for thirty-two
+        // distinct reads out of it.
         RuntimeContext(
             Frame value,
             uint64 comparisonBudget,
-            std::unique_ptr<ocr::IOcrEngine> reader = nullptr
+            std::unique_ptr<ocr::IOcrEngine> reader = nullptr,
+            uint32 maximumReadsPerCycle = k_defaultMaximumReadsPerCycle
         )
         {
             auto recorder = trace::TraceRecorder::create(
@@ -545,7 +551,11 @@ identity = { all = ["panel.anchor"], any = [], none = [] }
                 std::move(reader)
             );
             REQUIRE(session.has_value());
-            m_context.emplace(*std::move(session), *m_recorder);
+            m_context.emplace(
+                *std::move(session),
+                *m_recorder,
+                TaskContextConfig{.maximumReadsPerCycle = maximumReadsPerCycle}
+            );
         }
 
         // The constructor emplaces m_context on every path that produces an
