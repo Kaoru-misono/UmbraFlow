@@ -30,6 +30,7 @@ the method before spending a campaign.
 | A call inside a negative assertion | Mutating the callee's behaviour, never grepping the call site; the control is a case where the same callee must **succeed** |
 | A branch nothing reaches | A positive control — the identical mutation in the sibling branch must be red |
 | A value nothing reads back | Mutation, and only mutation: corrupt the stored value and expect red |
+| A refusal the caller's channel cannot express | A positive control on the *composer*: force the refusal and require the next step not to have run |
 | A selector that selected nothing | A denominator — `ctest -N`, the file list, the object count |
 | A pattern the engine reads differently | A probe run through the engine itself, with a known-positive control beside it |
 | A fixture value that disarms the check it arms | A rule that refuses the disarming value, in the loader rather than in a document |
@@ -401,6 +402,52 @@ so and names what will read it.**
 
 **Detection is mutation and nothing else.** Reading the code does not find it:
 the write site looks correct because it is correct.
+
+## A refusal the caller's channel cannot express
+
+The nearest relative of the last, one level out. The value *is* read back — by a
+person, in the payload — and the thing that decides what happens next reads a
+different channel, one that has no way to say "refused". The check is sound; its
+verdict is advisory. This sits in this family rather than in an entry of its own
+because it is the family's downstream half exactly — nothing is wrong upstream of
+the logic or inside it, only in what consumes the result — and the question it
+forces applies to every gate this repository composes with `&&`.
+
+The exploration driver is the instance. It queues one Luau chunk, waits for the
+answer, and exits `0 if answer.get("ok") else 1`. **`ok` means the chunk ran.** A
+chunk's guard — the read that proves the screen in front of it is the screen it
+was written for — refuses by *returning a string*:
+`GUARD REFUSED: wanted '一縷光芒', read '縷光芒' (9375 bp) — no press sent`. That
+string is `answer["value"]`, and `ok` is `true` beside it. One night's session
+recorded eleven refusals and all eleven exited 0.
+
+So `send.py pick-016 … && send.py pick-017 …` runs the second chunk on a screen
+the first deliberately refused to touch, and the `&&` reads as a precondition
+while expressing nothing. It cost a card pick on 2026-08-12: a guard on a card
+title read `縷光芒` for `一縷光芒` — the leading character clipped — and refused
+with no press sent; the chained follow-up pressed a card slot and confirmed it,
+taking a card nobody chose.
+
+**The fix is to make the refusal an exit status.** The guard's verdict has to
+reach the channel the composer reads, which means the chunk protocol needs a
+refusal outcome distinct from "ran" and the driver has to exit non-zero on it.
+**The workaround is to never chain acting chunks** — one invocation per command,
+read the payload, then decide. That is what stopped the bleeding, and it is not
+the repair: it holds only for as long as every caller remembers, and the shape of
+the mistake is one keystroke.
+
+**Detection is a positive control on the composer, not on the check.** Force the
+check to refuse and require that the downstream step did not run. Reading the
+guard finds nothing, because the guard is correct; mutating the guard finds
+nothing either, because the refusal a mutation produces is the same refusal that
+already fails to propagate.
+
+**The general question is cheap and worth asking of every refusal.** A check has
+two audiences — a reader and a composer — and they consume different channels:
+prose, a return value, a log line, an exit status. Name the channel the refusal
+travels on and the channel the next step consumes; where they differ, the refusal
+governs nobody. `&&`, `set -e`, CI step conditions and `ctest` all consume exit
+status and nothing else.
 
 ## A selector that selected nothing
 
