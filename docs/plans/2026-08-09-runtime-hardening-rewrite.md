@@ -7,23 +7,41 @@ Scope: `umbraflow-cpp` only; consumer projects are read-only
 
 ## Frozen product authority
 
-The normative product input is the read-only v1.13 bundle at
-`E:/github/uf-chaos/docs/architecture/`.
+The normative product input is the read-only v1.18 bundle at
+`E:/umbraflow-projects/uf-chaos/docs/architecture/`.
 
 - bundle manifest: `spec-bundle.manifest.json`
-- bundle root SHA-256: `c8e559a1ee6618246778ac465842976b7445fbe10a20a2edaf77ca047ec6e5f0`
-- main design: `8fcdb4401e33e8cd4f0624522797e85fd418d572851f2ffbefdb14ba5290018c`
-- project-layer design: `3f3879f464a7459bf3c4e208b2cfa4c4d11914a723534b6945211fddfbabaf6c`
-- requirements: `1b6eaabfc60dd75483f4620629b6ba62994c20a13985ab1681e84893aa9d428b`
-- failure/recovery audit: `9533dd76c8eb3fdf72a2fb24876172b3371853af133e23d9fbfb3b0a86c8c6b4`
+- bundle root SHA-256: `ac8c3fa652fb1601645d0c0bc04359bc75c9d08dc2883aa31ddeb94912f38ec4`
+- main design: `d4873fcce7f77e753ba13b867d46ac02a2f28a0eae852047b61fbc28d4003dda`
+- project-layer design: `2b12586487e124fe1432f6036afbe6fc22f59dfdf721e093bb492a0edc81fb91`
+- requirements: `849dc630b250900cf0bbba926af24f769a017fb922604781048e6b17260d9f54`
+- failure/recovery audit: `cd152579d3c0c1b4fb5fcad8908fc16e2deb47cb6242c85fe9e388dbe01a0bf9`
+- interface contract lock: `bce7f619d9f56b9ffd638be0ae453f365fb10e5952c1cc4d492a87d1b9007e3e`
 
-> Amended 2026-08-12: v1.13 records the product/conformance split in the
-> project-layer design and follows two v1 evidence records into `legacy/` in the
-> requirements matrix. No runtime schema or requirement row changed. Deciding
-> artifacts: `uf-chaos/CURRENT.md` and `uf-chaos/legacy/README.md`.
-> The same amendment moves this pin from the deleted
-> `E:/umbraflow-projects/uf-chaos/` checkout to the repository that now owns the
-> bundle, `E:/github/uf-chaos/`.
+> Amended 2026-08-12 (v1.18). Three things moved together.
+>
+> The **location** stated here was wrong. A v1.13 amendment claimed the
+> `E:/umbraflow-projects/uf-chaos/` checkout was deleted and moved the pin to
+> `E:/github/uf-chaos/`. The opposite is true: measured on 2026-08-12,
+> `E:/github/uf-chaos/` does not exist and `E:/umbraflow-projects/uf-chaos/` is
+> the live checkout, clean and pushed to `github.com/Kaoru-misono/uf-chaos`. The
+> full check therefore could not run at all, and the CTest registration asks only
+> for `--pins-only`, so nothing noticed for three bundle versions.
+>
+> The **membership** changed. `interface-contract-lock.md` joins as a pinned
+> member: it is the wire contract two repositories implement against in parallel,
+> so this framework's correctness does depend on its exact bytes.
+> `parallel-implementation-plan.md` is deliberately *not* pinned. It is an
+> execution schedule; its status columns move as work proceeds, and pinning it
+> would red this gate on every increment of progress until nobody read it again.
+> The consumer's G0 was rewritten from six documents to five in the same change.
+>
+> The **contents** changed: v1.14 through v1.16 froze the agent-first baseline and
+> the wave-zero interface; v1.17 fixed seven contract defects found by review and
+> measurement; v1.18 fixed five more, the largest being that the rejection-to-code
+> map was neither total nor deterministic, so two conforming implementations could
+> refuse the same document with different normative codes. See the interface
+> lock's own change record.
 
 If any byte differs, implementation stops. Umbraflow does not modify that
 consumer repository. This file is the upstream execution profile and records
