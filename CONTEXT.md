@@ -172,21 +172,31 @@ _Avoid_: contract suite, `contract-suite`, `contract-suite-<project>`,
 `contract-<area>-<id>` and `schema-<area>-<id>`: those name individual gates, not
 the suite.
 
-**LoadedProject** — everything one project's directory hands the conformance
-suite, constructed by `deployment::loadProject(directory, expected)` in
+**LoadedProject** — everything one project's directory hands the product,
+constructed by `deployment::loadProductionProject(directory, expected)` in
 `modules/deployment/source/deployment/project-directory.hpp`. A project is a
-directory of data with no C++ of its own: two root documents name every other
-file, and the loader derives each deployment's registration from that
+directory of data with no C++ of its own: `umbraflow-project.json` names every
+other file, and the loader derives each deployment's registration from that
 deployment's block and the digests of the files it read, then builds all five
-authorities from them. A run takes two roles out of it, `underTest` and
+authorities from them. One deployment is enough and no tool has to be mutating.
+
+**ConformanceProject** — a `LoadedProject` plus the second root document,
+`umbraflow-conformance.json`, constructed by
+`deployment::loadConformanceProject`. It carries the production load in
+`loaded`, the probe frame, and the two roles a run takes, `underTest` and
 `foreign`, each a `ProjectConformanceRole` naming one deployment and the
 vocabulary that drives it — `foreign` is deliberately not under test, and
 `underTest` keeps the phrase because it is honest about which of the two
-registrations a run observes.
-_Avoid_: `ProvidedProject`, `provideProject`, `ProjectRole` as an exported type,
-`provider.cpp`, `<conformance/provider.hpp>` (all retired 2026-08-11 when a
-project became a directory); `ProjectUnderTest`, `projectUnderTest`,
-`project-under-test.hpp` (retired earlier the same day).
+registrations a run observes. The split is 2026-08-12's
+([the loading question](docs/plans/2026-08-11-project-as-data.md) §2.7 R1):
+before it one loader required both documents, two roles and four mutating tools
+of every directory, so a consuming project at a read-only phase could not be
+expressed at all.
+_Avoid_: `deployment::loadProject` (one entry point requiring both documents,
+split 2026-08-12); `ProvidedProject`, `provideProject`, `ProjectRole` as an
+exported type, `provider.cpp`, `<conformance/provider.hpp>` (all retired
+2026-08-11 when a project became a directory); `ProjectUnderTest`,
+`projectUnderTest`, `project-under-test.hpp` (retired earlier the same day).
 `task::UiActionUnderTest` is unrelated and current: it is the action a run
 drives.
 

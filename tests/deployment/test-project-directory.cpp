@@ -150,11 +150,23 @@ namespace uf::deployment
                 std::filesystem::remove(m_root / relative);
             }
 
+            // The two entry points, against one directory. Which one a case
+            // calls is the case's claim about which reader owns the rule it
+            // breaks: a rule the product enforces must refuse the production
+            // load, and a rule only a suite needs must leave it accepting.
             [[nodiscard]]
             auto load(std::span<ExpectedRegistration const> expected = {}) const
                 -> Result<LoadedProject>
             {
-                return loadProject(m_root, expected);
+                return loadProductionProject(m_root, expected);
+            }
+
+            [[nodiscard]]
+            auto loadForConformance(
+                std::span<ExpectedRegistration const> expected = {}
+            ) const -> Result<ConformanceProject>
+            {
+                return loadConformanceProject(m_root, expected);
             }
 
             // The accepted manifest text, so a case can substitute one span of
@@ -311,8 +323,9 @@ namespace uf::deployment
             return restated;
         }
 
+        template <typename Loaded>
         [[nodiscard]]
-        auto why(Result<LoadedProject> const& outcome) -> std::string
+        auto why(Result<Loaded> const& outcome) -> std::string
         {
             return outcome.has_value()
                 ? std::string{"<the directory was accepted>"}
@@ -423,11 +436,19 @@ namespace uf::deployment
              })
         {
             INFO(example);
-            auto const loaded = loadProject(root / example, {});
+            auto const loaded = loadProductionProject(root / example, {});
             INFO(why(loaded));
             REQUIRE(loaded.has_value());
             CHECK(loaded->deployments.size() == 2U);
             CHECK(loaded->findDeployment(loaded->primaryDeployment) != nullptr);
+
+            // Each also ships the conformance fixture the suite runs against,
+            // which is a second document and not a second reading of the one
+            // above.
+            auto const suite = loadConformanceProject(root / example, {});
+            INFO(why(suite));
+            REQUIRE(suite.has_value());
+            CHECK(suite->underTest.deployment != suite->foreign.deployment);
 
             // The artifact root the project names, opened the way the installer
             // opens it. The root hash handed in is this case's own arithmetic
@@ -466,10 +487,7 @@ namespace uf::deployment
 
         CHECK(loaded->deployments.size() == 2U);
         CHECK(loaded->primaryDeployment == "alpha");
-        CHECK(loaded->underTest.deployment == "alpha");
-        CHECK(loaded->foreign.deployment == "beta");
         CHECK(loaded->runtimeArtifactRoot == fixture.path() / "runtime/artifact");
-        CHECK_FALSE(loaded->probeFrame.empty());
 
         auto const* const p_alpha = loaded->findDeployment("alpha");
         REQUIRE(p_alpha != nullptr);
@@ -504,6 +522,32 @@ namespace uf::deployment
                         )
                         .has_value());
 
+        // The recorders exist and are empty until a validator writes them.
+        REQUIRE(loaded->lastReduceInput != nullptr);
+        CHECK(loaded->lastReduceInput->empty());
+        REQUIRE(loaded->lastDeriveInput != nullptr);
+        CHECK(loaded->lastDeriveInput->empty());
+    }
+
+    // The conformance load is the production load plus a layer, so this states
+    // the layer: the same directory, the same deployments, and the three things
+    // only umbraflow-conformance.json supplies.
+    TEST_CASE("a conformance directory becomes that load plus two roles")
+    {
+        auto const fixture = Fixture{};
+        auto const loaded  = fixture.loadForConformance();
+        INFO(why(loaded));
+        REQUIRE(loaded.has_value());
+
+        // The production half is carried whole rather than restated.
+        CHECK(loaded->loaded.deployments.size() == 2U);
+        CHECK(loaded->loaded.primaryDeployment == "alpha");
+        CHECK(loaded->loaded.findDeployment("alpha") != nullptr);
+
+        CHECK(loaded->underTest.deployment == "alpha");
+        CHECK(loaded->foreign.deployment == "beta");
+        CHECK_FALSE(loaded->probeFrame.empty());
+
         // The vocabulary is read as strings and nothing else, and the payload
         // members carry the project's exact bytes rather than a shape this
         // loader chose.
@@ -512,16 +556,72 @@ namespace uf::deployment
         CHECK(loaded->underTest.vocabulary.baselineEntry.payload
               == "{\"marker\":\"baseline\"}");
         CHECK(loaded->underTest.vocabulary.uiAction.uiTarget == "fixture.target");
-
-        // The recorders exist and are empty until a validator writes them.
-        REQUIRE(loaded->lastReduceInput != nullptr);
-        CHECK(loaded->lastReduceInput->empty());
-        REQUIRE(loaded->lastDeriveInput != nullptr);
-        CHECK(loaded->lastDeriveInput->empty());
     }
 
-    // R1. Both root documents are required at their fixed names, and the
-    // refusal names the directory and both names.
+    // The defect the split repairs, stated as the directory that could not be
+    // expressed before it. A project at a read-only phase declares one
+    // deployment, carries no conformance document at all, and every tool its
+    // catalog holds is read_only -- so it has no mutating_tool to name, no
+    // other_mutating_tool to distinguish from it, and no second deployment to
+    // play a foreign role.
+    //
+    // Measured before this case existed: the loader required both documents,
+    // both roles, two deployments and four mutating tools of every directory it
+    // opened, and refused this one with "foreign is played by the deployment
+    // beta, which umbraflow-project.json does not declare".
+    TEST_CASE("a production project needs no conformance document at all")
+    {
+        auto const fixture = Fixture{};
+        REQUIRE(fixture.load().has_value());
+
+        // Every mutating row becomes read_only. The catalog stays a catalog
+        // this deployment's registration pins, so nothing but the mutability
+        // words differ from the accepted directory above.
+        auto const bundle    = umbraflow::DeploymentBundle{"fixture.alpha"};
+        auto       readOnly  = bundle.toolCatalog();
+        constexpr auto k_was = std::string_view{R"json("mutability":"mutating")json"};
+        constexpr auto k_now = std::string_view{R"json("mutability":"read_only")json"};
+        auto       replaced  = std::size_t{0};
+        for (auto at = readOnly.find(k_was);
+             at != std::string::npos;
+             at = readOnly.find(k_was, at + k_now.size()))
+        {
+            readOnly.replace(at, k_was.size(), k_now);
+            ++replaced;
+        }
+        REQUIRE(replaced > std::size_t{0});
+        REQUIRE_FALSE(readOnly.contains(k_was));
+        fixture.rewrite("schema/alpha/catalog.json", readOnly);
+
+        // One deployment, and no second one to play any other role.
+        fixture.rewrite(
+            "umbraflow-project.json",
+            std::string{R"json({"schema":"umbraflow-project/v1",)json"}
+                + R"json("runtime_artifact":"runtime/artifact",)json"
+                + R"json("primary_deployment":"alpha","deployments":[)json"
+                + Fixture::deploymentBlock("alpha") + "]}"
+        );
+        fixture.remove("umbraflow-conformance.json");
+
+        auto const loaded = fixture.load();
+        INFO(why(loaded));
+        REQUIRE(loaded.has_value());
+        REQUIRE(loaded->deployments.size() == 1U);
+        CHECK(loaded->primaryDeployment == "alpha");
+        CHECK(loaded->findDeployment("alpha") != nullptr);
+        CHECK(loaded->runtimeArtifactRoot == fixture.path() / "runtime/artifact");
+
+        // The other half of the same fact: this directory is a project and is
+        // not a conformance fixture, and the refusal names the document it
+        // lacks rather than a role or a tool.
+        auto const suite = fixture.loadForConformance();
+        REQUIRE_FALSE(suite.has_value());
+        CHECK(why(suite).contains(k_conformanceManifestFileName));
+        CHECK(why(suite).contains(fixture.path().string()));
+    }
+
+    // R1. Each load requires the root documents it reads, at their fixed names,
+    // and neither requires the other's.
     //
     // The message is asserted rather than only the refusal, and that is the
     // whole of what makes this case a check. Reading an absent document as
@@ -530,28 +630,40 @@ namespace uf::deployment
     // is satisfied by the "absent means empty" reading this rule exists to
     // forbid. Measured: that mutation left an earlier version of this case
     // green across all 39 of its assertions.
-    TEST_CASE("R1 a project directory without both root documents is refused")
+    TEST_CASE("R1 a load is refused without the root document it reads")
     {
         auto const fixture = Fixture{};
         REQUIRE(fixture.load().has_value());
-        auto const names = [&fixture](std::string const& refusal)
-        {
-            CHECK(refusal.contains(fixture.path().string()));
-            CHECK(refusal.contains(k_projectManifestFileName));
-            CHECK(refusal.contains(k_conformanceManifestFileName));
-        };
+        REQUIRE(fixture.loadForConformance().has_value());
 
+        // The conformance document is the one the product does not read, so
+        // removing it refuses the conformance load and leaves the production
+        // one accepting. A production loader that opened it would be red on the
+        // second assertion of this block rather than on a message.
         fixture.remove("umbraflow-conformance.json");
-        auto const missingConformance = fixture.load();
+        auto const missingConformance = fixture.loadForConformance();
         REQUIRE_FALSE(missingConformance.has_value());
-        names(why(missingConformance));
+        CHECK(why(missingConformance).contains(fixture.path().string()));
+        CHECK(why(missingConformance).contains(k_conformanceManifestFileName));
+        CHECK_FALSE(why(missingConformance).contains(k_projectManifestFileName));
 
+        auto const withoutFixture = fixture.load();
+        INFO(why(withoutFixture));
+        CHECK(withoutFixture.has_value());
+
+        // The project document is read by both, so its absence refuses both.
         fixture.rewrite("umbraflow-conformance.json", Fixture::conformanceManifest());
         REQUIRE(fixture.load().has_value());
         fixture.remove("umbraflow-project.json");
+
         auto const missingProject = fixture.load();
         REQUIRE_FALSE(missingProject.has_value());
-        names(why(missingProject));
+        CHECK(why(missingProject).contains(fixture.path().string()));
+        CHECK(why(missingProject).contains(k_projectManifestFileName));
+
+        auto const suiteWithoutProject = fixture.loadForConformance();
+        REQUIRE_FALSE(suiteWithoutProject.has_value());
+        CHECK(why(suiteWithoutProject).contains(k_projectManifestFileName));
     }
 
     // R2. Every member of every framework-owned document is required and every
@@ -790,7 +902,7 @@ namespace uf::deployment
     TEST_CASE("R8 a vocabulary provisioning another baseline event type is refused")
     {
         auto const fixture = Fixture{};
-        REQUIRE(fixture.load().has_value());
+        REQUIRE(fixture.loadForConformance().has_value());
 
         // fixture.progress is a real event type of this project, with a payload
         // schema of its own, so nothing but the agreement itself can refuse it.
@@ -802,10 +914,17 @@ namespace uf::deployment
                 R"json("baseline_entry":{"event_type":"fixture.progress")json"
             )
         );
-        auto const disagreeing = fixture.load();
+        auto const disagreeing = fixture.loadForConformance();
         REQUIRE_FALSE(disagreeing.has_value());
         CHECK(why(disagreeing).contains("baseline_event_type"));
         CHECK(why(disagreeing).contains("fixture.progress"));
+
+        // The rule belongs to the conformance layer and to nothing below it:
+        // the same directory still starts. Without this the case would equally
+        // describe a production loader that had read the vocabulary too.
+        auto const production = fixture.load();
+        INFO(why(production));
+        CHECK(production.has_value());
     }
 
     // R8, applied to the five tool names a vocabulary provisions. Each is a
@@ -819,7 +938,7 @@ namespace uf::deployment
     TEST_CASE("R8 a vocabulary the deployment's Tool Catalog contradicts is refused")
     {
         auto const fixture = Fixture{};
-        REQUIRE(fixture.load().has_value());
+        REQUIRE(fixture.loadForConformance().has_value());
 
         auto const refusing =
             [&fixture](std::string_view from, std::string_view to)
@@ -829,8 +948,15 @@ namespace uf::deployment
                 "umbraflow-conformance.json",
                 substituted(Fixture::conformanceManifest(), from, to)
             );
-            auto const refused = fixture.load();
+            auto const refused = fixture.loadForConformance();
             REQUIRE_FALSE(refused.has_value());
+
+            // Every substitution here is a claim about a vocabulary, and a
+            // vocabulary is a thing the product does not read. A production
+            // loader that started requiring a mutating tool would be red here.
+            auto const production = fixture.load();
+            INFO(why(production));
+            CHECK(production.has_value());
             return why(refused);
         };
 
@@ -891,7 +1017,7 @@ namespace uf::deployment
     TEST_CASE("R8 two journal entries provisioning one payload are refused")
     {
         auto const fixture = Fixture{};
-        REQUIRE(fixture.load().has_value());
+        REQUIRE(fixture.loadForConformance().has_value());
 
         // The event types stay distinct and each keeps a payload schema of its
         // own, so only the equality of the two payloads is left to refuse this.
@@ -903,7 +1029,7 @@ namespace uf::deployment
                 R"json("progress_entry":{"event_type":"fixture.progress","payload":"{\"marker\":\"confirmed\"}"})json"
             )
         );
-        auto const equal = fixture.load();
+        auto const equal = fixture.loadForConformance();
         REQUIRE_FALSE(equal.has_value());
         CHECK(why(equal).contains("progress_entry"));
         CHECK(why(equal).contains("confirmed_entry"));
@@ -1005,7 +1131,7 @@ namespace uf::deployment
     TEST_CASE("R9 a probe frame that is not a PNG is refused")
     {
         auto const fixture = Fixture{};
-        REQUIRE(fixture.load().has_value());
+        REQUIRE(fixture.loadForConformance().has_value());
 
         // A document this directory already holds and already reads, so the
         // path resolves and the file exists: R3 and R4 are both satisfied and
@@ -1018,7 +1144,7 @@ namespace uf::deployment
                 R"json("probe_frame":"schema/alpha/state.json")json"
             )
         );
-        auto const notAnImage = fixture.load();
+        auto const notAnImage = fixture.loadForConformance();
         REQUIRE_FALSE(notAnImage.has_value());
         CHECK(why(notAnImage).contains("probe_frame"));
         CHECK(why(notAnImage).contains("schema/alpha/state.json"));
@@ -1029,7 +1155,7 @@ namespace uf::deployment
             "runtime/probe-frame.png",
             probeFramePng().substr(0U, 16U)
         );
-        auto const truncated = fixture.load();
+        auto const truncated = fixture.loadForConformance();
         REQUIRE_FALSE(truncated.has_value());
         CHECK(why(truncated).contains("probe_frame"));
     }
@@ -1037,10 +1163,15 @@ namespace uf::deployment
     // Q7. A directory whose two roles are played by one deployment is refused
     // rather than run as a reduced suite: a skipped case is a green result
     // promising more than it verified.
+    //
+    // Both halves are the conformance load's and neither is the production
+    // load's, and the third load in each block is what says so: a directory
+    // whose roles do not hold together is still a directory the product starts,
+    // which is the whole reason the two entry points are separate.
     TEST_CASE("both conformance roles must be played by different deployments")
     {
         auto const fixture = Fixture{};
-        REQUIRE(fixture.load().has_value());
+        REQUIRE(fixture.loadForConformance().has_value());
 
         fixture.rewrite(
             "umbraflow-conformance.json",
@@ -1050,9 +1181,13 @@ namespace uf::deployment
                 R"json("foreign":{"deployment":"alpha")json"
             )
         );
-        auto const oneRegistration = fixture.load();
+        auto const oneRegistration = fixture.loadForConformance();
         REQUIRE_FALSE(oneRegistration.has_value());
         CHECK(why(oneRegistration).contains("authority is per"));
+
+        auto const startsAnyway = fixture.load();
+        INFO(why(startsAnyway));
+        CHECK(startsAnyway.has_value());
 
         fixture.rewrite(
             "umbraflow-conformance.json",
@@ -1062,9 +1197,13 @@ namespace uf::deployment
                 R"json("foreign":{"deployment":"gamma")json"
             )
         );
-        auto const undeclared = fixture.load();
+        auto const undeclared = fixture.loadForConformance();
         REQUIRE_FALSE(undeclared.has_value());
         CHECK(why(undeclared).contains("gamma"));
+
+        auto const startsWithoutGamma = fixture.load();
+        INFO(why(startsWithoutGamma));
+        CHECK(startsWithoutGamma.has_value());
     }
 
     // The one check on this chain that compares two values produced at two

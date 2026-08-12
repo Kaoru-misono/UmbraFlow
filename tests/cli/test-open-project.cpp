@@ -118,6 +118,11 @@ namespace uf::cli
                 };
             }
 
+            auto remove(std::string_view relative) const -> void
+            {
+                REQUIRE(std::filesystem::remove(m_root / relative));
+            }
+
             auto rewrite(std::string_view relative, std::string_view bytes) const
                 -> void
             {
@@ -149,7 +154,6 @@ namespace uf::cli
         CHECK(everyPluginRegistered(*opened));
 
         CHECK(opened->primaryDeployment == "alpha");
-        CHECK(opened->probeFrameBytes > std::size_t{0});
         REQUIRE(opened->deployments.size() == 2U);
 
         // The artifact half. The two schema digests are equal to the pins by
@@ -174,11 +178,27 @@ namespace uf::cli
         REQUIRE(p_foreign != nullptr);
         CHECK(p_foreign->pluginId == "fixture.foreign");
         CHECK(p_foreign->registrationHash != p_alpha->registrationHash);
+    }
 
-        CHECK(opened->underTest.deployment == "alpha");
-        CHECK(opened->underTest.mutatingTool == "command-1");
-        CHECK(opened->underTest.uiTarget == "fixture.target");
-        CHECK(opened->foreign.deployment == "foreign");
+    // The verb takes the production path, so a directory holding no conformance
+    // fixture at all opens. The exemplar ships one, so it is removed here:
+    // without this case nothing on the product path says which of the two root
+    // documents `open` actually needs.
+    TEST_CASE("a project shipping no conformance fixture opens")
+    {
+        auto const copy = ExemplarCopy{};
+
+        auto const whole = openProjectProduct(copy.args());
+        INFO(why(whole));
+        REQUIRE(whole.has_value());
+
+        copy.remove("umbraflow-conformance.json");
+
+        auto const opened = openProjectProduct(copy.args());
+        INFO(why(opened));
+        REQUIRE(opened.has_value());
+        CHECK(everyPluginRegistered(*opened));
+        CHECK(opened->deployments.size() == whole->deployments.size());
     }
 
     // The case that makes "registered" a claim. The plugin's bytes reach the
@@ -236,9 +256,9 @@ namespace uf::cli
     // whose runtime-artifact.manifest.json stated a manifest_schema_hash this
     // binary does not accept: `open` printed a completely clean load, every
     // deployment registered, while the conformance suite failed twelve of its
-    // sixteen cases against the same directory. deployment::loadProject reads
-    // that artifact's model file for emptiness and nothing else, so nothing on
-    // the open path had ever opened the manifest beside it.
+    // sixteen cases against the same directory. The production load reads that
+    // artifact's model file for emptiness and nothing else, so nothing on the
+    // open path had ever opened the manifest beside it.
     //
     // Both mutations move one file each and leave everything else in the
     // directory alone, and the reopen between them is what says the mutation is
@@ -301,9 +321,9 @@ namespace uf::cli
         CHECK(movedRefusal.contains("failed SHA-256 verification"));
     }
 
-    // A directory holding neither root document. The message is asserted and
-    // not only the failure: reading an absent document as empty bytes also
-    // fails, on "is not JSON", so a case that asked whether the open failed is
+    // A directory holding no project document. The message is asserted and not
+    // only the failure: reading an absent document as empty bytes also fails,
+    // on "is not JSON", so a case that asked whether the open failed is
     // satisfied by the reading this refusal exists to forbid.
     TEST_CASE("a directory that is not a project is refused by name")
     {
@@ -319,7 +339,11 @@ namespace uf::cli
         auto const refusal = why(opened);
         CHECK(refusal.contains(root.string()));
         CHECK(refusal.contains("umbraflow-project.json"));
-        CHECK(refusal.contains("umbraflow-conformance.json"));
+
+        // The document this verb never opens is not named in what it refuses:
+        // a reader sent after a conformance fixture would go looking for a file
+        // the product does not want.
+        CHECK_FALSE(refusal.contains("umbraflow-conformance.json"));
 
         auto discarded = std::error_code{};
         std::filesystem::remove_all(root, discarded);
@@ -327,7 +351,7 @@ namespace uf::cli
 
     // The report is the whole of what this verb delivers to an operator, so
     // every field a caller cannot recover elsewhere has to survive into it.
-    TEST_CASE("the report carries the identity, the vocabulary and the refusal")
+    TEST_CASE("the report carries the identity, the artifact and the refusal")
     {
         auto const accepted = std::string(64U, 'a');
         auto const refused  = std::string(64U, 'b');
@@ -344,7 +368,6 @@ namespace uf::cli
                     .assets                 = 2U,
                 },
 
-              .probeFrameBytes   = 78U,
               .primaryDeployment = "alpha",
 
               .deployments =
@@ -362,21 +385,12 @@ namespace uf::cli
                         .refusal          = "the module is missing an entry point",
                     },
                 },
-              .underTest =
-                OpenedRole{
-                    .deployment   = "alpha",
-                    .mutatingTool = "demo.advance",
-                    .absentTool   = "demo.uncarried",
-                    .uiTarget     = "demo.button",
-                },
-              .foreign = OpenedRole{.deployment = "beta"},
         };
 
         CHECK_FALSE(everyPluginRegistered(opened));
 
         auto const text = formatOpenedProject(opened);
         CHECK(text.contains("D:/projects/demo"));
-        CHECK(text.contains("78 bytes"));
 
         // The artifact block. A reader has to be able to tell a verified
         // artifact from an unread one, which is the whole reason this verb
@@ -391,9 +405,6 @@ namespace uf::cli
         CHECK(text.contains("demo.alpha"));
         CHECK(text.contains(accepted));
         CHECK(text.contains(refused));
-        CHECK(text.contains("demo.advance"));
-        CHECK(text.contains("demo.uncarried"));
-        CHECK(text.contains("demo.button"));
 
         // A deployment that did not register has to read differently from one
         // that did, at a glance and in a log somebody greps.

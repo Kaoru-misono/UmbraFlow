@@ -44,6 +44,11 @@ to the repository root.
 >   `projectUnderTest` → `provideProject` → **`deployment::loadProject`**, which
 >   reads a directory rather than being a function a consumer defines.
 >
+> Added 2026-08-12: `deployment::loadProject` split into
+> **`deployment::loadProductionProject`** (`-> LoadedProject`) and
+> **`deployment::loadConformanceProject`** (`-> ConformanceProject`). A consumer
+> reaching the suite reaches the second; nothing outside the suite may name it.
+>
 > **§8.3's quotation of uf-chaos `contract/CMakeLists.txt` was re-spelled with
 > them and is therefore not that file's current text.** uf-chaos still writes
 > `uf_add_operator_contract_suite(TARGET contract-suite-chaos …)` until it

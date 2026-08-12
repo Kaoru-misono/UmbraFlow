@@ -739,7 +739,9 @@ owes is the one pass over the remaining 15, not a permanent re-litigation.
   2026-08-11.** It was raised here as unowned; it is no longer. As landed it
   exported CMake and one public header a consumer implemented in C++; `974396e`
   replaced both with a binary this repository ships. A consumer runs
-  `umbra-flow-conformance --project <directory>`, and `deployment::loadProject`
+  `umbra-flow-conformance --project <directory>`, and
+  `deployment::loadConformanceProject` (named `loadProject` until the 2026-08-12
+  split)
   turns that directory into the registration, the four schema owners, the plugin
   and artifact bytes the registration pinned, the RuntimeArtifact root and the
   probe frame the model resolves against (added 2026-08-11) — and the suite

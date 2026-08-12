@@ -71,20 +71,20 @@ namespace uf::operator_runtime::conformance
     // The project directory, read. A case loads it rather than sharing one
     // load: the two recorders on it are written while that case runs, so a
     // shared load would let one case read what another observed.
-    [[nodiscard]] auto loadedProject() -> deployment::LoadedProject;
+    [[nodiscard]] auto loadedProject() -> deployment::ConformanceProject;
 
     // The deployment playing `role`, and the vocabulary that drives it. Both are
     // views into `project` and are call-scoped: every case holds the load on its
     // own stack, or in the PreparedStore below, for as long as it uses them.
     [[nodiscard]]
     auto deploymentFor(
-        deployment::LoadedProject const& project UF_LIFETIME_BOUND,
+        deployment::ConformanceProject const& project UF_LIFETIME_BOUND,
         ProjectRole role
     ) -> deployment::LoadedDeployment const&;
 
     [[nodiscard]]
     auto vocabularyFor(
-        deployment::LoadedProject const& project UF_LIFETIME_BOUND,
+        deployment::ConformanceProject const& project UF_LIFETIME_BOUND,
         ProjectRole role
     ) -> deployment::ProjectVocabulary const&;
 
@@ -97,34 +97,34 @@ namespace uf::operator_runtime::conformance
 
     [[nodiscard]]
     auto canonical(
-        deployment::LoadedProject const& project,
+        deployment::ConformanceProject const& project,
         ProjectRole role,
         std::string value
     ) -> CanonicalJson;
 
     [[nodiscard]]
     auto journalEntry(
-        deployment::LoadedProject const& project,
+        deployment::ConformanceProject const& project,
         ProjectRole role,
         deployment::ProjectJournalDocument const& document
     ) -> ValidatedJournalEntryData;
 
     [[nodiscard]]
     auto toolInvocation(
-        deployment::LoadedProject const& project,
+        deployment::ConformanceProject const& project,
         ProjectRole role,
         std::string toolName
     ) -> ValidatedToolInvocation;
 
     [[nodiscard]]
     auto loadPlugin(
-        deployment::LoadedProject const& project,
+        deployment::ConformanceProject const& project,
         ProjectRole role
     ) -> ProjectPluginHandle;
 
     [[nodiscard]]
     auto reconcileOutcome(
-        deployment::LoadedProject const& project,
+        deployment::ConformanceProject const& project,
         ProjectRole role,
         ProjectPluginHandle const& plugin,
         std::string operationId,
@@ -142,10 +142,10 @@ namespace uf::operator_runtime::conformance
     // snapshot: the state every ledger case starts from.
     struct PreparedStore final
     {
-        OperatorCoordinator       store;
-        ProjectPluginHandle       plugin;
-        deployment::LoadedProject project;
-        SessionManifest           manifest;
+        OperatorCoordinator            store;
+        ProjectPluginHandle            plugin;
+        deployment::ConformanceProject project;
+        SessionManifest                manifest;
 
         // The sole mint for an EffectivePlan. It is part of the prepared state
         // because a deployment builds one from the exact operator protocol

@@ -22,11 +22,15 @@
 
 namespace uf::deployment
 {
-    // The two documents at a project directory's root, at these exact names.
-    // Everything else a project owns is named BY one of them, project-relative,
+    // The document every project directory holds at its root, at this exact
+    // name. Everything else a project owns is named BY it, project-relative,
     // and opened through task_platform::ConfinedRoot.
     inline constexpr auto k_projectManifestFileName =
         std::string_view{"umbraflow-project.json"};
+
+    // The second document, which only a conformance run opens. A project that
+    // ships no conformance fixture holds no such file, and loading it for
+    // production never looks for one.
     inline constexpr auto k_conformanceManifestFileName =
         std::string_view{"umbraflow-conformance.json"};
 
@@ -112,6 +116,14 @@ namespace uf::deployment
         operator_runtime::ProjectToolCatalogSchemaOwner toolCatalogSchemaOwner;
         operator_runtime::ProjectReconcileSchemaOwner   reconcileSchemaOwner;
 
+        // The compiled schemas and read manifests the five authorities above
+        // were built from, kept rather than dropped. Every authority judges a
+        // call and therefore needs its arguments; a document that names tools
+        // without calling them -- a conformance vocabulary -- has none to
+        // offer, and carriedTool is what lets such a document and this
+        // deployment's catalog be held to each other.
+        ProjectDeployment catalog;
+
         // registerPlugin's other two arguments, as bytes.
         std::string pluginBytes{};
 
@@ -128,19 +140,8 @@ namespace uf::deployment
         // deployment drives, and a second root would be a second world.
         std::filesystem::path runtimeArtifactRoot{};
 
-        // One capture of the project's target, as the project's own PNG bytes.
-        // The load decoded them, so these are an image (2.7 R9); its extent is
-        // NOT checked here and cannot be, because after the Q2 ruling the
-        // extent it must match is published by RuntimeModelBinding, which does
-        // not exist until the Host has activated the artifact. See
-        // project-as-data.md 2.7 R8.
-        std::vector<std::byte> probeFrame{};
-
         std::string                   primaryDeployment{};
         std::vector<LoadedDeployment> deployments{};
-
-        ProjectConformanceRole underTest{};
-        ProjectConformanceRole foreign{};
 
         // Where each deployment's document validator records the exact bytes it
         // last saw. They are here rather than on a project because the thing
@@ -153,6 +154,30 @@ namespace uf::deployment
         [[nodiscard]]
         auto findDeployment(std::string_view name) const
             -> LoadedDeployment const*;
+    };
+
+    // What a conformance run reads on top of a production load: the second root
+    // document, the capture a suite observes through, and the two roles.
+    //
+    // It carries the production load rather than restating it, because a
+    // conformance directory is a project directory that also ships a fixture.
+    // Nothing here is a member production could be given a default for: a
+    // project that implements nothing mutating has no vocabulary to state, and
+    // a single-deployment project cannot fill two roles at all.
+    struct ConformanceProject final
+    {
+        LoadedProject loaded{};
+
+        // One capture of the project's target, as the project's own PNG bytes.
+        // The load decoded them, so these are an image (2.7 R9); its extent is
+        // NOT checked here and cannot be, because after the Q2 ruling the
+        // extent it must match is published by RuntimeModelBinding, which does
+        // not exist until the Host has activated the artifact. See
+        // project-as-data.md 2.7 R8.
+        std::vector<std::byte> probeFrame{};
+
+        ProjectConformanceRole underTest{};
+        ProjectConformanceRole foreign{};
     };
 
     // What a caller already knows one of this directory's deployments must
@@ -169,8 +194,11 @@ namespace uf::deployment
         ContentHash hash;
     };
 
-    // Reads a project directory and constructs every deployment's five
-    // authorities.
+    // Reads a project directory the way the product reads it:
+    // umbraflow-project.json, the RuntimeArtifact it names, and every
+    // deployment's five authorities. One deployment is enough, no conformance
+    // document is opened, and no tool is required to be mutating -- a project
+    // that honestly implements nothing mutating is a project this starts.
     //
     // `expected` is required rather than optional so that a caller states which
     // case it is in. A resume passes what the stored session named; a first
@@ -179,8 +207,21 @@ namespace uf::deployment
     // matches no deployment is a refusal, so a misspelling cannot silently
     // disarm the check.
     [[nodiscard]]
-    auto loadProject(
+    auto loadProductionProject(
         std::filesystem::path const& directory,
         std::span<ExpectedRegistration const> expected
     ) -> Result<LoadedProject>;
+
+    // The production load above, plus umbraflow-conformance.json: the probe
+    // frame, the two roles played by two different deployments, and every
+    // agreement between a role's vocabulary and the deployment playing it.
+    //
+    // It is the production load plus a layer rather than a second reader of the
+    // same document, so a directory a suite accepts is necessarily a directory
+    // the product starts.
+    [[nodiscard]]
+    auto loadConformanceProject(
+        std::filesystem::path const& directory,
+        std::span<ExpectedRegistration const> expected
+    ) -> Result<ConformanceProject>;
 }

@@ -35,35 +35,11 @@ namespace uf::cli
         std::optional<std::string> refusal{};
     };
 
-    // One conformance role of an opened project. The five tool names, the four
-    // journal event types and the UI action are what a reader can act on; the
-    // payloads beside them in ProjectVocabulary are exact document bytes, which
-    // a report cannot restate without choosing a serialization of its own.
-    struct OpenedRole final
-    {
-        std::string deployment{};
-
-        std::string mutatingTool{};
-        std::string otherMutatingTool{};
-        std::string readOnlyTool{};
-        std::string absentTool{};
-        std::string approvalRequiredPlanTool{};
-
-        std::string baselineEvent{};
-        std::string progressEvent{};
-        std::string confirmedEvent{};
-        std::string supersededEvent{};
-
-        std::string uiSurface{};
-        std::string uiTarget{};
-        std::string uiAction{};
-    };
-
     // The RuntimeArtifact this project names, as task::loadRuntimeArtifact
-    // verified it. deployment::loadProject deliberately checks only that the
-    // model file exists and is not empty, so without this block the verb would
-    // report a clean open for a directory the same binary refuses the moment it
-    // activates the artifact.
+    // verified it. deployment::loadProductionProject deliberately checks only
+    // that the model file exists and is not empty, so without this block the
+    // verb would report a clean open for a directory the same binary refuses
+    // the moment it activates the artifact.
     struct OpenedArtifact final
     {
         // The digest of runtime-artifact.manifest.json, which is what every
@@ -94,27 +70,24 @@ namespace uf::cli
 
         OpenedArtifact artifact{};
 
-        // The decoded capture the conformance manifest names, as the byte count
-        // of its file. A report has no use for the pixels; that the loader
-        // decoded them at all is the fact worth printing.
-        std::size_t probeFrameBytes{};
-
         std::string                   primaryDeployment{};
         std::vector<OpenedDeployment> deployments{};
-
-        OpenedRole underTest{};
-        OpenedRole foreign{};
     };
 
-    // Loads the directory, verifies the RuntimeArtifact it names the way the
-    // Operator's installer verifies it, registers every deployment's plugin
-    // through ProjectPluginRegistrar, and reports all three. The registrar is
-    // local to the call: this verb answers whether the directory registers, and
-    // a registry that outlived the answer would be a session, which is the next
-    // verb's job rather than this one's.
+    // Loads the directory the way the product starts it, verifies the
+    // RuntimeArtifact it names the way the Operator's installer verifies it,
+    // registers every deployment's plugin through ProjectPluginRegistrar, and
+    // reports all three. The registrar is local to the call: this verb answers
+    // whether the directory registers, and a registry that outlived the answer
+    // would be a session, which is the next verb's job rather than this one's.
+    //
+    // It is the production load, so it neither opens umbraflow-conformance.json
+    // nor reports anything out of it. A project that ships no conformance
+    // fixture is a project this verb opens, and whether a fixture holds
+    // together is umbra-flow-conformance's answer rather than this verb's.
     //
     // Two failure shapes, and the split is deliberate. A project-wide fact --
-    // either root document, the artifact -- refuses the whole call, because a
+    // the project document, the artifact -- refuses the whole call, because a
     // project that fails one cannot start at all. A per-deployment fact is
     // reported per deployment: a plugin the script substrate cannot compile
     // leaves this call successful with that deployment's `refusal` engaged, so

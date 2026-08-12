@@ -589,7 +589,8 @@ other. A fixture may move neither.
 
 `umbra-flow-conformance --project <directory>` is the one mechanism that already
 turns a consumer's claim into something this repository can refuse. A consumer
-supplies a project directory, and `deployment::loadProject` turns it into a
+supplies a project directory, and `deployment::loadConformanceProject` (named
+`loadProject` until the 2026-08-12 split) turns it into a
 `VerifiedProjectRegistration`, four schema owners, the exact plugin bytes and
 artifact blobs the registration pinned, a vocabulary of documents its own
 schemas accept, the RuntimeArtifact root its sessions are pinned to, and the one

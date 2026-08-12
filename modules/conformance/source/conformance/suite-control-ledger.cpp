@@ -530,12 +530,12 @@ namespace uf::operator_runtime::conformance
         auto const root   = TemporaryDirectory{"reducer-input"};
         auto prepared     = prepareStore(root.path());
         auto const& words = prepared.project.underTest.vocabulary;
-        REQUIRE(prepared.project.lastReduceInput != nullptr);
+        REQUIRE(prepared.project.loaded.lastReduceInput != nullptr);
 
         constexpr auto eventTypeKey = std::string_view{"\"namespaced_event_type\""};
 
         // Provisioning reduces its own baseline event against no prior state.
-        auto const baselineInput = *prepared.project.lastReduceInput;
+        auto const baselineInput = *prepared.project.loaded.lastReduceInput;
         CHECK(occurrences(baselineInput, eventTypeKey) == std::size_t{1});
         CHECK(baselineInput.find(words.baselineEntry.payload) != std::string::npos);
         CHECK(baselineInput.find(words.provenance) != std::string::npos);
@@ -555,7 +555,7 @@ namespace uf::operator_runtime::conformance
         // ProjectState the database already held, so a caller who wanted the
         // reducer to see something else has nowhere to put it: neither the
         // baseline payload nor any entry the commit did not name is in there.
-        auto const commitInput = *prepared.project.lastReduceInput;
+        auto const commitInput = *prepared.project.loaded.lastReduceInput;
         CHECK(occurrences(commitInput, eventTypeKey) == std::size_t{1});
         CHECK(commitInput.find(words.progressEntry.payload) != std::string::npos);
         CHECK(commitInput.find(words.baselineEntry.payload) == std::string::npos);
@@ -567,9 +567,9 @@ namespace uf::operator_runtime::conformance
     {
         auto const root = TemporaryDirectory{"derive-input"};
         auto prepared   = prepareStore(root.path());
-        REQUIRE(prepared.project.lastDeriveInput != nullptr);
+        REQUIRE(prepared.project.loaded.lastDeriveInput != nullptr);
 
-        auto const first = *prepared.project.lastDeriveInput;
+        auto const first = *prepared.project.loaded.lastDeriveInput;
         REQUIRE_FALSE(first.empty());
 
         // The Snapshot Coordinator assembles the envelope rather than accepting
@@ -605,7 +605,7 @@ namespace uf::operator_runtime::conformance
         // freshSnapshot captures again, so this is a second occasion over an
         // unchanged world.
         prepared.snapshot = freshSnapshot(prepared);
-        auto const second = *prepared.project.lastDeriveInput;
+        auto const second = *prepared.project.loaded.lastDeriveInput;
         CHECK(second != first);
 
         // The next derivation is handed the reading before it, so the prior is

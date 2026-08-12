@@ -39,7 +39,7 @@ namespace uf::operator_runtime::conformance
 
         [[nodiscard]]
         auto roleOf(
-            deployment::LoadedProject const& project UF_LIFETIME_BOUND,
+            deployment::ConformanceProject const& project UF_LIFETIME_BOUND,
             ProjectRole role
         ) -> deployment::ProjectConformanceRole const&
         {
@@ -59,14 +59,14 @@ namespace uf::operator_runtime::conformance
         return projectDirectorySlot();
     }
 
-    auto loadedProject() -> deployment::LoadedProject
+    auto loadedProject() -> deployment::ConformanceProject
     {
         auto const directory = projectDirectory();
         REQUIRE_MESSAGE(
             !directory.empty(),
             "no project directory was set; run umbra-flow-conformance --project"
         );
-        auto loaded = deployment::loadProject(directory, {});
+        auto loaded = deployment::loadConformanceProject(directory, {});
         REQUIRE_MESSAGE(
             loaded.has_value(),
             "the project directory could not be loaded: ",
@@ -76,11 +76,11 @@ namespace uf::operator_runtime::conformance
     }
 
     auto deploymentFor(
-        deployment::LoadedProject const& project,
+        deployment::ConformanceProject const& project,
         ProjectRole role
     ) -> deployment::LoadedDeployment const&
     {
-        auto const* p_deployment = project.findDeployment(
+        auto const* p_deployment = project.loaded.findDeployment(
             roleOf(project, role).deployment
         );
         REQUIRE(p_deployment != nullptr);
@@ -88,7 +88,7 @@ namespace uf::operator_runtime::conformance
     }
 
     auto vocabularyFor(
-        deployment::LoadedProject const& project,
+        deployment::ConformanceProject const& project,
         ProjectRole role
     ) -> deployment::ProjectVocabulary const&
     {
@@ -140,7 +140,7 @@ namespace uf::operator_runtime::conformance
     }
 
     auto canonical(
-        deployment::LoadedProject const& project,
+        deployment::ConformanceProject const& project,
         ProjectRole role,
         std::string value
     ) -> CanonicalJson
@@ -153,7 +153,7 @@ namespace uf::operator_runtime::conformance
     }
 
     auto journalEntry(
-        deployment::LoadedProject const& project,
+        deployment::ConformanceProject const& project,
         ProjectRole role,
         deployment::ProjectJournalDocument const& document
     ) -> ValidatedJournalEntryData
@@ -168,7 +168,7 @@ namespace uf::operator_runtime::conformance
     }
 
     auto toolInvocation(
-        deployment::LoadedProject const& project,
+        deployment::ConformanceProject const& project,
         ProjectRole role,
         std::string toolName
     ) -> ValidatedToolInvocation
@@ -182,7 +182,7 @@ namespace uf::operator_runtime::conformance
     }
 
     auto loadPlugin(
-        deployment::LoadedProject const& project,
+        deployment::ConformanceProject const& project,
         ProjectRole role
     ) -> ProjectPluginHandle
     {
@@ -199,7 +199,7 @@ namespace uf::operator_runtime::conformance
     }
 
     auto reconcileOutcome(
-        deployment::LoadedProject const& project,
+        deployment::ConformanceProject const& project,
         ProjectRole role,
         ProjectPluginHandle const& plugin,
         std::string operationId,
@@ -256,7 +256,7 @@ namespace uf::operator_runtime::conformance
 
         auto const release = observationRelease(
             root / "session-handoff",
-            project.runtimeArtifactRoot
+            project.loaded.runtimeArtifactRoot
         );
         auto storeResult   = OperatorCoordinator::open(root / "production");
         REQUIRE(storeResult.has_value());

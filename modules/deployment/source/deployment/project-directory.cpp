@@ -225,8 +225,10 @@ namespace uf::deployment
 })json"};
 
         // umbraflow-conformance.json: the document only a conformance run
-        // reads. Production never opens it, and that separation is the point --
-        // nothing in production wants a "tool the catalog does not carry".
+        // reads. loadProductionProject never opens it, and that separation is
+        // the point -- nothing in production wants a "tool the catalog does not
+        // carry", and a project at a read-only phase has no mutating tool to
+        // name in one.
         constexpr auto k_conformanceSchema = std::string_view{R"json({
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://umbraflow.dev/schema/project/conformance",
@@ -441,6 +443,48 @@ namespace uf::deployment
                 }
                 rest = rest.substr(slash + 1U);
             }
+        }
+
+        [[nodiscard]]
+        auto openRoot(std::filesystem::path const& directory)
+            -> Result<task_platform::ConfinedRoot>
+        {
+            auto opened = task_platform::ConfinedRoot::open(directory);
+            if (!opened.has_value())
+            {
+                return refuse(std::format(
+                    "{} is not a project directory this loader can open: {}",
+                    directory.string(),
+                    opened.error().message()
+                ));
+            }
+            return *std::move(opened);
+        }
+
+        // R1. A root document is required at its exact name. Which reader wants
+        // it is the caller's to say, because the two readers want different
+        // sets: a refusal naming a document this load never opens would send a
+        // reader after a file the project owes nobody.
+        [[nodiscard]]
+        auto readRootDocument(
+            task_platform::ConfinedRoot const& root,
+            std::filesystem::path const& directory,
+            std::string_view name,
+            std::string_view who
+        ) -> Result<std::string>
+        {
+            auto bytes = root.readFile(name, k_maximumDocumentBytes);
+            if (!bytes.has_value())
+            {
+                return refuse(std::format(
+                    "{} needs {} at the root of a project directory, and {} "
+                    "holds none",
+                    who,
+                    name,
+                    directory.string()
+                ));
+            }
+            return asText(*bytes);
         }
 
         // R4. A named file must exist and be readable inside the confined root.
@@ -934,11 +978,11 @@ namespace uf::deployment
         auto requireVocabularyAgrees(
             std::string_view role,
             ProjectConformanceRole const& played,
-            LoadedDeployment const& deployment,
-            ProjectDeployment const& catalog
+            LoadedDeployment const& deployment
         ) -> Status
         {
             auto const& vocabulary = played.vocabulary;
+            auto const& catalog    = deployment.catalog;
             auto const  registered = deployment.registration.baselineEventType();
             if (vocabulary.baselineEntry.eventType != registered)
             {
@@ -1110,48 +1154,23 @@ namespace uf::deployment
         return found == deployments.end() ? nullptr : &*found;
     }
 
-    auto loadProject(
+    auto loadProductionProject(
         std::filesystem::path const& directory,
         std::span<ExpectedRegistration const> expected
     ) -> Result<LoadedProject>
     {
-        auto opened = task_platform::ConfinedRoot::open(directory);
-        if (!opened.has_value())
-        {
-            return refuse(std::format(
-                "{} is not a project directory this loader can open: {}",
-                directory.string(),
-                opened.error().message()
-            ));
-        }
-        auto const& root = *opened;
-
-        // R1. Both root documents are required, at these exact names.
-        auto const requireRoot =
-            [&root, &directory](std::string_view name) -> Result<std::string>
-        {
-            auto bytes = root.readFile(name, k_maximumDocumentBytes);
-            if (!bytes.has_value())
-            {
-                return refuse(std::format(
-                    "a project directory holds {} and {} at its root; {} holds "
-                    "no {}",
-                    k_projectManifestFileName,
-                    k_conformanceManifestFileName,
-                    directory.string(),
-                    name
-                ));
-            }
-            return asText(*bytes);
-        };
-        UF_TRY_VALUE(projectBytes, requireRoot(k_projectManifestFileName));
-        UF_TRY_VALUE(conformanceBytes, requireRoot(k_conformanceManifestFileName));
+        UF_TRY_VALUE(root, openRoot(directory));
+        UF_TRY_VALUE(
+            projectBytes,
+            readRootDocument(
+                root,
+                directory,
+                k_projectManifestFileName,
+                "loading a project"
+            )
+        );
 
         UF_TRY_VALUE(projectSchema, compile("umbraflow-project/v1", k_projectSchema));
-        UF_TRY_VALUE(
-            conformanceSchema,
-            compile("umbraflow-conformance/v1", k_conformanceSchema)
-        );
         UF_TRY_VALUE(
             registrationSchema,
             compile("umbraflow-project-registration/v1", k_registrationSchema)
@@ -1159,14 +1178,6 @@ namespace uf::deployment
         UF_TRY_VALUE(
             manifest,
             readValidated(projectSchema, k_projectManifestFileName, projectBytes)
-        );
-        UF_TRY_VALUE(
-            conformance,
-            readValidated(
-                conformanceSchema,
-                k_conformanceManifestFileName,
-                conformanceBytes
-            )
         );
 
         UF_TRY_VALUE(manifestSchemaHash, hashOf(k_registrationSchema));
@@ -1183,11 +1194,8 @@ namespace uf::deployment
         auto loaded = LoadedProject{
             .directory           = directory,
             .runtimeArtifactRoot = {},
-            .probeFrame          = {},
             .primaryDeployment   = text(manifest, "primary_deployment"),
             .deployments         = {},
-            .underTest           = {},
-            .foreign             = {},
             .lastReduceInput     = std::make_shared<std::string>(),
             .lastDeriveInput     = std::make_shared<std::string>(),
         };
@@ -1217,43 +1225,6 @@ namespace uf::deployment
         }
         loaded.runtimeArtifactRoot = directory / artifactRoot;
 
-        auto const framePath = text(conformance, "probe_frame");
-        UF_TRY_VALUE(
-            frame,
-            readFile(root, "probe_frame", framePath, k_maximumFrameBytes)
-        );
-        auto const frameBytes = std::as_bytes(std::span{frame});
-
-        // R9. A named file must be what the member names it as, and for the one
-        // member naming a capture that means the bytes decode. Only the decoded
-        // extent is out of reach here (R8); whether there is an image at all is
-        // not, and a project whose probe frame is not one is refused where it
-        // was written rather than several minutes into a suite. The decoded
-        // pixels are dropped on purpose: the capture the Host is handed is the
-        // project's own bytes, and a second copy of them in another encoding
-        // would be a second spelling of the frame.
-        auto const decoded = image::decodePng(frameBytes, framePath);
-        if (!decoded.has_value())
-        {
-            return refuse(std::format(
-                "probe_frame names {}, which is not a PNG capture this "
-                "framework can decode: {}",
-                framePath,
-                decoded.error().message()
-            ));
-        }
-        loaded.probeFrame.assign(frameBytes.begin(), frameBytes.end());
-
-        // One deployment's Tool Catalog, kept past the loop that read it. A
-        // conformance role's vocabulary names tools, and which deployment plays
-        // which role is not settled until both roles have been read.
-        struct DeployedCatalog final
-        {
-            std::string       deployment{};
-            ProjectDeployment catalog;
-        };
-
-        auto catalogs = std::vector<DeployedCatalog>{};
         for (auto const& block : member(manifest, "deployments").items())
         {
             auto const name     = text(block, "name");
@@ -1420,12 +1391,9 @@ namespace uf::deployment
                 .journalSchemaOwner     = *std::move(journalOwner),
                 .toolCatalogSchemaOwner = *std::move(catalogOwner),
                 .reconcileSchemaOwner   = *std::move(reconcileOwner),
+                .catalog                = *std::move(deployed),
                 .pluginBytes            = std::move(files.pluginBytes),
                 .artifactBlobs          = std::move(blobs),
-            });
-            catalogs.emplace_back(DeployedCatalog{
-                .deployment = name,
-                .catalog    = *std::move(deployed),
             });
         }
 
@@ -1451,6 +1419,70 @@ namespace uf::deployment
                 "primary_deployment names {}, which is not one of this "
                 "project's deployments",
                 loaded.primaryDeployment
+            ));
+        }
+
+        return loaded;
+    }
+
+    auto loadConformanceProject(
+        std::filesystem::path const& directory,
+        std::span<ExpectedRegistration const> expected
+    ) -> Result<ConformanceProject>
+    {
+        UF_TRY_VALUE(loaded, loadProductionProject(directory, expected));
+
+        // The directory is confined a second time rather than threaded out of
+        // the load above: what a load returns is what it read, and a project is
+        // a value rather than a handle a caller keeps open. Every path below is
+        // therefore resolved under the same confinement rules as every path the
+        // production load resolved.
+        UF_TRY_VALUE(root, openRoot(directory));
+        UF_TRY_VALUE(
+            conformanceBytes,
+            readRootDocument(
+                root,
+                directory,
+                k_conformanceManifestFileName,
+                "running the conformance suite"
+            )
+        );
+        UF_TRY_VALUE(
+            conformanceSchema,
+            compile("umbraflow-conformance/v1", k_conformanceSchema)
+        );
+        UF_TRY_VALUE(
+            conformance,
+            readValidated(
+                conformanceSchema,
+                k_conformanceManifestFileName,
+                conformanceBytes
+            )
+        );
+
+        auto const framePath = text(conformance, "probe_frame");
+        UF_TRY_VALUE(
+            frame,
+            readFile(root, "probe_frame", framePath, k_maximumFrameBytes)
+        );
+        auto const frameBytes = std::as_bytes(std::span{frame});
+
+        // R9. A named file must be what the member names it as, and for the one
+        // member naming a capture that means the bytes decode. Only the decoded
+        // extent is out of reach here (R8); whether there is an image at all is
+        // not, and a project whose probe frame is not one is refused where it
+        // was written rather than several minutes into a suite. The decoded
+        // pixels are dropped on purpose: the capture the Host is handed is the
+        // project's own bytes, and a second copy of them in another encoding
+        // would be a second spelling of the frame.
+        auto const decoded = image::decodePng(frameBytes, framePath);
+        if (!decoded.has_value())
+        {
+            return refuse(std::format(
+                "probe_frame names {}, which is not a PNG capture this "
+                "framework can decode: {}",
+                framePath,
+                decoded.error().message()
             ));
         }
 
@@ -1486,8 +1518,13 @@ namespace uf::deployment
                 underTest.deployment
             ));
         }
-        loaded.underTest = std::move(underTest);
-        loaded.foreign   = std::move(foreign);
+
+        auto project = ConformanceProject{
+            .loaded     = std::move(loaded),
+            .probeFrame = {frameBytes.begin(), frameBytes.end()},
+            .underTest  = std::move(underTest),
+            .foreign    = std::move(foreign),
+        };
 
         // R8, the half a loader can answer, for each role in turn. The member
         // name is carried into the refusal because the two roles carry two
@@ -1500,27 +1537,18 @@ namespace uf::deployment
         };
 
         for (auto const& played : std::array{
-                 PlayedRole{"under_test", &loaded.underTest},
-                 PlayedRole{"foreign", &loaded.foreign},
+                 PlayedRole{"under_test", &project.underTest},
+                 PlayedRole{"foreign", &project.foreign},
              })
         {
             auto const* const p_deployment =
-                loaded.findDeployment(played.p_role->deployment);
+                project.loaded.findDeployment(played.p_role->deployment);
             UF_CHECK(p_deployment != nullptr);
-            auto const carried = std::ranges::find(
-                catalogs,
-                played.p_role->deployment,
-                &DeployedCatalog::deployment
+            UF_TRY(
+                requireVocabularyAgrees(played.member, *played.p_role, *p_deployment)
             );
-            UF_CHECK(carried != catalogs.end());
-            UF_TRY(requireVocabularyAgrees(
-                played.member,
-                *played.p_role,
-                *p_deployment,
-                carried->catalog
-            ));
         }
 
-        return loaded;
+        return project;
     }
 }

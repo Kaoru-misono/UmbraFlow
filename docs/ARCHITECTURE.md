@@ -63,8 +63,12 @@ the same shape as `umbra-flow`. A consuming repository compiles nothing and
 reaches no CMake of ours: a
 project is a directory of data, so a consumer runs
 `umbra-flow-conformance --project <directory>` against its own tree, and
-`deployment::loadProject` turns that directory into the five authorities the
-suite drives. `cmake/conformance-run.cmake` registers one CTest per run and is
+`deployment::loadConformanceProject` turns that directory into the five
+authorities the suite drives plus the two roles it drives them in. The product's
+own verbs take `deployment::loadProductionProject` instead, which reads
+`umbraflow-project.json` and the RuntimeArtifact and stops there (split
+2026-08-12; before it one loader demanded a conformance fixture of every
+directory the product opened). `cmake/conformance-run.cmake` registers one CTest per run and is
 included inside the `PROJECT_IS_TOP_LEVEL` guard, because nothing outside this
 repository reaches it. Nothing under `modules/conformance/source/` names a
 project; `examples/umbraflow` and `examples/arcana-expedition` are two project

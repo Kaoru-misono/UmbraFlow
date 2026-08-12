@@ -271,6 +271,11 @@ Exactly two paths are fixed, both at the project root:
 `umbraflow-project.json` and `umbraflow-conformance.json`. Every other file is
 named *by* those two, project-relative.
 
+> Amended 2026-08-12: only the first is required of a project. The second is
+> read by `deployment::loadConformanceProject` and by nothing else, so a project
+> that ships no conformance fixture holds no such file and the product still
+> starts it. See R1 in §2.7.
+
 Naming rather than fixing the tree is a decision, and the reason is that the
 framework already has the mechanism and the rule.
 `ConfinedRoot::readFile`'s contract (`confined-file.hpp:52-55`) is:
@@ -830,8 +835,26 @@ There is no "absent means the default" reading anywhere. Nine rules, each a
 refusal that names what it read. Eight and a half are the loader's; the half
 R8 keeps outside it is Q2's bill, and R8 says why:
 
-- **R1.** Both root documents are required at their fixed names. Absent → refusal
-  naming the absolute path and the two names.
+- **R1.** Each load requires the root documents it reads, at their fixed names.
+  Absent → refusal naming the absolute path and the document.
+
+  **Amended 2026-08-12: "both, always" was wrong, and one loader enforcing it
+  was the defect.** `umbraflow-project.json` is required of every project;
+  `umbraflow-conformance.json` is required only by
+  `deployment::loadConformanceProject`. Measured on the consuming project: the
+  single loader demanded of every directory both documents, an `under_test` and
+  a `foreign` role played by two *different* deployments, and per role a
+  `mutating_tool`, a distinct `other_mutating_tool` and an
+  `approval_required_plan_tool` each carried as `mutating` — so a directory the
+  framework would open had to publish at least four mutating tools across two
+  deployments, and a project at a read-only phase that honestly implements
+  nothing mutating could not be expressed. The comment above the conformance
+  schema said the separation already existed ("Production never opens it") while
+  the production path demonstrably opened it. There are now two entry points:
+  `loadProductionProject` (this document, the RuntimeArtifact, every
+  deployment's five authorities) and `loadConformanceProject` (that load, plus
+  the conformance document, the probe frame, the two roles and R8's vocabulary
+  agreements). The second is the first plus a layer, not a second reader.
 - **R2.** Every member of every framework-owned document is `required`, and every
   object sets `additionalProperties: false`. A missing member and an unknown
   member are both refusals. No member has a default.
@@ -1289,9 +1312,12 @@ or the loader has no fingerprint to give the suite. Unit tests only.
 
 **3. Land the five framework schemas and the directory loader — done.** The
 loader is `modules/deployment/source/deployment/project-directory.hpp`:
-`loadProject(directory, expected) -> Result<LoadedProject>`, which derives each
-deployment's registration from its block and the digests of the files it read
-and constructs all five authorities. Two of the five framework schemas were new
+`loadProductionProject(directory, expected) -> Result<LoadedProject>`, which
+derives each deployment's registration from its block and the digests of the
+files it read and constructs all five authorities, and
+`loadConformanceProject(directory, expected) -> Result<ConformanceProject>`,
+which is that load plus the conformance document (split 2026-08-12; it was one
+function named `loadProject` until then, see R1 in §2.7). Two of the five framework schemas were new
 and three had already landed at `8277fe3` (§2.6). Its tests are
 `tests/deployment/test-project-directory.cpp`, one case per rule R1–R8 except
 R8's second half, each proven red by removing its rule, plus the registration
