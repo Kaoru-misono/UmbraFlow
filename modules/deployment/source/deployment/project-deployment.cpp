@@ -33,9 +33,16 @@ namespace uf::deployment
         // document rather than repeating it once per function.
         //
         // Every definition here is copied from the repository's own published
-        // schemas -- schema/umbraflow-operator-v1.schema.json and
-        // schema/umbraflow-journal-v1.schema.json -- so a document this module
-        // accepts is a document those accept.
+        // schemas -- schema/umbraflow-operator-v1.schema.json,
+        // schema/umbraflow-journal-v1.schema.json and, for StateResolution's
+        // readings, schema/umbraflow-runtime-v2.schema.json -- so a document
+        // this module accepts is a document those accept.
+        //
+        // These bytes are compiled in and read no file: a Host that judges a
+        // plugin's derive input may not depend on a document a project could
+        // swap. The published schema is still the source of the shape, and
+        // readings_contract_errors in tests/test-runtime-surface.py derives
+        // this restatement from it, so editing either alone is red.
         constexpr auto k_commonSchema = std::string_view{R"json({
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://umbraflow.dev/schema/operator/common",
@@ -128,6 +135,7 @@ namespace uf::deployment
                             "reason": {
                                 "enum": [
                                     "not_measured",
+                                    "budget_exhausted",
                                     "low_confidence",
                                     "ocr_unreadable",
                                     "locator_failed",

@@ -51,6 +51,8 @@ RETIRED_PATHS = (
 REQUIRED_SAFE_PATHS = (
     f"{CLI_LIBRARY_SOURCE}/explore.cpp",
     f"{CLI_LIBRARY_SOURCE}/explore.hpp",
+    f"{CLI_LIBRARY_SOURCE}/observe.cpp",
+    f"{CLI_LIBRARY_SOURCE}/observe.hpp",
     f"{CLI_LIBRARY_SOURCE}/ocr.cpp",
     f"{CLI_LIBRARY_SOURCE}/ocr.hpp",
     f"{CLI_LIBRARY_SOURCE}/open-project.cpp",
@@ -70,6 +72,7 @@ REQUIRED_SAFE_PATHS = (
     "schema/umbraflow-trace-v2.schema.json",
     "tests/cli/test-args.cpp",
     "tests/cli/test-explore-protocol.cpp",
+    "tests/cli/test-observe.cpp",
     "tests/cli/test-ocr.cpp",
     "tests/cli/test-open-project.cpp",
     "tests/cli/test-project-skeleton.cpp",
@@ -82,7 +85,14 @@ RETIRED_COMMANDS = frozenset({"check", "replay", "run"})
 # whose whole invariant is acting on a real window. ocr is here on the same
 # terms: it measures a PNG already on disk, opens no capture and posts no
 # input, so it cannot reach a window at all.
-ALLOWED_COMMANDS = frozenset({"explore", "ocr", "open", "targets"})
+#
+# observe is the opposite case and belongs for the opposite reason: it binds a
+# real window and takes a real capture, which is exactly what this binary is
+# for. What it may not do is act, and that is a property of the composition
+# rather than of the name -- it mints no Receipt, proposes no plan, and calls
+# no verb of the action sink it builds. tests/cli/test-observe.cpp holds it to
+# that against a recorded target that counts what it was asked to post.
+ALLOWED_COMMANDS = frozenset({"explore", "observe", "ocr", "open", "targets"})
 # Names that must not be bound in a project script's global table.
 #
 # WHAT THIS RULE READS AND WHAT IT DOES NOT. A project environment's globals are
@@ -237,6 +247,49 @@ SCHEMA_AUTHORITIES = (
         "k_annotationWorkspaceSchemaHash",
         "schema/umbraflow-annotation-workspace-v2.schema.json",
     ),
+)
+
+# One shape, written twice, because the boundary between the two writings may
+# not be crossed by a file read.
+#
+# schema/umbraflow-runtime-v2.schema.json is the source: `state_readings` is
+# what the trusted Luau resolver serializes, and those bytes are what
+# k_runtimeModelSchemaHash and model.schema_hash pin. The Operator cannot read
+# that file. k_commonSchema is a compiled constant precisely so a Host
+# validating a plugin's derive input depends on no file a project could swap,
+# so modules/deployment restates the same shape in the Operator's own $defs
+# vocabulary, where a Reader id is `Identifier` rather than `identifier` and
+# there is no $def for a reading or for a reason at all.
+#
+# This rule derives that restatement from the source and requires the embedded
+# copy to be exactly it. Editing either side alone is red. Before it existed
+# both had to be edited by hand -- 2cb070b did edit both -- and nothing would
+# have noticed the half that was forgotten until every ProjectPlugin.derive
+# call refused.
+READINGS_SOURCE_SCHEMA = "schema/umbraflow-runtime-v2.schema.json"
+READINGS_SOURCE_DEFINITION = "state_readings"
+READINGS_EMBEDDED_SOURCE = (
+    "modules/deployment/source/deployment/project-deployment.cpp"
+)
+READINGS_EMBEDDED_CONSTANT = "k_commonSchema"
+READINGS_EMBEDDED_POINTER = (
+    "$defs",
+    "StateResolution",
+    "properties",
+    "readings",
+)
+# The whole of the difference the restatement is allowed to have. A definition
+# the Operator names under another spelling is renamed; one it has no $def for
+# is inlined. Every other $ref the source reaches is reported rather than
+# passed through, because a reference this rule cannot restate is a part of the
+# shape it would otherwise compare without having read it.
+READINGS_DEFINITION_RENAMES = {"identifier": "Identifier"}
+READINGS_INLINED_DEFINITIONS = frozenset({"binding_reading", "unknown_reason"})
+READINGS_ABSENT = object()
+EMBEDDED_SCHEMA_LITERAL_PATTERN = re.compile(
+    rf"{re.escape(READINGS_EMBEDDED_CONSTANT)}\s*=\s*std::string_view\s*\{{\s*"
+    r'R"json\((.*?)\)json"\s*\}',
+    re.DOTALL,
 )
 
 COMMAND_PATTERN = re.compile(r'Command\s*\{\s*"([a-z0-9-]+)"')
@@ -826,6 +879,180 @@ def schema_authority_errors(root: Path) -> list[str]:
     return errors
 
 
+def project_readings(
+    node: Any,
+    definitions: dict[str, Any],
+    unreadable: set[str],
+) -> Any:
+    """The source shape, restated in the Operator's $defs vocabulary."""
+    if isinstance(node, dict):
+        reference = node.get("$ref")
+        if isinstance(reference, str):
+            name = reference.removeprefix("#/$defs/")
+            if name == reference or name not in definitions:
+                unreadable.add(reference)
+                return node
+            if name in READINGS_INLINED_DEFINITIONS:
+                return project_readings(definitions[name], definitions, unreadable)
+            renamed = READINGS_DEFINITION_RENAMES.get(name)
+            if renamed is None:
+                unreadable.add(reference)
+                return node
+            return {"$ref": f"#/$defs/{renamed}"}
+        return {
+            key: project_readings(value, definitions, unreadable)
+            for key, value in node.items()
+            if key != "$comment"
+        }
+    if isinstance(node, list):
+        return [project_readings(value, definitions, unreadable) for value in node]
+    return node
+
+
+def without_comments(node: Any) -> Any:
+    """The same document with its prose removed.
+
+    Each side argues for the shape in its own words and to its own reader, and
+    neither is the contract. Everything else is.
+    """
+    if isinstance(node, dict):
+        return {
+            key: without_comments(value)
+            for key, value in node.items()
+            if key != "$comment"
+        }
+    if isinstance(node, list):
+        return [without_comments(value) for value in node]
+    return node
+
+
+def first_difference(
+    expected: Any,
+    actual: Any,
+    pointer: str = "",
+) -> tuple[str, Any, Any] | None:
+    """Where two documents first disagree, as a pointer and both values."""
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        for key in sorted(set(expected) | set(actual)):
+            at = f"{pointer}/{key}"
+            if key not in expected or key not in actual:
+                return (
+                    at,
+                    expected.get(key, READINGS_ABSENT),
+                    actual.get(key, READINGS_ABSENT),
+                )
+            found = first_difference(expected[key], actual[key], at)
+            if found is not None:
+                return found
+        return None
+    if isinstance(expected, list) and isinstance(actual, list):
+        for index in range(max(len(expected), len(actual))):
+            at = f"{pointer}/{index}"
+            if index >= len(expected) or index >= len(actual):
+                return (
+                    at,
+                    expected[index] if index < len(expected) else READINGS_ABSENT,
+                    actual[index] if index < len(actual) else READINGS_ABSENT,
+                )
+            found = first_difference(expected[index], actual[index], at)
+            if found is not None:
+                return found
+        return None
+    if expected != actual:
+        return (pointer, expected, actual)
+    return None
+
+
+def render_difference(value: Any) -> str:
+    if value is READINGS_ABSENT:
+        return "nothing"
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def readings_contract_errors(root: Path) -> list[str]:
+    """The embedded readings shape must be the published one, restated.
+
+    Every failure below is loud, including the ones that mean this rule found
+    nothing to read. A shape check that silently compares two documents it
+    never opened reports agreement it did not establish, which is worse than
+    the duplication it exists to guard.
+    """
+    schema_path = root / READINGS_SOURCE_SCHEMA
+    source_path = root / READINGS_EMBEDDED_SOURCE
+    if not schema_path.is_file():
+        return [
+            f"{READINGS_SOURCE_SCHEMA} is missing; the readings shape has no "
+            "source"
+        ]
+    if not source_path.is_file():
+        return [
+            f"{READINGS_EMBEDDED_SOURCE} is missing; the readings shape has no "
+            "embedded restatement"
+        ]
+
+    try:
+        document = json.loads(schema_path.read_bytes())
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        return [f"{READINGS_SOURCE_SCHEMA} is invalid: {error}"]
+    definitions = document.get("$defs")
+    if (
+        not isinstance(definitions, dict)
+        or READINGS_SOURCE_DEFINITION not in definitions
+    ):
+        return [
+            f"{READINGS_SOURCE_SCHEMA} declares no "
+            f"$defs/{READINGS_SOURCE_DEFINITION}, which is the source of the "
+            "readings shape"
+        ]
+
+    match = EMBEDDED_SCHEMA_LITERAL_PATTERN.search(read_text(source_path))
+    if match is None:
+        return [
+            f"{READINGS_EMBEDDED_SOURCE} declares no {READINGS_EMBEDDED_CONSTANT} "
+            "raw JSON literal for the readings rule to read"
+        ]
+    try:
+        embedded = json.loads(match.group(1))
+    except json.JSONDecodeError as error:
+        return [
+            f"{READINGS_EMBEDDED_SOURCE}: {READINGS_EMBEDDED_CONSTANT} is not "
+            f"JSON: {error}"
+        ]
+    for key in READINGS_EMBEDDED_POINTER:
+        if not isinstance(embedded, dict) or key not in embedded:
+            return [
+                f"{READINGS_EMBEDDED_SOURCE}: {READINGS_EMBEDDED_CONSTANT} carries "
+                "no " + "/".join(READINGS_EMBEDDED_POINTER) + " to compare"
+            ]
+        embedded = embedded[key]
+
+    unreadable: set[str] = set()
+    expected = project_readings(
+        definitions[READINGS_SOURCE_DEFINITION],
+        definitions,
+        unreadable,
+    )
+    if unreadable:
+        return [
+            f"{READINGS_SOURCE_SCHEMA}: {READINGS_SOURCE_DEFINITION} reaches "
+            + ", ".join(sorted(unreadable))
+            + ", which this rule cannot restate in the Operator's vocabulary, so "
+            "part of the shape would be compared unread"
+        ]
+
+    difference = first_difference(expected, without_comments(embedded))
+    if difference is None:
+        return []
+    pointer, from_source, from_embedded = difference
+    return [
+        f"{READINGS_EMBEDDED_SOURCE}: {READINGS_EMBEDDED_CONSTANT} restates "
+        f"{READINGS_SOURCE_SCHEMA}'s {READINGS_SOURCE_DEFINITION}, and the two "
+        f"disagree at {pointer or '/'}: the schema states "
+        f"{render_difference(from_source)} and the embedded copy carries "
+        f"{render_difference(from_embedded)}"
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -846,6 +1073,7 @@ def main() -> int:
             *trusted_parser_errors(root),
             *snapshot_identity_errors(root),
             *generic_schema_errors(root),
+            *readings_contract_errors(root),
             *receipt_validation_errors(root),
             *schema_authority_errors(root),
             *test_registration_errors(root),
