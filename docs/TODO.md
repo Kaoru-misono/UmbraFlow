@@ -1,123 +1,37 @@
 # Umbraflow upstream execution checklist
 
-> Amended 2026-08-09: this checklist is derived from the
-> [v1.7 breaking rewrite authority](plans/2026-08-09-runtime-hardening-rewrite.md)
-> and replaces the former consumer-project queue. Work in this repository does
-> not modify a game project.
+> **The record of corrections to the boxes below moved to
+> [the correction record](archive/plans/2026-08-12-todo-correction-record.md) on
+> 2026-08-12.** It was 118 lines of dated amendments — none of them opening work
+> — standing between this heading and the first thing still owed. Read it for
+> how a tick came to be true, or was corrected, or was corrected back.
 >
-> Amended 2026-08-10: boxes below are ticked against a build and a test run
-> that actually happened -- the tree had never been compiled before this date.
-> Both independent reviews returned FAIL; their closed and open findings are in
-> [the review outcome](reviews/2026-08-10-runtime-hardening-review.md), which is
-> what the two unticked review boxes now wait on.
+> **Three facts from it qualify every tick below and are therefore restated
+> here, not moved:**
 >
-> Amended 2026-08-10, later the same day: this checklist covers the rewrite, not
-> what follows it. The remaining work is enumerated per requirement in
-> [the next block](plans/2026-08-10-next-block.md), of which W1 (behavioural
-> cases for `c02 c04 s03 s06 a04 a06`), W5 (Replay Bundle and both publication
-> gates), W8 (runtime-artifact reclamation by database refcount, which closed
-> A-F8) and the exported conformance suite landed on this date. Two consequences
-> reach the boxes below: the Operator ledger DDL fingerprint changed, so an
-> operator database written before this date is refused at open and recreated
-> rather than migrated; and `ctest -N` now also lists
-> `conformance-umbraflow` and `conformance-arcana`. Every tick below
-> predates those changes and has not been re-run against them.
+> - The boxes were ticked against a build and a test run on 2026-08-10, the
+>   first this tree ever had. **Every G2/G4 tick predates seven Operator DDL
+>   fingerprint changes** and has not been re-run against them. The fingerprint
+>   is now `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`
+>   over 23 tables; an `operator-runtime.sqlite` from any earlier date is refused
+>   at open and deleted, never migrated.
+> - **The `linux-analysis` CI job does not compile**, under the project's own
+>   `-Wunsafe-buffer-usage` and under clang-tidy with `WarningsAsErrors: '*'`.
+>   That is W11 in [the next block](plans/2026-08-10-next-block.md) and it blocks
+>   merging this branch regardless of anything below. This branch has also never
+>   been pushed, so no tick below has been seen by CI at all.
+> - **Both independent reviews returned FAIL, twice**, and the third adversarial
+>   round returned FAIL with 17 findings. Every finding is now closed or accepted
+>   with a stated reason —
+>   [the review outcome](reviews/2026-08-10-runtime-hardening-review.md) and
+>   [the third round](archive/reviews/2026-08-10-third-round-review.md) — but no
+>   PASS verdict exists, which is what the two unticked review boxes in G0 wait
+>   on. W9, the round over W2-W7, has never run.
 >
-> The same day, W0's merge-readiness run found that the ticked Windows gate is
-> not the whole picture. The three sanitizer presets pass 62/62 with the
-> sanitizers proved active, but the required `linux-analysis` CI job does not
-> compile: `-Wunsafe-buffer-usage` and clang-tidy under `WarningsAsErrors: '*'`
-> produce well over a hundred fatal diagnostics. That is tracked as W11 in
-> [the next block](plans/2026-08-10-next-block.md) and blocks merging this
-> branch regardless of anything below.
->
-> Amended 2026-08-11: W3 (`4b955de`) and W2 (`848e390`) landed, closing `s01`,
-> `s02`, `s04`, `c05` and `c08`. Three consequences reach the boxes below. The
-> gate map moved again — 52 gates over 42 requirements, 33 `contract-*` and 19
-> `schema-*` — and the migration report drifted a second time for the same
-> reason as R3-F3, because both landings registered their cases before updating
-> it; it has been repaired. The Operator DDL fingerprint moved twice more, to
-> `sha256:12f64bfff305c30c716fbd5bdc9934a17140dfe4e127b5bce2ec7a10ecd309e4`
-> over 20 tables, and `848e390` deleted the `runtime_publications` table that
-> R3-F2 found unobservable, so the G2/G4 ticks predate a third schema break.
-> And the block's mutations were executed for the first time: three of W2's
-> stay green and are unresolved defects in the tests, carried in
-> [the next block](plans/2026-08-10-next-block.md) §2 and in
-> [checks that cannot fail](pitfalls/checks-that-cannot-fail.md).
->
-> Amended 2026-08-11, after the block closed. W4 (`e64c143`, `25f57f9`), W6
-> (`93698b4`) and W7 (`c23efd3`) landed, closing `c03`, `p01`, `p02`,
-> `p03`, `a01` and `a02` — every `REQUIRED_CORE` requirement is now implemented.
-> Four consequences reach the boxes below. The gate map is **59 gates over 42
-> requirements, 40 `contract-*` and 19 `schema-*`**, and a green run was 83
-> registered tests on that date — it is 86 as of 2026-08-11, the three added by
-> `test-json`, `test-deployment` and the `open` verb's surface pin, none of which
-> changes the gate map above. `a03` and `a05` are the only requirements without a
-> per-requirement behavioural ID; both are implemented and both run under the
-> aggregate `test-annotate-backend`, so that is a naming gap and not a coverage
-> gap. The Operator DDL fingerprint moved four more times and is now
-> `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`
-> over 23 tables, so every G2/G4 tick predates seven schema breaks; an operator
-> database from any earlier date is refused at open and deleted, never migrated.
-> And the migration report drifted a third, fourth and fifth time for the same
-> structural reason — no gate reads it — which is now recorded in the report
-> itself.
->
-> Corrected 2026-08-11 (`07abc3e`), on two counts this paragraph got wrong.
-> **`a07` was listed as closed by W4 and it is not**; it is reopened. Its
-> acceptance text has two clauses, `contract-agent-a07` proves the second, and
-> the first — that a human takeover and Host delivery share one target
-> serialization — is implemented by nothing: the takeover transaction and
-> `TaskHost`'s fence have no call edge between them in production or in test.
-> **39 of 42 requirements are closed by a behavioural gate, not 40.** The gate
-> map above is unchanged and correct: 40 `contract-*` gates are registered and
-> green, and one of them closes half a requirement. The reopened row and the two
-> ways it closes are in [the next block](plans/2026-08-10-next-block.md) §2. The
-> fingerprint above also read `bda31e4b18…` and was a seventh break out of date:
-> `07abc3e` renamed eight DDL columns to `controlled_target_id`, the only
-> spelling now, which changes the canonicalized DDL text without changing a table
-> name — hence the same 23 tables.
->
-> Corrected 2026-08-11, once more: the fingerprint above also read
-> `be80aca714…` before this block. Four DDL columns were renamed so that
-> `journal_events` and `project_state` — both journal records — carry
-> `$defs.JournalEvent` and `$defs.ProjectState`'s member names:
-> `canonical_event` to `opaque_project_payload`, `canonical_provenance` to
-> `provenance`, `state_schema_hash` to `project_state_schema_hash` and
-> `canonical_state` to `canonical_opaque_payload`. No table added or dropped,
-> hence the same 23 tables. See
-> [journal record binding](plans/2026-08-11-journal-record-binding.md).
->
-> Corrected 2026-08-11 (`bed456f`), reversing the correction two paragraphs
-> above: the reopening at `07abc3e` misread the acceptance text it was reopened
-> against. The frozen bundle's row puts both consequences inside `a07`'s 验收,
-> not one in its 需求 and one in its 验收: `contract-agent-a07` already proved
-> the second (an in-flight dispatch is explicitly reported), and the first —
-> `reserveDispatch`'s live-lease predicate, `requireLiveLease`, run inside the
-> same `BEGIN IMMEDIATE` serialization `takeoverLease` commits in — was already
-> implemented before the reopening. What was missing was not a call edge but a
-> test that ran the schedule: no case took over and then attempted a
-> reservation on the displaced lease. `contract-agent-a07` was extended, not
-> joined by a second case, and both halves are now falsified by mutation.
-> **42 of 42 `REQUIRED_CORE` requirements are closed by a behavioural gate**;
-> the gate map is unchanged, 40 `contract-*` and 19 `schema-*`. See
-> [the next block](plans/2026-08-10-next-block.md) §2, which is the current
-> record — the two paragraphs above it record the misreading and its
-> correction, not the requirement's state.
->
-> Amended 2026-08-10, after the third adversarial round. It returned FAIL with
-> 17 findings — [the record](reviews/2026-08-10-third-round-review.md) — so the
-> two unticked review boxes below wait on it too. Three corrections to the
-> paragraphs above. The G0 tick "map every requirement to an exact CTest ID"
-> holds again only as of today's repair: `dcc43b5` renamed 14 gate IDs to
-> `schema-*` without updating the migration report, which then named CTests
-> `ctest -N` cannot produce; the report now carries all 47 gates — 28
-> `contract-*` and 19 `schema-*` — over 42 requirements. `ctest -N` gained four
-> `CONFORMANCE` aggregates rather than two: `test-contract-operator` and
-> `test-contract-runtime` as well as `conformance-umbraflow` and
-> `conformance-arcana`. And W11 is a scope rather than a count — "well over a
-> hundred" was W0's reading before `603b0b0`, `cec8898` and `6f8d3a8` cleared
-> everything outside `modules/operator`, `conformance` and `tests/operator`.
+> The requirement-by-requirement state is not here and never was: it is
+> [the next block](plans/2026-08-10-next-block.md) §2, where all 42
+> `REQUIRED_CORE` requirements are closed. What the W-series specifications
+> still owe is [the carried debt ledger](plans/2026-08-12-carried-debt-ledger.md).
 
 ## The registration chain must be proven to have teeth
 
@@ -182,7 +96,7 @@ it.
       call site in the tree is a test fixture or a conformance provider that
       passes `hashOf` of the bytes it just assembled, and those die with step 6.
 
-## Build-system shape — owed, ordered
+## Build-system shape — closed 2026-08-12
 
 Raised by the owner on 2026-08-11: a manifest is how a target is declared, so
 everything carrying one belongs under `modules/`, examples belong in a directory
@@ -202,6 +116,13 @@ Amended 2026-08-12: the `conformance` row and the `DECLARED_SOURCE_TREES` row
 are closed together, because the second existed only for the first. Nothing
 carries a manifest outside `modules/` now, and the two shipped binaries have one
 shape: `entry/<name>/main.cpp` plus `modules/<name>`, `type = static`.
+
+Closed 2026-08-12, later the same day: the last open row, `conformance/exemplars/*`
+becoming project directories, was found already done in the tree. **Every row in
+this section is ticked**, and the section is kept because six of the seven carry
+a falsification whose result is not obvious from the change — most sharply the
+`[sources.other]` row, whose restoration half is enforced by no gate this host
+can run. Nothing here is owed.
 
 - [x] `entry/cli/` becomes `modules/cli/`, `type = static`. Done 2026-08-11.
       `entry/` keeps `main.cpp`, the generated `application-info.hpp` and the OCR
@@ -267,8 +188,18 @@ shape: `entry/<name>/main.cpp` plus `modules/<name>`, `type = static`.
       spelled the same way. This is what §4.2 of
       [the plan](plans/2026-08-11-project-as-data.md) recorded as owed. Their
       deletion is still Q5's, unchanged.
-- [ ] `conformance/exemplars/*` become project **directories** under `examples/`.
+- [x] `conformance/exemplars/*` become project **directories** under `examples/`.
       Data a project author copies, not C++ a consumer links.
+      **Closed 2026-08-12, verified against the tree rather than against a
+      commit message.** `conformance/exemplars/` does not exist, no `.cpp` or
+      `.hpp` anywhere names `provideProject` or `ProvidedProject`, and the root
+      `CMakeLists.txt` registers both runs by directory —
+      `uf_add_conformance_run(PROJECT umbraflow DIRECTORY .../examples/umbraflow)`
+      and the same for `arcana-expedition`, the second one being the whole of
+      what a consuming repository writes. That is §5 step 6, which the row below
+      said was still owed. The three C++ fixtures that were mixed in with the
+      exemplars are not part of this and moved separately, to `tests/support/`.
+      What follows is the pre-close record and is left as written.
       **The data half landed 2026-08-11.** `examples/umbraflow/` (deployments
       `alpha` and `foreign`, no artifact root) and `examples/arcana-expedition/`
       (deployments `expedition` and `rival`, one artifact root over one blob)
@@ -354,20 +285,78 @@ shape: `entry/<name>/main.cpp` plus `modules/<name>`, `type = static`.
       Those jobs are currently blocked by the repository's CI billing state, so
       the gate exists but has not run.
 
+## Delete-on-open has a deadline, and the deadline is C3
+
+Opened 2026-08-12. [The correction record](archive/plans/2026-08-12-todo-correction-record.md)
+— the amendments that stood at the top of this file until 2026-08-12 — records
+the Operator DDL fingerprint moving repeatedly and states, in passing, that "an
+operator database from any earlier date is refused at open and deleted, never
+migrated".
+That is history, and it is also a live decision with an expiry date that nothing
+was tracking. This section is where the expiry lives; it owns nothing else.
+
+- [ ] Before a mutation is delivered to a real target on a user's behalf, an
+      Operator database written by an earlier build must stop being something a
+      person deletes in order to get moving.
+
+      **What is deleted today.** `OperatorCoordinator::open`
+      (`modules/operator/source/operator/ledger.cpp`) refuses any database
+      whose table set is not the 23 v1 tables, or whose canonicalized DDL text
+      does not hash to `k_exactSchemaV1Fingerprint`, currently
+      `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`.
+      The code refuses; it neither migrates nor deletes. Deleting the file is
+      what a developer then does by hand, and what goes with it is not a cache:
+      `journal_events`, `ledger_events`, `operations`, `operation_plans`,
+      `operation_steps`, `dispatches`, `approvals`, `authority_decisions`,
+      `control_transitions` and `reconciliations` are the record of what was
+      proposed, authorized, delivered and reconciled — an Agent's journal, its
+      operations and its audit chain.
+
+      **Why that is acceptable now.** Nothing built here has acted on a real
+      target on anyone's behalf. Every Operator database in existence was
+      written by a test, a fixture, or a developer's own exploration, so the
+      chain being discarded is an account nobody is owed. Under exactly that
+      condition, refusing at the fingerprint is the better trade: a schema
+      break is loud and immediate, instead of buying a migration path for
+      records that have no subject.
+
+      **When it stops being acceptable: C3.** On the consuming project's phase
+      axis — `uf-chaos` §11, C0 extraction and projection, C1 content slice, C2
+      read-only observation and state, **C3 the first mutation**, C4 expansion
+      and Agent — C0 through C2 change nothing outside the project, so a
+      database deleted at those levels still records nothing owed. C3 is the
+      level at which a plan is approved, an action is delivered to a real
+      client, and a Journal records that it happened on someone's behalf. From
+      the first C3 run onward the audit chain is the account of what was done to
+      a real target, and a product may not delete that on open — not to accept a
+      schema change, and not for anything else. The upstream half of the same
+      boundary is G4 First Mutation; see
+      [the consumer attestation](plans/2026-08-11-consumer-attestation.md) §6.
+
+      **This row does not design the answer, and does not assume it is
+      migration.** Exporting the chain before refusing, a versioned read path, a
+      refusal that leaves the file untouched and names where the records went —
+      all are open. What this row fixes is the deadline: whoever takes a project
+      into C3 owes a decision here first, and reaching C3 with delete-on-open
+      still in force is the outcome this row exists to prevent.
+
 ## G0 — contract and inherited baseline
 
 - [x] Pin the four-document consumer bundle at root
       `b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5`
       (v1.12). Was `c4760bb5…bfb6a966` (v1.9), stale from v1.10 on 2026-08-12;
       v1.11 was never written down anywhere.
-- [ ] Re-pin the gate at v1.12. `scripts/check_spec_bundle.py`'s `FROZEN_BUNDLE`
-      and the five digest lines it cross-checks in
+- [x] Re-pin the gate at v1.12. Done 2026-08-12. `scripts/check_spec_bundle.py`'s
+      `FROZEN_BUNDLE` and the five digest lines it cross-checks in
       [the hardening rewrite](plans/2026-08-09-runtime-hardening-rewrite.md):10-18
-      still state v1.10 root `adb7f29f…51049f`. The two copies agree with each
-      other, so `check-spec-pins` stays green while asserting a bundle two
-      versions behind; reading the real directory reports `NOT VERIFIED`, which
-      is the gate working. Both copies move in one change, which is a source
-      change and was out of scope for the 2026-08-12 documentation pass.
+      both read v1.12 root `b3306dde…de51cda5`, and
+      `python scripts/check_spec_bundle.py --pins-only` reports 5 pins matched
+      with 6/6 self-test controls. Before this the two copies stated v1.10 root
+      `adb7f29f…51049f` and agreed with each other, so `check-spec-pins` stayed
+      green while asserting a bundle two versions behind. **Agreement between the
+      two copies is still not freshness** — the gate detects an edited pin, not a
+      moved bundle — which is recorded at
+      [checks that cannot fail](pitfalls/checks-that-cannot-fail.md).
 - [x] Record base commit, rejected stash and the 101-entry dirty baseline
       manifest.
 - [x] Assign exactly one disposition to all 101 inherited dirty paths
@@ -381,9 +370,24 @@ shape: `entry/<name>/main.cpp` plus `modules/<name>`, `type = static`.
       upstream execution profile. Both ran on 2026-08-10, returned FAIL, and
       every finding is now closed or accepted with a reason; see
       [the review outcome](reviews/2026-08-10-runtime-hardening-review.md).
-      The box turns on the re-review verdicts.
-- [ ] Make active documentation point to this authority without copying old
-      Context/Page/Target semantics.
+      The box turns on the re-review verdicts. **No PASS verdict exists anywhere
+      in the tree**, and the round that would produce one over W2-W7 is W9 in
+      [the next block](plans/2026-08-10-next-block.md), which has never run. This
+      is why that review is the one document in `docs/reviews/` that stayed live
+      through the 2026-08-12 archive pass: a live box turns on its verdicts.
+- [x] Make active documentation point to this authority without copying old
+      Context/Page/Target semantics. Done 2026-08-12, and what was checked is
+      worth stating because "active documentation" is now a smaller set than it
+      was. The five documents a reader meets first —
+      [`docs/INDEX.md`](INDEX.md), [`docs/ARCHITECTURE.md`](ARCHITECTURE.md),
+      this file, [`docs/plans/README.md`](plans/README.md) and `CONTEXT.md` —
+      each reach
+      [the rewrite authority](plans/2026-08-09-runtime-hardening-rewrite.md) in
+      their first screen and none teaches Context, Page, Element, Hit or UFR.
+      The retained predecessor plans still use that vocabulary and are kept for
+      it; every one of them carries a dated supersession note, and
+      `docs/plans/README.md` says for each what survives and what does not.
+      Nine documents that taught it as current left the live set the same day.
 
 ## G1 — remove unsafe entrances and restore primitives
 

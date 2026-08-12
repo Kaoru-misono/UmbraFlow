@@ -226,7 +226,7 @@ different feature.
 > floor rejects masks that are *probably* useless, where a zero mask is one that
 > *provably* cannot be matched at all.
 >
-> [The capability plan](../plans/2026-07-31-annotation-model-capabilities.md)
+> [The capability plan](../archive/plans/2026-07-31-annotation-model-capabilities.md)
 > §2.3 P0 originally wanted this floor as a construction-time refusal in
 > `Appearance::create`. That was **demoted to a warning** (see the plan's
 > "两条实现期裁决" B), for two reasons this section is the evidence for: a

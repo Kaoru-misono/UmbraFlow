@@ -12,10 +12,14 @@ Verified against the tree on 2026-08-11.
 
 Design authority for anything this file does not settle:
 [runtime hardening rewrite](docs/plans/2026-08-09-runtime-hardening-rewrite.md)
-for design, [the next block](docs/plans/2026-08-10-next-block.md) for
-requirement state, and
-[the W2-W7 reconciliation](docs/plans/2026-08-10-w2-w7-reconciliation.md) where
-same-day specifications conflict.
+for design and [the next block](docs/plans/2026-08-10-next-block.md) for
+requirement state. *(Amended 2026-08-12: this also named the W2-W7
+reconciliation as the tie-breaker "where same-day specifications conflict".
+There are no live same-day specifications left to break ties between — all four
+landed and all five documents are in
+[`docs/archive/plans/`](docs/archive/plans/) — so the reconciliation is a record
+of rulings, not a third authority. What it and they still owe is
+[the carried debt ledger](docs/plans/2026-08-12-carried-debt-ledger.md).)*
 
 ## Reading a spelling
 
@@ -48,6 +52,23 @@ rather than relocated. The rename moved the Operator DDL fingerprint to
 `sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1` over
 the same 23 tables, so an `operator-runtime.sqlite` from before it is refused at
 open and deleted, never migrated.
+
+> **Corrected 2026-08-12: the fingerprint above is one break out of date, and it
+> is not the only column rename this file was missing.** The current Operator
+> DDL fingerprint is
+> `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`,
+> over the same 23 tables, and it occurs exactly once in the tree at
+> `modules/operator/source/operator/ledger.cpp:362`. It moved because
+> `journal_events` and `project_state` — both journal records — were made to
+> carry their schema definitions' member names. **These four are now the one
+> spelling for their columns**, and each old spelling is an `_Avoid_`:
+> `opaque_project_payload` (was `canonical_event`, which named bytes that are
+> not an event), `provenance` (was `canonical_provenance`),
+> `project_state_schema_hash` (was `state_schema_hash`) and
+> `canonical_opaque_payload` (was `canonical_state`). Deciding artifact:
+> [journal record binding](docs/archive/plans/2026-08-11-journal-record-binding.md),
+> whose §9 asked for exactly this edit and had gone unexecuted; it is archived
+> as of this correction.
 
 **RuntimeArtifact** — a verified manifest, one `runtime-model.toml`, and the
 manifest-listed assets under `assets/`. Pinned as
@@ -530,7 +551,7 @@ word once meant and why it moved — never as a description of the tree.
 > `umbraflow-authoring/v2` and `umbraflow-annotations/v1` until the capability
 > model landed. Both were bumped in one atomic change, and neither old id had a
 > read path. Deciding artifact:
-> `docs/plans/2026-07-31-annotation-model-capabilities.md` §三 — itself superseded
+> `docs/archive/plans/2026-07-31-annotation-model-capabilities.md` §三 — itself superseded
 > on 2026-08-11 in `8be0b35`.
 
 > **2026-07-31 (vocabulary rename).** All three ids moved again, because a key

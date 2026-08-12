@@ -188,7 +188,7 @@ d445c811b9469a58ff116df4763d4e7f1acd80b6a3392639d7eb257321916753
 > 仍是 23 张表——`journal_events` 和 `project_state` 的四个列改用了
 > `$defs.JournalEvent`/`$defs.ProjectState` 已经在用的成员名，此前建好的
 > 数据库打开时会被拒绝并删除，不做迁移。详见
-> [journal record binding](2026-08-11-journal-record-binding.md)。
+> [journal record binding](../archive/plans/2026-08-11-journal-record-binding.md)。
 >
 > 2026-08-11 三度更正（`bed456f`）：`a07` 那段的读法本身是错的。冻结包那一行把两个
 > 后果都放在验收里——「takeover 返回后旧 fence 不可开始新 dispatch；在途 dispatch
@@ -388,7 +388,7 @@ modules/operator/source/operator/runtime-installation.cpp
 11. 派两个独立 reviewer：
     - state/persistence/recovery/production CAS；
     - plugin/capability/annotation/Host boundary。
-12. 两者 PASS 后再更新上游 `CONTEXT.md`、`docs/ARCHITECTURE.md`、`docs/TODO.md`、`docs/WORKLIST.md` 和 migration report。不得修改项目侧文档。
+12. 两者 PASS 后再更新上游 `CONTEXT.md`、`docs/ARCHITECTURE.md`、`docs/TODO.md`、`docs/archive/plans/2026-08-05-worklist.md` 和 migration report。不得修改项目侧文档。
 
 ## 8. 验收命令
 

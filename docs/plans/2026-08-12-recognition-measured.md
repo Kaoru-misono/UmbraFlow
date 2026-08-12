@@ -55,9 +55,13 @@ runtime model schema is not supported by this trusted parser
 ```
 
 The deployed artifact manifest declares
-`runtime_model_schema_hash = 44be8ecf…`. The framework's **working tree** now
-says `a2d14589…` — an in-flight change to `schema/umbraflow-runtime-v2.schema.json`
-and `runtime-model-file.hpp`. At `HEAD` the constant is still `44be8ecf…`.
+`runtime_model_schema_hash = 44be8ecf…`. The framework's **working tree** said
+`a2d14589…` when this ran — an in-flight change to
+`schema/umbraflow-runtime-v2.schema.json` and `runtime-model-file.hpp`. At the
+`HEAD` this was measured against the constant was still `44be8ecf…`. The pin has
+moved twice more on this branch since, most recently to `1f3cf1ec…` when
+`$defs/unknown_reason` gained `budget_exhausted`, so treat the value as a moving
+target and read it from the file rather than from here.
 
 So: **the deployed uf-chaos RuntimeArtifact does not load against the framework's
 current working tree, and will need republishing when that change lands.** The

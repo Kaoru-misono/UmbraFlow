@@ -4,7 +4,7 @@
 
 本文修改 [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md)
 的第一层边界,并作废
-[`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md)
+[`2026-07-31-annotation-model-capabilities.md`](../archive/plans/2026-07-31-annotation-model-capabilities.md)
 中关于模型归属的部分。能力模型本身的设计结论仍然有效,只是它的实现位置从 C++ 变成
 第二层 Luau。
 
@@ -249,7 +249,7 @@ element 的粒度,未定。
 appearance 列表,命中身份上到脚本面(`hit.appearance == uf.appearances.speed_3x`);
 同日一度提过的替代方案——把 `speed_1x` / `speed_2x` / `speed_3x` 拆成各自独立的元素
 ——**否决**。沿用的是
-[标注模型文档](2026-07-31-annotation-model-capabilities.md) §四之二.4(a),那一节的
+[标注模型文档](../archive/plans/2026-07-31-annotation-model-capabilities.md) §四之二.4(a),那一节的
 定义边界与「页面决定的形态在引用侧钉死、每周期只搜一次」一并有效。术语统一写
 appearance(曾称 variant)。
 

@@ -55,7 +55,7 @@ fixtures cannot satisfy them.
 > 2026-08-11; see the amendment below for the current totals.)
 > `dcc43b5` did not update this report and `5bb281d` edited it
 > without correcting the rows; the drift was found by
-> [the third adversarial round](../reviews/2026-08-10-third-round-review.md),
+> [the third adversarial round](../archive/reviews/2026-08-10-third-round-review.md),
 > R3-F3. The registrations are the authority:
 > `UF_REQUIRED_DOCTEST_CONTRACTS` in `tests/CMakeLists.txt` and the `CASES`
 > lists in `tests/CMakeLists.txt` and
@@ -179,7 +179,7 @@ fixtures cannot satisfy them.
 | S-03 | Snapshot coordinator | OP:`SnapshotToken` | CTEST `contract-state-s03` |
 | S-04 | Operator planner | OP:`DecisionBasis` | CTEST `contract-state-s04` and CTEST `schema-state-s04` |
 | S-05 | Session coordinator | OP:`SessionManifest` + PR | CTEST `contract-state-s05` |
-| S-06 | Project state store | JR:`ProjectInstance/ProjectState` | CTEST `contract-state-s06` — since 2026-08-11 it also binds the `project_state` column set to `JR:ProjectState`'s `required` list, with `project_instances` versus `JR:ProjectInstance` as the positive control that the comparison can fail; see [the journal record binding](2026-08-11-journal-record-binding.md) |
+| S-06 | Project state store | JR:`ProjectInstance/ProjectState` | CTEST `contract-state-s06` — since 2026-08-11 it also binds the `project_state` column set to `JR:ProjectState`'s `required` list, with `project_instances` versus `JR:ProjectInstance` as the positive control that the comparison can fail; see [the journal record binding](../archive/plans/2026-08-11-journal-record-binding.md) |
 | C-01 | Host control ledger | OP:`ControlLease/FencingToken` | CTEST `contract-control-c01` |
 | C-02 | Host control ledger | OP:`SessionEpoch/ControlLease` | CTEST `contract-control-c02` |
 | C-03 | Host delivery | OP:`DeliveryAuthority/ReceiptRef` | CTEST `contract-control-c03` and CTEST `schema-control-c03` |
@@ -197,7 +197,7 @@ fixtures cannot satisfy them.
 | A-01 | Agent event facade | OP:`SubscriptionCursor/ResyncRequired` | CTEST `contract-agent-a01` and CTEST `schema-agent-a01` |
 | A-02 | Agent runtime | OP:`AgentBudget/ProgressMarker` | CTEST `contract-agent-a02` and CTEST `schema-agent-a02` |
 | A-03 | Audit owners | TR + OP + JR + AW:`ReplayBundle` | CTEST `schema-agent-a03`; behaviour under the aggregate CTEST `test-annotate-backend`, with no per-requirement ID |
-| A-04 | Reconciliation coordinator | JR:`JournalEvent` | CTEST `contract-agent-a04` — since 2026-08-11 it also binds the `journal_events` column set to `JR:JournalEvent`'s `required` list and drives six provenance documents that each violate one rule of the fixed `JR:JournalProvenance`, which the framework now enforces itself; see [the journal record binding](2026-08-11-journal-record-binding.md) |
+| A-04 | Reconciliation coordinator | JR:`JournalEvent` | CTEST `contract-agent-a04` — since 2026-08-11 it also binds the `journal_events` column set to `JR:JournalEvent`'s `required` list and drives six provenance documents that each violate one rule of the fixed `JR:JournalProvenance`, which the framework now enforces itself; see [the journal record binding](../archive/plans/2026-08-11-journal-record-binding.md) |
 | A-05 | Publication gates | AW:`ReplayGate` + PR:`plugin_hash` | CTEST `schema-agent-a05`; behaviour under the aggregate CTEST `test-annotate-backend`, with no per-requirement ID |
 | A-06 | Deployment boundary | AW:`AuthoringCapabilityRoot` + RA | CTEST `contract-agent-a06` |
 | A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `contract-agent-a07` and CTEST `schema-agent-a07` — **closed**: `contract-agent-a07` proves both acceptance clauses — the displaced lease is refused a reservation the live lease is then granted, and a second Host still carrying the displaced fence cannot deliver it — after being extended 2026-08-11 (`bed456f`) to run the schedule the first clause needed. Reopened earlier the same day (`07abc3e`) on a misreading that substituted the 需求 sentence for the first 验收 clause. See [the next block](2026-08-10-next-block.md) §2 |

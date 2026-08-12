@@ -1,5 +1,27 @@
 # The journal records, their columns, and who enforces their provenance
 
+> **Archived 2026-08-12. Nothing here is still owed, and the one thing that was
+> owed was executed first.** §9, "What this owes elsewhere", asked that
+> `CONTEXT.md` be moved off the superseded Operator DDL fingerprint
+> `be80aca714…` and be given `opaque_project_payload`, `provenance`,
+> `project_state_schema_hash` and `canonical_opaque_payload` as the one spelling
+> for their columns. That was still unexecuted on 2026-08-12 — `CONTEXT.md` held
+> a second, stale spelling of a value this repository requires to exist once —
+> and it was applied that day, dated, in `CONTEXT.md`'s `controlled_target_id`
+> entry. Every other section landed with `ab97e2d`'s successors and is
+> re-verified by `contract-state-s06` and `contract-agent-a04` on every run.
+>
+> The current fingerprint,
+> `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a` over
+> 23 tables, occurs once in the tree, in
+> `modules/operator/source/operator/ledger.cpp`. Databases written before it are
+> refused at open and deleted, never migrated.
+>
+> *(Relative links in the body are as they were written while this document
+> was live and were not repointed, because nothing in the body was edited. A
+> bare-date link resolves to a sibling in this directory; a `../` link
+> resolves one level above it. The links in this note are correct.)*
+
 Date: 2026-08-11
 Branch: `design/annotation-system-v2`
 Baseline audited and changed: `ab97e2d`

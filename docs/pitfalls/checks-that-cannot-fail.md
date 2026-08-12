@@ -55,7 +55,8 @@ have been counted as passes on the weaker rule:
 that goes red on a bind-parameter range error, not on the scoping rule — and
 every fixture holds exactly one controlled target, so the property is never
 observed at all
-([the next block](../plans/2026-08-10-next-block.md) §2, lines 327-331).
+([the next block](../plans/2026-08-10-next-block.md) §2, the `a07` scoping
+bullet).
 
 A harness that rewrote sources with Python's `write_text` translated a mirrored
 document to CRLF, and a case searching that document for `"\n"`-delimited text
@@ -108,7 +109,8 @@ bytes have moved, and it prints both. It was proven red rather than reasoned to
 be — `tests/deployment/test-project-directory.cpp`, "a project whose bytes moved
 under a stored session is refused", where removing the comparison in
 `commitmentFor` leaves the case green (`6449b46`,
-[TODO](../TODO.md) lines 113-127). The flipped byte is in the plugin, whose bytes
+[TODO](../TODO.md), "The registration chain must be proven to have teeth").
+The flipped byte is in the plugin, whose bytes
 reach the hash through `plugin_hash` and nothing else, and the case reloads the
 flipped directory a third time with no commitment and requires that load to
 **succeed** — which is the negative control that stops a second mechanism from
@@ -215,6 +217,31 @@ in a mirror and observing the same registration succeed — including the two
 ceilings that are spelled twice, in `script` and in `operator`, where removing
 one spelling leaves the other refusing and proves nothing.
 
+### The second mechanism can be the operating system, so a positive control has a platform
+
+Recorded 2026-08-12 from the 2026-08-10 runtime-hardening review, which is the
+only place it had been written down. **A positive control is a claim about one
+platform until it has been run on the others**, because the earlier refusal that
+disarms it may belong to the kernel rather than to the code.
+
+The capability-swap case swaps a capability file under its open descriptor and
+requires the refusal to hold. On POSIX the identity re-check in
+`_descriptor_document` is what refuses. On Windows the open handle refuses the
+replacement outright, so that comparison never runs and **the case passes with
+it deleted** — the mutation is green on the developer's own host and red only in
+a lane nobody runs locally. The case is written to name both mechanisms rather
+than to pass on whichever holds, which is the fix; the residue is that its
+falsification is POSIX-only and says so.
+
+The same shape has a second instance one review later: `requireChildName`'s `.`
+and `..` clauses cannot be falsified on Windows, because the platform refuses
+those components before the code sees them.
+
+**What to do.** State the platform beside every positive control, in the test
+and not only in a review. A control with no platform named is read as universal,
+and on a Windows-only local gate — which is what `scripts/ci-local.ps1` is — that
+reading is wrong for every check whose first refusal is a file-system rule.
+
 ## An assertion another refusal already satisfies
 
 A weaker relative of the last, and it hides better, because the case does contain
@@ -317,7 +344,8 @@ unreachable because no plugin in the estate answers `next_step` with a
 the identical mutation in the UI-action branch is red. `StepKind::Wait` being
 unexercised also leaves the ledger's `kind() == StepKind::UiAction` guard
 untested on that side
-([the next block](../plans/2026-08-10-next-block.md) §2, lines 298-307).
+([the next block](../plans/2026-08-10-next-block.md) §2, the paragraph on
+W2's three stored-and-unenforced ceilings).
 
 The build-system instance is sharper because the mirror mutation is red.
 Deleting `[sources.other]` from `modules/cli/manifest.txt` puts both unsupported
@@ -328,7 +356,7 @@ wins is archive search order rather than anything the manifest states.
 Reassigning `targets-windows.cpp` to `[sources.linux]` **is** red —
 `unresolved external symbol uf::cli::targetsProduct`. So the removal half of the
 grammar is enforced and the restoration half is not, on any platform that has a
-section of its own. Ruled 2026-08-11 ([TODO](../TODO.md) lines 262-281): the
+section of its own. Ruled 2026-08-11 ([TODO](../TODO.md), "Build-system shape"): the
 property is "this translation unit compiles only on that platform", the honest
 verification is compiling it there, so the Linux and macOS jobs are the gate —
 and those jobs are blocked by the repository's CI billing state, so the gate
@@ -348,7 +376,7 @@ notice reads the basis from `operation_plans` instead.
 
 `authority_decisions.decision_basis_hash` is that instance
 (`modules/operator/source/operator/ledger.cpp:821-830`; W2's T13, recorded in
-[the next block](../plans/2026-08-10-next-block.md) §2, lines 289-296).
+[the next block](../plans/2026-08-10-next-block.md) §2, the T13 bullet).
 `dispatches.delivery_reason` is the pair that makes the point:
 `ledger.cpp:846-865` guards it harder than most columns, with a three-way `CHECK`
 tying its nullness to `delivery_outcome`, so no row can carry a reason without an
@@ -581,8 +609,14 @@ were left at v1.10, so they still agree with each other and `check-spec-pins`
 stays green while asserting a bundle two versions old — the gate cannot detect
 its own staleness, only a disagreement between its halves, and a full run against
 the real directory is what reports it. Duplication for independence buys
-detection of an edited pin at the price of a pin nobody edits. Re-pinning is
-[TODO](../TODO.md) G0.
+detection of an edited pin at the price of a pin nobody edits.
+
+**Re-pinned to v1.12 later on 2026-08-12**, and the instance above is kept
+because the mechanism did not change: both copies now read
+`b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5` and agree,
+which is exactly the state that hid two versions of staleness before. The
+detection is still "grep the pin outside `docs/`, then run the gate against the
+real directory"; nothing in the tree turns red when the bundle moves again.
 
 ## Two spellings, each tested against itself
 
@@ -717,7 +751,7 @@ the delegate with an input it must reject. A callback typed
 > rule of that schema and one that violates none, because a framework check that
 > merely compared bytes against the conforming document would have refused all
 > six for the wrong reason and read as a fix. See
-> [the journal record binding](../plans/2026-08-11-journal-record-binding.md).
+> [the journal record binding](../archive/plans/2026-08-11-journal-record-binding.md).
 
 ## A schema file nothing compares against is the same shape
 

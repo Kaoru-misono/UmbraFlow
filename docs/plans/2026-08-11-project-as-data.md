@@ -15,7 +15,7 @@ this one was written and no git command that writes was run in either.
 Framework read at `6bfe1d6` and reconciled against `319bdb1`; consumer read at
 `95d9668` with a dirty tree.
 
-Related: [consumer onboarding](2026-08-11-consumer-onboarding.md) measured what
+Related: [consumer onboarding](../archive/plans/2026-08-11-consumer-onboarding.md) measured what
 a consuming repository writes today and proposed moving 626 of 880 lines
 upstream. This supersedes its shape rather than its measurements: it answers
 "which C++ does a consumer stop writing" with "all of it", which closes its Q1,
@@ -91,9 +91,9 @@ zero times in `modules/cli`**, which since `319bdb1` are the whole of the
 command surface. No shipped binary has ever registered a plugin. The same holds one level up:
 every call to `ProjectRegistration::verifyExact` or to any of the four owners'
 `create` is in a test fixture or a conformance provider, which is what
-`docs/plans/2026-08-10-w2-w7-reconciliation.md`'s predecessor already recorded as
+`docs/archive/plans/2026-08-10-w2-w7-reconciliation.md`'s predecessor already recorded as
 "no production deployment exists yet"
-(`docs/plans/2026-08-10-w2-effective-plan.md:1185-1189`).
+(`docs/archive/plans/2026-08-10-w2-effective-plan.md:1185-1189`).
 
 So the deliverable of this whole correction is one thing: **the code that turns a
 project directory into `registerPlugin`'s four arguments, and into the five
@@ -1071,7 +1071,7 @@ at `modules/core/source/core/text/json-text.hpp:15-19`:
 
 `core` held two of RFC 8785's four rules — the string escape (`json-text.hpp:20`)
 and member-name ordering (`:40-42`) — and
-`docs/reviews/2026-08-10-third-round-review.md:493-499` recorded that number
+`docs/archive/reviews/2026-08-10-third-round-review.md:493-499` recorded that number
 formatting and container framing had no C++ implementation because they need a
 value tree. `canonicalBytes` and `requireExactCanonical`
 (`modules/json/source/json/value.hpp:114`, `:121`) are that missing half, and
@@ -1214,7 +1214,7 @@ repository ships.
 
   §0.1's call-site census is the evidence that it does not exist: no shipped
   binary registers a plugin or mints an authority, and
-  `docs/plans/2026-08-10-w2-effective-plan.md:1185-1189` says so in as many
+  `docs/archive/plans/2026-08-10-w2-effective-plan.md:1185-1189` says so in as many
   words. This module is that deployment, and the conformance binary is one of its
   callers rather than its purpose — which is the reason it is a module rather
   than something under `conformance/`.
@@ -1883,7 +1883,7 @@ installer or native capability seam is part of this API"
 through the trusted Luau runtime's verbs. A project that could link C++ would be
 able to reach a target directly, which defeats the background-only product
 invariant that no compiled contract case can detect — the shape
-`docs/plans/2026-08-11-consumer-onboarding.md:886-902` already identified as
+`docs/archive/plans/2026-08-11-consumer-onboarding.md:886-902` already identified as
 belonging to attestation rather than to a shipped check. *Recommend that a gap be
 recorded as a framework work item with the project's measurement attached, and
 that the project wait.* **Blocks:** nothing today, and it is written down
@@ -1897,7 +1897,7 @@ This document registers itself nowhere; `docs/INDEX.md` and
 the consumer-attestation entry:
 
 ```markdown
-- [A project is a directory of data](plans/2026-08-11-project-as-data.md) — the
+- [A project is a directory of data](2026-08-11-project-as-data.md) — the
   correction that follows from "uf-chaos depends only on umbraflow's compiled
   binary": the exported C++ provider surface is replaced by a project directory
   format and a host-side loader, and conformance becomes a second shipped

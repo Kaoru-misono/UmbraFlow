@@ -1,5 +1,35 @@
 # 标注模型重构 — 能力集合、持有关系、多形态
 
+> **Archived 2026-08-12. Nothing here is still owed, and that was checked rather
+> than assumed.** §三 and §四 were already marked 已废止 in the body. §2.1's
+> correction, §2.3's falsification matrix, §五.2 and §五.5 are moot by
+> construction: `Capabilities`, `Holding`, `exercised`, `Appearance`,
+> `ElementId`, `ModelCheckCell` and `searchRoi`, and the `page add` / `page
+> reference` verbs they all turn on, are absent from the tree, and
+> `umbra-authoring check` no longer exists.
+>
+> **Its two surviving conclusions are stated live in the normative vocabulary,
+> not only in an index entry.** A pixel region serving several purposes is
+> annotated once: `CONTEXT.md`'s **UiTarget** entry — "semantic identity alone:
+> no pixels, no placement, no page" — and
+> [`schema/umbraflow-runtime-v2.schema.json`](../../../schema/umbraflow-runtime-v2.schema.json).
+> Several appearances of one element are several Bindings on one `ui_target`
+> told apart by `variant`: `CONTEXT.md`'s **Binding** entry and its `Appearance`
+> → `variant` rename note, and
+> [the runtime model contract](../../plans/2026-08-09-runtime-model-contract.md).
+> [`plans/README.md`](../../plans/README.md) is the only place that names them
+> *as this document's* surviving conclusions.
+>
+> **One stale line is left standing rather than rewritten**: the 状态 line inside
+> the body still reads 设计结论有效并已落地, which the supersession banner
+> immediately below contradicts. It is a record of what was believed on
+> 2026-07-31.
+>
+> *(Relative links in the body are as they were written while this document
+> was live and were not repointed, because nothing in the body was edited. A
+> bare-date link resolves to a sibling in this directory; a `../` link
+> resolves one level above it. The links in this note are correct.)*
+
 > **Superseded 2026-08-11.** Read the status note below as a record of what was
 > decided on 2026-07-31, not as a description of the tree. It is wrong in one
 > load-bearing way: it says the design landed under `umbraflow-authoring/v4`,

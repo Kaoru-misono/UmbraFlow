@@ -1,5 +1,35 @@
 # W2-W7 reconciliation: read this before touching code
 
+> **Archived 2026-08-12. It governed four specifications, all four landed, and
+> all five documents left the live set together.** Its rulings R1 through R7 are
+> discharged or recorded in
+> [the next block](../../plans/2026-08-10-next-block.md); its §7.2
+> `sessions.installed_generation` recommendation is false and is marked so at the
+> recommendation itself, which [`plans/README.md`](../../plans/README.md) also
+> records.
+>
+> **Seven items were still owed and are carried as `C-R-1` through `C-R-7` in
+> [the carried debt ledger](../../plans/2026-08-12-carried-debt-ledger.md).**
+> Two of them matter most, because the only live document that mentioned them
+> discharged nothing — it cited *this* document as the place they still live:
+> §8's `k_workflowCeiling` values, invented here and contradicted by the bundle,
+> which does name a per-tool `workflow_limits`; and §8's `required_approvals`
+> collapsed to 0/1 against a schema that types it as an array of identifiers.
+> The others are §7.1(c)'s bundle-root question that there is no record of anyone
+> raising, §6.3's measured negative that moving the seam between the two DDL
+> string literals does not move the fingerprint, §3.10's conditional ruling on
+> `availability_revision`, §4 item 4's budget-decrement placement, and §3.8's
+> rule that the DDL fingerprint must never enter `SCHEMA_AUTHORITIES`.
+>
+> **Nothing is owed that is not named above.** The body is unchanged, including
+> the two places it states the `identity_hash` invariance W3's own landing note
+> proved cannot hold; that is `C-W3-1`.
+>
+> *(Relative links in the body are as they were written while this document
+> was live and were not repointed, because nothing in the body was edited. A
+> bare-date link resolves to a sibling in this directory; a `../` link
+> resolves one level above it. The links in this note are correct.)*
+
 Status: ruling record. No code changed on its account.
 Date: 2026-08-10
 Scope: `umbraflow-cpp` only. No consumer-project writes.

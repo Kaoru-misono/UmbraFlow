@@ -1,5 +1,35 @@
 # Consumer onboarding: measuring what a new project actually has to write
 
+> **Archived 2026-08-12. Four items were still owed and are carried as `C-CO-1`
+> through `C-CO-4` in
+> [the carried debt ledger](../../plans/2026-08-12-carried-debt-ledger.md).**
+> One of them is a ruling nobody executed and nobody made moot: §8.2's Q9, that
+> the background-only rule is a product invariant no compiled contract case can
+> detect and must become part of what a consumer attests.
+> [Consumer attestation](../../plans/2026-08-11-consumer-attestation.md) still
+> specifies nine requirements and names none of it. The others are §9's J2
+> artifact-closure trap, whose target file was deleted with the provider surface;
+> §12's two index entries, which were never made, so this document sat in
+> `docs/plans/` listed by nothing; and a correction to this file's own status
+> line.
+>
+> **That correction, stated here rather than by editing the body:** the status
+> line says Q3 "stands as project-as-data's §7 Q1", and §6.4 says a complete RFC
+> 8785 canonicaliser is still open with both fixtures faking it by allowlist.
+> Both were ruled and landed on 2026-08-11 — `evaluate-core-capability` refused
+> `core`, the canonicaliser shipped as `modules/json` in `a0ae304`, and
+> `974396e` deleted both faking exemplars.
+>
+> **Nothing is owed that is not named above.** Twelve of its rulings were
+> executed and five more were made moot by the project-as-data correction; §2
+> and §3's measurement of what the deleted surface cost a consumer is why this
+> file is kept rather than deleted.
+>
+> *(Relative links in the body are as they were written while this document
+> was live and were not repointed, because nothing in the body was edited. A
+> bare-date link resolves to a sibling in this directory; a `../` link
+> resolves one level above it. The links in this note are correct.)*
+
 Status: superseded in shape, kept for its measurements. **Nothing below tells a
 consumer what to write today, because a consumer writes no C++ at all.**
 [A project is a directory of data](2026-08-11-project-as-data.md) answers "which

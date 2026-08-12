@@ -11,7 +11,7 @@
 > deadlocks over are gone too: `AnnotationType` is a capability set, and
 > `allowed_page_ids` no longer exists — a page's `PageReference` exercising
 > `interact` IS the authorization. Deciding artifact:
-> [the capability plan](../plans/2026-07-31-annotation-model-capabilities.md)
+> [the capability plan](../archive/plans/2026-07-31-annotation-model-capabilities.md)
 > §四之二.1 (GUI retirement) and §2.2 (the model). Nothing is deleted here; the
 > entries stay because the general rules they distilled outlive the panels.
 >

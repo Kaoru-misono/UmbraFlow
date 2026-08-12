@@ -1,5 +1,35 @@
 # Third adversarial round — `37296d7..cec8898` (2026-08-10)
 
+> **Archived 2026-08-12. Its verdict was FAIL over 17 findings; twelve are closed
+> in the tree, four still owe something, and one is a permanent acceptance.**
+> What blocked archiving was not the open four but the closed nine: **R3-F1, F4,
+> F7, F8, F10, F12, F13, F15 and F17 were fixed in the tree and recorded in no
+> document at all**, R3-F1 among them, which this verdict calls blocking. Filing
+> a FAIL whose top finding is silently fixed is how a review becomes misleading
+> evidence.
+>
+> Those nine closures are now recorded, each with the site that closes it, in §F
+> of [the carried debt ledger](../../plans/2026-08-12-carried-debt-ledger.md).
+> The four that still owe something are carried in the same section as `C-R3-1`
+> through `C-R3-4`: **F-5**, accepted permanently, whose only record is a CMake
+> comment saying the `contract-`/`schema-` classification is caught by review and
+> by nothing else; **F-6**, whose live instruction is that `dcc43b5` does not
+> compile and must be folded or reordered before this history is published;
+> **F-9**, whose invalid-UTF-8 pass-through on the explore emit path is open and
+> was carried nowhere; and **F-14**, whose two suppression limits stand.
+>
+> R3-F2, R3-F3 and R3-F16 were already discharged by the disposition note below,
+> which is left as written. **Nothing is owed that is not named above.**
+>
+> This file was listed in neither `docs/INDEX.md` nor `docs/plans/README.md`
+> while it was live, although six documents cite it as their evidence. It is
+> listed in [`plans/README.md`](../../plans/README.md) now.
+>
+> *(Relative links in the body are as they were written while this document
+> was live and were not repointed, because nothing in the body was edited. A
+> bare-date link resolves to a sibling in this directory; a `../` link
+> resolves one level above it. The links in this note are correct.)*
+
 Eight commits, reviewed as landed rather than as they sit in the working tree
 (two agents held uncommitted edits during this review; every file below was read
 through `git show <commit>:<path>`). No build was run.

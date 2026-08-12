@@ -75,8 +75,11 @@ to the repository root.
 >   **applied**: `:3` now reads v1.9, which is the correction this document
 >   ruled, and `:17` reads v1.12.
 > - **§1's (b), "nothing checks the pin"**, already carried its 2026-08-11
->   closure note. The gate it names now pins **v1.10** and has not been moved to
->   v1.12; the re-pin is [TODO](../TODO.md) G0.
+>   closure note. The gate it names then pinned **v1.10**. *(Corrected later on
+>   2026-08-12: both copies now read v1.12 root `b3306dde…de51cda5` and agree,
+>   and that TODO row is ticked. The finding's own point survives the re-pin —
+>   two copies agreeing is not the bundle being current, and nothing in the tree
+>   goes red when it moves again.)*
 
 ---
 
@@ -770,10 +773,10 @@ Framework wrong at `:3`. Correction: v1.9.
 **`createOrLoadOperation`**, removed in `93698b4`, has zero occurrences in
 `modules/`, `entry/`, `tests/`, `conformance/`. It survives in
 `docs/plans/2026-08-09-claude-handoff.md`:281,288;
-`docs/plans/2026-08-10-w2-effective-plan.md`:136,160,638;
-`docs/plans/2026-08-10-w2-w7-reconciliation.md`:726;
-`docs/plans/2026-08-10-w3-snapshot-coordinator.md`:119,394,545,760;
-`docs/plans/2026-08-10-w6-w7-controller-and-agent.md`:915,941-943,1000;
+`docs/archive/plans/2026-08-10-w2-effective-plan.md`:136,160,638;
+`docs/archive/plans/2026-08-10-w2-w7-reconciliation.md`:726;
+`docs/archive/plans/2026-08-10-w3-snapshot-coordinator.md`:119,394,545,760;
+`docs/archive/plans/2026-08-10-w6-w7-controller-and-agent.md`:915,941-943,1000;
 `docs/reviews/2026-08-10-runtime-hardening-review.md`:18. The review entry and the
 handoff are historical records and are fine as such; W3's `:760` ("signature
 unchanged") is now false.
@@ -804,7 +807,7 @@ survives in six. The current value is
 > so the count stays at 23 and the constant still occurs exactly once, at
 > `:362`. The nine and six counts above are unaffected by this change;
 > `be80aca714…` now joins the superseded set. See
-> [journal record binding](2026-08-11-journal-record-binding.md).
+> [journal record binding](../archive/plans/2026-08-11-journal-record-binding.md).
 
 **Consumer-side check performed:** uf-chaos pins **no** framework fingerprint
 anywhere, so this breadth does not extend across the boundary. VERIFIED —

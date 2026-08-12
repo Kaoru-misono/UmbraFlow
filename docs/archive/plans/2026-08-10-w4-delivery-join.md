@@ -1,5 +1,29 @@
 # W4: join Host delivery to the ledger
 
+> **Archived 2026-08-12. Nine of its rulings were still owed and are carried as
+> `C-W4-1` through `C-W4-9` in
+> [the carried debt ledger](../../plans/2026-08-12-carried-debt-ledger.md)**:
+> §9 questions 1, 2, 3 and 6, all four unowned; the consumer-visible cost of
+> Q4's answer; `T-10`'s green mutation, a fifth unfalsifiable property for
+> `c03`/`a07` beside the four the next block names; the `observe.luau`
+> template-cache finding, which is reusable failure knowledge with no home; and
+> §8's assumptions A5, A9 and A11, of which **A9 was written as a precondition of
+> accepting this work item and there is no record that it was ever performed**.
+>
+> Q5 is the exception, and it is carried in the strongest place available:
+> [the next block](../../plans/2026-08-10-next-block.md) §2 states its residue
+> and §6.1 is the post-mortem of how it died here for twenty hours, which is why
+> that ledger exists at all. F-4 of
+> [cross-repository drift](../../plans/2026-08-11-cross-repository-drift.md)
+> carries the same divergence from the bundle's side and stays open.
+>
+> **Nothing is owed that is not named above.** The body is unchanged.
+>
+> *(Relative links in the body are as they were written while this document
+> was live and were not repointed, because nothing in the body was edited. A
+> bare-date link resolves to a sibling in this directory; a `../` link
+> resolves one level above it. The links in this note are correct.)*
+
 Status: **landed 2026-08-11** — additive half `e64c143`, ledger join `25f57f9`.
 Everything below is the pre-landing specification and is left as written.
 Date: 2026-08-10 (landed 2026-08-11)

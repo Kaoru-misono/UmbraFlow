@@ -164,7 +164,7 @@ interrupt handler 拿到的是**当前**周期,handler 消费掉观察后由外�
 > 原因在标注模型这一侧:一次 find 要用的东西全部挂在**页面对元素的那一行引用**上——
 > 本页细化的搜索范围、本页钉死的形态、以及 interact 那条授权边。页面未知,就没有那一行
 > 可读。详见
-> [标注模型重构](2026-07-31-annotation-model-capabilities.md) §2.2 与「两条实现期裁决」A。
+> [标注模型重构](../archive/plans/2026-07-31-annotation-model-capabilities.md) §2.2 与「两条实现期裁决」A。
 >
 > **不替脚本解析是裁决,不是遗漏。** 自动解析会**藏起成本**(解析要走完 `pageAnchorOrder`,
 > 是一个周期里最贵的部分,而 wait 循环每轮都要付),而且会让**解析不出页面**以
@@ -1482,7 +1482,7 @@ SLA;一条 trace 足以解释每一步。
   > 至今成立。但被点名的三样东西此后各自变了,别把这一行当作它们今天的值:两个标注 schema
   > 已升到 `umbraflow-authoring/v3` 与 `umbraflow-annotations/v2`(旧 id 无读路径),
   > `umbraflow-trace/v1` 不变;`umbra-workbench` 这个二进制已随 GUI 归档(`b57b67b`)。
-  > 见 [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md)。
+  > 见 [`2026-07-31-annotation-model-capabilities.md`](../archive/plans/2026-07-31-annotation-model-capabilities.md)。
 
 #### 2c — 错误改宿主 mint 的 userdata(**已完成,`c37ee5b`**)
 
@@ -1663,7 +1663,7 @@ pause 的实现(只留 §13 的签名,以及「framework 的观察周期边界�
 > > 已经不是这里写的了——能力模型在一次原子改动里把它们一起升到
 > > `umbraflow-authoring/v3` 与 `umbraflow-annotations/v2`,并且旧 id 都没有读路径。
 > > 恰恰因为版本号会错位,写全名而不是「v2」这条纪律更要紧了。见
-> > [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md) §三。
+> > [`2026-07-31-annotation-model-capabilities.md`](../archive/plans/2026-07-31-annotation-model-capabilities.md) §三。
 >
 > 未处理、留给开发者的治理问题:`docs/adr/` 已空,而
 > `.claude/skills/improve-codebase-architecture` 仍教「读 `docs/adr/`、按需写

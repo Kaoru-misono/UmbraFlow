@@ -229,7 +229,7 @@ raise from a primitive.
 > the authorization. Re-pointing is now adding one reference row and removing
 > another; there is no lower bound to widen past, and `retypeRecognizer` was
 > deleted along with the three-way type it rewrote. Deciding artifact:
-> [the capability plan](../plans/2026-07-31-annotation-model-capabilities.md)
+> [the capability plan](../archive/plans/2026-07-31-annotation-model-capabilities.md)
 > §2.2 推论 3 and §四之二.1.
 >
 > **What still transfers:** the ordering rule itself — *for any invariant with a

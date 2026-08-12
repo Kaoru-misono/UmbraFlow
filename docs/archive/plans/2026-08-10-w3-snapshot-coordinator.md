@@ -1,5 +1,31 @@
 # W3: the Snapshot Coordinator
 
+> **Archived 2026-08-12. This document owed more than any of the four, because
+> it never had a "what it still owes" section** — [`plans/README.md`](../../plans/README.md)
+> claimed all four specifications carried one, which was true of W2 and false of
+> this. Eleven items are carried as `C-W3-1` through `C-W3-11` in
+> [the carried debt ledger](../../plans/2026-08-12-carried-debt-ledger.md): the
+> refuted `identity_hash` invariance, which two live artefacts still assert and
+> one of them inside the DDL text the schema fingerprint canonicalizes; the §3.4
+> join comment its own mutation campaign disproved; `T5d`'s substitution; `T8`'s
+> first version passing against the mutation it existed for; §9's questions 3, 5
+> and 6; §9 Q4's half-executed ruling; §8 assumption 7's conditional ruling on
+> `availability_revision`; the "three of the four triggers" claim the document
+> contradicts itself about; and §2.3's untested single-friend property.
+>
+> **Nothing is owed that is not named above.** Its two closed questions — Q1's
+> JCS serializer and Q2's `controlled_target_id` spelling — are in
+> [the next block](../../plans/2026-08-10-next-block.md) §3 and in `CONTEXT.md`.
+>
+> The body is unchanged, including the claims the ledger records as false, and
+> its `ledger.cpp` line citations predate several landings. The pointer runs one
+> way, from the ledger to here.
+>
+> *(Relative links in the body are as they were written while this document
+> was live and were not repointed, because nothing in the body was edited. A
+> bare-date link resolves to a sibling in this directory; a `../` link
+> resolves one level above it. The links in this note are correct.)*
+
 Status: **landed** — additive half `7cef402` (2026-08-10), Operator half
 `4b955de` (2026-08-11). Everything below is the pre-landing specification and is
 left as written.

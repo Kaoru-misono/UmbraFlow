@@ -461,7 +461,7 @@ Three implementations of one interface:
   `contract/json-value.cpp` (719) + `contract/json-schema.cpp` (828) +
   `contract/CMakeLists.txt` (269)
 
-> **Count disagreement.** `docs/plans/2026-08-11-consumer-onboarding.md:29`
+> **Count disagreement.** `docs/archive/plans/2026-08-11-consumer-onboarding.md:29`
 > states arcana's `provider.cpp` is **880 lines** and `:131` states
 > `project-fixture.hpp` is **1532**, and `:45` says the line spans "sum to
 > 880". That document dates its measurement explicitly: "Every file-level claim
@@ -546,7 +546,7 @@ mechanism sitting in the same CMakeLists — nothing forces this, and there are
 no `.luau` files under `uf-chaos/contract/` (measured: the tree's `.luau` files
 are all under `map/`, `tasks/`, `tools/`). The vocabulary is the one block the
 onboarding document already identified as irreducibly the project's
-(`docs/plans/2026-08-11-consumer-onboarding.md:118-121`), and this measurement
+(`docs/archive/plans/2026-08-11-consumer-onboarding.md:118-121`), and this measurement
 agrees: 17 fields, 52 reaches, zero C++ construction.
 
 **4. The three disagree about `artifactBlobs` to the point of one supplying
@@ -1063,7 +1063,7 @@ explaining that the suite is not a module, then `[module]` (`:17-20`) and
 - **No document in `docs/` discusses a data-only project.** `project-as-data`,
   `data-only`, `data-driven`, `declarative`, `non-C++` return zero hits under
   `docs/`. The closest prior art is
-  `docs/plans/2026-08-11-consumer-onboarding.md:469-497`, "The generator case,
+  `docs/archive/plans/2026-08-11-consumer-onboarding.md:469-497`, "The generator case,
   argued and rejected" — a `generate-provider.cmake` scaffold was refused
   because the generated lines "would be validators the consumer owns but never
   thought about", the `docs/pitfalls/checks-that-cannot-fail.md` defect
@@ -1078,7 +1078,7 @@ explaining that the suite is not a module, then `[module]` (`:17-20`) and
 
 | Claim in the tree | Site | Measured today |
 |---|---|---|
-| arcana `provider.cpp` is 880 lines | `docs/plans/2026-08-11-consumer-onboarding.md:29,45,86` | **1063** |
+| arcana `provider.cpp` is 880 lines | `docs/archive/plans/2026-08-11-consumer-onboarding.md:29,45,86` | **1063** |
 | umbraflow `project-fixture.hpp` is 1532 lines | same, `:131` | **1804** |
 | `provider.hpp` 140 / `operator-protocol.hpp` 649 / `observation-fixture.hpp` 777 / `host-delivery-fixture.hpp` 139 | same, `:36-37` | **221 / 716 / 821 / 195** |
 | 213 P / 360 F / 208 A / 58 D / 41 N line split | same, `:86` | **stale by construction** — derived from the 880-line file |

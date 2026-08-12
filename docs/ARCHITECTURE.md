@@ -26,8 +26,14 @@ in this repository's generic core.
 > carried that waiver into the upstream design). The `:3` note above said v1.7,
 > which was already wrong when written; the correction to v1.9 is
 > [cross-repository drift](plans/2026-08-11-cross-repository-drift.md) F-14,
-> applied here. `scripts/check_spec_bundle.py` and its authority document still
-> pin v1.10 — see [TODO](TODO.md) G0.
+> applied here.
+>
+> *(Corrected 2026-08-12, later the same day: this note ended "`scripts/check_spec_bundle.py`
+> and its authority document still pin v1.10 — see TODO G0". Both copies have
+> since moved to v1.12 and agree; `python scripts/check_spec_bundle.py --pins-only`
+> reports 5 pins matched against
+> [the hardening rewrite](plans/2026-08-09-runtime-hardening-rewrite.md):10-18.
+> That TODO row is ticked.)*
 
 ## Module direction
 
@@ -48,27 +54,31 @@ image      -> {core, domain}
 facility requires the repository's core-capability review; Runtime/Operator
 types do not move there merely because two modules use them.
 
-`conformance/` (added 2026-08-10, renamed from `contract-suite/` on 2026-08-11)
-is the one first-party source tree outside `modules/`, `entry/` and `tests/`,
-and the loader does not turn it into a library. It builds the second shipped
+`modules/conformance` (added 2026-08-10 as `contract-suite/`, renamed
+`conformance/` on 2026-08-11, and moved under `modules/` on 2026-08-12) is a
+library like every other module. It is the logic half of the second shipped
 binary, `umbra-flow-conformance`, which is the exported Operator conformance
-suite. A consuming repository compiles nothing and reaches no CMake of ours: a
+suite; the binary is `entry/conformance/main.cpp` plus `modules/conformance`,
+the same shape as `umbra-flow`. A consuming repository compiles nothing and
+reaches no CMake of ours: a
 project is a directory of data, so a consumer runs
 `umbra-flow-conformance --project <directory>` against its own tree, and
 `deployment::loadProject` turns that directory into the five authorities the
 suite drives. `cmake/conformance-run.cmake` registers one CTest per run and is
 included inside the `PROJECT_IS_TOP_LEVEL` guard, because nothing outside this
-repository reaches it. Nothing under `conformance/source/` or `include/` names a
+repository reaches it. Nothing under `modules/conformance/source/` names a
 project; `examples/umbraflow` and `examples/arcana-expedition` are two project
 directories written the way a consumer writes its own, and this repository is
 two runs of the suite rather than its home.
 
-It carries a `manifest.txt` and is not a module. The autoloader never reads it —
-`CPP_MODULE_ROOTS` names `modules/` only — but `scripts/check_modules.py` does,
-so the suite is a node in the dependency graph rather than first-party C++
-outside it. Before 2026-08-11 a dependency that closed a cycle through the suite
-passed while the check printed a module count that was never all the C++.
-`tests/support/` is still in that position and declares no manifest.
+> Amended 2026-08-12: until that date the suite was `conformance/` at the
+> repository root, the one first-party source tree outside `modules/`, `entry/`
+> and `tests/`, carrying a `manifest.txt` the autoloader never read and
+> `scripts/check_modules.py` reached through a `DECLARED_SOURCE_TREES` list.
+> Both are gone: nothing carries a manifest outside `modules/` now, the check
+> is back to a single root, and the three C++ fixtures moved to `tests/support/`.
+> See [TODO](TODO.md), "Build-system shape". `tests/support/` declares no
+> manifest and is still outside the graph.
 
 ## Ownership
 

@@ -1,5 +1,30 @@
 # W6 Controller facade and W7 Agent subscription and budgets
 
+> **Archived 2026-08-12. Eleven of its rulings were still owed and are carried
+> as `C-W67-1` through `C-W67-11` in
+> [the carried debt ledger](../../plans/2026-08-12-carried-debt-ledger.md).**
+> Two of them qualify requirements this document's own `Closes:` line marks
+> closed, and both were verified against the tree rather than inferred.
+> `recordDeliveryOutcome` appends no `ledger_events` row, which is exactly the
+> incompleteness §9.2 assumption 8 warned would let `T-A01-c` pass over a broken
+> stream. And `p03`'s offer side — `ProjectSnapshot.available_tools`, which §3.2
+> calls required because "offering less is not enforcement" — was never built,
+> is not among the seven refusals the landing note enumerates, and
+> [the next block](../../plans/2026-08-10-next-block.md) §4 still rules that
+> `p03` enforces it.
+>
+> The rest are §10's questions 1, 2, 4 and 5, four of the seven refusals that
+> reached no live document, the `ProgressMarker` member with neither producer
+> nor reader, `T-A02-j`'s unfalsifiable shape, and §2.4's request that somebody
+> reconcile the older documents' `FrontEnd` wording.
+>
+> **Nothing is owed that is not named above.** The body is unchanged.
+>
+> *(Relative links in the body are as they were written while this document
+> was live and were not repointed, because nothing in the body was edited. A
+> bare-date link resolves to a sibling in this directory; a `../` link
+> resolves one level above it. The links in this note are correct.)*
+
 Status: **landed 2026-08-11** — W6 `93698b4`, W7 `c23efd3`. Everything below is
 the pre-landing specification and is left as written.
 Date: 2026-08-10 (landed 2026-08-11)

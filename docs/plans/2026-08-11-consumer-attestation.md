@@ -391,7 +391,7 @@ already ruled twice.
 > `plugin_hash` inside `project_registration_hash` makes that attributable rather
 > than undetectable.
 > — [the next block](2026-08-10-next-block.md) §4, and
-> [the reconciliation](2026-08-10-w2-w7-reconciliation.md) R4
+> [the reconciliation](../archive/plans/2026-08-10-w2-w7-reconciliation.md) R4
 
 The same ruling was applied a second time to a plugin under-declaring its own
 effects (reconciliation §3.11): "a plugin under-declaring its own effects is

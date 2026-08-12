@@ -2,7 +2,7 @@
 
 > 状态:进行中,2026-07-21 grill 敲定方向层。这份是**产品方向权威**,取代旧
 > `/e/github/UmbraFlow/DESIGN.md` 的里程碑 M0–M4。实现层裁决见
-> [`2026-07-21-lua-task-model-grill-decisions.md`](2026-07-21-lua-task-model-grill-decisions.md)(D0–D10,存款性质)。
+> [`2026-07-21-lua-task-model-grill-decisions.md`](../archive/plans/2026-07-21-lua-task-model-grill-decisions.md)(D0–D10,存款性质)。
 > 决策弹药见 [`2026-07-21-lua-task-model-decision-package.md`](../archive/plans/2026-07-21-lua-task-model-decision-package.md)。
 
 ## 背景:为什么重锚
@@ -118,7 +118,7 @@ fail-closed 严格门防止误点,但从第一天保留统一坐标变换接缝;
   A 的 Preview 直接用共享识别核、不必等 B 的引擎,B 消费 A 产出的资产。故拆成薄片穿插:
   - **S0 共享地基(已锁定,2026-07-23)**:识别核(已移植)+ authoring/runtime schema +
     `template_rect`/`search_roi` + page/动作证据 + 项目级尺寸/DPI 兼容契约。权威设计见
-    [`2026-07-22-annotation-design.md`](2026-07-22-annotation-design.md);A1/B1 已解除设计阻塞。
+    [`2026-07-22-annotation-design.md`](../archive/plans/2026-07-22-annotation-design.md);A1/B1 已解除设计阻塞。
   - **A1 最小标注**:抓 WGC 帧 / 导图 → 为一个 page anchor 与 action target 分别框选模板/搜索区域 →
     生成切分模板、最小单页 signature 与 runtime manifest。第一片即消除手裁 PNG;Preview 用共享有界识别核。
   - **B1 最小 runtime**:读 manifest → capture → 有界识别 → 唯一 page resolution →
@@ -186,7 +186,7 @@ fail-closed 严格门防止误点,但从第一天保留统一坐标变换接缝;
    > runtime manifest 与切分模板这条性质没有变**,变的只是谁在编辑它。第 3 条的
    > required/forbidden 语义也没变,只是这两个角色现在挂在页面**引用**上而不是元素上。
    > 裁决见
-   > [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md)
+   > [`2026-07-31-annotation-model-capabilities.md`](../archive/plans/2026-07-31-annotation-model-capabilities.md)
    > §四之二.1;P2 的托盘 App 仍然是 GUI,本条不预判它的技术栈。
 
 ## 四、待定 / 待开发者输入

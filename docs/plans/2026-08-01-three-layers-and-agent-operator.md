@@ -3,7 +3,7 @@
 > 状态:**已定稿,2026-08-01 开发者审定。**
 >
 > 本文是顶层形态文档。骨架沿用[三层 Task System](2026-07-29-three-layer-task-system.md)
-> ——修订,不推翻;[标注模型重构](2026-07-31-annotation-model-capabilities.md)在本文
+> ——修订,不推翻;[标注模型重构](../archive/plans/2026-07-31-annotation-model-capabilities.md)在本文
 > 中的位置是层间合同。「C++ 拥有所有保证,Luau 拥有所有策略」在每一处裁决中仍然
 > 有效。
 >
@@ -113,7 +113,7 @@ author-*.ps1 重建脚本是这条原则的既有实践。
 - read ↔ 区域信息
 - 命中判断 ↔ 拿标注当查询目标的反向查询(场景待定,见 §九)
 
-本文对[标注模型文档](2026-07-31-annotation-model-capabilities.md)追加四条裁决,它们在
+本文对[标注模型文档](../archive/plans/2026-07-31-annotation-model-capabilities.md)追加四条裁决,它们在
 归属上移之后原样成立:
 
 1. **极性在引用侧(已确认)。**required / forbidden 属于页面引用,不属于元素。
@@ -135,7 +135,7 @@ author-*.ps1 重建脚本是这条原则的既有实践。
    期待文字是**数据**,核对是**策略**:文字写进项目文件所以可证伪、可重放,而
    「怎么算匹配」(全角半角、繁简、包含还是相等)的核对逻辑归框架层 Luau,C++ 的
    `cycle_read` **不收** `expected` 参数。这与
-   [标注模型文档](2026-07-31-annotation-model-capabilities.md) §四之二.3 并立成立,
+   [标注模型文档](../archive/plans/2026-07-31-annotation-model-capabilities.md) §四之二.3 并立成立,
    不冲突:一个说事实住在哪,一个说规则归谁。
 
    > **更正(2026-08-01,落地时)。** 期待文字最终**也可以写在引用侧并优先于元素侧**,
@@ -151,7 +151,7 @@ author-*.ps1 重建脚本是这条原则的既有实践。
   未完成/就绪两态,脚本在此整体分叉——去选人,或点进入。
 - **有名字的 appearance = 局部事实。**同一矩形上互斥的状态是**一个**元素带一张命名
   appearance 列表,不是 N 个元素——把 `speed_1x` / `speed_2x` / `speed_3x` 拆成各自
-  独立的元素这个替代方案**已否决**;机制沿用[标注模型文档](2026-07-31-annotation-model-capabilities.md)
+  独立的元素这个替代方案**已否决**;机制沿用[标注模型文档](../archive/plans/2026-07-31-annotation-model-capabilities.md)
   §四之二.4(a)。例:`speed_button` 的 `speed_1x / speed_2x / speed_3x`,`auto_button`
   的 `auto_on / auto_off / auto_gray`。命中身份上到脚本面:
   `hit.appearance == uf.appearances.speed_3x`。战斗页始终是一个页面,不随速度与
@@ -330,7 +330,7 @@ end
 
    落地在 `model.luau` / `observe.luau` / `project.luau` / `scribe.luau`(模型、读取与
    写入)和 `oracle.luau` / `regress.luau` / `recognition.luau` / `reading.luau`(屏、
-   期望与判分);[标注模型文档](2026-07-31-annotation-model-capabilities.md) §四之二.2
+   期望与判分);[标注模型文档](../archive/plans/2026-07-31-annotation-model-capabilities.md) §四之二.2
    的「构造时应拒绝 `identify`」随之更正。
 
 ## 十、下一步

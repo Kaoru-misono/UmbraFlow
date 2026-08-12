@@ -1,5 +1,29 @@
 # W2: EffectivePlan authority
 
+> **Archived 2026-08-12. Three of its rulings were still owed, and they now live
+> in [the carried debt ledger](../../plans/2026-08-12-carried-debt-ledger.md) as
+> `C-W2-1`, `C-W2-2` and `C-W2-3`**: §11 question 6 (the plan authority is
+> constructed only in test fixtures, so the exact operator-protocol schema bytes
+> have no production reader), the three deviations the landing took from the
+> specification, and the finding that `T4` is not applicable as written because
+> `DecisionBasisParts` gives a stronger guarantee than `T4` asked for.
+>
+> Everything else this document owed was already carried before the move, and
+> the "What this document still owes, and where" block below is that record: the
+> three green mutations, §10's three unenforced ceilings and §11's questions 4
+> and 5 in [the next block](../../plans/2026-08-10-next-block.md) §2, and `T13`
+> in [checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md). Those
+> pointers still hold. **Nothing is owed that is not named above.**
+>
+> The body is unchanged. Its `ledger.cpp` line citations and §6's fingerprint
+> predate seven schema breaks; the current Operator DDL fingerprint is in
+> [the next block](../../plans/2026-08-10-next-block.md) §3.
+>
+> *(Relative links in the body are as they were written while this document
+> was live and were not repointed, because nothing in the body was edited. A
+> bare-date link resolves to a sibling in this directory; a `../` link
+> resolves one level above it. The links in this note are correct.)*
+
 Status: **landed 2026-08-11 in `848e390`**, with deviations. Everything below is
 the pre-landing specification and is left as written.
 Date: 2026-08-10 (landed 2026-08-11)
