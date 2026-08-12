@@ -1,16 +1,19 @@
 # Plans
 
-This directory contains current authority and one canonical list of unfinished
-work. Completed, superseded and measurement-only plans live under
+This directory contains current authority. The one canonical list of
+unfinished work lives in the consumer repository; see below. Completed,
+superseded and measurement-only plans live under
 [`docs/archive/plans/`](../archive/plans/); closed reviews live under
 [`docs/archive/reviews/`](../archive/reviews/).
 
 ## Unfinished work
 
-- [Consolidated outstanding work](2026-08-12-outstanding-work.md) — the only
-  canonical owner of unfinished framework, runtime, plugin, consumer and
-  documentation work. Older plans may explain a row, but they do not open a
-  second copy of it.
+- The consumer repository's `docs/architecture/parallel-implementation-plan.md`
+  is the only canonical owner of unfinished framework, runtime, plugin,
+  consumer and documentation work. Older plans may explain a row, but they do
+  not open a second copy of it. Its predecessor,
+  [consolidated outstanding work](../archive/plans/2026-08-12-outstanding-work.md),
+  is archived; its "Now lives" column names where every row went.
 
 ## Current authority
 
@@ -61,6 +64,7 @@ the consolidated plan owns what survived.
 - [Project-as-data inventory](../archive/plans/2026-08-11-project-as-data-inventory.md)
 - [Project as data](../archive/plans/2026-08-11-project-as-data.md)
 - [Carried debt ledger](../archive/plans/2026-08-12-carried-debt-ledger.md)
+- [Consolidated outstanding work](../archive/plans/2026-08-12-outstanding-work.md)
 - [Pure plugin helpers](../archive/plans/2026-08-12-plugin-pure-helpers.md)
 - [Project content at scale](../archive/plans/2026-08-12-project-content-at-scale.md)
 - [Recognition measurement](../archive/plans/2026-08-12-recognition-measured.md)

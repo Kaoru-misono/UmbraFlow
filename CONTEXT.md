@@ -12,16 +12,16 @@ Verified against the tree on 2026-08-11.
 
 Design authority for anything this file does not settle:
 [runtime hardening rewrite](docs/plans/2026-08-09-runtime-hardening-rewrite.md)
-for design and
-[the consolidated outstanding-work plan](docs/plans/2026-08-12-outstanding-work.md)
-for current requirement state. *(Amended 2026-08-12: the archived next-block
+for design and the consumer repository's
+`docs/architecture/parallel-implementation-plan.md` for current requirement
+state. *(Amended 2026-08-12: the archived next-block
 record also named the W2-W7
 reconciliation as the tie-breaker "where same-day specifications conflict".
 There are no live same-day specifications left to break ties between — all four
 landed and all five documents are in
 [`docs/archive/plans/`](docs/archive/plans/) — so the reconciliation is a record
 of rulings, not a third authority. What it and they still owe is now carried in
-the consolidated outstanding-work plan.)*
+the consumer repository's parallel implementation plan.)*
 
 ## Reading a spelling
 

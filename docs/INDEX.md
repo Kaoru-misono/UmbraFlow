@@ -22,10 +22,12 @@ records:
 
 ## 2. Current work
 
-- [Consolidated outstanding work](plans/2026-08-12-outstanding-work.md) is the
-  only canonical list of unfinished work. It contains current blockers,
+- The consumer repository's `docs/architecture/parallel-implementation-plan.md`
+  is the only canonical list of unfinished work. It contains current blockers,
   upstream correctness debt, Runtime behaviour, plugin/schema work, read-only
-  consumer obligations and documentation cleanup.
+  consumer obligations and documentation cleanup. Its predecessor is archived at
+  [`docs/archive/plans/2026-08-12-outstanding-work.md`](archive/plans/2026-08-12-outstanding-work.md),
+  which names where every row went.
 - [Current execution checklist](TODO.md) retains the two release-gate boxes that
   are useful as checkboxes. It is not a second complete work inventory.
 - [Plans index](plans/README.md) lists current authorities and every archived
@@ -33,8 +35,8 @@ records:
 
 ## 3. Current blockers
 
-The exact acceptance criteria live in the consolidated plan. In dependency
-order, the immediate blockers are:
+The exact acceptance criteria live in the consumer repository's parallel
+implementation plan. In dependency order, the immediate blockers are:
 
 1. Finalize the consumer's uncommitted v1.14 bundle and re-pin only committed,
    jointly reviewed bytes (`O-001`).
@@ -57,7 +59,7 @@ The real dual-game attestation remains external and cannot be moved by fixtures.
   against current paths before relying on an old locator.
 - Operator databases are currently refused on exact DDL mismatch rather than
   migrated. The deadline for replacing that development-only behaviour is
-  consolidated row `O-007`.
+  `O-007` in the consumer repository's parallel implementation plan.
 - A consumer writes a project directory and runs
   `umbra-flow-conformance --project <directory>`; it compiles no Umbraflow C++.
 - The checked-in upstream pin is v1.13. A dirty v1.14 draft exists in the

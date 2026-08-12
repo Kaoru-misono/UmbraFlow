@@ -17,8 +17,8 @@
 >   at open and deleted, never migrated.
 > - **The `linux-analysis` CI job does not compile**, under the project's own
 >   `-Wunsafe-buffer-usage` and under clang-tidy with `WarningsAsErrors: '*'`.
->   That is now tracked as O-002 in
->   [the consolidated outstanding-work plan](plans/2026-08-12-outstanding-work.md)
+>   That is now tracked as O-002 in the consumer repository's
+>   `docs/architecture/parallel-implementation-plan.md` §2.1 (gate in §7)
 >   and it blocks merging this branch regardless of anything below. The current
 >   local head is ahead of its remote branch, so the unpublished commits have not
 >   been seen by CI.
@@ -34,8 +34,9 @@
 > [the archived next-block record](archive/plans/2026-08-10-next-block.md) §2,
 > where all 42
 > `REQUIRED_CORE` requirements are closed. What the W-series specifications
-> still owe is tracked by O-101 through O-122 in
-> [the consolidated outstanding-work plan](plans/2026-08-12-outstanding-work.md).
+> still owe is tracked by O-101 through O-122, absorbed into workflows U2, U3
+> and U8-U12 in §3 of the consumer repository's
+> `docs/architecture/parallel-implementation-plan.md`.
 
 ## The registration chain must be proven to have teeth
 
@@ -380,7 +381,8 @@ was tracking. This section is where the expiry lives; it owns nothing else.
       [the review outcome](reviews/2026-08-10-runtime-hardening-review.md).
       The box turns on the re-review verdicts. **No PASS verdict exists anywhere
       in the tree**, and the round that would produce one over W2-W7 is W9 in
-      O-003 in [the consolidated outstanding-work plan](plans/2026-08-12-outstanding-work.md),
+      O-003 in the consumer repository's
+      `docs/architecture/parallel-implementation-plan.md` §2.1 (gate in §7),
       which has never run. This
       is why that review is the one document in `docs/reviews/` that stayed live
       through the 2026-08-12 archive pass: a live box turns on its verdicts.

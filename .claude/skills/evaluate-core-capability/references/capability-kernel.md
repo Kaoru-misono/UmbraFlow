@@ -41,7 +41,8 @@ Two consequences. A facility's presence in `core` is not a decision, so never
 cite the table below as the reason to keep one; find the evaluation that
 admitted it, or run one now. And the 2026-07-20 import has never been reviewed
 retroactively — one pass over the 15, not an open-ended re-litigation — which is
-tracked as O-005 in `docs/plans/2026-08-12-outstanding-work.md`.
+tracked as O-005 in §9 (治理与文档工作) of the consumer repository's
+`docs/architecture/parallel-implementation-plan.md`.
 
 Four of the imported facilities were run through this skill on 2026-08-11 and
 all four were **rejected**, then deleted with their capability tests:
