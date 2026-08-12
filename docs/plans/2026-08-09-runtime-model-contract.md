@@ -182,6 +182,16 @@ presence  { id, target, kind, confidence_floor }
 > that declares more `reads` than one cycle can pay for reports fewer readings
 > and never a wrong one.
 
+> **Amended 2026-08-13: a Reader declares its text layout.** Every Reader
+> carries a required `layout`, either `single_line` or `block`, with no default
+> and nothing inferred. `single_line` asserts the rectangle holds exactly one
+> line and skips line detection; `block` says the count is not known, so every
+> line the detector finds inside that rectangle is located and read. A block
+> Reader costs one Host read for the detection pass plus one per line located,
+> out of the same cycle pool. `text_equals` over a Reader holds only when the
+> reading is exactly one line equal to the value, which is a single_line
+> Reader's behaviour unchanged and refuses to invent a separator for a block.
+
 ### 2.7 Binding
 
 ```text
@@ -326,11 +336,14 @@ must be satisfied before a candidate can enter the stack.
 > what it read, through a second verb over the same open cycle. One reading is
 >
 > ```text
-> Reading { ui_target, reader, kind, text?, reason? }
+> Reading { ui_target, reader, kind, lines?, reason? }
+> ReadingLine { rect, text }
 > ```
 >
-> with `kind` one of `read`, `absent` or `unknown`, `text` present exactly when
-> it read, and `reason` present exactly when it could not. The list is sorted by
+> with `kind` one of `read`, `absent` or `unknown`, `lines` present exactly when
+> it read, and `reason` present exactly when it could not. A reading is a list
+> of lines under either layout: a single_line Reader reports one element rather
+> than a second shape. The list is sorted by
 > `ui_target` then `reader`, so one world produces one document, and it carries
 > one entry per Reader every reporting Binding named — the failures included,
 > because a plugin that cannot separate "nothing is written here" from "this
@@ -348,8 +361,20 @@ must be satisfied before a candidate can enter the stack.
 > on a hover. The confidence score is excluded for the same
 > reason and not for economy — a score differs between two captures of one
 > unchanged screen, and a recapture that is semantically equal must remain one
-> decision. The measured rectangle and the pre-normalisation text are excluded
-> with it; the raw read is what the Reader exists to narrow.
+> decision. The pre-normalisation text is excluded with it; the raw read is what
+> the Reader exists to narrow.
+>
+> **Amended 2026-08-13: each line's rectangle is carried, and IS hashed.** Under
+> `block` that rectangle is the detector's measurement, in the coordinate space
+> of the image, and two captures of one unchanged screen can move it — measured
+> on a real frame, the same three lines came back one to two pixels apart when
+> the surrounding region changed. It is hashed with the rest of the document
+> anyway, which is the ruling: the score has no decision left in it once the
+> floor has judged it, while the rect is where a plugin acts, and a decision
+> basis that omits an input a plugin can branch on would let a frozen plan be
+> re-derived into a different action without the basis moving. Unsoundness
+> outranks an extra approval. Under `single_line` the rect is the Binding's
+> declared placement and cannot move at all.
 >
 > A Binding contributes a reading only while its own predicates measure it
 > present, because a Reader reads that Binding's rectangle and reading through a
