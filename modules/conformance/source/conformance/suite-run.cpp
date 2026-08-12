@@ -7,7 +7,7 @@
 // session whose source and sink disagree -- so a run here can never reach a
 // live window, while reaching one is the whole job of umbra-flow. Two binaries
 // make that separation a link-time fact rather than a subcommand string. See
-// docs/plans/2026-08-11-project-as-data.md 3.
+// docs/archive/plans/2026-08-11-project-as-data.md 3.
 //
 // DOCTEST_CONFIG_IMPLEMENT rather than ..._WITH_MAIN: the project directory has
 // to be set before any case runs, and doctest gives a TEST_CASE no parameters.

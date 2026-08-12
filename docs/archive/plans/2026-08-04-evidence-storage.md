@@ -1,5 +1,10 @@
 # 证据语料的存储 — 截屏进版本管理会爆掉,怎么办
 
+> Archived 2026-08-12: Tier 4 landed, Tier 0 was refuted, and the remaining
+> trigger-based proposals are owned by
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `E-001`–`E-003`. Nothing else here is owed.
+
 > 状态:**第 4 层已于 2026-08-04 实施(提前),第 0 层作废,第 1–3 层仍是方案**。
 > 相关:[状态层与策略插槽](2026-08-04-state-layer-and-policy-slots.md) §4.3(语料管理)
 > —— 那一节原先定了"截屏入库",08-04 已更正为出库,理由见该节。

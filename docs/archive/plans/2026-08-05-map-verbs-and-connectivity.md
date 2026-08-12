@@ -1,10 +1,16 @@
 # 全图规划要的框架能力 —— 拖拽动词与读连通
 
+> Archived 2026-08-12: the approved direction survives, but its page-model
+> implementation assumptions do not. Runtime-v2 re-planning and the four open
+> rulings are owned by
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `T-006` and `T-007`.
+
 > 状态:**方向已定(2026-08-05 开发者逐条答复),按顺序待执行**。
 > 这份 plan 只写**框架要提供什么**。这个游戏要量什么、要标什么、地图函数长什么样,
 > 在工程目录:`E:\umbraflow-projects\uf-chaos\MAP.md`。
 >
-> 上位文档:[三层与 Agent 操作者](2026-08-01-three-layers-and-agent-operator.md)。
+> 上位文档:[三层与 Agent 操作者](../../plans/2026-08-01-three-layers-and-agent-operator.md)。
 > 那份的第九节开放问题 6 是「远期小地图立项」——这份就是那个立项,同时兑现了它
 > 第七节里「拖拽:运行模式暂不提供,随远期小地图立项再定」那句话。
 

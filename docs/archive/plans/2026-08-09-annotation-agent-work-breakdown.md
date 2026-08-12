@@ -1,5 +1,11 @@
 # Annotation System Parallel Work Breakdown
 
+> Archived 2026-08-12: the P0–P12 write sets describe the superseded annotation
+> rewrite rather than the landed Runtime v2 tree. Surviving runtime, plugin and
+> consumer work is owned by
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md);
+> no package in this document remains assignable as written.
+
 Status: execution plan
 
 Date: 2026-08-09

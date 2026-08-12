@@ -1,8 +1,14 @@
 # Agent 前端与探索环境 — 工单 4b 形状
 
+> Archived 2026-08-12: the exploration surface landed and the old annotation
+> module, workbench and `FrontEnd` vocabulary were subsequently retired. Current
+> runtime work is owned by
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `T-001`–`T-008` and `D-001`; nothing else here is owed.
+
 > 状态:**已授权执行,2026-08-01 开发者「全都动,搞干净点」**。上位裁决全部来自
-> [三层与 Agent](2026-08-01-three-layers-and-agent-operator.md) §一–§三、§七 与
-> [script-owned](2026-07-31-script-owned-page-model.md) §九/§十二;本文只钉实现
+> [三层与 Agent](../../plans/2026-08-01-three-layers-and-agent-operator.md) §一–§三、§七 与
+> [script-owned](../../plans/2026-07-31-script-owned-page-model.md) §九/§十二;本文只钉实现
 > 形状,不重开任何已裁问题。前置:工单 4a(旧动词退役)落地。
 
 ## 一、要建的东西

@@ -22,7 +22,8 @@ clang-tidy is on `PATH`, in clang-cl mode, rather than the clang-23 CI pins.
 >
 > - The job does not compile. About 14 `-Werror` failures from the project's own
 >   `-Wunsafe-buffer-usage`, plus roughly 90 fatal clang-tidy diagnostics under
->   `WarningsAsErrors: '*'` — W11 in `docs/plans/2026-08-10-next-block.md`. A job
+>   `WarningsAsErrors: '*'` — O-002 in
+>   `docs/plans/2026-08-12-outstanding-work.md`. A job
 >   that does not build enforces nothing, whatever `.clang-tidy` says.
 > - `HeaderFilterRegex` in `.clang-tidy` must be POSIX ERE. The PCRE negative
 >   lookahead it carried on 2026-08-10 matches nothing under `llvm::Regex`, so

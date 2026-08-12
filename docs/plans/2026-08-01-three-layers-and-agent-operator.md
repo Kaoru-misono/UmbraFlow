@@ -201,7 +201,7 @@ end
   > 它现在是一个**有条件的**工作项:只有真机量出展开地图页的节点**不**落在规则格点上
   > 才做。真做的话要连带解决三件——非极大值抑制、自己的预算、超限响亮报错(照
   > `read_lines` 那条,绝不返回截断的前几个)。见
-  > [全图规划要的框架能力](2026-08-05-map-verbs-and-connectivity.md)第四节。
+  > [全图规划要的框架能力](../archive/plans/2026-08-05-map-verbs-and-connectivity.md)第四节。
 - 读区域:文字与结构化信息。**已落地(2026-08-01)**:两种布局,由调用方选。
   单行是「我画了这个矩形,读它」(`cycle_read` / `observe.read_element`);整块是
   「我不知道里面有什么,把行找出来」(`cycle_read_lines` / `observe.read_lines`),
@@ -230,7 +230,7 @@ end
 - 滚轮:倾向锚定标注区域,待实例检验(见 §九)
 - 拖拽:~~运行模式暂不提供,随远期小地图立项再定~~
   > **已立项(2026-08-05)。** 远期小地图就是那个立项,见
-  > [全图规划要的框架能力](2026-08-05-map-verbs-and-connectivity.md)第二节。形态定为
+  > [全图规划要的框架能力](../archive/plans/2026-08-05-map-verbs-and-connectivity.md)第二节。形态定为
   > `drag(start, offset)`,**一次调用完成整个手势**——因为每个动作动词都消费周期,拆成
   > 按下/移动/抬起就是三个周期三帧租约,中途必然撞 `StaleObservation`,失败时还会留下
   > 一个按住不放的鼠标键。端口沿用 `cycle_long_press` 那条「每条退出路径都释放」的保证。
@@ -272,7 +272,7 @@ end
 策略层。
 
 > **已立项(2026-08-05),边界原样成立。** 框架侧见
-> [全图规划要的框架能力](2026-08-05-map-verbs-and-connectivity.md);这个游戏要量什么、
+> [全图规划要的框架能力](../archive/plans/2026-08-05-map-verbs-and-connectivity.md);这个游戏要量什么、
 > 标什么、脚本怎么写在工程目录 `E:\umbraflow-projects\uf-chaos\MAP.md`。
 >
 > 「C++ 只提供这一屏看见哪些节点、路线选择在策略层」这条边界不但成立,还比预想的更值钱:
@@ -297,7 +297,7 @@ end
    里放进一次从未发生的识别。
 5. **滚轮的授权语义。**倾向锚定标注区域,与点击同构,待实例检验。
 6. ~~**远期小地图立项。**~~ —— **已立项(2026-08-05)。** 见
-   [全图规划要的框架能力](2026-08-05-map-verbs-and-connectivity.md)与工程目录的
+   [全图规划要的框架能力](../archive/plans/2026-08-05-map-verbs-and-connectivity.md)与工程目录的
    `uf-chaos/MAP.md`。要建的是两个动词(拖拽、读连通)加一套拼接图评估;同时定下三条
    **不做**:帧差异原语(改真机标定一次拖拽走多少像素)、通用线段检测(收窄成「给定
    两点问有没有连线」,因为列表型结果的证伪矩阵仍是本节问题 3)、跨周期的坐标身份
@@ -426,7 +426,7 @@ facts. `recognition.needs_engine` takes the switch for the same reason: without
 the sweep, a page no screen names is never resolved and cannot want an engine.
 
 The exception the ruling could not write down is the `over = [...]` field of
-[状态层与策略插槽](2026-08-04-state-layer-and-policy-slots.md) §3.4. When a page
+[状态层与策略插槽](../archive/plans/2026-08-04-state-layer-and-policy-slots.md) §3.4. When a page
 can declare what it covers, a co-resolution that `over` does not explain becomes
 a finding. Until then it is a fact about the corpus.
 

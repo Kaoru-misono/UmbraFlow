@@ -206,7 +206,7 @@ C++ 兜底释放账本里的一切。
 > **补(2026-08-05):拖拽不再只属于探索环境。** 全图规划立项后它进运行模式,形态是
 > `drag(start, offset)`,起点锚在标注元素上——所以它是「锚定标注」那一类,不是「自由
 > 坐标」那一类,原语纪律照旧。自由坐标点击仍然只在探索环境。见
-> [`2026-08-05-map-verbs-and-connectivity.md`](2026-08-05-map-verbs-and-connectivity.md)
+> [`2026-08-05-map-verbs-and-connectivity.md`](../archive/plans/2026-08-05-map-verbs-and-connectivity.md)
 > 第二节。
 
 只有 framework 能拿到,以闭包 upvalue 形式持有,**永不作为任何 project 脚本能命名的
@@ -578,7 +578,7 @@ steady clock 在 C++。project 看不到墙钟。
 > **补(2026-08-05)**,这份名单要改两处:**拖拽**分成两个——自由拖拽仍是探索特权,而
 > 锚在标注元素上的 `drag(start, offset)` 进运行模式(全图规划立项);**帧差异**决定
 > **不做**,拖一次走多少像素改成在真机上标定成常数。区域像素不变。见
-> [`2026-08-05-map-verbs-and-connectivity.md`](2026-08-05-map-verbs-and-connectivity.md)
+> [`2026-08-05-map-verbs-and-connectivity.md`](../archive/plans/2026-08-05-map-verbs-and-connectivity.md)
 > 第一、二节。
 
 **环境隔离按闭包,不按线程。** `luau_load` 收 env 索引(`lvmload.cpp:787`);新线程的

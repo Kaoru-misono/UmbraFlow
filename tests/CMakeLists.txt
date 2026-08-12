@@ -461,7 +461,7 @@ cpp_add_test(
 # The project registration every Operator test builds on. It is the last thing
 # that still builds a ProjectRegistration in C++: the conformance suite loads one
 # out of examples/umbraflow instead, and Q5 of
-# docs/plans/2026-08-11-project-as-data.md moves these tests onto the same loader
+# docs/archive/plans/2026-08-11-project-as-data.md moves these tests onto the same loader
 # as its own change, after which this directory has nothing left in it. It lives
 # in tests/support/ because tests/ is its only caller -- the suite includes
 # nothing from it. Adding the directory here leaves every

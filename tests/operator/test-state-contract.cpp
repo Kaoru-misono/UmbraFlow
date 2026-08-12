@@ -530,7 +530,7 @@ namespace uf::operator_runtime
     // was deleted here rather than moved. After the Q2 ruling a caller cannot
     // declare a geometry at all: the model states base_resolution and the
     // trusted parser publishes it, so there is no second value left to make
-    // wrong. docs/plans/2026-08-11-project-as-data.md 7.0 Q2 records that as
+    // wrong. docs/archive/plans/2026-08-11-project-as-data.md 7.0 Q2 records that as
     // what deleting the restated number cost.
     TEST_CASE("an observation is resolved from the frame and the geometry its model declares")
     {

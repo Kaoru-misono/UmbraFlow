@@ -1,5 +1,10 @@
 # The next block: complete coverage of the remaining design
 
+> Archived 2026-08-12: all 42 `REQUIRED_CORE` requirements landed. W9, W11,
+> W12, the two missing gate IDs and the correctness residue are now owned by
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `O-002`–`O-006` and `O-101`–`O-122`.
+
 Status: **the requirement block is closed.** Every work item that
 closes a requirement — W1 through W8, with W10 folded into them — has landed,
 and all 42 `REQUIRED_CORE` requirements are implemented. W1, W5, W8 and the
@@ -68,7 +73,7 @@ W2, W3, W4 and W6/W7 were each written out in full on 2026-08-10 by agents who
 could not see each other's drafts. Their conflicts, their unsatisfied
 cross-assumptions, their landing order and the union of their DDL changes are
 reconciled in
-[**W2-W7 reconciliation**](../archive/plans/2026-08-10-w2-w7-reconciliation.md), which governed
+[**W2-W7 reconciliation**](2026-08-10-w2-w7-reconciliation.md), which governed
 all four. All four have landed, so it and they are now records; each of the four
 carries a dated note saying what the implementation refused and why.
 
@@ -151,7 +156,7 @@ recorded in the report itself rather than only here, because the next agent will
 read the report and not this paragraph.
 
 The 19 `schema-*` gates **were** falsified on 2026-08-10, by
-[the third adversarial round](../archive/reviews/2026-08-10-third-round-review.md).
+[the third adversarial round](../reviews/2026-08-10-third-round-review.md).
 Each of the 38 definition names they pass to `definition(schema, name)` occurs
 exactly once in its schema file, so the lookup cannot latch onto a `$ref` or a
 `required` entry and removing a definition fires
@@ -290,7 +295,7 @@ false choice:
    `DispatchAuthority`'s declaration, where the wiring work will read it.
 
 > The finding that forced the reopening was written before the work landed, in
-> [W4](../archive/plans/2026-08-10-w4-delivery-join.md) Q5, which asked in terms that it "is
+> [W4](2026-08-10-w4-delivery-join.md) Q5, which asked in terms that it "is
 > correct but worth stating in the requirement matrix rather than leaving
 > implied". It was never carried here, and the row said closed with no caveat.
 > That is the same family this block spent two days removing — a finding
@@ -315,7 +320,7 @@ larger.** All 23 of W2's and W3's falsifying mutations were run — the first ti
 any of this block's were — and three of W2's stay green. Each is a defect in the
 test, not in the code, and none is closed by the requirement being marked done.
 W3's run found less but not nothing; its three retargeted or contradicted rows
-are recorded in [its own specification](../archive/plans/2026-08-10-w3-snapshot-coordinator.md).
+are recorded in [its own specification](2026-08-10-w3-snapshot-coordinator.md).
 
 - The registration guard in `OperatorPlanAuthority::mintPlan` that W2 §9 T2
   names is not the guard doing the work. `freezePlan` has already checked the
@@ -331,7 +336,7 @@ are recorded in [its own specification](../archive/plans/2026-08-10-w3-snapshot-
   `reserveDispatch` reads the basis from `operation_plans` and nothing on the
   public surface reads `authority_decisions` back. Recorded as an instance of
   the repository's own recurring family in
-  [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md), which is
+  [checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md), which is
   where it belongs: it is not a fact about `c05`, it is a fact about what an
   audit column is worth without a reader.
 
@@ -355,7 +360,7 @@ Each limit below is a property that is true, is
 load-bearing, and that **no mutation of this tree can turn red** — recorded here
 beside the requirement it qualifies, because a requirement marked done with an
 unfalsifiable half is exactly what a later reader will over-read. The repeatable
-shapes are in [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md);
+shapes are in [checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md);
 what follows is which requirement each one qualifies.
 
 - **`c03`, `a07` — the lease identity is one fact spelled three times.**
@@ -446,7 +451,7 @@ because W4 changed `takeoverLease`'s return type, and W7 needed W6's event
 sequence to have a cursor to subscribe from. Each landed in that order and none
 had to be re-opened.
 
-**W2 and W3 were ruled one change** ([reconciliation](../archive/plans/2026-08-10-w2-w7-reconciliation.md)
+**W2 and W3 were ruled one change** ([reconciliation](2026-08-10-w2-w7-reconciliation.md)
 R2) and landed as two, W3 first (`4b955de`) and W2 second (`848e390`). The
 hazard R2 named did not occur, and the reason is that the order was reversed
 rather than the ruling ignored: W3 gave `createSnapshot` its final shape —
@@ -460,11 +465,11 @@ because W4 changes `takeoverLease`'s return type.
 |---|---|---|---|---|---|
 | W0 | Merge readiness: run `linux-analysis` and the three sanitizer presets locally. CI runs on `master` only, so the first CI sight of this work is post-merge; seven of eight configurations are reproducible locally, macOS is not | — | none | 1 day | **ran 2026-08-10**: sanitizers pass, `linux-analysis` fails; the failure is W11 |
 | W1 | **Coverage debt**: write behavioural cases for the six requirements whose implementation already exists but whose gate only reads a schema | `c02 c04 s03 s06 a04 a06` | none | 2-3 days | **done 2026-08-10** |
-| W2 | **EffectivePlan authority**: mint it from a plugin `PlanProposal` bound to registration, command fingerprint and decision basis; derive the frozen plan, step intent and effect envelope hashes from it; add bounded step sequencing; `reserveDispatch` takes the minted plan instead of three caller hashes | `c05 c08` + half of `s04` | none | 5-7 days | **done 2026-08-11** (`848e390`), with three deviations and three unresolved test defects recorded in §2 and in [the specification](../archive/plans/2026-08-10-w2-effective-plan.md) |
+| W2 | **EffectivePlan authority**: mint it from a plugin `PlanProposal` bound to registration, command fingerprint and decision basis; derive the frozen plan, step intent and effect envelope hashes from it; add bounded step sequencing; `reserveDispatch` takes the minted plan instead of three caller hashes | `c05 c08` + half of `s04` | none | 5-7 days | **done 2026-08-11** (`848e390`), with three deviations and three unresolved test defects recorded in §2 and in [the specification](2026-08-10-w2-effective-plan.md) |
 | W3 | **Snapshot Coordinator**: introduce `ProjectObservation`; compose UI observation, `plugin.derive` and current ProjectState atomically; derive the snapshot parts instead of accepting them | `s01 s02` + half of `s04` | the JCS serializer, which landed 2026-08-10 | 4 days | **done**: additive half 2026-08-10 (`7cef402`: `TaskHost::observe` and `UiObservationSnapshot`, no signature changed), Operator half `4b955de` |
-| W4 | **Join Host delivery to the ledger**: `recordDeliveryOutcome` takes what `Host::deliver` returned, inside the fence; the takeover path enters the same linearization | `c03 a07` | W2+W3, both landed | 3 days **understated**: `contract-control-c03` needs a real `TaskHost`, so the ~490-line Runtime v2 fixture in `tests/task/test-runtime-v2-contract.cpp` must be extracted and shared, not copied | **done 2026-08-11** in two commits — `e64c143` (a `HostDeliveryReport` only `TaskHost` can mint) and `25f57f9` (the ledger join). The extraction was done first, in `55bd564`. Deviations and four unfalsifiable properties in [the specification](../archive/plans/2026-08-10-w4-delivery-join.md) and §2. **The work item is done and it closed `c03` alone**: the row's own phrase "the takeover path enters the same linearization" was never delivered as a call edge and cannot be — nothing in production holds both a lease and a Host — so `a07` stood open on it for twenty hours until §2 established that the phrase is the requirement's 需求 and not one of its acceptance clauses. `a07`'s first clause is `reserveDispatch`'s live-lease predicate, gated on 2026-08-11 by extending `contract-agent-a07`. Both closed. See §2 |
+| W4 | **Join Host delivery to the ledger**: `recordDeliveryOutcome` takes what `Host::deliver` returned, inside the fence; the takeover path enters the same linearization | `c03 a07` | W2+W3, both landed | 3 days **understated**: `contract-control-c03` needs a real `TaskHost`, so the ~490-line Runtime v2 fixture in `tests/task/test-runtime-v2-contract.cpp` must be extracted and shared, not copied | **done 2026-08-11** in two commits — `e64c143` (a `HostDeliveryReport` only `TaskHost` can mint) and `25f57f9` (the ledger join). The extraction was done first, in `55bd564`. Deviations and four unfalsifiable properties in [the specification](2026-08-10-w4-delivery-join.md) and §2. **The work item is done and it closed `c03` alone**: the row's own phrase "the takeover path enters the same linearization" was never delivered as a call edge and cannot be — nothing in production holds both a lease and a Host — so `a07` stood open on it for twenty hours until §2 established that the phrase is the requirement's 需求 and not one of its acceptance clauses. `a07`'s first clause is `reserveDispatch`'s live-lease predicate, gated on 2026-08-11 by extending `contract-agent-a07`. Both closed. See §2 |
 | W5 | **Replay Bundle and the two gates**: implement the bundle closure and both publication gates rather than declaring them | `a03 a05` | none | 4 days | **done 2026-08-10** |
-| W6 | **Controller facade**: one path for Script, Agent and Human; out-of-band human input enters as an external source; the Agent surface is semantic-only | `p01 p02 p03` | W2+W3, **and W4** | 4 days | **done 2026-08-11** (`93698b4`). `p02` closed by making a command inexpressible rather than by refusing one; `ExternalInputSource` was refused. See [the specification](../archive/plans/2026-08-10-w6-w7-controller-and-agent.md) |
+| W6 | **Controller facade**: one path for Script, Agent and Human; out-of-band human input enters as an external source; the Agent surface is semantic-only | `p01 p02 p03` | W2+W3, **and W4** | 4 days | **done 2026-08-11** (`93698b4`). `p02` closed by making a command inexpressible rather than by refusing one; `ExternalInputSource` was refused. See [the specification](2026-08-10-w6-w7-controller-and-agent.md) |
 | W7 | **Agent subscription and budgets**: `subscribe(after_cursor)`, and action/risk/time/observation/no-progress budgets | `a01 a02` | W6 | 4 days | **done 2026-08-11** (`c23efd3`). Budgets are established at `pinSession`, never at a door the controller comes through; six specification clauses refused |
 | W8 | Artifact GC by database refcount for orphaned `runtime-artifacts/<hash>/` and `.staging` | — | none | 1-2 days | **done 2026-08-10** |
 | W9 | Adversarial review round over W2-W7 | — | W2-W7, all landed | 1 day per reviewer | **open, and now unblocked.** The round that ran on 2026-08-10 covered `37296d7..cec8898`, which ends before W2; nothing has reviewed W2, W3, W4, W6 or W7 |
@@ -518,7 +523,7 @@ a footnote on W0.
 
 **W0's two figures are a reading, not W11's scope, and they were already stale
 when this plan first quoted them** (recorded 2026-08-10 after
-[the third adversarial round](../archive/reviews/2026-08-10-third-round-review.md),
+[the third adversarial round](../reviews/2026-08-10-third-round-review.md),
 R3-F11). The order matters: `603b0b0` landed before this plan was written and
 had already cleared everything outside `modules/operator`,
 `modules/task/.../platform` and `conformance` — 77 of 106 unique sites over
@@ -538,7 +543,7 @@ CI-faithful run analyzed 92 objects and never reached `modules/task`,
 claim that clang-analysis passed must state how many objects it analyzed, or it
 says almost nothing. Second, the job's header diagnostics were being discarded
 outright by an unusable `HeaderFilterRegex` until 2026-08-10 — see
-[checks that cannot fail](../pitfalls/checks-that-cannot-fail.md) — so the
+[checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md) — so the
 diagnostic count will rise again once that filter starts matching.
 
 Third, **this is not a Linux-only item.** `CMakePresets.json` carries an
@@ -574,7 +579,7 @@ What the three landed items actually left behind:
   the name promises something, and nothing verifies the promise. The other three
   are the dead `HeaderFilterRegex`, `conformance/` missing from `SOURCE_ROOTS`
   in the format and safety checkers, and `test-annotate-backend` running in no
-  gate. [Checks that cannot fail](../pitfalls/checks-that-cannot-fail.md) records
+  gate. [Checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md) records
   them as one family, which is worth more than any of the four separately.
 - **W5** implemented the Replay Bundle closure and both publication gates in
   `tools/annotate`, whose suite is 43 tests. The checked-in workspace JSON
@@ -591,7 +596,7 @@ What the three landed items actually left behind:
   `modules/operator/source/operator/runtime-installation.hpp:31-33`, matching
   the Python literal at `tools/annotate/tests/test_backend.py:800`. Two
   independent copies, and nothing compares them to a computed hash — the shape
-  [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md) is about.)*
+  [checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md) is about.)*
   One design consequence is deliberate and
   stricter than the requirement's wording: the checked-in `ReplayGate` marks
   both sub-gates `required`, so publishing a RuntimeModel is now blocked by a
@@ -643,7 +648,7 @@ What the three landed items actually left behind:
   > block renamed four DDL columns in `journal_events` and `project_state` to
   > the journal schema's member names, again changing the stored DDL text
   > without changing a table name. See
-  > [journal record binding](../archive/plans/2026-08-11-journal-record-binding.md).)* It moved
+  > [journal record binding](2026-08-11-journal-record-binding.md).)* It moved
   > three times before that —
   > `937773366f…` with W4's `dispatches` DDL, `c691f1d9bf…` with W6's two new
   > tables, then this with W7's `agent_budgets` — and W4's move is the one worth
@@ -657,7 +662,7 @@ exactly one file, `tests/core/test-capabilities.cpp`, and by nothing in
 production. It declined to delete them and ruled instead that all four are
 unvalidated core surface to be run through `evaluate-core-capability` — a
 governance question it put outside its own scope. That ruling is §6 of
-[the archived sweep](../archive/reviews/2026-07-25-simplify-sweep.md), and it
+[the archived sweep](../reviews/2026-07-25-simplify-sweep.md), and it
 reached no TODO entry and no plan. The review was archived on 2026-08-01 in
 `eb1d205`, and the ruling was archived with it. Re-measured at `55bd564` on
 2026-08-11 the four counts were unchanged and the evaluation had not run:
@@ -672,9 +677,9 @@ on whether `modules/vision/source/vision/sad.hpp` is a real call site. Keeping a
 facility closes its row exactly as well as removing one does; what does not close
 it is a second measurement. Each answer has to land where a later reader meets
 the facility — the kernel list in
-[`core-reuse.md`](../../.claude/skills/cpp-coding/references/core-reuse.md) and
+[`core-reuse.md`](../../../.claude/skills/cpp-coding/references/core-reuse.md) and
 the Core additions table in
-[`capability-kernel.md`](../../.claude/skills/evaluate-core-capability/references/capability-kernel.md)
+[`capability-kernel.md`](../../../.claude/skills/evaluate-core-capability/references/capability-kernel.md)
 — or the next survey measures the same thing a third time.
 
 That evaluation returned in `bcc3171` on 2026-08-11. All four were **rejected**
@@ -715,7 +720,7 @@ owes is the one pass over the remaining 15, not a permanent re-litigation.
 - `OperatorCoordinator` grows to hold observation and plan data. A second
   trusted object is a second place authority can leak from.
 - **W2 and W3 land as one change; `s04` closes only when both do.** See §3 and
-  [the reconciliation](../archive/plans/2026-08-10-w2-w7-reconciliation.md), which also carries the
+  [the reconciliation](2026-08-10-w2-w7-reconciliation.md), which also carries the
   union of the four items' DDL changes so the schema fingerprint is recomputed
   once per landing rather than once per item. (Executed 2026-08-11 as two
   landings, W3 then W2; the second half of the ruling held and the first was
@@ -732,7 +737,7 @@ owes is the one pass over the remaining 15, not a permanent re-litigation.
   what "orphan" means while a concurrent publisher is mid-install, which is the
   hazard behind finding A-F8. (W8 executed this on 2026-08-10 and A-F8 moved
   from accepted to closed; see
-  [the review outcome](../reviews/2026-08-10-runtime-hardening-review.md).)
+  [the review outcome](../../reviews/2026-08-10-runtime-hardening-review.md).)
 
 ## 5. Outside these work items
 
@@ -834,7 +839,7 @@ unfalsifiable properties rather than counting them as coverage (§2).
    it once more, to
    `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`,
    over the same 23 tables. See
-   [journal record binding](../archive/plans/2026-08-11-journal-record-binding.md).)*
+   [journal record binding](2026-08-11-journal-record-binding.md).)*
 
 **Not this repository's to close, and a different stage.** The consumer-side
 work is specified in
@@ -852,7 +857,7 @@ state the mechanism.
 
 Nobody was wrong at any step. The agent that implemented W4 found the gap,
 understood it correctly, and wrote it down in the right document — Q5 of
-[W4](../archive/plans/2026-08-10-w4-delivery-join.md), which even names the destination: "worth
+[W4](2026-08-10-w4-delivery-join.md), which even names the destination: "worth
 stating in the requirement matrix rather than leaving implied". The landing note
 at the top of that document then restated it and made it *stronger*, observing
 that production had become narrower than the specification assumed. Neither
@@ -899,7 +904,7 @@ this kind lives, and amending it is the owner's call.*
 ## 7. Corrections to this block's record, 2026-08-10
 
 The finding record is
-[the third adversarial round](../archive/reviews/2026-08-10-third-round-review.md). What
+[the third adversarial round](../reviews/2026-08-10-third-round-review.md). What
 follows are the dispositions that belong in the plan rather than in the review,
 and one correction to the review itself. Nothing landed is rewritten to match.
 
@@ -937,7 +942,7 @@ suppression turns the gate red" is true of clang-tidy and false of any gate a
 developer runs: clang-tidy is enabled only by `CPP_ENABLE_CLANG_TIDY`, which
 belongs to the three `*-analysis` presets and the `clang-analysis` CI job, and
 `scripts/ci-local.*` configures the host debug preset. The same block's
-[coding standard amendment](../../.claude/skills/cpp-coding/references/coding-standard.md)
+[coding standard amendment](../../../.claude/skills/cpp-coding/references/coding-standard.md)
 records that the job does not compile. The claim is about a lane that is red for
 other reasons, which is W11 above.
 

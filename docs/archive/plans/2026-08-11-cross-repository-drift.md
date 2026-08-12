@@ -1,5 +1,10 @@
 # Cross-repository drift audit: framework vs uf-chaos, against the frozen v1.9 bundle
 
+> Archived 2026-08-12: this report measured v1.9 and cannot describe the current
+> uncommitted v1.14 draft. Its surviving framework findings are owned by
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `O-101`–`O-121`; the required current-version re-audit is `D-005`.
+
 Status: report only. Nothing here is fixed, and this document changes no schema,
 no code and no other document.
 Date: 2026-08-11
@@ -63,7 +68,7 @@ to the repository root.
 > §0's byte-for-byte verification is a record of that read. It is not rewritten,
 > because rewriting the number would claim the audit hashed bytes it never saw.
 > After 2026-08-12 the v1.9 root survives here and, truncated, in
-> [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md) — both as
+> [checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md) — both as
 > evidence in a dated record, neither as a pin. Every statement of the pin now
 > carries the current root.
 >
@@ -92,7 +97,7 @@ to the repository root.
 ## 0. The pin: VERIFIED, byte for byte
 
 All four bundle documents on disk hash exactly to the values pinned in
-[the hardening rewrite](2026-08-09-runtime-hardening-rewrite.md):14-18.
+[the hardening rewrite](../../plans/2026-08-09-runtime-hardening-rewrite.md):14-18.
 
 | Document | SHA-256 on disk | Bytes | Pin |
 |---|---|---|---|
@@ -128,7 +133,7 @@ not choose one of them.**"*
 
 The bundle anticipated its own contradictions and specified the remedy: re-version
 the bundle. It explicitly forbids the mechanism the framework used instead —
-[the hardening rewrite](2026-08-09-runtime-hardening-rewrite.md)'s four
+[the hardening rewrite](../../plans/2026-08-09-runtime-hardening-rewrite.md)'s four
 "executable conformance resolutions", each of which picks one side of a bundle
 disagreement and freezes that choice upstream.
 
@@ -188,7 +193,7 @@ self-tests on every invocation so that a verification which cannot fail is
 itself caught. This paragraph is kept as the record of the finding, not as a
 live one.
 
-This is the [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md)
+This is the [checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md)
 family applied to the arbiter itself: a name promises that the bundle is pinned,
 and nothing verifies the promise. The re-hash performed for this report appears to
 be only the second time anyone has actually done it.
@@ -570,7 +575,7 @@ question Q4.
 `` `REQUIRED_CORE` + `PROJECT_CONTRACT` `` — the only two rows in the matrix whose
 ownership cell holds two labels.
 
-**Framework.** [The migration report](2026-08-09-runtime-migration-report.md):160
+**Framework.** [The migration report](../../plans/2026-08-09-runtime-migration-report.md):160
 and `:167` give each a single framework owner and purely local CTests. Every other
 `PROJECT_CONTRACT` requirement in that table (`:127-135`) carries `EXTERNAL
 attest-consumer-dNN`. Neither `C-11` nor `A-04` has any consumer-side verification
@@ -742,7 +747,7 @@ schema spelling is `_id`, and a single assignment bridges them.
 **Which side is wrong.** The framework's C++ implementation. The bundle and the
 framework's own schemas agree; the code invented a second spelling for one concept
 and hides it behind a boundary rename. That is precisely the shim
-[`CLAUDE.md`](../../CLAUDE.md)'s "Break it rather than bridge it" forbids —
+[`CLAUDE.md`](../../../CLAUDE.md)'s "Break it rather than bridge it" forbids —
 "no accepting two spellings of one thing" — and the rename at `:3956` is the
 reason "the next reader cannot tell which spelling is the real one."
 
@@ -813,7 +818,7 @@ survives in six. The current value is
 > so the count stays at 23 and the constant still occurs exactly once, at
 > `:362`. The nine and six counts above are unaffected by this change;
 > `be80aca714…` now joins the superseded set. See
-> [journal record binding](../archive/plans/2026-08-11-journal-record-binding.md).
+> [journal record binding](2026-08-11-journal-record-binding.md).
 
 **Consumer-side check performed:** uf-chaos pins **no** framework fingerprint
 anywhere, so this breadth does not extend across the boundary. VERIFIED —

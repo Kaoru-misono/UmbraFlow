@@ -10,7 +10,7 @@
 // decoded extent must be the model's, and after the Q2 ruling the model's
 // extent does not exist until the Host has activated the artifact -- which a
 // loader does not do. It moved into the conformance run instead; see
-// docs/plans/2026-08-11-project-as-data.md 2.7 R8. What R9's case covers is
+// docs/archive/plans/2026-08-11-project-as-data.md 2.7 R8. What R9's case covers is
 // the other claim about the same file, that it decodes at all, which is
 // answerable here and was unchecked until 2026-08-11.
 
@@ -360,7 +360,7 @@ namespace uf::deployment
     TEST_CASE("the specification's worked documents are documents this accepts")
     {
         constexpr auto k_specification =
-            std::string_view{"docs/plans/2026-08-11-project-as-data.md"};
+            std::string_view{"docs/archive/plans/2026-08-11-project-as-data.md"};
         auto const root = json::repositoryRoot(k_specification);
         REQUIRE_FALSE(root.empty());
 
@@ -421,7 +421,7 @@ namespace uf::deployment
     // trailing newline scripts/fix_format.py adds to every .json is exactly
     // what parseManifest refuses -- which is why that script no longer owns a
     // directory holding umbraflow-project.json
-    // (docs/plans/2026-08-11-project-as-data.md 2.5). This is what says the
+    // (docs/archive/plans/2026-08-11-project-as-data.md 2.5). This is what says the
     // exclusion held.
     TEST_CASE("this repository's own example project directories load")
     {
@@ -1068,7 +1068,7 @@ namespace uf::deployment
     // directory -- so both directions are refused where they were written.
     // Without this member their bytes are inside no hash at all and editing one
     // is answered by a Plan refusal much later
-    // (docs/plans/2026-08-11-project-as-data.md 2.2).
+    // (docs/archive/plans/2026-08-11-project-as-data.md 2.2).
     TEST_CASE("R5 the catalog and the effect payload schemas must name each other")
     {
         auto const fixture = Fixture{};

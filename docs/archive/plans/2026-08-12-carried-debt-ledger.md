@@ -1,5 +1,10 @@
 # What the archived W-series specifications and reviews still owe
 
+> Archived 2026-08-12: every still-actionable row was consolidated into
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `O-101`–`O-122`. Closed, conditional and historical-only rows remain below as
+> evidence. Current-head revalidation of the mapping is `D-004`.
+
 Status: **live work item, and the only live owner of every row below.** Nothing
 here is a design and nothing here is a summary of one. Each row is a ruling, a
 concession, a refused clause or a measured negative that a document made and
@@ -9,8 +14,8 @@ ruling going with it.
 Date: 2026-08-12
 Scope: `umbraflow-cpp` only. No consumer-project writes.
 Evidence: the documents these rows came from are unchanged in
-[`docs/archive/plans/`](../archive/plans/) and
-[`docs/archive/reviews/`](../archive/reviews/). Every row names its origin
+[`docs/archive/plans/`](./) and
+[`docs/archive/reviews/`](../reviews/). Every row names its origin
 section, so the argument behind it is one hop away and was not rewritten.
 
 ## Why this file exists
@@ -48,7 +53,7 @@ still readable somewhere a later agent will trust.
 
 ## A. From the W2 EffectivePlan specification
 
-Origin: [`archive/plans/2026-08-10-w2-effective-plan.md`](../archive/plans/2026-08-10-w2-effective-plan.md).
+Origin: [`archive/plans/2026-08-10-w2-effective-plan.md`](2026-08-10-w2-effective-plan.md).
 W2's own owed-list already pointed at the next block for its three green
 mutations and three unenforced ceilings, and those pointers hold; only what it
 did **not** point at is carried here.
@@ -61,15 +66,15 @@ did **not** point at is carried here.
 
 ## B. From the W3 Snapshot Coordinator specification
 
-Origin: [`archive/plans/2026-08-10-w3-snapshot-coordinator.md`](../archive/plans/2026-08-10-w3-snapshot-coordinator.md).
+Origin: [`archive/plans/2026-08-10-w3-snapshot-coordinator.md`](2026-08-10-w3-snapshot-coordinator.md).
 W3 had no "what it still owes" section of its own — the claim in
-[`plans/README.md`](README.md) that all four specifications carried one was true
+[`plans/README.md`](../../plans/README.md) that all four specifications carried one was true
 of W2 and false of W3. This section is that missing block.
 
 | ID | Owes | Where it was ruled | State in the tree |
 |---|---|---|---|
 | `C-W3-1` | **`identity_hash` cannot be invariant across two observations of an identical world**, because `observation_id` is one of the frozen `SnapshotParts` members. W3's landing note conceded it; two live artefacts still assert the opposite. | landing note, against §3.5 and §4 | **Falsified and still asserted.** `modules/operator/source/operator/ledger.cpp:706-707` states the invariance *inside the DDL text the schema fingerprint canonicalizes*, so correcting the comment moves the fingerprint and refuses every existing operator database. `archive/plans/2026-08-10-w2-w7-reconciliation.md` §3.5 and §6.2 state it twice more. Also recorded as [cross-repository drift](2026-08-11-cross-repository-drift.md) F-12 item 4 |
-| `C-W3-2` | **§3.4's join comment claims a guarantee its own mutation campaign disproved.** `T6a` and `T6b` are each green; only `T6c`, deleting both clauses, is red. The conjunction is guarded; neither clause is. | landing note, against §3.4 | **Falsified and still asserted.** `ledger.cpp:4256-4260` tells the next reader that `obs.project_state_revision = state.revision` "is not redundant with the clause above it"; both clauses are live at `:4279-4280`. Belongs beside its family in [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md) |
+| `C-W3-2` | **§3.4's join comment claims a guarantee its own mutation campaign disproved.** `T6a` and `T6b` are each green; only `T6c`, deleting both clauses, is red. The conjunction is guarded; neither clause is. | landing note, against §3.4 | **Falsified and still asserted.** `ledger.cpp:4256-4260` tells the next reader that `obs.project_state_revision = state.revision` "is not redundant with the clause above it"; both clauses are live at `:4279-4280`. Belongs beside its family in [checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md) |
 | `C-W3-3` | **`T5d` proves nothing in its literal form** — the value it adds is constant across captures in that fixture. It was retargeted to a per-capture value and reported as a substitution. | landing note | Correct; the instance is recorded in no live document, only the general shape |
 | `C-W3-4` | **The surface rule `T8` asserts did not exist and had to be written, and its first version passed with the forbidden parameter reintroduced.** A check that could not fail, inside the machinery built to catch checks that cannot fail. | landing note | The rule landed and is correct (`tests/test-runtime-surface.py`, the `createSnapshot` declaration guard). The *outcome* — that its first version was green against the mutation it existed for — reaches no live document |
 | `C-W3-5` | **`project_observations` grows without bound.** "Whether observation rows are pruned, and by what rule that does not break the join in §3.4, has no owner." | §9 Q5 | Still true and still unowned. Table at `ledger.cpp:585`, inserted at `:3829`, pruned nowhere |
@@ -78,11 +83,11 @@ of W2 and false of W3. This section is that missing block.
 | `C-W3-8` | **§9 Q4's ruling is half executed.** W6 was to own `available_tools` and `event_cursor` on the snapshot; W6 and W7 landed and neither exists. | §9 Q4, with reconciliation §3.10 | `snapshots` has no `event_cursor` column (`ledger.cpp:708-736`; the INSERT at `:4007-4011` binds 16 columns), and no available-tool set exists anywhere. See also `C-W67-9` |
 | `C-W3-9` | **The conditional ruling on `availability_revision` has not been discharged**: the moment an available-tool set exists, `availability_revision` must become *that set's* revision, because it is inside `identity_hash`. A semantic change invisible to both the compiler and the fingerprint. | §8 assumption 7, reconciliation §3.10 | Not yet triggered — no such set exists — so this row is a trap laid for whoever builds one |
 | `C-W3-10` | **"Three of the four triggers" is wrong, and the document disagrees with itself.** §3.3 claims acquire/takeover/release is three of four; §9.6 says it covers the first two. The design's four are acquire/takeover/**policy**/**availability**; release is not among them and neither policy nor availability is covered. | §3.3 against §9.6 | Confirmed by [cross-repository drift](2026-08-11-cross-repository-drift.md) F-12 item 5. Joins `C-W3-6` |
-| `C-W3-11` | **`createSnapshot`'s single-friend property is untested**, and the document says the §7 falsification is what would notice. It never tested it. | §2.3 | The identical zero for `HostDeliveryReport` **is** carried in [the next block](2026-08-10-next-block.md) §2 and in [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md); this one should be recorded the same way or repaired |
+| `C-W3-11` | **`createSnapshot`'s single-friend property is untested**, and the document says the §7 falsification is what would notice. It never tested it. | §2.3 | The identical zero for `HostDeliveryReport` **is** carried in [the next block](2026-08-10-next-block.md) §2 and in [checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md); this one should be recorded the same way or repaired |
 
 ## C. From the W4 delivery-join specification
 
-Origin: [`archive/plans/2026-08-10-w4-delivery-join.md`](../archive/plans/2026-08-10-w4-delivery-join.md).
+Origin: [`archive/plans/2026-08-10-w4-delivery-join.md`](2026-08-10-w4-delivery-join.md).
 This is the document whose Q5 died in place. Its open questions are carried in
 full, answered or not, because that is the failure this ledger exists to stop
 repeating.
@@ -95,13 +100,13 @@ repeating.
 | `C-W4-4` | **Is one `TaskHost` bound to one `controlled_target_id` the intended shape**, or does `m_fence` become a per-target map with every Receipt carrying its target? | §9 Q6 | Open, unowned |
 | `C-W4-5` | **Q4's answer has a consumer-visible cost that was never recorded.** The exported suite grew a `TaskHost`, so the Runtime v2 world is now consumer-visible through it. | §9 Q4 and the landing note | True and unrecorded. [The next block](2026-08-10-next-block.md) §5 records the suite's reshaping and not this |
 | `C-W4-6` | **`T-10` is unfalsifiable as written** — the mutation was run and reported green. A fifth zero for `c03` / `a07`, beside the four the next block names. | landing note | Correct. The next block lists four W4 zeros; this is the fifth and is in no live document |
-| `C-W4-7` | **A second `TaskContext` on one `TaskHost` generation resolves nothing**, because `observe.luau`'s template cache is keyed by the RuntimeModel and outlives the context that registered the handles. Found while implementing, predicted by nobody. | landing note | Reusable failure knowledge with no home. It belongs in [`docs/pitfalls/`](../pitfalls/README.md) |
+| `C-W4-7` | **A second `TaskContext` on one `TaskHost` generation resolves nothing**, because `observe.luau`'s template cache is keyed by the RuntimeModel and outlives the context that registered the handles. Found while implementing, predicted by nobody. | landing note | Reusable failure knowledge with no home. It belongs in [`docs/pitfalls/`](../../pitfalls/README.md) |
 | `C-W4-8` | **Three assumptions were never re-checked, and one of them was written as a precondition of accepting W4.** §8 A9: "§1.2's claim that five of six operations are serialized by SQLite must be re-checked against W3's `ProjectObservation` composition before W4 is accepted" — W4 was accepted. §8 A5: if several dispatches may be in flight, `resolveUnansweredDispatches` must resolve every NULL row and `T-9`'s `== 1` becomes a count. §8 A11: if snapshot composition needs live UI observation through the Host, W4's §2 boundary answer must be revisited before W3 lands — W3 landed. | §8 A5, A9, A11 | No record that any of the three was performed |
 | `C-W4-9` | **The `docs/INDEX.md` half of Q7 was never done.** Q7 said both index entries were owed on acceptance; `plans/README.md` gained one and `INDEX.md` did not. | §9 Q7 | Discharged differently on 2026-08-12: `INDEX.md` no longer lists individual specifications at all, and `plans/README.md` is the canonical listing. Kept as the record of why the row closed rather than was done |
 
 ## D. From the W6 controller and W7 Agent specification
 
-Origin: [`archive/plans/2026-08-10-w6-w7-controller-and-agent.md`](../archive/plans/2026-08-10-w6-w7-controller-and-agent.md).
+Origin: [`archive/plans/2026-08-10-w6-w7-controller-and-agent.md`](2026-08-10-w6-w7-controller-and-agent.md).
 Two of these qualify requirements that document's own `Closes:` line marks
 closed.
 
@@ -115,13 +120,13 @@ closed.
 | `C-W67-6` | **Should no-progress carry a millisecond ceiling?** §5.3 rules it out and says in as many words that the ruling may be wrong. The field it turns on is `C-W67-3`. | §10 Q4 | Open, unowned |
 | `C-W67-7` | **`AgentBudgetRemaining` carries one no-progress counter, not the two §5.1 specified**, and **`createSnapshot` gained neither a `ControllerBinding` nor an `observedAt`.** Two of the seven refusals that no live document records. | landing note, refusals 2 and 4 | Both refusals stand; only the `pinSession` refusal reached a live document |
 | `C-W67-8` | **`operation_state_changed` is deliberately not a fourth `ledger_events` kind.** The reason is sound and it is the direct cause of `C-W67-1`. | landing note, refusal 6 | Recorded nowhere live |
-| `C-W67-9` | **`T-A02-j` was unfalsifiable as written**: a C++ guard sitting in front of a database `CHECK` makes the constraint's mutation green. Repaired by removing the C++ guard. | landing note, refusal 5 | The requirement is fine; the **shape** is a form of "a second mechanism refuses first" and is not in [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md) |
-| `C-W67-10` | **"Someone should reconcile the older documents' `FrontEnd` wording; this specification does not edit them."** | §2.4 | Still true. `FrontEnd` has zero hits in `modules/` and `entry/` and survives in [agent front end](2026-08-01-agent-front-end-and-exploration.md), [state layer](2026-08-04-state-layer-and-policy-slots.md) and [three-layer task system](2026-07-29-three-layer-task-system.md) |
+| `C-W67-9` | **`T-A02-j` was unfalsifiable as written**: a C++ guard sitting in front of a database `CHECK` makes the constraint's mutation green. Repaired by removing the C++ guard. | landing note, refusal 5 | The requirement is fine; the **shape** is a form of "a second mechanism refuses first" and is not in [checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md) |
+| `C-W67-10` | **"Someone should reconcile the older documents' `FrontEnd` wording; this specification does not edit them."** | §2.4 | Still true. `FrontEnd` has zero hits in `modules/` and `entry/` and survives in [agent front end](2026-08-01-agent-front-end-and-exploration.md), [state layer](2026-08-04-state-layer-and-policy-slots.md) and [three-layer task system](../../plans/2026-07-29-three-layer-task-system.md) |
 | `C-W67-11` | **§10 Q1's premise is refuted by the bundle.** The ruling that a `Semantic` marking is "not resolvable without the v1.9 clause behind `P-03`" is wrong: the clause exists and requires the privileged surface to **not exist** in the Agent's capability set, proven by attack test. The framework substituted a marking on a project-owned catalog. | §10 Q1 | [Cross-repository drift](2026-08-11-cross-repository-drift.md) F-12 item 3 and F-3, both open. [The next block](2026-08-10-next-block.md) §4's ruling was made without this |
 
 ## E. From the W2-W7 reconciliation
 
-Origin: [`archive/plans/2026-08-10-w2-w7-reconciliation.md`](../archive/plans/2026-08-10-w2-w7-reconciliation.md).
+Origin: [`archive/plans/2026-08-10-w2-w7-reconciliation.md`](2026-08-10-w2-w7-reconciliation.md).
 Its rulings R1-R7 are all discharged or recorded elsewhere. What is carried is
 its §8 open list — which [the next block](2026-08-10-next-block.md) §6 discharged
 by *pointing back into it* — and four items that live in no document at all.
@@ -138,7 +143,7 @@ by *pointing back into it* — and four items that live in no document at all.
 
 ## F. From the third adversarial round
 
-Origin: [`archive/reviews/2026-08-10-third-round-review.md`](../archive/reviews/2026-08-10-third-round-review.md).
+Origin: [`archive/reviews/2026-08-10-third-round-review.md`](../reviews/2026-08-10-third-round-review.md).
 Verdict FAIL, 17 findings. Twelve are closed in the tree; **nine of those
 closures were recorded in no document at all**, including R3-F1, one of the two
 findings the verdict called blocking. Recording them is what let the review be
@@ -163,14 +168,14 @@ review is left exactly as written.
 
 | ID | Owes | State in the tree |
 |---|---|---|
-| `C-R3-1` | **R3-F5 is accepted permanently and its record is a CMake comment.** The `contract-` versus `schema-` classification is not mechanically checkable and is caught by review and by nothing else. | Stated at `tests/CMakeLists.txt:58-66` and in no document. A `contract-` name is an unverified promise, which is the whole subject of [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md) |
+| `C-R3-1` | **R3-F5 is accepted permanently and its record is a CMake comment.** The `contract-` versus `schema-` classification is not mechanically checkable and is caught by review and by nothing else. | Stated at `tests/CMakeLists.txt:58-66` and in no document. A `contract-` name is an unverified promise, which is the whole subject of [checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md) |
 | `C-R3-2` | **R3-F6 leaves a live instruction for whoever recombines this history: `dcc43b5` does not compile.** It calls `ConfinedRoot::removeTree` and `childNames`, which arrive in `cec8898`. Fold the extension into `dcc43b5`, or order `cec8898` first. | Carried in [the next block](2026-08-10-next-block.md) §7; repeated here because §7 is a corrections section a reader of open work will not open |
-| `C-R3-3` | **R3-F9's residue is open and carried nowhere.** `modules/cli/source/cli/explore-protocol.cpp:410` passes a raw Luau string to `appendJsonString` with no `isValidUtf8`, so invalid UTF-8 passes through on the explore emit path; `:405`'s `{:.17g}` is retained with a rationale rather than made shortest-round-trip. | The closed half — three JCS spellings held to one vector set — is in [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md) |
-| `C-R3-4` | **R3-F14's two limits stand**: the `cppcoreguidelines-pro-type-member-init` suppression proof was never committed as a `static_assert`, so a default constructor added to `PixelRect`, `PixelPoint`, `FrameId` or `ContentHash` later turns the suppressions into silent holes; and `NOLINTNEXTLINE` sits above the record rather than the member, so a bare new field is swallowed. | Carried in [the next block](2026-08-10-next-block.md) §7 and in [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md) |
+| `C-R3-3` | **R3-F9's residue is open and carried nowhere.** `modules/cli/source/cli/explore-protocol.cpp:410` passes a raw Luau string to `appendJsonString` with no `isValidUtf8`, so invalid UTF-8 passes through on the explore emit path; `:405`'s `{:.17g}` is retained with a rationale rather than made shortest-round-trip. | The closed half — three JCS spellings held to one vector set — is in [checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md) |
+| `C-R3-4` | **R3-F14's two limits stand**: the `cppcoreguidelines-pro-type-member-init` suppression proof was never committed as a `static_assert`, so a default constructor added to `PixelRect`, `PixelPoint`, `FrameId` or `ContentHash` later turns the suppressions into silent holes; and `NOLINTNEXTLINE` sits above the record rather than the member, so a bare new field is swallowed. | Carried in [the next block](2026-08-10-next-block.md) §7 and in [checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md) |
 
 ## G. From the consumer-onboarding measurement
 
-Origin: [`archive/plans/2026-08-11-consumer-onboarding.md`](../archive/plans/2026-08-11-consumer-onboarding.md).
+Origin: [`archive/plans/2026-08-11-consumer-onboarding.md`](2026-08-11-consumer-onboarding.md).
 Superseded in shape by [a project is a directory of data](2026-08-11-project-as-data.md)
 and kept for its measurement of what the deleted C++ surface cost a consumer.
 Its status line says four of its ten questions are moot and one stands as
@@ -181,7 +186,7 @@ moot by the correction; what follows is what was neither.
 |---|---|---|---|
 | `C-CO-1` | **The background-only rule is a product invariant that no compiled contract case can detect, and it must become part of what a consumer attests** — a tenth requirement, or a field on the existing nine. Ten Win32 APIs are forbidden by a Python source scan of *this* repository; a consumer's own code is scanned by nothing. | §8.2, its Q9 | **Dropped, not mooted.** [Consumer attestation](2026-08-11-consumer-attestation.md) still specifies exactly nine requirements and names none of this; `scripts/check_safety.py:47-50` still holds the rule with no consumer-facing route. This is the one genuinely unexecuted ruling in that document |
 | `C-CO-2` | **The `attestations`-root trap.** A registration naming an artifact root without the blob beneath it fails at `loadPlugin` with an artifact-closure message that does not say what is missing. The document asked for one sentence in `provider.hpp`. | §9 J2 | The recommendation's target file was deleted with the provider surface, so the sentence has nowhere to go and the trap is untreated. The `attestations` root itself is still unruled — [consumer attestation](2026-08-11-consumer-attestation.md) §10 Q1 |
-| `C-CO-3` | **Its own §12 owed two index entries and neither was made**, so a 1,213-line document sat in `docs/plans/` listed in nothing. [Project as data](2026-08-11-project-as-data.md) even places a cross-reference "beside the consumer-onboarding entry", which never existed. | §12 | Closed 2026-08-12 by the archive move: it is listed in [`plans/README.md`](README.md) under archived plans, with the date. Recorded here because the *cause* — a document can enter `docs/plans/` and be indexed by nothing — is the same defect as [cross-repository drift](2026-08-11-cross-repository-drift.md) §4 and is not fixed by one entry |
+| `C-CO-3` | **Its own §12 owed two index entries and neither was made**, so a 1,213-line document sat in `docs/plans/` listed in nothing. [Project as data](2026-08-11-project-as-data.md) even places a cross-reference "beside the consumer-onboarding entry", which never existed. | §12 | Closed 2026-08-12 by the archive move: it is listed in [`plans/README.md`](../../plans/README.md) under archived plans, with the date. Recorded here because the *cause* — a document can enter `docs/plans/` and be indexed by nothing — is the same defect as [cross-repository drift](2026-08-11-cross-repository-drift.md) §4 and is not fixed by one entry |
 | `C-CO-4` | **Its status line and §6.4 are stale in the archive.** Both say Q3 "stands as project-as-data's §7 Q1" and that a complete RFC 8785 canonicaliser is "still open" with "both fixtures still faking it with an allowlist". | status line, §6.4 | Both were ruled and landed: `evaluate-core-capability` refused `core`, the canonicaliser landed as `modules/json` (`a0ae304`, `value.hpp:114,121`), and `974396e` deleted both faking exemplars. Stated in the archived file's closure note rather than by editing its body |
 
 ## What this ledger does not carry
@@ -193,7 +198,7 @@ Two things, deliberately.
 invariant, the three stored-and-unenforced ceilings, `StepKind::Wait`,
 `ApprovalRequest::policyHash` and the harness defects are all carried in
 [the next block](2026-08-10-next-block.md) §2 or in
-[checks that cannot fail](../pitfalls/checks-that-cannot-fail.md), which are
+[checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md), which are
 their right homes. Copying them here would make two records of one debt, which is
 the failure mode one level up from the one this file fixes.
 

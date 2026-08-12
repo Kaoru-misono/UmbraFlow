@@ -342,7 +342,7 @@ namespace uf::script
         // interrupt's three triggers reach no host call, so a break by the wall
         // clock or the instruction budget latches HERE and nowhere the task
         // layer can see
-        // (docs/plans/2026-08-01-agent-front-end-and-exploration.md).
+        // (docs/archive/plans/2026-08-01-agent-front-end-and-exploration.md).
         [[nodiscard]]
         auto generationSpent() const noexcept -> bool;
     };

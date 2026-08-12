@@ -1,5 +1,11 @@
 # Recognition, measured
 
+> Archived 2026-08-12: measurement complete. It refuted weighted scoring and
+> the two-capture Reader; the correct Reader, real derive and conflict ruling
+> are owned by
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `C-001`, `C-002` and `C-004`.
+
 2026-08-12. A measurement, not a design. It answers one question with numbers
 from the real game: **can this system recognise it today, and does the weighted
 matching the project layer specifies need to be built?**

@@ -122,7 +122,7 @@ namespace uf::deployment
     // governs it. Which one it is comes from the document's own `schema`
     // member, so a caller states no choice and cannot state the wrong one.
     //
-    // It is published for one reason. docs/plans/2026-08-11-project-as-data.md
+    // It is published for one reason. docs/archive/plans/2026-08-11-project-as-data.md
     // 2.4 specifies these three by worked example, and an example that nothing
     // holds to the bytes that decide drifts from them: the last time this
     // format was stated only as C++ string constants, the first consumer to

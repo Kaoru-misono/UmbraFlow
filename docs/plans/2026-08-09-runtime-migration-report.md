@@ -96,7 +96,7 @@ fixtures cannot satisfy them.
 > and `A-07` is reopened; its row below says so. This table maps requirements to
 > gates and is correct as such. It is not a closure ledger, and reading it as one
 > is how the row stayed unqualified. See
-> [the next block](2026-08-10-next-block.md) §2 and §6.1.
+> [the archived next-block record](../archive/plans/2026-08-10-next-block.md) §2 and §6.1.
 
 > **Corrected again 2026-08-11 (`bed456f`): the correction above also misread
 > the acceptance text.** The frozen bundle's row places both consequences
@@ -109,7 +109,7 @@ fixtures cannot satisfy them.
 > second case, and both clauses are now falsified by mutation. **All 40
 > `contract-*` gates close their requirement in full, and 42 of 42 requirements
 > are closed by a behavioural gate.** `A-07`'s row below is corrected to match.
-> See [the next block](2026-08-10-next-block.md) §2.
+> See [the archived next-block record](../archive/plans/2026-08-10-next-block.md) §2.
 
 > **Forty of the forty-two requirements now own a behavioural gate, and the two
 > that do not are not open work.** `A-03` and `A-05` are implemented — the
@@ -137,7 +137,7 @@ fixtures cannot satisfy them.
 > specification.** Until that date the `D-01`-`D-09` rows below were the only
 > occurrence of those strings anywhere in the tree, and nothing said what a
 > consumer produces, who signs it, where it is recorded, or what refuses it.
-> [Consumer attestation](2026-08-11-consumer-attestation.md) settles all four:
+> [Consumer attestation](../archive/plans/2026-08-11-consumer-attestation.md) settles all four:
 > one exact JCS `ProjectAttestationSet` inlining nine content-addressed
 > attestations, carried as the `attestations` entry of
 > `project_artifact_roots` — which is why the `Schema location` column of those
@@ -201,7 +201,7 @@ fixtures cannot satisfy them.
 | A-04 | Reconciliation coordinator | JR:`JournalEvent` | CTEST `contract-agent-a04` — since 2026-08-11 it also binds the `journal_events` column set to `JR:JournalEvent`'s `required` list and drives six provenance documents that each violate one rule of the fixed `JR:JournalProvenance`, which the framework now enforces itself; see [the journal record binding](../archive/plans/2026-08-11-journal-record-binding.md) |
 | A-05 | Publication gates | AW:`ReplayGate` + PR:`plugin_hash` | CTEST `schema-agent-a05`; behaviour under the aggregate CTEST `test-annotate-backend`, with no per-requirement ID |
 | A-06 | Deployment boundary | AW:`AuthoringCapabilityRoot` + RA | CTEST `contract-agent-a06` |
-| A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `contract-agent-a07` and CTEST `schema-agent-a07` — **closed**: `contract-agent-a07` proves both acceptance clauses — the displaced lease is refused a reservation the live lease is then granted, and a second Host still carrying the displaced fence cannot deliver it — after being extended 2026-08-11 (`bed456f`) to run the schedule the first clause needed. Reopened earlier the same day (`07abc3e`) on a misreading that substituted the 需求 sentence for the first 验收 clause. See [the next block](2026-08-10-next-block.md) §2 |
+| A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `contract-agent-a07` and CTEST `schema-agent-a07` — **closed**: `contract-agent-a07` proves both acceptance clauses — the displaced lease is refused a reservation the live lease is then granted, and a second Host still carrying the displaced fence cannot deliver it — after being extended 2026-08-11 (`bed456f`) to run the schedule the first clause needed. Reopened earlier the same day (`07abc3e`) on a misreading that substituted the 需求 sentence for the first 验收 clause. See [the archived next-block record](../archive/plans/2026-08-10-next-block.md) §2 |
 | A-08 | Operator recovery | OP:`ExternalInputFinding/OperationState` | CTEST `contract-agent-a08` |
 
 Where the 59 gates are declared, as of 2026-08-11:
@@ -241,7 +241,7 @@ registered tests, which is what a green run must report:
   CTEST `test-contract-operator`, CTEST `test-contract-runtime`,
   CTEST `conformance-umbraflow` and CTEST `conformance-arcana`. The last
   two were added 2026-08-10 with the exported Operator conformance suite (see
-  [the next block](2026-08-10-next-block.md) §5); they run cases through the
+  [the archived next-block record](../archive/plans/2026-08-10-next-block.md) §5); they run cases through the
   public entry point a consumer uses, so a change that keeps the in-tree
   fixtures green but breaks the exported surface is visible. The first two
   gained the same aggregate in `dcc43b5`, after seven compiled cases in

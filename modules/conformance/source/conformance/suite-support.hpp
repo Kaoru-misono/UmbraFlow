@@ -28,7 +28,7 @@ namespace uf::operator_runtime::conformance
     // nothing writes it afterwards. Cases run single-threaded in one process,
     // which TemporaryDirectory below already relies on. Returned by copy, so no
     // case holds a view of storage it does not own. See
-    // docs/plans/2026-08-11-project-as-data.md 7.0 Q9.
+    // docs/archive/plans/2026-08-11-project-as-data.md 7.0 Q9.
     auto setProjectDirectory(std::filesystem::path directory) -> void;
 
     [[nodiscard]] auto projectDirectory() -> std::filesystem::path;

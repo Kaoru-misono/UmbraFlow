@@ -49,7 +49,7 @@ published.
 ### A-F8 — the artifact directory a failed CAS leaves behind
 
 Closed 2026-08-10 by work item W8 of
-[the next block](../plans/2026-08-10-next-block.md), which was ordered on the
+[the archived next-block record](../archive/plans/2026-08-10-next-block.md), which was ordered on the
 strength of this finding's acceptance.
 
 The acceptance below was right and is still the reason nothing is deleted on

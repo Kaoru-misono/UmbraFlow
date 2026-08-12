@@ -46,7 +46,7 @@ namespace uf::cli
         // other authority names this artifact by. A project directory records
         // no prior commitment to it, so the value handed to the verifier is
         // this verb's own arithmetic over the bytes it read -- the legal and
-        // empty comparison of docs/plans/2026-08-11-project-as-data.md 7.0. It
+        // empty comparison of docs/archive/plans/2026-08-11-project-as-data.md 7.0. It
         // is reported so a later run can be held to the same artifact.
         std::string rootHash{};
 

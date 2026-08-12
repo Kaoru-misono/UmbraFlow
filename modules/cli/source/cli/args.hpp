@@ -136,7 +136,7 @@ namespace uf::cli
     // project carries, so a caller cannot ask for a generation to be opened
     // under a digest it stated -- which is the same rule that keeps a project
     // author from typing a digest at all
-    // (docs/plans/2026-08-11-project-as-data.md 7.0 Q3).
+    // (docs/archive/plans/2026-08-11-project-as-data.md 7.0 Q3).
     //
     // installedGeneration is the one quantity neither the directory nor the
     // ledger's public surface can answer for: it is the CAS compare-and-swap

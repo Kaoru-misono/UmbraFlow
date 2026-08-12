@@ -531,7 +531,7 @@ namespace uf::operator_runtime::conformance
     // the binding rather than carried alongside the capture because the model is
     // a Luau value: after the Q2 ruling the trusted parser publishes
     // base_resolution and base_dpi, and no document beside the model restates
-    // them. See docs/plans/2026-08-11-project-as-data.md 7.0 Q2.
+    // them. See docs/archive/plans/2026-08-11-project-as-data.md 7.0 Q2.
     [[nodiscard]]
     inline auto declaredFingerprint(
         task::TaskHost& host,

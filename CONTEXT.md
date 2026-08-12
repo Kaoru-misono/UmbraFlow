@@ -12,14 +12,16 @@ Verified against the tree on 2026-08-11.
 
 Design authority for anything this file does not settle:
 [runtime hardening rewrite](docs/plans/2026-08-09-runtime-hardening-rewrite.md)
-for design and [the next block](docs/plans/2026-08-10-next-block.md) for
-requirement state. *(Amended 2026-08-12: this also named the W2-W7
+for design and
+[the consolidated outstanding-work plan](docs/plans/2026-08-12-outstanding-work.md)
+for current requirement state. *(Amended 2026-08-12: the archived next-block
+record also named the W2-W7
 reconciliation as the tie-breaker "where same-day specifications conflict".
 There are no live same-day specifications left to break ties between — all four
 landed and all five documents are in
 [`docs/archive/plans/`](docs/archive/plans/) — so the reconciliation is a record
-of rulings, not a third authority. What it and they still owe is
-[the carried debt ledger](docs/plans/2026-08-12-carried-debt-ledger.md).)*
+of rulings, not a third authority. What it and they still owe is now carried in
+the consolidated outstanding-work plan.)*
 
 ## Reading a spelling
 
@@ -188,7 +190,7 @@ authorities from them. One deployment is enough and no tool has to be mutating.
 vocabulary that drives it — `foreign` is deliberately not under test, and
 `underTest` keeps the phrase because it is honest about which of the two
 registrations a run observes. The split is 2026-08-12's
-([the loading question](docs/plans/2026-08-11-project-as-data.md) §2.7 R1):
+([the loading question](docs/archive/plans/2026-08-11-project-as-data.md) §2.7 R1):
 before it one loader required both documents, two roles and four mutating tools
 of every directory, so a consuming project at a read-only phase could not be
 expressed at all.

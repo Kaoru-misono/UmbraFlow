@@ -1,5 +1,11 @@
 # What the pure plugin environment owes a project, and what its schemas do not
 
+> Archived 2026-08-12: the value boundary, artifact reader and environment pin
+> landed; `canon.encode` was ruled unnecessary. Remaining schema and large-pack
+> work is owned by
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `P-001`–`P-006`.
+
 Status: **largely landed, and one of its recommendations was refuted by trying to
 build it.** The decoded frozen value and the `plugin_environment_hash` pin are in
 the tree. `canon.encode`, prescribed in §5, was **not** built: an external review
@@ -37,7 +43,7 @@ fact carries its file and line so a reader can re-check it against a later tree.
 
 Related: [a project is a directory of data](2026-08-11-project-as-data.md)
 specifies the directory and the loader rules R1–R9 this document leans on.
-[Checks that cannot fail](../pitfalls/checks-that-cannot-fail.md) is the record
+[Checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md) is the record
 §8.5 is measured against. Nothing here changes either.
 
 ## 0. The two questions
@@ -535,7 +541,7 @@ has nothing left to refuse. Every other document keeps it.
 
 Also not contested, and the record supports it more strongly than argument does.
 The historical provenance incident that motivated the schema row in the
-[false-green detector matrix](../pitfalls/checks-that-cannot-fail.md) — a real
+[false-green detector matrix](../../pitfalls/checks-that-cannot-fail.md) — a real
 consumer's suite green while producing documents the framework's own schema
 would reject — was *statable as a defect only because the schema existed*.
 `JournalProvenance` in `schema/umbraflow-journal-v1.schema.json` named
@@ -707,7 +713,7 @@ that the code does not make anywhere.
 ### 8.5 What would actually have caught something
 
 Checked against the current
-[false-green detector matrix](../pitfalls/checks-that-cannot-fail.md). The
+[false-green detector matrix](../../pitfalls/checks-that-cannot-fail.md). The
 hypothesis mostly holds, with one correction that matters; the incidents below
 remain historical evidence rather than current pitfall instructions.
 
@@ -717,7 +723,7 @@ DDL drift by comparing a schema against a database; the effect-payload digest
 gap (`df5a73d`) by flipping a byte and finding no hash moved.
 
 The correction: the relevant schema failure shape is “a schema file nothing
-compares against”. The [detector matrix](../pitfalls/checks-that-cannot-fail.md)
+compares against”. The [detector matrix](../../pitfalls/checks-that-cannot-fail.md)
 requires every schema to name its producer, consumer, and executable joining
 assertion. Applied to the 23: the
 producer is the plugin, the consumer is the Operator, and the assertion is

@@ -1,5 +1,11 @@
 # Project content at scale: what one `derive` actually reads
 
+> Archived 2026-08-12: the seekable-container recommendation was refuted and
+> normalized readings now reach `derive` through `ui_snapshot`. Surviving
+> ceiling, conformance and consumer work is owned by
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `P-005`, `P-006` and `C-001`–`C-004`.
+
 Status: **its measurements stand and its central recommendation was refuted by
 its own numbers.** The seekable container this document proposes was **not**
 built: it measured the projection at 1.55 MiB against a 4 MiB cap and then

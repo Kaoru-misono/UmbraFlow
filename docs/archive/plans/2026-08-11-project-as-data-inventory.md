@@ -1,5 +1,9 @@
 # Project-as-data: an inventory of what the conformance suite reaches for
 
+> Archived 2026-08-12: measurement complete. `ProvidedProject` and
+> `provideProject` were deleted by the project-directory switch. Nothing here is
+> still owed; the measurements remain evidence for the archived design.
+
 Status: measurement only. Nothing here is a proposal, a ruling, or a design.
 It exists so that the design correcting `provideProject` is sized from counted
 evidence rather than from anyone's memory of the header.

@@ -1,5 +1,11 @@
 # Umbraflow Runtime Annotation and Agent Model
 
+> Archived 2026-08-12: superseded by the Runtime v2 schema, the runtime-model
+> contract and the hardening rewrite. Surviving behaviour and consumer work is
+> owned by
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `T-001`–`T-005` and `C-001`–`C-011`.
+
 Status: design proposal
 
 Date: 2026-08-09

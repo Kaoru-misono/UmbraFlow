@@ -205,7 +205,7 @@ my_grid_stride = 5
 > (dismiss_overlay)。拆的理由是量出来的——`dismiss_overlay` 的唯一锚点是
 > `season_flash_cards` / `season_mental_intro` 锚点集合的真子集,而 interrupt 排最前,
 > 于是那两页在模式机下永远认不出来。见
-> [状态层与策略插槽](2026-08-04-state-layer-and-policy-slots.md) §3.4。
+> [状态层与策略插槽](../archive/plans/2026-08-04-state-layer-and-policy-slots.md) §3.4。
 >
 > 本节下面那条「打断页要不要是一个显式的页面种类,未定」也就此有了答案:是,而且是两种。
 

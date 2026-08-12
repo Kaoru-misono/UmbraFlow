@@ -1,5 +1,10 @@
 # Umbraflow upstream Runtime v2 / Operator handoff for Claude
 
+> Archived 2026-08-12: the handoff was consumed. Its paths, dirty-worktree
+> warning, build state and gate count are stale. The surviving consumer-read-only
+> boundary and unfinished work now live in
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md).
+
 更新时间：2026-08-09
 
 ## 1. 接管目标与硬边界
@@ -51,8 +56,8 @@ E:\github\umbraflow-cpp-annotation-design\.claude\skills\post-change-validation\
 如果这些 hash 变化，先重读新版本并重新做需求差异检查，仍不得修改消费者仓库。
 
 > 2026-08-10：bundle 已升到 1.8。上表是接管时的记录，保持原样。当前哈希见
-> [ARCHITECTURE](../ARCHITECTURE.md) 与
-> [runtime hardening authority](2026-08-09-runtime-hardening-rewrite.md)。
+> [ARCHITECTURE](../../ARCHITECTURE.md) 与
+> [runtime hardening authority](../../plans/2026-08-09-runtime-hardening-rewrite.md)。
 > 本条要求的差异检查已做：设计文档只做了原地版本号替换，本仓库依赖的七处契约面
 > （disposition 五值、reduce 信封、I-13 与契约 15、两条重放门禁、Replay Bundle
 > 闭包、authoring capability root、provenance 词表）字节与行号均未变动。项目层
@@ -155,7 +160,7 @@ d445c811b9469a58ff116df4763d4e7f1acd80b6a3392639d7eb257321916753
 > 一次，在 `modules/operator/source/operator/ledger.cpp`。旧 Operator 数据库在 open
 > 时被拒绝，不迁移而是重建。缘由见
 > [next block](2026-08-10-next-block.md) 第三节与
-> [review](../reviews/2026-08-10-runtime-hardening-review.md) 的 A-F8。
+> [review](../../reviews/2026-08-10-runtime-hardening-review.md) 的 A-F8。
 
 > 2026-08-11：上面两条同样保持原样，只补当前值。W3（`4b955de`）与 W2（`848e390`）
 > 落地，新增 `project_observations`、`operation_plans`、`operation_steps`；同一个
@@ -188,7 +193,7 @@ d445c811b9469a58ff116df4763d4e7f1acd80b6a3392639d7eb257321916753
 > 仍是 23 张表——`journal_events` 和 `project_state` 的四个列改用了
 > `$defs.JournalEvent`/`$defs.ProjectState` 已经在用的成员名，此前建好的
 > 数据库打开时会被拒绝并删除，不做迁移。详见
-> [journal record binding](../archive/plans/2026-08-11-journal-record-binding.md)。
+> [journal record binding](2026-08-11-journal-record-binding.md)。
 >
 > 2026-08-11 三度更正（`bed456f`）：`a07` 那段的读法本身是错的。冻结包那一行把两个
 > 后果都放在验收里——「takeover 返回后旧 fence 不可开始新 dispatch；在途 dispatch
@@ -468,7 +473,7 @@ ctest --test-dir build -N
 > `contract-*`（行为）和 `schema-*`（只读 schema 文件）两族，一个需求可以各持一个，
 > 所以 42 个需求现在带 52 个 gate：33 个 `contract-*`、19 个 `schema-*`。权威是
 > `tests/CMakeLists.txt` 的 `UF_REQUIRED_DOCTEST_CONTRACTS`，人读的映射在
-> [migration report](2026-08-09-runtime-migration-report.md)。验收要看的是「每个
+> [migration report](../../plans/2026-08-09-runtime-migration-report.md)。验收要看的是「每个
 > `REQUIRED_CORE` 需求都有行为 gate」，不是某个总数。
 
 ## 9. 最终交付口径

@@ -1,5 +1,10 @@
 # Consumer attestation: what `attest-consumer-dNN` has to be
 
+> Archived 2026-08-12: this proposal was never implemented. Its six owner
+> questions and all consumer evidence obligations are now owned by
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `C-005`–`C-011`; this file remains the detailed proposed format.
+
 Status: specification proposal. Nothing here is implemented, and §5 rules that
 implementing it changes no schema and no compiled hash in this repository.
 Six questions in §10 need a ruling from the repository owner.
@@ -15,7 +20,7 @@ Deciding artifact: the hardening rewrite's frozen authority.)
 
 Nine requirements, `D-01` through `D-09`, are assigned to the consumer
 repository and marked verified by `EXTERNAL attest-consumer-dNN` in
-[the migration report](2026-08-09-runtime-migration-report.md). Those nine
+[the migration report](../../plans/2026-08-09-runtime-migration-report.md). Those nine
 strings occur in exactly one file, one table, nine rows, and nowhere else in
 this tree — no format, no schema, no CTest registration, no script, no
 recording location, no statement of who signs one or what makes it valid. The
@@ -79,7 +84,7 @@ by anything here.
 **A recorded run would be a check that cannot fail.** The consumer runs its own
 CTest; upstream never sees the process. A "recorded run" that upstream stores
 is a claim about a run, which is an attestation with extra steps and a name
-that overstates. [Checks that cannot fail](../pitfalls/checks-that-cannot-fail.md)
+that overstates. [Checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md)
 records four instances of exactly that defect found on one day.
 
 **A directory does not fit.** `verifyArtifactClosure` in
@@ -228,7 +233,7 @@ locator stay traceable.*
 
 Discharged by a four-way partition with no implicit default — the same
 discipline as
-[the disposition manifest](2026-08-09-runtime-migration-disposition.manifest.json),
+[the disposition manifest](../../plans/2026-08-09-runtime-migration-disposition.manifest.json),
 whose 101 paths carry 67 `REWRITE` and 34 `DELETE` and "no implicit/default
 disposition". The report is the four counts, their sum against the ledger size,
 the count of `ParseFailed` entries that nevertheless carry raw bytes and
@@ -392,7 +397,7 @@ already ruled twice.
 > `plugin_hash` inside `project_registration_hash` makes that attributable rather
 > than undetectable.
 > — [the next block](2026-08-10-next-block.md) §4, and
-> [the reconciliation](../archive/plans/2026-08-10-w2-w7-reconciliation.md) R4
+> [the reconciliation](2026-08-10-w2-w7-reconciliation.md) R4
 
 The same ruling was applied a second time to a plugin under-declaring its own
 effects (reconciliation §3.11): "a plugin under-declaring its own effects is
@@ -503,7 +508,7 @@ rather than serving a session under a set that describes other bytes.
 The alternative — a C++ reader here plus
 `schema/umbraflow-project-attestation-v1.schema.json` — is tempting and is a
 trap. A reader that validates the document's shape and stops would be exactly
-the family [checks that cannot fail](../pitfalls/checks-that-cannot-fail.md)
+the family [checks that cannot fail](../../pitfalls/checks-that-cannot-fail.md)
 records: a name that promises verification over a claim nothing verifies. Worse,
 it would be in-tree, so a fixture could satisfy it, and the nine rows must stay
 `EXTERNAL`. See open question Q2 — this is a recommendation, not a settled
@@ -707,7 +712,7 @@ The two halves are not in the same state, and the difference matters:
 ## 9. Corrections to the record, 2026-08-11
 
 Applied to [the next block](2026-08-10-next-block.md) §1 and to
-[the migration report](2026-08-09-runtime-migration-report.md) §"Requirement
+[the migration report](../../plans/2026-08-09-runtime-migration-report.md) §"Requirement
 ownership and test map" in the same change as this document. Nothing landed is
 rewritten to match; the notes are dated and name the deciding artifact.
 

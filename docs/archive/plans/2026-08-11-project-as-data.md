@@ -1,5 +1,11 @@
 # A project is a directory of data, not a C++ library
 
+> Archived 2026-08-12: the framework directory loader, conformance binary,
+> examples, module moves and consumer C++/CMake deletion landed. The consumer's
+> honest production registration still depends on C2 and is owned by
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `C-001`–`C-003`; nothing else here is owed.
+
 Status: specification, ruled, and being built. All ten questions are answered in
 §7.0, and §2, §4 and §5 below are written as those rulings left them. Steps 1 to
 3 of §5 have landed — `modules/json` (`a0ae304`), `modules/deployment` with the
@@ -15,7 +21,7 @@ this one was written and no git command that writes was run in either.
 Framework read at `6bfe1d6` and reconciled against `319bdb1`; consumer read at
 `95d9668` with a dirty tree.
 
-Related: [consumer onboarding](../archive/plans/2026-08-11-consumer-onboarding.md) measured what
+Related: [consumer onboarding](2026-08-11-consumer-onboarding.md) measured what
 a consuming repository writes today and proposed moving 626 of 880 lines
 upstream. This supersedes its shape rather than its measurements: it answers
 "which C++ does a consumer stop writing" with "all of it", which closes its Q1,

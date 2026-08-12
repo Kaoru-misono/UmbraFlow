@@ -17,7 +17,7 @@ luau_version = 0.1.0
 # image is private because it appears in no header of this module: only
 # pixel-probe.cpp and task-context.cpp reach it, to decode the PNG blob `probe`
 # measures and to encode the one `cycle_crop` produces. Both verbs exist for the
-# exploration front-end (docs/plans/2026-08-01-agent-front-end-and-exploration.md
+# exploration front-end (docs/archive/plans/2026-08-01-agent-front-end-and-exploration.md
 # 1); the bytes cross this boundary as bytes, so nothing image declares is named
 # by anything task publishes.
 [dependencies]

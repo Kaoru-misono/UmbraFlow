@@ -1,5 +1,9 @@
 # M0 demo port deviations
 
+> Archived 2026-08-12: frozen port-history reference. The production `run`
+> path named below was retired by Runtime v2, so the old parity-and-retirement
+> condition no longer opens work. Nothing here is still owed.
+
 > 状态:已冻结(2026-07-24)——m0-demo 于 2026-07-23 FROZEN，保留为真机验收参考；`engine`/`umbra-flow run` 已取代其产品路径，待真机能力对齐后退役。
 
 These findings were reviewed against the Rust source in

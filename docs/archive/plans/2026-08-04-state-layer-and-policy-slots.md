@@ -1,10 +1,16 @@
 # 状态层与策略插槽 — l2-v2 形状
 
+> Archived 2026-08-12: the l2-v2/page-model implementation shape was replaced
+> by Runtime v2. Surviving runtime and consumer work is owned by
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `T-001`–`T-007` and `C-001`–`C-011`; the old A–D phases are not executable
+> work.
+
 > 状态:**方向已定,五项裁决已落(见第九节,2026-08-04 直答),按阶段待执行**。
 > 2026-08-03 开发者在 `标注过程.md` 写下状态脑暴段并确认「按这个方向走」,
 > 08-04 指示成文。上位文档:
-> [标注模型重构](../archive/plans/2026-07-31-annotation-model-capabilities.md)(能力集合与引用,不重开)、
-> [script-owned](2026-07-31-script-owned-page-model.md)(模型住工程文件,不重开)。
+> [标注模型重构](2026-07-31-annotation-model-capabilities.md)(能力集合与引用,不重开)、
+> [script-owned](../../plans/2026-07-31-script-owned-page-model.md)(模型住工程文件,不重开)。
 > 证据基线:uf-chaos 2026-08-03 真机——85 步菜单到菜单的 `daily.luau` 运行
 > (`frames/menu-to-menu5.jsonl`,21154 行 trace)与同日多次失败运行的教训。
 > 本文每一节结尾给证伪方式;没有证伪方式的段落只是措辞,可以随便改。
@@ -13,8 +19,8 @@
 > **2026-08-12**:上面两份上位文档都已作废(标注模型 2026-08-11,script-owned
 > 2026-08-12)。它们给本文的那两条前提不变——模型不是 C++ 类型,住工程文件——但运行时
 > 模型的定义现在是
-> [`schema/umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json)
-> 与[运行时模型合同](2026-08-09-runtime-model-contract.md)。本文 §3.4 那条
+> [`schema/umbraflow-runtime-v2.schema.json`](../../../schema/umbraflow-runtime-v2.schema.json)
+> 与[运行时模型合同](../../plans/2026-08-09-runtime-model-contract.md)。本文 §3.4 那条
 > `catch_all` 标志不在 v2 模型里:surface 只有 `scene` / `overlay` / `interrupt`,
 > 而且每个 Surface 都必须有正向识别 Binding,写不出 catch-all。
 
@@ -134,7 +140,7 @@ observe 里"page signature 不是项目可按调用点放松的地方"的裁决�
   > 必须先处理掉才谈得上继续的页,`network_retry` 是一个,先问它是对的。新增
   > `catch_all = true` 表示相反的次序——签名描述的是一**类**画面而不是某一屏的页,
   > 它同样永远在场,但要**最后**问,等每一张具体页都问过之后。`dismiss_overlay`
-  > 从 `interrupt` 移到 `catch_all`。这不是新道理:[WORKLIST](../archive/plans/2026-08-05-worklist.md) 一·2
+  > 从 `interrupt` 移到 `catch_all`。这不是新道理:[WORKLIST](2026-08-05-worklist.md) 一·2
   > 记的六条派发器护栏里就有「事件页做**兜底**而不是候选 —— 结构上杜绝假阳性」,
   > 本条只是把那一条从手排纪律提升成模型里的声明。
   >
@@ -271,12 +277,12 @@ screen/expect;残余段落保序往返。schema 串升 `l2-v2`。
 > `recognition.anchor_subsets`(纯文件、零抓帧),verdict 多出 `resolution` /
 > `anchor_subset` / `page_coverage` 三种行(08-05 又加第四种 `page_linkage`,见
 > 四·2),**全部只报不判**——`accepted` 仍然只数
-> findings(裁决见[三层文档](2026-08-01-three-layers-and-agent-operator.md)
+> findings(裁决见[三层文档](../../plans/2026-08-01-three-layers-and-agent-operator.md)
 > 2026-08-04 一节)。量出来的:
 >
 > - **`season_event` 在 85 张屏里的 59 张上解析成功。** 它的签名是必需
 >   `seasonevent_crest` 加禁止 `battle_draw`,而 `seasonevent_crest` 正是
->   [WORKLIST](../archive/plans/2026-08-05-worklist.md) 一·1 点名的无掩膜模板之一。那一条原本是论证,现在是
+>   [WORKLIST](2026-08-05-worklist.md) 一·1 点名的无掩膜模板之一。那一条原本是论证,现在是
 >   一个数字:**这不是页面签名,是常量**。同族还有 `event_node` 命中 10 屏、
 >   `fighter_list` 8 屏、`dismiss_overlay` 5 屏。
 > - 85 屏里 **62 屏有不止一页解析**;3 条锚点子集(`dismiss_overlay` ⊆
@@ -667,7 +673,7 @@ D 依赖 C 加真机。
    随之落定三件:
    - 四·1 报的 `season_event` 命中 85 屏中的 59 屏(`seasonevent_crest` 是常量而不是
      页面签名)**不再是待裁项**,留档等重标。机制已量清,记在
-     [WORKLIST](../archive/plans/2026-08-05-worklist.md) 一·1。
+     [WORKLIST](2026-08-05-worklist.md) 一·1。
    - 三对锚点子集里有两对(`dismiss_overlay` ⊆ `season_flash_cards` /
      `season_mental_intro`)一并搁置,但三·4 的 `catch_all` 裁决**不重开**:它成立的
      理由是 `dismiss_overlay` 的签名描述的是一类画面,与包含它的是哪两页无关;而第三对

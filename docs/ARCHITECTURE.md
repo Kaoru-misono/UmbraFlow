@@ -25,7 +25,7 @@ in this repository's generic core.
 > dual-game waiver, recorded nowhere), to v1.12 (the co-versioned amendment that
 > carried that waiver into the upstream design). The `:3` note above said v1.7,
 > which was already wrong when written; the correction to v1.9 is
-> [cross-repository drift](plans/2026-08-11-cross-repository-drift.md) F-14,
+> [cross-repository drift](archive/plans/2026-08-11-cross-repository-drift.md) F-14,
 > applied here.
 >
 > *(Corrected 2026-08-12, later the same day: this note ended "`scripts/check_spec_bundle.py`

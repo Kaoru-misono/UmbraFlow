@@ -58,7 +58,7 @@
 // directory contains and that exists to give the ledger two artifact roots to
 // tell apart. It stays in the conformance namespace because that is the name
 // its callers spell, and it dies with the rest of this header when Q5 of
-// docs/plans/2026-08-11-project-as-data.md moves those tests onto the loader.
+// docs/archive/plans/2026-08-11-project-as-data.md moves those tests onto the loader.
 namespace uf::operator_runtime::conformance
 {
     // One file inside a RuntimeArtifact: the artifact-relative path a locator

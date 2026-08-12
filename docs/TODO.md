@@ -17,9 +17,11 @@
 >   at open and deleted, never migrated.
 > - **The `linux-analysis` CI job does not compile**, under the project's own
 >   `-Wunsafe-buffer-usage` and under clang-tidy with `WarningsAsErrors: '*'`.
->   That is W11 in [the next block](plans/2026-08-10-next-block.md) and it blocks
->   merging this branch regardless of anything below. This branch has also never
->   been pushed, so no tick below has been seen by CI at all.
+>   That is now tracked as O-002 in
+>   [the consolidated outstanding-work plan](plans/2026-08-12-outstanding-work.md)
+>   and it blocks merging this branch regardless of anything below. The current
+>   local head is ahead of its remote branch, so the unpublished commits have not
+>   been seen by CI.
 > - **Both independent reviews returned FAIL, twice**, and the third adversarial
 >   round returned FAIL with 17 findings. Every finding is now closed or accepted
 >   with a stated reason —
@@ -29,14 +31,16 @@
 >   on. W9, the round over W2-W7, has never run.
 >
 > The requirement-by-requirement state is not here and never was: it is
-> [the next block](plans/2026-08-10-next-block.md) §2, where all 42
+> [the archived next-block record](archive/plans/2026-08-10-next-block.md) §2,
+> where all 42
 > `REQUIRED_CORE` requirements are closed. What the W-series specifications
-> still owe is [the carried debt ledger](plans/2026-08-12-carried-debt-ledger.md).
+> still owe is tracked by O-101 through O-122 in
+> [the consolidated outstanding-work plan](plans/2026-08-12-outstanding-work.md).
 
 ## The registration chain must be proven to have teeth
 
 Opened 2026-08-11 by the independent review of the Q3 ruling in
-[the boundary correction](plans/2026-08-11-project-as-data.md) §7.0. Under that
+[the boundary correction](archive/plans/2026-08-11-project-as-data.md) §7.0. Under that
 ruling the loader computes every digest, so **every comparison inside a single
 load is between two quantities the loader itself produced** — structurally
 incapable of failing, deliberately, and named as such. Exactly one check on this
@@ -101,7 +105,7 @@ it.
 Raised by the owner on 2026-08-11: a manifest is how a target is declared, so
 everything carrying one belongs under `modules/`, examples belong in a directory
 of their own, and `cli` was never made a module at all. All three still stand
-after [the boundary correction](plans/2026-08-11-project-as-data.md); that
+after [the boundary correction](archive/plans/2026-08-11-project-as-data.md); that
 document makes them simpler rather than moot, because a `sources` module kind, a
 nameable doctest target, `EXCLUDE_FROM_ALL` for consumers and a portable
 `UF_FRAMEWORK_ROOT` default were all symptoms of a consumer compiling this
@@ -158,7 +162,7 @@ can run. Nothing here is owed.
       repository has one shape for those: `umbra-flow` is `entry/cli/main.cpp`
       plus `modules/cli`, so `umbra-flow-conformance` is `entry/conformance/main.cpp`
       plus `modules/conformance`. §4.3 of
-      [the plan](plans/2026-08-11-project-as-data.md) had said
+      [the plan](archive/plans/2026-08-11-project-as-data.md) had said
       `entry/conformance/main.cpp` and step 6 placed it elsewhere for scope; this
       closes that gap.
       What moved with it: `runSuite` left the anonymous namespace for
@@ -186,7 +190,7 @@ can run. Nothing here is owed.
       `tests/support/arcana-expedition/`, which leaves every
       `#include "project-fixture.hpp"` and `#include "umbraflow/project-schemas.hpp"`
       spelled the same way. This is what §4.2 of
-      [the plan](plans/2026-08-11-project-as-data.md) recorded as owed. Their
+      [the plan](archive/plans/2026-08-11-project-as-data.md) recorded as owed. Their
       deletion is still Q5's, unchanged.
 - [x] `conformance/exemplars/*` become project **directories** under `examples/`.
       Data a project author copies, not C++ a consumer links.
@@ -203,7 +207,7 @@ can run. Nothing here is owed.
       **The data half landed 2026-08-11.** `examples/umbraflow/` (deployments
       `alpha` and `foreign`, no artifact root) and `examples/arcana-expedition/`
       (deployments `expedition` and `rival`, one artifact root over one blob)
-      are project directories in `docs/plans/2026-08-11-project-as-data.md`
+      are project directories in `docs/archive/plans/2026-08-11-project-as-data.md`
       §2's format, and `deployment::loadProject` accepts both. Every value in
       them was written out of the exemplar C++ that assembles the same values
       today; nothing reads them, `conformance/exemplars/` is untouched, and §5
@@ -331,7 +335,7 @@ was tracking. This section is where the expiry lives; it owns nothing else.
       a real target, and a product may not delete that on open — not to accept a
       schema change, and not for anything else. The upstream half of the same
       boundary is G4 First Mutation; see
-      [the consumer attestation](plans/2026-08-11-consumer-attestation.md) §6.
+      [the consumer attestation](archive/plans/2026-08-11-consumer-attestation.md) §6.
 
       **This row does not design the answer, and does not assume it is
       migration.** Exporting the chain before refusing, a versioned read path, a
@@ -376,7 +380,8 @@ was tracking. This section is where the expiry lives; it owns nothing else.
       [the review outcome](reviews/2026-08-10-runtime-hardening-review.md).
       The box turns on the re-review verdicts. **No PASS verdict exists anywhere
       in the tree**, and the round that would produce one over W2-W7 is W9 in
-      [the next block](plans/2026-08-10-next-block.md), which has never run. This
+      O-003 in [the consolidated outstanding-work plan](plans/2026-08-12-outstanding-work.md),
+      which has never run. This
       is why that review is the one document in `docs/reviews/` that stayed live
       through the 2026-08-12 archive pass: a live box turns on its verdicts.
 - [x] Make active documentation point to this authority without copying old

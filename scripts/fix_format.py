@@ -60,7 +60,7 @@ EXCLUDED_PREFIXES = {
 }
 
 # A project directory is exactly a directory holding this file at its root
-# (docs/plans/2026-08-11-project-as-data.md 2.1), and this normalizer does not
+# (docs/archive/plans/2026-08-11-project-as-data.md 2.1), and this normalizer does not
 # own one. Every file such a directory names is bytes a digest pins: the loader
 # derives each registration hash from the schemas, manifests and plugin it read,
 # and a runtime artifact manifest is exact canonical JSON that the installer

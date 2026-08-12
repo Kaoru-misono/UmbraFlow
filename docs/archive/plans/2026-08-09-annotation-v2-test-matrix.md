@@ -1,5 +1,10 @@
 # Annotation-v2 test matrix
 
+> Archived 2026-08-12: completed and partial cases are recorded below; all
+> unfinished behaviour has moved to
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `T-001`–`T-005`. This file remains the detailed historical contract.
+
 Status: behavior contract for P7
 
 Date: 2026-08-09
@@ -10,7 +15,7 @@ Date: 2026-08-09
 > CMake target, no Python test, no script, no CI step — and the runtime that
 > answers these contracts was built afterwards to a different shape, so the
 > fixture vocabulary (`context`, `layer`, target-level `read`) is vocabulary the
-> [runtime hardening rewrite](2026-08-09-runtime-hardening-rewrite.md) overrode.
+> [runtime hardening rewrite](../../plans/2026-08-09-runtime-hardening-rewrite.md) overrode.
 > The data went; the contracts stayed here, and §"Fixture format" and
 > §"Coverage on 2026-08-11" below were written on removal so nothing the deleted
 > files said is lost.
@@ -213,14 +218,14 @@ still owe is visible without them. Read out of `modules/task/runtime/model.luau`
 | T04 | Yes | Two positive scenes give `ambiguous_state` with both candidates retained, not declaration order. |
 | T05 | Substance yes, path no | `present`/`absent`/`unknown` stay distinct and three cases assert that an unknown competitor blocks resolution. All three use locator predicates; the `text_equals` reader path is not the one exercised. |
 | T06 | Partly | One `ui_target` is shared by two Bindings, and no ownership field exists. Nothing asserts one target reached from two *different* surfaces. |
-| T07 | **No** | Not representable: `ui_target.kind` is `control` or `region` only, and there is no collection kind and no `items` read. The requirement lives in [the runtime model contract](2026-08-09-runtime-model-contract.md). |
+| T07 | **No** | Not representable: `ui_target.kind` is `control` or `region` only, and there is no collection kind and no `items` read. The requirement lives in [the runtime model contract](../../plans/2026-08-09-runtime-model-contract.md). |
 | T08 | Yes, more strictly | `model.luau` rejects a `placement` on a `ui_target`, so a target-global rectangle cannot be written at all; placement exists only per Binding. |
 | T09 | Yes, more strictly | A Binding cannot cross an evidence cycle and a receipt request dies when its cycle closes. |
 | T10 | Substance yes, diagnostic no | With no scene candidate the state is `unknown_state` and no receipt is minted; every Surface must name a positive identity Binding, so an authored catch-all cannot be expressed. The `unmatched_visible_content` diagnostic does not exist. |
 | T11 | Partly | Declared transitions are in the model and validated. Observed transitions as a separate record type, and the comparison that reports a differing destination, are not implemented anywhere. |
 
 T03, T07 and T11 are the open ones. Their requirements are also stated in
-[the runtime model contract](2026-08-09-runtime-model-contract.md) and
+[the runtime model contract](../../plans/2026-08-09-runtime-model-contract.md) and
 [the runtime annotation and Agent model](2026-08-09-runtime-annotation-and-agent-model.md),
 so removing the fixtures did not make this document their only home — but it did
 make it the only place their *behaviour* is written as a testable expectation.

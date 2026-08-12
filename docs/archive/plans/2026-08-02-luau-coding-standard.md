@@ -1,5 +1,10 @@
 # Luau 代码规范:测量结果与提纲
 
+> Archived 2026-08-12: the survey measured a fifteen-file runtime that no
+> longer exists. The current re-survey and executable-gate decision live in
+> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> `T-008`; the old symbol-by-symbol edits are superseded rather than owed.
+
 2026-08-02。**本文只是记录,代码一行未改。**下面每一项改动都是一次独立的批准决定,
 不打包。
 

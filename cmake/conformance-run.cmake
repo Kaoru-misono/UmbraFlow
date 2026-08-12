@@ -8,7 +8,7 @@
 # and no provider file to check for existence. What is left is the CTest
 # registration and the two checks that earn their keep -- the
 # CASES-versus-declared-TEST_CASE cross-check, and uf_require_executed_assertions
-# on every gate. See docs/plans/2026-08-11-project-as-data.md 3.
+# on every gate. See docs/archive/plans/2026-08-11-project-as-data.md 3.
 #
 # There is no exported entry point here any more either. A consuming repository
 # does not add this repository with add_subdirectory and does not build the
