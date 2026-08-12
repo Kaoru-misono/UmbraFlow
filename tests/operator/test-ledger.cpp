@@ -20,6 +20,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <format>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -567,6 +569,22 @@ namespace uf::operator_runtime
             };
         }
 
+        // The whole ledger file. Compared rather than any one column, because
+        // "wrote nothing" is a claim about every table at once and a case that
+        // named one would absorb the next write silently. Reading it after the
+        // coordinator was destroyed is what makes it complete: WAL frames are
+        // checkpointed into this file on close.
+        [[nodiscard]]
+        auto ledgerBytes(std::filesystem::path const& databasePath) -> std::string
+        {
+            auto stream = std::ifstream{databasePath, std::ios::binary};
+            REQUIRE(stream.good());
+            return std::string{
+                std::istreambuf_iterator<char>{stream},
+                std::istreambuf_iterator<char>{},
+            };
+        }
+
         // A directory link that needs no privilege on Windows and that the
         // portable inspection functions report as a plain directory, which is
         // what makes it the shape worth planting.
@@ -1031,6 +1049,95 @@ namespace uf::operator_runtime
         );
         REQUIRE(reopened.has_value());
         CHECK(reopened->rootHash() == release.artifactRootHash);
+    }
+
+    // The three properties readInstalledRuntimeArtifact's declaration states, one
+    // case each. They are here rather than beside the verb that calls it because
+    // the guarantee belongs to the door: any second caller inherits it.
+    TEST_CASE("the read-only door answers for a pin without writing a byte")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto const release = test_support::runtimeRelease(temporary.path());
+
+        // Scoped, so the coordinator's connection is closed and its WAL
+        // checkpointed before the ledger is measured.
+        {
+            auto coordinator = OperatorCoordinator::open(production);
+            REQUIRE(coordinator.has_value());
+            REQUIRE(
+                coordinator->installRuntimeArtifact(installRequest(release, 0U))
+                    .has_value()
+            );
+        }
+        auto const installed = ledgerBytes(databasePath);
+
+        auto const artifact = OperatorCoordinator::readInstalledRuntimeArtifact(
+            production,
+            1U,
+            release.artifactRootHash
+        );
+        REQUIRE(artifact.has_value());
+        CHECK(artifact->installedGeneration() == 1U);
+        CHECK(artifact->rootHash() == release.artifactRootHash);
+        CHECK_MESSAGE(
+            ledgerBytes(databasePath) == installed,
+            "the read-only door wrote to the ledger its declaration says it only reads"
+        );
+
+        // A wrong pin is refused by the same query the coordinator's door uses,
+        // and a refusal writes nothing either.
+        CHECK_FALSE(OperatorCoordinator::readInstalledRuntimeArtifact(
+            production,
+            2U,
+            release.artifactRootHash
+        ).has_value());
+        CHECK_MESSAGE(
+            ledgerBytes(databasePath) == installed,
+            "a refused read wrote to the ledger"
+        );
+    }
+
+    TEST_CASE("the read-only door bootstraps no Operator layout")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto const production = temporary.path() / "production";
+        auto const release = test_support::runtimeRelease(temporary.path());
+
+        auto const artifact = OperatorCoordinator::readInstalledRuntimeArtifact(
+            production,
+            1U,
+            release.artifactRootHash
+        );
+        CHECK_FALSE(artifact.has_value());
+        CHECK_MESSAGE(
+            !std::filesystem::exists(production),
+            "reading an Operator root that does not exist created one"
+        );
+    }
+
+    TEST_CASE("the read-only door is refused while a coordinator holds the directory")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto const production = temporary.path() / "production";
+        auto const release = test_support::runtimeRelease(temporary.path());
+
+        auto coordinator = OperatorCoordinator::open(production);
+        REQUIRE(coordinator.has_value());
+        REQUIRE(
+            coordinator->installRuntimeArtifact(installRequest(release, 0U)).has_value()
+        );
+
+        // claimExclusiveOwnership holds SQLite's lock for the connection's
+        // lifetime, so this read cannot proceed beside a live coordinator. That
+        // is the refusal the declaration promises, and it is the reason a
+        // read-only door needs no lock of its own.
+        CHECK_FALSE(OperatorCoordinator::readInstalledRuntimeArtifact(
+            production,
+            1U,
+            release.artifactRootHash
+        ).has_value());
     }
 
     TEST_CASE("reclamation removes a RuntimeArtifact directory nothing references")

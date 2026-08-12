@@ -596,7 +596,7 @@ namespace uf::cli
         }
 
         // Zero is refused here rather than at the ledger so that the refusal
-        // names the flag. openInstalledRuntimeArtifact rejects it too, and its
+        // names the flag. readInstalledRuntimeArtifact rejects it too, and its
         // message names an installed generation nobody typed.
         if (!installedGeneration || *installedGeneration == uint64{0})
         {
@@ -787,12 +787,16 @@ namespace uf::cli
             "\n"
             "It stops there. It proposes no plan, mints no Receipt and\n"
             "delivers nothing to the target; the action sink it builds exists\n"
-            "so the engine has one and posts nothing. It moves nothing in the\n"
-            "Operator either: opening an installed generation reads, while\n"
-            "installing a release would publish a CAS object and advance the\n"
-            "installed-generation counter, which is a deployment act and not\n"
-            "this verb's. Opening the root creates its layout if it is absent,\n"
-            "and that is the only write.\n"
+            "so the engine has one and posts nothing.\n"
+            "\n"
+            "It writes nothing at --runtime. The Operator database is opened\n"
+            "read-only, so no byte of it changes: no directory is created, no\n"
+            "session epoch advances, no control lease or session is cleared,\n"
+            "no in-flight dispatch is resolved, and no CAS object is\n"
+            "published. Running this twice leaves the Operator exactly as\n"
+            "running it once does, and running it against a --runtime that\n"
+            "does not already hold an installed generation is refused rather\n"
+            "than bootstrapped.\n"
             "\n"
             "The printed document carries the resolution kind, the ordered\n"
             "surface stack, and one entry per Reader every reporting Binding\n"

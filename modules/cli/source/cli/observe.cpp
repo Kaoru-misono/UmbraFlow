@@ -80,7 +80,7 @@ namespace uf::cli
             );
         }
 
-        UF_TRY_VALUE(loaded, deployment::loadProject(args.project, {}));
+        UF_TRY_VALUE(loaded, deployment::loadProductionProject(args.project, {}));
         auto const* const p_deployment = loaded.findDeployment(
             loaded.primaryDeployment
         );
@@ -125,16 +125,21 @@ namespace uf::cli
             )
         );
 
-        // Opened rather than installed. Installing a release publishes a CAS
-        // object and advances the ledger's installed-generation counter, which
-        // is a write to production state; this verb reads. The refusal a
-        // mismatch produces is the check that ties this directory to what the
-        // Operator actually holds, and both of its sides were produced by
-        // different parties at different times.
-        UF_TRY_VALUE(store, operator_runtime::OperatorCoordinator::open(args.runtime));
+        // Read through the ledger's read-only door, and deliberately not through
+        // OperatorCoordinator::open: opening a coordinator is a restart, which
+        // advances the session epoch, drops every control lease, deactivates
+        // every session and resolves every unanswered dispatch. This verb takes
+        // none of those decisions, so it must not perform them to reach a pin it
+        // only reads. The refusal a mismatch produces is the check that ties
+        // this directory to what the Operator actually holds, and both of its
+        // sides were produced by different parties at different times.
         UF_TRY_VALUE_CONTEXT(
             installed,
-            store.openInstalledRuntimeArtifact(args.installedGeneration, rootHash),
+            operator_runtime::OperatorCoordinator::readInstalledRuntimeArtifact(
+                args.runtime,
+                args.installedGeneration,
+                rootHash
+            ),
             std::format(
                 "the Operator root {} holds no installed generation {} pinned "
                 "to the RuntimeArtifact this project names",

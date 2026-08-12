@@ -132,6 +132,15 @@ robocopy <worktree> <scratch> /MIR /XD build install /XF .git
 Configure and build in the copy and run every mutation there. The shared
 worktree then only ever holds the version that is meant to pass.
 
+Put the copy at a short absolute path such as `E:\uf-<agent>`, not under the
+session scratchpad. The scratchpad path is about 130 characters before the
+mirror name, and MSVC's intermediate files (`.obj.modmap`, `.obj.ddi`, the
+per-target `.pdb`) push the total past `MAX_PATH`. The build then fails as
+`D8022 cannot open ... .modmap`, `C1083 Cannot open compiler generated file`,
+and `C1041 cannot open program database`, none of which name a path problem;
+CMake's only warning is a generic "cannot be safely placed under this
+directory" at configure time. Measured 2026-08-12.
+
 Design the harness so no mutation can hang. A test that drives a loop needs an
 escape that survives the mutation being proved: if the escape is the very exit
 the mutation removes, the case does not fail, it runs forever. Open every exit

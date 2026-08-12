@@ -89,14 +89,21 @@ namespace uf::cli
     // observes once through `sources`, and reports what the trusted resolver
     // concluded.
     //
-    // Read only in both directions. Toward the target: no verb of the action
-    // sink is called, no Receipt is minted and no plan is proposed, which is
-    // what makes this the entry a project may run before it has met the
-    // conditions for its first mutation. Toward the Operator: the installed
-    // generation is opened rather than installed, so no CAS object is
-    // published and no ledger counter moves. Opening the production root
-    // creates its layout when it is absent, which is the one write on the
-    // path and is bootstrap rather than project state.
+    // Read only in both directions, and in the Operator's direction that is a
+    // guarantee SQLite enforces rather than a claim this file makes.
+    //
+    // Toward the target: no verb of the action sink is called, no Receipt is
+    // minted and no plan is proposed, which is what makes this the entry a
+    // project may run before it has met the conditions for its first mutation.
+    //
+    // Toward the Operator: the pin is read through
+    // OperatorCoordinator::readInstalledRuntimeArtifact, whose connection is
+    // opened SQLITE_OPEN_READONLY without SQLITE_OPEN_CREATE. No coordinator is
+    // constructed, so nothing here creates the production layout, advances the
+    // session epoch, drops a control lease, deactivates a session or resolves a
+    // dispatch. Two runs against one Operator root leave it in the state one run
+    // did, and a run against an Operator root that does not exist is refused
+    // rather than bootstrapped.
     //
     // The sources are consumed: EngineSession takes ownership of all three
     // ports, and a caller that kept one would hold a borrow of the session's

@@ -264,6 +264,23 @@ namespace uf::cli
                 return m_installedGeneration;
             }
 
+            // Every byte the Operator holds. The coordinator this fixture
+            // installed through was destroyed inside the constructor, so WAL
+            // frames are already checkpointed into this file and any write a
+            // later call commits and closes lands here too.
+            [[nodiscard]] auto ledgerBytes() const -> std::string
+            {
+                auto stream = std::ifstream{
+                    m_runtime / "operator-runtime.sqlite",
+                    std::ios::binary,
+                };
+                REQUIRE(stream.good());
+                return std::string{
+                    std::istreambuf_iterator<char>{stream},
+                    std::istreambuf_iterator<char>{},
+                };
+            }
+
             // One trace path per call: FileTraceSink refuses a file that already
             // carries evidence, so two observations in one case need two.
             [[nodiscard]] auto args(std::string_view trace) const -> ObserveArgs
@@ -343,6 +360,45 @@ namespace uf::cli
 
         // The whole of the phase limit, in one number. A verb that planned,
         // minted a Receipt or dispatched would post here.
+        CHECK(*delivered == 0U);
+    }
+
+    // The verb's own claim, measured rather than reviewed. Before the read-only
+    // door existed this ran OperatorCoordinator::open, which advanced the
+    // session epoch, dropped every control lease, deactivated every session and
+    // resolved every unanswered dispatch -- so the first observation moved the
+    // ledger and the second moved it again.
+    //
+    // The whole file is compared rather than a chosen column, because the claim
+    // is about every write and a case that named the epoch would absorb the next
+    // one silently.
+    TEST_CASE("observe leaves the Operator ledger byte-for-byte as it found it")
+    {
+        auto const world     = RecordedWorld{};
+        auto const delivered = std::make_shared<uint32>();
+        auto const installed = world.ledgerBytes();
+
+        auto const first = observeProject(
+            world.args("unchanged-first.jsonl"),
+            world.sources(delivered, std::make_unique<PresentReader>())
+        );
+        REQUIRE_MESSAGE(first.has_value(), why(first));
+        CHECK_MESSAGE(
+            world.ledgerBytes() == installed,
+            "observe wrote to the Operator ledger it documents itself as only reading"
+        );
+
+        // Twice, because "read only" and "idempotent" are different claims and
+        // a verb that wrote once on a first open would satisfy only the second.
+        auto const second = observeProject(
+            world.args("unchanged-second.jsonl"),
+            world.sources(delivered, std::make_unique<PresentReader>())
+        );
+        REQUIRE_MESSAGE(second.has_value(), why(second));
+        CHECK_MESSAGE(
+            world.ledgerBytes() == installed,
+            "a second observe run moved the Operator ledger off what installation left"
+        );
         CHECK(*delivered == 0U);
     }
 

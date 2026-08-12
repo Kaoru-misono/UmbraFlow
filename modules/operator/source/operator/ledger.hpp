@@ -444,10 +444,52 @@ namespace uf::operator_runtime
         auto operator=(OperatorCoordinator const&) -> OperatorCoordinator& = delete;
         ~OperatorCoordinator();
 
+        // Takes ownership of a runtime directory, and writes on the way in. It
+        // creates the layout when absent, claims SQLite's exclusive lock for the
+        // connection's lifetime, creates the schema on a first open, advances
+        // runtime_state.current_session_epoch by one, deletes every
+        // control_leases row, clears sessions.active, and resolves every
+        // dispatch nobody answered for to transport_unknown with its Operation
+        // moved to reconciling.
+        //
+        // All of that is a restart, and it is what a coordinator must do before
+        // it hands out a lease or dispatches an action: those rows are claims by
+        // a process that is provably gone, since the exclusive lock is what let
+        // this open happen at all. A caller that only wants to read an installed
+        // generation is therefore asking for a restart it does not need --
+        // readInstalledRuntimeArtifact below is the door for that.
         [[nodiscard]]
         static auto open(
             std::filesystem::path const& runtimeDirectory
         ) -> Result<OperatorCoordinator>;
+
+        // Reads one installed generation's artifact pin and opens the artifact
+        // it names, writing nothing at all.
+        //
+        // The connection carries SQLITE_OPEN_READONLY and not
+        // SQLITE_OPEN_CREATE, so the guarantee is the library's rather than this
+        // file's: no statement can write, and an absent database is refused
+        // rather than created. Nothing on the path creates a directory either,
+        // no exclusive ownership is claimed, no session epoch moves, no lease or
+        // session is swept, and no dispatch is recovered.
+        //
+        // Skipping that sweep does not make the answer a lie. A
+        // runtime_installations row and the runtime_state generation it advances
+        // are written by one compare-and-swap transaction inside
+        // installRuntimeArtifact, so a pin is never half-written and no recovery
+        // stands between it and the truth. What the sweep resolves is control of
+        // a target and effects that may already have landed on it, and this call
+        // acquires no lease and dispatches nothing.
+        //
+        // It is static because there is no coordinator: constructing one is the
+        // act this exists to avoid. While a coordinator does hold the directory,
+        // its exclusive lock makes this call fail rather than read alongside it.
+        [[nodiscard]]
+        static auto readInstalledRuntimeArtifact(
+            std::filesystem::path const& runtimeDirectory,
+            uint64 installedGeneration,
+            ContentHash const& artifactRootHash
+        ) -> Result<task::InstalledRuntimeArtifact>;
 
         [[nodiscard]] auto databasePath() const -> std::filesystem::path;
 

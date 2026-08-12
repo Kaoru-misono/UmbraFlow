@@ -349,6 +349,60 @@ namespace uf::operator_runtime
             }
         };
 
+        [[nodiscard]]
+        auto readDatabaseInteger(
+            sqlite3* database,
+            std::string_view sql
+        ) -> Result<uint64>
+        {
+            UF_TRY_VALUE(statement, prepare(database, sql));
+            if (sqlite3_step(statement.get()) != SQLITE_ROW)
+            {
+                return databaseFailure(database, "could not read database identity");
+            }
+            return static_cast<uint64>(sqlite3_column_int64(statement.get(), 0));
+        }
+
+        [[nodiscard]]
+        auto readDatabaseText(
+            sqlite3* database,
+            std::string_view sql
+        ) -> Result<std::string>
+        {
+            UF_TRY_VALUE(statement, prepare(database, sql));
+            if (sqlite3_step(statement.get()) != SQLITE_ROW)
+            {
+                return databaseFailure(database, "could not read database schema");
+            }
+            return columnText(statement.get(), 0);
+        }
+
+        // The layout refusal both doors share. open() runs it after creating the
+        // directory it names; readInstalledRuntimeArtifact runs it instead of
+        // creating one, so the two refuse the same shapes for the same reasons.
+        [[nodiscard]]
+        auto requirePlainDirectory(
+            std::filesystem::path const& directory,
+            std::string_view description
+        ) -> Status
+        {
+            auto error        = std::error_code{};
+            auto const status = std::filesystem::symlink_status(directory, error);
+            if (
+                error
+                || !std::filesystem::is_directory(status)
+                || std::filesystem::is_symlink(status)
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format("{} must be a plain directory", description),
+                    error
+                );
+            }
+            return ok();
+        }
+
         // sha256 over the canonicalization verifyExactDatabaseSchema builds:
         // every sqlite_schema row ordered by (type, name), each of its four
         // columns written as <byte length>:<value>. It therefore covers the
@@ -405,6 +459,104 @@ namespace uf::operator_runtime
             return ok();
         }
 
+        // "Is this file the exact Operator runtime schema v1", and nothing else.
+        // Every statement it runs is a read, which is why the read-only door can
+        // apply the same identity gate open() does rather than a weaker one of
+        // its own.
+        [[nodiscard]]
+        auto verifyOperatorSchemaV1(sqlite3* database) -> Status
+        {
+            constexpr auto applicationIdentity = uint64{0x55464F50U};
+            constexpr auto expectedTables      = std::string_view{
+                "agent_budgets,approvals,authority_decisions,control_leases,"
+                "control_transitions,dispatches,external_input_findings,"
+                "fencing_high_water,journal_events,ledger_events,"
+                "operation_plans,operation_steps,operations,"
+                "project_instances,project_observations,"
+                "project_registrations,project_state,reconciliations,"
+                "runtime_artifacts,runtime_installations,runtime_state,"
+                "sessions,snapshots"
+            };
+
+            UF_TRY_VALUE(
+                applicationId,
+                readDatabaseInteger(database, "PRAGMA application_id")
+            );
+            UF_TRY_VALUE(
+                userVersion,
+                readDatabaseInteger(database, "PRAGMA user_version")
+            );
+            if (applicationId != applicationIdentity || userVersion != 1U)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Database is not the exact Operator runtime schema v1"
+                );
+            }
+            UF_TRY_VALUE(
+                tables,
+                readDatabaseText(
+                    database,
+                    "SELECT group_concat(name, ',') FROM (SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name)"
+                )
+            );
+            if (tables != expectedTables)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Operator database table set does not match schema v1"
+                );
+            }
+            UF_TRY(verifyExactDatabaseSchema(database));
+            UF_TRY_VALUE(integrity, readDatabaseText(database, "PRAGMA quick_check"));
+            if (integrity != "ok")
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    "Operator database quick_check failed"
+                );
+            }
+            return ok();
+        }
+
+        // The one query that answers "does this ledger pin that generation to
+        // that artifact". Shared, so the coordinator's door and the read-only
+        // door cannot come to answer it differently.
+        [[nodiscard]]
+        auto requireInstalledArtifactPin(
+            sqlite3* database,
+            uint64 installedGeneration,
+            ContentHash const& artifactRootHash
+        ) -> Status
+        {
+            if (installedGeneration == 0U)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Installed RuntimeArtifact generation must be positive"
+                );
+            }
+            UF_TRY_VALUE(
+                query,
+                prepare(
+                    database,
+                    "SELECT 1 FROM runtime_installations WHERE installed_generation=?1 "
+                    "AND artifact_root_hash=?2"
+                )
+            );
+            UF_TRY(bindInteger(database, query.get(), 1, installedGeneration));
+            UF_TRY(bindText(database, query.get(), 2, artifactRootHash.hex()));
+            if (sqlite3_step(query.get()) != SQLITE_ROW)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "RuntimeArtifact root is not pinned to the requested installed generation"
+                );
+            }
+            return ok();
+        }
+
         [[nodiscard]]
         auto randomToken(sqlite3* database) -> Result<std::string>
         {
@@ -435,29 +587,19 @@ namespace uf::operator_runtime
                 "PRAGMA trusted_schema=OFF;"
             ));
 
-            auto readInteger = [database](std::string_view sql) -> Result<uint64>
-            {
-                UF_TRY_VALUE(statement, prepare(database, sql));
-                if (sqlite3_step(statement.get()) != SQLITE_ROW)
-                {
-                    return databaseFailure(database, "could not read database identity");
-                }
-                return static_cast<uint64>(sqlite3_column_int64(statement.get(), 0));
-            };
-            auto readText = [database](std::string_view sql) -> Result<std::string>
-            {
-                UF_TRY_VALUE(statement, prepare(database, sql));
-                if (sqlite3_step(statement.get()) != SQLITE_ROW)
-                {
-                    return databaseFailure(database, "could not read database schema");
-                }
-                return columnText(statement.get(), 0);
-            };
-
-            UF_TRY_VALUE(journalMode, readText("PRAGMA journal_mode"));
-            UF_TRY_VALUE(foreignKeys, readInteger("PRAGMA foreign_keys"));
-            UF_TRY_VALUE(synchronous, readInteger("PRAGMA synchronous"));
-            UF_TRY_VALUE(trustedSchema, readInteger("PRAGMA trusted_schema"));
+            UF_TRY_VALUE(journalMode, readDatabaseText(database, "PRAGMA journal_mode"));
+            UF_TRY_VALUE(
+                foreignKeys,
+                readDatabaseInteger(database, "PRAGMA foreign_keys")
+            );
+            UF_TRY_VALUE(
+                synchronous,
+                readDatabaseInteger(database, "PRAGMA synchronous")
+            );
+            UF_TRY_VALUE(
+                trustedSchema,
+                readDatabaseInteger(database, "PRAGMA trusted_schema")
+            );
             if (
                 journalMode != "wal"
                 || foreignKeys != 1U
@@ -471,59 +613,25 @@ namespace uf::operator_runtime
                 );
             }
 
-            UF_TRY_VALUE(applicationId, readInteger("PRAGMA application_id"));
-            UF_TRY_VALUE(userVersion, readInteger("PRAGMA user_version"));
+            UF_TRY_VALUE(
+                applicationId,
+                readDatabaseInteger(database, "PRAGMA application_id")
+            );
+            UF_TRY_VALUE(
+                userVersion,
+                readDatabaseInteger(database, "PRAGMA user_version")
+            );
             UF_TRY_VALUE(
                 tableCount,
-                readInteger(
+                readDatabaseInteger(
+                    database,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
                     "AND name NOT LIKE 'sqlite_%'"
                 )
             );
-            constexpr auto applicationIdentity = uint64{0x55464F50U};
             if (applicationId != 0U || userVersion != 0U || tableCount != 0U)
             {
-                if (applicationId != applicationIdentity || userVersion != 1U)
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "Database is not the exact Operator runtime schema v1"
-                    );
-                }
-                UF_TRY_VALUE(
-                    tables,
-                    readText(
-                        "SELECT group_concat(name, ',') FROM (SELECT name FROM sqlite_master "
-                        "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name)"
-                    )
-                );
-                constexpr auto expectedTables = std::string_view{
-                    "agent_budgets,approvals,authority_decisions,control_leases,"
-                    "control_transitions,dispatches,external_input_findings,"
-                    "fencing_high_water,journal_events,ledger_events,"
-                    "operation_plans,operation_steps,operations,"
-                    "project_instances,project_observations,"
-                    "project_registrations,project_state,reconciliations,"
-                    "runtime_artifacts,runtime_installations,runtime_state,"
-                    "sessions,snapshots"
-                };
-                if (tables != expectedTables)
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "Operator database table set does not match schema v1"
-                    );
-                }
-                UF_TRY(verifyExactDatabaseSchema(database));
-                UF_TRY_VALUE(integrity, readText("PRAGMA quick_check"));
-                if (integrity != "ok")
-                {
-                    return fail(
-                        AutomationErrorKind::IoFailure,
-                        "Operator database quick_check failed"
-                    );
-                }
-                return ok();
+                return verifyOperatorSchemaV1(database);
             }
 
             UF_TRY(execute(
@@ -2041,21 +2149,9 @@ namespace uf::operator_runtime
             );
         }
 
-        auto const runtimeStatus = std::filesystem::symlink_status(runtimeDirectory, error);
-        if (
-            error
-            || !std::filesystem::is_directory(runtimeStatus)
-            || std::filesystem::is_symlink(runtimeStatus)
-        )
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "Operator runtime root must be a plain directory",
-                error
-            );
-        }
+        UF_TRY(requirePlainDirectory(runtimeDirectory, "Operator runtime root"));
 
-        auto const databasePath = runtimeDirectory / "operator-runtime.sqlite";
+        auto const databasePath        = runtimeDirectory / "operator-runtime.sqlite";
         auto const runtimeArtifactRoot = runtimeDirectory / "runtime-artifacts";
         std::filesystem::create_directories(runtimeArtifactRoot, error);
         if (error)
@@ -2066,22 +2162,10 @@ namespace uf::operator_runtime
                 error
             );
         }
-        auto const artifactRootStatus = std::filesystem::symlink_status(
+        UF_TRY(requirePlainDirectory(
             runtimeArtifactRoot,
-            error
-        );
-        if (
-            error
-            || !std::filesystem::is_directory(artifactRootStatus)
-            || std::filesystem::is_symlink(artifactRootStatus)
-        )
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "Production RuntimeArtifact root must be a plain directory",
-                error
-            );
-        }
+            "Production RuntimeArtifact root"
+        ));
 
         // The staging directory is part of the production layout rather than
         // something an installation creates on its way past, because
@@ -2097,19 +2181,10 @@ namespace uf::operator_runtime
                 error
             );
         }
-        auto const stagingRootStatus = std::filesystem::symlink_status(stagingRoot, error);
-        if (
-            error
-            || !std::filesystem::is_directory(stagingRootStatus)
-            || std::filesystem::is_symlink(stagingRootStatus)
-        )
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "Production RuntimeArtifact staging root must be a plain directory",
-                error
-            );
-        }
+        UF_TRY(requirePlainDirectory(
+            stagingRoot,
+            "Production RuntimeArtifact staging root"
+        ));
         auto const databaseStatus = std::filesystem::symlink_status(databasePath, error);
         if (!error && std::filesystem::exists(databaseStatus))
         {
@@ -2411,46 +2486,107 @@ namespace uf::operator_runtime
         ContentHash const& artifactRootHash
     ) -> Result<task::InstalledRuntimeArtifact>
     {
-        if (installedGeneration == 0U)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "Installed RuntimeArtifact generation must be positive"
-            );
-        }
-        UF_TRY_VALUE(
-            query,
-            prepare(
-                m_impl->database.get(),
-                "SELECT 1 FROM runtime_installations WHERE installed_generation=?1 "
-                "AND artifact_root_hash=?2"
-            )
-        );
-        UF_TRY(bindInteger(
+        UF_TRY(requireInstalledArtifactPin(
             m_impl->database.get(),
-            query.get(),
-            1,
-            installedGeneration
+            installedGeneration,
+            artifactRootHash
         ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            query.get(),
-            2,
-            artifactRootHash.hex()
-        ));
-        if (sqlite3_step(query.get()) != SQLITE_ROW)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "RuntimeArtifact root is not pinned to the requested installed generation"
-            );
-        }
         UF_TRY_VALUE(
             artifact,
             detail::openProductionRuntimeArtifact(
                 m_impl->runtimeArtifactRoot,
                 artifactRootHash
             )
+        );
+        return task::InstalledRuntimeArtifact{
+            std::move(artifact),
+            installedGeneration,
+        };
+    }
+
+    auto OperatorCoordinator::readInstalledRuntimeArtifact(
+        std::filesystem::path const& runtimeDirectory,
+        uint64 installedGeneration,
+        ContentHash const& artifactRootHash
+    ) -> Result<task::InstalledRuntimeArtifact>
+    {
+        if (runtimeDirectory.empty())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Operator runtime directory must not be empty"
+            );
+        }
+
+        // Checked, never created. open() may bootstrap a layout because a
+        // coordinator that owns an empty directory is a coordinator that can
+        // still install into it; an absent layout holds no installation to read,
+        // so creating one here would answer a question about a ledger this call
+        // had just invented.
+        UF_TRY(requirePlainDirectory(runtimeDirectory, "Operator runtime root"));
+        auto const runtimeArtifactRoot = runtimeDirectory / "runtime-artifacts";
+        UF_TRY(requirePlainDirectory(
+            runtimeArtifactRoot,
+            "Production RuntimeArtifact root"
+        ));
+
+        auto const databasePath   = runtimeDirectory / "operator-runtime.sqlite";
+        auto error                = std::error_code{};
+        auto const databaseStatus = std::filesystem::symlink_status(databasePath, error);
+        if (
+            error
+            || !std::filesystem::is_regular_file(databaseStatus)
+            || std::filesystem::is_symlink(databaseStatus)
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "Operator database path must be an existing plain file",
+                error
+            );
+        }
+
+        // SQLITE_OPEN_READONLY is the whole of the guarantee this function's
+        // declaration makes. Without SQLITE_OPEN_CREATE a missing file is
+        // refused rather than made, and under READONLY the library itself
+        // returns SQLITE_READONLY for any statement that would write, so a
+        // later edit that adds one fails at runtime rather than passing review.
+        auto* rawDatabase = static_cast<sqlite3*>(nullptr);
+        auto const openCode = sqlite3_open_v2(
+            pathToUtf8(databasePath).c_str(),
+            &rawDatabase,
+            SQLITE_OPEN_READONLY
+                | SQLITE_OPEN_FULLMUTEX
+                | SQLITE_OPEN_EXRESCODE
+                | SQLITE_OPEN_NOFOLLOW,
+            nullptr
+        );
+        auto database = Database{rawDatabase};
+        if (openCode != SQLITE_OK || database == nullptr)
+        {
+            auto const detail = database == nullptr
+                ? std::string{"SQLite returned no database handle"}
+                : std::string{sqlite3_errmsg(database.get())};
+            return fail(
+                AutomationErrorKind::IoFailure,
+                std::format("Could not open Operator database read-only: {}", detail)
+            );
+        }
+
+        // Before any statement reads sqlite_schema, because the file this call
+        // was pointed at is not one it wrote. No busy timeout is installed: a
+        // coordinator holding this directory holds SQLite's exclusive lock, and
+        // an immediate refusal is a better answer than a stall.
+        UF_TRY(execute(database.get(), "PRAGMA trusted_schema=OFF"));
+        UF_TRY(verifyOperatorSchemaV1(database.get()));
+        UF_TRY(requireInstalledArtifactPin(
+            database.get(),
+            installedGeneration,
+            artifactRootHash
+        ));
+        UF_TRY_VALUE(
+            artifact,
+            detail::openProductionRuntimeArtifact(runtimeArtifactRoot, artifactRootHash)
         );
         return task::InstalledRuntimeArtifact{
             std::move(artifact),
