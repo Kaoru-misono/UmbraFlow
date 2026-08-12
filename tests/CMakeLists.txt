@@ -615,6 +615,7 @@ endif()
 set(CLI_TEST_SOURCES
     cli/test-args.cpp
     cli/test-explore-protocol.cpp
+    cli/test-observe.cpp
     cli/test-ocr.cpp
     cli/test-open-project.cpp
     cli/test-project-skeleton.cpp
@@ -632,6 +633,15 @@ cpp_add_test(
         ${CLI_TEST_SOURCES}
     LIBS
         ${PROJECT_NAME}_cli
+        # cli links all three privately, so nothing propagates. test-observe.cpp
+        # installs a release into a production Operator root and decodes the
+        # project's capture through the suite's fixture, which is what the verb
+        # under test is handed on a real desktop.
+        ${PROJECT_NAME}_operator
+        ${PROJECT_NAME}_image
+)
+target_include_directories(test-cli PRIVATE
+    "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}"
 )
 # cli links engine publicly, which links ocr publicly.
 if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)

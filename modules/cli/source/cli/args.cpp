@@ -75,6 +75,55 @@ namespace uf::cli
 
         constexpr auto k_openProjectFlag = std::string_view{"--project"};
 
+        enum class ObserveFlag : uint8
+        {
+            Project,
+            WindowHandle,
+            Runtime,
+            InstalledGeneration,
+            OcrModels,
+            Budget,
+            RecognitionTimeout,
+            Trace,
+        };
+
+        struct ObserveFlagSpec final
+        {
+            std::string_view name{};
+            ObserveFlag      flag{ObserveFlag::Project};
+        };
+
+        constexpr auto k_observeFlags = std::array{
+            ObserveFlagSpec{"--project", ObserveFlag::Project},
+            ObserveFlagSpec{"--hwnd", ObserveFlag::WindowHandle},
+            ObserveFlagSpec{"--runtime", ObserveFlag::Runtime},
+            ObserveFlagSpec{
+                "--installed-generation",
+                ObserveFlag::InstalledGeneration,
+            },
+            ObserveFlagSpec{"--ocr-models", ObserveFlag::OcrModels},
+            ObserveFlagSpec{"--budget", ObserveFlag::Budget},
+            ObserveFlagSpec{
+                "--recognition-timeout",
+                ObserveFlag::RecognitionTimeout,
+            },
+            ObserveFlagSpec{"--trace", ObserveFlag::Trace},
+        };
+
+        [[nodiscard]]
+        auto findObserveFlag(
+            std::string_view name
+        ) noexcept -> std::optional<ObserveFlag>
+        {
+            auto const found = std::ranges::find(
+                k_observeFlags,
+                name,
+                &ObserveFlagSpec::name
+            );
+            if (found == k_observeFlags.end()) return std::nullopt;
+            return found->flag;
+        }
+
         enum class OcrFlag : uint8
         {
             Image,
@@ -459,6 +508,117 @@ namespace uf::cli
         return OpenArgs{.project = std::move(requiredProject)};
     }
 
+    auto parseObserveArguments(
+        std::span<std::string const> raw
+    ) -> Result<ObserveArgs>
+    {
+        auto project      = std::optional<std::filesystem::path>{};
+        auto windowHandle = std::optional<intptr>{};
+        auto runtime      = std::optional<std::filesystem::path>{};
+        auto ocrModels    = std::optional<std::filesystem::path>{};
+
+        auto installedGeneration = std::optional<uint64>{};
+
+        auto budget             = k_defaultPixelComparisonBudget;
+        auto recognitionTimeout = k_defaultRecognitionTimeout;
+        auto trace              = std::filesystem::path{k_defaultObserveTracePath};
+
+        auto index = std::size_t{0};
+        while (index < raw.size())
+        {
+            auto const& name = raw[index];
+            auto const flag  = findObserveFlag(name);
+            if (!flag)
+            {
+                return invalid(std::format("unknown argument \"{}\"", name));
+            }
+            if (index + 1U >= raw.size())
+            {
+                return invalid(std::format("missing value for {}", name));
+            }
+            auto const& value = raw[index + 1U];
+
+            switch (*flag)
+            {
+            case ObserveFlag::Project:
+                project = std::filesystem::path{value};
+                break;
+            case ObserveFlag::WindowHandle:
+            {
+                UF_TRY_VALUE(parsed, parseWindowHandle(value, name));
+                windowHandle = parsed;
+                break;
+            }
+            case ObserveFlag::Runtime:
+                runtime = std::filesystem::path{value};
+                break;
+            case ObserveFlag::InstalledGeneration:
+            {
+                UF_TRY_VALUE(parsed, parseUnsigned(value, name));
+                installedGeneration = parsed;
+                break;
+            }
+            case ObserveFlag::OcrModels:
+                ocrModels = std::filesystem::path{value};
+                break;
+            case ObserveFlag::Budget:
+            {
+                UF_TRY_VALUE(parsed, parseUnsigned(value, name));
+                budget = parsed;
+                break;
+            }
+            case ObserveFlag::RecognitionTimeout:
+            {
+                UF_TRY_VALUE(count, parseUnsigned(value, name));
+                UF_TRY_VALUE(
+                    parsed,
+                    parseDurationCount<std::chrono::milliseconds>(count, name)
+                );
+                recognitionTimeout = parsed;
+                break;
+            }
+            case ObserveFlag::Trace:
+                trace = std::filesystem::path{value};
+                break;
+            }
+            index += 2U;
+        }
+
+        UF_TRY_VALUE(requiredProject, requirePath(std::move(project), "--project"));
+        UF_TRY_VALUE(requiredRuntime, requirePath(std::move(runtime), "--runtime"));
+        UF_TRY_VALUE(
+            requiredModels,
+            requirePath(std::move(ocrModels), "--ocr-models")
+        );
+        if (!windowHandle)
+        {
+            return invalid("missing required argument --hwnd");
+        }
+
+        // Zero is refused here rather than at the ledger so that the refusal
+        // names the flag. openInstalledRuntimeArtifact rejects it too, and its
+        // message names an installed generation nobody typed.
+        if (!installedGeneration || *installedGeneration == uint64{0})
+        {
+            return invalid(
+                "--installed-generation must name the positive CAS generation "
+                "the Operator recorded when this project's RuntimeArtifact was "
+                "installed"
+            );
+        }
+
+        return ObserveArgs{
+            .project             = std::move(requiredProject),
+            .windowHandle        = *windowHandle,
+            .runtime             = std::move(requiredRuntime),
+            .installedGeneration = *installedGeneration,
+            .ocrModels           = std::move(requiredModels),
+            .budget              = budget,
+            .recognitionTimeout  = recognitionTimeout,
+            .trace               = std::move(trace),
+        };
+    }
+
     auto parseOcrArguments(std::span<std::string const> raw) -> Result<OcrArgs>
     {
         auto image     = std::optional<std::filesystem::path>{};
@@ -611,6 +771,54 @@ namespace uf::cli
             "                               N lines\n";
     }
 
+    auto observeUsageText() noexcept -> std::string_view
+    {
+        return
+            "Usage:\n"
+            "  umbra-flow observe --project DIR --hwnd 0xHANDLE --runtime DIR\n"
+            "                     --installed-generation N --ocr-models DIR "
+            "[options]\n"
+            "\n"
+            "Runs the production path once, read only. It loads the project at\n"
+            "--project, opens the RuntimeArtifact that project names from the\n"
+            "Operator production root at --runtime, activates it, binds the\n"
+            "window --hwnd names, takes ONE observation, and prints the\n"
+            "StateResolution the trusted resolver produced.\n"
+            "\n"
+            "It stops there. It proposes no plan, mints no Receipt and\n"
+            "delivers nothing to the target; the action sink it builds exists\n"
+            "so the engine has one and posts nothing. It moves nothing in the\n"
+            "Operator either: opening an installed generation reads, while\n"
+            "installing a release would publish a CAS object and advance the\n"
+            "installed-generation counter, which is a deployment act and not\n"
+            "this verb's. Opening the root creates its layout if it is absent,\n"
+            "and that is the only write.\n"
+            "\n"
+            "The printed document carries the resolution kind, the ordered\n"
+            "surface stack, and one entry per Reader every reporting Binding\n"
+            "named -- each with its ui_target, its reader, and either the text\n"
+            "it read or the reason it could not. Those bytes are exactly what\n"
+            "a project's plugin would be handed as ui_snapshot.\n"
+            "\n"
+            "Required:\n"
+            "  --project DIR                Project directory holding\n"
+            "                               umbraflow-project.json\n"
+            "  --hwnd 0xHANDLE              Target handle from `umbra-flow targets`\n"
+            "  --runtime DIR                Operator production root holding the\n"
+            "                               installed RuntimeArtifact\n"
+            "  --installed-generation N     CAS generation that installation\n"
+            "                               recorded; positive\n"
+            "  --ocr-models DIR             Directory holding\n"
+            "                               ppocr-v6-small-rec and\n"
+            "                               ppocr-v6-small-det\n"
+            "\n"
+            "Options:\n"
+            "  --budget N                   Pixel comparison ceiling per search\n"
+            "  --recognition-timeout MS     Per-recognition deadline; default: 2000\n"
+            "  --trace PATH                 Trace JSONL path; default: "
+            "umbra-flow-observe-trace.jsonl\n";
+    }
+
     auto targetsUsageText() noexcept -> std::string_view
     {
         return
@@ -627,6 +835,8 @@ namespace uf::cli
     auto usageText() -> std::string
     {
         auto text = std::string{exploreUsageText()};
+        text += '\n';
+        text += observeUsageText();
         text += '\n';
         text += ocrUsageText();
         text += '\n';

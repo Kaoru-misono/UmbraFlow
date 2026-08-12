@@ -27,9 +27,16 @@ unity_build = false
 # of this module reads canonical bytes rather than a document model. json was
 # already reachable through deployment, which is an accident of that edge and
 # not a declaration this module can rely on.
+#
+# operator and trace arrived with the observe verb and are declared for that
+# same reason. observe.cpp names OperatorCoordinator, because opening an
+# already installed RuntimeArtifact is the only production mint of an
+# activation authority, and it names TraceRecorder and FileTraceSink, because
+# an EngineSession has nowhere else to record what it saw. Neither appears in
+# observe.hpp: what the observation established is restated there as strings.
 [dependencies]
 public = engine task
-private = deployment image json
+private = deployment image json operator trace
 
 # controller is public because targets.hpp and candidate-selection.hpp name its
 # TargetCandidate, so a caller holding one has to see the type. user32 is
@@ -42,9 +49,9 @@ private = user32
 # files beside it are the Windows implementations of headers whose declarations
 # are platform-free.
 [sources.windows]
-include = candidate-selection.cpp candidate-selection.hpp explore-windows.cpp ocr-windows.cpp platform/*.cpp platform/*.hpp targets-windows.cpp
+include = candidate-selection.cpp candidate-selection.hpp explore-windows.cpp observe-windows.cpp ocr-windows.cpp platform/*.cpp platform/*.hpp targets-windows.cpp
 
 # What answers the same declarations where there is no desktop to enumerate,
 # and -- for ocr -- no inference runtime to load a model into.
 [sources.other]
-include = explore-unsupported.cpp ocr-unsupported.cpp targets-unsupported.cpp
+include = explore-unsupported.cpp observe-unsupported.cpp ocr-unsupported.cpp targets-unsupported.cpp

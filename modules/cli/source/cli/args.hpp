@@ -37,6 +37,14 @@ namespace uf::cli
         "umbra-flow-trace.jsonl"
     };
 
+    // A separate default from the one above, because both verbs bind a target
+    // and FileTraceSink refuses a file that already carries evidence: one
+    // shared default would make an observation refuse after an exploration
+    // session had run in the same directory.
+    inline constexpr auto k_defaultObserveTracePath = std::string_view{
+        "umbra-flow-observe-trace.jsonl"
+    };
+
     // How long an exploration session waits with an empty queue before it
     // releases capture and target resources after its agent disappears.
     inline constexpr auto k_defaultExploreIdleTimeout = (
@@ -118,6 +126,52 @@ namespace uf::cli
     auto parseOcrArguments(std::span<std::string const> raw) -> Result<OcrArgs>;
 
     [[nodiscard]] auto ocrUsageText() noexcept -> std::string_view;
+
+    // The production read-only path: a project directory, a live target, and
+    // the Operator production root that already holds this project's installed
+    // RuntimeArtifact.
+    //
+    // The artifact is NAMED by the project directory and never by a flag. Its
+    // root hash is this binary's own arithmetic over the manifest bytes the
+    // project carries, so a caller cannot ask for a generation to be opened
+    // under a digest it stated -- which is the same rule that keeps a project
+    // author from typing a digest at all
+    // (docs/plans/2026-08-11-project-as-data.md 7.0 Q3).
+    //
+    // installedGeneration is the one quantity neither the directory nor the
+    // ledger's public surface can answer for: it is the CAS compare-and-swap
+    // counter that installing a release advanced, the Operator exposes no
+    // reader for it, and installing here would be a write.
+    //
+    // The model directory is required for OcrArgs' reason, one layer further
+    // down: TaskContext::cycleReadLines answers a session with no OCR adapter
+    // with UnsupportedCapability, and a Reader the model declared would
+    // otherwise reach the plugin as a reading that failed rather than as a
+    // refusal naming the flag nobody passed.
+    struct ObserveArgs final
+    {
+        std::filesystem::path project{};
+        intptr                windowHandle{};
+
+        std::filesystem::path runtime{};
+        uint64                installedGeneration{};
+
+        std::filesystem::path ocrModels{};
+
+        uint64                     budget{k_defaultPixelComparisonBudget};
+        MonotonicInstant::Duration recognitionTimeout{k_defaultRecognitionTimeout};
+
+        std::filesystem::path trace{k_defaultObserveTracePath};
+
+        auto operator==(ObserveArgs const&) const -> bool = default;
+    };
+
+    [[nodiscard]]
+    auto parseObserveArguments(
+        std::span<std::string const> raw
+    ) -> Result<ObserveArgs>;
+
+    [[nodiscard]] auto observeUsageText() noexcept -> std::string_view;
 
     // The target listing takes no arguments because it discovers the handle
     // required by the privileged exploration entry point.
