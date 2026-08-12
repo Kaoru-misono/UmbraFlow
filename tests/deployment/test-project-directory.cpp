@@ -522,10 +522,8 @@ namespace uf::deployment
                         )
                         .has_value());
 
-        // The record log exists and is empty until a validator writes it.
-        REQUIRE(loaded->documentInputLog != nullptr);
-        CHECK(loaded->documentInputLog->lastReduceInput().empty());
-        CHECK(loaded->documentInputLog->lastDeriveInput().empty());
+        // Production loads retain only the authorities and pinned project data;
+        // conformance-only input evidence has no member here to accumulate in.
     }
 
     // The conformance load is the production load plus a layer, so this states
@@ -542,6 +540,9 @@ namespace uf::deployment
         CHECK(loaded->loaded.deployments.size() == 2U);
         CHECK(loaded->loaded.primaryDeployment == "alpha");
         CHECK(loaded->loaded.findDeployment("alpha") != nullptr);
+        REQUIRE(loaded->documentInputLog != nullptr);
+        CHECK(loaded->documentInputLog->lastReduceInput().empty());
+        CHECK(loaded->documentInputLog->lastDeriveInput().empty());
 
         CHECK(loaded->underTest.deployment == "alpha");
         CHECK(loaded->foreign.deployment == "beta");
@@ -1253,6 +1254,27 @@ namespace uf::deployment
         auto const unchanged = fixture.load(stored);
         INFO(why(unchanged));
         REQUIRE(unchanged.has_value());
+
+        auto const* const p_beta = first->findDeployment("beta");
+        REQUIRE(p_beta != nullptr);
+        auto const duplicate = std::array{
+            ExpectedRegistration{.deployment = "alpha", .hash = recorded},
+            ExpectedRegistration{.deployment = "alpha", .hash = recorded},
+        };
+        auto const duplicated = fixture.load(duplicate);
+        REQUIRE_FALSE(duplicated.has_value());
+        CHECK(why(duplicated).contains("more than once"));
+
+        auto const conflicting = std::array{
+            ExpectedRegistration{.deployment = "alpha", .hash = recorded},
+            ExpectedRegistration{
+                .deployment = "alpha",
+                .hash       = p_beta->registration.hash(),
+            },
+        };
+        auto const conflicted = fixture.load(conflicting);
+        REQUIRE_FALSE(conflicted.has_value());
+        CHECK(why(conflicted).contains("more than once"));
 
         fixture.rewrite(
             "plugin/alpha.luau",

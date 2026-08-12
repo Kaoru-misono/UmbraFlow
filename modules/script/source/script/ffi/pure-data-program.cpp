@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -126,6 +127,16 @@ namespace uf::script
         // is read, and no implementation detail: a cache layout or a timing
         // moves nothing here.
         constexpr auto k_artifactReadContract = std::string_view{"decoded_json_value_v1"};
+        constexpr auto k_tostringContract =
+            std::string_view{"json_scalar_or_type_name_v1"};
+
+        // Luau has no public implementation-version constant. The pinned
+        // submodule revision is therefore part of the environment material
+        // explicitly: bytecode or VM behavior moving beneath an unchanged
+        // bridge and whitelist must still move every session pin.
+        constexpr auto k_luauImplementation = std::string_view{
+            "luau-0.730+5bc7f4b23756f69f4669b419fa9034f117ccd6fe"
+        };
 
         constexpr auto k_bridgeSource = std::string_view{R"LUAU(
 local safe_type = type
@@ -269,6 +280,30 @@ return {
         {
             auto const key = std::string{name};
             lua_rawsetfield(state, index, key.c_str());
+        }
+
+        // Native Luau tostring includes an encoded object pointer for tables,
+        // functions and other reference types. A pure data result must not vary
+        // with process layout, so the published function keeps scalar spelling
+        // and maps every other value to its stable Luau type name.
+        auto deterministicToString(lua_State* state) -> int
+        {
+            luaL_checkany(state, 1);
+            switch (lua_type(state, 1))
+            {
+            case LUA_TNIL: lua_pushliteral(state, "nil"); break;
+            case LUA_TBOOLEAN:
+                lua_pushstring(state, lua_toboolean(state, 1) != 0 ? "true" : "false");
+                break;
+            case LUA_TNUMBER:
+            case LUA_TINTEGER:
+                lua_pushvalue(state, 1);
+                static_cast<void>(lua_tolstring(state, -1, nullptr));
+                break;
+            case LUA_TSTRING: lua_pushvalue(state, 1); break;
+            default: lua_pushstring(state, lua_typename(state, lua_type(state, 1))); break;
+            }
+            return 1;
         }
 
         [[nodiscard]]
@@ -451,7 +486,14 @@ return {
             for (auto const name : k_pureGlobals)
             {
                 auto const key = std::string{name};
-                lua_rawgetfield(state, LUA_GLOBALSINDEX, key.c_str());
+                if (name == "tostring")
+                {
+                    lua_pushcfunction(state, &deterministicToString, "tostring");
+                }
+                else
+                {
+                    lua_rawgetfield(state, LUA_GLOBALSINDEX, key.c_str());
+                }
                 if (lua_isnil(state, -1))
                 {
                     lua_pop(state, 2);
@@ -822,6 +864,45 @@ return {
             return ok();
         }
 
+        struct StackReservation final
+        {
+            int  slots{0};
+            bool succeeded{false};
+        };
+
+        auto reserveStackProtected(lua_State* state) -> int
+        {
+            auto* p_reservation = static_cast<StackReservation*>(
+                lua_tolightuserdata(state, 1)
+            );
+            if (p_reservation == nullptr)
+            {
+                luaL_error(state, "pure data stack reservation context is invalid");
+            }
+            p_reservation->succeeded = lua_checkstack(state, p_reservation->slots) != 0;
+            return 0;
+        }
+
+        [[nodiscard]]
+        auto reserveStack(lua_State* state, int slots) -> Status
+        {
+            auto reservation = StackReservation{.slots = slots};
+            int const status = lua_cpcall(state, &reserveStackProtected, &reservation);
+            if (status == LUA_ERRMEM)
+            {
+                return refuse("pure data VM exhausted its fixed memory quota reserving a stack");
+            }
+            if (status != LUA_OK)
+            {
+                return refuse("pure data VM could not reserve a protected stack: " + topError(state));
+            }
+            if (!reservation.succeeded)
+            {
+                return refuse("pure data value exceeds the VM stack it must use");
+            }
+            return ok();
+        }
+
         [[nodiscard]]
         auto loadModule(
             lua_State* mainState,
@@ -834,6 +915,7 @@ return {
             UF_TRY(pushPureEnvironment(mainState, p_environment));
             int const environment = lua_gettop(mainState);
             lua_State* thread = lua_newthread(mainState);
+            UF_TRY(reserveStack(thread, 4));
 
             lua_xpush(mainState, thread, environment);
             lua_pushthread(thread);
@@ -885,12 +967,17 @@ return {
         ) -> Status
         {
             lua_State* thread = lua_newthread(mainState);
+            UF_TRY(reserveStack(thread, 4));
             lua_rawgetfield(mainState, bridge, "inspect");
             lua_xpush(mainState, thread, -1);
             lua_pop(mainState, 1);
             lua_xpush(mainState, thread, plugin);
-            lua_pushlstring(thread, moduleId.data(), moduleId.size());
-            pushEntryPoints(thread, entryPoints);
+            lua_pushlstring(mainState, moduleId.data(), moduleId.size());
+            lua_xpush(mainState, thread, -1);
+            lua_pop(mainState, 1);
+            pushEntryPoints(mainState, entryPoints);
+            lua_xpush(mainState, thread, -1);
+            lua_pop(mainState, 1);
             UF_TRY(resume(thread, 3, control));
             lua_pop(mainState, 1);
             return ok();
@@ -910,17 +997,29 @@ return {
         ) -> Result<json::Value>
         {
             lua_State* thread = lua_newthread(mainState);
+            constexpr auto k_readStackSlots = static_cast<int>(
+                k_maximumValueDepth * 4U + 32U
+            );
+            UF_TRY(reserveStack(thread, k_readStackSlots));
             lua_rawgetfield(mainState, bridge, "invoke");
             lua_xpush(mainState, thread, -1);
             lua_pop(mainState, 1);
             lua_xpush(mainState, thread, plugin);
-            lua_pushlstring(thread, moduleId.data(), moduleId.size());
-            pushEntryPoints(thread, entryPoints);
-            lua_pushlstring(thread, entryPoint.data(), entryPoint.size());
+            lua_pushlstring(mainState, moduleId.data(), moduleId.size());
+            lua_xpush(mainState, thread, -1);
+            lua_pop(mainState, 1);
+            pushEntryPoints(mainState, entryPoints);
+            lua_xpush(mainState, thread, -1);
+            lua_pop(mainState, 1);
+            lua_pushlstring(mainState, entryPoint.data(), entryPoint.size());
+            lua_xpush(mainState, thread, -1);
+            lua_pop(mainState, 1);
 
             auto inputBudget = ValueBudget{};
-            UF_TRY_CONTEXT(pushValue(thread, environment, input, 0U, inputBudget),
+            UF_TRY_CONTEXT(pushValue(mainState, environment, input, 0U, inputBudget),
                            "pushing the decoded ProjectPlugin input");
+            lua_xpush(mainState, thread, -1);
+            lua_pop(mainState, 1);
             UF_TRY(resume(thread, 5, control));
             if (lua_gettop(thread) != 1)
             {
@@ -978,6 +1077,100 @@ return {
             return ok();
         }
 
+        struct FreshRunContext final
+        {
+            VmRun*                           pVm{nullptr};
+            PureEnvironment*                 pEnvironment{nullptr};
+            std::string_view             bridgeBytecode{};
+            std::string_view             pluginBytecode{};
+            std::string_view             moduleId{};
+            std::span<std::string const> entryPoints{};
+            std::string_view             entryPoint{};
+            json::Value const*               pInput{nullptr};
+            bool                               invoke{false};
+            std::optional<Result<json::Value>> result{};
+        };
+
+        [[nodiscard]]
+        auto runInsideProtectedCall(FreshRunContext& context) -> Result<json::Value>
+        {
+            auto& vm          = *context.pVm;
+            auto& environment = *context.pEnvironment;
+
+            luaL_openlibs(vm.state);
+            nilLibraryField(vm.state, "math", "random");
+            nilLibraryField(vm.state, "math", "randomseed");
+            nilLibraryField(vm.state, "string", "dump");
+            installInterrupt(vm.state, &vm.control);
+            luaL_sandbox(vm.state);
+            UF_TRY(createFrozenSentinels(vm.state, environment));
+            vm.control.beginUnitOfScript(k_maximumRuntime);
+
+            UF_TRY(
+                loadModule(
+                    vm.state,
+                    context.bridgeBytecode,
+                    "pure-data-bridge",
+                    &environment,
+                    vm.control
+                )
+            );
+            int const bridge = lua_gettop(vm.state);
+            UF_TRY(
+                loadModule(
+                    vm.state,
+                    context.pluginBytecode,
+                    context.moduleId,
+                    &environment,
+                    vm.control
+                )
+            );
+            int const plugin = lua_gettop(vm.state);
+            UF_TRY(
+                inspectModule(
+                    vm.state,
+                    bridge,
+                    plugin,
+                    context.moduleId,
+                    context.entryPoints,
+                    vm.control
+                )
+            );
+            if (!context.invoke)
+            {
+                UF_TRY(proveArtifactsMaterialize(vm.state, environment));
+                return json::Value{};
+            }
+            return invokeModule(
+                vm.state,
+                bridge,
+                plugin,
+                context.moduleId,
+                context.entryPoints,
+                context.entryPoint,
+                *context.pInput,
+                environment,
+                vm.control
+            );
+        }
+
+        // lua_cpcall supplies the context as its sole light-userdata argument.
+        // This callback is deliberately the outermost Luau frame: every Luau
+        // allocation after state creation, including host-side argument pushes,
+        // must unwind to it when the quota allocator refuses growth.
+        auto runProtected(lua_State* state) -> int
+        {
+            auto* p_context = static_cast<FreshRunContext*>(lua_tolightuserdata(state, 1));
+            if (p_context == nullptr || p_context->pVm == nullptr
+                || p_context->pEnvironment == nullptr || p_context->pInput == nullptr)
+            {
+                luaL_error(state, "pure data protected-call context is invalid");
+            }
+            lua_settop(state, 0);
+            p_context->result.emplace(runInsideProtectedCall(*p_context));
+            return 0;
+        }
+
         [[nodiscard]]
         auto runFresh(
             std::string_view bridgeBytecode,
@@ -1003,44 +1196,38 @@ return {
             }
             auto stateGuard = scopeExit([&vm]() noexcept { lua_close(vm.state); });
 
-            luaL_openlibs(vm.state);
-            nilLibraryField(vm.state, "math", "random");
-            nilLibraryField(vm.state, "math", "randomseed");
-            nilLibraryField(vm.state, "string", "dump");
-            installInterrupt(vm.state, &vm.control);
-            luaL_sandbox(vm.state);
-            UF_TRY(createFrozenSentinels(vm.state, environment));
-            vm.control.beginUnitOfScript(k_maximumRuntime);
-
-            UF_TRY(
-                loadModule(
-                    vm.state,
-                    bridgeBytecode,
-                    "pure-data-bridge",
-                    &environment,
-                    vm.control
-                )
-            );
-            int const bridge = lua_gettop(vm.state);
-            UF_TRY(loadModule(vm.state, pluginBytecode, moduleId, &environment, vm.control));
-            int const plugin = lua_gettop(vm.state);
-            UF_TRY(inspectModule(vm.state, bridge, plugin, moduleId, entryPoints, vm.control));
-            if (!invoke)
+            auto context = FreshRunContext{
+                .pVm            = &vm,
+                .pEnvironment   = &environment,
+                .bridgeBytecode = bridgeBytecode,
+                .pluginBytecode = pluginBytecode,
+                .moduleId       = moduleId,
+                .entryPoints    = entryPoints,
+                .entryPoint     = entryPoint,
+                .pInput         = &input,
+                .invoke         = invoke,
+                .result         = {},
+            };
+            int const status = lua_cpcall(vm.state, &runProtected, &context);
+            if (status != LUA_OK)
             {
-                UF_TRY(proveArtifactsMaterialize(vm.state, environment));
-                return json::Value{};
+                auto const detail = topError(vm.state);
+                if (status == LUA_ERRMEM)
+                {
+                    return refuse(
+                        "pure data VM exhausted its fixed memory quota: " + detail
+                    );
+                }
+                return refuse("pure data VM protected call failed: " + detail);
             }
-            return invokeModule(
-                vm.state,
-                bridge,
-                plugin,
-                moduleId,
-                entryPoints,
-                entryPoint,
-                input,
-                environment,
-                vm.control
-            );
+            if (!context.result.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "pure data VM protected call returned without a result"
+                );
+            }
+            return *std::move(context.result);
         }
 
         [[nodiscard]]
@@ -1223,6 +1410,10 @@ return {
         appendJsonString(output, artifactReadName);
         output += ':';
         appendJsonString(output, k_artifactReadContract);
+        output += ',';
+        appendJsonString(output, "tostring");
+        output += ':';
+        appendJsonString(output, k_tostringContract);
         output += "},\"frozen_tables\":{";
         appendJsonString(output, k_artifactTable);
         output += ":[";
@@ -1244,7 +1435,9 @@ return {
             separated = true;
             appendJsonString(output, name);
         }
-        output += "]}";
+        output += "],\"luau_implementation\":";
+        appendJsonString(output, k_luauImplementation);
+        output += '}';
         return output;
     }
 

@@ -164,13 +164,6 @@ namespace uf::deployment
         std::string                   primaryDeployment{};
         std::vector<LoadedDeployment> deployments{};
 
-        // Shared with every deployment's retained document validator. The log
-        // owns and synchronizes its mutable state; the shared pointer supplies
-        // only the callback lifetime.
-        std::shared_ptr<ProjectDocumentInputLog> documentInputLog{
-            std::make_shared<ProjectDocumentInputLog>()
-        };
-
         [[nodiscard]]
         auto findDeployment(std::string_view name) const
             -> LoadedDeployment const*;
@@ -187,6 +180,11 @@ namespace uf::deployment
     struct ConformanceProject final
     {
         LoadedProject loaded{};
+
+        // Shared with the document validators installed only for this
+        // conformance load. Production loads neither allocate this recorder nor
+        // retain plugin inputs after validating them.
+        std::shared_ptr<ProjectDocumentInputLog> documentInputLog{};
 
         // One capture of the project's target, as the project's own PNG bytes.
         // The load decoded them, so these are an image (2.7 R9); its extent is
@@ -225,7 +223,8 @@ namespace uf::deployment
     // load passes an empty span, which says "this caller holds no prior
     // commitment" rather than leaving a default to be read as one. A name that
     // matches no deployment is a refusal, so a misspelling cannot silently
-    // disarm the check.
+    // disarm the check. Deployment names in the span must be unique; duplicate
+    // commitments are refused rather than resolved by span order.
     [[nodiscard]]
     auto loadProductionProject(
         std::filesystem::path const& directory,

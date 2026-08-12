@@ -26,8 +26,7 @@ namespace uf::script
     {
         // What tripped the interrupt. All three triggers land on the same
         // lua_break, so a break that does not record its cause cannot name one
-        // afterwards (docs/pitfalls/embedded-vm-memory-ceiling.md). None doubles
-        // as "never broken".
+        // afterwards. None doubles as "never broken".
         enum class BreakCause : uint8
         {
             None,

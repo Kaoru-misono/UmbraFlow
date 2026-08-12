@@ -41,11 +41,10 @@ namespace uf::operator_runtime
     // and their content hash only; it does not claim that any field is valid for
     // a ProjectPlugin function.
     //
-    // It carries the value those bytes denote beside them. Deciding that the
-    // bytes are exact RFC 8785 requires parsing them, so the value is a result
-    // the owner already computed rather than a second reading of the document;
-    // holding it is what lets the ProjectPlugin boundary be a value without the
-    // document being parsed again to get one.
+    // It carries the value those bytes denote beside them. That cached value is
+    // useful only to the owner that minted it: a different ProjectSchemaOwner
+    // re-parses the bytes at its call boundary, and the value produced by that
+    // validation is the only value a ProjectPlugin may execute against.
     class CanonicalJson final
     {
         friend class ProjectSchemaOwner;
@@ -149,7 +148,7 @@ namespace uf::operator_runtime
             ProjectPluginFunction function,
             ProjectDocumentDirection direction,
             CanonicalJson const& document
-        ) const -> Status;
+        ) const -> Result<json::Value>;
 
         // Mints canonical bytes from a value rather than judging bytes a caller
         // spelled. A plugin returns a value, so its output has no serialization

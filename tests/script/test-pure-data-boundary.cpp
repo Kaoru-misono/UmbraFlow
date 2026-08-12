@@ -156,6 +156,23 @@ namespace uf::script
         CHECK(deriveBytes("fixture.denied", probe, parsed("{}")) == "{\"reachable\":false}");
     }
 
+    TEST_CASE("published tostring has no pointer-derived spelling")
+    {
+        constexpr auto probe = std::string_view{R"(
+        return {
+            boolean = tostring(true),
+            callable = tostring(function() end),
+            nil_value = tostring(nil),
+            number = tostring(12.5),
+            object = tostring({}),
+            text = tostring("value"),
+        })"};
+        CHECK(
+            deriveBytes("fixture.deterministic-tostring", probe, parsed("{}"))
+            == R"({"boolean":"true","callable":"function","nil_value":"nil","number":"12.5","object":"table","text":"value"})"
+        );
+    }
+
     // Beside the whitelist stand exactly two frozen tables, and this is what
     // says frozen is a property of the objects rather than of the comment on
     // them.
@@ -368,6 +385,28 @@ namespace uf::script
         );
     }
 
+    TEST_CASE("quota exhaustion while the host pushes an input is a refusal")
+    {
+        // 300,000 empty arrays spell less than one MiB of JSON, yet require one
+        // Luau table apiece. The quota is reached while pushValue is preparing
+        // the argument, before the plugin's entry point can be resumed.
+        auto items = std::vector<json::Value>{};
+        items.reserve(300'000U);
+        for (auto index = std::size_t{0}; index < 300'000U; ++index)
+        {
+            items.emplace_back(json::Value::ofArray({}));
+        }
+        auto const input = json::Value::ofArray(std::move(items));
+        auto const output = derive(
+            "fixture.host-push-quota",
+            "        return input",
+            input
+        );
+        REQUIRE_FALSE(output.has_value());
+        CHECK(std::string{output.error().message()}.find("memory quota")
+              != std::string::npos);
+    }
+
     // The pin change 2 rests on. The literal is what a framework upgrade has to
     // move deliberately: the bridge source, the whitelist, the frozen table
     // surface and the contract each published function answers to are its whole
@@ -390,9 +429,15 @@ namespace uf::script
             pluginEnvironmentMaterial().find(R"("artifact.read":"decoded_json_value_v1")")
             != std::string::npos
         );
+        CHECK(pluginEnvironmentMaterial().find(
+                  R"("tostring":"json_scalar_or_type_name_v1")")
+              != std::string::npos);
+        CHECK(pluginEnvironmentMaterial().find(
+                  R"("luau_implementation":"luau-0.730+5bc7f4b23756f69f4669b419fa9034f117ccd6fe")")
+              != std::string::npos);
         CHECK(
             first->hex()
-            == "6f6c3f87e140d29f2f5a34f91f7b90a9557f57f2dd4530c1f9d3ec187f986b66"
+            == "0eca9b6b1d364eee24aa0c7b6500010b96d5656365b79d718d5add9963a55dee"
         );
     }
 } // namespace uf::script

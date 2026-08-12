@@ -294,13 +294,14 @@ namespace uf::operator_runtime
         ProjectPluginFunction function,
         ProjectDocumentDirection direction,
         CanonicalJson const& document
-    ) const -> Status
+    ) const -> Result<json::Value>
     {
-        // The value this re-parse produces is discarded on purpose: the
-        // document already carries the one its own mint computed. What is
-        // wanted here is the refusal, which is what stops a CanonicalJson minted
-        // by a laxer owner from reaching this owner's document validator.
-        UF_TRY_CONTEXT(
+        // CanonicalJson carries no owner identity. Re-parsing here therefore
+        // produces both the canonicality proof and the sole value execution may
+        // consume; using document.value() would validate these bytes while
+        // executing a value cached by some other, potentially laxer, owner.
+        UF_TRY_VALUE_CONTEXT(
+            validatedValue,
             m_state->validateCanonicalJson(document.bytes()),
             "revalidating exact JCS at the ProjectPlugin call boundary"
         );
@@ -308,7 +309,7 @@ namespace uf::operator_runtime
             m_state->validateDocument(function, direction, document.bytes()),
             "validating complete ProjectPlugin document schema"
         );
-        return ok();
+        return validatedValue;
     }
 
     auto ProjectSchemaOwner::validateOutput(
@@ -317,7 +318,11 @@ namespace uf::operator_runtime
     ) const
         -> Result<ValidatedDocument>
     {
-        UF_TRY(validate(function, ProjectDocumentDirection::Output, document));
+        UF_TRY_VALUE(
+            validatedValue,
+            validate(function, ProjectDocumentDirection::Output, document)
+        );
+        document.m_value = std::move(validatedValue);
         return ValidatedDocument{
             m_state->projectRegistrationHash,
             function,
@@ -383,10 +388,17 @@ namespace uf::operator_runtime
         // Validation is intentionally repeated at the call boundary. A
         // CanonicalJson carries no schema authority and cannot be promoted by a
         // caller attaching a hash label.
-        UF_TRY(m_state->schemaOwner.validate(function, ProjectDocumentDirection::Input, input));
+        UF_TRY_VALUE(
+            validatedInput,
+            m_state->schemaOwner.validate(
+                function,
+                ProjectDocumentDirection::Input,
+                input
+            )
+        );
         UF_TRY_VALUE_CONTEXT(
             outputValue,
-            m_state->program.invoke(functionName(function), input.value()),
+            m_state->program.invoke(functionName(function), validatedInput),
             "running isolated ProjectPlugin data function"
         );
         UF_TRY_VALUE(

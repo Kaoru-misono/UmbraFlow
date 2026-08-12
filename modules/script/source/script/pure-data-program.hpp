@@ -94,10 +94,11 @@ namespace uf::script
     auto pluginEnvironmentMaterial() -> std::string;
 
     // The identity of the plugin environment this build runs: the trusted Luau
-    // bridge that wraps every plugin call, the global whitelist above, the
-    // frozen tables published beside it, and the versioned contract each
-    // published function answers to. It belongs in a SessionManifest for the
-    // same reason the protocol schema hashes do -- a framework upgrade that
+    // bridge that wraps every plugin call, the pinned Luau implementation, the
+    // global whitelist above, the frozen tables published beside it, and the
+    // versioned contract each published function answers to. It belongs in a
+    // SessionManifest for the same reason the protocol schema hashes do -- a
+    // framework upgrade that
     // changed any of them would change what a plugin does under a session
     // manifest that had not moved, and what a function RETURNS is such a
     // change even when every published name is unmoved.

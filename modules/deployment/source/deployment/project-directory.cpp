@@ -1132,6 +1132,39 @@ namespace uf::deployment
             }
             return computed;
         }
+
+        [[nodiscard]]
+        auto requireUniqueCommitments(
+            std::span<ExpectedRegistration const> expected
+        ) -> Status
+        {
+            for (auto first = std::size_t{0}; first < expected.size(); ++first)
+            {
+                for (auto second = first + 1U; second < expected.size(); ++second)
+                {
+                    if (expected[first].deployment == expected[second].deployment)
+                    {
+                        return refuse(std::format(
+                            "project_registration_hash was presented more than once for "
+                            "the deployment {}",
+                            expected[first].deployment
+                        ));
+                    }
+                }
+            }
+            return ok();
+        }
+
+        class ProjectLoader final
+        {
+        public:
+            [[nodiscard]]
+            static auto load(
+                std::filesystem::path const& directory,
+                std::span<ExpectedRegistration const> expected,
+                std::shared_ptr<ProjectDocumentInputLog> p_inputLog
+            ) -> Result<LoadedProject>;
+        };
     }
 
     auto projectRegistrationSchemaBytes() -> std::string_view
@@ -1195,11 +1228,13 @@ namespace uf::deployment
         return found == deployments.end() ? nullptr : &*found;
     }
 
-    auto loadProductionProject(
+    auto ProjectLoader::load(
         std::filesystem::path const& directory,
-        std::span<ExpectedRegistration const> expected
+        std::span<ExpectedRegistration const> expected,
+        std::shared_ptr<ProjectDocumentInputLog> p_inputLog
     ) -> Result<LoadedProject>
     {
+        UF_TRY(requireUniqueCommitments(expected));
         UF_TRY_VALUE(root, openRoot(directory));
         UF_TRY_VALUE(
             projectBytes,
@@ -1379,14 +1414,19 @@ namespace uf::deployment
                     .projectObservation = files.projectObservation,
                     .toolPrecondition   = files.toolPrecondition,
                 };
+            auto documentValidator = deployed->documentValidator();
+            if (p_inputLog != nullptr)
+            {
+                documentValidator = recordingValidator(
+                    std::move(documentValidator),
+                    p_inputLog
+                );
+            }
             auto projectSchemaOwner = operator_runtime::ProjectSchemaOwner::create(
                 *registration,
                 documentSchemas,
                 canonicalJsonValidator(),
-                recordingValidator(
-                    deployed->documentValidator(),
-                    loaded.documentInputLog
-                )
+                std::move(documentValidator)
             );
             if (!projectSchemaOwner.has_value())
             {
@@ -1463,12 +1503,21 @@ namespace uf::deployment
         return loaded;
     }
 
+    auto loadProductionProject(
+        std::filesystem::path const& directory,
+        std::span<ExpectedRegistration const> expected
+    ) -> Result<LoadedProject>
+    {
+        return ProjectLoader::load(directory, expected, {});
+    }
+
     auto loadConformanceProject(
         std::filesystem::path const& directory,
         std::span<ExpectedRegistration const> expected
     ) -> Result<ConformanceProject>
     {
-        UF_TRY_VALUE(loaded, loadProductionProject(directory, expected));
+        auto inputLog = std::make_shared<ProjectDocumentInputLog>();
+        UF_TRY_VALUE(loaded, ProjectLoader::load(directory, expected, inputLog));
 
         // The directory is confined a second time rather than threaded out of
         // the load above: what a load returns is what it read, and a project is
@@ -1558,10 +1607,11 @@ namespace uf::deployment
         }
 
         auto project = ConformanceProject{
-            .loaded     = std::move(loaded),
-            .probeFrame = {frameBytes.begin(), frameBytes.end()},
-            .underTest  = std::move(underTest),
-            .foreign    = std::move(foreign),
+            .loaded           = std::move(loaded),
+            .documentInputLog = std::move(inputLog),
+            .probeFrame       = {frameBytes.begin(), frameBytes.end()},
+            .underTest        = std::move(underTest),
+            .foreign          = std::move(foreign),
         };
 
         // R8, the half a loader can answer, for each role in turn. The member

@@ -527,6 +527,50 @@ return {
             REQUIRE(plugin.has_value());
             CHECK_FALSE(plugin->derive(*forged).has_value());
         }
+
+        SUBCASE("the validating owner's parsed value is the execution input")
+        {
+            auto const source = echoPlugin("fixture.reparsed-input");
+            auto fixture = registrationFixture("fixture.reparsed-input", source);
+
+            auto foreignOwner = ProjectSchemaOwner::create(
+                fixture.registration,
+                ProjectDocumentSchemaBytes{
+                    .projectState       = "state",
+                    .projectObservation = "observation",
+                    .toolPrecondition   = "precondition",
+                },
+                [](std::string_view candidateJcs) -> Result<json::Value> {
+                    if (candidateJcs != k_input)
+                    {
+                        return fail(AutomationErrorKind::InvalidResource,
+                                    "foreign owner rejected bytes");
+                    }
+                    return parseCanonical("{\"request\":\"foreign-cache\"}");
+                },
+                [](ProjectPluginFunction, ProjectDocumentDirection, std::string_view) -> Status {
+                    return ok();
+                }
+            );
+            REQUIRE(foreignOwner.has_value());
+            auto const foreignInput = foreignOwner->canonicalize(std::string{k_input});
+            REQUIRE(foreignInput.has_value());
+            CHECK(json::canonicalBytes(foreignInput->value())
+                  == "{\"request\":\"foreign-cache\"}");
+
+            auto registrar = ProjectPluginRegistrar{};
+            auto const plugin = registrar.registerPlugin(
+                fixture.registration,
+                source,
+                {},
+                fixture.schemaOwner
+            );
+            REQUIRE(plugin.has_value());
+
+            auto const output = plugin->derive(*foreignInput);
+            REQUIRE(output.has_value());
+            CHECK(output->bytes() == k_input);
+        }
     }
 
     // Every blob below is valid JSON even where the closure rule is what must
