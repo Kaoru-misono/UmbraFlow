@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbraflow.dev/schema/collection-fact/v1",
+  "title": "Umbraflow Collection Fact v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "items",
+    "completeness",
+    "metadata"
+  ],
+  "$defs": {
+    "collection_metadata_value": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_count"
+      ],
+      "properties": {
+        "item_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema": {
+      "const": "umbraflow-collection-fact/v1"
+    },
+    "items": {
+      "type": "array"
+    },
+    "completeness": {
+      "enum": [
+        "Complete",
+        "Partial",
+        "Unknown"
+      ]
+    },
+    "metadata": {
+      "$ref": "https://umbraflow.dev/schema/fact/v1",
+      "properties": {
+        "value": {
+          "$ref": "#/$defs/collection_metadata_value"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "metadata": {
+            "properties": {
+              "status": {
+                "const": "Unknown"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        },
+        "required": [
+          "metadata"
+        ]
+      },
+      "then": {
+        "properties": {
+          "items": {
+            "maxItems": 0
+          },
+          "completeness": {
+            "const": "Unknown"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "metadata": {
+            "properties": {
+              "status": {
+                "const": "Conflict"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        },
+        "required": [
+          "metadata"
+        ]
+      },
+      "then": {
+        "properties": {
+          "items": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 #include "project-deployment.hpp"
 
+#include "framework-schema-catalog.hpp"
+
 #include <json/error.hpp>
 #include <json/schema.hpp>
 #include <json/value.hpp>
@@ -728,6 +730,22 @@ namespace uf::deployment
                 ));
             }
             return *std::move(compiled);
+        }
+
+        [[nodiscard]]
+        auto sharedSchemaDocuments() -> std::vector<json::Schema::Document>
+        {
+            auto documents = std::vector<json::Schema::Document>{};
+            auto const catalog = frameworkSchemaCatalog();
+            documents.reserve(catalog.size());
+            for (auto const& published : catalog)
+            {
+                documents.emplace_back(json::Schema::Document{
+                    .label      = published.relativePath,
+                    .exactBytes = published.exactBytes,
+                });
+            }
+            return documents;
         }
 
         // The two operator protocol schemas that reference no project document.
@@ -1490,13 +1508,28 @@ namespace uf::deployment
             .exactBytes = sources.projectObservation,
         };
 
-        auto const commonOnly = std::array{common};
-        auto const withState  = std::array{common, projectStateDocument};
-        auto const withWorld  = std::array{
+        auto const commonOnly      = std::array{common};
+        auto const sharedDocuments = sharedSchemaDocuments();
+
+        // A set that embeds a project document also has to resolve what that
+        // document references, so the published fragments belong in every set
+        // below and not only in the project's own compilations.
+        auto const withShared =
+            [&sharedDocuments](std::vector<json::Schema::Document> local)
+        {
+            local.insert(
+                local.end(),
+                sharedDocuments.begin(),
+                sharedDocuments.end()
+            );
+            return local;
+        };
+        auto const withState = withShared({common, projectStateDocument});
+        auto const withWorld = withShared({
             common,
             projectStateDocument,
             projectObservationDocument,
-        };
+        });
 
         UF_TRY_VALUE(
             deriveInput,
@@ -1517,19 +1550,27 @@ namespace uf::deployment
         UF_TRY_VALUE(envelopes, envelopeSchemas());
         UF_TRY_VALUE(
             projectState,
-            compile("project/state", sources.projectState, {})
+            compile("project/state", sources.projectState, sharedDocuments)
         );
         UF_TRY_VALUE(
             projectObservation,
-            compile("project/observation", sources.projectObservation, {})
+            compile(
+                "project/observation",
+                sources.projectObservation,
+                sharedDocuments
+            )
         );
         UF_TRY_VALUE(
             toolPrecondition,
-            compile("project/tool-precondition", sources.toolPrecondition, {})
+            compile(
+                "project/tool-precondition",
+                sources.toolPrecondition,
+                sharedDocuments
+            )
         );
         UF_TRY_VALUE(
             reconcile,
-            compile("project/reconcile", sources.reconcile, {})
+            compile("project/reconcile", sources.reconcile, sharedDocuments)
         );
 
         auto state = std::make_shared<State>(State{
@@ -1561,7 +1602,11 @@ namespace uf::deployment
             UF_TRY_VALUE(hash, hashOf(bytes));
             UF_TRY_VALUE(
                 schema,
-                compile(std::format("journal payload {}", hash.hex()), bytes, {})
+                compile(
+                    std::format("journal payload {}", hash.hex()),
+                    bytes,
+                    sharedDocuments
+                )
             );
             state->journalPayloadSchemas.emplace_back(PayloadSchema{
                 .hash   = hash,
@@ -1573,7 +1618,11 @@ namespace uf::deployment
             UF_TRY_VALUE(hash, hashOf(bytes));
             UF_TRY_VALUE(
                 schema,
-                compile(std::format("effect payload {}", hash.hex()), bytes, {})
+                compile(
+                    std::format("effect payload {}", hash.hex()),
+                    bytes,
+                    sharedDocuments
+                )
             );
             state->effectPayloadSchemas.emplace_back(PayloadSchema{
                 .hash   = hash,

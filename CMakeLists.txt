@@ -59,6 +59,15 @@ set(CPP_MODULE_ROOTS
 
 cpp_scan_and_load_modules(${CPP_MODULE_ROOTS})
 
+cpp_embed_framework_schemas(
+    ${PROJECT_NAME}_deployment
+    "${CMAKE_CURRENT_SOURCE_DIR}/schema"
+    "${CMAKE_CURRENT_BINARY_DIR}/modules/deployment"
+    umbraflow-collection-fact-v1.schema.json
+    umbraflow-fact-provenance-v1.schema.json
+    umbraflow-fact-v1.schema.json
+)
+
 # The imported ONNX runtime is declared by modules/ocr/external, which names it
 # after this repository's project. Publish the same namespaced alias the module
 # targets carry, so nothing outside this repository has to spell that name.

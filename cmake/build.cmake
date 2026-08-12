@@ -68,6 +68,42 @@ function(cpp_embed_luau_sources TARGET_NAME LUAU_SOURCE_DIR GENERATED_DIR VERSIO
     target_sources(${TARGET_NAME} PRIVATE "${GENERATED_FILE}")
 endfunction()
 
+# Embeds published framework schemas from their exact files. The generated
+# translation unit is the runtime catalog, leaving schema/ as the only authored
+# spelling of each document.
+function(cpp_embed_framework_schemas TARGET_NAME SCHEMA_DIR GENERATED_DIR)
+    if(NOT Python3_Interpreter_FOUND)
+        message(FATAL_ERROR
+            "[Embed] ${TARGET_NAME}: embedding framework schemas requires Python 3."
+        )
+    endif()
+
+    set(SCHEMA_NAMES ${ARGN})
+    set(SCHEMA_FILES "")
+    foreach(SCHEMA_NAME IN LISTS SCHEMA_NAMES)
+        list(APPEND SCHEMA_FILES "${SCHEMA_DIR}/${SCHEMA_NAME}")
+    endforeach()
+
+    cmake_path(SET EMBED_SCRIPT NORMALIZE
+        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../scripts/embed_framework_schemas.py"
+    )
+    set(GENERATED_FILE "${GENERATED_DIR}/framework-schema-catalog.generated.cpp")
+
+    add_custom_command(
+        OUTPUT "${GENERATED_FILE}"
+        COMMAND ${Python3_EXECUTABLE} "${EMBED_SCRIPT}"
+            --schema-dir "${SCHEMA_DIR}"
+            --output "${GENERATED_FILE}"
+            ${SCHEMA_NAMES}
+        DEPENDS "${EMBED_SCRIPT}" ${SCHEMA_FILES}
+        COMMENT "[Embed] ${TARGET_NAME}: embedding published framework schemas"
+        VERBATIM
+    )
+
+    set_source_files_properties("${GENERATED_FILE}" PROPERTIES GENERATED TRUE)
+    target_sources(${TARGET_NAME} PRIVATE "${GENERATED_FILE}")
+endfunction()
+
 # Applies the manifest's [sources.<platform>] sections to the module's globbed
 # file set, in place: SRC_VAR and HDR_VAR name the caller's variables.
 #

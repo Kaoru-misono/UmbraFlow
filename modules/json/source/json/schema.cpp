@@ -480,6 +480,26 @@ namespace uf::json
                 + std::string{reference};
         }
 
+        // The scheme and authority of an absolute URI, which is the whole of
+        // what says who publishes it. Two identities sharing an origin are
+        // published together, so a reference that misses inside a registered
+        // origin names a sibling nobody handed to compile -- a different defect
+        // from a reference to an origin this evaluator has never been given,
+        // and one with a different repair.
+        [[nodiscard]]
+        auto originOf(std::string_view identity) -> std::string_view
+        {
+            auto const authorityAt = identity.find("//");
+            if (authorityAt == std::string_view::npos)
+            {
+                return identity;
+            }
+            auto const pathAt = identity.find('/', authorityAt + 2U);
+            return pathAt == std::string_view::npos
+                ? identity
+                : identity.substr(0U, pathAt);
+        }
+
         struct Target final
         {
             std::size_t resource{0};
@@ -523,9 +543,26 @@ namespace uf::json
                 );
                 if (found == resources.end())
                 {
+                    auto const origin  = originOf(identity);
+                    auto const sibling = std::ranges::any_of(
+                        resources,
+                        [origin](Resource const& resource)
+                        {
+                            return !resource.identity.empty()
+                                && originOf(resource.identity) == origin;
+                        }
+                    );
+                    if (sibling)
+                    {
+                        return unsupported(std::format(
+                            "a $ref names a document outside the set this schema "
+                            "was compiled from: {}",
+                            identity
+                        ));
+                    }
                     return unsupported(std::format(
-                        "a $ref names a document outside the set this schema was "
-                        "compiled from: {}",
+                        "a $ref names a remote document, and this evaluator "
+                        "fetches nothing: {}",
                         identity
                     ));
                 }
@@ -564,9 +601,10 @@ namespace uf::json
                 auto const* const p_next = p_node->find(token);
                 if (p_next == nullptr)
                 {
-                    return unsupported(
-                        std::format("a $ref names nothing: {}", reference)
-                    );
+                    return unsupported(std::format(
+                        "a $ref has no target in the document it names: {}",
+                        reference
+                    ));
                 }
 
                 p_node = p_next;

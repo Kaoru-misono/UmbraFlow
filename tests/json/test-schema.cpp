@@ -387,15 +387,44 @@ namespace uf::json
         CHECK(rejects(*schema, R"({"id":1})"));
 
         // Without the other document in the set, the same reference is refused
-        // rather than resolved somewhere else.
-        CHECK(compileRefuses(k_root));
+        // rather than resolved somewhere else. It names an origin the set does
+        // carry, so the repair is to widen the set.
+        auto const outside = Schema::compile(
+            Schema::Document{.label = "root", .exactBytes = k_root}
+        );
+        REQUIRE_FALSE(outside.has_value());
+        CHECK(std::string{outside.error().message()}.contains(
+            "outside the set this schema was compiled from"
+        ));
+
+        // A reference to an origin no document in the set publishes is the
+        // other refusal, and it is reported apart from the one above because no
+        // widening of the set repairs it: this evaluator fetches nothing.
+        constexpr auto k_fetching = std::string_view{
+            R"({"$id":"https://x.test/schema/root.json",)"
+            R"("$ref":"https://elsewhere.test/s.json"})"
+        };
+        auto const remote = Schema::compile(
+            Schema::Document{.label = "remote", .exactBytes = k_fetching},
+            others
+        );
+        REQUIRE_FALSE(remote.has_value());
+        CHECK(std::string{remote.error().message()}.contains(
+            "a remote document, and this evaluator fetches nothing"
+        ));
 
         // A same-document reference to a name that is not there, an anchor
         // rather than a pointer, and a reference into an array, are all refused.
-        CHECK(compileRefuses(R"({"$ref":"#/$defs/Missing"})"));
+        auto const missing = Schema::compile(Schema::Document{
+            .label      = "missing",
+            .exactBytes = R"({"$ref":"#/$defs/Missing"})",
+        });
+        REQUIRE_FALSE(missing.has_value());
+        CHECK(std::string{missing.error().message()}.contains(
+            "no target in the document it names"
+        ));
         CHECK(compileRefuses(R"({"$defs":{"A":true},"$ref":"#A"})"));
         CHECK(compileRefuses(R"({"$defs":[true],"$ref":"#/$defs/0"})"));
-        CHECK(compileRefuses(R"({"$ref":"https://elsewhere.test/s.json"})"));
     }
 
     TEST_CASE("json::Schema applies a recursive $ref and stops on a cycle")
@@ -517,12 +546,9 @@ namespace uf::json
     }
 
     // This repository's own schemas, compiled by the evaluator that is meant
-    // to apply them. Two of the eight are refusals, and both are the properties
-    // above rather than accidents: umbraflow-trace-v2 states int64 and uint64
-    // ranges as JSON numbers, which the number model its own documents are
-    // serialized under cannot represent; and umbraflow-annotation-workspace-v2
-    // references two sibling documents, which resolve only when they are in the
-    // set handed to compile.
+    // to apply them. Four require context: trace carries numeric bounds this
+    // evaluator cannot represent exactly, while workspace, Fact and Collection
+    // Fact name documents that must be present in their closed reference set.
     TEST_CASE("json::Schema compiles this repository's schemas")
     {
         constexpr auto k_knownFile =
@@ -531,6 +557,10 @@ namespace uf::json
             std::string_view{"umbraflow-trace-v2.schema.json"};
         constexpr auto k_crossDocument =
             std::string_view{"umbraflow-annotation-workspace-v2.schema.json"};
+        constexpr auto k_fact =
+            std::string_view{"umbraflow-fact-v1.schema.json"};
+        constexpr auto k_collectionFact =
+            std::string_view{"umbraflow-collection-fact-v1.schema.json"};
 
         auto const root = repositoryRoot(k_knownFile);
         REQUIRE_FALSE(root.empty());
@@ -547,7 +577,7 @@ namespace uf::json
             buffer << stream.rdbuf();
             sources.emplace_back(entry.path().filename().string(), buffer.str());
         }
-        REQUIRE(sources.size() == 8U);
+        REQUIRE(sources.size() == 11U);
 
         auto compiledCount = std::size_t{0};
         for (auto const& source : sources)
@@ -558,14 +588,19 @@ namespace uf::json
                 .exactBytes = source.second,
             });
 
-            if (source.first == k_outOfRange || source.first == k_crossDocument)
+            if (
+                source.first == k_outOfRange
+                || source.first == k_crossDocument
+                || source.first == k_fact
+                || source.first == k_collectionFact
+            )
             {
                 REQUIRE_FALSE(schema.has_value());
                 CHECK(errorKind(schema.error()) == ErrorKind::SchemaUnsupported);
                 auto const message = std::string{schema.error().message()};
                 auto const expected = source.first == k_outOfRange
                     ? std::string_view{"2^53"}
-                    : std::string_view{"outside the set"};
+                    : std::string_view{"outside the set this schema was compiled from"};
                 CHECK(message.contains(expected));
                 continue;
             }
@@ -579,7 +614,7 @@ namespace uf::json
             }
             ++compiledCount;
         }
-        CHECK(compiledCount == 6U);
+        CHECK(compiledCount == 7U);
 
         // The cross-document schema compiles once its two siblings are in the
         // set, which is the whole of what the closed world buys.
@@ -612,5 +647,57 @@ namespace uf::json
             : std::string{workspace.error().message()};
         INFO(why);
         CHECK(workspace.has_value());
+
+        auto factReferences  = std::vector<Schema::Document>{};
+        auto factBytes       = std::string_view{};
+        auto collectionBytes = std::string_view{};
+        for (auto const& source : sources)
+        {
+            if (source.first == k_fact)
+            {
+                factBytes = source.second;
+            }
+            else if (source.first == k_collectionFact)
+            {
+                collectionBytes = source.second;
+            }
+            else if (source.first == "umbraflow-fact-provenance-v1.schema.json")
+            {
+                factReferences.emplace_back(Schema::Document{
+                    .label      = source.first,
+                    .exactBytes = source.second,
+                });
+            }
+        }
+        REQUIRE(factReferences.size() == 1U);
+
+        // The published Fact family, closed one document at a time: Fact needs
+        // provenance, and Collection Fact needs both.
+        auto const fact = Schema::compile(
+            Schema::Document{.label = k_fact, .exactBytes = factBytes},
+            factReferences
+        );
+        auto const whyFact = fact.has_value()
+            ? std::string{}
+            : std::string{fact.error().message()};
+        INFO(whyFact);
+        REQUIRE(fact.has_value());
+
+        factReferences.emplace_back(Schema::Document{
+            .label      = k_fact,
+            .exactBytes = factBytes,
+        });
+        auto const collection = Schema::compile(
+            Schema::Document{
+                .label      = k_collectionFact,
+                .exactBytes = collectionBytes,
+            },
+            factReferences
+        );
+        auto const whyCollection = collection.has_value()
+            ? std::string{}
+            : std::string{collection.error().message()};
+        INFO(whyCollection);
+        REQUIRE(collection.has_value());
     }
 }

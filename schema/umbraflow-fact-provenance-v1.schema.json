@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbraflow.dev/schema/fact-provenance/v1",
+  "title": "Umbraflow Fact Provenance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "reference"
+  ],
+  "properties": {
+    "kind": {
+      "enum": [
+        "client_db",
+        "human_correction",
+        "inference",
+        "observation",
+        "policy"
+      ]
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "project_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "detail": {
+      "type": "object"
+    }
+  }
+}

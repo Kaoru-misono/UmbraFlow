@@ -165,6 +165,10 @@ PUBLISHED_GLOBAL_AUTHORITIES = (
 GLOBALS_BODY_SCAFFOLDING = frozenset(
     {"auto", "return", "std", "string", "string_view", "to_array", "vector"}
 )
+# The consumer's domain nouns, which a framework schema must not learn. "item"
+# is deliberately absent: `items` is a JSON Schema keyword and `item_count` is
+# the cardinality of the published Collection Fact, so the word carries the
+# generic collection sense here. "inventory" names the consumer's sense of it.
 FORBIDDEN_SCHEMA_WORDS = frozenset(
     {
         "battle",
@@ -180,7 +184,6 @@ FORBIDDEN_SCHEMA_WORDS = frozenset(
         "game",
         "gameplay",
         "inventory",
-        "item",
         "level",
         "mission",
         "player",

@@ -62,6 +62,12 @@ namespace uf::json
         // name. Each must declare an absolute $id, and a reference resolving to
         // an identity outside the set is refused rather than fetched. Passing
         // none restricts the schema to same-document references.
+        //
+        // The three ways a reference fails to resolve are reported apart,
+        // because each has a different repair: a document of an origin the set
+        // publishes but did not supply is widened in, a document of an origin
+        // the set never publishes is removed, and a pointer that misses inside
+        // a document the set does carry is corrected.
         [[nodiscard]]
         static auto compile(
             Document const& document,

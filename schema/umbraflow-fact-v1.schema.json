@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbraflow.dev/schema/fact/v1",
+  "title": "Umbraflow Fact v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "status"
+  ],
+  "properties": {
+    "schema": {
+      "const": "umbraflow-fact/v1"
+    },
+    "status": {
+      "enum": [
+        "Known",
+        "Unknown",
+        "Stale",
+        "Conflict"
+      ]
+    },
+    "value": true,
+    "candidates": {
+      "type": "array",
+      "minItems": 2
+    },
+    "confirmed_at_project_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "confirmed_at_run_generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "source_observation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "provenance": {
+      "type": "array",
+      "items": {
+        "$ref": "https://umbraflow.dev/schema/fact-provenance/v1"
+      }
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "Known"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "required": [
+              "value"
+            ]
+          },
+          {
+            "required": [
+              "confirmed_at_project_revision"
+            ]
+          },
+          {
+            "required": [
+              "provenance"
+            ],
+            "properties": {
+              "provenance": {
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "candidates"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "reason"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "Unknown"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "required": [
+              "reason"
+            ]
+          },
+          {
+            "not": {
+              "required": [
+                "value"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "candidates"
+              ]
+            }
+          },
+          {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "confirmed_at_project_revision"
+                  ]
+                },
+                {
+                  "required": [
+                    "confirmed_at_run_generation"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "Stale"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "required": [
+              "value"
+            ]
+          },
+          {
+            "required": [
+              "confirmed_at_project_revision"
+            ]
+          },
+          {
+            "required": [
+              "provenance"
+            ],
+            "properties": {
+              "provenance": {
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "required": [
+              "reason"
+            ]
+          },
+          {
+            "not": {
+              "required": [
+                "candidates"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "Conflict"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "required": [
+              "candidates"
+            ]
+          },
+          {
+            "required": [
+              "reason"
+            ]
+          },
+          {
+            "not": {
+              "required": [
+                "value"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
