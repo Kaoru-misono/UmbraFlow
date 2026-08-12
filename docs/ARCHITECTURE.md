@@ -14,8 +14,8 @@ Read in this order:
 2. [migration report](plans/2026-08-09-runtime-migration-report.md);
 3. checked-in schemas named by that report.
 
-The read-only consumer bundle is v1.12; its root is
-`b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5`.
+The read-only consumer bundle is v1.13; its root is
+`c8e559a1ee6618246778ac465842976b7445fbe10a20a2edaf77ca047ec6e5f0`.
 No game entity, tool name, state field, Journal event, or content schema belongs
 in this repository's generic core.
 
@@ -34,6 +34,10 @@ in this repository's generic core.
 > reports 5 pins matched against
 > [the hardening rewrite](plans/2026-08-09-runtime-hardening-rewrite.md):10-18.
 > That TODO row is ticked.)*
+>
+> *(Corrected again 2026-08-12: v1.13 records the consumer repository's
+> product/conformance split and archived evidence paths. The hardening rewrite
+> and `scripts/check_spec_bundle.py` moved together to root `c8e559a1…ec6e5f0`.)*
 
 ## Module direction
 

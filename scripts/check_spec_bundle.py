@@ -69,13 +69,13 @@ class BundleSpec:
 # to that document; holding two independent copies is what makes an altered pin
 # fail rather than propagate.
 FROZEN_BUNDLE = BundleSpec(
-    version="1.12",
+    version="1.13",
     manifest_name="spec-bundle.manifest.json",
     pins=(
         Pin(
             "bundle root SHA-256",
             "spec-bundle.manifest.json",
-            "b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5",
+            "c8e559a1ee6618246778ac465842976b7445fbe10a20a2edaf77ca047ec6e5f0",
         ),
         Pin(
             "main design",
@@ -85,12 +85,12 @@ FROZEN_BUNDLE = BundleSpec(
         Pin(
             "project-layer design",
             "uf-chaos-project-layer-design.md",
-            "8acaf6e0e02ac2b0182e0278c378864b93c191b4335bc59e6386ef42475d4d38",
+            "3f3879f464a7459bf3c4e208b2cfa4c4d11914a723534b6945211fddfbabaf6c",
         ),
         Pin(
             "requirements",
             "requirements-traceability.md",
-            "f531f10645120684361efbc9f520b562268f7ed2f0f5ae7cd8c98981821a8fe3",
+            "1b6eaabfc60dd75483f4620629b6ba62994c20a13985ab1681e84893aa9d428b",
         ),
         Pin(
             "failure/recovery audit",

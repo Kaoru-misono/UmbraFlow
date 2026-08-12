@@ -343,9 +343,10 @@ was tracking. This section is where the expiry lives; it owns nothing else.
 ## G0 — contract and inherited baseline
 
 - [x] Pin the four-document consumer bundle at root
-      `b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5`
-      (v1.12). Was `c4760bb5…bfb6a966` (v1.9), stale from v1.10 on 2026-08-12;
-      v1.11 was never written down anywhere.
+      `c8e559a1ee6618246778ac465842976b7445fbe10a20a2edaf77ca047ec6e5f0`
+      (v1.13). Was `c4760bb5…bfb6a966` (v1.9), stale from v1.10 on 2026-08-12;
+      v1.11 was never written down anywhere, and v1.12 preceded the final
+      product/conformance archive correction.
 - [x] Re-pin the gate at v1.12. Done 2026-08-12. `scripts/check_spec_bundle.py`'s
       `FROZEN_BUNDLE` and the five digest lines it cross-checks in
       [the hardening rewrite](plans/2026-08-09-runtime-hardening-rewrite.md):10-18
@@ -357,6 +358,9 @@ was tracking. This section is where the expiry lives; it owns nothing else.
       two copies is still not freshness** — the gate detects an edited pin, not a
       moved bundle — which is recorded at
       [checks that cannot fail](pitfalls/checks-that-cannot-fail.md).
+- [x] Re-pin the gate at v1.13. Done 2026-08-12 with the consumer archive move:
+      the hardening rewrite and `FROZEN_BUNDLE` both read root
+      `c8e559a1…ec6e5f0`, and the full bundle gate reads the consumer directory.
 - [x] Record base commit, rejected stash and the 101-entry dirty baseline
       manifest.
 - [x] Assign exactly one disposition to all 101 inherited dirty paths

@@ -57,7 +57,7 @@ to the repository root.
 > §8.3 — because this change does not own either string. `CONTEXT.md` carries
 > the full map.
 
-> **Read note, 2026-08-12 — the bundle this audit verified is three versions
+> **Read note, 2026-08-12 — the bundle this audit verified is four versions
 > old, and every root hash below is left as written.** This audit read v1.9,
 > root `c4760bb59e7df28e13a676446a4cfbb4a62b067741420ecf13f4b939bfb6a966`, and
 > §0's byte-for-byte verification is a record of that read. It is not rewritten,
@@ -67,21 +67,22 @@ to the repository root.
 > evidence in a dated record, neither as a pin. Every statement of the pin now
 > carries the current root.
 >
-> The bundle is at **v1.12**, root
-> `b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5`. It moved
+> The bundle is at **v1.13**, root
+> `c8e559a1ee6618246778ac465842976b7445fbe10a20a2edaf77ca047ec6e5f0`. It moved
 > on 2026-08-12: v1.10 amended the project-layer design in seven places, v1.11
 > recorded the owner's waiver of the dual-game prerequisite for the first
 > mutation, and v1.12 co-versioned that waiver into
 > `umbraflow-game-automation-final-design.md` §15 Phase 4 and repaired the
-> version statements the earlier bumps left behind. Two findings read
+> version statements the earlier bumps left behind; v1.13 records the
+> product/conformance split and archived evidence paths. Two findings read
 > differently now:
 >
 > - **F-14** (`ARCHITECTURE.md` names two bundle versions seven lines apart) is
 >   **applied**: `:3` now reads v1.9, which is the correction this document
->   ruled, and `:17` reads v1.12.
+>   ruled, and `:17` reads v1.13.
 > - **§1's (b), "nothing checks the pin"**, already carried its 2026-08-11
 >   closure note. The gate it names then pinned **v1.10**. *(Corrected later on
->   2026-08-12: both copies now read v1.12 root `b3306dde…de51cda5` and agree,
+>   2026-08-12: both copies now read v1.13 root `c8e559a1…ec6e5f0` and agree,
 >   and that TODO row is ticked. The finding's own point survives the re-pin —
 >   two copies agreeing is not the bundle being current, and nothing in the tree
 >   goes red when it moves again.)*

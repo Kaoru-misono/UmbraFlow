@@ -23,7 +23,7 @@ Reading order: target form, then layer ownership, then the model semantics.
   conflicting Page/Element/Hit/UFR, Context, direct-run, caller-measurement, caller-effect, and
   pre-Operator action clause below. No compatibility implementation is permitted.
   It is also the document `scripts/check_spec_bundle.py` reads: its `:10-18`
-  digest lines are one of the gate's two independent copies of the v1.12 bundle
+  digest lines are one of the gate's two independent copies of the v1.13 bundle
   pin, so an edit there is a gate change.
 - [Runtime v2 migration report](2026-08-09-runtime-migration-report.md) —
   reproducible inherited baseline, KEEP/REWRITE/DELETE dispositions, and the exact

@@ -7,15 +7,23 @@ Scope: `umbraflow-cpp` only; consumer projects are read-only
 
 ## Frozen product authority
 
-The normative product input is the read-only v1.12 bundle at
-`E:/umbraflow-projects/uf-chaos/docs/architecture/`.
+The normative product input is the read-only v1.13 bundle at
+`E:/github/uf-chaos/docs/architecture/`.
 
 - bundle manifest: `spec-bundle.manifest.json`
-- bundle root SHA-256: `b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5`
+- bundle root SHA-256: `c8e559a1ee6618246778ac465842976b7445fbe10a20a2edaf77ca047ec6e5f0`
 - main design: `8fcdb4401e33e8cd4f0624522797e85fd418d572851f2ffbefdb14ba5290018c`
-- project-layer design: `8acaf6e0e02ac2b0182e0278c378864b93c191b4335bc59e6386ef42475d4d38`
-- requirements: `f531f10645120684361efbc9f520b562268f7ed2f0f5ae7cd8c98981821a8fe3`
+- project-layer design: `3f3879f464a7459bf3c4e208b2cfa4c4d11914a723534b6945211fddfbabaf6c`
+- requirements: `1b6eaabfc60dd75483f4620629b6ba62994c20a13985ab1681e84893aa9d428b`
 - failure/recovery audit: `9533dd76c8eb3fdf72a2fb24876172b3371853af133e23d9fbfb3b0a86c8c6b4`
+
+> Amended 2026-08-12: v1.13 records the product/conformance split in the
+> project-layer design and follows two v1 evidence records into `legacy/` in the
+> requirements matrix. No runtime schema or requirement row changed. Deciding
+> artifacts: `uf-chaos/CURRENT.md` and `uf-chaos/legacy/README.md`.
+> The same amendment moves this pin from the deleted
+> `E:/umbraflow-projects/uf-chaos/` checkout to the repository that now owns the
+> bundle, `E:/github/uf-chaos/`.
 
 If any byte differs, implementation stops. Umbraflow does not modify that
 consumer repository. This file is the upstream execution profile and records

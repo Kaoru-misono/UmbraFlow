@@ -4,16 +4,17 @@ Status: G0 execution map
 Date: 2026-08-09
 Scope: `umbraflow-cpp` only; no consumer-project writes
 
-This report binds the v1.12 spec root
-`b3306dde9337a70e5e33bb5676f9da5b0e99b4b1acd2fec1ef4d16dbde51cda5`
+This report binds the v1.13 spec root
+`c8e559a1ee6618246778ac465842976b7445fbe10a20a2edaf77ca047ec6e5f0`
 to the inherited upstream baseline rooted at
 `55444b02a8ace9fe7493e5175618ef0a67d87402087874b7972187ac71ed8ac7`.
 
 > Amended 2026-08-12: written against v1.9, root `c4760bb5…bfb6a966`, and
 > re-bound here because G0 in the requirements matrix passes only on a migration
 > report bound to the *current* bundle root. The bundle moved on 2026-08-12
-> through v1.10 and v1.11 to v1.12; no requirement row, owner, schema path or
-> CTest ID below changed with it.
+> through v1.10, v1.11 and v1.12 to v1.13; no requirement row, owner, schema
+> path or CTest ID below changed with it. v1.13 records the consumer's
+> product/conformance split and follows two evidence records into `legacy/`.
 
 The executable specification resolutions derived from the product bundle are
 fixed by
