@@ -157,9 +157,9 @@ local reading = model.compile({
         { id = "dialog.title.locator", kind = "template", asset_path = "assets/dialog-title.png", threshold = 0.9 },
     },
     readers = {
-        { id = "name.reader", kind = "text", confidence_floor = 0.5, normalization = "collapse_whitespace" },
-        { id = "flavour.reader", kind = "text", confidence_floor = 0.5, normalization = "trim" },
-        { id = "count.reader", kind = "text", confidence_floor = 0.5, normalization = "trim" },
+        { id = "name.reader", kind = "text", confidence_floor = 0.5, layout = "single_line", normalization = "collapse_whitespace" },
+        { id = "flavour.reader", kind = "text", confidence_floor = 0.5, layout = "block", normalization = "trim" },
+        { id = "count.reader", kind = "text", confidence_floor = 0.5, layout = "single_line", normalization = "trim" },
     },
     bindings = {
         {
@@ -256,10 +256,20 @@ local function reads(pairs_: { { any } }): any
 end
 
 local function readValue(text: string): any
-    return { kind = "read", text = text, confidence = 0.91 }
+    return { kind = "read", lines = { { text = text, rect = { 4, 5, 60, 12 } } }, confidence = 0.91 }
 end
 
--- The reported shape: ui_target, reader, kind and text, sorted, and nothing else.
+-- What a block Reader answers: several lines, each with the rectangle the frame
+-- held it in.
+local function readBlock(lines: { { any } }): any
+    local result = {}
+    for index, row in lines do
+        result[index] = { text = row[1], rect = row[2] }
+    end
+    return { kind = "read", lines = result, confidence = 0.91 }
+end
+
+-- The reported shape: ui_target, reader, kind and lines, sorted, and nothing else.
 do
     local cycle = evidence.begin_cycle()
     local records = readingRecords(cycle, "present", "absent", "present")
@@ -276,21 +286,45 @@ do
     for _, row in reported do assert(row.ui_target ~= "dialog_title") end
     assert(#reported == 3)
     assert(reported[1].ui_target == "count" and reported[1].reader == "count.reader")
-    assert(reported[1].kind == "read" and reported[1].text == "3")
+    assert(reported[1].kind == "read" and #reported[1].lines == 1)
+    assert(reported[1].lines[1].text == "3")
     assert(reported[2].ui_target == "title" and reported[2].reader == "flavour.reader")
     assert(reported[3].ui_target == "title" and reported[3].reader == "name.reader")
-    assert(reported[3].kind == "read" and reported[3].text == "Wandering Merchant")
+    assert(reported[3].kind == "read" and reported[3].lines[1].text == "Wandering Merchant")
 
-    -- No score, no rectangle, no binding, no variant, and no reason on a
-    -- reading that succeeded: four keys and no fifth.
+    -- No score, no binding, no variant, and no reason on a reading that
+    -- succeeded: four keys and no fifth.
     local keys = 0
     for key in reported[3] do
-        assert(key == "ui_target" or key == "reader" or key == "kind" or key == "text")
+        assert(key == "ui_target" or key == "reader" or key == "kind" or key == "lines")
         keys += 1
     end
     assert(keys == 4)
-    assert(not pcall(function() (reported[3] :: any).text = "forged" end))
+    assert(not pcall(function() (reported[3] :: any).lines = "forged" end))
     assert(not pcall(function() (reported :: any)[4] = {} end))
+    evidence.end_cycle(cycle)
+end
+
+-- A block Reader's reading carries every line it read, in order, each with its
+-- own rectangle: the whole point of the layout, and the shape a single-line
+-- reading is one element of rather than a second spelling of.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    local reported = resolution.resolve_readings(reading, cycle, state, records, reads({
+        { "title.primary", "flavour.reader", readBlock({
+            { "The road is blocked.", { 40, 100, 260, 22 } },
+            { "A stranger waits.", { 40, 124, 210, 22 } },
+        }) },
+        { "count.primary", "count.reader", readValue("3") },
+    }))
+    assert(reported[2].reader == "flavour.reader" and reported[2].kind == "read")
+    assert(#reported[2].lines == 2)
+    assert(reported[2].lines[1].text == "The road is blocked.")
+    assert(reported[2].lines[1].rect[1] == 40 and reported[2].lines[1].rect[2] == 100)
+    assert(reported[2].lines[2].text == "A stranger waits.")
+    assert(reported[2].lines[2].rect[2] == 124 and reported[2].lines[2].rect[4] == 22)
     evidence.end_cycle(cycle)
 end
 
@@ -325,7 +359,7 @@ do
             kind = "unknown",
             reason = "low_confidence",
             confidence = 0.2,
-            text = "Wandering Merchant",
+            lines = { { text = "Wandering Merchant", rect = { 4, 5, 60, 12 } } },
         } },
         { "title.primary", "flavour.reader", { kind = "absent" } },
         { "count.primary", "count.reader", readValue("3") },
@@ -333,10 +367,10 @@ do
     assert(#reported == 3)
     assert(reported[1].ui_target == "count" and reported[1].kind == "read")
     assert(reported[2].reader == "flavour.reader" and reported[2].kind == "absent")
-    assert(reported[2].reason == nil and reported[2].text == nil)
+    assert(reported[2].reason == nil and reported[2].lines == nil)
     assert(reported[3].reader == "name.reader" and reported[3].kind == "unknown")
     assert(reported[3].reason == "low_confidence")
-    assert(reported[3].text == nil)
+    assert(reported[3].lines == nil)
     assert((reported[3] :: any).confidence == nil)
 
     -- Three keys for a failed reading, and the reason is one of them.

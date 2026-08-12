@@ -20,6 +20,10 @@ luau_version = 0.1.0
 # exploration front-end (docs/archive/plans/2026-08-01-agent-front-end-and-exploration.md
 # 1); the bytes cross this boundary as bytes, so nothing image declares is named
 # by anything task publishes.
+#
+# ocr is public because a Reader's declared layout is a parameter of this
+# module's own read verbs: CycleAnswers keys an answer by it and TaskContext
+# takes it, so a caller holding one has to see the type.
 [dependencies]
-public = core domain engine script trace
+public = core domain engine ocr script trace
 private = image Luau.VM Luau.Compiler Luau.Ast

@@ -34,6 +34,7 @@ threshold = 0.92
 id = "header.text"
 kind = "text"
 confidence_floor = 0.80
+layout = "single_line"
 normalization = "trim"
 
 [[binding]]
@@ -149,6 +150,22 @@ end)
 rejects(function()
     project.parse(string.gsub(valid, 'variant = "enabled"', 'variant = "enabled"\nvariant = "other"'))
 end)
+
+-- A Reader states its layout and inherits nothing. There is no default because
+-- a single_line read of a rectangle holding several lines comes back as one run
+-- of nonsense rather than failing, so a model that says nothing would be given
+-- the answer that cannot report its own mistake.
+assert(project.parse(valid).reader_by_id["header.text"].layout == "single_line")
+rejects(function()
+    project.parse(string.gsub(valid, 'layout = "single_line"\n', ""))
+end)
+rejects(function()
+    project.parse(string.gsub(valid, 'layout = "single_line"', 'layout = "paragraph"'))
+end)
+assert(
+    project.parse(string.gsub(valid, 'layout = "single_line"', 'layout = "block"'))
+        .reader_by_id["header.text"].layout == "block"
+)
 
 -- Two action kinds, and the placement rule follows the kinds present rather
 -- than the count. A keystroke names no coordinate, so a Binding granting only

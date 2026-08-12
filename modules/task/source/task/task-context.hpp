@@ -20,6 +20,8 @@
 
 #include <engine/session.hpp>
 
+#include <ocr/engine.hpp>
+
 #include <trace/recorder.hpp>
 
 #include <vision/frame-analysis.hpp>
@@ -316,8 +318,28 @@ namespace uf::task
             PixelRect searchRoi
         ) -> Result<std::optional<engine::MatchFound>>;
 
-        // Reads the text in `rect` of the frame `ticket`'s cycle retains. An
-        // empty optional is a completed read that found no text.
+        // Reads the text in `rect` of the frame `ticket`'s cycle retains, under
+        // the layout the caller asserts that rectangle has, and hands back one
+        // entry per line. An empty list is a completed read that found no text.
+        //
+        // ocr::TextLayout::SingleLine asserts the rectangle holds exactly one
+        // line and runs no detection; it is right wherever the caller drew the
+        // rectangle. ocr::TextLayout::Block is for a rectangle nobody CAN draw
+        // inside because what is in it moves -- a grid that scrolls, an option
+        // card whose body is one to three lines -- and every line it returns
+        // carries the rect the detector measured, in FRAME pixels.
+        //
+        // A block read costs one read for the detection pass plus one for every
+        // line located, out of the pool a single-line read spends one of, so a
+        // region holding more lines than the cycle can still pay for fails
+        // RecognitionIncomplete and reads NONE of them. It does NOT consume the
+        // cycle either way, so the same cycle goes on to click a line it found.
+        //
+        // A session whose composition root bound NO OCR adapter fails
+        // UnsupportedCapability rather than reporting no lines, and every layer
+        // above must keep that a refusal: an empty list would say the region
+        // holds no text, which is a claim about the screen that a host unable to
+        // read text has not earned.
         //
         // The read is charged against this cycle's own read budget BEFORE the
         // engine is reached, and an exhausted cycle fails RecognitionIncomplete:
@@ -325,9 +347,12 @@ namespace uf::task
         // screen, and "no text" would be a fail-open answer on the one capability
         // that has no score to contradict it.
         //
-        // ONE RECTANGLE IS READ ONCE PER CYCLE. A repeat is answered from
-        // CycleAnswers, which decides nothing and only hands back what the engine
-        // already said about this same frame. Two consequences, each a decision:
+        // ONE RECTANGLE IS READ ONCE PER CYCLE PER LAYOUT. A repeat is answered
+        // from CycleAnswers, which decides nothing and only hands back what the
+        // engine already said about this same frame; the layout is part of the
+        // key because the engine runs a different pipeline for each, so a block
+        // read never serves a single-line read or the reverse. Two consequences,
+        // each a decision:
         //
         //   - A SERVED ANSWER CHARGES NO BUDGET, and is served even once the
         //     budget is spent. That budget is calibrated in inference
@@ -351,37 +376,8 @@ namespace uf::task
         [[nodiscard]]
         auto cycleRead(
             CycleTicket ticket,
-            PixelRect rect
-        ) -> Result<std::optional<engine::TextReading>>;
-
-        // Finds every line of text inside `rect` of the frame `ticket`'s cycle
-        // retains and reads each one, with its own rectangle in FRAME pixels.
-        //
-        // cycleRead's sibling, not its replacement: cycleRead is right wherever
-        // the caller drew the rectangle, this one is for a region nobody CAN draw
-        // a rectangle inside because what is in it moves -- a grid that scrolls,
-        // where a name's position is a fact about the frame rather than the model.
-        //
-        // It costs one read for the detection pass plus one for every line
-        // located, out of the pool cycleRead spends, so a region holding more
-        // lines than the cycle can still pay for fails RecognitionIncomplete and
-        // reads NONE of them. It does NOT consume the cycle, so the same cycle
-        // goes on to click one of the lines it found.
-        //
-        // It is memoised per cycle on cycleRead's terms, in a table of its own:
-        // this verb and that one over the same rectangle are two questions with
-        // two answer shapes, so a block read never serves a single-line read or
-        // the reverse.
-        //
-        // A session whose composition root bound NO OCR adapter fails
-        // UnsupportedCapability here rather than reporting no lines, and every
-        // layer above must keep that a refusal: an empty list would say the
-        // region holds no text, which is a claim about the screen that a host
-        // unable to read text has not earned.
-        [[nodiscard]]
-        auto cycleReadLines(
-            CycleTicket ticket,
-            PixelRect rect
+            PixelRect rect,
+            ocr::TextLayout layout
         ) -> Result<std::vector<engine::TextReading>>;
 
         // Copies `rect` of the frame `ticket`'s cycle retains, encodes it as a

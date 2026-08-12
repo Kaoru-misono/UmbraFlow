@@ -7,7 +7,7 @@
 
 local model = {}
 model.schema = "umbraflow-runtime/v2"
-model.schema_hash = "7acfdc4561c42d85eef2d22d3a52bd1903bbbc35bbf8066c91a16c41dfc65d11"
+model.schema_hash = "7b24d6b865b45a9a9681197dbde88d550e594443f9817bf32dff2b66821d59f9"
 
 local runtimeModels: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 local semanticBytes: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any
@@ -336,14 +336,31 @@ local function locator(what: string, value: any): any
     })
 end
 
+-- One Reader, which states how much of the rectangle it is asserting about.
+--
+-- `layout` has no default and is never inferred.  Under `single_line` the Host
+-- runs no line detection at all, so a rectangle that in fact holds several
+-- lines comes back as one run of nonsense rather than failing; only whoever
+-- drew the rectangle knows which of the two it is, and a default here would
+-- answer that question on their behalf.
 local function reader(what: string, value: any): any
     local source = object(what, value)
-    only(what, source, { id = true, kind = true, confidence_floor = true, normalization = true })
+    only(what, source, {
+        id = true,
+        kind = true,
+        confidence_floor = true,
+        layout = true,
+        normalization = true,
+    })
     if source.kind ~= "text" then fail(what .. ".kind", "must be text") end
     return table.freeze({
         id = identifier(what .. ".id", source.id),
         kind = "text",
         confidence_floor = unit(what .. ".confidence_floor", source.confidence_floor),
+        layout = enum(what .. ".layout", source.layout, {
+            single_line = true,
+            block = true,
+        }),
         normalization = enum(what .. ".normalization", source.normalization, {
             raw = true,
             trim = true,

@@ -8,6 +8,8 @@
 
 #include <engine/session.hpp>
 
+#include <ocr/engine.hpp>
+
 #include <algorithm>
 #include <optional>
 #include <vector>
@@ -20,34 +22,15 @@ namespace uf::task
         {
             return;
         }
-        m_texts.clear();
-        m_lineBlocks.clear();
+        m_reads.clear();
         m_matches.clear();
         m_cycleOrdinal = cycleOrdinal;
     }
 
-    auto CycleAnswers::findText(
+    auto CycleAnswers::findRead(
         uint64 cycleOrdinal,
-        PixelRect rect
-    ) const noexcept -> std::optional<engine::TextReading> const*
-    {
-        if (cycleOrdinal != m_cycleOrdinal)
-        {
-            return nullptr;
-        }
-        auto const found = std::ranges::find_if(
-            m_texts,
-            [rect](TextEntry const& entry) noexcept
-            {
-                return entry.rect == rect;
-            }
-        );
-        return found == m_texts.end() ? nullptr : &found->reading;
-    }
-
-    auto CycleAnswers::findLines(
-        uint64 cycleOrdinal,
-        PixelRect rect
+        PixelRect rect,
+        ocr::TextLayout layout
     ) const noexcept -> std::vector<engine::TextReading> const*
     {
         if (cycleOrdinal != m_cycleOrdinal)
@@ -55,13 +38,13 @@ namespace uf::task
             return nullptr;
         }
         auto const found = std::ranges::find_if(
-            m_lineBlocks,
-            [rect](LinesEntry const& entry) noexcept
+            m_reads,
+            [rect, layout](ReadEntry const& entry) noexcept
             {
-                return entry.rect == rect;
+                return entry.rect == rect && entry.layout == layout;
             }
         );
-        return found == m_lineBlocks.end() ? nullptr : &found->lines;
+        return found == m_reads.end() ? nullptr : &found->lines;
     }
 
     auto CycleAnswers::findMatch(
@@ -87,32 +70,19 @@ namespace uf::task
         return found == m_matches.end() ? nullptr : &found->found;
     }
 
-    auto CycleAnswers::rememberText(
+    auto CycleAnswers::rememberRead(
         uint64 cycleOrdinal,
         PixelRect rect,
-        std::optional<engine::TextReading> const& reading
-    ) -> void
-    {
-        retainOnly(cycleOrdinal);
-        m_texts.emplace_back(
-            TextEntry{
-                .rect    = rect,
-                .reading = reading,
-            }
-        );
-    }
-
-    auto CycleAnswers::rememberLines(
-        uint64 cycleOrdinal,
-        PixelRect rect,
+        ocr::TextLayout layout,
         std::vector<engine::TextReading> const& lines
     ) -> void
     {
         retainOnly(cycleOrdinal);
-        m_lineBlocks.emplace_back(
-            LinesEntry{
-                .rect  = rect,
-                .lines = lines,
+        m_reads.emplace_back(
+            ReadEntry{
+                .rect   = rect,
+                .layout = layout,
+                .lines  = lines,
             }
         );
     }

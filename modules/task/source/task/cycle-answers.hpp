@@ -9,6 +9,8 @@
 
 #include <engine/session.hpp>
 
+#include <ocr/engine.hpp>
+
 #include <optional>
 #include <vector>
 
@@ -18,10 +20,10 @@ namespace uf::task
     // retains, so the same question asked twice on one frame is asked of the
     // engine once.
     //
-    // The question is the verb and the region, plus the template for a search;
-    // the frame is the cycle. Nothing here judges or reshapes an answer -- it
-    // comes back exactly as the engine gave it, which is what lets a caller be
-    // unable to tell a served answer from a fresh one.
+    // The question is the verb and the region, plus the template for a search
+    // and the layout for a read; the frame is the cycle. Nothing here judges or
+    // reshapes an answer -- it comes back exactly as the engine gave it, which
+    // is what lets a caller be unable to tell a served answer from a fresh one.
     //
     // WHY A REPEAT CANNOT DIFFER, AND WHEN THIS WOULD HAVE TO GO: a cycle retains
     // one frame for its whole life, and matching and reading are deterministic
@@ -53,18 +55,18 @@ namespace uf::task
     // NOT thread-safe: every method runs on the VM's owning thread.
     class CycleAnswers final
     {
+        // One read, keyed by the rectangle AND the layout it was asked under:
+        // the engine runs a different pipeline for each, so a block read and a
+        // single-line read over one rectangle are two questions and neither
+        // ever answers the other.
+        //
         // No in-class initializer for the rect: PixelRect has no default state.
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-        struct TextEntry final
+        struct ReadEntry final
         {
             PixelRect rect;
 
-            std::optional<engine::TextReading> reading{};
-        };
-
-        struct LinesEntry final
-        {
-            PixelRect rect;
+            ocr::TextLayout layout{ocr::TextLayout::SingleLine};
 
             std::vector<engine::TextReading> lines{};
         };
@@ -87,8 +89,7 @@ namespace uf::task
         // Linear lookup, and it stays that way while the bound is one screen's
         // distinct regions -- 76 at the widest over the reference project, against
         // an OCR read that costs 2-13 ms.
-        std::vector<TextEntry>  m_texts{};
-        std::vector<LinesEntry> m_lineBlocks{};
+        std::vector<ReadEntry>  m_reads{};
         std::vector<MatchEntry> m_matches{};
 
         // Drops every answer from an earlier cycle. Called by each remember, which
@@ -97,24 +98,15 @@ namespace uf::task
 
     public:
         // The answer this cycle already has, or null when it has none. A non-null
-        // result may still hold an empty optional or an empty list: "this frame
-        // reads no text there" is an answer and is served like any other.
+        // result may still hold an empty list: "this frame reads no text there"
+        // is an answer and is served like any other.
         //
         // The borrow lasts until the next remember on this cache.
         [[nodiscard]]
-        auto findText(
+        auto findRead(
             uint64 cycleOrdinal,
-            PixelRect rect
-        ) const noexcept UF_LIFETIME_BOUND
-            -> std::optional<engine::TextReading> const*;
-
-        // cycle_read_lines' own table. A block read and a single-line read over
-        // one rectangle are two questions with two answer shapes, and the engine
-        // runs a different pipeline for each, so they never share an entry.
-        [[nodiscard]]
-        auto findLines(
-            uint64 cycleOrdinal,
-            PixelRect rect
+            PixelRect rect,
+            ocr::TextLayout layout
         ) const noexcept UF_LIFETIME_BOUND
             -> std::vector<engine::TextReading> const*;
 
@@ -128,16 +120,11 @@ namespace uf::task
 
         // Records what the engine answered. The answer is copied rather than moved
         // in because the caller returns the same value it just received, and one
-        // reading is a short string beside the inference that produced it.
-        auto rememberText(
+        // reading is a few short strings beside the inference that produced it.
+        auto rememberRead(
             uint64 cycleOrdinal,
             PixelRect rect,
-            std::optional<engine::TextReading> const& reading
-        ) -> void;
-
-        auto rememberLines(
-            uint64 cycleOrdinal,
-            PixelRect rect,
+            ocr::TextLayout layout,
             std::vector<engine::TextReading> const& lines
         ) -> void;
 

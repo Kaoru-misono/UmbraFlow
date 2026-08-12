@@ -23,7 +23,13 @@ local sectionLists: { [string]: string } = {
 local sectionFields: { [string]: { [string]: boolean } } = {
     ui_target = { id = true, kind = true },
     locator = { id = true, kind = true, asset_path = true, threshold = true },
-    reader = { id = true, kind = true, confidence_floor = true, normalization = true },
+    reader = {
+        id = true,
+        kind = true,
+        confidence_floor = true,
+        layout = true,
+        normalization = true,
+    },
     binding = {
         id = true,
         surface = true,

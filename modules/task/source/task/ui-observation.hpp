@@ -86,19 +86,14 @@ namespace uf::task
         // it would put the number of preceding resolutions inside every decision
         // basis and make two identical readings of one world disagree.
         //
-        // A reading is `{ ui_target, reader, kind }` plus `text` when it read
-        // and `reason` when it could not, and nothing else. One entry per
-        // Reader every reporting Binding named, so the failures travel too: a
-        // plugin told only about successful reads cannot separate "nothing is
-        // written here" from "this frame was unreadable", and has to fail
-        // closed on a single blurry capture. The text was normalised and
-        // confidence-floored by the trusted Reader before it got here; the
-        // score that decided it is not carried, because it differs between two
-        // captures of one unchanged screen and this document is hashed, whereas
-        // a reason out of a closed vocabulary does not. No rectangle travels
-        // with it either -- geometry still proves nothing (U-04), and this is
-        // trusted-resolver evidence rather than the raw OCR capability the
-        // online Agent is denied.
+        // A reading is `{ ui_target, reader, kind }` plus `lines` when it read
+        // and `reason` when it was unknown. Each line carries its normalised
+        // `text` and frame-pixel `rect`; an absent reading carries neither.
+        // One entry per Reader every reporting Binding named keeps "nothing is
+        // written here" distinct from "this frame was unreadable". The trusted
+        // Reader applies the confidence floor before this boundary, so the score
+        // does not travel. The rect does travel because it remains an action
+        // input and is therefore part of the hashed decision basis.
         [[nodiscard]]
         auto canonicalJcs() const noexcept UF_LIFETIME_BOUND
             -> std::string const&;

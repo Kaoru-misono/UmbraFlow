@@ -374,8 +374,12 @@ end
 
 -- What a resolved state reports it read: one entry per Reader every reporting
 -- Binding named, sorted by UiTarget then Reader.  Each is
--- `{ ui_target, reader, kind }` plus `text` when it read and `reason` when it
+-- `{ ui_target, reader, kind }` plus `lines` when it read and `reason` when it
 -- could not.
+--
+-- A reading is a LIST of lines under either Reader layout.  A `single_line`
+-- Reader reports one element rather than a second shape, because a consumer
+-- that has to ask which spelling it was handed has been handed two contracts.
 --
 -- All three outcomes travel.  A consumer told only about successful reads
 -- cannot separate "nothing is written here" from "this frame was unreadable",
@@ -390,6 +394,16 @@ end
 -- the caller's to re-take; carrying the number as well would put a value that
 -- differs between two captures of one unchanged screen inside a hashed decision
 -- basis.  A bounded reason is safe there, a float is not.
+--
+-- Each line's RECT does travel, and is hashed with the rest of this document.
+-- That is the ruling and not an oversight: a block Reader's rectangle is
+-- measured, so it can move by a pixel between two captures of one unchanged
+-- screen exactly as the score can -- but unlike the score it has a decision
+-- left in it, because it is where the consumer acts.  A basis that omitted an
+-- input the consumer branches on would let a frozen plan be re-derived into a
+-- different action without the basis moving, and unsoundness outranks an extra
+-- approval.  Under `single_line` the rect is the Binding's declared placement
+-- and cannot move at all.
 function resolution.resolve_readings(
     runtimeModel: any,
     cycle: any,
@@ -408,12 +422,12 @@ function resolution.resolve_readings(
         for _, readerId in binding.reads do
             local reading = supplied[model.reading_key(binding.id, readerId)]
             local kind = "unknown"
-            local text = nil
+            local lines = nil
             local reason = "not_measured"
             if type(reading) == "table" then
-                if reading.kind == "read" and type(reading.text) == "string" then
+                if reading.kind == "read" and type(reading.lines) == "table" then
                     kind = "read"
-                    text = reading.text
+                    lines = reading.lines
                     reason = nil
                 elseif reading.kind == "absent" then
                     kind = "absent"
@@ -428,7 +442,7 @@ function resolution.resolve_readings(
                 ui_target = binding.ui_target,
                 reader = readerId,
                 kind = kind,
-                text = text,
+                lines = lines,
                 reason = reason,
             }))
         end

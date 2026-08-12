@@ -101,6 +101,49 @@ namespace uf::engine
             };
         }
 
+        // What one read's region is measured against, and what a refusal calls
+        // that bound so the two ceilings stay distinguishable in a message.
+        struct ReadCeiling final
+        {
+            uint64           pixels{};
+            std::string_view name{};
+        };
+
+        // The ceiling is a fact about the layout: a single-line read pays for
+        // its whole area at recognition resolution, while detection resizes its
+        // input to a fixed longest side, so a block read's cost grows with the
+        // number of lines and is bounded by the caller's line budget instead.
+        [[nodiscard]] auto readCeiling(ocr::TextLayout layout) noexcept -> ReadCeiling
+        {
+            switch (layout)
+            {
+            case ocr::TextLayout::SingleLine:
+                return ReadCeiling{
+                    .pixels = k_maximumSingleLineReadPixels,
+                    .name   = "single-line read",
+                };
+            case ocr::TextLayout::Block:
+                return ReadCeiling{
+                    .pixels = k_maximumBlockReadPixels,
+                    .name   = "block read",
+                };
+            }
+
+            UF_UNREACHABLE_MSG("Unknown ocr::TextLayout value");
+        }
+
+        [[nodiscard]]
+        auto layoutName(ocr::TextLayout layout) noexcept -> std::string_view
+        {
+            switch (layout)
+            {
+            case ocr::TextLayout::SingleLine: return "single_line";
+            case ocr::TextLayout::Block: return "block";
+            }
+
+            UF_UNREACHABLE_MSG("Unknown ocr::TextLayout value");
+        }
+
         [[nodiscard]]
         auto targetWorldName(TargetWorld world) noexcept -> std::string_view
         {
@@ -301,12 +344,12 @@ namespace uf::engine
         return ok();
     }
 
-    auto EngineSession::runRead(
+    auto EngineSession::readTextOnFrame(
         Frame const& frame,
-        ocr::ReadSpec const& spec,
-        uint64 ceilingPixels,
-        std::string_view ceilingName
-    ) const -> Result<TimedReadout>
+        PixelRect rect,
+        ocr::TextLayout layout,
+        uint32 maximumLines
+    ) const -> Result<ReadAttempt>
     {
         if (m_ocrEngine == nullptr)
         {
@@ -317,28 +360,31 @@ namespace uf::engine
             );
         }
 
-        // Both reads name the region they charge against a ceiling; a
-        // whole-image spec has no area for one to bound.
-        UF_CHECK(spec.rect.has_value());
-        auto const area = checkedMultiply(
-            static_cast<uint64>(spec.rect->width()),
-            static_cast<uint64>(spec.rect->height())
+        auto const ceiling = readCeiling(layout);
+        auto const area    = checkedMultiply(
+            static_cast<uint64>(rect.width()),
+            static_cast<uint64>(rect.height())
         );
-        if (!area || *area == 0U || *area > ceilingPixels)
+        if (!area || *area == 0U || *area > ceiling.pixels)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
                     "a read region of {}x{} is empty or beyond the host's {} "
                     "ceiling of {} pixels",
-                    spec.rect->width(),
-                    spec.rect->height(),
-                    ceilingName,
-                    ceilingPixels
+                    rect.width(),
+                    rect.height(),
+                    ceiling.name,
+                    ceiling.pixels
                 )
             );
         }
 
+        auto const spec = ocr::ReadSpec{
+            .rect         = rect,
+            .layout       = layout,
+            .maximumLines = maximumLines,
+        };
         auto const started = MonotonicInstant::now();
         auto       readout = withBgraFrame(
             frame,
@@ -356,85 +402,22 @@ namespace uf::engine
             return std::unexpected{std::move(readout).error()};
         }
 
-        return TimedReadout{
-            .readout        = *std::move(readout),
+        auto attempt = ReadAttempt{
             .engineId       = std::string{m_ocrEngine->identity()},
             .durationMicros = static_cast<uint64>(std::max(micros, int64{0})),
         };
-    }
-
-    auto EngineSession::readTextOnFrame(
-        Frame const& frame,
-        PixelRect rect
-    ) const -> Result<ReadAttempt>
-    {
-        // SingleLine and never Block: the caller asserted the region holds one
-        // line, so running detection here would work around that contract
-        // rather than honour it.
-        UF_TRY_VALUE(
-            timed,
-            runRead(
-                frame,
-                ocr::ReadSpec{
-                    .rect   = rect,
-                    .layout = ocr::TextLayout::SingleLine,
-                },
-                k_maximumReadPixels,
-                "single-line read"
-            )
-        );
-
-        auto attempt = ReadAttempt{
-            .engineId       = std::move(timed.engineId),
-            .durationMicros = timed.durationMicros,
-        };
-        if (!timed.readout.lines.empty())
+        attempt.lines.reserve(readout->lines.size());
+        for (auto& line : readout->lines)
         {
-            // Under SingleLine there is at most one line, and ocr's ordering is
-            // a contract, so "the first" is the same line on every run.
-            auto& line   = timed.readout.lines.front();
-            attempt.line = TextReading{
-                .text         = std::move(line.text),
-                .rect         = rect,
-                .confidenceBp = line.confidenceBp,
-            };
-        }
-        return attempt;
-    }
-
-    auto EngineSession::readTextLinesOnFrame(
-        Frame const& frame,
-        PixelRect rect,
-        uint32 maximumLines
-    ) const -> Result<BlockReadAttempt>
-    {
-        UF_TRY_VALUE(
-            timed,
-            runRead(
-                frame,
-                ocr::ReadSpec{
-                    .rect         = rect,
-                    .layout       = ocr::TextLayout::Block,
-                    .maximumLines = maximumLines,
-                },
-                k_maximumBlockReadPixels,
-                "block read"
-            )
-        );
-
-        auto attempt = BlockReadAttempt{
-            .engineId       = std::move(timed.engineId),
-            .durationMicros = timed.durationMicros,
-        };
-        attempt.lines.reserve(timed.readout.lines.size());
-        for (auto& line : timed.readout.lines)
-        {
-            // The line's OWN rectangle -- where the frame held the text, not
-            // where the caller looked -- in frame pixels per ocr::TextLine.
+            // SingleLine locates nothing, so only the caller's declared rect is
+            // stable enough to report. Block preserves the detector measurement.
+            auto const lineRect = layout == ocr::TextLayout::SingleLine
+                ? rect
+                : line.bounds;
             attempt.lines.emplace_back(
                 TextReading{
                     .text         = std::move(line.text),
-                    .rect         = line.bounds,
+                    .rect         = lineRect,
                     .confidenceBp = line.confidenceBp,
                 }
             );
@@ -794,14 +777,16 @@ namespace uf::engine
 
     auto EngineSession::readText(
         Observation const& observation,
-        PixelRect rect
-    ) -> Result<std::optional<TextReading>>
+        PixelRect rect,
+        ocr::TextLayout layout,
+        uint32 maximumLines
+    ) -> Result<std::vector<TextReading>>
     {
         UF_TRY(ensureUsable(observation, "readText"));
 
         auto const& frame    = observation.m_frame;
         auto const  identity = FrameIdentity::fromFrame(frame);
-        auto        reading  = readTextOnFrame(frame, rect);
+        auto        reading  = readTextOnFrame(frame, rect, layout, maximumLines);
         if (!reading)
         {
             UF_TRY(
@@ -831,14 +816,9 @@ namespace uf::engine
             return std::unexpected{std::move(reading).error()};
         }
 
-        // Bound once rather than reached through reading-> at each use. The
-        // confidence field below is read under its own guard, but in a
-        // conditional expression bugprone-unchecked-optional-access follows that
-        // guard only when the guard and the read name the SAME object: spelling
-        // either of them reading->line re-derives it and the read is reported as
-        // unchecked. One name is also one fewer indirection to follow.
-        auto& line = reading->line;
-
+        // ONE event records the bounded read, the layout it ran under and its
+        // line count. Recognized text remains in the caller-owned result; Audit
+        // Trace is not an OCR corpus.
         auto event = engineEvent(
             "engine.text_read",
             identity,
@@ -848,101 +828,8 @@ namespace uf::engine
                     .value = std::string{"completed"},
                 },
                 trace::TraceField{
-                    .name  = "text_present",
-                    .value = line.has_value(),
-                },
-                trace::TraceField{
-                    .name  = "confidence_bp",
-                    .value = static_cast<uint64>(
-                        line ? line->confidenceBp : uint32{0}
-                    ),
-                },
-                trace::TraceField{
-                    .name  = "read_x",
-                    .value = static_cast<uint64>(rect.x()),
-                },
-                trace::TraceField{
-                    .name  = "read_y",
-                    .value = static_cast<uint64>(rect.y()),
-                },
-                trace::TraceField{
-                    .name  = "read_width",
-                    .value = static_cast<uint64>(rect.width()),
-                },
-                trace::TraceField{
-                    .name  = "read_height",
-                    .value = static_cast<uint64>(rect.height()),
-                },
-                trace::TraceField{
-                    .name  = "read_micros",
-                    .value = reading->durationMicros,
-                },
-            }
-        );
-        event.audit.references.emplace_back(
-            trace::TraceReference{
-                .type = "ocr_engine",
-                .id   = reading->engineId,
-            }
-        );
-        UF_TRY(emit(event));
-
-        if (!line)
-        {
-            return std::optional<TextReading>{std::nullopt};
-        }
-        return std::optional<TextReading>{*std::move(line)};
-    }
-
-    auto EngineSession::readTextLines(
-        Observation const& observation,
-        PixelRect rect,
-        uint32 maximumLines
-    ) -> Result<std::vector<TextReading>>
-    {
-        UF_TRY(ensureUsable(observation, "readTextLines"));
-
-        auto const& frame    = observation.m_frame;
-        auto const  identity = FrameIdentity::fromFrame(frame);
-        auto        reading  = readTextLinesOnFrame(frame, rect, maximumLines);
-        if (!reading)
-        {
-            UF_TRY(
-                emit(
-                    engineEvent(
-                        "engine.text_read",
-                        identity,
-                        {
-                            trace::TraceField{
-                                .name  = "outcome",
-                                .value = std::string{"failed"},
-                            },
-                            trace::TraceField{
-                                .name  = "error_kind",
-                                .value = std::string{
-                                    automationErrorWireName(
-                                        automationErrorKind(reading.error()).value_or(
-                                            AutomationErrorKind::InternalInvariant
-                                        )
-                                    )
-                                },
-                            },
-                        }
-                    )
-                )
-            );
-            return std::unexpected{std::move(reading).error()};
-        }
-
-        // ONE event records the bounded read and its line count. Recognized text
-        // remains in the caller-owned result; Audit Trace is not an OCR corpus.
-        auto event = engineEvent(
-            "engine.text_read",
-            identity,
-            {
-                trace::TraceField{
-                    .name  = "outcome",
-                    .value = std::string{"completed"},
+                    .name  = "layout",
+                    .value = std::string{layoutName(layout)},
                 },
                 trace::TraceField{
                     .name  = "line_count",

@@ -68,11 +68,15 @@
     "reader": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "confidence_floor", "normalization"],
+      "required": ["id", "kind", "confidence_floor", "layout", "normalization"],
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
         "kind": { "const": "text" },
         "confidence_floor": { "type": "number", "minimum": 0, "maximum": 1 },
+        "layout": {
+          "$comment": "How much of the Binding's rectangle this Reader is asserting about. single_line says the rectangle holds exactly one line and skips line detection entirely, which is cheaper and immune to a detector that splits one label in two. block says the count is not known, so every line the detector finds inside that rectangle is located and read. There is no default and nothing is inferred: under single_line a rectangle that in fact holds several lines reads as one run of nonsense rather than failing, so which of the two this Reader is has to be stated by whoever drew the rectangle.",
+          "enum": ["single_line", "block"]
+        },
         "normalization": { "enum": ["raw", "trim", "collapse_whitespace"] }
       }
     },
@@ -425,16 +429,30 @@
         { "$ref": "#/$defs/unknown_evidence" }
       ]
     },
+    "reading_line": {
+      "$comment": "One line of one reading: the normalised text, and the rectangle the frame held that text in. Under a block Reader the rectangle is the detector's own measurement and is in the coordinate space of the IMAGE rather than of the Reader's rectangle; under a single_line Reader nothing was located, so it is the Binding's declared placement rect and cannot move between two captures at all.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rect", "text"],
+      "properties": {
+        "rect": { "$ref": "#/$defs/rect" },
+        "text": { "type": "string" }
+      }
+    },
     "binding_reading": {
-      "$comment": "One reading the resolver reports for a Binding it measured present, under a Reader that Binding named in reads. Three outcomes and no fourth: read carries the text, absent says the Reader found no text in that rectangle, unknown says it could not decide and carries why. The two failures are reported rather than dropped because a consumer that cannot tell 'nothing is written here' from 'this frame was unreadable' has to fail closed on one blurry capture. What is still not carried is the score: it has already been compared against the Reader's confidence_floor, and it differs between two captures of one unchanged screen while this value is hashed into a decision basis. A bounded reason is safe there; a float is not. There is no rectangle for the reason U-04 gives, and no pre-normalisation text because that is the raw read the Reader exists to narrow.",
+      "$comment": "One reading the resolver reports for a Binding it measured present, under a Reader that Binding named in reads. Three outcomes and no fourth: read carries the lines, absent says the Reader found no text in that rectangle, unknown says it could not decide and carries why. The two failures are reported rather than dropped because a consumer that cannot tell 'nothing is written here' from 'this frame was unreadable' has to fail closed on one blurry capture. A reading is a LIST of lines whatever the Reader's layout: a single_line Reader reports one element, not a second shape, because one fact spelled two ways makes every consumer ask which spelling it was handed. What is still not carried is the score: it has already been compared against the Reader's confidence_floor, and it differs between two captures of one unchanged screen while this value is hashed into a decision basis. A bounded reason is safe there; a float is not. Each line's RECT is carried and IS hashed with the rest of this document, and that is a ruling rather than an oversight: the score has no decision left to take once the floor has judged it, while the rect is where a consumer acts, so a basis that omitted it would let a frozen plan be re-derived into a different action without the basis moving. Unsoundness outranks an extra approval. There is still no pre-normalisation text, because that is the raw read the Reader exists to narrow.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "reader", "ui_target"],
       "properties": {
         "kind": { "enum": ["read", "absent", "unknown"] },
+        "lines": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/reading_line" }
+        },
         "reader": { "$ref": "#/$defs/identifier" },
         "reason": { "$ref": "#/$defs/unknown_reason" },
-        "text": { "type": "string" },
         "ui_target": { "$ref": "#/$defs/identifier" }
       },
       "allOf": [
@@ -443,8 +461,8 @@
             "properties": { "kind": { "const": "read" } },
             "required": ["kind"]
           },
-          "then": { "required": ["text"] },
-          "else": { "not": { "required": ["text"] } }
+          "then": { "required": ["lines"] },
+          "else": { "not": { "required": ["lines"] } }
         },
         {
           "if": {

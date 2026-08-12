@@ -17,6 +17,8 @@
 
 #include <engine/session.hpp>
 
+#include <ocr/engine.hpp>
+
 #include <script/engine.hpp>
 
 #include <doctest/doctest.h>
@@ -67,13 +69,16 @@ namespace uf::task
         // what it was asked. It is not a stub standing in for a real engine: the
         // property under test is what the resolver does with a reading, and a
         // real engine would make the text a fact about a PNG rather than about
-        // this file, without making any of these assertions stronger.
+        // this file, without making any of these assertions stronger. Its line
+        // bounds deliberately differ from the requested rect so SingleLine's
+        // declared-placement contract is exercised at the engine boundary.
         class ScriptedReader final : public ocr::IOcrEngine
         {
             std::string m_text;
             uint32      m_confidenceBp;
             uint32      m_calls{};
             PixelRect   m_lastRect{pixelRect(0, 0, 1, 1)};
+            PixelRect   m_reportedBounds{pixelRect(0, 0, 1, 1)};
 
         public:
             ScriptedReader(std::string text, uint32 confidenceBp)
@@ -100,7 +105,7 @@ namespace uf::task
                     .lines = {
                         ocr::TextLine{
                             .text         = m_text,
-                            .bounds       = m_lastRect,
+                            .bounds       = m_reportedBounds,
                             .confidenceBp = m_confidenceBp,
                         },
                     },
@@ -140,12 +145,99 @@ namespace uf::task
             [[nodiscard]] auto calls() const noexcept -> uint32 { return m_calls; }
         };
 
+        // What a block Reader's engine answers: several lines, each located
+        // somewhere else in the IMAGE. It reports bounds of its own rather than
+        // the rect it was asked about, which is what a detector does and what
+        // makes a reported rectangle a measurement rather than a copy of the
+        // question.
+        class ScriptedBlockReader final : public ocr::IOcrEngine
+        {
+            std::vector<ocr::TextLine>     m_lines;
+            std::optional<ocr::TextLayout> m_lastLayout{};
+
+        public:
+            explicit ScriptedBlockReader(std::vector<ocr::TextLine> lines)
+                : m_lines{std::move(lines)}
+            {
+            }
+
+            [[nodiscard]] auto identity() const noexcept -> std::string_view override
+            {
+                return "scripted-block-reader";
+            }
+
+            [[nodiscard]]
+            auto read(BgraImage const&, ocr::ReadSpec const& spec)
+                -> Result<ocr::Readout> override
+            {
+                m_lastLayout = spec.layout;
+                return ocr::Readout{.lines = m_lines};
+            }
+
+            [[nodiscard]]
+            auto lastLayout() const noexcept -> std::optional<ocr::TextLayout>
+            {
+                return m_lastLayout;
+            }
+        };
+
+        // One rectangle has two different answers because layout selects a
+        // different OCR pipeline. Serving either answer to the other question
+        // makes the memoisation key observably incomplete.
+        class LayoutSensitiveReader final : public ocr::IOcrEngine
+        {
+            uint32 m_calls{};
+
+        public:
+            [[nodiscard]] auto identity() const noexcept -> std::string_view override
+            {
+                return "layout-sensitive-reader";
+            }
+
+            [[nodiscard]]
+            auto read(BgraImage const&, ocr::ReadSpec const& spec)
+                -> Result<ocr::Readout> override
+            {
+                ++m_calls;
+                if (spec.layout == ocr::TextLayout::SingleLine)
+                {
+                    return ocr::Readout{
+                        .lines = {
+                            ocr::TextLine{
+                                .text   = "single answer",
+                                .bounds = pixelRect(0, 0, 1, 1),
+                                .confidenceBp = 9'100,
+                            },
+                        },
+                    };
+                }
+                return ocr::Readout{
+                    .lines = {
+                        ocr::TextLine{
+                            .text   = "block first",
+                            .bounds = pixelRect(0, 0, 1, 1),
+                            .confidenceBp = 9'200,
+                        },
+                        ocr::TextLine{
+                            .text   = "block second",
+                            .bounds = pixelRect(2, 0, 1, 1),
+                            .confidenceBp = 9'300,
+                        },
+                    },
+                };
+            }
+
+            [[nodiscard]] auto calls() const noexcept -> uint32 { return m_calls; }
+        };
+
         // The fixture's world plus one Binding that reports what a Reader read.
         // Its detector is the confirm mark, so the middle pixel decides whether
         // the reading Binding is present while the anchor still resolves the
         // Surface -- which is what lets an absent reading Binding be exercised
         // without also unresolving the state.
-        [[nodiscard]] auto readingRuntimeModel() -> std::string
+        [[nodiscard]]
+        auto readingRuntimeModel(std::string_view titleLayout = "single_line")
+            -> std::string
         {
             return R"toml(schema_version = 2
 base_resolution = [3, 1]
@@ -175,6 +267,9 @@ threshold = 1
 id = "title.reader"
 kind = "text"
 confidence_floor = 0.5
+layout = ")toml"
+                + std::string{titleLayout}
+                + R"toml("
 normalization = "collapse_whitespace"
 
 [[binding]]
@@ -204,6 +299,27 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
 )toml";
         }
 
+        [[nodiscard]] auto mixedLayoutReadingRuntimeModel() -> std::string
+        {
+            auto result = readingRuntimeModel();
+            auto constexpr declaredReads = std::string_view{R"(["title.reader"])"};
+            auto constexpr mixedReads = std::string_view{
+                R"(["title.reader", "title.block"])"
+            };
+            auto const readsAt = result.find(declaredReads);
+            REQUIRE(readsAt != std::string::npos);
+            result.replace(readsAt, declaredReads.size(), mixedReads);
+            result += R"toml(
+[[reader]]
+id = "title.block"
+kind = "text"
+confidence_floor = 0.5
+layout = "block"
+normalization = "collapse_whitespace"
+)toml";
+            return result;
+        }
+
         // The reading world with a SECOND reporting Binding over the third
         // pixel. Two rectangles are what a read budget can be exhausted against:
         // a cycle memoises per rectangle, so two Readers on one Binding cost one
@@ -222,6 +338,7 @@ kind = "region"
 id = "subtitle.reader"
 kind = "text"
 confidence_floor = 0.5
+layout = "single_line"
 normalization = "collapse_whitespace"
 
 [[binding]]
@@ -1241,15 +1358,27 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         };
         auto const observed = host.observe(*generation, runtime.context());
         REQUIRE(observed.has_value());
+        auto const& canonical = observed->canonicalJcs();
 
-        // The reading is attributed to the UiTarget, carries the NORMALISED text
-        // its Reader declared collapse_whitespace for, and is inside the document
-        // whose sha256 is the state resolution hash.
+        CHECK_MESSAGE(
+            canonical.find(R"("kind":"read","lines":[)") != std::string::npos,
+            "Read outcomes must carry a lines list rather than top-level text"
+        );
+        CHECK_MESSAGE(
+            canonical.find(R"("rect":[1,0,1,1])") != std::string::npos,
+            "SingleLine readings must use the declared Binding rectangle"
+        );
+
+        // The reading is attributed to the UiTarget, carries one line of the
+        // NORMALISED text its Reader declared collapse_whitespace for with the
+        // rectangle that line was read in, and is inside the document whose
+        // sha256 is the state resolution hash.
         CHECK(
             observed->canonicalJcs()
             == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
-               R"("readings":[{"kind":"read","reader":"title.reader",)"
-               R"("text":"Wandering Merchant","ui_target":"title"}]})"
+               R"("readings":[{"kind":"read","lines":[{"rect":[1,0,1,1],)"
+               R"("text":"Wandering Merchant"}],"reader":"title.reader",)"
+               R"("ui_target":"title"}]})"
         );
         CHECK(observed->stateResolutionHash() == hash(observed->canonicalJcs()));
 
@@ -1262,12 +1391,11 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         CHECK(p_reader->lastRect().width() == 1);
         CHECK(p_reader->lastRect().height() == 1);
 
-        // Nothing the Reader knew beyond the text travels: not the score that
-        // cleared the floor, not the rectangle, not the variant that matched,
+        // Nothing the Reader knew beyond the text and that rectangle travels:
+        // not the score that cleared the floor, not the variant that matched,
         // and not the pre-normalisation string.
         CHECK(observed->canonicalJcs().find("confidence") == std::string::npos);
         CHECK(observed->canonicalJcs().find("0.91") == std::string::npos);
-        CHECK(observed->canonicalJcs().find("rect") == std::string::npos);
         CHECK(observed->canonicalJcs().find("primary") == std::string::npos);
         CHECK(observed->canonicalJcs().find("title.primary") == std::string::npos);
         CHECK(observed->canonicalJcs().find("Wandering   Merchant") == std::string::npos);
@@ -1279,6 +1407,167 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         REQUIRE(again.has_value());
         CHECK(again->canonicalJcs() == observed->canonicalJcs());
         CHECK(again->stateResolutionHash() == observed->stateResolutionHash());
+    }
+
+    // What the Reader's layout buys, end to end. A Reader declaring block is
+    // read under Block, and every line the detector found travels with the
+    // rectangle it found it at -- which is the capability a single-line Reader
+    // cannot express, because it asserts there is only ever one.
+    TEST_CASE("TaskHost::observe reports every line a block Reader read")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const rootHash = publish(
+            directory.path(),
+            readingRuntimeModel("block"),
+            runtimeAssets()
+        );
+        auto const generation = TaskHostTestAccess::activate(
+            host,
+            directory.path(),
+            rootHash
+        );
+        REQUIRE(generation.has_value());
+
+        auto reader = std::make_unique<ScriptedBlockReader>(
+            std::vector<ocr::TextLine>{
+                ocr::TextLine{
+                    .text   = "The road is blocked",
+                    .bounds = pixelRect(0, 0, 1, 1),
+                    .confidenceBp = 9'100,
+                },
+                ocr::TextLine{
+                    .text   = "by a stranger",
+                    .bounds = pixelRect(1, 0, 1, 1),
+                    .confidenceBp = 9'200,
+                },
+                ocr::TextLine{
+                    .text   = "who will not move",
+                    .bounds = pixelRect(2, 0, 1, 1),
+                    .confidenceBp = 9'300,
+                },
+            }
+        );
+        auto* const p_reader = reader.get();
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{51}),
+            1'000,
+            std::move(reader)
+        };
+        auto const observed = host.observe(*generation, runtime.context());
+        REQUIRE(observed.has_value());
+
+        // The model's declared layout is what the Host ran, not a default the
+        // engine chose: a Reader saying block and a Host reading one line would
+        // report the first line of three and call the region read.
+        CHECK(p_reader->lastLayout() == ocr::TextLayout::Block);
+        CHECK(
+            observed->canonicalJcs()
+            == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
+               R"("readings":[{"kind":"read","lines":[)"
+               R"({"rect":[0,0,1,1],"text":"The road is blocked"},)"
+               R"({"rect":[1,0,1,1],"text":"by a stranger"},)"
+               R"({"rect":[2,0,1,1],"text":"who will not move"}],)"
+               R"("reader":"title.reader","ui_target":"title"}]})"
+        );
+
+        // Each line's own rectangle, and not the Binding's: a reading that
+        // copied the question would put [1,0,1,1] on all three.
+        CHECK(observed->stateResolutionHash() == hash(observed->canonicalJcs()));
+    }
+
+    TEST_CASE("TaskHost::observe floors a block reading as one set of lines")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const rootHash = publish(
+            directory.path(),
+            readingRuntimeModel("block"),
+            runtimeAssets()
+        );
+        auto const generation = TaskHostTestAccess::activate(
+            host,
+            directory.path(),
+            rootHash
+        );
+        REQUIRE(generation.has_value());
+
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{52}),
+            1'000,
+            std::make_unique<ScriptedBlockReader>(
+                std::vector<ocr::TextLine>{
+                    ocr::TextLine{
+                        .text   = "high first",
+                        .bounds = pixelRect(0, 0, 1, 1),
+                        .confidenceBp = 9'100,
+                    },
+                    ocr::TextLine{
+                        .text   = "low middle",
+                        .bounds = pixelRect(1, 0, 1, 1),
+                        .confidenceBp = 1'000,
+                    },
+                    ocr::TextLine{
+                        .text   = "high last",
+                        .bounds = pixelRect(2, 0, 1, 1),
+                        .confidenceBp = 9'300,
+                    },
+                }
+            )
+        };
+        auto const observed = host.observe(*generation, runtime.context());
+        REQUIRE(observed.has_value());
+        auto const& canonical = observed->canonicalJcs();
+
+        CHECK_MESSAGE(
+            canonical.find(R"("reason":"low_confidence")") != std::string::npos,
+            "A block reading must become low_confidence when any line is below confidence_floor"
+        );
+        CHECK_MESSAGE(
+            canonical.find(R"("kind":"read")") == std::string::npos,
+            "A below-floor block line must not be dropped to salvage a partial read"
+        );
+        CHECK(
+            canonical
+            == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
+               R"("readings":[{"kind":"unknown","reader":"title.reader",)"
+               R"("reason":"low_confidence","ui_target":"title"}]})"
+        );
+    }
+
+    TEST_CASE("TaskHost::observe memoises one rectangle separately per layout")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const rootHash = publish(
+            directory.path(),
+            mixedLayoutReadingRuntimeModel(),
+            runtimeAssets()
+        );
+        auto const generation = TaskHostTestAccess::activate(
+            host,
+            directory.path(),
+            rootHash
+        );
+        REQUIRE(generation.has_value());
+
+        auto reader = std::make_unique<LayoutSensitiveReader>();
+        auto* const p_reader = reader.get();
+        auto runtime = RuntimeContext{
+            frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{53}),
+            1'000,
+            std::move(reader)
+        };
+        auto const observed = host.observe(*generation, runtime.context());
+        REQUIRE(observed.has_value());
+
+        CHECK_MESSAGE(
+            p_reader->calls() == 2U,
+            "Read memoisation must distinguish the same rectangle by layout"
+        );
+        CHECK(observed->canonicalJcs().find("single answer") != std::string::npos);
+        CHECK(observed->canonicalJcs().find("block first") != std::string::npos);
+        CHECK(observed->canonicalJcs().find("block second") != std::string::npos);
     }
 
     // The falsifier for the decision basis. state_resolution_hash is one member
@@ -1404,7 +1693,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         // is what the ScriptedReader reported; a document carrying either would
         // hand the caller the judgement the floor already made.
         CHECK(observed->canonicalJcs().find("Wandering") == std::string::npos);
-        CHECK(observed->canonicalJcs().find(R"("text")") == std::string::npos);
+        CHECK(observed->canonicalJcs().find(R"("lines")") == std::string::npos);
         CHECK(observed->canonicalJcs().find(R"("confidence")") == std::string::npos);
         CHECK(observed->canonicalJcs().find("0.1") == std::string::npos);
 
@@ -1503,8 +1792,9 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
             == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
                R"("readings":[{"kind":"unknown","reader":"subtitle.reader",)"
                R"("reason":"budget_exhausted","ui_target":"subtitle"},)"
-               R"({"kind":"read","reader":"title.reader",)"
-               R"("text":"Wandering Merchant","ui_target":"title"}]})"
+               R"({"kind":"read","lines":[{"rect":[1,0,1,1],)"
+               R"("text":"Wandering Merchant"}],"reader":"title.reader",)"
+               R"("ui_target":"title"}]})"
         );
 
         // The reason on its own, because it is the whole of what this case
@@ -1567,10 +1857,12 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         CHECK(
             observed->canonicalJcs()
             == R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
-               R"("readings":[{"kind":"read","reader":"subtitle.reader",)"
-               R"("text":"Wandering Merchant","ui_target":"subtitle"},)"
-               R"({"kind":"read","reader":"title.reader",)"
-               R"("text":"Wandering Merchant","ui_target":"title"}]})"
+               R"("readings":[{"kind":"read","lines":[{"rect":[2,0,1,1],)"
+               R"("text":"Wandering Merchant"}],"reader":"subtitle.reader",)"
+               R"("ui_target":"subtitle"},)"
+               R"({"kind":"read","lines":[{"rect":[1,0,1,1],)"
+               R"("text":"Wandering Merchant"}],"reader":"title.reader",)"
+               R"("ui_target":"title"}]})"
         );
         CHECK(observed->canonicalJcs().find(R"("reason")") == std::string::npos);
         CHECK(p_reader->calls() == 2U);

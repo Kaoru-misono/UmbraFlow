@@ -19,6 +19,8 @@
 #include <domain/key.hpp>
 #include <domain/space.hpp>
 
+#include <ocr/engine.hpp>
+
 #include <script/engine.hpp>
 
 #include <algorithm>
@@ -78,6 +80,15 @@ namespace uf::task
         constexpr auto k_receiptActionKinds = std::array{
             std::pair{std::string_view{"click"}, ReceiptActionKind::Click},
             std::pair{std::string_view{"key"}, ReceiptActionKind::Key},
+        };
+
+        // The layouts a Reader may declare, spelled as the model spells them.
+        // A table for k_receiptActionKinds' reason, and the only place the two
+        // vocabularies are joined: the enumerator is the Host's, the string is
+        // schema/umbraflow-runtime-v2.schema.json's reader.layout.
+        constexpr auto k_readerLayouts = std::array{
+            std::pair{std::string_view{"single_line"}, ocr::TextLayout::SingleLine},
+            std::pair{std::string_view{"block"}, ocr::TextLayout::Block},
         };
 
         struct TierBError final
@@ -168,6 +179,25 @@ namespace uf::task
                     state,
                     AutomationErrorKind::InvalidResource,
                     "action_kind has an unsupported value"
+                );
+            }
+            return found->second;
+        }
+
+        [[nodiscard]]
+        auto readerLayout(lua_State* state, std::string_view name) -> ocr::TextLayout
+        {
+            auto const found = std::ranges::find(
+                k_readerLayouts,
+                name,
+                &std::pair<std::string_view, ocr::TextLayout>::first
+            );
+            if (found == k_readerLayouts.end())
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "reader layout has an unsupported value"
                 );
             }
             return found->second;
@@ -529,9 +559,14 @@ namespace uf::task
         {
             auto* const context = boundContext(state);
             guardLive(state, context);
-            auto const lines = context->cycleReadLines(
+            // Block and never the caller's choice: this verb exists for the
+            // region nobody can draw a rectangle inside, so a layout argument
+            // would offer an authoring chunk the one answer it came here to
+            // avoid.
+            auto const lines = context->cycleRead(
                 *cycleAt(state, 1),
-                rectangle(state, 2, "read rectangle")
+                rectangle(state, 2, "read rectangle"),
+                ocr::TextLayout::Block
             );
             if (!lines)
             {
@@ -1700,10 +1735,18 @@ namespace uf::task
             return 2;
         }
 
+        // What the Reader's rectangle holds, under the layout the Reader
+        // declared. The layout crosses as the model's own spelling rather than
+        // as a number: the trusted parser owns that vocabulary, and this is the
+        // one place it is joined to the Host's enumerator.
+        //
+        // A read that located nothing is ABSENT rather than a read with no
+        // lines, so the resolver never has to tell an empty list from a missing
+        // one.
         static auto read(lua_State* state) -> int
         {
             auto& self = bound(state);
-            self.requireArity(state, 5, "runtime_read");
+            self.requireArity(state, 6, "runtime_read");
             auto& runtimeContext = self.context(state);
             auto* const p_cycle = boxAt<CycleTicket>(
                 state,
@@ -1711,9 +1754,14 @@ namespace uf::task
                 k_cycleType,
                 "a Runtime observation cycle"
             );
+            auto const layout = readerLayout(
+                state,
+                stringAt(state, 6, "Runtime reader layout")
+            );
             auto reading = runtimeContext.cycleRead(
                 *p_cycle,
-                rectangle(state, 2, "Runtime read rectangle")
+                rectangle(state, 2, "Runtime read rectangle"),
+                layout
             );
             if (!reading)
             {
@@ -1723,25 +1771,42 @@ namespace uf::task
                 }
                 return pushUnknown(state, unknownReason(reading.error()));
             }
-            if (!reading->has_value())
+            if (reading->empty())
             {
                 return pushAbsent(state);
             }
 
-            lua_createtable(state, 0, 3);
+            lua_createtable(state, 0, 2);
             lua_pushstring(state, "read");
             lua_setfield(state, -2, "kind");
-            lua_pushlstring(
-                state,
-                (*reading)->text.data(),
-                (*reading)->text.size()
-            );
-            lua_setfield(state, -2, "text");
-            lua_pushnumber(
-                state,
-                static_cast<double>((*reading)->confidenceBp) / 10'000.0
-            );
-            lua_setfield(state, -2, "confidence");
+            auto const count = checkedCast<int>(reading->size());
+            UF_CHECK(count.has_value());
+            lua_createtable(state, *count, 0);
+            auto index = 1;
+            for (auto const& line : *reading)
+            {
+                lua_createtable(state, 0, 3);
+                lua_pushlstring(state, line.text.data(), line.text.size());
+                lua_setfield(state, -2, "text");
+                lua_createtable(state, 4, 0);
+                lua_pushnumber(state, line.rect.x());
+                lua_rawseti(state, -2, 1);
+                lua_pushnumber(state, line.rect.y());
+                lua_rawseti(state, -2, 2);
+                lua_pushnumber(state, line.rect.width());
+                lua_rawseti(state, -2, 3);
+                lua_pushnumber(state, line.rect.height());
+                lua_rawseti(state, -2, 4);
+                lua_setfield(state, -2, "rect");
+                lua_pushnumber(
+                    state,
+                    static_cast<double>(line.confidenceBp) / 10'000.0
+                );
+                lua_setfield(state, -2, "confidence");
+                lua_rawseti(state, -2, index);
+                ++index;
+            }
+            lua_setfield(state, -2, "lines");
             freezeData(state, &runtimeContext);
             return 1;
         }

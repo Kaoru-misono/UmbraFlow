@@ -26,6 +26,8 @@
 #include <image/pixels.hpp>
 #include <image/png.hpp>
 
+#include <ocr/engine.hpp>
+
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
 
@@ -453,55 +455,24 @@ namespace uf::task
 
     auto TaskContext::cycleRead(
         CycleTicket ticket,
-        PixelRect rect
-    ) -> Result<std::optional<engine::TextReading>>
+        PixelRect rect,
+        ocr::TextLayout layout
+    ) -> Result<std::vector<engine::TextReading>>
     {
         UF_TRY(m_cycles.requireOpen(ticket));
 
         // Consulted BEFORE the budget, because an answer this frame already gave
         // costs no inference and refusing it would deny a region this cycle has
         // already read. See the header for both halves of that decision.
-        auto const* p_remembered = m_answers.findText(ticket.ordinal, rect);
+        auto const* p_remembered = m_answers.findRead(ticket.ordinal, rect, layout);
         if (p_remembered != nullptr)
         {
             return *p_remembered;
         }
 
         // Charged before the engine is reached, so an exhausted budget costs no
-        // inference. RecognitionIncomplete rather than an empty optional: the
-        // host stopped looking, and a miss would claim the region was inspected.
-        if (m_cycles.readsCharged() >= m_config.maximumReadsPerCycle)
-        {
-            return fail(
-                AutomationErrorKind::RecognitionIncomplete,
-                std::format(
-                    "this observation cycle has already spent its budget of {} "
-                    "text reads; open a new cycle to read again",
-                    m_config.maximumReadsPerCycle
-                )
-            );
-        }
-        m_cycles.chargeReads(1);
-
-        UF_TRY_VALUE(reading, m_session.readText(m_cycles.observation(), rect));
-        m_answers.rememberText(ticket.ordinal, rect, reading);
-        return reading;
-    }
-
-    auto TaskContext::cycleReadLines(
-        CycleTicket ticket,
-        PixelRect rect
-    ) -> Result<std::vector<engine::TextReading>>
-    {
-        UF_TRY(m_cycles.requireOpen(ticket));
-
-        // cycleRead's rule and cycleRead's reasoning, over this verb's own table.
-        auto const* p_remembered = m_answers.findLines(ticket.ordinal, rect);
-        if (p_remembered != nullptr)
-        {
-            return *p_remembered;
-        }
-
+        // inference. RecognitionIncomplete rather than an empty list: the host
+        // stopped looking, and a miss would claim the region was inspected.
         auto const spent = m_cycles.readsCharged();
         if (spent >= m_config.maximumReadsPerCycle)
         {
@@ -515,27 +486,35 @@ namespace uf::task
             );
         }
 
-        // One read for the detection pass, charged before it runs, and one more for
-        // every line it located. Locating is one inference over the region;
-        // recognising is one MORE inference per line at the same 2-13 ms a
-        // cycle_read costs, so a block read over a twenty-name grid is twenty-one
-        // reads however it is spelled. It stays the SAME pool as cycle_read because
-        // a block read's lines go through the same recogniser at the same price --
-        // unlike a crop, which is an encode and does not compare.
+        // One read for the pass this layout runs, charged before it runs. Under
+        // SingleLine that pass IS the recognition and the charge is the whole
+        // cost. Under Block it is the detection, and each line it located costs
+        // one MORE inference at the same 2-13 ms, so a block read over a
+        // twenty-name grid is twenty-one reads however it is spelled. It stays
+        // one pool because every line goes through the same recogniser at the
+        // same price -- unlike a crop, which is an encode and does not compare.
         //
         // The remainder is handed DOWN so the engine can refuse a region holding
         // more lines than this cycle can pay for, having spent one inference
         // rather than one per line. That refusal is a failure and never a short
-        // list; see engine::EngineSession::readTextLines.
+        // list; see engine::EngineSession::readText.
         m_cycles.chargeReads(1);
         auto const remaining = m_config.maximumReadsPerCycle - spent - 1U;
 
         UF_TRY_VALUE(
             lines,
-            m_session.readTextLines(m_cycles.observation(), rect, remaining)
+            m_session.readText(m_cycles.observation(), rect, layout, remaining)
         );
-        m_cycles.chargeReads(static_cast<uint32>(lines.size()));
-        m_answers.rememberLines(ticket.ordinal, rect, lines);
+        switch (layout)
+        {
+        case ocr::TextLayout::SingleLine:
+            // The pass charged above IS the recognition; there is no second one.
+            break;
+        case ocr::TextLayout::Block:
+            m_cycles.chargeReads(static_cast<uint32>(lines.size()));
+            break;
+        }
+        m_answers.rememberRead(ticket.ordinal, rect, layout, lines);
         return lines;
     }
 

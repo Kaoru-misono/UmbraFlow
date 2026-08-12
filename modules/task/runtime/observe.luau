@@ -85,6 +85,43 @@ local function measureLocator(state: any, binding: any, locatorId: string): any
     return record
 end
 
+-- What one Host read produced, narrowed by the Reader that asked for it.
+--
+-- A reading is the WHOLE set of lines, so the floor judges the set: one line
+-- below it makes the reading low_confidence rather than making that line
+-- disappear.  Dropping it would hand a consumer a shorter block than the frame
+-- holds, with nothing in the answer to say so, which is the fail-open shape
+-- this path refuses everywhere else.
+local function readLines(reader: any, reading: any): any
+    if type(reading.lines) ~= "table" or #reading.lines == 0 then
+        return { kind = "unknown", reason = "ocr_unreadable" }
+    end
+    local lines = {}
+    local lowest = 1
+    for index, line in reading.lines do
+        if type(line) ~= "table"
+            or type(line.text) ~= "string"
+            or type(line.rect) ~= "table"
+            or #line.rect ~= 4
+            or type(line.confidence) ~= "number"
+            or line.confidence ~= line.confidence
+            or line.confidence < 0
+            or line.confidence > 1
+        then
+            return { kind = "unknown", reason = "ocr_unreadable" }
+        end
+        if line.confidence < lowest then lowest = line.confidence end
+        lines[index] = table.freeze({
+            text = normalize(line.text, reader.normalization),
+            rect = table.freeze({ line.rect[1], line.rect[2], line.rect[3], line.rect[4] }),
+        })
+    end
+    if lowest < reader.confidence_floor then
+        return { kind = "unknown", reason = "low_confidence", confidence = lowest }
+    end
+    return { kind = "read", lines = table.freeze(lines), confidence = lowest }
+end
+
 local function readText(state: any, binding: any, readerId: string): any
     local key = model.reading_key(binding.id, readerId)
     local cached = state.reader_values[key]
@@ -92,12 +129,16 @@ local function readText(state: any, binding: any, readerId: string): any
     local reader = state.model.reader_by_id[readerId]
     if reader == nil then error("RuntimeModel references unknown Reader '" .. readerId .. "'", 3) end
     local area = binding.placement.rect
+    -- The Reader's own layout travels to the Host, which runs a different
+    -- pipeline for each: the model states how many lines its rectangle holds
+    -- and the Host never guesses.
     local reading = requireNative("runtime_read")(
         state.ticket,
         area[1],
         area[2],
         area[3],
-        area[4]
+        area[4],
+        reader.layout
     )
     local result
     if type(reading) ~= "table" then
@@ -106,22 +147,10 @@ local function readText(state: any, binding: any, readerId: string): any
         result = { kind = "absent" }
     elseif reading.kind == "unknown" then
         result = { kind = "unknown", reason = reading.reason }
-    elseif reading.kind ~= "read"
-        or type(reading.text) ~= "string"
-        or type(reading.confidence) ~= "number"
-        or reading.confidence ~= reading.confidence
-        or reading.confidence < 0
-        or reading.confidence > 1
-    then
+    elseif reading.kind ~= "read" then
         result = { kind = "unknown", reason = "ocr_unreadable" }
-    elseif reading.confidence < reader.confidence_floor then
-        result = { kind = "unknown", reason = "low_confidence", confidence = reading.confidence }
     else
-        result = {
-            kind = "read",
-            text = normalize(reading.text, reader.normalization),
-            confidence = reading.confidence,
-        }
+        result = readLines(reader, reading)
     end
     state.reader_values[key] = result
     return result
@@ -146,7 +175,13 @@ local function measurePredicate(state: any, binding: any, predicate: any): any
             )
         elseif reading.kind == "absent" then
             record = evidence.absent(state.evidence_cycle, source)
-        elseif reading.text == predicate.value then
+        -- One line, equal to the value.  `text_equals` asks whether the text in
+        -- this rectangle IS the value, and a set of several lines is not equal
+        -- to one string under any reading that does not invent a separator.  A
+        -- single_line Reader always answers one line, so this is that Reader's
+        -- behaviour unchanged; a block Reader over a rectangle holding two
+        -- lines measures absent, which is the conservative half.
+        elseif #reading.lines == 1 and reading.lines[1].text == predicate.value then
             record = evidence.present(
                 state.evidence_cycle,
                 source,

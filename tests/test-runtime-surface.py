@@ -287,7 +287,9 @@ READINGS_EMBEDDED_POINTER = (
 # passed through, because a reference this rule cannot restate is a part of the
 # shape it would otherwise compare without having read it.
 READINGS_DEFINITION_RENAMES = {"identifier": "Identifier"}
-READINGS_INLINED_DEFINITIONS = frozenset({"binding_reading", "unknown_reason"})
+READINGS_INLINED_DEFINITIONS = frozenset(
+    {"binding_reading", "reading_line", "rect", "unknown_reason"}
+)
 READINGS_ABSENT = object()
 EMBEDDED_SCHEMA_LITERAL_PATTERN = re.compile(
     rf"{re.escape(READINGS_EMBEDDED_CONSTANT)}\s*=\s*std::string_view\s*\{{\s*"
@@ -341,6 +343,8 @@ LUAU_RUNTIME_PARSER_PATTERN = re.compile(
     r"\bfunction\s+[A-Za-z0-9_]*(?:runtime_model|RuntimeModel|toml)"
     r"[A-Za-z0-9_]*\s*\("
 )
+RUNTIME_MODEL_PARSER_SOURCE = "modules/task/runtime/project.luau"
+RUNTIME_MODEL_SCHEMA = "schema/umbraflow-runtime-v2.schema.json"
 
 # The declaration of the Snapshot Coordinator's entry point, in the one header
 # that declares it. The rule below reads its parameter list.
@@ -675,6 +679,79 @@ def trusted_parser_errors(root: Path) -> list[str]:
             + (", ".join(luau_parsers) if luau_parsers else "none")
         )
     return errors
+
+
+def reader_member_parity_errors(root: Path) -> list[str]:
+    parser_path = root / RUNTIME_MODEL_PARSER_SOURCE
+    schema_path = root / RUNTIME_MODEL_SCHEMA
+    if not parser_path.is_file() or not schema_path.is_file():
+        return [
+            "RuntimeModel Reader member parity cannot find both the trusted "
+            "parser and published schema"
+        ]
+
+    parser_text = executable_text(parser_path, read_text(parser_path))
+    section_fields = re.search(
+        r"\blocal\s+sectionFields\b[^=]*=\s*\{",
+        parser_text,
+    )
+    if section_fields is None:
+        return [
+            "RuntimeModel Reader member parity cannot read the trusted "
+            "parser's sectionFields table"
+        ]
+    section_body = extract_braced_body(parser_text, section_fields.end() - 1)
+    if section_body is None:
+        return [
+            "RuntimeModel Reader member parity found an unterminated trusted "
+            "parser sectionFields table"
+        ]
+
+    reader_fields = re.search(r"\breader\s*=\s*\{", section_body)
+    if reader_fields is None:
+        return [
+            "RuntimeModel Reader member parity cannot read trusted parser "
+            "sectionFields.reader"
+        ]
+    reader_body = extract_braced_body(section_body, reader_fields.end() - 1)
+    if reader_body is None:
+        return [
+            "RuntimeModel Reader member parity found an unterminated trusted "
+            "parser sectionFields.reader table"
+        ]
+    parser_members = set(
+        re.findall(r"\b([a-z][a-z0-9_]*)\s*=\s*true\b", reader_body)
+    )
+    if not parser_members:
+        return [
+            "RuntimeModel Reader member parity found no trusted parser members"
+        ]
+
+    try:
+        schema = json.loads(schema_path.read_bytes())
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        return [f"RuntimeModel Reader member parity found invalid schema: {error}"]
+    definitions = schema.get("$defs") if isinstance(schema, dict) else None
+    reader_schema = definitions.get("reader") if isinstance(definitions, dict) else None
+    properties = reader_schema.get("properties") if isinstance(reader_schema, dict) else None
+    if not isinstance(properties, dict):
+        return [
+            "RuntimeModel Reader member parity cannot read published schema "
+            "$defs.reader.properties"
+        ]
+
+    schema_members = set(properties)
+    parser_only = sorted(parser_members - schema_members)
+    schema_only = sorted(schema_members - parser_members)
+    if not parser_only and not schema_only:
+        return []
+
+    differences = []
+    if parser_only:
+        differences.append("trusted parser only: " + ", ".join(parser_only))
+    if schema_only:
+        differences.append("published schema only: " + ", ".join(schema_only))
+    return ["RuntimeModel Reader member parity differs: " + "; ".join(differences)]
 
 
 def snapshot_identity_errors(root: Path) -> list[str]:
@@ -1074,6 +1151,7 @@ def main() -> int:
             *published_global_errors(root),
             *retired_runtime_errors(root),
             *trusted_parser_errors(root),
+            *reader_member_parity_errors(root),
             *snapshot_identity_errors(root),
             *generic_schema_errors(root),
             *readings_contract_errors(root),
