@@ -14,7 +14,8 @@
 >   fingerprint changes** and has not been re-run against them. The fingerprint
 >   is now `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`
 >   over 23 tables; an `operator-runtime.sqlite` from any earlier date is refused
->   at open and deleted, never migrated.
+>   at open and left untouched, never migrated and never replaced. What that
+>   fingerprint is and is not is ruled below, under the delete-on-open deadline.
 > - **The `linux-analysis` CI job does not compile**, under the project's own
 >   `-Wunsafe-buffer-usage` and under clang-tidy with `WarningsAsErrors: '*'`.
 >   That is now tracked as O-002 in the consumer repository's
@@ -298,17 +299,82 @@ the Operator DDL fingerprint moving repeatedly and states, in passing, that "an
 operator database from any earlier date is refused at open and deleted, never
 migrated".
 That is history, and it is also a live decision with an expiry date that nothing
-was tracking. This section is where the expiry lives; it owns nothing else.
+was tracking. This section is where the expiry lives, together with the ruling
+below on what schema identity is; it owns nothing else.
+
+### Ruled 2026-08-12: the exact stored DDL is the sole schema identity
+
+Three mechanisms used to take part in accepting an Operator database —
+`PRAGMA user_version == 1`, a byte-exact `sqlite_schema` fingerprint, and a
+separate expected-table-list check — and they could disagree. They no longer
+do, and each surviving mechanism answers exactly one question. All three are
+applied by `verifyOperatorSchema` (`modules/operator/source/operator/ledger.cpp`),
+the one gate both the coordinator door and the read-only door run, and which
+`initialize` also runs against a schema it has just created:
+
+- `PRAGMA application_id` is a **database-kind marker**: is this file an
+  Operator database at all. It is never schema identity.
+- `PRAGMA quick_check` is **integrity evidence**: are the pages readable. It
+  runs before identity, so a corrupt file is reported as corrupt rather than as
+  a different schema.
+- The **exact stored DDL fingerprint is the sole schema identity**:
+  `k_operatorDatabaseSchemaIdentity`, sha256 over every `sqlite_schema` row
+  ordered by `(type, name)` with each of its four columns written as
+  `<byte length>:<value>`. It is currently
+  `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a` over
+  23 tables and occurs exactly once in the tree,
+  `modules/operator/source/operator/ledger.cpp:429`.
+- **`PRAGMA user_version` has no identity role and no upgrade role.** The DDL no
+  longer writes it, nothing reads it, and no future schema break may bump it.
+  A second version number beside the fingerprint is a second thing that can be
+  right when the fingerprint is wrong.
+- **A non-empty database whose identity differs is refused and left byte-identical.**
+  The open writes nothing, deletes nothing and upgrades nothing.
+
+The fingerprint did not move when `PRAGMA user_version=1` left the DDL: the
+canonicalization covers `sqlite_schema` rows, and a `PRAGMA` is not one. The
+value above was recomputed independently — a second SQLite running the same DDL
+and a second implementation of the canonicalization — rather than copied from
+the constant it is compared against.
+
+What this fixes for a migration author, which is the whole of what `O-007` may
+assume from here: a migration is **keyed by an exact source identity and an
+exact target identity** — the two fingerprint strings, not a version ordering.
+There is no `v1`, no "before/after", no monotonic number to compare, so a
+migration cannot be selected by range and cannot be applied to a database it was
+not written against. Whatever `O-007` builds — an upgrade, an export-then-refuse,
+a versioned read path — it registers under the pair `(source identity, target
+identity)`, it may run only when the database's computed identity equals the
+source exactly, and it must produce a database whose computed identity equals
+the target exactly. Absence of a registered pair is a refusal, never a default,
+and never a replacement.
+
+For `U2e`, which settles DDL fingerprint changes: changing the DDL block is
+changing the identity. Recompute `k_operatorDatabaseSchemaIdentity` from a
+freshly created database in the same change — `initialize` verifies immediately
+after creating the schema, so a forgotten recomputation cannot ship green — and
+from the first `C3` run onward, pair that recomputation with an `O-007`
+migration keyed `(old identity, new identity)`.
+
+Falsified 2026-08-12 by three independent mutations, each reverted:
+inserting one space into the `runtime_artifacts` DDL reddens
+`a created schema must equal the pinned exact DDL schema identity`; neutralizing
+the fingerprint comparison in `verifyExactDatabaseSchema` reddens
+`a different exact DDL identity must not be upgraded or replaced`; and re-adding
+a `PRAGMA user_version` guard to `verifyOperatorSchema` reddens
+`a user_version the Operator never writes must not refuse the open`. The two
+cases are in `tests/operator/test-ledger.cpp` under `test-operator`.
 
 - [ ] Before a mutation is delivered to a real target on a user's behalf, an
       Operator database written by an earlier build must stop being something a
       person deletes in order to get moving.
 
       **What is deleted today.** `OperatorCoordinator::open`
-      (`modules/operator/source/operator/ledger.cpp`) refuses any database
-      whose table set is not the 23 v1 tables, or whose canonicalized DDL text
-      does not hash to `k_exactSchemaV1Fingerprint`, currently
-      `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`.
+      (`modules/operator/source/operator/ledger.cpp`) refuses any database whose
+      canonicalized DDL text does not hash to
+      `k_operatorDatabaseSchemaIdentity`, currently
+      `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`;
+      see the ruling above for the two mechanisms that are not that one.
       The code refuses; it neither migrates nor deletes. Deleting the file is
       what a developer then does by hand, and what goes with it is not a cache:
       `journal_events`, `ledger_events`, `operations`, `operation_plans`,

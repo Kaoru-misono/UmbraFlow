@@ -52,6 +52,17 @@ every call. The value returned by its canonical validator is also the value the
 plugin executes against, so the check does not validate one byte sequence while
 executing a value cached by a different owner.
 
+A mutation written into a file rather than through the software that owns it can
+land on bytes nothing reads. `tests/operator/test-ledger.cpp` rewrites one
+separator inside the Operator database's stored DDL to prove the identity
+refusal fires; a SQLite b-tree split leaves the pre-split cell bytes in the
+freed space of the page it split, so the statement's text appears more than once
+and the live copy is not the earliest. Patching the first match alone left the
+database opening cleanly, and the case's own read-back of that byte still
+passed, because both were looking at dead space. Every occurrence is rewritten
+now, and the refusal is asserted by the message that names schema identity so an
+integrity or application-id refusal cannot stand in for it.
+
 `tests/CMakeLists.txt` owns the concrete doctest/CTest registration rules. When
 changing them, inspect the discovered test list in addition to running the
 aggregate; a passing aggregate with a missing child is the defining false green.

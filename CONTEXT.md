@@ -60,7 +60,14 @@ open and deleted, never migrated.
 > DDL fingerprint is
 > `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`,
 > over the same 23 tables, and it occurs exactly once in the tree at
-> `modules/operator/source/operator/ledger.cpp:362`. It moved because
+> `modules/operator/source/operator/ledger.cpp:429`, as
+> `k_operatorDatabaseSchemaIdentity`. It is the **sole** Operator schema
+> identity as of 2026-08-12 — `application_id` is a database-kind marker,
+> `quick_check` is integrity evidence, `user_version` carries nothing and is not
+> written, and a database whose identity differs is refused and left untouched
+> rather than deleted. The ruling and what it obliges a migration author to name
+> are in [the execution checklist](docs/TODO.md), under the delete-on-open
+> deadline. It moved because
 > `journal_events` and `project_state` — both journal records — were made to
 > carry their schema definitions' member names. **These four are now the one
 > spelling for their columns**, and each old spelling is an `_Avoid_`:

@@ -58,8 +58,12 @@ The real dual-game attestation remains external and cannot be moved by fixtures.
   inherited baseline, dispositions and requirement-to-gate map. Verify it
   against current paths before relying on an old locator.
 - Operator databases are currently refused on exact DDL mismatch rather than
-  migrated. The deadline for replacing that development-only behaviour is
-  `O-007` in the consumer repository's parallel implementation plan.
+  migrated, and refusal leaves the file untouched. The exact stored DDL is the
+  sole schema identity, ruled 2026-08-12 in
+  [the execution checklist](TODO.md) under the delete-on-open deadline, which
+  also states what a migration must name. The deadline for replacing that
+  development-only behaviour is `O-007` in the consumer repository's parallel
+  implementation plan.
 - A consumer writes a project directory and runs
   `umbra-flow-conformance --project <directory>`; it compiles no Umbraflow C++.
 - The checked-in upstream pin is v1.13. A dirty v1.14 draft exists in the

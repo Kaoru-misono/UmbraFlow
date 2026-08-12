@@ -29,6 +29,7 @@
 #include <system_error>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace uf::operator_runtime
 {
@@ -108,6 +109,110 @@ namespace uf::operator_runtime
                 return m_path;
             }
         };
+
+        // Where SQLite keeps PRAGMA user_version, and a value the Operator's
+        // DDL never writes there.
+        constexpr auto k_userVersionOffset      = std::streamoff{60};
+        constexpr auto k_nonIdentityUserVersion = std::array<char, 4>{
+            '\0',
+            '\0',
+            '\0',
+            '\x2a',
+        };
+
+        auto writeNonIdentityUserVersion(
+            std::filesystem::path const& databasePath
+        ) -> void
+        {
+            auto database = std::fstream{
+                databasePath,
+                std::ios::binary | std::ios::in | std::ios::out,
+            };
+            REQUIRE(database.good());
+            database.seekp(k_userVersionOffset);
+            database.write(
+                k_nonIdentityUserVersion.data(),
+                std::ssize(k_nonIdentityUserVersion)
+            );
+            REQUIRE(database.good());
+        }
+
+        [[nodiscard]]
+        auto storedUserVersion(
+            std::filesystem::path const& databasePath
+        ) -> std::array<char, 4>
+        {
+            auto database = std::ifstream{databasePath, std::ios::binary};
+            REQUIRE(database.good());
+            database.seekg(k_userVersionOffset);
+            auto stored = std::array<char, 4>{};
+            database.read(stored.data(), std::ssize(stored));
+            REQUIRE(database.good());
+            return stored;
+        }
+
+        // Rewrites the separator inside one stored CREATE statement, which
+        // changes the exact DDL text without changing what the schema means.
+        //
+        // Every copy of that statement is rewritten, not the first. A b-tree
+        // split leaves the pre-split cell bytes in the freed space of the page
+        // it split, so one CREATE statement's text can appear more than once
+        // and the live copy is not the earliest; rewriting only the first moves
+        // a byte SQLite never reads and leaves the identity intact.
+        [[nodiscard]]
+        auto mutateStoredDdlSeparator(
+            std::filesystem::path const& databasePath
+        ) -> std::vector<std::streamoff>
+        {
+            auto database = std::fstream{
+                databasePath,
+                std::ios::binary | std::ios::in | std::ios::out,
+            };
+            REQUIRE(database.good());
+            auto const bytes = std::string{
+                std::istreambuf_iterator<char>{database},
+                std::istreambuf_iterator<char>{},
+            };
+            auto constexpr opening = std::string_view{"CREATE TABLE runtime_artifacts("};
+
+            auto offsets = std::vector<std::streamoff>{};
+            auto at      = bytes.find(opening);
+            while (at != std::string::npos)
+            {
+                auto const separator = at + std::string_view{"CREATE"}.size();
+                REQUIRE(bytes[separator] == ' ');
+                offsets.emplace_back(static_cast<std::streamoff>(separator));
+                at = bytes.find(opening, at + opening.size());
+            }
+            REQUIRE_FALSE(offsets.empty());
+
+            database.clear();
+            for (auto const offset : offsets)
+            {
+                database.seekp(offset);
+                database.put('\n');
+            }
+            REQUIRE(database.good());
+            return offsets;
+        }
+
+        [[nodiscard]]
+        auto storedDdlSeparators(
+            std::filesystem::path const& databasePath,
+            std::vector<std::streamoff> const& offsets
+        ) -> std::string
+        {
+            auto database = std::ifstream{databasePath, std::ios::binary};
+            REQUIRE(database.good());
+            auto separators = std::string{};
+            for (auto const offset : offsets)
+            {
+                database.seekg(offset);
+                separators.push_back(static_cast<char>(database.get()));
+            }
+            REQUIRE(database.good());
+            return separators;
+        }
 
         using test_support::canonical;
         using test_support::hashOf;
@@ -725,6 +830,70 @@ namespace uf::operator_runtime
         auto prepared  = prepareStore(temporary.path());
         CHECK(prepared.store.databasePath().filename() == "operator-runtime.sqlite");
         CHECK(std::filesystem::is_regular_file(prepared.store.databasePath()));
+    }
+
+    TEST_CASE("PRAGMA user_version is no part of Operator schema identity")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        {
+            auto created = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(
+                created.has_value(),
+                "a created schema must equal the pinned exact DDL schema identity"
+            );
+        }
+
+        writeNonIdentityUserVersion(databasePath);
+        {
+            auto reopened = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(
+                reopened.has_value(),
+                "a user_version the Operator never writes must not refuse the open"
+            );
+        }
+
+        // Without this the case would also pass against an open that reset the
+        // header, which is a second identity mechanism rather than none.
+        CHECK_MESSAGE(
+            storedUserVersion(databasePath) == k_nonIdentityUserVersion,
+            "the open must neither read nor write user_version"
+        );
+    }
+
+    TEST_CASE("a different exact DDL identity is refused without replacement")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        {
+            auto created = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(
+                created.has_value(),
+                "a created schema must equal the pinned exact DDL schema identity"
+            );
+        }
+
+        auto const mutated = mutateStoredDdlSeparator(databasePath);
+        auto const refused = OperatorCoordinator::open(production);
+        REQUIRE_FALSE_MESSAGE(
+            refused.has_value(),
+            "a different exact DDL identity must not be upgraded or replaced"
+        );
+
+        // Names the guard, because a corrupt file or a foreign application_id
+        // would refuse this open just as flatly and prove nothing about
+        // identity.
+        CHECK_MESSAGE(
+            refused.error().message().contains("schema identity"),
+            "the refusal must come from the schema-identity gate"
+        );
+        CHECK_MESSAGE(
+            storedDdlSeparators(databasePath, mutated)
+                == std::string(mutated.size(), '\n'),
+            "a refused database keeps the exact bytes it was refused for"
+        );
     }
 
     TEST_CASE("pinSession names both registration hashes when the pin and manifest disagree")

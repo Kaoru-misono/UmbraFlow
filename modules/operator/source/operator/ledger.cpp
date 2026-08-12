@@ -403,16 +403,30 @@ namespace uf::operator_runtime
             return ok();
         }
 
-        // sha256 over the canonicalization verifyExactDatabaseSchema builds:
-        // every sqlite_schema row ordered by (type, name), each of its four
-        // columns written as <byte length>:<value>. It therefore covers the
-        // STORED DDL TEXT -- reindenting the R"sql(...)" block below changes it
-        // even when the schema is identical, and so does adding a comment
-        // inside it. Any change to that block recomputes this value and the
-        // expectedTables list in the same change, from a freshly created
-        // database rather than by hand. initialize() verifies immediately after
-        // creating the schema, so a forgotten recomputation cannot ship green.
-        constexpr auto k_exactSchemaV1Fingerprint = std::string_view{
+        // The database-kind marker, and never schema identity: 'UFOP' as a
+        // big-endian ASCII quad, which is what the DDL's
+        // PRAGMA application_id=1430671184 writes. The two spellings are joined
+        // by initialize(), which verifies this immediately after creating the
+        // schema.
+        constexpr auto k_operatorApplicationId = uint64{0x55464F50U};
+
+        // The sole Operator schema identity: sha256 over the canonicalization
+        // verifyExactDatabaseSchema builds -- every sqlite_schema row ordered
+        // by (type, name), each of its four columns written as
+        // <byte length>:<value>. It therefore covers the STORED DDL TEXT --
+        // reindenting the R"sql(...)" block below changes it even when the
+        // schema is identical, and so does adding a comment inside it. Any
+        // change to that block recomputes this value in the same change, from a
+        // freshly created database rather than by hand. initialize() verifies
+        // immediately after creating the schema, so a forgotten recomputation
+        // cannot ship green.
+        //
+        // PRAGMA user_version has no identity and no upgrade role, so the DDL
+        // does not write it. A database whose schema is non-empty and whose
+        // identity differs is refused and left exactly as it was; docs/TODO.md
+        // "Delete-on-open has a deadline" owns that policy and states what a
+        // migration between two identities must name.
+        constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
             "sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a"
         };
 
@@ -448,67 +462,42 @@ namespace uf::operator_runtime
                 actual,
                 sha256(std::as_bytes(std::span{canonical}))
             );
-            UF_TRY_VALUE(expected, ContentHash::parse(k_exactSchemaV1Fingerprint));
+            UF_TRY_VALUE(
+                expected,
+                ContentHash::parse(k_operatorDatabaseSchemaIdentity)
+            );
             if (actual != expected)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "Operator database schema bytes do not match exact v1"
+                    "Operator database schema identity does not match the pinned "
+                    "exact stored DDL"
                 );
             }
             return ok();
         }
 
-        // "Is this file the exact Operator runtime schema v1", and nothing else.
-        // Every statement it runs is a read, which is why the read-only door can
-        // apply the same identity gate open() does rather than a weaker one of
-        // its own.
+        // The three mechanisms in their only order, each answering one
+        // question: application_id says the file is an Operator database,
+        // quick_check says its pages are readable, and the exact stored DDL
+        // says which Operator schema it is. Integrity precedes identity because
+        // a corrupt file would otherwise be reported as a different schema and
+        // sent to whoever writes migrations. Every statement is a read, so both
+        // doors apply this one gate.
         [[nodiscard]]
-        auto verifyOperatorSchemaV1(sqlite3* database) -> Status
+        auto verifyOperatorSchema(sqlite3* database) -> Status
         {
-            constexpr auto applicationIdentity = uint64{0x55464F50U};
-            constexpr auto expectedTables      = std::string_view{
-                "agent_budgets,approvals,authority_decisions,control_leases,"
-                "control_transitions,dispatches,external_input_findings,"
-                "fencing_high_water,journal_events,ledger_events,"
-                "operation_plans,operation_steps,operations,"
-                "project_instances,project_observations,"
-                "project_registrations,project_state,reconciliations,"
-                "runtime_artifacts,runtime_installations,runtime_state,"
-                "sessions,snapshots"
-            };
-
             UF_TRY_VALUE(
                 applicationId,
                 readDatabaseInteger(database, "PRAGMA application_id")
             );
-            UF_TRY_VALUE(
-                userVersion,
-                readDatabaseInteger(database, "PRAGMA user_version")
-            );
-            if (applicationId != applicationIdentity || userVersion != 1U)
+            if (applicationId != k_operatorApplicationId)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "Database is not the exact Operator runtime schema v1"
+                    "Database does not carry the Operator application identity"
                 );
             }
-            UF_TRY_VALUE(
-                tables,
-                readDatabaseText(
-                    database,
-                    "SELECT group_concat(name, ',') FROM (SELECT name FROM sqlite_master "
-                    "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name)"
-                )
-            );
-            if (tables != expectedTables)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "Operator database table set does not match schema v1"
-                );
-            }
-            UF_TRY(verifyExactDatabaseSchema(database));
             UF_TRY_VALUE(integrity, readDatabaseText(database, "PRAGMA quick_check"));
             if (integrity != "ok")
             {
@@ -517,7 +506,7 @@ namespace uf::operator_runtime
                     "Operator database quick_check failed"
                 );
             }
-            return ok();
+            return verifyExactDatabaseSchema(database);
         }
 
         // The one query that answers "does this ledger pin that generation to
@@ -618,20 +607,27 @@ namespace uf::operator_runtime
                 readDatabaseInteger(database, "PRAGMA application_id")
             );
             UF_TRY_VALUE(
-                userVersion,
-                readDatabaseInteger(database, "PRAGMA user_version")
-            );
-            UF_TRY_VALUE(
-                tableCount,
+                schemaObjectCount,
                 readDatabaseInteger(
                     database,
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
-                    "AND name NOT LIKE 'sqlite_%'"
+                    "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'"
                 )
             );
-            if (applicationId != 0U || userVersion != 0U || tableCount != 0U)
+            if (schemaObjectCount != 0U)
             {
-                return verifyOperatorSchemaV1(database);
+                return verifyOperatorSchema(database);
+            }
+
+            // An empty schema under any application_id at all is another
+            // product's file: this DDL writes the marker in the same
+            // transaction that creates the tables, so no Operator database ever
+            // reaches here carrying one.
+            if (applicationId != 0U)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Database does not carry the Operator application identity"
+                );
             }
 
             UF_TRY(execute(
@@ -887,7 +883,7 @@ namespace uf::operator_runtime
                 // One statement sequence, two literals: MSVC caps a single
                 // string literal and the schema outgrew it here. Adjacent
                 // literals concatenate before anything reads them, so the SQL
-                // text -- and therefore k_exactSchemaV1Fingerprint, which
+                // text -- and therefore k_operatorDatabaseSchemaIdentity, which
                 // covers the STORED DDL -- is byte-identical to the unsplit
                 // block. The seam must add no character of its own: it sits
                 // between a newline and a newline, and it moves to wherever the
@@ -1145,11 +1141,10 @@ namespace uf::operator_runtime
                     ) STRICT;
 
                     PRAGMA application_id=1430671184;
-                    PRAGMA user_version=1;
                     COMMIT;
                 )sql"
             ));
-            return verifyExactDatabaseSchema(database);
+            return verifyOperatorSchema(database);
         }
 
         [[nodiscard]]
@@ -2578,7 +2573,7 @@ namespace uf::operator_runtime
         // coordinator holding this directory holds SQLite's exclusive lock, and
         // an immediate refusal is a better answer than a stall.
         UF_TRY(execute(database.get(), "PRAGMA trusted_schema=OFF"));
-        UF_TRY(verifyOperatorSchemaV1(database.get()));
+        UF_TRY(verifyOperatorSchema(database.get()));
         UF_TRY(requireInstalledArtifactPin(
             database.get(),
             installedGeneration,
