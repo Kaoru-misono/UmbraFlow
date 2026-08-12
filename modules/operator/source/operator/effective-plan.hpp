@@ -1,7 +1,9 @@
 #pragma once
 
 #include "manifest.hpp"
+#include "policy.hpp"
 #include "project-plugin.hpp"
+#include "tool-descriptor.hpp"
 
 #include <task/runtime-model-file.hpp>
 
@@ -12,6 +14,7 @@
 #include <domain/content-hash.hpp>
 
 #include <functional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -20,20 +23,6 @@ namespace uf::operator_runtime
 {
     class OperatorCoordinator;
     class OperatorPlanAuthority;
-
-    // How much one declared effect can cost. It is OP:`Risk` and it is never a
-    // request field: a caller that could state its own risk could state
-    // read_only for a tool the catalog marked mutating.
-    enum class Risk : uint8
-    {
-        ReadOnly,
-        Low,
-        Medium,
-        High,
-        Critical,
-    };
-
-    [[nodiscard]] auto riskWireName(Risk risk) noexcept -> std::string_view;
 
     // The two shapes a workflow step can take: OP:`UIActionIntent` and
     // OP:`WaitIntent`. A wait never reaches Host dispatch, so the kind decides
@@ -45,46 +34,6 @@ namespace uf::operator_runtime
     };
 
     [[nodiscard]] auto stepKindWireName(StepKind kind) noexcept -> std::string_view;
-
-    // OP:`WorkflowLimits`. Every member is an upper bound, so clamping is a
-    // minimum and a plan can only ever become more restricted.
-    struct WorkflowLimits final
-    {
-        uint32 maximumSteps{};
-        uint32 maximumDispatches{};
-        uint32 maximumObservations{};
-        uint32 maximumWaits{};
-        uint64 maximumElapsedMillis{};
-    };
-
-    // The ceiling no plugin proposal can exceed. It sits beside the type it
-    // bounds so that the clamp and the bound cannot drift into two files. The
-    // five numbers are an Operator choice, not a product one: nothing in the
-    // frozen bundle names a ceiling, and a plan is allowed to be smaller.
-    inline constexpr auto k_workflowCeiling = WorkflowLimits{
-        .maximumSteps        = 64U,
-        .maximumDispatches   = 64U,
-        .maximumObservations = 256U,
-        .maximumWaits        = 64U,
-        .maximumElapsedMillis = 600'000U,
-    };
-
-    // One OP:`ExpectedEffect` in the terms the Operator acts on. The project
-    // payload stays opaque: it is carried so that the minted plan is the exact
-    // document the checked-in schema defines, and it is never interpreted.
-    struct ProposedEffect final
-    {
-        std::string namespacedType{};
-
-        // Critical is the default for the same reason ToolMutability defaults
-        // to Mutating: an effect whose risk failed to parse must be treated as
-        // the most restricted of the five, never the least.
-        Risk        risk{Risk::Critical};
-        std::string scopeKind{};
-        std::string scopeKey{};
-        ContentHash payloadSchemaHash;
-        std::string opaqueProjectPayload{};
-    };
 
     // What the Operator reads out of a PlanProposal the operator protocol
     // schema has already accepted. Like ProjectRegistrationClaims this is not
@@ -113,7 +62,17 @@ namespace uf::operator_runtime
         std::string surfaceId{};
         std::string uiTargetId{};
         std::string actionId{};
-        StepKind    kind{StepKind::Wait};
+
+        // Both intents carry a timeout policy, and mintStep holds it to the
+        // descriptor's: a step that could outlast what its tool declared would
+        // be a per-tool bound with no consumer.
+        TimeoutPolicy timeout{};
+
+        // OP:`UIActionIntent`.delivery_class. A Wait names none and leaves this
+        // at the weakest claim, which is what an unstated one must read as.
+        DeliveryClass deliveryClass{DeliveryClass::NonIdempotent};
+
+        StepKind kind{StepKind::Wait};
     };
 
     // Trusted deployment callbacks. Each reads a document a ProjectSchemaOwner
@@ -155,9 +114,9 @@ namespace uf::operator_runtime
         std::string                 m_canonicalPlan;
         std::vector<ProposedEffect> m_effects;
         std::vector<std::string>    m_allowedUiActions;
+        std::vector<std::string>    m_requiredApprovals;
         WorkflowLimits              m_limits;
         Risk                        m_risk;
-        bool                        m_approvalRequired;
 
         EffectivePlan(
             ContentHash projectRegistrationHash,
@@ -172,9 +131,9 @@ namespace uf::operator_runtime
             std::string canonicalPlan,
             std::vector<ProposedEffect> effects,
             std::vector<std::string> allowedUiActions,
+            std::vector<std::string> requiredApprovals,
             WorkflowLimits limits,
-            Risk risk,
-            bool approvalRequired
+            Risk risk
         );
 
     public:
@@ -186,9 +145,15 @@ namespace uf::operator_runtime
         [[nodiscard]] auto planHash() const -> ContentHash;
         [[nodiscard]] auto risk() const noexcept -> Risk;
 
-        // Whether the derived risk requires a human approval before the first
-        // Host dispatch. It is a conclusion, not an input: no caller states it.
-        [[nodiscard]] auto approvalRequired() const noexcept -> bool;
+        // OP:`EffectivePlan`.required_approvals: the approver capabilities the
+        // pinned PolicyArtifact ruled must sign this plan before its first Host
+        // dispatch, sorted and without repeats. It is a conclusion, not an
+        // input: no caller states it, and it is not derived from the risk
+        // level -- which humans may approve and whether any must are different
+        // facts, and one value cannot answer both if it is a flag.
+        [[nodiscard]]
+        auto requiredApprovals() const noexcept UF_LIFETIME_BOUND
+            -> std::vector<std::string> const&;
 
         // The Operation this plan is about. Without it a plan is bound only to
         // a registration, so a plan frozen for one Operation could freeze
@@ -282,9 +247,22 @@ namespace uf::operator_runtime
     struct PlanMintInputs final
     {
         ValidatedDocument const& proposal;
+
+        // The declaration the session's pinned Tool Catalog carries for this
+        // tool. It arrives here rather than being remembered from the
+        // submission, because the bounds a proposal is judged against belong to
+        // the catalog inside project_registration_hash and not to an invocation
+        // a caller once presented.
+        ToolDescriptor const& descriptor;
+
+        // The capability set of the session this Operation belongs to, read
+        // from its own row. The policy's required_controller_capabilities is
+        // judged against it, so a controller that could state it could satisfy
+        // any rule it liked.
+        std::span<std::string const> controllerCapabilities{};
+
         std::string operationId{};
         std::string toolName{};
-        std::string toolVersion{};
         std::string canonicalArgs{};
         ContentHash projectRegistrationHash;
         ContentHash commandFingerprint;
@@ -304,6 +282,12 @@ namespace uf::operator_runtime
     struct StepMintInputs final
     {
         ValidatedDocument const& intent;
+
+        // The same catalog declaration mintPlan was given, for the same reason.
+        // A step's delivery class and timeout are bounded by what the tool
+        // declared about itself, and that statement lives in the catalog.
+        ToolDescriptor const& descriptor;
+
         std::string_view canonicalPlan{};
         std::string      operationId{};
         ContentHash      planHash;
@@ -328,6 +312,7 @@ namespace uf::operator_runtime
         ContentHash               m_projectRegistrationHash;
         ContentHash               m_operatorProtocolSchemaHash;
         task::RuntimeModelBinding m_runtimeModel;
+        VerifiedPolicyArtifact    m_policy;
         PlanProposalReader        m_readProposal;
         StepIntentReader          m_readStepIntent;
 
@@ -335,6 +320,7 @@ namespace uf::operator_runtime
             ContentHash projectRegistrationHash,
             ContentHash operatorProtocolSchemaHash,
             task::RuntimeModelBinding runtimeModel,
+            VerifiedPolicyArtifact policy,
             PlanProposalReader readProposal,
             StepIntentReader readStepIntent
         );
@@ -361,16 +347,27 @@ namespace uf::operator_runtime
         // root. Only TaskHost can mint one, so an authority for a model nobody
         // parsed cannot be constructed at all -- which is what makes the check
         // in mintStep unavoidable rather than optional.
+        //
+        // The PolicyArtifact is the third argument of the same kind. The
+        // Operator evaluates policy rather than accepting a hash a caller
+        // supplied, so the authority that mints a plan is built from the exact
+        // bytes the manifest's policy_artifact_hash names and can evaluate
+        // nothing else.
         [[nodiscard]]
         static auto create(
             VerifiedProjectRegistration const& registration,
             SessionManifest const& sessionManifest,
             task::RuntimeModelBinding const& runtimeModel,
             std::string_view exactOperatorProtocolSchemaBytes,
+            std::string_view exactPolicyArtifactBytes,
             PlanProposalReader readProposal,
             StepIntentReader readStepIntent
         ) -> Result<OperatorPlanAuthority>;
 
         [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
+
+        // The policy this authority evaluates, so that the ledger can record
+        // which artifact ruled a plan without a caller naming one.
+        [[nodiscard]] auto policyHash() const -> ContentHash;
     };
 }

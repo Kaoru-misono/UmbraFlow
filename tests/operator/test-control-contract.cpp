@@ -209,7 +209,7 @@ namespace uf::operator_runtime
                 .authenticatedControllerId = "controller-1",
                 .idempotencyNamespace      = "controller-1",
                 .projectRegistrationHash   = registrationHash,
-                .capabilityProfileHash     = hashOf("capability"),
+                .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
                 .controlledTargetId        = "target-1",
                 .projectInstanceKey        = "instance-1",
                 .mode                      = SessionMode::Write,
@@ -481,10 +481,10 @@ namespace uf::operator_runtime
         auto const mutating = toolInvocation(prepared.project, "command-1");
         auto const readOnly = toolInvocation(prepared.project, "observe-1");
         CHECK(mutating.canonicalArgs() == readOnly.canonicalArgs());
-        CHECK(mutating.mutability() == ToolMutability::Mutating);
-        CHECK(readOnly.mutability() == ToolMutability::ReadOnly);
-        CHECK(mutating.toolVersion() == "1");
-        CHECK(readOnly.toolVersion() == "1");
+        CHECK(mutating.descriptor().mutability == ToolMutability::Mutating);
+        CHECK(readOnly.descriptor().mutability == ToolMutability::ReadOnly);
+        CHECK(mutating.descriptor().toolVersion == "1");
+        CHECK(readOnly.descriptor().toolVersion == "1");
 
         // A tool the catalog does not describe cannot be minted at all, so an
         // effect has no spelling that skips the descriptor.
@@ -684,7 +684,7 @@ namespace uf::operator_runtime
         // effects rather than anything the proposal stated about itself.
         CHECK(frozen->decisionBasisHash == prepared.snapshot.decisionBasisHash);
         CHECK(frozen->risk == Risk::Medium);
-        CHECK_FALSE(frozen->approvalRequired);
+        CHECK(frozen->requiredApprovals.empty());
         CHECK(frozen->operation.state == OperationState::Ready);
 
         // A plan freezes once. operation_plans is keyed by operation_id, so the

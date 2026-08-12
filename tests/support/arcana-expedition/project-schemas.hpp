@@ -264,13 +264,26 @@ namespace uf::operator_runtime::conformance::expedition
                 }
                 first = false;
                 m_toolCatalog += R"json({"argument_schema":"MarchArguments",)json"
-                    R"json("mutability":")json";
+                    R"json("effect_bounds":[{"maximum_risk":"high",)json"
+                    R"json("namespaced_type":"expedition.march",)json"
+                    R"json("payload_schema_hash":")json";
+                m_toolCatalog += schemaHashHex(k_effectPayloadSchema);
+                m_toolCatalog += R"json(","scope_kind":"camp"}],)json"
+                                 R"json("idempotency":"delivery_safe","mutability":")json";
                 m_toolCatalog += tool.mutability;
                 m_toolCatalog += R"json(","name":")json";
                 m_toolCatalog += tool.name;
-                m_toolCatalog += R"json(","surface":"semantic","version":")json";
+                m_toolCatalog += R"json(","required_capabilities":[],)json"
+                                 R"json("surface":"semantic",)json"
+                                 R"json("timeout_policy":{"maximum_elapsed_ms":60000,)json"
+                                 R"json("on_timeout":"reobserve"},)json"
+                                 R"json("ui_action_bounds":["expedition.step"],)json"
+                                 R"json("version":")json";
                 m_toolCatalog += tool.version;
-                m_toolCatalog += R"json("})json";
+                m_toolCatalog += R"json(","workflow_limits":{"maximum_dispatches":8,)json"
+                                 R"json("maximum_elapsed_ms":600000,)json"
+                                 R"json("maximum_observations":256,"maximum_steps":8,)json"
+                                 R"json("maximum_waits":64}})json";
             }
             m_toolCatalog += "]}";
 

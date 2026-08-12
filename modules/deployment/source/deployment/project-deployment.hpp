@@ -173,11 +173,12 @@ namespace uf::deployment
         // What this deployment's Tool Catalog carries under one name, or
         // nothing at all.
         //
-        // Every other reader reaches the catalog through toolCatalogValidator(),
-        // which judges a call and therefore needs its arguments. A document
-        // that names tools without calling them -- a conformance vocabulary --
-        // has no arguments to offer, so this is what lets such a document and a
-        // catalog be held to each other where both were written.
+        // toolCatalogReader() below hands the whole catalog to the Operator's
+        // own owner, which is where a session reads it from. This answers for
+        // one name without building an owner at all, which is what lets a
+        // document that names tools without calling them -- a conformance
+        // vocabulary -- and this deployment's catalog be held to each other
+        // where both were written.
         [[nodiscard]]
         auto carriedTool(std::string_view name) const
             -> std::optional<operator_runtime::ToolDescriptor>;
@@ -190,9 +191,17 @@ namespace uf::deployment
         auto journalPayloadValidator() const
             -> operator_runtime::JournalPayloadSchemaValidator;
 
+        // The catalog is read once and the arguments of each call are judged
+        // per call, so these are two callbacks rather than one. See
+        // ToolCatalogReader in operator/tool-invocation.hpp for why the split
+        // is what keeps the offer side and the accept side answering from one
+        // stored declaration.
         [[nodiscard]]
-        auto toolCatalogValidator() const
-            -> operator_runtime::ToolCatalogValidator;
+        auto toolCatalogReader() const -> operator_runtime::ToolCatalogReader;
+
+        [[nodiscard]]
+        auto toolArgumentValidator() const
+            -> operator_runtime::ToolArgumentValidator;
 
         [[nodiscard]]
         auto reconcileDispositionReader() const

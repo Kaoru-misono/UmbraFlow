@@ -69,13 +69,13 @@ namespace uf::operator_runtime::conformance
             ProjectRole::UnderTest,
             words.mutatingTool
         );
-        CHECK(mutating.mutability() == ToolMutability::Mutating);
+        CHECK(mutating.descriptor().mutability == ToolMutability::Mutating);
         CHECK(mutating.projectRegistrationHash() == underTest.registration.hash());
         CHECK(
             mutating.toolCatalogHash()
             == underTest.registration.toolCatalogHash()
         );
-        CHECK_FALSE(mutating.toolVersion().empty());
+        CHECK_FALSE(mutating.descriptor().toolVersion.empty());
 
         // The descriptor decides, so the read-only tool reaches the same
         // authority through the same call and comes back restricted.
@@ -84,7 +84,7 @@ namespace uf::operator_runtime::conformance
                 project,
                 ProjectRole::UnderTest,
                 words.readOnlyTool
-            ).mutability()
+            ).descriptor().mutability
             == ToolMutability::ReadOnly
         );
 
@@ -112,13 +112,19 @@ namespace uf::operator_runtime::conformance
             ProjectToolCatalogSchemaOwner::create(
                 underTest.registration,
                 "not-the-tool-catalog",
-                [](std::string_view, std::string_view) -> Result<ToolDescriptor>
+                []() -> Result<std::vector<ToolCatalogEntry>>
                 {
-                    return ToolDescriptor{
-                        .toolVersion = "1",
-                        .mutability  = ToolMutability::ReadOnly,
+                    return std::vector<ToolCatalogEntry>{
+                        ToolCatalogEntry{
+                            .name       = "anything",
+                            .descriptor = ToolDescriptor{
+                                .toolVersion = "1",
+                                .mutability  = ToolMutability::ReadOnly,
+                            },
+                        },
                     };
-                }
+                },
+                [](std::string_view, std::string_view) -> Status { return ok(); }
             ).has_value()
         );
         CHECK_FALSE(
@@ -312,6 +318,10 @@ namespace uf::operator_runtime::conformance
                 prepared.manifest,
                 *runtimeModel,
                 "operator",
+                policyArtifact(
+                    deploymentFor(prepared.project, ProjectRole::UnderTest),
+                    prepared.project.underTest.vocabulary
+                ),
                 testCase.action
             );
             REQUIRE(authority.has_value());
@@ -321,6 +331,10 @@ namespace uf::operator_runtime::conformance
                 frozen->operation.revision,
                 prepared.lease,
                 prepared.plugin,
+                deploymentFor(
+                    prepared.project,
+                    ProjectRole::UnderTest
+                ).toolCatalogSchemaOwner,
                 *authority
             );
             REQUIRE_FALSE(refused.has_value());

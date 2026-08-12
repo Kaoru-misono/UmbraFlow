@@ -502,6 +502,7 @@ if(TARGET ${PROJECT_NAME}_operator)
             operator/test-ledger.cpp
             operator/test-manifest.cpp
             operator/test-operation.cpp
+            operator/test-tool-authority.cpp
         LIBS
             ${PROJECT_NAME}_operator
             ${PROJECT_NAME}_image
@@ -512,6 +513,9 @@ if(TARGET ${PROJECT_NAME}_operator)
     target_include_directories(test-operator PRIVATE
         "${UF_OPERATOR_FIXTURE_DIR}"
         "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}"
+        # tests/ itself, so that the policy schema case reaches
+        # tests/json/repository-path.hpp rather than becoming a seventh copy.
+        "${CMAKE_CURRENT_SOURCE_DIR}"
     )
     if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
         cpp_stage_runtime_libraries(test-operator ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})

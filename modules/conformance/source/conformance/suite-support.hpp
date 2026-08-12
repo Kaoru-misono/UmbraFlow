@@ -132,9 +132,21 @@ namespace uf::operator_runtime::conformance
     ) -> ValidatedReconcileOutcome;
 
     [[nodiscard]]
+    // The PolicyArtifact bytes a run pins, built from the effect types this
+    // deployment's own descriptors bound. It is published because prepareStore
+    // pins the manifest to their hash and the plan authority is built from the
+    // same bytes.
+    [[nodiscard]]
+    auto policyArtifact(
+        deployment::LoadedDeployment const& deployed,
+        deployment::ProjectVocabulary const& vocabulary
+    ) -> std::string;
+
+    [[nodiscard]]
     auto sessionManifest(
         VerifiedProjectRegistration const& registration,
-        ContentHash const& runtimeArtifactRootHash
+        ContentHash const& runtimeArtifactRootHash,
+        std::string_view exactPolicyArtifactBytes
     ) -> SessionManifest;
 
     // A coordinator holding one installed runtime artifact, one registered and

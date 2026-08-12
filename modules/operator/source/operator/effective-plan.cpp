@@ -20,45 +20,6 @@ namespace uf::operator_runtime
 {
     namespace
     {
-        // The one approval kind the ledger has. OP:`EffectivePlan` types
-        // required_approvals as an array of identifiers, and the `approvals`
-        // table holds exactly one human token, so the array is either empty or
-        // this single name.
-        constexpr auto k_humanApproval = std::string_view{"human"};
-
-        struct RiskApproval final
-        {
-            Risk risk{Risk::Critical};
-            bool required{};
-        };
-
-        // Which derived risks demand a human before the first Host dispatch.
-        // It is Operator-owned and deliberately not read from a policy
-        // artifact: nothing parses one yet, and a table nobody can supply is
-        // the honest shape of that gap.
-        constexpr auto k_approvalByRisk = std::array{
-            RiskApproval{.risk = Risk::ReadOnly, .required = false},
-            RiskApproval{.risk = Risk::Low, .required = false},
-            RiskApproval{.risk = Risk::Medium, .required = false},
-            RiskApproval{.risk = Risk::High, .required = true},
-            RiskApproval{.risk = Risk::Critical, .required = true},
-        };
-
-        [[nodiscard]]
-        auto approvalRequiredFor(Risk risk) noexcept -> bool
-        {
-            auto const found = std::ranges::find(
-                k_approvalByRisk,
-                risk,
-                &RiskApproval::risk
-            );
-            if (found == k_approvalByRisk.end())
-            {
-                return true;
-            }
-            return found->required;
-        }
-
         auto appendHash(std::string& output, ContentHash const& hash) -> void
         {
             appendJsonString(output, hash.hex());
@@ -272,9 +233,9 @@ namespace uf::operator_runtime
             ContentHash                     decisionBasisHash;
             std::span<ProposedEffect const> effects{};
             std::span<std::string const>    allowedUiActions{};
+            std::span<std::string const>    requiredApprovals{};
             WorkflowLimits                  limits{};
             Risk                            risk{Risk::Critical};
-            bool                            approvalRequired{};
         };
 
         // OP:`EffectivePlan` in JCS member order. plan_hash cannot cover
@@ -313,9 +274,15 @@ namespace uf::operator_runtime
             output += ",\"project_registration_hash\":";
             appendHash(output, body.projectRegistrationHash);
             output += ",\"required_approvals\":[";
-            if (body.approvalRequired)
+            first = true;
+            for (auto const& approver : body.requiredApprovals)
             {
-                appendJsonString(output, k_humanApproval);
+                if (!first)
+                {
+                    output.push_back(',');
+                }
+                first = false;
+                appendJsonString(output, approver);
             }
             output += "],\"risk\":";
             appendJsonString(output, riskWireName(body.risk));
@@ -410,20 +377,6 @@ namespace uf::operator_runtime
         }
     }
 
-    auto riskWireName(Risk risk) noexcept -> std::string_view
-    {
-        switch (risk)
-        {
-        case Risk::ReadOnly: return "read_only";
-        case Risk::Low: return "low";
-        case Risk::Medium: return "medium";
-        case Risk::High: return "high";
-        case Risk::Critical: return "critical";
-        }
-
-        UF_UNREACHABLE_MSG("Unknown Risk value");
-    }
-
     auto stepKindWireName(StepKind kind) noexcept -> std::string_view
     {
         switch (kind)
@@ -448,9 +401,9 @@ namespace uf::operator_runtime
         std::string canonicalPlan,
         std::vector<ProposedEffect> effects,
         std::vector<std::string> allowedUiActions,
+        std::vector<std::string> requiredApprovals,
         WorkflowLimits limits,
-        Risk risk,
-        bool approvalRequired
+        Risk risk
     )
         : m_projectRegistrationHash{projectRegistrationHash}
         , m_operatorProtocolSchemaHash{operatorProtocolSchemaHash}
@@ -464,9 +417,9 @@ namespace uf::operator_runtime
         , m_canonicalPlan{std::move(canonicalPlan)}
         , m_effects{std::move(effects)}
         , m_allowedUiActions{std::move(allowedUiActions)}
+        , m_requiredApprovals{std::move(requiredApprovals)}
         , m_limits{limits}
         , m_risk{risk}
-        , m_approvalRequired{approvalRequired}
     {
     }
 
@@ -505,9 +458,10 @@ namespace uf::operator_runtime
         return m_risk;
     }
 
-    auto EffectivePlan::approvalRequired() const noexcept -> bool
+    auto EffectivePlan::requiredApprovals() const noexcept
+        -> std::vector<std::string> const&
     {
-        return m_approvalRequired;
+        return m_requiredApprovals;
     }
 
     auto EffectivePlan::operationId() const noexcept -> std::string const&
@@ -605,12 +559,14 @@ namespace uf::operator_runtime
         ContentHash projectRegistrationHash,
         ContentHash operatorProtocolSchemaHash,
         task::RuntimeModelBinding runtimeModel,
+        VerifiedPolicyArtifact policy,
         PlanProposalReader readProposal,
         StepIntentReader readStepIntent
     )
         : m_projectRegistrationHash{projectRegistrationHash}
         , m_operatorProtocolSchemaHash{operatorProtocolSchemaHash}
         , m_runtimeModel{std::move(runtimeModel)}
+        , m_policy{std::move(policy)}
         , m_readProposal{std::move(readProposal)}
         , m_readStepIntent{std::move(readStepIntent)}
     {
@@ -621,6 +577,7 @@ namespace uf::operator_runtime
         SessionManifest const& sessionManifest,
         task::RuntimeModelBinding const& runtimeModel,
         std::string_view exactOperatorProtocolSchemaBytes,
+        std::string_view exactPolicyArtifactBytes,
         PlanProposalReader readProposal,
         StepIntentReader readStepIntent
     ) -> Result<OperatorPlanAuthority>
@@ -658,10 +615,18 @@ namespace uf::operator_runtime
                 "session manifest does not pin"
             );
         }
+        UF_TRY_VALUE(
+            policy,
+            VerifiedPolicyArtifact::verifyExact(
+                sessionManifest,
+                exactPolicyArtifactBytes
+            )
+        );
         return OperatorPlanAuthority{
             registration.hash(),
             schemaHash,
             runtimeModel,
+            std::move(policy),
             std::move(readProposal),
             std::move(readStepIntent),
         };
@@ -670,6 +635,11 @@ namespace uf::operator_runtime
     auto OperatorPlanAuthority::projectRegistrationHash() const -> ContentHash
     {
         return m_projectRegistrationHash;
+    }
+
+    auto OperatorPlanAuthority::policyHash() const -> ContentHash
+    {
+        return m_policy.hash();
     }
 
     auto OperatorPlanAuthority::mintPlan(
@@ -708,7 +678,7 @@ namespace uf::operator_runtime
                 "PlanProposal names a tool the Operation was not created for"
             );
         }
-        if (claims.toolVersion != inputs.toolVersion)
+        if (claims.toolVersion != inputs.descriptor.toolVersion)
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
@@ -727,34 +697,61 @@ namespace uf::operator_runtime
         for (auto const& action : allowed)
         {
             UF_TRY(requireField(action, "allowed_ui_actions entry"));
+            if (!std::ranges::contains(inputs.descriptor.uiActionBounds, action))
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "PlanProposal allows UI action " + action
+                        + ", which this tool's ui_action_bounds do not declare"
+                );
+            }
         }
         std::ranges::sort(allowed);
         allowed.erase(std::ranges::unique(allowed).begin(), allowed.end());
 
         UF_TRY_VALUE(envelope, deriveEffectEnvelope(std::move(claims.effects)));
+        if (envelope.effects.empty())
+        {
+            // A mutating plan with no effect would reach the policy with
+            // nothing to judge, and every rule in an artifact speaks about an
+            // effect. Refusing here is what keeps "policy decides" true rather
+            // than true of the plans that happen to declare something.
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "PlanProposal for a mutating tool declares no effect at all"
+            );
+        }
+        for (auto const& effect : envelope.effects)
+        {
+            UF_TRY(effectWithinBounds(inputs.descriptor, effect));
+        }
 
-        // Every bound is a minimum against the ceiling, so widening is
-        // arithmetically impossible rather than policy-checked.
-        auto const limits = WorkflowLimits{
+        // Every bound is a minimum against the tool's own declaration, so
+        // widening is arithmetically impossible rather than policy-checked.
+        // There is no second, compiled-in ceiling beside it: the catalog states
+        // this tool's limit and the catalog bytes are inside
+        // project_registration_hash.
+        auto const& declared = inputs.descriptor.limits;
+        auto const  limits   = WorkflowLimits{
             .maximumSteps = std::min(
                 claims.limits.maximumSteps,
-                k_workflowCeiling.maximumSteps
+                declared.maximumSteps
             ),
             .maximumDispatches = std::min(
                 claims.limits.maximumDispatches,
-                k_workflowCeiling.maximumDispatches
+                declared.maximumDispatches
             ),
             .maximumObservations = std::min(
                 claims.limits.maximumObservations,
-                k_workflowCeiling.maximumObservations
+                declared.maximumObservations
             ),
             .maximumWaits = std::min(
                 claims.limits.maximumWaits,
-                k_workflowCeiling.maximumWaits
+                declared.maximumWaits
             ),
             .maximumElapsedMillis = std::min(
                 claims.limits.maximumElapsedMillis,
-                k_workflowCeiling.maximumElapsedMillis
+                declared.maximumElapsedMillis
             ),
         };
         if (
@@ -770,20 +767,31 @@ namespace uf::operator_runtime
             );
         }
 
-        auto const risk             = highestRisk(envelope.effects);
-        auto const approvalRequired = approvalRequiredFor(risk);
-        auto const body             = PlanBody{
+        // The one place a plan's authorization is decided, and it is an
+        // evaluation of the artifact this session pinned rather than a table
+        // compiled in beside it.
+        UF_TRY_VALUE(
+            verdict,
+            m_policy.evaluate(PolicyRequest{
+                .effects                = envelope.effects,
+                .controllerCapabilities = inputs.controllerCapabilities,
+                .toolName               = inputs.toolName,
+            })
+        );
+
+        auto const risk = highestRisk(envelope.effects);
+        auto const body = PlanBody{
             .toolName                = inputs.toolName,
-            .toolVersion             = inputs.toolVersion,
+            .toolVersion             = inputs.descriptor.toolVersion,
             .canonicalArgs           = inputs.canonicalArgs,
             .commandFingerprint      = inputs.commandFingerprint,
             .projectRegistrationHash = m_projectRegistrationHash,
             .decisionBasisHash       = inputs.decisionBasisHash,
             .effects                 = envelope.effects,
             .allowedUiActions        = allowed,
+            .requiredApprovals       = verdict.requiredApprovals,
             .limits                  = limits,
             .risk                    = risk,
-            .approvalRequired        = approvalRequired,
         };
         auto const hashedForm = planJcs(body, nullptr);
         UF_TRY_VALUE(planHash, sha256(std::as_bytes(std::span{hashedForm})));
@@ -796,13 +804,13 @@ namespace uf::operator_runtime
             planHash,
             inputs.operationId,
             inputs.toolName,
-            inputs.toolVersion,
+            inputs.descriptor.toolVersion,
             planJcs(body, &planHash),
             std::move(envelope.effects),
             std::move(allowed),
+            std::move(verdict.requiredApprovals),
             limits,
             risk,
-            approvalRequired,
         };
     }
 
@@ -826,8 +834,39 @@ namespace uf::operator_runtime
                 "Step intent names an action outside the frozen allowed set"
             );
         }
+        if (
+            claims.timeout.maximumElapsedMillis
+            > inputs.descriptor.timeout.maximumElapsedMillis
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Step intent allows more elapsed time than this tool's "
+                "timeout_policy declares"
+            );
+        }
+        if (claims.timeout.onTimeout != inputs.descriptor.timeout.onTimeout)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Step intent on_timeout differs from this tool's timeout_policy"
+            );
+        }
         if (claims.kind == StepKind::UiAction)
         {
+            if (
+                !deliveryClassWithin(
+                    claims.deliveryClass,
+                    inputs.descriptor.idempotency
+                )
+            )
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "UIActionIntent claims a delivery_class safer than this "
+                    "tool's declared idempotency"
+                );
+            }
             UF_TRY(requireDeclaredUi(
                 m_runtimeModel,
                 inputs.runtimeArtifactRootHash,

@@ -9,6 +9,8 @@
 
 #include <domain/error.hpp>
 
+#include <json/value.hpp>
+
 #include <task/platform/confined-file.hpp>
 
 #include <sqlite3.h>
@@ -42,6 +44,60 @@ namespace uf::operator_runtime
         };
 
         using Database = std::unique_ptr<sqlite3, DatabaseCloser>;
+
+        // A set of identifiers as the one text the ledger stores it under: a
+        // JCS array, sorted and without repeats. Capability sets and
+        // required-approval sets are both this shape, and both are hashed or
+        // compared as whole documents, so two spellings of one set would be two
+        // values.
+        [[nodiscard]]
+        auto canonicalNameArray(std::vector<std::string> names) -> std::string
+        {
+            std::ranges::sort(names);
+            names.erase(std::ranges::unique(names).begin(), names.end());
+            auto output = std::string{"["};
+            auto first  = true;
+            for (auto const& name : names)
+            {
+                if (!first)
+                {
+                    output.push_back(',');
+                }
+                first = false;
+                appendJsonString(output, name);
+            }
+            output.push_back(']');
+            return output;
+        }
+
+        // The same set, read back out of the column that holds it. A row this
+        // process wrote is the only thing that reaches here, so unparseable
+        // text is a broken database rather than bad input.
+        [[nodiscard]]
+        auto readNameArray(std::string_view stored) -> Result<std::vector<std::string>>
+        {
+            UF_TRY_VALUE(document, json::parse(stored));
+            if (document.kind() != json::ValueKind::Array)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "a stored identifier set is not a JSON array"
+                );
+            }
+            auto names = std::vector<std::string>{};
+            for (auto const& item : document.items())
+            {
+                if (item.kind() != json::ValueKind::String)
+                {
+                    return fail(
+                        AutomationErrorKind::InternalInvariant,
+                        "a stored identifier set holds a value that is not a name"
+                    );
+                }
+                names.emplace_back(item.string());
+            }
+            return names;
+        }
 
         class Statement final
         {
@@ -427,7 +483,7 @@ namespace uf::operator_runtime
         // "Delete-on-open has a deadline" owns that policy and states what a
         // migration between two identities must name.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a"
+            "sha256:f4ac557ff316be6a3a5825193cf3f2fd45894206ffdbfcb4dbeed5074857b550"
         };
 
         [[nodiscard]]
@@ -715,6 +771,12 @@ namespace uf::operator_runtime
                             CHECK(installed_generation > 0),
                         project_registration_hash TEXT NOT NULL
                             REFERENCES project_registrations(registration_hash),
+                        -- The capability set this session holds, as the exact
+                        -- JCS array capability_profile_hash is the sha256 of.
+                        -- The hash alone was a caller field with no content
+                        -- behind it, so a policy rule naming a required
+                        -- capability had nothing to be judged against.
+                        controller_capabilities TEXT NOT NULL,
                         capability_profile_hash TEXT NOT NULL,
                         session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
                         controlled_target_id TEXT NOT NULL,
@@ -894,9 +956,11 @@ namespace uf::operator_runtime
                     -- operation_id is the primary key, so a plan freezes once
                     -- and a second freeze is a constraint violation rather than
                     -- a policy check. There is no update path and none may be
-                    -- added. required_approvals is 0 or 1 because the only
-                    -- approval kind the ledger has is the single human token in
-                    -- approvals; a list would be a column nothing reads.
+                    -- added. required_approvals is the JCS array of approver
+                    -- capabilities the pinned PolicyArtifact ruled must sign
+                    -- this plan, and policy_hash names the artifact that ruled
+                    -- them; issueApproval reads both, so neither is a column
+                    -- nothing keeps true.
                     CREATE TABLE IF NOT EXISTS operation_plans(
                         operation_id TEXT PRIMARY KEY
                             REFERENCES operations(operation_id),
@@ -909,8 +973,8 @@ namespace uf::operator_runtime
                         risk TEXT NOT NULL CHECK(risk IN (
                             'read_only', 'low', 'medium', 'high', 'critical'
                         )),
-                        required_approvals INTEGER NOT NULL
-                            CHECK(required_approvals IN (0, 1)),
+                        policy_hash TEXT NOT NULL,
+                        required_approvals TEXT NOT NULL,
                         maximum_steps INTEGER NOT NULL CHECK(maximum_steps > 0),
                         maximum_dispatches INTEGER NOT NULL
                             CHECK(maximum_dispatches > 0),
@@ -1009,7 +1073,12 @@ namespace uf::operator_runtime
                         effect_envelope_hash TEXT NOT NULL,
                         policy_hash TEXT NOT NULL,
                         approver_principal TEXT NOT NULL,
-                        approver_capability_hash TEXT NOT NULL,
+                        -- The capability the approver presented, matched
+                        -- against the plan's own required_approvals. A hash of
+                        -- an unnamed profile could not be matched against
+                        -- anything, so an approval was recorded rather than
+                        -- ruled.
+                        approver_capability TEXT NOT NULL,
                         authority_decision_id TEXT NOT NULL,
                         expires_at_unix_millis INTEGER NOT NULL CHECK(expires_at_unix_millis > 0),
                         consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed IN (0, 1)),
@@ -2972,6 +3041,20 @@ namespace uf::operator_runtime
                 "AgentProfile was verified against a different SessionManifest"
             );
         }
+        for (auto const& capability : pin.controllerCapabilities)
+        {
+            UF_TRY(requireName(capability, "controller capability"));
+        }
+
+        // The profile hash is the sha256 of the set, derived here and never
+        // stated: a caller that could name it could pin a session whose
+        // capability hash and capability set were about different things.
+        auto const capabilities = canonicalNameArray(pin.controllerCapabilities);
+        UF_TRY_VALUE(
+            capabilityProfileHash,
+            sha256(std::as_bytes(std::span{capabilities}))
+        );
+
         UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
 
         auto const runtimeArtifactRootHash = manifest.runtimeModelArtifactRootHash();
@@ -3049,10 +3132,11 @@ namespace uf::operator_runtime
                 "INSERT OR IGNORE INTO sessions"
                 "(session_id, authenticated_controller_id, idempotency_namespace, "
                 "manifest_hash, runtime_artifact_root_hash, installed_generation, "
-                "project_registration_hash, capability_profile_hash, session_epoch, "
+                "project_registration_hash, controller_capabilities, "
+                "capability_profile_hash, session_epoch, "
                 "controlled_target_id, project_instance_key, mode, controller_kind, "
                 "active) "
-                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 1)"
+                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 1)"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, pin.sessionId));
@@ -3082,25 +3166,26 @@ namespace uf::operator_runtime
             7,
             pin.projectRegistrationHash.hex()
         ));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 8, capabilities));
         UF_TRY(bindText(
             m_impl->database.get(),
             insert.get(),
-            8,
-            pin.capabilityProfileHash.hex()
+            9,
+            capabilityProfileHash.hex()
         ));
-        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 9, m_impl->sessionEpoch));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 10, pin.controlledTargetId));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 11, pin.projectInstanceKey));
+        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 10, m_impl->sessionEpoch));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 11, pin.controlledTargetId));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 12, pin.projectInstanceKey));
         UF_TRY(bindText(
             m_impl->database.get(),
             insert.get(),
-            12,
+            13,
             sessionModeWireName(pin.mode)
         ));
         UF_TRY(bindText(
             m_impl->database.get(),
             insert.get(),
-            13,
+            14,
             controllerKindWireName(pin.kind)
         ));
         UF_TRY(expectDone(m_impl->database.get(), insert.get()));
@@ -3111,7 +3196,8 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "SELECT authenticated_controller_id, idempotency_namespace, manifest_hash, "
                 "runtime_artifact_root_hash, installed_generation, "
-                "project_registration_hash, capability_profile_hash, session_epoch, "
+                "project_registration_hash, controller_capabilities, "
+                "capability_profile_hash, session_epoch, "
                 "controlled_target_id, project_instance_key, mode, controller_kind, "
                 "active "
                 "FROM sessions WHERE session_id=?1"
@@ -3129,14 +3215,15 @@ namespace uf::operator_runtime
             && static_cast<uint64>(sqlite3_column_int64(query.get(), 4))
                 == installedGeneration
             && columnText(query.get(), 5) == pin.projectRegistrationHash.hex()
-            && columnText(query.get(), 6) == pin.capabilityProfileHash.hex()
-            && static_cast<uint64>(sqlite3_column_int64(query.get(), 7))
+            && columnText(query.get(), 6) == capabilities
+            && columnText(query.get(), 7) == capabilityProfileHash.hex()
+            && static_cast<uint64>(sqlite3_column_int64(query.get(), 8))
                 == m_impl->sessionEpoch
-            && columnText(query.get(), 8) == pin.controlledTargetId
-            && columnText(query.get(), 9) == pin.projectInstanceKey
-            && columnText(query.get(), 10) == sessionModeWireName(pin.mode)
-            && columnText(query.get(), 11) == controllerKindWireName(pin.kind)
-            && sqlite3_column_int(query.get(), 12) == 1;
+            && columnText(query.get(), 9) == pin.controlledTargetId
+            && columnText(query.get(), 10) == pin.projectInstanceKey
+            && columnText(query.get(), 11) == sessionModeWireName(pin.mode)
+            && columnText(query.get(), 12) == controllerKindWireName(pin.kind)
+            && sqlite3_column_int(query.get(), 13) == 1;
         if (!matches)
         {
             return fail(
@@ -4194,6 +4281,48 @@ namespace uf::operator_runtime
         };
     }
 
+    auto OperatorCoordinator::availableTools(
+        ControllerBinding const& controller,
+        ProjectToolCatalogSchemaOwner const& catalog
+    ) -> Result<std::vector<OfferedTool>>
+    {
+        UF_TRY_VALUE(
+            query,
+            prepare(
+                m_impl->database.get(),
+                "SELECT controller_kind, controller_capabilities, "
+                "project_registration_hash FROM sessions "
+                "WHERE session_id=?1 AND active=1 AND session_epoch=?2"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), query.get(), 1, controller.sessionId()));
+        UF_TRY(bindInteger(m_impl->database.get(), query.get(), 2, m_impl->sessionEpoch));
+        if (sqlite3_step(query.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "ControllerBinding names no active session of this epoch"
+            );
+        }
+        UF_TRY_VALUE(kind, parseControllerKind(columnText(query.get(), 0)));
+        if (kind != controller.kind())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "ControllerBinding names a kind the session row no longer holds"
+            );
+        }
+        if (catalog.projectRegistrationHash().hex() != columnText(query.get(), 2))
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Tool Catalog does not match the pinned session registration"
+            );
+        }
+        UF_TRY_VALUE(capabilities, readNameArray(columnText(query.get(), 1)));
+        return catalog.offeredTools(controllerProfile(kind), capabilities);
+    }
+
     auto OperatorCoordinator::submitCommand(
         ControllerBinding const& controller,
         CommandRequest const& request,
@@ -4204,11 +4333,9 @@ namespace uf::operator_runtime
         UF_TRY(requireName(request.idempotencyNamespace, "idempotency_namespace"));
         UF_TRY(requireName(request.clientRequestId, "client_request_id"));
 
-        // The accept side of p03, evaluated again over the same predicate the
-        // offer side used. Both halves are required: the offer keeps an online
-        // Agent from ever holding a Privileged invocation, and this keeps it
-        // from presenting one another controller was offered.
-        if (!toolSurfaceAllowed(controller.profile(), invocation.surface()))
+        // The accept side of p03 re-evaluates every offer predicate because an
+        // invocation may be presented without first being offered.
+        if (!toolSurfaceAllowed(controller.profile(), invocation.descriptor().surface))
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
@@ -4217,9 +4344,10 @@ namespace uf::operator_runtime
         }
 
         auto const& toolName = invocation.toolName();
-        auto const& toolVersion = invocation.toolVersion();
+        auto const& toolVersion = invocation.descriptor().toolVersion;
         auto const& canonicalArgs = invocation.canonicalArgs().bytes();
-        auto const mutating = invocation.mutability() == ToolMutability::Mutating;
+        auto const mutating =
+            invocation.descriptor().mutability == ToolMutability::Mutating;
 
         // The fingerprint covers exactly what the catalog decided the command
         // is. Mutability and surface are absent on purpose: they are functions
@@ -4264,7 +4392,7 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "SELECT session.controlled_target_id, session.project_instance_key, "
                 "registration.plugin_id, session.idempotency_namespace, "
-                "session.project_registration_hash "
+                "session.project_registration_hash, session.controller_capabilities "
                 "FROM sessions session JOIN project_registrations "
                 "registration ON registration.registration_hash="
                 "session.project_registration_hash "
@@ -4302,6 +4430,22 @@ namespace uf::operator_runtime
             return fail(
                 AutomationErrorKind::ActionRejected,
                 "Tool invocation was minted for a different ProjectRegistration"
+            );
+        }
+        UF_TRY_VALUE(
+            heldCapabilities,
+            readNameArray(columnText(sessionQuery.get(), 5))
+        );
+        auto const missingCapability = missingRequiredToolCapability(
+            heldCapabilities,
+            invocation.descriptor().requiredCapabilities
+        );
+        if (missingCapability)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Controller does not hold required capability '" + *missingCapability
+                    + "' for tool " + toolName
             );
         }
 
@@ -5056,6 +5200,7 @@ namespace uf::operator_runtime
         uint64 expectedRevision,
         ControlLease const& lease,
         ProjectPluginHandle const& plugin,
+        ProjectToolCatalogSchemaOwner const& catalog,
         OperatorPlanAuthority const& planAuthority
     ) -> Result<FrozenPlan>
     {
@@ -5069,7 +5214,8 @@ namespace uf::operator_runtime
                 "o.controlled_target_id, o.plugin_id, "
                 "session.project_registration_hash, registration.plugin_hash, "
                 "snapshot.decision_basis_hash, observation.canonical_observation, "
-                "state.canonical_opaque_payload, session.controller_kind FROM operations o "
+                "state.canonical_opaque_payload, session.controller_kind, "
+                "session.controller_capabilities FROM operations o "
                 + std::string{k_liveControllerJoin}
                 + "JOIN project_registrations registration "
                 "ON registration.registration_hash=session.project_registration_hash "
@@ -5150,6 +5296,13 @@ namespace uf::operator_runtime
                 "Plan ProjectPlugin does not match the pinned session registration"
             );
         }
+        if (catalog.projectRegistrationHash().hex() != registrationHex)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Plan Tool Catalog does not match the pinned session registration"
+            );
+        }
 
         auto const commandFingerprintHex = columnText(query.get(), 3);
         auto const toolName              = columnText(query.get(), 4);
@@ -5159,6 +5312,19 @@ namespace uf::operator_runtime
         UF_TRY_VALUE(commandFingerprint, parseHashColumn(commandFingerprintHex));
         UF_TRY_VALUE(decisionBasisHash, parseHashColumn(decisionBasisHex));
         UF_TRY_VALUE(projectRegistrationHash, parseHashColumn(registrationHex));
+        UF_TRY_VALUE(descriptor, catalog.describe(toolName));
+        if (descriptor.toolVersion != toolVersion)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "The Tool Catalog now declares a different version of the tool "
+                "this Operation was created for"
+            );
+        }
+        UF_TRY_VALUE(
+            controllerCapabilities,
+            readNameArray(columnText(query.get(), 16))
+        );
 
         // The plugin runs inside the transaction, as derive and reduce already
         // do: the read of its inputs and the freeze against them must be one
@@ -5178,9 +5344,10 @@ namespace uf::operator_runtime
             plan,
             planAuthority.mintPlan(PlanMintInputs{
                 .proposal                = proposal,
+                .descriptor              = descriptor,
+                .controllerCapabilities  = controllerCapabilities,
                 .operationId             = operationId,
                 .toolName                = toolName,
-                .toolVersion             = toolVersion,
                 .canonicalArgs           = canonicalArgs,
                 .projectRegistrationHash = projectRegistrationHash,
                 .commandFingerprint      = commandFingerprint,
@@ -5205,30 +5372,32 @@ namespace uf::operator_runtime
             ));
         }
 
-        // The Operation's own edge is decided here, from the derived risk. The
-        // caller has no signal for either of these two events for exactly that
-        // reason.
+        // The Operation's own edge is decided here, by what the policy ruled.
+        // The caller has no signal for either of these two events for exactly
+        // that reason.
         UF_TRY_VALUE(machine, OperationMachine::restore(state, false, false));
         UF_TRY_VALUE(
             nextState,
             machine.transition(
-                plan.approvalRequired()
-                    ? OperationEvent::ApprovalRequired
-                    : OperationEvent::ReadyWithoutApproval
+                plan.requiredApprovals().empty()
+                    ? OperationEvent::ReadyWithoutApproval
+                    : OperationEvent::ApprovalRequired
             )
         );
 
-        auto const limits = plan.limits();
+        auto const limits            = plan.limits();
+        auto const requiredApprovals = canonicalNameArray(plan.requiredApprovals());
         UF_TRY_VALUE(
             insert,
             prepare(
                 m_impl->database.get(),
                 "INSERT INTO operation_plans(operation_id, plan_hash, "
                 "command_fingerprint, decision_basis_hash, effect_envelope_hash, "
-                "project_registration_hash, risk, required_approvals, maximum_steps, "
-                "maximum_dispatches, maximum_observations, maximum_waits, "
-                "maximum_elapsed_ms, canonical_plan) "
-                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)"
+                "project_registration_hash, risk, policy_hash, required_approvals, "
+                "maximum_steps, maximum_dispatches, maximum_observations, "
+                "maximum_waits, maximum_elapsed_ms, canonical_plan) "
+                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, "
+                "?14, ?15)"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, operationId));
@@ -5243,33 +5412,34 @@ namespace uf::operator_runtime
         ));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 6, registrationHex));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 7, riskWireName(plan.risk())));
-        UF_TRY(bindInteger(
+        UF_TRY(bindText(
             m_impl->database.get(),
             insert.get(),
             8,
-            plan.approvalRequired() ? 1U : 0U
+            planAuthority.policyHash().hex()
         ));
-        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 9, limits.maximumSteps));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 9, requiredApprovals));
+        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 10, limits.maximumSteps));
         UF_TRY(bindInteger(
             m_impl->database.get(),
             insert.get(),
-            10,
+            11,
             limits.maximumDispatches
         ));
         UF_TRY(bindInteger(
             m_impl->database.get(),
             insert.get(),
-            11,
+            12,
             limits.maximumObservations
         ));
-        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 12, limits.maximumWaits));
+        UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 13, limits.maximumWaits));
         UF_TRY(bindInteger(
             m_impl->database.get(),
             insert.get(),
-            13,
+            14,
             limits.maximumElapsedMillis
         ));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 14, plan.canonicalPlan()));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 15, plan.canonicalPlan()));
         UF_TRY(expectDone(m_impl->database.get(), insert.get()));
 
         UF_TRY_VALUE(nextRevision, checkedSqlIncrement(revision, "Operation revision"));
@@ -5308,9 +5478,10 @@ namespace uf::operator_runtime
             .planHash           = plan.planHash(),
             .decisionBasisHash  = plan.decisionBasisHash(),
             .effectEnvelopeHash = plan.effectEnvelopeHash(),
+            .policyHash         = planAuthority.policyHash(),
+            .requiredApprovals  = plan.requiredApprovals(),
             .limits             = limits,
             .risk               = plan.risk(),
-            .approvalRequired   = plan.approvalRequired(),
         };
     }
 
@@ -5319,6 +5490,7 @@ namespace uf::operator_runtime
         uint64 expectedRevision,
         ControlLease const& lease,
         ProjectPluginHandle const& plugin,
+        ProjectToolCatalogSchemaOwner const& catalog,
         OperatorPlanAuthority const& planAuthority
     ) -> Result<PlannedStep>
     {
@@ -5339,7 +5511,8 @@ namespace uf::operator_runtime
                 "observation.canonical_observation, state.canonical_opaque_payload, "
                 "o.frozen_plan_hash, EXISTS(SELECT 1 FROM dispatches d "
                 "WHERE d.operation_id=o.operation_id), "
-                "session.runtime_artifact_root_hash FROM operations o "
+                "session.runtime_artifact_root_hash, o.tool_name, o.tool_version "
+                "FROM operations o "
                 + std::string{k_liveControllerJoin}
                 + "JOIN project_registrations registration "
                 "ON registration.registration_hash=session.project_registration_hash "
@@ -5403,6 +5576,22 @@ namespace uf::operator_runtime
                 "Step ProjectPlugin does not match the pinned session registration"
             );
         }
+        if (catalog.projectRegistrationHash().hex() != columnText(query.get(), 5))
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Step Tool Catalog does not match the pinned session registration"
+            );
+        }
+        UF_TRY_VALUE(descriptor, catalog.describe(columnText(query.get(), 18)));
+        if (descriptor.toolVersion != columnText(query.get(), 19))
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "The Tool Catalog now declares a different version of the tool "
+                "this Operation was created for"
+            );
+        }
 
         // At most one UI-action step may await its dispatch. The check lives
         // here and nowhere else on purpose: a partial unique index expressing
@@ -5453,6 +5642,7 @@ namespace uf::operator_runtime
             step,
             planAuthority.mintStep(StepMintInputs{
                 .intent                  = intent,
+                .descriptor              = descriptor,
                 .canonicalPlan           = canonicalPlan,
                 .operationId             = operationId,
                 .planHash                = planHash,
@@ -5494,9 +5684,10 @@ namespace uf::operator_runtime
         // dispatch, so moving to Running for one would leave a state with no
         // outgoing edge; the first step of a plan is minted while the Operation
         // is already Ready or AwaitingApproval and needs no edge at all.
-        auto const frozen         = sqlite3_column_type(query.get(), 15) != SQLITE_NULL;
-        auto const dispatched     = sqlite3_column_int(query.get(), 16) != 0;
-        auto const approvalNeeded = sqlite3_column_int64(query.get(), 10) != 0;
+        auto const frozen     = sqlite3_column_type(query.get(), 15) != SQLITE_NULL;
+        auto const dispatched = sqlite3_column_int(query.get(), 16) != 0;
+        UF_TRY_VALUE(requiredApprovals, readNameArray(columnText(query.get(), 10)));
+        auto const approvalNeeded = !requiredApprovals.empty();
         auto nextState      = state;
         auto nextFrozen     = frozen;
         auto nextDispatched = dispatched;
@@ -6085,6 +6276,7 @@ namespace uf::operator_runtime
     {
         UF_TRY(requireName(authorityDecisionId.value(), "authority_decision_id"));
         UF_TRY(requireName(request.approverPrincipal, "approver_principal"));
+        UF_TRY(requireName(request.approverCapability, "approver_capability"));
         UF_TRY_VALUE(currentUnixMillis, unixTimeMilliseconds());
         if (request.expiresAtUnixMillis <= currentUnixMillis)
         {
@@ -6105,7 +6297,8 @@ namespace uf::operator_runtime
                 "SELECT o.state, o.session_id, o.controlled_target_id, "
                 "o.command_fingerprint, o.frozen_plan_hash, plan.plan_hash, "
                 "plan.decision_basis_hash, plan.effect_envelope_hash, "
-                "step.step_intent_hash FROM operations o "
+                "step.step_intent_hash, plan.policy_hash, plan.required_approvals "
+                "FROM operations o "
                 "JOIN operation_plans plan ON plan.operation_id=o.operation_id "
                 "JOIN operation_steps step ON step.operation_id=o.operation_id "
                 "AND step.step_kind='ui_action' AND step.dispatch_sequence IS NULL "
@@ -6160,6 +6353,23 @@ namespace uf::operator_runtime
             "Approval lease is stale"
         ));
 
+        // The plan's own ruling on who may approve it. An approver presenting
+        // any other capability is refused here: required_approvals names the
+        // approvers the policy ruled, so an approval by someone outside that
+        // set is an approval the policy never authorised.
+        UF_TRY_VALUE(
+            requiredApprovals,
+            readNameArray(columnText(operationQuery.get(), 10))
+        );
+        if (!std::ranges::contains(requiredApprovals, request.approverCapability))
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "The frozen plan's required_approvals does not name capability "
+                    + request.approverCapability
+            );
+        }
+
         UF_TRY_VALUE(token, randomToken(m_impl->database.get()));
         UF_TRY_VALUE(
             insert,
@@ -6169,7 +6379,7 @@ namespace uf::operator_runtime
                 "controlled_target_id, lease_id, session_epoch, fencing_token, "
                 "command_fingerprint, frozen_plan_hash, step_intent_hash, decision_basis_hash, "
                 "effect_envelope_hash, policy_hash, approver_principal, "
-                "approver_capability_hash, authority_decision_id, expires_at_unix_millis) "
+                "approver_capability, authority_decision_id, expires_at_unix_millis) "
                 "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, "
                 "?14, ?15, ?16, ?17, ?18)"
             )
@@ -6212,13 +6422,18 @@ namespace uf::operator_runtime
             13,
             columnText(operationQuery.get(), 7)
         ));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 14, request.policyHash.hex()));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            insert.get(),
+            14,
+            columnText(operationQuery.get(), 9)
+        ));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 15, request.approverPrincipal));
         UF_TRY(bindText(
             m_impl->database.get(),
             insert.get(),
             16,
-            request.approverCapabilityHash.hex()
+            request.approverCapability
         ));
         UF_TRY(bindText(
             m_impl->database.get(),

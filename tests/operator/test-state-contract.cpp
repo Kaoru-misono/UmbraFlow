@@ -764,7 +764,7 @@ namespace uf::operator_runtime
                 .authenticatedControllerId = "controller-1",
                 .idempotencyNamespace      = "controller-1",
                 .projectRegistrationHash   = registration.hash(),
-                .capabilityProfileHash     = hashOf("capability"),
+                .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
                 .controlledTargetId        = "target-2",
                 .projectInstanceKey        = "instance-missing",
                 .mode                      = SessionMode::Write,

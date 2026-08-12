@@ -448,7 +448,8 @@ namespace uf::operator_runtime::test_support
         auto toolCatalogSchemaOwner = ProjectToolCatalogSchemaOwner::create(
             *registration,
             bundle.toolCatalog(),
-            deployed->toolCatalogValidator()
+            deployed->toolCatalogReader(),
+            deployed->toolArgumentValidator()
         );
         REQUIRE(toolCatalogSchemaOwner.has_value());
 
@@ -648,11 +649,24 @@ namespace uf::operator_runtime::test_support
         };
     }
 
+    // The exact PolicyArtifact bytes this project's sessions are pinned to. It
+    // is derived from the operator protocol schema hash the manifest below
+    // names, because the artifact declares which protocol it answers for and
+    // verifyExact refuses one that answers for another. The one effect type it
+    // speaks about is the one this project's plugin proposes.
+    [[nodiscard]]
+    inline auto policyArtifactBytes() -> std::string
+    {
+        auto const types = std::vector<std::string>{std::string{k_effectType}};
+        return conformance::policyArtifactBytes(hashOf("operator"), types);
+    }
+
     [[nodiscard]]
     inline auto sessionManifest(
         VerifiedProjectRegistration const& project,
         ContentHash const& runtimeArtifactRootHash,
-        ContentHash const& agentProfileHash
+        ContentHash const& agentProfileHash,
+        std::string_view exactPolicyArtifactBytes
     ) -> SessionManifest
     {
         auto const result = SessionManifest::create(
@@ -662,7 +676,7 @@ namespace uf::operator_runtime::test_support
                 .runtimeModelArtifactRootHash = runtimeArtifactRootHash,
                 .operatorProtocolSchemaHash   = hashOf("operator"),
                 .projectRegistrationHash      = project.hash(),
-                .policyArtifactHash           = hashOf("policy"),
+                .policyArtifactHash           = hashOf(exactPolicyArtifactBytes),
                 .journalEnvelopeSchemaHash    = hashOf("journal-envelope"),
                 .agentProfileHash             = agentProfileHash,
             }
@@ -974,6 +988,20 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
                 ordinaryEffects,
                 ordinaryLimits,
             },
+            // Two tools whose plans are ordinary and whose descriptors are not:
+            // one declares it cannot be redelivered safely, the other allows
+            // less elapsed time than the step this plugin proposes. Each
+            // reaches mintStep and is refused by one clause of the descriptor.
+            ProposalCase{
+                "strict-delivery",
+                "strict-delivery",
+                ordinaryEffects,
+                ordinaryLimits,
+            },
+            ProposalCase{"brief-timeout", "brief-timeout", ordinaryEffects, ordinaryLimits},
+            // Its plan allows the step key every other plan allows, which is
+            // the one its own descriptor's ui_action_bounds does not name.
+            ProposalCase{"stray-action", "stray-action", ordinaryEffects, ordinaryLimits},
         };
         for (auto const& proposal : cases)
         {
@@ -1111,7 +1139,8 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         auto const manifest = sessionManifest(
             prepared.project.registration,
             prepared.runtimeArtifactRootHash,
-            hashOf(bytes)
+            hashOf(bytes),
+            policyArtifactBytes()
         );
         auto profile = AgentProfile::verifyExact(
             manifest,
@@ -1236,7 +1265,8 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         auto const manifest = sessionManifest(
             project.registration,
             installed->rootHash(),
-            hashOf("agent")
+            hashOf("agent"),
+            policyArtifactBytes()
         );
         auto const projectPlugin = loadPlugin(project, source);
         REQUIRE(store.registerProject(project.registration).has_value());
@@ -1260,7 +1290,7 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
                 .authenticatedControllerId = "controller-1",
                 .idempotencyNamespace      = "controller-1",
                 .projectRegistrationHash   = project.registration.hash(),
-                .capabilityProfileHash     = hashOf("capability"),
+                .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
                 .controlledTargetId        = "target-1",
                 .projectInstanceKey        = "instance-1",
                 .mode                      = SessionMode::Write,
@@ -1299,6 +1329,7 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
             manifest,
             *runtimeModel,
             "operator",
+            policyArtifactBytes(),
             k_fixtureUiAction
         );
         REQUIRE(planAuthority.has_value());
@@ -1383,7 +1414,7 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
                 .authenticatedControllerId = "controller-1",
                 .idempotencyNamespace      = "controller-1",
                 .projectRegistrationHash   = prepared.project.registration.hash(),
-                .capabilityProfileHash     = hashOf("capability"),
+                .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
                 .controlledTargetId        = controlledTargetId,
                 .projectInstanceKey        = projectInstanceKey,
                 .mode                      = mode,
@@ -1440,6 +1471,7 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
             operation.revision,
             prepared.lease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             prepared.planAuthority
         );
     }
@@ -1455,6 +1487,7 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
             operation.revision,
             prepared.lease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             prepared.planAuthority
         );
     }

@@ -607,19 +607,59 @@ every row — `ToolDescriptor` defaults them to the restricted value in C++
       "name": "chaos.choose_event_option",
       "version": "1",
       "mutability": "mutating",
+      "idempotency": "keyed_external",
       "surface": "semantic",
-      "argument_schema": "ChooseEventOptionArguments"
+      "argument_schema": "ChooseEventOptionArguments",
+      "required_capabilities": [],
+      "effect_bounds": [
+        {
+          "namespaced_type": "chaos.event_resolved",
+          "scope_kind": "run",
+          "maximum_risk": "medium",
+          "payload_schema_hash": "2eb9225d5bf5b9a694158b0b456e8df6512669ad4b50f90f936a0ab0f1615598"
+        }
+      ],
+      "ui_action_bounds": ["chaos.choose_option"],
+      "workflow_limits": {
+        "maximum_steps": 8,
+        "maximum_dispatches": 8,
+        "maximum_observations": 64,
+        "maximum_waits": 8,
+        "maximum_elapsed_ms": 120000
+      },
+      "timeout_policy": {"maximum_elapsed_ms": 30000, "on_timeout": "reobserve"}
     },
     {
       "name": "chaos.get_battle_state",
       "version": "1",
       "mutability": "read_only",
+      "idempotency": "read_safe",
       "surface": "semantic",
-      "argument_schema": "ReadBattleStateArguments"
+      "argument_schema": "ReadBattleStateArguments",
+      "required_capabilities": [],
+      "effect_bounds": [],
+      "ui_action_bounds": [],
+      "workflow_limits": {
+        "maximum_steps": 1,
+        "maximum_dispatches": 1,
+        "maximum_observations": 8,
+        "maximum_waits": 1,
+        "maximum_elapsed_ms": 15000
+      },
+      "timeout_policy": {"maximum_elapsed_ms": 15000, "on_timeout": "stop"}
     }
   ]
 }
 ```
+
+> **Amended by U8 (2026-08-13).** The example above carries the complete
+> `ToolDescriptor` the specification bundle states — required capabilities,
+> effect bounds, UI-action bounds, per-tool workflow limits, timeout policy and
+> idempotency — because the Tool Catalog schema now requires all of them. The
+> hard-coded global workflow ceiling that used to bound every plan is gone: a
+> limit stated per tool and a second one compiled in are two authorities over
+> one number, and only the catalog's is inside `tool_catalog_hash`. Nothing else
+> in this archived document changed.
 
 Q6 said to drop `plugin_id` and `tool_precondition_schema` as restatements. The
 first half is overruled and the second is answered differently. `plugin_id`

@@ -574,7 +574,7 @@ namespace uf::operator_runtime
                 .authenticatedControllerId = "controller-1",
                 .idempotencyNamespace      = "controller-1",
                 .projectRegistrationHash   = prepared.project.registration.hash(),
-                .capabilityProfileHash     = hashOf("capability"),
+                .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
                 .controlledTargetId        = std::move(controlledTargetId),
                 .projectInstanceKey        = std::move(projectInstanceKey),
                 .mode                      = SessionMode::Write,
@@ -833,6 +833,7 @@ namespace uf::operator_runtime
                     operation->operation.revision,
                     lease,
                     prepared.plugin,
+                    prepared.project.toolCatalogSchemaOwner,
                     prepared.planAuthority
                 ),
             };
@@ -897,6 +898,7 @@ namespace uf::operator_runtime
             timedOperation->operation.revision,
             timedLease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             prepared.planAuthority
         );
         REQUIRE_FALSE(latePlan.has_value());
@@ -1046,11 +1048,11 @@ namespace uf::operator_runtime
                 .authenticatedControllerId = "controller-1",
                 .idempotencyNamespace      = "controller-1",
                 .projectRegistrationHash   = pinned->manifest.projectRegistrationHash(),
-                .capabilityProfileHash = hashOf("capability"),
-                .controlledTargetId    = "target-agent",
-                .projectInstanceKey    = "instance-agent",
-                .mode                  = SessionMode::Write,
-                .kind                  = ControllerKind::Agent,
+                .controllerCapabilities = {std::string{conformance::k_operateCapability}},
+                .controlledTargetId     = "target-agent",
+                .projectInstanceKey     = "instance-agent",
+                .mode                   = SessionMode::Write,
+                .kind                   = ControllerKind::Agent,
             };
         };
         CHECK_FALSE(restarted->pinSession(

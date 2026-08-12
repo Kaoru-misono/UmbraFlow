@@ -44,7 +44,14 @@ namespace uf::operator_runtime
         std::string authenticatedControllerId{};
         std::string idempotencyNamespace{};
         ContentHash projectRegistrationHash;
-        ContentHash capabilityProfileHash;
+
+        // What this controller may ask for, stated as the set itself rather
+        // than as an opaque hash of one. capability_profile_hash is derived
+        // from these names inside pinSession, so the two cannot disagree, and a
+        // policy rule naming a required controller capability now has something
+        // to be judged against.
+        std::vector<std::string> controllerCapabilities{};
+
         std::string controlledTargetId{};
         std::string projectInstanceKey{};
         SessionMode mode{SessionMode::Read};
@@ -256,9 +263,16 @@ namespace uf::operator_runtime
         ContentHash     planHash;
         ContentHash     decisionBasisHash;
         ContentHash     effectEnvelopeHash;
-        WorkflowLimits  limits{};
-        Risk            risk{Risk::Critical};
-        bool            approvalRequired{};
+
+        // The artifact that ruled this plan, and the approver capabilities it
+        // ruled. Empty means the policy allowed the plan outright, and it is
+        // the only statement of that fact: there is no separate flag that could
+        // say otherwise.
+        ContentHash              policyHash;
+        std::vector<std::string> requiredApprovals{};
+
+        WorkflowLimits limits{};
+        Risk           risk{Risk::Critical};
     };
 
     // One minted workflow step. stepIntentHash covers the frozen plan hash and
@@ -347,16 +361,18 @@ namespace uf::operator_runtime
     // operation_plans and the pending operation_steps row, because an approver
     // who could name them could issue an approval for a plan nobody froze.
     //
-    // policyHash is still a caller field and is the one remaining hole: no code
-    // parses a PolicyArtifact, so there is nothing to derive it from. It
-    // belongs to c12 rather than to this change.
+    // The policy hash is read from operation_plans for the same reason, now
+    // that a PolicyArtifact is evaluated rather than named: an approver who
+    // could state which policy ruled the plan could state one that did not.
+    //
+    // approverCapability is what the approver presents, and issueApproval
+    // refuses one the plan's required_approvals does not name.
     struct ApprovalRequest final
     {
         std::string  operationId{};
         ControlLease lease;
-        ContentHash  policyHash;
         std::string  approverPrincipal{};
-        ContentHash  approverCapabilityHash;
+        std::string  approverCapability{};
         uint64       expiresAtUnixMillis{};
     };
 
@@ -592,15 +608,34 @@ namespace uf::operator_runtime
         //
         // The invocation must be minted by the Tool Catalog owner bound to the
         // same ProjectRegistration the session is pinned to; a mismatch is
-        // refused rather than reconciled. Its surface is re-evaluated here
-        // against the binding, because a controller can present an invocation
-        // it was never offered.
+        // refused rather than reconciled. Surface and required capabilities are
+        // re-evaluated here because a controller can present an invocation it
+        // was never offered.
         [[nodiscard]]
         auto submitCommand(
             ControllerBinding const& controller,
             CommandRequest const& request,
             ValidatedToolInvocation const& invocation
         ) -> Result<AcceptedCommand>;
+
+        // The p03 offer side: the tool set this binding may be told exists.
+        //
+        // It is here rather than on the catalog owner alone because who is
+        // asking is the ledger's fact and no caller's: the kind and the
+        // capability set both come from the live sessions row, re-read under
+        // the same rules every other entry point re-reads it under. The catalog
+        // owner must be bound to the registration this session pinned, so a
+        // foreign catalog cannot answer for it.
+        //
+        // A Privileged tool is absent from the result for an online Agent. That
+        // is a different fact from submitCommand's refusal of one, and neither
+        // stands in for the other: an Agent handed a list naming a tool it may
+        // not use has already been told something p03 says it must not learn.
+        [[nodiscard]]
+        auto availableTools(
+            ControllerBinding const& controller,
+            ProjectToolCatalogSchemaOwner const& catalog
+        ) -> Result<std::vector<OfferedTool>>;
 
         // Records that the world moved under us, which is what out-of-band
         // human input is. It is not an Operation and cannot become one: it
@@ -655,13 +690,21 @@ namespace uf::operator_runtime
         // the operations row and the snapshot row it names, and a plan that
         // stated its own would be a plan about a world nobody observed. The
         // Operation's own state moves to Ready or AwaitingApproval according to
-        // the derived risk, so no caller chooses which.
+        // what the policy ruled, so no caller chooses which.
+        //
+        // The catalog owner is required because the bounds a proposal is judged
+        // against are the descriptor's. It is asked again here rather than
+        // remembered from the submission: the descriptor is a function of the
+        // catalog bytes this session pinned and the tool name the operations
+        // row holds, so re-deriving it keeps one authority instead of storing a
+        // copy that could disagree with the catalog it came from.
         [[nodiscard]]
         auto freezePlan(
             std::string const& operationId,
             uint64 expectedRevision,
             ControlLease const& lease,
             ProjectPluginHandle const& plugin,
+            ProjectToolCatalogSchemaOwner const& catalog,
             OperatorPlanAuthority const& planAuthority
         ) -> Result<FrozenPlan>;
 
@@ -674,6 +717,7 @@ namespace uf::operator_runtime
             uint64 expectedRevision,
             ControlLease const& lease,
             ProjectPluginHandle const& plugin,
+            ProjectToolCatalogSchemaOwner const& catalog,
             OperatorPlanAuthority const& planAuthority
         ) -> Result<PlannedStep>;
 

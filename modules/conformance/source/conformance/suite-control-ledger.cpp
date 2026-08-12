@@ -279,19 +279,19 @@ namespace uf::operator_runtime::conformance
         REQUIRE(proposed.has_value());
         auto const frozen = frozenPlan(prepared, proposed->operation);
         REQUIRE(frozen.has_value());
-        CHECK(frozen->approvalRequired);
+        CHECK(frozen->requiredApprovals
+              == std::vector<std::string>{std::string{k_approveCapability}});
         CHECK(frozen->operation.state == OperationState::AwaitingApproval);
 
         auto const first = plannedStep(prepared, frozen->operation);
         REQUIRE(first.has_value());
 
         auto const approvalRequest = ApprovalRequest{
-            .operationId            = proposed->operation.operationId,
-            .lease                  = prepared.lease,
-            .policyHash             = hashOf("policy"),
-            .approverPrincipal      = "human-1",
-            .approverCapabilityHash = hashOf("approval-capability"),
-            .expiresAtUnixMillis    = 4'000'000'000'000U,
+            .operationId         = proposed->operation.operationId,
+            .lease               = prepared.lease,
+            .approverPrincipal   = "human-1",
+            .approverCapability  = std::string{k_approveCapability},
+            .expiresAtUnixMillis = 4'000'000'000'000U,
         };
         // Two approvals over the same pending step. The second is never
         // consumed, which is what lets the check below isolate the step binding

@@ -144,7 +144,7 @@ namespace uf::cli
     // reader for it, and installing here would be a write.
     //
     // The model directory is required for OcrArgs' reason, one layer further
-    // down: TaskContext::cycleReadLines answers a session with no OCR adapter
+    // down: TaskContext::cycleRead answers a session with no OCR adapter
     // with UnsupportedCapability, and a Reader the model declared would
     // otherwise reach the plugin as a reading that failed rather than as a
     // refusal naming the flag nobody passed.

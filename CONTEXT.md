@@ -79,6 +79,18 @@ open and deleted, never migrated.
 > whose §9 asked for exactly this edit and had gone unexecuted; it is archived
 > as of this correction.
 
+> **Re-settled 2026-08-13 by U8.** The current Operator DDL fingerprint is
+> `sha256:f4ac557ff316be6a3a5825193cf3f2fd45894206ffdbfcb4dbeed5074857b550`,
+> still over the same 23 tables and still the sole identity. Three columns moved
+> with it: `sessions.controller_capabilities` is new and carries the exact JCS
+> array `capability_profile_hash` is now derived from, `operation_plans` gained
+> `policy_hash` and turned `required_approvals` from a 0/1 integer into the JCS
+> array of approver capabilities the pinned PolicyArtifact ruled, and
+> `approvals.approver_capability_hash` became `approver_capability` so an
+> approval can be matched against that array. Each old spelling is gone rather
+> than accepted beside the new one, and a database at the previous identity is
+> refused at open as before.
+
 **RuntimeArtifact** — a verified manifest, one `runtime-model.toml`, and the
 manifest-listed assets under `assets/`. Pinned as
 `k_runtimeArtifactManifestFileName`, `k_runtimeModelFileName` and

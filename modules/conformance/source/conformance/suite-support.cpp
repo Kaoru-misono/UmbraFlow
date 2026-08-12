@@ -12,6 +12,8 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -218,9 +220,38 @@ namespace uf::operator_runtime::conformance
         return *outcome;
     }
 
+    auto policyArtifact(
+        deployment::LoadedDeployment const& deployed,
+        deployment::ProjectVocabulary const& vocabulary
+    ) -> std::string
+    {
+        // Read out of this project's own descriptors rather than named here: a
+        // policy speaking about an effect type this project never proposes
+        // would allow nothing, and every plan would meet the artifact's
+        // default deny instead of the rule a case is about.
+        auto types = std::vector<std::string>{};
+        for (auto const& tool : std::array{
+                 vocabulary.mutatingTool,
+                 vocabulary.approvalRequiredPlanTool,
+             })
+        {
+            auto const descriptor = deployed.catalog.carriedTool(tool);
+            REQUIRE(descriptor.has_value());
+            for (auto const& bound : descriptor->effectBounds)
+            {
+                types.emplace_back(bound.namespacedType);
+            }
+        }
+        std::ranges::sort(types);
+        types.erase(std::ranges::unique(types).begin(), types.end());
+        REQUIRE_FALSE(types.empty());
+        return policyArtifactBytes(hashOf("operator"), types);
+    }
+
     auto sessionManifest(
         VerifiedProjectRegistration const& registration,
-        ContentHash const& runtimeArtifactRootHash
+        ContentHash const& runtimeArtifactRootHash,
+        std::string_view exactPolicyArtifactBytes
     ) -> SessionManifest
     {
         auto const result = SessionManifest::create(
@@ -230,7 +261,7 @@ namespace uf::operator_runtime::conformance
                 .runtimeModelArtifactRootHash = runtimeArtifactRootHash,
                 .operatorProtocolSchemaHash   = hashOf("operator"),
                 .projectRegistrationHash      = registration.hash(),
-                .policyArtifactHash           = hashOf("policy"),
+                .policyArtifactHash           = hashOf(exactPolicyArtifactBytes),
                 .journalEnvelopeSchemaHash    = hashOf("journal-envelope"),
                 .agentProfileHash             = hashOf("agent"),
             }
@@ -272,9 +303,11 @@ namespace uf::operator_runtime::conformance
         auto const artifactRootHash    = installed->rootHash();
         auto const installedGeneration = installed->installedGeneration();
 
+        auto const policy   = policyArtifact(underTest, vocabulary);
         auto const manifest = sessionManifest(
             underTest.registration,
-            installed->rootHash()
+            installed->rootHash(),
+            policy
         );
         auto const plugin = loadPlugin(project, ProjectRole::UnderTest);
         REQUIRE(store.registerProject(underTest.registration).has_value());
@@ -298,7 +331,7 @@ namespace uf::operator_runtime::conformance
                 .authenticatedControllerId = "controller-1",
                 .idempotencyNamespace      = "controller-1",
                 .projectRegistrationHash   = underTest.registration.hash(),
-                .capabilityProfileHash     = hashOf("capability"),
+                .controllerCapabilities    = {std::string{k_operateCapability}},
                 .controlledTargetId        = "target-1",
                 .projectInstanceKey        = "instance-1",
                 .mode                      = SessionMode::Write,
@@ -351,6 +384,7 @@ namespace uf::operator_runtime::conformance
             manifest,
             *runtimeModel,
             "operator",
+            policy,
             uiActionOf(vocabulary)
         );
         REQUIRE(authority.has_value());
@@ -433,6 +467,7 @@ namespace uf::operator_runtime::conformance
             operation.revision,
             prepared.lease,
             prepared.plugin,
+            deploymentFor(prepared.project, ProjectRole::UnderTest).toolCatalogSchemaOwner,
             prepared.planAuthority
         );
     }
@@ -447,6 +482,7 @@ namespace uf::operator_runtime::conformance
             operation.revision,
             prepared.lease,
             prepared.plugin,
+            deploymentFor(prepared.project, ProjectRole::UnderTest).toolCatalogSchemaOwner,
             prepared.planAuthority
         );
     }

@@ -121,6 +121,7 @@ def runtime_model(*, threshold: float = 0.9, with_asset: bool = True) -> dict:
                 "id": "caption-reader",
                 "kind": "text",
                 "confidence_floor": 0.8,
+                "layout": "single_line",
                 "normalization": "trim",
             }
         ]

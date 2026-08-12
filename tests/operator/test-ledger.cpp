@@ -332,7 +332,8 @@ namespace uf::operator_runtime
             auto const manifest = sessionManifest(
                 project.registration,
                 installed->rootHash(),
-                hashOf("agent")
+                hashOf("agent"),
+                test_support::policyArtifactBytes()
             );
             auto const projectPlugin = loadPlugin(project, pluginSource);
             REQUIRE(store.registerProject(project.registration).has_value());
@@ -356,7 +357,7 @@ namespace uf::operator_runtime
                     .authenticatedControllerId = "controller-1",
                     .idempotencyNamespace      = "controller-1",
                     .projectRegistrationHash   = project.registration.hash(),
-                    .capabilityProfileHash     = hashOf("capability"),
+                    .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
                     .controlledTargetId        = "target-1",
                     .projectInstanceKey        = "instance-1",
                     .mode                      = SessionMode::Write,
@@ -389,6 +390,7 @@ namespace uf::operator_runtime
                 manifest,
                 *runtimeModel,
                 "operator",
+                test_support::policyArtifactBytes(),
                 test_support::k_fixtureUiAction
             );
             REQUIRE(planAuthority.has_value());
@@ -476,6 +478,7 @@ namespace uf::operator_runtime
                 operation.revision,
                 prepared.lease,
                 prepared.plugin,
+                prepared.project.toolCatalogSchemaOwner,
                 prepared.planAuthority
             );
         }
@@ -491,6 +494,7 @@ namespace uf::operator_runtime
                 operation.revision,
                 prepared.lease,
                 prepared.plugin,
+                prepared.project.toolCatalogSchemaOwner,
                 prepared.planAuthority
             );
         }
@@ -515,10 +519,12 @@ namespace uf::operator_runtime
                 sessionManifest(
                     prepared.project.registration,
                     runtimeArtifactRootHash,
-                    hashOf("agent")
+                    hashOf("agent"),
+                    test_support::policyArtifactBytes()
                 ),
                 *runtimeModel,
                 "operator",
+                test_support::policyArtifactBytes(),
                 deployment::readPlanProposal,
                 deployment::readStepIntent
             );
@@ -536,6 +542,7 @@ namespace uf::operator_runtime
                 proposed.revision,
                 prepared.lease,
                 prepared.plugin,
+                prepared.project.toolCatalogSchemaOwner,
                 authority
             );
             REQUIRE(frozen.has_value());
@@ -544,6 +551,7 @@ namespace uf::operator_runtime
                 frozen->operation.revision,
                 prepared.lease,
                 prepared.plugin,
+                prepared.project.toolCatalogSchemaOwner,
                 authority
             );
         }
@@ -912,7 +920,7 @@ namespace uf::operator_runtime
                 .authenticatedControllerId = "controller-mismatch",
                 .idempotencyNamespace      = "controller-mismatch",
                 .projectRegistrationHash   = pinRegistration,
-                .capabilityProfileHash     = hashOf("capability"),
+                .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
                 .controlledTargetId        = "target-mismatch",
                 .projectInstanceKey        = "instance-mismatch",
                 .mode                      = SessionMode::Write,
@@ -946,7 +954,7 @@ namespace uf::operator_runtime
             .authenticatedControllerId = "controller-1",
             .idempotencyNamespace      = "controller-1",
             .projectRegistrationHash   = prepared.project.registration.hash(),
-            .capabilityProfileHash     = hashOf("capability"),
+            .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
             .controlledTargetId        = "target-1",
             .projectInstanceKey        = "instance-1",
             .mode                      = SessionMode::Write,
@@ -958,7 +966,8 @@ namespace uf::operator_runtime
         auto const stored = sessionManifest(
             prepared.project.registration,
             prepared.runtimeArtifactRootHash,
-            hashOf("agent")
+            hashOf("agent"),
+            test_support::policyArtifactBytes()
         );
         REQUIRE(prepared.store.pinSession(samePin, stored, std::nullopt).has_value());
 
@@ -1004,7 +1013,7 @@ namespace uf::operator_runtime
                 .authenticatedControllerId = "controller-no-instance",
                 .idempotencyNamespace      = "controller-no-instance",
                 .projectRegistrationHash   = registrationHash,
-                .capabilityProfileHash     = hashOf("capability"),
+                .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
                 .controlledTargetId        = "target-no-instance",
                 .projectInstanceKey        = "instance-never-provisioned",
                 .mode                      = SessionMode::Write,
@@ -1163,7 +1172,8 @@ namespace uf::operator_runtime
         auto const manifest = sessionManifest(
             project.registration,
             installed->rootHash(),
-            hashOf("agent")
+            hashOf("agent"),
+            test_support::policyArtifactBytes()
         );
         REQUIRE(coordinator->registerProject(project.registration).has_value());
         CHECK_FALSE(coordinator->provisionProjectInstance(
@@ -1955,17 +1965,16 @@ namespace uf::operator_runtime
         auto const proposed = proposedOperation(prepared, "request-1", "approval-plan");
         auto const frozen   = freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
-        REQUIRE(frozen->approvalRequired);
+        REQUIRE_FALSE(frozen->requiredApprovals.empty());
         auto const step = mintStepFor(prepared, frozen->operation);
         REQUIRE(step.has_value());
 
         auto const request = ApprovalRequest{
-            .operationId            = proposed.operationId,
-            .lease                  = prepared.lease,
-            .policyHash             = hashOf("policy"),
-            .approverPrincipal      = "human-1",
-            .approverCapabilityHash = hashOf("approval-capability"),
-            .expiresAtUnixMillis    = 4'000'000'000'000U,
+            .operationId       = proposed.operationId,
+            .lease             = prepared.lease,
+            .approverPrincipal = "human-1",
+            .approverCapability  = frozen->requiredApprovals.front(),
+            .expiresAtUnixMillis = 4'000'000'000'000U,
         };
         auto const approval = prepared.store.issueApproval(
             request,
@@ -2027,7 +2036,8 @@ namespace uf::operator_runtime
         auto const foreignManifest = sessionManifest(
             foreign.registration,
             prepared.runtimeArtifactRootHash,
-            hashOf("agent")
+            hashOf("agent"),
+            test_support::policyArtifactBytes()
         );
         auto runtimeModel = prepared.observation.host->runtimeModelBinding(
             prepared.observation.generation
@@ -2038,6 +2048,7 @@ namespace uf::operator_runtime
             foreignManifest,
             *runtimeModel,
             "operator",
+            test_support::policyArtifactBytes(),
             test_support::k_fixtureUiAction
         );
         REQUIRE(foreignAuthority.has_value());
@@ -2048,6 +2059,7 @@ namespace uf::operator_runtime
             proposed.revision,
             prepared.lease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             *foreignAuthority
         ).has_value());
         CHECK(freezePlanFor(prepared, proposed).has_value());
@@ -2178,10 +2190,12 @@ namespace uf::operator_runtime
             sessionManifest(
                 prepared.project.registration,
                 secondRootHash,
-                hashOf("agent")
+                hashOf("agent"),
+                test_support::policyArtifactBytes()
             ),
             *secondModel,
             "operator",
+            test_support::policyArtifactBytes(),
             deployment::readPlanProposal,
             deployment::readStepIntent
         );
@@ -2194,17 +2208,26 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
 
+        // The bound is this tool's own descriptor and not a number compiled in
+        // beside it, so the case reads the catalog rather than a constant: a
+        // catalog that raised the tool's ceiling would raise this expectation
+        // with it, which is what makes tool_catalog_hash the single authority.
+        auto const declared =
+            prepared.project.toolCatalogSchemaOwner.describe("oversized-plan");
+        REQUIRE(declared.has_value());
+
         auto const proposed = proposedOperation(prepared, "request-1", "oversized-plan");
         auto const frozen   = freezePlanFor(prepared, proposed);
         REQUIRE(frozen.has_value());
 
-        // Every bound is a minimum against the ceiling, so widening is
-        // arithmetically impossible rather than policy-checked.
-        CHECK(frozen->limits.maximumSteps == k_workflowCeiling.maximumSteps);
-        CHECK(frozen->limits.maximumDispatches == k_workflowCeiling.maximumDispatches);
-        CHECK(frozen->limits.maximumObservations <= k_workflowCeiling.maximumObservations);
-        CHECK(frozen->limits.maximumWaits <= k_workflowCeiling.maximumWaits);
-        CHECK(frozen->limits.maximumElapsedMillis <= k_workflowCeiling.maximumElapsedMillis);
+        // Every bound is a minimum against the descriptor, so widening is
+        // arithmetically impossible rather than policy-checked. The proposal
+        // asks for far more than the descriptor allows on the first two.
+        CHECK(frozen->limits.maximumSteps == declared->limits.maximumSteps);
+        CHECK(frozen->limits.maximumDispatches == declared->limits.maximumDispatches);
+        CHECK(frozen->limits.maximumObservations <= declared->limits.maximumObservations);
+        CHECK(frozen->limits.maximumWaits <= declared->limits.maximumWaits);
+        CHECK(frozen->limits.maximumElapsedMillis <= declared->limits.maximumElapsedMillis);
     }
 
     TEST_CASE("a step cannot be replayed at another index")
@@ -2368,7 +2391,12 @@ namespace uf::operator_runtime
         // The derived risk decided the edge. OperationSignal carries no
         // ReadyWithoutApproval, so no caller could have taken the other one.
         CHECK(frozen->risk == Risk::High);
-        CHECK(frozen->approvalRequired);
+        CHECK(
+            frozen->requiredApprovals
+            == std::vector<std::string>{
+                std::string{conformance::k_approveCapability},
+            }
+        );
         CHECK(frozen->operation.state == OperationState::AwaitingApproval);
 
         auto const step = mintStepFor(prepared, frozen->operation);

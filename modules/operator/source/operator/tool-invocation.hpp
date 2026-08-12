@@ -3,68 +3,26 @@
 #include "controller.hpp"
 #include "manifest.hpp"
 #include "project-plugin.hpp"
+#include "tool-descriptor.hpp"
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
-#include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
 
 #include <functional>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace uf::operator_runtime
 {
     class ProjectToolCatalogSchemaOwner;
 
-    // Whether a tool changes anything outside the Operator. It is a property of
-    // the Tool Catalog descriptor and never of a request, because the whole
-    // point of the mutation chain is that it cannot be opted out of.
-    enum class ToolMutability : uint8
-    {
-        ReadOnly,
-        Mutating,
-    };
-
-    // Whether a tool's arguments and results are stated in the project's own
-    // vocabulary, or in the machine's -- coordinates, pixels, key codes,
-    // receipts, fencing tokens, bindings, frames. It is a property of the Tool
-    // Catalog descriptor and never of a request.
-    //
-    // The catalog is project-owned, so this is a declaration the project makes
-    // about itself, not isolation the Operator imposes. A project that marks a
-    // coordinate tool Semantic is not contained by p03; it is attributable,
-    // because the catalog bytes are inside plugin_hash, which is inside
-    // project_registration_hash, which pins the session. What p03 enforces is
-    // that the Operator never offers or accepts a Privileged tool for an online
-    // Agent. It is the same limit the Operator accepts for a plugin that
-    // under-declares its own effects, and it is deliberate: a second trust
-    // model beside ToolMutability's would be worse than one documented limit.
-    enum class ToolSurface : uint8
-    {
-        Semantic,
-        Privileged,
-    };
-
-    // What one Tool Catalog descriptor says about a tool. Returned by the
-    // catalog validator; there is no path by which a request proposes it.
-    struct ToolDescriptor final
-    {
-        std::string    toolVersion{};
-
-        // Mutating is the default so that a descriptor which failed to state a
-        // mutability is treated as the more restricted of the two.
-        ToolMutability mutability{ToolMutability::Mutating};
-
-        // Privileged is the default for the same reason: a descriptor that
-        // failed to state a surface gets the more restricted of the two, so a
-        // catalog cannot widen the Agent ceiling by omission.
-        ToolSurface    surface{ToolSurface::Privileged};
-    };
-
-    // One tool call the catalog owner recognised, carrying the descriptor's own
-    // version, mutability and surface. Only the owner bound to the exact
+    // One tool call the catalog owner recognised, carrying the descriptor the
+    // catalog declared for it. Only the owner bound to the exact
     // ProjectRegistration root and tool_catalog_hash can mint one.
     //
     // It deliberately records no controller. An invocation is what the project
@@ -78,19 +36,15 @@ namespace uf::operator_runtime
         ContentHash    m_projectRegistrationHash;
         ContentHash    m_toolCatalogHash;
         std::string    m_toolName;
-        std::string    m_toolVersion;
         CanonicalJson  m_canonicalArgs;
-        ToolMutability m_mutability;
-        ToolSurface    m_surface;
+        ToolDescriptor m_descriptor;
 
         ValidatedToolInvocation(
             ContentHash projectRegistrationHash,
             ContentHash toolCatalogHash,
             std::string toolName,
-            std::string toolVersion,
             CanonicalJson canonicalArgs,
-            ToolMutability mutability,
-            ToolSurface surface
+            ToolDescriptor descriptor
         );
 
     public:
@@ -101,49 +55,74 @@ namespace uf::operator_runtime
         auto toolName() const noexcept UF_LIFETIME_BOUND -> std::string const&;
 
         [[nodiscard]]
-        auto toolVersion() const noexcept UF_LIFETIME_BOUND
-            -> std::string const&;
-
-        [[nodiscard]]
         auto canonicalArgs() const noexcept UF_LIFETIME_BOUND
             -> CanonicalJson const&;
 
-        [[nodiscard]] auto mutability() const noexcept -> ToolMutability;
-        [[nodiscard]] auto surface() const noexcept -> ToolSurface;
+        // The whole descriptor rather than a projection of it. Version,
+        // mutability, surface, idempotency and every bound are one statement
+        // the catalog made about this tool, and an accessor per member would be
+        // a second spelling of each.
+        [[nodiscard]]
+        auto descriptor() const noexcept UF_LIFETIME_BOUND
+            -> ToolDescriptor const&;
     };
 
-    // The one p03 rule, spelled once. submitCommand enforces it, and a
-    // deployment computing the tool names it offers a controller asks the same
-    // function rather than restating the rule. Offering less would not be
-    // enforcement on its own -- a controller can present an invocation it was
-    // never offered -- which is why the enforcing evaluation is at the accept.
+    // Both p03 predicates are shared by the offer and accept sides. Neither side
+    // substitutes for the other: an unoffered invocation may still be presented.
     [[nodiscard]]
     auto toolSurfaceAllowed(
         ControllerProfile profile,
         ToolSurface surface
     ) noexcept -> bool;
 
-    // Trusted deployment callback. It selects the descriptor by tool name,
-    // validates the complete argument schema that descriptor names, and returns
-    // the descriptor's own version and mutability. It is never passed to plugin
-    // code or published in a business VM.
-    using ToolCatalogValidator = std::function<
-        Result<ToolDescriptor>(
-            std::string_view toolName,
-            std::string_view exactArgsJcs
-        )
+    [[nodiscard]]
+    auto missingRequiredToolCapability(
+        std::span<std::string const> heldCapabilities,
+        std::span<std::string const> requiredCapabilities
+    ) -> std::optional<std::string>;
+
+    // One tool the catalog declares, under the name it declares it by.
+    struct ToolCatalogEntry final
+    {
+        std::string    name{};
+        ToolDescriptor descriptor{};
+    };
+
+    // What one controller may be handed for one tool: enough to call it, and
+    // nothing about the bounds it will be judged against. Those are the
+    // Operator's business at the freeze, and an online Agent that could read
+    // them would learn the shape of what it is not allowed to do.
+    struct OfferedTool final
+    {
+        std::string name{};
+        std::string version{};
+    };
+
+    // Trusted deployment callbacks, and the reason they are two rather than
+    // one. The catalog is read once, when the owner is built, so the offer side
+    // and the accept side answer from the same stored declaration rather than
+    // from two reads that could disagree. Arguments cannot be read once: they
+    // arrive per call and are judged against the argument schema this
+    // descriptor names. Neither is ever passed to plugin code or published in a
+    // business VM.
+    using ToolCatalogReader =
+        std::function<Result<std::vector<ToolCatalogEntry>>()>;
+    using ToolArgumentValidator = std::function<
+        Status(std::string_view toolName, std::string_view exactArgsJcs)
     >;
 
     class ProjectToolCatalogSchemaOwner final
     {
-        ContentHash          m_projectRegistrationHash;
-        ContentHash          m_toolCatalogHash;
-        ToolCatalogValidator m_validateInvocation;
+        ContentHash                   m_projectRegistrationHash;
+        ContentHash                   m_toolCatalogHash;
+        std::vector<ToolCatalogEntry> m_tools;
+        ToolArgumentValidator         m_validateArguments;
 
         ProjectToolCatalogSchemaOwner(
             ContentHash projectRegistrationHash,
             ContentHash toolCatalogHash,
-            ToolCatalogValidator validateInvocation
+            std::vector<ToolCatalogEntry> tools,
+            ToolArgumentValidator validateArguments
         );
 
     public:
@@ -155,8 +134,12 @@ namespace uf::operator_runtime
         static auto create(
             VerifiedProjectRegistration const& registration,
             std::string_view exactToolCatalogBytes,
-            ToolCatalogValidator validateInvocation
+            ToolCatalogReader readCatalog,
+            ToolArgumentValidator validateArguments
         ) -> Result<ProjectToolCatalogSchemaOwner>;
+
+        [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
+        [[nodiscard]] auto toolCatalogHash() const -> ContentHash;
 
         // Takes the two things an ordinary caller is allowed to name -- which
         // tool, and the exact canonical arguments -- and nothing else. It
@@ -164,11 +147,32 @@ namespace uf::operator_runtime
         // catalog says about its own tools is the project's authority, and a
         // foreign registration must be able to mint its own invocation with no
         // session anywhere. Who may present one is the Operator's authority and
-        // is decided by toolSurfaceAllowed at submission.
+        // is decided from the surface and required capabilities at submission.
         [[nodiscard]]
         auto validate(
             std::string toolName,
             CanonicalJson canonicalArgs
         ) const -> Result<ValidatedToolInvocation>;
+
+        // The declaration this catalog carries for one tool. The Operator asks
+        // for it again when it freezes a plan, because the bounds a proposal is
+        // judged against belong to the catalog the session pinned and not to
+        // the invocation a caller once presented.
+        [[nodiscard]]
+        auto describe(std::string_view toolName) const -> Result<ToolDescriptor>;
+
+        // The offer side of p03: what a controller of this profile, holding
+        // these capabilities, may be told exists. A Privileged tool is absent
+        // from the result for a controller restricted to semantic tools -- not
+        // present and refused later -- and a tool whose required capabilities
+        // this session does not hold is absent for the same reason.
+        //
+        // heldCapabilities is a call-scoped borrow of the session's own
+        // capability set; nothing here stores it.
+        [[nodiscard]]
+        auto offeredTools(
+            ControllerProfile profile,
+            std::span<std::string const> heldCapabilities
+        ) const -> std::vector<OfferedTool>;
     };
 }

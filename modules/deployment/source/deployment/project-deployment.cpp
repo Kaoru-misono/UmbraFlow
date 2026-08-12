@@ -125,7 +125,7 @@ namespace uf::deployment
                     "items": {"$ref": "#/$defs/Identifier"}
                 },
                 "readings": {
-                    "$comment": "Present exactly when ordered_surface_stack is, with one entry per Reader every reporting Binding named. read carries the normalised text the trusted Reader produced, absent says that Reader found no text, and unknown says it could not decide and names why out of a closed vocabulary. All three travel because a plugin that cannot tell 'nothing is written here' from 'this frame was unreadable' has to fail closed on one blurry capture. No score, no rectangle and no pre-normalisation text: the score has already been compared against the Reader's own floor and differs between two captures of one unchanged screen, while this document is hashed.",
+                    "$comment": "Present exactly when ordered_surface_stack is, with one entry per Reader every reporting Binding named. read carries the lines the trusted Reader produced, each with its normalised text and the rectangle the frame held it in; absent says that Reader found no text; unknown says it could not decide and names why out of a closed vocabulary. All three travel because a plugin that cannot tell 'nothing is written here' from 'this frame was unreadable' has to fail closed on one blurry capture. A single_line Reader reports one line rather than a second shape. No score and no pre-normalisation text: the score has already been compared against the Reader's own floor and differs between two captures of one unchanged screen, while this document is hashed. The rects are here and are hashed with it, because unlike the score they are where a plugin acts, and a basis missing an input a plugin branches on is unsound.",
                     "type": "array",
                     "items": {
                         "type": "object",
@@ -133,6 +133,30 @@ namespace uf::deployment
                         "required": ["kind", "reader", "ui_target"],
                         "properties": {
                             "kind": {"enum": ["read", "absent", "unknown"]},
+                            "lines": {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "required": ["rect", "text"],
+                                    "properties": {
+                                        "rect": {
+                                            "type": "array",
+                                            "prefixItems": [
+                                                {"type": "integer", "minimum": 0},
+                                                {"type": "integer", "minimum": 0},
+                                                {"type": "integer", "minimum": 1},
+                                                {"type": "integer", "minimum": 1}
+                                            ],
+                                            "items": false,
+                                            "minItems": 4,
+                                            "maxItems": 4
+                                        },
+                                        "text": {"type": "string"}
+                                    }
+                                }
+                            },
                             "reader": {"$ref": "#/$defs/Identifier"},
                             "reason": {
                                 "enum": [
@@ -146,7 +170,6 @@ namespace uf::deployment
                                     "internal_error"
                                 ]
                             },
-                            "text": {"type": "string"},
                             "ui_target": {"$ref": "#/$defs/Identifier"}
                         },
                         "allOf": [
@@ -155,8 +178,8 @@ namespace uf::deployment
                                     "properties": {"kind": {"const": "read"}},
                                     "required": ["kind"]
                                 },
-                                "then": {"required": ["text"]},
-                                "else": {"not": {"required": ["text"]}}
+                                "then": {"required": ["lines"]},
+                                "else": {"not": {"required": ["lines"]}}
                             },
                             {
                                 "if": {
@@ -533,6 +556,7 @@ namespace uf::deployment
             "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Hash"
         },
         "tools": {
+            "$comment": "One complete ToolDescriptor per tool. Every bound a plan is judged against is declared here and nowhere else, so a widened bound moves tool_catalog_hash and therefore project_registration_hash.",
             "type": "array",
             "minItems": 1,
             "items": {
@@ -540,22 +564,136 @@ namespace uf::deployment
                 "additionalProperties": false,
                 "required": [
                     "argument_schema",
+                    "effect_bounds",
+                    "idempotency",
                     "mutability",
                     "name",
+                    "required_capabilities",
                     "surface",
-                    "version"
+                    "timeout_policy",
+                    "ui_action_bounds",
+                    "version",
+                    "workflow_limits"
                 ],
                 "properties": {
                     "argument_schema": {
                         "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
                     },
+                    "effect_bounds": {
+                        "$comment": "The complete set of OP:ExpectedEffect this tool may propose. An empty set is a tool that may propose none, which is the honest declaration for a read_only tool.",
+                        "type": "array",
+                        "uniqueItems": true,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                                "maximum_risk",
+                                "namespaced_type",
+                                "payload_schema_hash",
+                                "scope_kind"
+                            ],
+                            "properties": {
+                                "maximum_risk": {
+                                    "enum": [
+                                        "read_only",
+                                        "low",
+                                        "medium",
+                                        "high",
+                                        "critical"
+                                    ]
+                                },
+                                "namespaced_type": {
+                                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/NamespacedIdentifier"
+                                },
+                                "payload_schema_hash": {
+                                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Hash"
+                                },
+                                "scope_kind": {
+                                    "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
+                                }
+                            }
+                        }
+                    },
+                    "idempotency": {
+                        "enum": [
+                            "read_safe",
+                            "delivery_safe",
+                            "keyed_external",
+                            "non_idempotent"
+                        ]
+                    },
                     "mutability": {"enum": ["read_only", "mutating"]},
                     "name": {
                         "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
                     },
+                    "required_capabilities": {
+                        "type": "array",
+                        "uniqueItems": true,
+                        "items": {
+                            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
+                        }
+                    },
                     "surface": {"enum": ["semantic", "privileged"]},
+                    "timeout_policy": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["maximum_elapsed_ms", "on_timeout"],
+                        "properties": {
+                            "maximum_elapsed_ms": {"type": "integer", "minimum": 1},
+                            "on_timeout": {
+                                "enum": ["reobserve", "reconcile", "stop"]
+                            }
+                        }
+                    },
+                    "ui_action_bounds": {
+                        "$comment": "The complete set of OP:EffectivePlan allowed_ui_actions entries this tool may propose.",
+                        "type": "array",
+                        "uniqueItems": true,
+                        "items": {
+                            "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
+                        }
+                    },
                     "version": {
                         "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
+                    },
+                    "workflow_limits": {
+                        "$comment": "This tool's own ceiling. There is no second one compiled into the Operator: a limit stated per tool and another stated in C++ would be two authorities over one number.",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                            "maximum_dispatches",
+                            "maximum_elapsed_ms",
+                            "maximum_observations",
+                            "maximum_steps",
+                            "maximum_waits"
+                        ],
+                        "properties": {
+                            "maximum_dispatches": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 4294967295
+                            },
+                            "maximum_elapsed_ms": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                            },
+                            "maximum_observations": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 4294967295
+                            },
+                            "maximum_steps": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 4294967295
+                            },
+                            "maximum_waits": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 4294967295
+                            }
+                        }
                     }
                 }
             }
@@ -996,11 +1134,97 @@ namespace uf::deployment
         struct ToolEntry final
         {
             std::string                      name{};
-            std::string                      version{};
             std::string                      argumentDefinition{};
-            operator_runtime::ToolMutability mutability{};
-            operator_runtime::ToolSurface    surface{};
+            operator_runtime::ToolDescriptor descriptor{};
         };
+
+        struct IdempotencyName final
+        {
+            std::string_view                  wire{};
+            operator_runtime::ToolIdempotency idempotency{};
+        };
+
+        constexpr auto k_idempotencies = std::array{
+            IdempotencyName{
+                "delivery_safe",
+                operator_runtime::ToolIdempotency::DeliverySafe,
+            },
+            IdempotencyName{
+                "keyed_external",
+                operator_runtime::ToolIdempotency::KeyedExternal,
+            },
+            IdempotencyName{
+                "non_idempotent",
+                operator_runtime::ToolIdempotency::NonIdempotent,
+            },
+            IdempotencyName{"read_safe", operator_runtime::ToolIdempotency::ReadSafe},
+        };
+
+        struct DeliveryClassName final
+        {
+            std::string_view                wire{};
+            operator_runtime::DeliveryClass deliveryClass{};
+        };
+
+        constexpr auto k_deliveryClasses = std::array{
+            DeliveryClassName{
+                "delivery_safe",
+                operator_runtime::DeliveryClass::DeliverySafe,
+            },
+            DeliveryClassName{
+                "keyed_external",
+                operator_runtime::DeliveryClass::KeyedExternal,
+            },
+            DeliveryClassName{
+                "non_idempotent",
+                operator_runtime::DeliveryClass::NonIdempotent,
+            },
+        };
+
+        struct TimeoutActionName final
+        {
+            std::string_view                wire{};
+            operator_runtime::TimeoutAction action{};
+        };
+
+        constexpr auto k_timeoutActions = std::array{
+            TimeoutActionName{"reconcile", operator_runtime::TimeoutAction::Reconcile},
+            TimeoutActionName{"reobserve", operator_runtime::TimeoutAction::Reobserve},
+            TimeoutActionName{"stop", operator_runtime::TimeoutAction::Stop},
+        };
+
+        [[nodiscard]]
+        auto names(json::Value const& array) -> std::vector<std::string>
+        {
+            auto values = std::vector<std::string>{};
+            for (auto const& item : array.items())
+            {
+                values.emplace_back(item.string());
+            }
+            return values;
+        }
+
+        // OP:`TimeoutPolicy`, which both step intents and every tool descriptor
+        // carry. The schema has already bounded both members, so this reads
+        // rather than judges.
+        [[nodiscard]]
+        auto readTimeoutPolicy(
+            json::Value const& policy
+        ) -> operator_runtime::TimeoutPolicy
+        {
+            auto const action = std::ranges::find(
+                k_timeoutActions,
+                member(policy, "on_timeout").string(),
+                &TimeoutActionName::wire
+            );
+            UF_CHECK(action != k_timeoutActions.end());
+            return operator_runtime::TimeoutPolicy{
+                .maximumElapsedMillis = static_cast<uint64>(
+                    member(policy, "maximum_elapsed_ms").number()
+                ),
+                .onTimeout = action->action,
+            };
+        }
 
         // One payload schema and the identity it answers under: the sha256 of
         // its own exact bytes, which is what a journal manifest entry and an
@@ -1449,20 +1673,30 @@ namespace uf::deployment
         // OP:`WaitIntent`, so its presence is the answer the schema already
         // reached. A wait names no UI and leaves the three identifiers empty,
         // which is what mintStep refuses a UI-action step for.
+        auto const timeout = readTimeoutPolicy(member(document, "timeout_policy"));
         auto const* const p_action = document.find("action");
         if (p_action == nullptr)
         {
             return operator_runtime::StepIntentClaims{
                 .stepKey = std::string{member(document, "step_key").string()},
+                .timeout = timeout,
                 .kind    = operator_runtime::StepKind::Wait,
             };
         }
+        auto const deliveryClass = std::ranges::find(
+            k_deliveryClasses,
+            member(document, "delivery_class").string(),
+            &DeliveryClassName::wire
+        );
+        UF_CHECK(deliveryClass != k_deliveryClasses.end());
         return operator_runtime::StepIntentClaims{
             .stepKey    = std::string{member(document, "step_key").string()},
             .surfaceId  = std::string{member(*p_action, "surface_id").string()},
             .uiTargetId = std::string{member(*p_action, "ui_target_id").string()},
             .actionId   = std::string{member(*p_action, "action_id").string()},
-            .kind       = operator_runtime::StepKind::UiAction,
+            .timeout    = timeout,
+            .deliveryClass = deliveryClass->deliveryClass,
+            .kind          = operator_runtime::StepKind::UiAction,
         };
     }
 
@@ -1727,14 +1961,89 @@ namespace uf::deployment
                 member(tool, "surface").string(),
                 &SurfaceName::wire
             );
+            auto const idempotency = std::ranges::find(
+                k_idempotencies,
+                member(tool, "idempotency").string(),
+                &IdempotencyName::wire
+            );
             UF_CHECK(mutability != k_mutabilities.end());
             UF_CHECK(surface != k_surfaces.end());
+            UF_CHECK(idempotency != k_idempotencies.end());
+
+            auto bounds = std::vector<operator_runtime::EffectBound>{};
+            for (auto const& bound : member(tool, "effect_bounds").items())
+            {
+                auto const named = member(bound, "payload_schema_hash").string();
+                auto const carried = std::ranges::find_if(
+                    state->effectPayloadSchemas,
+                    [named](PayloadSchema const& candidate)
+                    {
+                        return candidate.hash.hex() == named;
+                    }
+                );
+                if (carried == state->effectPayloadSchemas.end())
+                {
+                    // A bound naming bytes nobody supplied would admit an
+                    // effect whose payload nothing could judge, so the join is
+                    // made where the bound is read rather than where the
+                    // effect arrives.
+                    return refuse(std::format(
+                        "the Tool Catalog bounds an effect to payload schema "
+                        "{}, which this deployment does not carry: its "
+                        "effect_payload_schemas hash to {}",
+                        named,
+                        carriedDigests(state->effectPayloadSchemas)
+                    ));
+                }
+                auto const risk = std::ranges::find(
+                    k_risks,
+                    member(bound, "maximum_risk").string(),
+                    operator_runtime::riskWireName
+                );
+                UF_CHECK(risk != k_risks.end());
+                bounds.emplace_back(operator_runtime::EffectBound{
+                    .namespacedType = std::string{
+                        member(bound, "namespaced_type").string()
+                    },
+                    .scopeKind = std::string{member(bound, "scope_kind").string()},
+                    .payloadSchemaHash = carried->hash,
+                    .maximumRisk       = *risk,
+                });
+            }
+
+            auto const& declaredLimits = member(tool, "workflow_limits");
             state->tools.emplace_back(ToolEntry{
                 .name               = std::string{member(tool, "name").string()},
-                .version            = std::string{member(tool, "version").string()},
                 .argumentDefinition = std::string{definition},
-                .mutability         = mutability->mutability,
-                .surface            = surface->surface,
+                .descriptor         = operator_runtime::ToolDescriptor{
+                    .toolVersion = std::string{member(tool, "version").string()},
+                    .requiredCapabilities = names(
+                        member(tool, "required_capabilities")
+                    ),
+                    .effectBounds   = std::move(bounds),
+                    .uiActionBounds = names(member(tool, "ui_action_bounds")),
+                    .limits         = operator_runtime::WorkflowLimits{
+                        .maximumSteps = static_cast<uint32>(
+                            member(declaredLimits, "maximum_steps").number()
+                        ),
+                        .maximumDispatches = static_cast<uint32>(
+                            member(declaredLimits, "maximum_dispatches").number()
+                        ),
+                        .maximumObservations = static_cast<uint32>(
+                            member(declaredLimits, "maximum_observations").number()
+                        ),
+                        .maximumWaits = static_cast<uint32>(
+                            member(declaredLimits, "maximum_waits").number()
+                        ),
+                        .maximumElapsedMillis = static_cast<uint64>(
+                            member(declaredLimits, "maximum_elapsed_ms").number()
+                        ),
+                    },
+                    .timeout     = readTimeoutPolicy(member(tool, "timeout_policy")),
+                    .mutability  = mutability->mutability,
+                    .surface     = surface->surface,
+                    .idempotency = idempotency->idempotency,
+                },
             });
         }
 
@@ -1891,11 +2200,7 @@ namespace uf::deployment
         {
             return std::nullopt;
         }
-        return operator_runtime::ToolDescriptor{
-            .toolVersion = p_tool->version,
-            .mutability  = p_tool->mutability,
-            .surface     = p_tool->surface,
-        };
+        return p_tool->descriptor;
     }
 
     auto ProjectDeployment::documentValidator() const
@@ -1951,29 +2256,35 @@ namespace uf::deployment
         };
     }
 
-    auto ProjectDeployment::toolCatalogValidator() const
-        -> operator_runtime::ToolCatalogValidator
+    auto ProjectDeployment::toolCatalogReader() const
+        -> operator_runtime::ToolCatalogReader
+    {
+        return [p_state = m_state]()
+                   -> Result<std::vector<operator_runtime::ToolCatalogEntry>>
+        {
+            auto entries = std::vector<operator_runtime::ToolCatalogEntry>{};
+            entries.reserve(p_state->tools.size());
+            for (auto const& tool : p_state->tools)
+            {
+                entries.emplace_back(operator_runtime::ToolCatalogEntry{
+                    .name       = tool.name,
+                    .descriptor = tool.descriptor,
+                });
+            }
+            return entries;
+        };
+    }
+
+    auto ProjectDeployment::toolArgumentValidator() const
+        -> operator_runtime::ToolArgumentValidator
     {
         return [p_state = m_state](
                    std::string_view toolName,
                    std::string_view exactArgsJcs
-               ) -> Result<operator_runtime::ToolDescriptor>
+               ) -> Status
         {
-            auto const* const p_tool = p_state->findTool(toolName);
-            if (p_tool == nullptr)
-            {
-                return refuse(std::format(
-                    "this project's Tool Catalog declares no tool named {}",
-                    toolName
-                ));
-            }
             UF_TRY_VALUE(arguments, parseDocument(exactArgsJcs));
-            UF_TRY(p_state->validateToolArguments(toolName, arguments));
-            return operator_runtime::ToolDescriptor{
-                .toolVersion = p_tool->version,
-                .mutability  = p_tool->mutability,
-                .surface     = p_tool->surface,
-            };
+            return p_state->validateToolArguments(toolName, arguments);
         };
     }
 

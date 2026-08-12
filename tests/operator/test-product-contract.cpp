@@ -11,6 +11,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -18,6 +19,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace uf::operator_runtime
 {
@@ -532,11 +534,79 @@ namespace uf::operator_runtime
         );
         REQUIRE(humanSnapshot.has_value());
 
+        // The offer side. It is asserted before any submission below, and it is
+        // a different failure from the refusals that follow: an Agent handed a
+        // list naming raw-coordinate-click has already learned the machine
+        // surface exists, whatever happens when it tries to use it. A test that
+        // only submitted would pass with no offer side at all.
+        auto const offeredToAgent = prepared.store.availableTools(
+            agent,
+            prepared.project.toolCatalogSchemaOwner
+        );
+        REQUIRE(offeredToAgent.has_value());
+        auto const names = [](std::vector<OfferedTool> const& offered)
+        {
+            auto listed = std::vector<std::string>{};
+            listed.reserve(offered.size());
+            for (auto const& tool : offered)
+            {
+                listed.emplace_back(tool.name);
+            }
+            return listed;
+        };
+        auto const agentNames = names(*offeredToAgent);
+        CHECK_FALSE(std::ranges::contains(agentNames, "raw-coordinate-click"));
+
+        // The offered set is not empty of everything, so the absence above is
+        // this tool's and not the whole catalog's.
+        CHECK(std::ranges::contains(agentNames, "observe-1"));
+        CHECK(std::ranges::contains(agentNames, "command-1"));
+
+        // A tool whose required_capabilities this session does not hold is
+        // absent for a reason that is not its surface, so the two halves of the
+        // derivation are told apart.
+        CHECK_FALSE(std::ranges::contains(agentNames, "capability-gated"));
+
+        // The same catalog, the same call, a controller whose profile is not
+        // restricted: the privileged tool is present. Without this the check
+        // above would pass over a derivation that offered nothing to anybody.
+        auto const offeredToHuman = prepared.store.availableTools(
+            human,
+            prepared.project.toolCatalogSchemaOwner
+        );
+        REQUIRE(offeredToHuman.has_value());
+        auto const humanNames = names(*offeredToHuman);
+        CHECK(std::ranges::contains(humanNames, "raw-coordinate-click"));
+        CHECK_FALSE(std::ranges::contains(humanNames, "capability-gated"));
+
+        auto const capabilityGated = test_support::toolInvocation(
+            prepared.project,
+            "capability-gated"
+        );
+        REQUIRE(capabilityGated.descriptor().surface == ToolSurface::Semantic);
+        REQUIRE(
+            capabilityGated.descriptor().requiredCapabilities
+            == std::vector<std::string>{"authoring"}
+        );
+        auto const capabilityRefused = prepared.store.submitCommand(
+            agent,
+            test_support::command(*agentSnapshot, "request-capability-gated"),
+            capabilityGated
+        );
+        REQUIRE_MESSAGE(
+            !capabilityRefused.has_value(),
+            "submitCommand must refuse capability-gated without authoring"
+        );
+        CHECK_MESSAGE(
+            capabilityRefused.error().message().contains("authoring"),
+            "the submit-side refusal must name the missing capability"
+        );
+
         auto const privileged = test_support::toolInvocation(
             prepared.project,
             "raw-coordinate-click"
         );
-        REQUIRE(privileged.surface() == ToolSurface::Privileged);
+        REQUIRE(privileged.descriptor().surface == ToolSurface::Privileged);
 
         // The identical invocation: accepted for the Human, refused for the
         // online Agent. Minting is the project's authority and says nothing
@@ -573,21 +643,19 @@ namespace uf::operator_runtime
         auto unstated = ProjectToolCatalogSchemaOwner::create(
             prepared.project.registration,
             prepared.project.toolCatalogBytes,
-            [](std::string_view toolName,
-               std::string_view) -> Result<ToolDescriptor>
+            []() -> Result<std::vector<ToolCatalogEntry>>
             {
-                if (toolName != "observe-1")
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "the surface-silent catalog names one tool"
-                    );
-                }
-                return ToolDescriptor{
-                    .toolVersion = "1",
-                    .mutability  = ToolMutability::ReadOnly,
+                return std::vector<ToolCatalogEntry>{
+                    ToolCatalogEntry{
+                        .name       = "observe-1",
+                        .descriptor = ToolDescriptor{
+                            .toolVersion = "1",
+                            .mutability  = ToolMutability::ReadOnly,
+                        },
+                    },
                 };
-            }
+            },
+            [](std::string_view, std::string_view) -> Status { return ok(); }
         );
         REQUIRE(unstated.has_value());
         auto const silent = unstated->validate(
@@ -595,7 +663,7 @@ namespace uf::operator_runtime
             test_support::canonical(prepared.project.schemaOwner, "{\"value\":1}")
         );
         REQUIRE(silent.has_value());
-        CHECK(silent->surface() == ToolSurface::Privileged);
+        CHECK(silent->descriptor().surface == ToolSurface::Privileged);
         CHECK_FALSE(prepared.store.submitCommand(
             agent,
             test_support::command(*agentSnapshot, "request-4"),

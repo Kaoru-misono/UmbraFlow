@@ -1445,7 +1445,8 @@ namespace uf::deployment
                 operator_runtime::ProjectToolCatalogSchemaOwner::create(
                     *registration,
                     files.toolCatalog,
-                    deployed->toolCatalogValidator()
+                    deployed->toolCatalogReader(),
+                    deployed->toolArgumentValidator()
                 );
             if (!catalogOwner.has_value())
             {

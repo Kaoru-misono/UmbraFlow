@@ -22,6 +22,8 @@
 
 #include <domain/content-hash.hpp>
 
+#include <core/types/integer.hpp>
+
 #include <array>
 #include <cstddef>
 #include <span>
@@ -220,29 +222,218 @@ namespace uf::operator_runtime::test_support
     // vocabulary. The names are not namespaced, which
     // schema/umbraflow-operator-v1.schema.json requires of a tool_name; see the
     // note in project-fixture.hpp.
+    //
+    // Every member varies for one case's sake, so each is supplied explicitly
+    // below rather than defaulted: the descriptor is the only bound a plan is
+    // judged against, and a tool that differed from its neighbours by accident
+    // would make some case pass for a reason nobody chose.
     struct ToolSource final
     {
         std::string_view name{};
-        std::string_view version{};
         std::string_view mutability{};
         std::string_view surface{};
+        std::string_view idempotency{};
+        std::string_view requiredCapability{};
+        std::string_view uiActionBound{};
+        uint32           workflowSteps{};
+        uint32           workflowDispatches{};
+        uint64           timeoutMillis{};
     };
 
+    // The plugin's one next_step names delivery_safe and a 5000 ms timeout, so
+    // a tool declaring delivery_safe and 60000 ms admits it, and the two tools
+    // that declare less are the only ones whose steps their descriptors refuse.
+    inline constexpr auto k_ordinaryIdempotency = std::string_view{"delivery_safe"};
+    inline constexpr auto k_ordinaryTimeoutMillis = uint64{60'000};
+
+    // The one entry of most tools' ui_action_bounds, which is the step key the
+    // plugin's proposals allow and its next_step names, and one no proposal
+    // ever names.
+    inline constexpr auto k_uiActionBound = std::string_view{"fixture.step"};
+    inline constexpr auto k_unboundUiAction = std::string_view{"fixture.elsewhere"};
+
     inline constexpr auto k_toolSources = std::array{
-        ToolSource{"approval-plan", "1", "mutating", "semantic"},
-        ToolSource{"command-1", "1", "mutating", "semantic"},
-        ToolSource{"command-2", "1", "mutating", "semantic"},
-        ToolSource{"different-command", "1", "mutating", "semantic"},
-        ToolSource{"mismatched-plan", "1", "mutating", "semantic"},
-        ToolSource{"observe-1", "1", "read_only", "semantic"},
-        ToolSource{"oversized-plan", "1", "mutating", "semantic"},
+        ToolSource{
+            .name               = "approval-plan",
+            .mutability         = "mutating",
+            .surface            = "semantic",
+            .idempotency        = k_ordinaryIdempotency,
+            .requiredCapability = "",
+            .uiActionBound      = k_uiActionBound,
+            .workflowSteps      = 8,
+            .workflowDispatches = 8,
+            .timeoutMillis      = k_ordinaryTimeoutMillis,
+        },
+        // Shorter than the 5000 ms the plugin's one step intent names, so
+        // the per-tool timeout_policy is what refuses that step and nothing
+        // else about the tool differs.
+        ToolSource{
+            .name               = "brief-timeout",
+            .mutability         = "mutating",
+            .surface            = "semantic",
+            .idempotency        = k_ordinaryIdempotency,
+            .requiredCapability = "",
+            .uiActionBound      = k_uiActionBound,
+            .workflowSteps      = 8,
+            .workflowDispatches = 8,
+            .timeoutMillis      = 1'000,
+        },
+        // The tool no session in this project holds a capability for. It is
+        // Semantic and read-only, so the only thing that can keep it out of
+        // an offered set is required_capabilities.
+        ToolSource{
+            .name               = "capability-gated",
+            .mutability         = "read_only",
+            .surface            = "semantic",
+            .idempotency        = "read_safe",
+            .requiredCapability = "authoring",
+            .uiActionBound      = k_uiActionBound,
+            .workflowSteps      = 1,
+            .workflowDispatches = 1,
+            .timeoutMillis      = k_ordinaryTimeoutMillis,
+        },
+        ToolSource{
+            .name               = "command-1",
+            .mutability         = "mutating",
+            .surface            = "semantic",
+            .idempotency        = k_ordinaryIdempotency,
+            .requiredCapability = "",
+            .uiActionBound      = k_uiActionBound,
+            .workflowSteps      = 8,
+            .workflowDispatches = 8,
+            .timeoutMillis      = k_ordinaryTimeoutMillis,
+        },
+        ToolSource{
+            .name               = "command-2",
+            .mutability         = "mutating",
+            .surface            = "semantic",
+            .idempotency        = k_ordinaryIdempotency,
+            .requiredCapability = "",
+            .uiActionBound      = k_uiActionBound,
+            .workflowSteps      = 8,
+            .workflowDispatches = 8,
+            .timeoutMillis      = k_ordinaryTimeoutMillis,
+        },
+        ToolSource{
+            .name               = "different-command",
+            .mutability         = "mutating",
+            .surface            = "semantic",
+            .idempotency        = k_ordinaryIdempotency,
+            .requiredCapability = "",
+            .uiActionBound      = k_uiActionBound,
+            .workflowSteps      = 8,
+            .workflowDispatches = 8,
+            .timeoutMillis      = k_ordinaryTimeoutMillis,
+        },
+        ToolSource{
+            .name               = "mismatched-plan",
+            .mutability         = "mutating",
+            .surface            = "semantic",
+            .idempotency        = k_ordinaryIdempotency,
+            .requiredCapability = "",
+            .uiActionBound      = k_uiActionBound,
+            .workflowSteps      = 8,
+            .workflowDispatches = 8,
+            .timeoutMillis      = k_ordinaryTimeoutMillis,
+        },
+        ToolSource{
+            .name               = "observe-1",
+            .mutability         = "read_only",
+            .surface            = "semantic",
+            .idempotency        = "read_safe",
+            .requiredCapability = "",
+            .uiActionBound      = k_uiActionBound,
+            .workflowSteps      = 8,
+            .workflowDispatches = 8,
+            .timeoutMillis      = k_ordinaryTimeoutMillis,
+        },
+        // Its own descriptor is the clamp the oversized proposal meets.
+        ToolSource{
+            .name               = "oversized-plan",
+            .mutability         = "mutating",
+            .surface            = "semantic",
+            .idempotency        = k_ordinaryIdempotency,
+            .requiredCapability = "",
+            .uiActionBound      = k_uiActionBound,
+            .workflowSteps      = 8,
+            .workflowDispatches = 8,
+            .timeoutMillis      = k_ordinaryTimeoutMillis,
+        },
         // The machine-surface tool: it names a coordinate, so no online Agent
-        // may be handed it. Read-only so that the p03 cases never contend for
-        // the mutation-chain slot the p01 cases are about.
-        ToolSource{"raw-coordinate-click", "1", "read_only", "privileged"},
-        ToolSource{"reordered-effects", "1", "mutating", "semantic"},
-        ToolSource{"two-step-plan", "1", "mutating", "semantic"},
+        // may be handed it. Read-only so that the p03 cases never contend
+        // for the mutation-chain slot the p01 cases are about.
+        ToolSource{
+            .name               = "raw-coordinate-click",
+            .mutability         = "read_only",
+            .surface            = "privileged",
+            .idempotency        = "read_safe",
+            .requiredCapability = "",
+            .uiActionBound      = k_uiActionBound,
+            .workflowSteps      = 8,
+            .workflowDispatches = 8,
+            .timeoutMillis      = k_ordinaryTimeoutMillis,
+        },
+        ToolSource{
+            .name               = "reordered-effects",
+            .mutability         = "mutating",
+            .surface            = "semantic",
+            .idempotency        = k_ordinaryIdempotency,
+            .requiredCapability = "",
+            .uiActionBound      = k_uiActionBound,
+            .workflowSteps      = 8,
+            .workflowDispatches = 8,
+            .timeoutMillis      = k_ordinaryTimeoutMillis,
+        },
+        // Admits no step claiming it is safe to redeliver, which is the one
+        // claim the plugin's step intent makes.
+        ToolSource{
+            .name               = "strict-delivery",
+            .mutability         = "mutating",
+            .surface            = "semantic",
+            .idempotency        = "non_idempotent",
+            .requiredCapability = "",
+            .uiActionBound      = k_uiActionBound,
+            .workflowSteps      = 8,
+            .workflowDispatches = 8,
+            .timeoutMillis      = k_ordinaryTimeoutMillis,
+        },
+        // Bounds a UI action the plugin never proposes, so the allowed set of
+        // its otherwise ordinary plan is what its ui_action_bounds refuses.
+        ToolSource{
+            .name               = "stray-action",
+            .mutability         = "mutating",
+            .surface            = "semantic",
+            .idempotency        = k_ordinaryIdempotency,
+            .requiredCapability = "",
+            .uiActionBound      = k_unboundUiAction,
+            .workflowSteps      = 8,
+            .workflowDispatches = 8,
+            .timeoutMillis      = k_ordinaryTimeoutMillis,
+        },
+        ToolSource{
+            .name               = "two-step-plan",
+            .mutability         = "mutating",
+            .surface            = "semantic",
+            .idempotency        = k_ordinaryIdempotency,
+            .requiredCapability = "",
+            .uiActionBound      = k_uiActionBound,
+            .workflowSteps      = 2,
+            .workflowDispatches = 2,
+            .timeoutMillis      = k_ordinaryTimeoutMillis,
+        },
     };
+
+    // Every tool of this catalog carries the same version, because nothing in
+    // this project is about a version and a per-tool one would be a number each
+    // case had to remember.
+    inline constexpr auto k_toolVersion = std::string_view{"1"};
+
+    // The one effect type and scope kind this project's plugin proposes, and the
+    // highest risk its descriptors admit. `critical` is deliberately outside the
+    // bound so that a case can reach the policy's default deny without
+    // rewriting the catalog.
+    inline constexpr auto k_effectType = std::string_view{"fixture.write"};
+    inline constexpr auto k_effectScopeKind = std::string_view{"instance"};
 
     [[nodiscard]]
     inline auto schemaHashHex(std::string_view bytes) -> std::string
@@ -298,15 +489,41 @@ namespace uf::operator_runtime::test_support
                 }
                 first = false;
                 m_toolCatalog += R"json({"argument_schema":"FixtureArguments",)json"
-                    R"json("mutability":")json";
+                    R"json("effect_bounds":[{"maximum_risk":"high",)json"
+                    R"json("namespaced_type":")json";
+                m_toolCatalog += k_effectType;
+                m_toolCatalog += R"json(","payload_schema_hash":")json";
+                m_toolCatalog += schemaHashHex(k_effectPayloadSchema);
+                m_toolCatalog += R"json(","scope_kind":")json";
+                m_toolCatalog += k_effectScopeKind;
+                m_toolCatalog += R"json("}],"idempotency":")json";
+                m_toolCatalog += tool.idempotency;
+                m_toolCatalog += R"json(","mutability":")json";
                 m_toolCatalog += tool.mutability;
                 m_toolCatalog += R"json(","name":")json";
                 m_toolCatalog += tool.name;
-                m_toolCatalog += R"json(","surface":")json";
+                m_toolCatalog += R"json(","required_capabilities":[)json";
+                if (!tool.requiredCapability.empty())
+                {
+                    m_toolCatalog += '"';
+                    m_toolCatalog += tool.requiredCapability;
+                    m_toolCatalog += '"';
+                }
+                m_toolCatalog += R"json(],"surface":")json";
                 m_toolCatalog += tool.surface;
-                m_toolCatalog += R"json(","version":")json";
-                m_toolCatalog += tool.version;
-                m_toolCatalog += R"json("})json";
+                m_toolCatalog += R"json(","timeout_policy":{"maximum_elapsed_ms":)json";
+                m_toolCatalog += std::to_string(tool.timeoutMillis);
+                m_toolCatalog += R"json(,"on_timeout":"reobserve"},)json"
+                                 R"json("ui_action_bounds":[")json";
+                m_toolCatalog += tool.uiActionBound;
+                m_toolCatalog += R"json("],"version":")json";
+                m_toolCatalog += k_toolVersion;
+                m_toolCatalog += R"json(","workflow_limits":{"maximum_dispatches":)json";
+                m_toolCatalog += std::to_string(tool.workflowDispatches);
+                m_toolCatalog += R"json(,"maximum_elapsed_ms":600000,)json"
+                                 R"json("maximum_observations":256,"maximum_steps":)json";
+                m_toolCatalog += std::to_string(tool.workflowSteps);
+                m_toolCatalog += R"json(,"maximum_waits":64}})json";
             }
             m_toolCatalog += "]}";
 

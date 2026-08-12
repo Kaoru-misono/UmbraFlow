@@ -12,7 +12,7 @@
 > - The boxes were ticked against a build and a test run on 2026-08-10, the
 >   first this tree ever had. **Every G2/G4 tick predates seven Operator DDL
 >   fingerprint changes** and has not been re-run against them. The fingerprint
->   is now `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`
+>   is now `sha256:f4ac557ff316be6a3a5825193cf3f2fd45894206ffdbfcb4dbeed5074857b550`
 >   over 23 tables; an `operator-runtime.sqlite` from any earlier date is refused
 >   at open and left untouched, never migrated and never replaced. What that
 >   fingerprint is and is not is ruled below, under the delete-on-open deadline.
@@ -321,9 +321,9 @@ the one gate both the coordinator door and the read-only door run, and which
   `k_operatorDatabaseSchemaIdentity`, sha256 over every `sqlite_schema` row
   ordered by `(type, name)` with each of its four columns written as
   `<byte length>:<value>`. It is currently
-  `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a` over
+  `sha256:f4ac557ff316be6a3a5825193cf3f2fd45894206ffdbfcb4dbeed5074857b550` over
   23 tables and occurs exactly once in the tree,
-  `modules/operator/source/operator/ledger.cpp:429`.
+  `modules/operator/source/operator/ledger.cpp:486`.
 - **`PRAGMA user_version` has no identity role and no upgrade role.** The DDL no
   longer writes it, nothing reads it, and no future schema break may bump it.
   A second version number beside the fingerprint is a second thing that can be
@@ -373,7 +373,7 @@ cases are in `tests/operator/test-ledger.cpp` under `test-operator`.
       (`modules/operator/source/operator/ledger.cpp`) refuses any database whose
       canonicalized DDL text does not hash to
       `k_operatorDatabaseSchemaIdentity`, currently
-      `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`;
+      `sha256:f4ac557ff316be6a3a5825193cf3f2fd45894206ffdbfcb4dbeed5074857b550`;
       see the ruling above for the two mechanisms that are not that one.
       The code refuses; it neither migrates nor deletes. Deleting the file is
       what a developer then does by hand, and what goes with it is not a cache:

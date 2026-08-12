@@ -172,6 +172,12 @@ namespace uf::operator_runtime
         // bytes: an authority that merely named a hash would be a convention.
         [[nodiscard]] auto operatorProtocolSchemaHash() const -> ContentHash;
 
+        // The PolicyArtifact this session is pinned to, exposed for the same
+        // reason: VerifiedPolicyArtifact::verifyExact must satisfy it with
+        // exact bytes, so the rules a plan is judged under are the ones this
+        // manifest attests to and not ones a caller handed in as a hash.
+        [[nodiscard]] auto policyArtifactHash() const -> ContentHash;
+
         // The AgentProfile this session is pinned to. Exposed for the same
         // reason: AgentProfile::verifyExact must satisfy it with exact bytes,
         // so that the ceilings an Agent binding runs under are the ones this
