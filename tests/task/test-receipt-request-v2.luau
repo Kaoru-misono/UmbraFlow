@@ -53,6 +53,7 @@ local runtime = model.compile({
             },
         },
     },
+    collections = {},
     surfaces = {
         { id = "screen", kind = "scene", covers = {}, identity = { all = { "screen.identity" }, any = {}, none = {} } },
     },

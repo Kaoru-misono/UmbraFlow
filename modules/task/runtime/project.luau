@@ -16,6 +16,7 @@ local sectionLists: { [string]: string } = {
     locator = "locators",
     reader = "readers",
     binding = "bindings",
+    collection = "collections",
     surface = "surfaces",
     transition = "transitions",
 }
@@ -40,6 +41,7 @@ local sectionFields: { [string]: { [string]: boolean } } = {
         actions = true,
         reads = true,
     },
+    collection = { id = true, surface = true, placement = true },
     surface = { id = true, kind = true, covers = true, identity = true },
     transition = { id = true, from_surfaces = true, trigger = true, to_surfaces = true },
 }
@@ -232,6 +234,7 @@ local function parseToml(text: string): any
         locators = {},
         readers = {},
         bindings = {},
+        collections = {},
         surfaces = {},
         transitions = {},
     }

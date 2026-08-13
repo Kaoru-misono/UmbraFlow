@@ -192,6 +192,47 @@ presence  { id, target, kind, confidence_floor }
 > reading is exactly one line equal to the value, which is a single_line
 > Reader's behaviour unchanged and refuses to invent a separator for a block.
 
+### 2.6a Ordered collection
+
+> **Amended 2026-08-13 (U13 `T-002`; deciding artifacts:
+> [`umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json)
+> and `test-resolution-v2.luau`).** A variable-cardinality ordered collection is
+> a Surface-scoped declaration:
+>
+> ```text
+> Collection {
+>     id,
+>     surface: SurfaceId,
+>     placement: {
+>         kind = "detected",
+>         search_rect: Rect,
+>         reader: ReaderId,
+>         order: left_to_right | top_to_bottom
+>     }
+> }
+> ```
+>
+> The Reader must declare `layout = "block"`. `search_rect` only bounds the
+> measurement and is never existence evidence. Once the Surface has resolved,
+> `cycle:resolve_collection(state, id)` runs that Reader and returns exactly
+> `{ count, items = [{ index, rect }, ...] }`: indices are zero-based and each
+> rectangle is the detector's exact image-space line rectangle. An absent read
+> resolves to count zero; Unknown returns no collection result and its reason.
+>
+> The declared axis, not Reader adapter enumeration order, assigns indices.
+> Items are sorted by x for `left_to_right` and y for `top_to_bottom`; their
+> spans on that axis must not overlap. This makes indices stable across two
+> captures of one unchanged layout despite detector enumeration changes or
+> small rectangle jitter: an index cannot swap until two items cross, and a
+> crossing first becomes an ambiguous overlap that refuses resolution.
+>
+> This Reader **does decide collection-item presence**, explicitly. That is the
+> reader-evidence half of U-04: every item exists because the trusted block
+> detector returned a line, never because a rectangle was calculated. It does
+> not change `Binding.reads`: a Reader named there remains reporting-only and
+> never decides that Binding's detector. Collection results also mint no Receipt
+> and authorize no action.
+
 ### 2.7 Binding
 
 ```text
@@ -385,10 +426,13 @@ must be satisfied before a candidate can enter the stack.
 > `confidence_floor`, or that was unreadable, is absent from the list rather
 > than present with a reason.
 >
-> A reading is not evidence. It carries no evidence ID, it never appears in a
-> receipt's `evidence_ids`, and it authorizes nothing. `Ambiguous` and
-> `UnknownResolution` report no readings, because a state that resolved no
-> Surface has nothing to attribute one to.
+> A **Binding `reads` reading** is not detector evidence. It carries no evidence
+> ID, it never appears in a receipt's `evidence_ids`, and it authorizes nothing.
+> `Ambiguous` and `UnknownResolution` report no readings, because a state that
+> resolved no Surface has nothing to attribute one to. **Amended 2026-08-13 by
+> the `T-002` collection ruling above:** a Collection's dedicated block Reader
+> is the detector evidence for its items; that separate field is not
+> `Binding.reads` and still mints no Receipt.
 
 Only a framework-minted `Resolved` result can mint a `Receipt`. A receipt is:
 
@@ -430,6 +474,7 @@ base_dpi             [positive integer, positive integer], required
 [[locator]]           Locator
 [[locator_variant]]   LocatorVariant
 [[reader]]            Reader
+[[collection]]        Collection
 [[surface]]           Surface
 [[binding]]           Binding
 [[transition]]        Transition
@@ -738,6 +783,10 @@ The following cases are mandatory for downstream agents:
 11. C++ can extract target/surface names and geometry without interpreting
     binding semantics.
 12. `runtime-model.toml` contains no offline screenshot or assertion records.
+13. One collection declaration resolves one, two, and three detected items to
+    the corresponding count, stable zero-based spatial indices, and exact line
+    rectangles; reversing detector enumeration order does not change the
+    indices, while overlapping spatial spans refuse.
 
 ## 10. Non-blocking open questions
 

@@ -122,13 +122,16 @@ local function readLines(reader: any, reading: any): any
     return { kind = "read", lines = table.freeze(lines), confidence = lowest }
 end
 
-local function readText(state: any, binding: any, readerId: string): any
-    local key = model.reading_key(binding.id, readerId)
+local function readText(state: any, subject: any, readerId: string): any
+    local collection = subject.placement.kind == "detected"
+    local key = if collection
+        then model.collection_reading_key(subject.id, readerId)
+        else model.reading_key(subject.id, readerId)
     local cached = state.reader_values[key]
     if cached ~= nil then return cached end
     local reader = state.model.reader_by_id[readerId]
     if reader == nil then error("RuntimeModel references unknown Reader '" .. readerId .. "'", 3) end
-    local area = binding.placement.rect
+    local area = if collection then subject.placement.search_rect else subject.placement.rect
     -- The Reader's own layout travels to the Host, which runs a different
     -- pipeline for each: the model states how many lines its rectangle holds
     -- and the Host never guesses.
@@ -283,6 +286,30 @@ function observe.open(runtimeModel: any): any
             current.evidence_cycle,
             resolvedState,
             current.predicate_records,
+            current.reader_values
+        )
+    end
+
+    -- A collection is measured only after its Surface resolved on this cycle.
+    -- Its declared search rectangle bounds the block read but creates no item;
+    -- the trusted Reader's detected lines are the sole item-existence evidence.
+    function cycle:resolve_collection(resolvedState: any, collectionId: any): (any?, string?)
+        local current = requireCycle(self)
+        local resolved, reason = resolution.resolve_collection(
+            current.model,
+            current.evidence_cycle,
+            resolvedState,
+            collectionId,
+            current.reader_values
+        )
+        if resolved ~= nil or reason ~= "not_measured" then return resolved, reason end
+        local collection = current.model.collection_by_id[collectionId]
+        readText(current, collection, collection.placement.reader)
+        return resolution.resolve_collection(
+            current.model,
+            current.evidence_cycle,
+            resolvedState,
+            collectionId,
             current.reader_values
         )
     end

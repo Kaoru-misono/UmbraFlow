@@ -42,6 +42,7 @@ local runtime = model.compile({
         { id = "save.primary", surface = "dialog", ui_target = "save", variant = "primary", placement = placement(800, 600, true), detector = detector("save.primary"), actions = { { id = "activate", kind = "click", proof_locator = "save.primary" } } },
         { id = "save.alternate", surface = "dialog", ui_target = "save", variant = "alternate", placement = placement(950, 600, true), detector = detector("save.alternate"), actions = { { id = "activate", kind = "click", proof_locator = "save.alternate" } } },
     },
+    collections = {},
     surfaces = {
         { id = "scene", kind = "scene", covers = {}, identity = { all = { "scene.identity" }, any = {}, none = {} } },
         { id = "other", kind = "scene", covers = {}, identity = { all = { "other.identity" }, any = {}, none = {} } },
@@ -191,6 +192,18 @@ local reading = model.compile({
         {
             id = "dialog.identity", surface = "dialog", ui_target = "dialog_anchor", variant = "default",
             placement = placement(500, 10, false), detector = detector("dialog.locator"), actions = {},
+        },
+    },
+    collections = {
+        {
+            id = "options",
+            surface = "scene",
+            placement = {
+                kind = "detected",
+                search_rect = { 100, 80, 1080, 160 },
+                reader = "flavour.reader",
+                order = "left_to_right",
+            },
         },
     },
     surfaces = {
@@ -440,6 +453,149 @@ do
     assert(#resolution.resolve_readings(runtime, cycle, state, records, values) == 0)
     evidence.end_cycle(cycle)
     assert(#resolution.resolve_readings(reading, cycle, state, records, values) == 0)
+end
+
+
+-- T-002 / T07-equivalent: one declaration resolves three different item
+-- counts. Image rectangles determine stable zero-based indices and travel
+-- without rewriting.
+local function collectionReading(lines: { { any } }): any
+    return {
+        [model.collection_reading_key("options", "flavour.reader")] = readBlock(lines),
+    }
+end
+
+local function resolvedCollection(lines: { { any } }): any
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    local result, reason = resolution.resolve_collection(
+        reading,
+        cycle,
+        state,
+        "options",
+        collectionReading(lines)
+    )
+    assert(reason == nil, "T-002 collection must resolve from trusted Reader evidence")
+    assert(result ~= nil, "T-002 collection must return a resolved value")
+    evidence.end_cycle(cycle)
+    return result
+end
+
+do
+    local reversed = resolvedCollection({
+        { "Right", { 821, 100, 180, 40 } },
+        { "Middle", { 505, 100, 180, 40 } },
+        { "Left", { 189, 100, 180, 40 } },
+    })
+    local forward = resolvedCollection({
+        { "Left", { 189, 100, 180, 40 } },
+        { "Middle", { 505, 100, 180, 40 } },
+        { "Right", { 821, 100, 180, 40 } },
+    })
+    for position, item in reversed.items do
+        local other = forward.items[position]
+        assert(
+            item.index == other.index
+                and item.rect[1] == other.rect[1]
+                and item.rect[2] == other.rect[2]
+                and item.rect[3] == other.rect[3]
+                and item.rect[4] == other.rect[4],
+            "T-002 indices must ignore detector enumeration order"
+        )
+    end
+
+    local cases = {
+        {
+            lines = { { "Only", { 631, 100, 180, 40 } } },
+            expected = { { 631, 100, 180, 40 } },
+        },
+        {
+            lines = {
+                { "Left", { 392, 100, 180, 40 } },
+                { "Right", { 708, 100, 180, 40 } },
+            },
+            expected = {
+                { 392, 100, 180, 40 },
+                { 708, 100, 180, 40 },
+            },
+        },
+        {
+            lines = {
+                { "Left", { 189, 100, 180, 40 } },
+                { "Middle", { 505, 100, 180, 40 } },
+                { "Right", { 821, 100, 180, 40 } },
+            },
+            expected = {
+                { 189, 100, 180, 40 },
+                { 505, 100, 180, 40 },
+                { 821, 100, 180, 40 },
+            },
+        },
+    }
+    for expectedCount, case in cases do
+        local result = resolvedCollection(case.lines)
+        assert(result.count == expectedCount, "T-002 count must follow detected item cardinality")
+        assert(#result.items == expectedCount, "T-002 item list must match reported count")
+        for position, item in result.items do
+            assert(item.index == position - 1, "T-002 item index must be the stable spatial ordinal")
+            local expected = case.expected[position]
+            assert(
+                item.rect[1] == expected[1]
+                    and item.rect[2] == expected[2]
+                    and item.rect[3] == expected[3]
+                    and item.rect[4] == expected[4],
+                "T-002 item rectangle must be the Reader's exact detected rectangle"
+            )
+        end
+    end
+end
+
+-- A bare search rectangle never produces an item. Only an absent result from
+-- the trusted Reader can resolve the collection to a known empty value.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    local missing, missingReason = resolution.resolve_collection(
+        reading,
+        cycle,
+        state,
+        "options",
+        {}
+    )
+    assert(missing == nil and missingReason == "not_measured", "T-002 geometry must not create Present")
+    local empty, emptyReason = resolution.resolve_collection(
+        reading,
+        cycle,
+        state,
+        "options",
+        {
+            [model.collection_reading_key("options", "flavour.reader")] = { kind = "absent" },
+        }
+    )
+    assert(emptyReason == nil and empty.count == 0, "T-002 absent Reader evidence must resolve zero items")
+    evidence.end_cycle(cycle)
+end
+
+-- Overlapping spans have no stable spatial order. Refusing them is what keeps a
+-- detector adapter's enumeration order from becoming item identity by accident.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    local result, reason = resolution.resolve_collection(
+        reading,
+        cycle,
+        state,
+        "options",
+        collectionReading({
+            { "First", { 200, 100, 180, 40 } },
+            { "Second", { 300, 100, 180, 40 } },
+        })
+    )
+    assert(result == nil and reason == "ambiguous_order", "T-002 ambiguous spatial order must refuse")
+    evidence.end_cycle(cycle)
 end
 
 return 1

@@ -7,7 +7,7 @@
 
 local model = {}
 model.schema = "umbraflow-runtime/v2"
-model.schema_hash = "7b24d6b865b45a9a9681197dbde88d550e594443f9817bf32dff2b66821d59f9"
+model.schema_hash = "de7057fad426d8de51e0e549f3ffa97450455effcfffb9b9c606ddc5b2f759dd"
 
 local runtimeModels: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 local semanticBytes: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any
@@ -246,6 +246,16 @@ function model.reading_key(bindingId: any, readerId: any): string
         .. identifier("reader_id", readerId)
 end
 
+-- A collection and a Binding may deliberately share an id: record ids are
+-- unique within their own vocabulary. The prefix keeps their Reader answers
+-- distinct without imposing a cross-vocabulary naming rule.
+function model.collection_reading_key(collectionId: any, readerId: any): string
+    return "collection:"
+        .. identifier("collection_id", collectionId)
+        .. ":read:"
+        .. identifier("reader_id", readerId)
+end
+
 local function predicate(what: string, value: any): any
     local source = object(what, value)
     if source.kind == "locator_present" then
@@ -386,6 +396,40 @@ local function placementBuilder(bounds: { number }): (string, any) -> any
             end
         end
         return table.freeze({ kind = "fixed", rect = area, action_point = actionPoint })
+    end
+end
+
+local function collectionBuilder(bounds: { number }): (string, any) -> any
+    return function(what: string, value: any): any
+        local source = object(what, value)
+        only(what, source, { id = true, surface = true, placement = true })
+        local placement = object(what .. ".placement", source.placement)
+        only(what .. ".placement", placement, {
+            kind = true,
+            search_rect = true,
+            reader = true,
+            order = true,
+        })
+        if placement.kind ~= "detected" then
+            fail(what .. ".placement.kind", "must be detected")
+        end
+        return table.freeze({
+            id = identifier(what .. ".id", source.id),
+            surface = identifier(what .. ".surface", source.surface),
+            placement = table.freeze({
+                kind = "detected",
+                search_rect = rect(
+                    what .. ".placement.search_rect",
+                    placement.search_rect,
+                    bounds
+                ),
+                reader = identifier(what .. ".placement.reader", placement.reader),
+                order = enum(what .. ".placement.order", placement.order, {
+                    left_to_right = true,
+                    top_to_bottom = true,
+                }),
+            }),
+        })
     end
 end
 
@@ -574,6 +618,7 @@ function model.compile(value: any): any
         locators = true,
         readers = true,
         bindings = true,
+        collections = true,
         surfaces = true,
         transitions = true,
     })
@@ -585,6 +630,11 @@ function model.compile(value: any): any
     local locators = records("RuntimeModel.locators", source.locators, locator)
     local readers = records("RuntimeModel.readers", source.readers, reader)
     local bindings = records("RuntimeModel.bindings", source.bindings, bindingBuilder(baseResolution))
+    local collections = records(
+        "RuntimeModel.collections",
+        source.collections,
+        collectionBuilder(baseResolution)
+    )
     local surfaces = records("RuntimeModel.surfaces", source.surfaces, surface)
     local transitions = records("RuntimeModel.transitions", source.transitions, transition)
     if #uiTargets == 0 then fail("RuntimeModel.ui_targets", "must not be empty") end
@@ -594,6 +644,7 @@ function model.compile(value: any): any
     local locatorById = mapById("RuntimeModel.locators", locators)
     local readerById = mapById("RuntimeModel.readers", readers)
     local bindingById = mapById("RuntimeModel.bindings", bindings)
+    local collectionById = mapById("RuntimeModel.collections", collections)
     local surfaceById = mapById("RuntimeModel.surfaces", surfaces)
     local transitionById = mapById("RuntimeModel.transitions", transitions)
 
@@ -667,6 +718,33 @@ function model.compile(value: any): any
     end
     for id, rows in bindingsBySurface do bindingsBySurface[id] = table.freeze(rows) end
 
+    local collectionsBySurface: { [string]: { any } } = {}
+    for _, valueCollection in collections do
+        requireRef(
+            "collection '" .. valueCollection.id .. "'",
+            surfaceById,
+            valueCollection.surface
+        )
+        local valueReader = requireRef(
+            "collection '" .. valueCollection.id .. "' placement",
+            readerById,
+            valueCollection.placement.reader
+        )
+        if valueReader.layout ~= "block" then
+            fail(
+                "collection '" .. valueCollection.id .. "' placement.reader",
+                "must name a block Reader"
+            )
+        end
+        local rows = collectionsBySurface[valueCollection.surface]
+        if rows == nil then
+            rows = {}
+            collectionsBySurface[valueCollection.surface] = rows
+        end
+        table.insert(rows, valueCollection)
+    end
+    for id, rows in collectionsBySurface do collectionsBySurface[id] = table.freeze(rows) end
+
     for _, valueSurface in surfaces do
         for _, covered in valueSurface.covers do
             if covered == valueSurface.id then fail("surface '" .. valueSurface.id .. "'", "cannot cover itself") end
@@ -702,6 +780,7 @@ function model.compile(value: any): any
         locators = locators,
         readers = readers,
         bindings = bindings,
+        collections = collections,
         surfaces = surfaces,
         transitions = transitions,
     })
@@ -713,6 +792,7 @@ function model.compile(value: any): any
         locators = semanticModel.locators,
         readers = semanticModel.readers,
         bindings = semanticModel.bindings,
+        collections = semanticModel.collections,
         surfaces = semanticModel.surfaces,
         transitions = semanticModel.transitions,
         asset_paths = assetPaths,
@@ -724,9 +804,11 @@ function model.compile(value: any): any
         locator_by_id = locatorById,
         reader_by_id = readerById,
         binding_by_id = bindingById,
+        collection_by_id = collectionById,
         surface_by_id = surfaceById,
         transition_by_id = transitionById,
         bindings_by_surface = table.freeze(bindingsBySurface),
+        collections_by_surface = table.freeze(collectionsBySurface),
     })
     runtimeModels[runtimeModel] = true
     semanticBytes[runtimeModel] = canonical(semanticModel)

@@ -296,6 +296,97 @@ function resolution.binding_candidates(
     return freezeList(result)
 end
 
+local function collectionTarget(
+    runtimeModel: any,
+    cycle: any,
+    resolvedState: any,
+    collectionId: any
+): (any?, string?)
+    if not model.is_runtime_model(runtimeModel)
+        or type(collectionId) ~= "string"
+        or runtimeModel.collection_by_id[collectionId] == nil
+    then
+        return nil, "unknown_collection"
+    end
+    local stateEntry = stateLedger[resolvedState]
+    if stateEntry == nil
+        or stateEntry.cycle ~= cycle
+        or stateEntry.model ~= runtimeModel
+        or not evidence.is_cycle_live(cycle)
+    then
+        return nil, "stale_state"
+    end
+    local collection = runtimeModel.collection_by_id[collectionId]
+    for _, surfaceId in stateEntry.stack do
+        if collection.surface == surfaceId then return collection, nil end
+    end
+    return nil, "collection_off_surface"
+end
+
+local function orderedCollectionLines(collection: any, lines: { any }): ({ any }?, string?)
+    local ordered = {}
+    for index, line in lines do ordered[index] = line end
+    local axis = if collection.placement.order == "left_to_right" then 1 else 2
+    local extent = if axis == 1 then 3 else 4
+    table.sort(ordered, function(left: any, right: any): boolean
+        return left.rect[axis] < right.rect[axis]
+    end)
+    for index = 2, #ordered do
+        local previous = ordered[index - 1].rect
+        local current = ordered[index].rect
+        if previous[axis] + previous[extent] > current[axis] then
+            return nil, "ambiguous_order"
+        end
+    end
+    return ordered, nil
+end
+
+-- Resolves one variable-cardinality collection against the same live state
+-- that made its Surface available. A bare search rectangle contributes nothing:
+-- only an absent or successful answer from the collection's trusted block
+-- Reader can resolve a count. Unknown reading and overlapping spatial spans
+-- refuse instead of fabricating items or inheriting adapter enumeration order.
+function resolution.resolve_collection(
+    runtimeModel: any,
+    cycle: any,
+    resolvedState: any,
+    collectionId: any,
+    readingsByKey: any
+): (any?, string?)
+    local collection, targetReason = collectionTarget(
+        runtimeModel,
+        cycle,
+        resolvedState,
+        collectionId
+    )
+    if collection == nil then return nil, targetReason end
+    local supplied = if type(readingsByKey) == "table" then readingsByKey else {}
+    local reading = supplied[model.collection_reading_key(
+        collection.id,
+        collection.placement.reader
+    )]
+    if type(reading) ~= "table" then return nil, "not_measured" end
+    if reading.kind == "absent" then
+        return table.freeze({ count = 0, items = freezeList({}) }), nil
+    end
+    if reading.kind ~= "read" or type(reading.lines) ~= "table" then
+        local reason = if reading.kind == "unknown" and evidence.is_unknown_reason(reading.reason)
+            then reading.reason
+            else "ocr_unreadable"
+        return nil, reason
+    end
+    local ordered, orderReason = orderedCollectionLines(collection, reading.lines)
+    if ordered == nil then return nil, orderReason end
+    local items = {}
+    for position, line in ordered do
+        items[position] = table.freeze({
+            index = position - 1,
+            rect = line.rect,
+        })
+    end
+    return table.freeze({ count = #items, items = freezeList(items) }), nil
+end
+
 -- The Bindings a resolved state could report readings from: every Binding on a
 -- Surface of its stack that named a Reader in `reads`.  It is the reading
 -- sibling of binding_candidates and refuses on the same terms, so a state from

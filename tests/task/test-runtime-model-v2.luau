@@ -1,8 +1,8 @@
 --!strict
 -- Unique TOML parser and immutable RuntimeModel v2 field contract.
 
-local function rejects(action: () -> any)
-    assert(not pcall(action))
+local function rejects(action: () -> any, message: string?)
+    assert(not pcall(action), message)
 end
 
 local valid = [==[
@@ -35,6 +35,13 @@ id = "header.text"
 kind = "text"
 confidence_floor = 0.80
 layout = "single_line"
+normalization = "trim"
+
+[[reader]]
+id = "options.text"
+kind = "text"
+confidence_floor = 0.80
+layout = "block"
 normalization = "trim"
 
 [[binding]]
@@ -73,6 +80,16 @@ detector = {
 }
 actions = [{ id = "activate", kind = "click", proof_locator = "save.template" }]
 
+[[collection]]
+id = "options"
+surface = "settings"
+placement = {
+  kind = "detected",
+  search_rect = [120, 300, 1680, 300],
+  reader = "options.text",
+  order = "left_to_right",
+}
+
 [[surface]]
 id = "settings"
 kind = "scene"
@@ -99,6 +116,14 @@ assert(runtime.ui_target_by_id.save_button.variant == nil)
 assert(runtime.binding_by_id["settings.save"].variant == "enabled")
 assert(runtime.binding_by_id["settings.save"].placement.rect[1] == 1600)
 assert(runtime.binding_by_id["settings.save"].placement.action_point[1] == 1710)
+assert(
+    runtime.collection_by_id.options.placement.order == "left_to_right",
+    "T-002 collection order must survive TOML compilation"
+)
+assert(
+    runtime.collection_by_id.options.placement.search_rect[3] == 1680,
+    "T-002 collection search rectangle must survive TOML compilation"
+)
 assert(runtime.locator_by_id["save.template"].asset_path == "assets/templates/save.png")
 assert(runtime.locator_by_id["save.template"].sha256 == nil)
 assert(runtime.asset_paths[1] == "assets/templates/header.png")
@@ -183,6 +208,22 @@ end
 local clickAction = '{ id = "activate", kind = "click", proof_locator = "save.template" }'
 local keyAction = '{ id = "activate", kind = "key", key = "ENTER", proof_locator = "save.template" }'
 local actionPointLine = '  action_point = [1710, 965],\n'
+
+-- A collection's Reader is its item detector, so the declaration accepts only
+-- block layout and cannot fall back to geometry or to a fixed placement.
+rejects(function()
+    project.parse(replace(
+        valid,
+        'id = "options.text"\nkind = "text"\nconfidence_floor = 0.80\nlayout = "block"',
+        'id = "options.text"\nkind = "text"\nconfidence_floor = 0.80\nlayout = "single_line"'
+    ))
+end, "T-002 collection detector must require block layout")
+rejects(function()
+    project.parse(replace(valid, '  reader = "options.text",\n', ""))
+end, "T-002 collection detector must require a Reader")
+rejects(function()
+    project.parse(replace(valid, '  kind = "detected",\n', '  kind = "fixed",\n'))
+end, "T-002 collection placement must have one destructive spelling")
 
 local keyed = project.parse(
     replace(replace(valid, clickAction, keyAction), actionPointLine, "")

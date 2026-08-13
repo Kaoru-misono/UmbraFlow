@@ -299,6 +299,23 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
 )toml";
         }
 
+        [[nodiscard]] auto collectionRuntimeModel() -> std::string
+        {
+            return runtimeModel() + R"toml(
+[[reader]]
+id = "options.reader"
+kind = "text"
+confidence_floor = 0.5
+layout = "block"
+normalization = "trim"
+
+[[collection]]
+id = "options"
+surface = "screen"
+placement = { kind = "detected", search_rect = [0, 0, 3, 1], reader = "options.reader", order = "left_to_right" }
+)toml";
+        }
+
         [[nodiscard]] auto mixedLayoutReadingRuntimeModel() -> std::string
         {
             auto result = readingRuntimeModel();
@@ -1474,6 +1491,146 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         // Each line's own rectangle, and not the Binding's: a reading that
         // copied the question would put [1,0,1,1] on all three.
         CHECK(observed->stateResolutionHash() == hash(observed->canonicalJcs()));
+    }
+
+    // T-002 / T07-equivalent. One declaration is resolved against one, two and
+    // three detected items. The Reader returns right-to-left order for the
+    // multi-item cases, so the exact result also proves that adapter enumeration
+    // order is not item identity. A final unchanged three-item capture returns
+    // left-to-right and must produce the same indices and rectangles.
+    TEST_CASE("A detected collection returns count stable index and exact rectangle")
+    {
+        auto const resolve = [](std::vector<ocr::TextLine> lines, FrameId frameId)
+        {
+            auto const directory = TemporaryDirectory{};
+            auto host = TaskHost{};
+            auto const rootHash = publish(
+                directory.path(),
+                collectionRuntimeModel(),
+                runtimeAssets()
+            );
+            auto const generation = TaskHostTestAccess::activate(
+                host,
+                directory.path(),
+                rootHash
+            );
+            REQUIRE(generation.has_value());
+            auto runtime = RuntimeContext{
+                frame(
+                    {
+                        std::byte{k_anchorGray},
+                        std::byte{k_actionGray},
+                        std::byte{0},
+                    },
+                    frameId
+                ),
+                1'000,
+                std::make_unique<ScriptedBlockReader>(std::move(lines))
+            };
+            return runText(
+                host,
+                *generation,
+                runtime,
+                R"lua(
+                    local cycle = observe.open(project.load_project())
+                    local state = cycle:resolve_state()
+                    local collection, reason = cycle:resolve_collection(state, "options")
+                    cycle:close()
+                    if collection == nil then error(reason) end
+                    return jcs.encode(collection)
+                )lua"
+            );
+        };
+
+        auto const one = resolve(
+            {
+                ocr::TextLine{
+                    .text   = "only",
+                    .bounds = pixelRect(1, 0, 1, 1),
+                    .confidenceBp = 9'100,
+                },
+            },
+            FrameId{45}
+        );
+        CHECK_MESSAGE(
+            one
+                == R"({"count":1,"items":[{"index":0,"rect":[1,0,1,1]}]})",
+            "T-002 one-item Host result must report count, index and exact rectangle"
+        );
+
+        auto const two = resolve(
+            {
+                ocr::TextLine{
+                    .text   = "right",
+                    .bounds = pixelRect(2, 0, 1, 1),
+                    .confidenceBp = 9'100,
+                },
+                ocr::TextLine{
+                    .text   = "left",
+                    .bounds = pixelRect(0, 0, 1, 1),
+                    .confidenceBp = 9'100,
+                },
+            },
+            FrameId{46}
+        );
+        CHECK_MESSAGE(
+            two
+                == R"({"count":2,"items":[{"index":0,"rect":[0,0,1,1]},{"index":1,"rect":[2,0,1,1]}]})",
+            "T-002 two-item Host result must report count, indices and exact rectangles"
+        );
+
+        auto const expectedThree = std::string{
+            R"({"count":3,"items":[{"index":0,"rect":[0,0,1,1]},{"index":1,"rect":[1,0,1,1]},{"index":2,"rect":[2,0,1,1]}]})"
+        };
+        auto const threeReversed = resolve(
+            {
+                ocr::TextLine{
+                    .text   = "right",
+                    .bounds = pixelRect(2, 0, 1, 1),
+                    .confidenceBp = 9'100,
+                },
+                ocr::TextLine{
+                    .text   = "middle",
+                    .bounds = pixelRect(1, 0, 1, 1),
+                    .confidenceBp = 9'100,
+                },
+                ocr::TextLine{
+                    .text   = "left",
+                    .bounds = pixelRect(0, 0, 1, 1),
+                    .confidenceBp = 9'100,
+                },
+            },
+            FrameId{47}
+        );
+        CHECK_MESSAGE(
+            threeReversed == expectedThree,
+            "T-002 three-item Host result must ignore detector enumeration order"
+        );
+
+        auto const threeForward = resolve(
+            {
+                ocr::TextLine{
+                    .text   = "left",
+                    .bounds = pixelRect(0, 0, 1, 1),
+                    .confidenceBp = 9'100,
+                },
+                ocr::TextLine{
+                    .text   = "middle",
+                    .bounds = pixelRect(1, 0, 1, 1),
+                    .confidenceBp = 9'100,
+                },
+                ocr::TextLine{
+                    .text   = "right",
+                    .bounds = pixelRect(2, 0, 1, 1),
+                    .confidenceBp = 9'100,
+                },
+            },
+            FrameId{48}
+        );
+        CHECK_MESSAGE(
+            threeForward == expectedThree,
+            "T-002 unchanged captures must preserve indices and exact rectangles"
+        );
     }
 
     TEST_CASE("TaskHost::observe floors a block reading as one set of lines")

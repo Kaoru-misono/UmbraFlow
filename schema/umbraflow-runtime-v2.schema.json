@@ -164,6 +164,29 @@
         "action_point": { "$ref": "#/$defs/point" }
       }
     },
+    "detected_collection_placement": {
+      "$comment": "A search region plus the trusted block Reader that detects every item inside it. search_rect bounds the measurement and is never evidence by itself. Each detected line supplies one item's exact image-space rectangle. order turns those measured rectangles into stable zero-based indices; overlapping spans on that axis are ambiguous and the resolver refuses them instead of inheriting detector enumeration order.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "search_rect", "reader", "order"],
+      "properties": {
+        "kind": { "const": "detected" },
+        "search_rect": { "$ref": "#/$defs/rect" },
+        "reader": { "$ref": "#/$defs/identifier" },
+        "order": { "enum": ["left_to_right", "top_to_bottom"] }
+      }
+    },
+    "collection": {
+      "$comment": "An ordered, variable-cardinality collection on one Surface. Its item count and item placements are runtime results, never authored geometry. The placement's Reader is detector evidence for the items and must declare block layout; this is distinct from a Reader named by Binding.reads, which remains reporting-only and never decides a Binding detector.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "surface", "placement"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "surface": { "$ref": "#/$defs/identifier" },
+        "placement": { "$ref": "#/$defs/detected_collection_placement" }
+      }
+    },
     "click_action": {
       "type": "object",
       "additionalProperties": false,
@@ -328,6 +351,10 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/binding" }
         },
+        "collections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/collection" }
+        },
         "surfaces": {
           "type": "array",
           "minItems": 1,
@@ -478,6 +505,29 @@
       "$comment": "Every reading a resolved state reports, ordered by ui_target then reader so one world produces one document. One entry per Reader every reporting Binding named, whatever the outcome, so the length is decided by the model and the resolved stack rather than by what the Host managed to answer. It is keyed by UiTarget rather than by Binding because a Binding names a visual variant, and the variant a hover or a highlight selects changes between two captures of one semantic instance. Two present Bindings sharing a UiTarget report nothing for it: which instance is on screen is exactly what an ambiguity means.",
       "type": "array",
       "items": { "$ref": "#/$defs/binding_reading" }
+    },
+    "collection_item": {
+      "$comment": "One item located by a collection's trusted block Reader. index is the zero-based spatial ordinal declared by the collection, not the Reader adapter's enumeration order. rect is copied exactly from the detected line in image coordinates.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "rect"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "rect": { "$ref": "#/$defs/rect" }
+      }
+    },
+    "resolved_collection": {
+      "$comment": "The complete result of resolving one declared collection against one resolved state in the same live cycle. count equals the number of items and indices are exactly 0 through count-1; the trusted resolver enforces both relations. An absent Reader result resolves to count zero. Unknown reading or ambiguous spatial order produces no resolved_collection.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "items"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/collection_item" }
+        }
+      }
     },
     "resolved_state": {
       "type": "object",
