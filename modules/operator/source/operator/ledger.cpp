@@ -462,27 +462,35 @@ namespace uf::operator_runtime
         }
 
         // The sole Operator schema identity: sha256 over the canonicalization
-        // verifyExactDatabaseSchema builds -- every sqlite_schema row ordered
+        // exactDatabaseSchemaIdentity builds -- every sqlite_schema row ordered
         // by (type, name), each of its four columns written as
         // <byte length>:<value>. It therefore covers the STORED DDL TEXT --
         // reindenting the R"sql(...)" block below changes it even when the
         // schema is identical, and so does adding a comment inside it. Any
-        // change to that block recomputes this value in the same change, from a
-        // freshly created database rather than by hand. initialize() verifies
-        // immediately after creating the schema, so a forgotten recomputation
-        // cannot ship green.
+        // change to stored DDL below recomputes this value in the same change,
+        // from a freshly created database rather than by hand. initialize()
+        // verifies immediately after creating the schema, so a forgotten
+        // recomputation cannot ship green.
         //
         // PRAGMA user_version has no identity and no upgrade role, so the DDL
-        // does not write it. A database whose schema is non-empty and whose
-        // identity differs is refused and left exactly as it was; docs/TODO.md
-        // "Delete-on-open has a deadline" owns that policy and states what a
-        // migration between two identities must name.
+        // does not write it. docs/TODO.md "Delete-on-open has a deadline" owns
+        // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:584ba6c3f25069a91978c32bc3cf2d1d8a20d1fb1da0e4265b441f7a1d27cd67"
+            "sha256:96c4ef8ffb88bcb8ce85889d42426905ee3cad5cc2d65c7f498fbb2b7b9c4f71"
+        };
+
+        // A transition row records the applied exact pair; neither the row nor
+        // its insertion order participates in identity or selects a migration.
+        constexpr auto k_schemaIdentityTransitionsDdl = std::string_view{
+            "CREATE TABLE schema_identity_transitions("
+            "source_identity TEXT NOT NULL,"
+            "target_identity TEXT NOT NULL,"
+            "PRIMARY KEY(source_identity, target_identity)"
+            ") STRICT"
         };
 
         [[nodiscard]]
-        auto verifyExactDatabaseSchema(sqlite3* database) -> Status
+        auto exactDatabaseSchemaIdentity(sqlite3* database) -> Result<ContentHash>
         {
             UF_TRY_VALUE(
                 query,
@@ -509,23 +517,117 @@ namespace uf::operator_runtime
             {
                 return databaseFailure(database, "could not fingerprint exact schema");
             }
-            UF_TRY_VALUE(
-                actual,
-                sha256(std::as_bytes(std::span{canonical}))
-            );
+            return sha256(std::as_bytes(std::span{canonical}));
+        }
+
+        [[nodiscard]]
+        auto verifyExactDatabaseSchema(
+            sqlite3* database,
+            std::string_view expectedIdentity
+        ) -> Status
+        {
+            UF_TRY_VALUE(actual, exactDatabaseSchemaIdentity(database));
             UF_TRY_VALUE(
                 expected,
-                ContentHash::parse(k_operatorDatabaseSchemaIdentity)
+                ContentHash::parse(expectedIdentity)
             );
             if (actual != expected)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "Operator database schema identity does not match the pinned "
-                    "exact stored DDL"
+                    std::format(
+                        "Operator database schema identity sha256:{} does not match {}",
+                        actual.hex(),
+                        expectedIdentity
+                    )
                 );
             }
             return ok();
+        }
+
+        [[nodiscard]]
+        auto verifyExactDatabaseSchema(sqlite3* database) -> Status
+        {
+            return verifyExactDatabaseSchema(
+                database,
+                k_operatorDatabaseSchemaIdentity
+            );
+        }
+
+        struct SchemaMigration final
+        {
+            std::string_view sourceIdentity{};
+            std::string_view targetIdentity{};
+            auto (*apply)(sqlite3*, SchemaMigration const&) -> Status{};
+        };
+
+        [[nodiscard]]
+        auto migrateToAuditPreservingSchema(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(execute(database, k_schemaIdentityTransitionsDdl));
+            UF_TRY_VALUE(
+                insert,
+                prepare(
+                    database,
+                    "INSERT INTO schema_identity_transitions("
+                    "source_identity, target_identity) VALUES(?1, ?2)"
+                )
+            );
+            UF_TRY(bindText(database, insert.get(), 1, migration.sourceIdentity));
+            UF_TRY(bindText(database, insert.get(), 2, migration.targetIdentity));
+            UF_TRY(expectDone(database, insert.get()));
+
+            // No migration commits under an identity other than the exact
+            // target named by its registration.
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        constexpr auto k_schemaMigrations = std::array{
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:584ba6c3f25069a91978c32bc3cf2d1d8a20d1fb1da0e4265b441f7a1d27cd67",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateToAuditPreservingSchema,
+            },
+        };
+
+        [[nodiscard]]
+        auto upgradeOrVerifyExactDatabaseSchema(sqlite3* database) -> Status
+        {
+            UF_TRY_VALUE(actual, exactDatabaseSchemaIdentity(database));
+            auto const actualIdentity = std::format("sha256:{}", actual.hex());
+            if (actualIdentity == k_operatorDatabaseSchemaIdentity)
+            {
+                return ok();
+            }
+
+            auto const migration = std::ranges::find_if(
+                k_schemaMigrations,
+                [&actualIdentity](SchemaMigration const& candidate)
+                {
+                    return candidate.sourceIdentity == actualIdentity
+                        && candidate.targetIdentity
+                            == k_operatorDatabaseSchemaIdentity;
+                }
+            );
+            if (migration == k_schemaMigrations.end())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "Operator database schema identity {} has no registered "
+                        "audit-preserving disposition to {}; database left intact",
+                        actualIdentity,
+                        k_operatorDatabaseSchemaIdentity
+                    )
+                );
+            }
+            return migration->apply(database, *migration);
         }
 
         // The one query that answers "does this ledger pin that generation to
@@ -1158,13 +1260,13 @@ namespace uf::operator_runtime
             );
             if (schemaObjectCount != 0U)
             {
-                return verifyExactDatabaseSchema(database);
+                return upgradeOrVerifyExactDatabaseSchema(database);
             }
 
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(execute(
                 database,
                 R"sql(
-                    BEGIN IMMEDIATE;
                     CREATE TABLE IF NOT EXISTS runtime_artifacts(
                         artifact_root_hash TEXT PRIMARY KEY
                     ) STRICT;
@@ -1752,10 +1854,11 @@ namespace uf::operator_runtime
                         PRIMARY KEY(plugin_id, project_instance_key)
                     ) STRICT;
 
-                    COMMIT;
                 )sql"
             ));
-            return verifyExactDatabaseSchema(database);
+            UF_TRY(execute(database, k_schemaIdentityTransitionsDdl));
+            UF_TRY(verifyExactDatabaseSchema(database));
+            return transaction.commit();
         }
 
         [[nodiscard]]

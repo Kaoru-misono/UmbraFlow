@@ -489,6 +489,13 @@ namespace uf::operator_runtime
         // dispatch nobody answered for to transport_unknown with its Operation
         // moved to reconciling.
         //
+        // A non-empty schema reaches those restart writes only when its exact
+        // stored-DDL identity is current or a migration is registered under
+        // its exact source identity and the current exact target identity. The
+        // migration verifies that target before its transaction commits and
+        // records the pair it applied. An unregistered pair is refused without
+        // changing the database.
+        //
         // All of that is a restart, and it is what a coordinator must do before
         // it hands out a lease or dispatches an action: those rows are claims by
         // a process that is provably gone, since the exclusive lock is what let
@@ -508,7 +515,10 @@ namespace uf::operator_runtime
         // file's: no statement can write, and an absent database is refused
         // rather than created. Nothing on the path creates a directory either,
         // no exclusive ownership is claimed, no session epoch moves, no lease or
-        // session is swept, and no dispatch is recovered.
+        // session is swept, and no dispatch is recovered. It requires the
+        // current exact schema identity; even a registered source is refused
+        // here because applying its migration would violate this door's
+        // read-only contract.
         //
         // Skipping that sweep does not make the answer a lie. A
         // runtime_installations row and the runtime_state generation it advances

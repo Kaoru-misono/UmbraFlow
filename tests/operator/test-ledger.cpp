@@ -9,6 +9,7 @@
 #include <operator/manifest.hpp>
 
 #include "project-fixture.hpp"
+#include "unsafe/operator-database-probe.hpp"
 
 #include <domain/content-hash.hpp>
 
@@ -110,6 +111,32 @@ namespace uf::operator_runtime
                 return m_path;
             }
         };
+
+        [[nodiscard]]
+        auto exactSchemaIdentity(
+            test_support::OperatorDatabaseProbe const& database
+        ) -> std::string
+        {
+            auto const rows = database.readRows(
+                "SELECT type, name, tbl_name, coalesce(sql, '') FROM sqlite_schema "
+                "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+            );
+            auto canonical = std::string{};
+            for (auto const& row : rows)
+            {
+                REQUIRE(row.size() == 4U);
+                for (auto const& value : row)
+                {
+                    canonical += std::to_string(value.size());
+                    canonical.push_back(':');
+                    canonical += value;
+                }
+            }
+            return std::format(
+                "sha256:{}",
+                test_support::hashOf(canonical).hex()
+            );
+        }
 
         // Where SQLite keeps PRAGMA user_version, and a value the Operator's
         // DDL never writes there.
@@ -1745,7 +1772,7 @@ namespace uf::operator_runtime
         );
     }
 
-    TEST_CASE("a different exact DDL identity is refused without replacement")
+    TEST_CASE("an unregistered exact identity pair is refused byte-identical")
     {
         auto temporary          = TemporaryDirectory{};
         auto const production   = temporary.path() / "production";
@@ -1759,21 +1786,155 @@ namespace uf::operator_runtime
         }
 
         auto const mutated = mutateStoredDdlSeparator(databasePath);
+        auto const beforeRefusal = ledgerBytes(databasePath);
         auto const refused = OperatorCoordinator::open(production);
         REQUIRE_FALSE_MESSAGE(
             refused.has_value(),
-            "a different exact DDL identity must not be upgraded or replaced"
+            "an unregistered exact identity pair must not be upgraded or replaced"
         );
 
         // Names the guard so another open refusal cannot stand in for identity.
         CHECK_MESSAGE(
-            refused.error().message().contains("schema identity"),
-            "the refusal must come from the schema-identity gate"
+            refused.error().message().contains(
+                "no registered audit-preserving disposition"
+            ),
+            "the refusal must come from the unregistered identity-pair gate"
+        );
+        CHECK_MESSAGE(
+            ledgerBytes(databasePath) == beforeRefusal,
+            "an unregistered identity refusal must leave the whole ledger byte-identical"
         );
         CHECK_MESSAGE(
             storedDdlSeparators(databasePath, mutated)
                 == std::string(mutated.size(), '\n'),
             "a refused database keeps the exact bytes it was refused for"
+        );
+    }
+
+    TEST_CASE("a registered exact identity pair upgrades a populated audit chain")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto operationId         = std::string{};
+        auto artifactRootHash    = std::optional<ContentHash>{};
+        auto installedGeneration = uint64{};
+        {
+            auto prepared = prepareStore(temporary.path());
+            auto const operation = proposedOperation(
+                prepared,
+                "migration-request",
+                "command-1"
+            );
+            operationId         = operation.operationId;
+            artifactRootHash    = prepared.runtimeArtifactRootHash;
+            installedGeneration = prepared.installedGeneration;
+        }
+
+        auto sourceIdentity = std::string{};
+        {
+            auto priorSchema = test_support::OperatorDatabaseProbe{databasePath};
+            // The registered source is the otherwise-identical populated
+            // layout before the transition table joined its stored DDL.
+            priorSchema.execute("DROP TABLE schema_identity_transitions");
+            sourceIdentity = exactSchemaIdentity(priorSchema);
+        }
+
+        REQUIRE(artifactRootHash.has_value());
+        auto const beforeReadOnlyRefusal = ledgerBytes(databasePath);
+        auto const readOnlyRefusal = OperatorCoordinator::readInstalledRuntimeArtifact(
+            production,
+            installedGeneration,
+            *artifactRootHash
+        );
+        REQUIRE_FALSE_MESSAGE(
+            readOnlyRefusal.has_value(),
+            "the read-only door must not apply a registered schema migration"
+        );
+        CHECK_MESSAGE(
+            readOnlyRefusal.error().message().contains("schema identity"),
+            "a registered source must reach the read-only schema-identity gate"
+        );
+        CHECK_MESSAGE(
+            ledgerBytes(databasePath) == beforeReadOnlyRefusal,
+            "read-only refusal of a registered source must preserve the whole ledger"
+        );
+
+        {
+            auto upgraded = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(
+                upgraded.has_value(),
+                "a registered exact source-target pair must produce the pinned target identity"
+            );
+        }
+        {
+            auto verifiedTarget = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(
+                verifiedTarget.has_value(),
+                "a committed schema migration must reopen as the pinned target identity"
+            );
+        }
+
+        auto migrated = test_support::OperatorDatabaseProbe{databasePath};
+        auto const targetIdentity = exactSchemaIdentity(migrated);
+        REQUIRE(sourceIdentity != targetIdentity);
+
+        auto const expectedTransition = std::vector<std::vector<std::string>>{
+            {sourceIdentity, targetIdentity},
+        };
+        CHECK_MESSAGE(
+            migrated.readRows(
+                "SELECT source_identity, target_identity "
+                "FROM schema_identity_transitions"
+            ) == expectedTransition,
+            "the schema upgrade must record its exact source-target identity pair"
+        );
+
+        auto const expectedJournal = std::vector<std::vector<std::string>>{
+            {
+                "baseline-1",
+                "fixture.baseline",
+                "{\"kind\":\"baseline\"}",
+                std::string{k_fixtureProvenance},
+            },
+        };
+        CHECK_MESSAGE(
+            migrated.readRows(
+                "SELECT event_id, namespaced_event_type, opaque_project_payload, provenance "
+                "FROM journal_events WHERE event_id='baseline-1'"
+            ) == expectedJournal,
+            "the populated Journal entry must remain readable with its exact content"
+        );
+
+        auto const expectedOperation = std::vector<std::vector<std::string>>{
+            {
+                operationId,
+                "migration-request",
+                "command-1",
+                "proposed",
+            },
+        };
+        CHECK_MESSAGE(
+            migrated.readRows(
+                "SELECT operation_id, client_request_id, tool_name, state "
+                "FROM operations WHERE client_request_id='migration-request'"
+            ) == expectedOperation,
+            "the populated Operation ledger row must remain readable with its exact content"
+        );
+
+        auto const expectedAuditTrace = std::vector<std::vector<std::string>>{
+            {
+                "operation_created",
+                "target-1",
+                operationId,
+            },
+        };
+        CHECK_MESSAGE(
+            migrated.readRows(
+                "SELECT kind, controlled_target_id, subject_id FROM ledger_events "
+                "WHERE kind='operation_created' AND controlled_target_id='target-1'"
+            ) == expectedAuditTrace,
+            "the populated audit trace must remain readable with its exact content"
         );
     }
 
