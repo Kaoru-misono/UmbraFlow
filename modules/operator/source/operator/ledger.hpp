@@ -27,6 +27,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -57,9 +58,19 @@ namespace uf::operator_runtime
         SessionMode mode{SessionMode::Read};
 
         // Which of the three operators this session is. It is pinned with the
-        // rest of the immutable session tuple rather than chosen per call, so a
+        // rest of the controller tuple rather than chosen per call, so a
         // controller cannot change what it is between two commands. Agent is
         // the default because it is the least privileged of the three.
+        ControllerKind kind{ControllerKind::Agent};
+    };
+
+    // The externally known facts that identify a prior session without
+    // exposing its Operator-private session or ProjectInstance names.
+    struct SessionResume final
+    {
+        std::string    authenticatedControllerId{};
+        std::string    controlledTargetId{};
+        SessionMode    mode{SessionMode::Read};
         ControllerKind kind{ControllerKind::Agent};
     };
 
@@ -179,19 +190,19 @@ namespace uf::operator_runtime
     // first and must not move the second.
     struct SnapshotRecord final
     {
-        std::string        token{};
-        std::string        sessionId{};
-        ContentHash        identityHash;
-        ContentHash        decisionBasisHash;
-        ContentHash        stateResolutionHash;
-        ContentHash        projectStateHash;
-        std::string        canonicalParts{};
-        uint64             sessionEpoch{};
-        uint64             leaseRevision{};
-        uint64             snapshotRevision{};
-        uint64             projectStateRevision{};
-        uint64             availabilityRevision{};
-        ProjectObservation observation;
+        std::string              token{};
+        std::string              sessionId{};
+        ContentHash              identityHash;
+        ContentHash              decisionBasisHash;
+        ContentHash              stateResolutionHash;
+        ContentHash              projectStateHash;
+        std::string              canonicalParts{};
+        uint64                   sessionEpoch{};
+        uint64                   leaseRevision{};
+        uint64                   snapshotRevision{};
+        uint64                   projectStateRevision{};
+        uint64                   availabilityRevision{};
+        StoredProjectObservation observation;
 
         // The join point between a snapshot and the event stream: the head of
         // ledger_events read inside the same BEGIN IMMEDIATE that composed this
@@ -441,6 +452,16 @@ namespace uf::operator_runtime
         std::vector<JournalAppend> journalEvents{};
     };
 
+    // Actionable recovery work retained in the ledger until reconciliation
+    // leaves the reconciling state. The revision names match the two CAS
+    // inputs ReconciliationCommit consumes.
+    struct RecoveredUncertainDispatch final
+    {
+        std::string operationId{};
+        uint64      expectedOperationRevision{};
+        uint64      expectedProjectStateRevision{};
+    };
+
     // Trusted in-process control plane. This object is never installed in a
     // business VM or exposed through the project-plugin data boundary.
     class OperatorCoordinator final
@@ -507,6 +528,24 @@ namespace uf::operator_runtime
             ContentHash const& artifactRootHash
         ) -> Result<task::InstalledRuntimeArtifact>;
 
+        // Selects the active installation compatible with the caller-derived
+        // artifact root and opens it without accepting the ledger's internal
+        // compare-and-swap generation. This is a second read-only door, not a
+        // Coordinator operation: it uses SQLITE_OPEN_READONLY and cannot run a
+        // restart sweep or mutate session state.
+        [[nodiscard]]
+        static auto readActiveInstalledRuntimeArtifact(
+            std::filesystem::path const& runtimeDirectory,
+            ContentHash const& compatibleArtifactRootHash
+        ) -> Result<task::InstalledRuntimeArtifact>;
+
+        // Reports the Operations a restart moved to reconciliation. The query
+        // is persistent and repeatable, so a caller crash cannot consume the
+        // only copy of the work needed by commitReconciliation.
+        [[nodiscard]]
+        auto recoveredUncertainDispatches()
+            -> Result<std::vector<RecoveredUncertainDispatch>>;
+
         [[nodiscard]] auto databasePath() const -> std::filesystem::path;
 
         [[nodiscard]]
@@ -549,6 +588,17 @@ namespace uf::operator_runtime
             SessionManifest const& manifest,
             std::optional<AgentProfile> const& agentProfile
         ) -> Status;
+
+        // Reactivates the unique most-recent prior session matching these
+        // externally known facts and the active installation named by the
+        // manifest. Budgeted Agent sessions are refused because their steady
+        // deadline is process-local; the caller must remain read-only or pin a
+        // new Agent session under newly verified ceilings.
+        [[nodiscard]]
+        auto resumeSession(
+            SessionResume const& resume,
+            SessionManifest const& manifest
+        ) -> Result<ControllerBinding>;
 
         // The one door onto the Operation path. Everything below takes a
         // ControllerBinding rather than a session id, so there is exactly one
@@ -598,6 +648,31 @@ namespace uf::operator_runtime
             ProjectPluginHandle const& plugin,
             task::UiObservationSnapshot const& observation
         ) -> Result<SnapshotRecord>;
+
+        // Converts the VM's proposal into the locked final observation. The
+        // registration, project instance and plugin identity are re-read from
+        // the active lease; proposal carries no field that can replace them,
+        // and no final ID enters through this signature.
+        [[nodiscard]]
+        auto publishProjectObservation(
+            ControlLease const& lease,
+            ProjectPluginHandle const& plugin,
+            ObservedInstanceWorldScope const& worldScope,
+            ObservedInstanceIdentitySchemas const& identitySchemas,
+            ProjectObservationProposal const& proposal
+        ) -> Result<ProjectObservation>;
+
+        // Resolves an opaque wire spelling without parsing it. Authorization
+        // is checked against the persistent binding before fresh-observation
+        // membership, so a cross-scope ID cannot disclose whether it remains
+        // visible in the scope that owns it.
+        [[nodiscard]]
+        auto resolveObservedInstance(
+            ControlLease const& lease,
+            ObservedInstanceWorldScope const& worldScope,
+            ProjectObservation const& freshObservation,
+            std::string_view observedInstanceId
+        ) -> Result<ObservedInstanceId>;
 
         // The one function that creates an Operation, and it cannot be called
         // without a ControllerBinding. Script, Agent and Human reach it by the

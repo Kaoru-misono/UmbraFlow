@@ -27,6 +27,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -242,11 +243,36 @@ namespace uf::operator_runtime
         template <typename T>
         concept NamesCanonicalArgs = requires(T value) { value.canonicalArgs; };
 
+        template <typename T>
+        concept NamesSessionId = requires(T value) { value.sessionId; };
+
+        template <typename T>
+        concept NamesProjectInstanceKey = requires(T value) {
+            value.projectInstanceKey;
+        };
+
+        template <typename T>
+        concept NamesObservedInstanceId = requires(T value) {
+            value.observedInstanceId;
+        };
+
         static_assert(!NamesReducerInput<ReconciliationCommit>);
         static_assert(!NamesReducerInput<ProjectInstanceBaseline>);
         static_assert(!NamesMutability<CommandRequest>);
         static_assert(!NamesTool<CommandRequest>);
         static_assert(!NamesCanonicalArgs<CommandRequest>);
+        static_assert(
+            !NamesSessionId<SessionResume>,
+            "SessionResume must not accept an internal session_id"
+        );
+        static_assert(
+            !NamesProjectInstanceKey<SessionResume>,
+            "SessionResume must not accept an internal project_instance_key"
+        );
+        static_assert(
+            !NamesObservedInstanceId<ObservedInstanceProposal>,
+            "ObservedInstanceProposal must not accept a final observed_instance_id"
+        );
 
         // The same guard for every authority-bearing value, not just the one
         // that happened to get it: an aggregate could be brace-initialized past
@@ -769,6 +795,143 @@ namespace uf::operator_runtime
             REQUIRE(manifest.has_value());
             return *std::move(manifest);
         }
+
+        [[nodiscard]]
+        auto observedInstanceIdentitySchemas(
+            VerifiedProjectRegistration const& registration
+        ) -> ObservedInstanceIdentitySchemas
+        {
+            auto schemas = ObservedInstanceIdentitySchemas::create(
+                registration,
+                {
+                    ObservedInstanceIdentitySchema{
+                        .schemaId = "https://fixture.example/identity/overlay/v1",
+                        .validate = [](json::Value const& basis) -> Status
+                        {
+                            auto const nativeId = basis.find("native_id");
+                            auto const epoch    = basis.find("surface_epoch");
+                            if (
+                                basis.kind() != json::ValueKind::Object
+                                || basis.members().size() != 2U
+                                || nativeId == nullptr
+                                || nativeId->kind() != json::ValueKind::String
+                                || nativeId->string().empty()
+                                || epoch == nullptr
+                                || epoch->kind() != json::ValueKind::Number
+                                || !epoch->isInteger()
+                                || epoch->number() < 0.0
+                            )
+                            {
+                                return fail(
+                                    AutomationErrorKind::InvalidResource,
+                                    "fixture observed-instance basis violates its schema"
+                                );
+                            }
+                            return ok();
+                        },
+                    },
+                }
+            );
+            REQUIRE(schemas.has_value());
+            return *std::move(schemas);
+        }
+
+        [[nodiscard]]
+        auto semanticBasis(
+            std::string nativeId,
+            double surfaceEpoch,
+            bool reversed = false
+        ) -> json::Value
+        {
+            if (reversed)
+            {
+                return json::Value::ofObject({
+                    json::Member{
+                        "surface_epoch",
+                        json::Value::ofNumber(surfaceEpoch),
+                    },
+                    json::Member{
+                        "native_id",
+                        json::Value::ofString(std::move(nativeId)),
+                    },
+                });
+            }
+            return json::Value::ofObject({
+                json::Member{
+                    "native_id",
+                    json::Value::ofString(std::move(nativeId)),
+                },
+                json::Member{
+                    "surface_epoch",
+                    json::Value::ofNumber(surfaceEpoch),
+                },
+            });
+        }
+
+        [[nodiscard]]
+        auto observedInstanceProposal(
+            std::string localRef,
+            std::string nativeId,
+            std::optional<std::string> parentLocalRef = std::nullopt,
+            double surfaceEpoch = 4.0,
+            bool reversedBasis = false
+        ) -> ObservedInstanceProposal
+        {
+            return ObservedInstanceProposal{
+                .localRef         = std::move(localRef),
+                .parentLocalRef   = std::move(parentLocalRef),
+                .kind             = "fixture.overlay",
+                .identitySchemaId = "https://fixture.example/identity/overlay/v1",
+                .semanticIdentityBasis = semanticBasis(
+                    std::move(nativeId),
+                    surfaceEpoch,
+                    reversedBasis
+                ),
+                .opaqueProjectPayload = json::Value::ofObject({
+                    json::Member{
+                        "visible",
+                        json::Value::ofBoolean(true),
+                    },
+                }),
+            };
+        }
+
+        [[nodiscard]]
+        auto observationProposal(
+            std::vector<ObservedInstanceProposal> instances
+        ) -> ProjectObservationProposal
+        {
+            return ProjectObservationProposal{
+                .schema                 = "umbraflow-project-observation-proposal/v1",
+                .canonicalOpaquePayload = json::Value::ofObject({
+                    json::Member{
+                        "surface",
+                        json::Value::ofString("fixture.surface"),
+                    },
+                }),
+                .projectToolPreconditions = {
+                    ProjectToolPrecondition{
+                        .name   = "fixture.overlay_clear",
+                        .status = ProjectToolPreconditionStatus::Known,
+                    },
+                },
+                .observedInstanceProposals = std::move(instances),
+            };
+        }
+
+        [[nodiscard]]
+        auto runScope(
+            std::string scopeId = "run-7",
+            uint64 generation = 7U
+        ) -> ObservedInstanceWorldScope
+        {
+            auto scope = ObservedInstanceWorldScope::run(
+                std::move(scopeId),
+                generation
+            );
+            REQUIRE(scope.has_value());
+            return *std::move(scope);
+        }
     }
 
     // The two operator protocol readers, on documents this registration's
@@ -838,6 +1001,720 @@ namespace uf::operator_runtime
         auto prepared  = prepareStore(temporary.path());
         CHECK(prepared.store.databasePath().filename() == "operator-runtime.sqlite");
         CHECK(std::filesystem::is_regular_file(prepared.store.databasePath()));
+    }
+
+    TEST_CASE("the proposal cannot state an observed instance ID or authority binding")
+    {
+        static_assert(std::is_aggregate_v<ProjectObservationProposal>);
+        static_assert(std::is_aggregate_v<ObservedInstanceProposal>);
+        static_assert(!std::is_aggregate_v<ProjectObservation>);
+        static_assert(
+            !std::is_constructible_v<ObservedInstanceId, std::string>,
+            "Only OperatorCoordinator may construct a final observed-instance ID"
+        );
+        static_assert(
+            !std::is_constructible_v<ObservedInstanceId, std::string_view>,
+            "A wire spelling must not construct observed-instance authority"
+        );
+        static_assert(
+            !std::is_constructible_v<
+                ProjectObservation,
+                json::Value,
+                std::vector<ProjectToolPrecondition>,
+                std::vector<ObservedInstance>,
+                std::string,
+                ContentHash
+            >,
+            "Only OperatorCoordinator may construct the final observation"
+        );
+        CHECK(ProjectObservation::schema() == "umbraflow-project-observation/v1");
+    }
+
+    TEST_CASE("observed instance mint is opaque stable scoped and projects parents")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto schemas = observedInstanceIdentitySchemas(
+            prepared.project.registration
+        );
+        auto const scope = runScope();
+        auto first = prepared.store.publishProjectObservation(
+            prepared.lease,
+            prepared.plugin,
+            scope,
+            schemas,
+            observationProposal({
+                observedInstanceProposal("event", "overlay.event"),
+                observedInstanceProposal(
+                    "choice",
+                    "overlay.choice",
+                    std::string{"event"}
+                ),
+            })
+        );
+        REQUIRE(first.has_value());
+        REQUIRE(first->observedInstances().size() == 2U);
+        auto const eventId  = first->observedInstances()[0].observedInstanceId.value();
+        auto const choiceId = first->observedInstances()[1].observedInstanceId.value();
+        CHECK(choiceId != eventId);
+        CHECK(eventId.size() == 68U);
+        CHECK(eventId.starts_with("oi1_"));
+        CHECK(std::ranges::all_of(
+            eventId.substr(4),
+            [](char character)
+            {
+                return (character >= '0' && character <= '9')
+                    || (character >= 'a' && character <= 'f');
+            }
+        ));
+        REQUIRE(first->observedInstances()[1].parentObservedInstanceId.has_value());
+        CHECK(
+            first->observedInstances()[1].parentObservedInstanceId->value()
+            == eventId
+        );
+        CHECK(first->projectToolPreconditions().size() == 1U);
+        CHECK(
+            first->projectToolPreconditions()[0].status
+            == ProjectToolPreconditionStatus::Known
+        );
+        CHECK(first->canonicalBytes().find("semantic_identity_basis") == std::string::npos);
+        CHECK(first->canonicalBytes().find("identity_schema_id") == std::string::npos);
+        CHECK(first->canonicalBytes().find("local_ref") == std::string::npos);
+        CHECK(first->canonicalBytes().find(eventId) != std::string::npos);
+        CHECK(first->canonicalBytes().find(choiceId) != std::string::npos);
+
+        auto equivalentProposal = observationProposal({
+            observedInstanceProposal(
+                "renamed-event",
+                "overlay.event",
+                std::nullopt,
+                4.0,
+                true
+            ),
+            observedInstanceProposal(
+                "renamed-choice",
+                "overlay.choice",
+                std::string{"renamed-event"},
+                4.0,
+                true
+            ),
+        });
+        equivalentProposal.canonicalOpaquePayload = json::Value::ofObject({
+            json::Member{
+                "surface",
+                json::Value::ofString("different opaque envelope payload"),
+            },
+        });
+        for (auto& instance : equivalentProposal.observedInstanceProposals)
+        {
+            instance.opaqueProjectPayload = json::Value::ofObject({
+                json::Member{
+                    "visible",
+                    json::Value::ofBoolean(false),
+                },
+            });
+        }
+        auto equivalent = prepared.store.publishProjectObservation(
+            prepared.lease,
+            prepared.plugin,
+            scope,
+            schemas,
+            equivalentProposal
+        );
+        REQUIRE(equivalent.has_value());
+        CHECK(
+            equivalent->observedInstances()[0].observedInstanceId.value()
+            == eventId
+        );
+        CHECK(
+            equivalent->observedInstances()[1].observedInstanceId.value()
+            == choiceId
+        );
+
+        auto changedBasis = prepared.store.publishProjectObservation(
+            prepared.lease,
+            prepared.plugin,
+            scope,
+            schemas,
+            observationProposal({
+                observedInstanceProposal("event", "overlay.other"),
+            })
+        );
+        REQUIRE(changedBasis.has_value());
+        CHECK(
+            changedBasis->observedInstances()[0].observedInstanceId.value()
+            != eventId
+        );
+
+        auto changedBasisMember = prepared.store.publishProjectObservation(
+            prepared.lease,
+            prepared.plugin,
+            scope,
+            schemas,
+            observationProposal({
+                observedInstanceProposal(
+                    "event",
+                    "overlay.event",
+                    std::nullopt,
+                    5.0
+                ),
+            })
+        );
+        REQUIRE(changedBasisMember.has_value());
+        CHECK(
+            changedBasisMember->observedInstances()[0].observedInstanceId.value()
+            != eventId
+        );
+
+        auto changedKindProposal = observationProposal({
+            observedInstanceProposal("event", "overlay.event"),
+        });
+        changedKindProposal.observedInstanceProposals.front().kind =
+            "fixture.other-overlay";
+        auto changedKind = prepared.store.publishProjectObservation(
+            prepared.lease,
+            prepared.plugin,
+            scope,
+            schemas,
+            changedKindProposal
+        );
+        REQUIRE(changedKind.has_value());
+        CHECK(
+            changedKind->observedInstances()[0].observedInstanceId.value()
+            != eventId
+        );
+
+        auto changedScope = prepared.store.publishProjectObservation(
+            prepared.lease,
+            prepared.plugin,
+            runScope("run-8", 8U),
+            schemas,
+            observationProposal({
+                observedInstanceProposal("event", "overlay.event"),
+            })
+        );
+        REQUIRE(changedScope.has_value());
+        CHECK(
+            changedScope->observedInstances()[0].observedInstanceId.value()
+            != eventId
+        );
+    }
+
+    TEST_CASE("observed instance proposal refusals follow the normative precedence")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto schemas = observedInstanceIdentitySchemas(
+            prepared.project.registration
+        );
+        auto const scope = runScope();
+        auto const expectCode = [](
+            Result<ProjectObservation> const& result,
+            ProjectObservationErrorCode expected
+        )
+        {
+            CAPTURE(projectObservationErrorWireName(expected));
+            REQUIRE_FALSE(result.has_value());
+            CHECK(projectObservationErrorCode(result.error()) == expected);
+            CHECK(
+                result.error().detailCode().message()
+                == projectObservationErrorWireName(expected)
+            );
+        };
+
+        auto invalidStatusAndName = observationProposal({});
+        invalidStatusAndName.projectToolPreconditions.front().status =
+            static_cast<ProjectToolPreconditionStatus>(0xFFU);
+        invalidStatusAndName.projectToolPreconditions.emplace_back(
+            ProjectToolPrecondition{
+                .name   = "not_namespaced",
+                .status = ProjectToolPreconditionStatus::Known,
+            }
+        );
+        expectCode(
+            prepared.store.publishProjectObservation(
+                prepared.lease,
+                prepared.plugin,
+                scope,
+                schemas,
+                invalidStatusAndName
+            ),
+            ProjectObservationErrorCode::PreconditionNameNotNamespaced
+        );
+
+        auto invalidStatus = observationProposal({});
+        invalidStatus.projectToolPreconditions.front().status =
+            static_cast<ProjectToolPreconditionStatus>(0xFFU);
+        expectCode(
+            prepared.store.publishProjectObservation(
+                prepared.lease,
+                prepared.plugin,
+                scope,
+                schemas,
+                invalidStatus
+            ),
+            ProjectObservationErrorCode::PreconditionStatusOutsideFactDomain
+        );
+
+        auto duplicatePrecondition = observationProposal({
+            observedInstanceProposal("repeat", "overlay.a"),
+            observedInstanceProposal("repeat", "overlay.b"),
+        });
+        duplicatePrecondition.projectToolPreconditions.emplace_back(
+            duplicatePrecondition.projectToolPreconditions.front()
+        );
+        expectCode(
+            prepared.store.publishProjectObservation(
+                prepared.lease,
+                prepared.plugin,
+                scope,
+                schemas,
+                duplicatePrecondition
+            ),
+            ProjectObservationErrorCode::DuplicatePreconditionName
+        );
+
+        expectCode(
+            prepared.store.publishProjectObservation(
+                prepared.lease,
+                prepared.plugin,
+                scope,
+                schemas,
+                observationProposal({
+                    observedInstanceProposal("repeat", "overlay.a"),
+                    observedInstanceProposal("repeat", "overlay.b"),
+                    observedInstanceProposal(
+                        "orphan",
+                        "overlay.orphan",
+                        std::string{"missing"}
+                    ),
+                })
+            ),
+            ProjectObservationErrorCode::DuplicateObservedInstanceLocalRef
+        );
+
+        expectCode(
+            prepared.store.publishProjectObservation(
+                prepared.lease,
+                prepared.plugin,
+                scope,
+                schemas,
+                observationProposal({
+                    observedInstanceProposal(
+                        "cycle-a",
+                        "overlay.a",
+                        std::string{"cycle-b"}
+                    ),
+                    observedInstanceProposal(
+                        "cycle-b",
+                        "overlay.b",
+                        std::string{"cycle-a"}
+                    ),
+                    observedInstanceProposal(
+                        "orphan",
+                        "overlay.orphan",
+                        std::string{"missing"}
+                    ),
+                })
+            ),
+            ProjectObservationErrorCode::ObservedInstanceParentMissing
+        );
+
+        auto cycleBeforeRegistration = observationProposal({
+            observedInstanceProposal(
+                "cycle-a",
+                "overlay.a",
+                std::string{"cycle-b"}
+            ),
+            observedInstanceProposal(
+                "cycle-b",
+                "overlay.b",
+                std::string{"cycle-a"}
+            ),
+            observedInstanceProposal("stray", "overlay.stray"),
+        });
+        cycleBeforeRegistration.observedInstanceProposals.back().identitySchemaId =
+            "https://fixture.example/identity/unregistered/v1";
+        expectCode(
+            prepared.store.publishProjectObservation(
+                prepared.lease,
+                prepared.plugin,
+                scope,
+                schemas,
+                cycleBeforeRegistration
+            ),
+            ProjectObservationErrorCode::ObservedInstanceParentCycle
+        );
+
+        auto unregisteredBeforeBasis = observationProposal({
+            observedInstanceProposal(
+                "invalid",
+                "overlay.invalid",
+                std::nullopt,
+                -1.0
+            ),
+            observedInstanceProposal("stray", "overlay.stray"),
+        });
+        unregisteredBeforeBasis.observedInstanceProposals.back().identitySchemaId =
+            "https://fixture.example/identity/unregistered/v1";
+        expectCode(
+            prepared.store.publishProjectObservation(
+                prepared.lease,
+                prepared.plugin,
+                scope,
+                schemas,
+                unregisteredBeforeBasis
+            ),
+            ProjectObservationErrorCode::ObservedInstanceIdentitySchemaNotRegistered
+        );
+
+        expectCode(
+            prepared.store.publishProjectObservation(
+                prepared.lease,
+                prepared.plugin,
+                scope,
+                schemas,
+                observationProposal({
+                    observedInstanceProposal("duplicate-a", "overlay.same"),
+                    observedInstanceProposal("duplicate-b", "overlay.same"),
+                    observedInstanceProposal(
+                        "invalid",
+                        "overlay.invalid",
+                        std::nullopt,
+                        -1.0
+                    ),
+                })
+            ),
+            ProjectObservationErrorCode::SemanticIdentityBasisSchemaViolation
+        );
+
+        expectCode(
+            prepared.store.publishProjectObservation(
+                prepared.lease,
+                prepared.plugin,
+                scope,
+                schemas,
+                observationProposal({
+                    observedInstanceProposal("duplicate-a", "overlay.same"),
+                    observedInstanceProposal("duplicate-b", "overlay.same"),
+                })
+            ),
+            ProjectObservationErrorCode::ObservedInstanceCollision
+        );
+    }
+
+    TEST_CASE("observed instance authorization checks scope before freshness")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto schemas = observedInstanceIdentitySchemas(
+            prepared.project.registration
+        );
+        auto const scope = runScope();
+        auto first = prepared.store.publishProjectObservation(
+            prepared.lease,
+            prepared.plugin,
+            scope,
+            schemas,
+            observationProposal({
+                observedInstanceProposal("first", "overlay.first"),
+            })
+        );
+        REQUIRE(first.has_value());
+        auto const id = first->observedInstances()[0].observedInstanceId.value();
+        auto const allowed = prepared.store.resolveObservedInstance(
+            prepared.lease,
+            scope,
+            *first,
+            id
+        );
+        REQUIRE(allowed.has_value());
+        CHECK(allowed->value() == id);
+
+        auto const wrongScope = prepared.store.resolveObservedInstance(
+            prepared.lease,
+            runScope("run-8", 8U),
+            *first,
+            id
+        );
+        REQUIRE_FALSE(wrongScope.has_value());
+        CHECK(
+            projectObservationErrorCode(wrongScope.error())
+            == ProjectObservationErrorCode::ObservedInstanceScopeMismatch
+        );
+
+        auto second = prepared.store.publishProjectObservation(
+            prepared.lease,
+            prepared.plugin,
+            scope,
+            schemas,
+            observationProposal({
+                observedInstanceProposal("second", "overlay.second"),
+            })
+        );
+        REQUIRE(second.has_value());
+        auto const wrongScopeAndStale = prepared.store.resolveObservedInstance(
+            prepared.lease,
+            runScope("run-8", 8U),
+            *second,
+            id
+        );
+        REQUIRE_FALSE(wrongScopeAndStale.has_value());
+        CHECK_MESSAGE(
+            projectObservationErrorCode(wrongScopeAndStale.error())
+                == ProjectObservationErrorCode::ObservedInstanceScopeMismatch,
+            "scope authorization must precede fresh-observation membership"
+        );
+        auto const stale = prepared.store.resolveObservedInstance(
+            prepared.lease,
+            scope,
+            *second,
+            id
+        );
+        REQUIRE_FALSE(stale.has_value());
+        CHECK(
+            projectObservationErrorCode(stale.error())
+            == ProjectObservationErrorCode::ObservedInstanceStale
+        );
+    }
+
+    TEST_CASE("observed instance binding survives a Coordinator reopen")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto retained = [&temporary]()
+        {
+            auto prepared = test_support::prepareStore(temporary.path());
+            auto schemas = observedInstanceIdentitySchemas(
+                prepared.project.registration
+            );
+            auto first = prepared.store.publishProjectObservation(
+                prepared.lease,
+                prepared.plugin,
+                runScope(),
+                schemas,
+                observationProposal({
+                    observedInstanceProposal("first", "overlay.stable"),
+                })
+            );
+            REQUIRE(first.has_value());
+            return std::tuple{
+                prepared.project,
+                prepared.plugin,
+                prepared.manifest,
+                std::string{
+                    first->observedInstances()[0].observedInstanceId.value()
+                }
+            };
+        }();
+
+        auto reopenedResult = OperatorCoordinator::open(
+            temporary.path() / "production"
+        );
+        REQUIRE(reopenedResult.has_value());
+        auto reopened = *std::move(reopenedResult);
+        auto const& [project, plugin, manifest, firstId] = retained;
+        REQUIRE(reopened.pinSession(
+            SessionPin{
+                .sessionId                 = "session-after-reopen",
+                .authenticatedControllerId = "controller-after-reopen",
+                .idempotencyNamespace      = "controller-after-reopen",
+                .projectRegistrationHash   = project.registration.hash(),
+                .controllerCapabilities    = {
+                    std::string{conformance::k_operateCapability},
+                },
+                .controlledTargetId = "target-after-reopen",
+                .projectInstanceKey = "instance-1",
+                .mode               = SessionMode::Write,
+                .kind               = ControllerKind::Script,
+            },
+            manifest,
+            std::nullopt
+        ).has_value());
+        auto controller = reopened.bindController("session-after-reopen");
+        REQUIRE(controller.has_value());
+        auto lease = reopened.acquireLease(*controller);
+        REQUIRE(lease.has_value());
+        auto schemas = observedInstanceIdentitySchemas(project.registration);
+        auto afterReopen = reopened.publishProjectObservation(
+            *lease,
+            plugin,
+            runScope(),
+            schemas,
+            observationProposal({
+                observedInstanceProposal(
+                    "different-local-ref",
+                    "overlay.stable",
+                    std::nullopt,
+                    4.0,
+                    true
+                ),
+            })
+        );
+        REQUIRE(afterReopen.has_value());
+        CHECK(
+            afterReopen->observedInstances()[0].observedInstanceId.value()
+            == firstId
+        );
+    }
+
+    TEST_CASE("observed instance mint separates project and registration domains")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto const scope = runScope();
+        auto schemas = observedInstanceIdentitySchemas(
+            prepared.project.registration
+        );
+        auto first = prepared.store.publishProjectObservation(
+            prepared.lease,
+            prepared.plugin,
+            scope,
+            schemas,
+            observationProposal({
+                observedInstanceProposal("first", "overlay.domain"),
+            })
+        );
+        REQUIRE(first.has_value());
+        auto const firstId = first->observedInstances()[0].observedInstanceId.value();
+
+        REQUIRE(prepared.store.provisionProjectInstance(
+            prepared.project.registration,
+            prepared.plugin,
+            ProjectInstanceBaseline{
+                .projectInstanceKey  = "instance-2",
+                .eventId             = "baseline-2",
+                .sessionManifestHash = prepared.manifest.hash(),
+                .entry = journalEntry(
+                    prepared.project,
+                    prepared.project.registration.baselineEventType(),
+                    "{\"kind\":\"baseline\"}"
+                ),
+            }
+        ).has_value());
+        REQUIRE(prepared.store.pinSession(
+            SessionPin{
+                .sessionId                 = "session-project-2",
+                .authenticatedControllerId = "controller-project-2",
+                .idempotencyNamespace      = "controller-project-2",
+                .projectRegistrationHash =
+                    prepared.project.registration.hash(),
+                .controllerCapabilities = {
+                    std::string{conformance::k_operateCapability},
+                },
+                .controlledTargetId = "target-project-2",
+                .projectInstanceKey = "instance-2",
+                .mode               = SessionMode::Write,
+                .kind               = ControllerKind::Script,
+            },
+            prepared.manifest,
+            std::nullopt
+        ).has_value());
+        auto projectController = prepared.store.bindController("session-project-2");
+        REQUIRE(projectController.has_value());
+        auto projectLease = prepared.store.acquireLease(*projectController);
+        REQUIRE(projectLease.has_value());
+        auto otherProject = prepared.store.publishProjectObservation(
+            *projectLease,
+            prepared.plugin,
+            scope,
+            schemas,
+            observationProposal({
+                observedInstanceProposal("first", "overlay.domain"),
+            })
+        );
+        REQUIRE(otherProject.has_value());
+        CHECK(
+            otherProject->observedInstances()[0].observedInstanceId.value()
+            != firstId
+        );
+        auto const crossProject = prepared.store.resolveObservedInstance(
+            *projectLease,
+            scope,
+            *otherProject,
+            firstId
+        );
+        REQUIRE_FALSE(crossProject.has_value());
+        CHECK(
+            projectObservationErrorCode(crossProject.error())
+            == ProjectObservationErrorCode::ObservedInstanceScopeMismatch
+        );
+
+        auto const foreignSource = test_support::pluginSource("fixture.foreign");
+        auto foreignProject = makeProject("fixture.foreign", foreignSource);
+        auto foreignPlugin  = loadPlugin(foreignProject, foreignSource);
+        auto foreignManifest = test_support::sessionManifest(
+            foreignProject.registration,
+            prepared.runtimeArtifactRootHash,
+            hashOf("agent"),
+            test_support::policyArtifactBytes()
+        );
+        REQUIRE(prepared.store.registerProject(
+            foreignProject.registration
+        ).has_value());
+        REQUIRE(prepared.store.provisionProjectInstance(
+            foreignProject.registration,
+            foreignPlugin,
+            ProjectInstanceBaseline{
+                .projectInstanceKey  = "instance-1",
+                .eventId             = "baseline-foreign",
+                .sessionManifestHash = foreignManifest.hash(),
+                .entry = journalEntry(
+                    foreignProject,
+                    foreignProject.registration.baselineEventType(),
+                    "{\"kind\":\"baseline\"}"
+                ),
+            }
+        ).has_value());
+        REQUIRE(prepared.store.pinSession(
+            SessionPin{
+                .sessionId                 = "session-foreign",
+                .authenticatedControllerId = "controller-foreign",
+                .idempotencyNamespace      = "controller-foreign",
+                .projectRegistrationHash   = foreignProject.registration.hash(),
+                .controllerCapabilities    = {
+                    std::string{conformance::k_operateCapability},
+                },
+                .controlledTargetId = "target-foreign",
+                .projectInstanceKey = "instance-1",
+                .mode               = SessionMode::Write,
+                .kind               = ControllerKind::Script,
+            },
+            foreignManifest,
+            std::nullopt
+        ).has_value());
+        auto foreignController = prepared.store.bindController("session-foreign");
+        REQUIRE(foreignController.has_value());
+        auto foreignLease = prepared.store.acquireLease(*foreignController);
+        REQUIRE(foreignLease.has_value());
+        auto foreignSchemas = observedInstanceIdentitySchemas(
+            foreignProject.registration
+        );
+        auto foreignObservation = prepared.store.publishProjectObservation(
+            *foreignLease,
+            foreignPlugin,
+            scope,
+            foreignSchemas,
+            observationProposal({
+                observedInstanceProposal("first", "overlay.domain"),
+            })
+        );
+        REQUIRE(foreignObservation.has_value());
+        CHECK(
+            foreignObservation->observedInstances()[0].observedInstanceId.value()
+            != firstId
+        );
+
+        auto const crossRegistration = prepared.store.resolveObservedInstance(
+            *foreignLease,
+            scope,
+            *foreignObservation,
+            firstId
+        );
+        REQUIRE_FALSE(crossRegistration.has_value());
+        CHECK(
+            projectObservationErrorCode(crossRegistration.error())
+            == ProjectObservationErrorCode::ObservedInstanceScopeMismatch
+        );
     }
 
     TEST_CASE("PRAGMA user_version is no part of Operator schema identity")
@@ -1275,6 +2152,47 @@ namespace uf::operator_runtime
         CHECK_MESSAGE(
             ledgerBytes(databasePath) == installed,
             "a refused read wrote to the ledger"
+        );
+    }
+
+    TEST_CASE("the active read-only door derives the generation without writing")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto const first = test_support::runtimeRelease(temporary.path() / "first");
+        auto const second = releaseWithModel(
+            temporary.path() / "second",
+            "a different active page model\r\n"
+        );
+        {
+            auto coordinator = OperatorCoordinator::open(production);
+            REQUIRE(coordinator.has_value());
+            REQUIRE(
+                coordinator->installRuntimeArtifact(installRequest(first, 0U))
+                    .has_value()
+            );
+            REQUIRE(
+                coordinator->installRuntimeArtifact(installRequest(second, 1U))
+                    .has_value()
+            );
+        }
+        auto const installed = ledgerBytes(databasePath);
+
+        auto const active = OperatorCoordinator::readActiveInstalledRuntimeArtifact(
+            production,
+            second.artifactRootHash
+        );
+        REQUIRE(active.has_value());
+        CHECK(active->installedGeneration() == 2U);
+        CHECK(active->rootHash() == second.artifactRootHash);
+        CHECK_FALSE(OperatorCoordinator::readActiveInstalledRuntimeArtifact(
+            production,
+            first.artifactRootHash
+        ).has_value());
+        CHECK_MESSAGE(
+            ledgerBytes(databasePath) == installed,
+            "active installation selection must not mutate the Operator ledger"
         );
     }
 
@@ -1731,6 +2649,200 @@ namespace uf::operator_runtime
         // resolved is no longer unanswered.
         auto again = OperatorCoordinator::open(temporary.path() / "production");
         REQUIRE(again.has_value());
+    }
+
+    TEST_CASE(
+        "restart recovery reports actionable revisions after automatic session resume"
+    )
+    {
+        auto temporary = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto retained = [&temporary]()
+        {
+            auto prepared = prepareStore(temporary.path());
+            auto const operation = createReadyOperation(
+                prepared,
+                "request-restart-action",
+                "command-1"
+            );
+            auto host = deliveringHost(prepared);
+            auto const reserved = prepared.store.reserveDispatch(
+                operation.operationId,
+                operation.revision,
+                prepared.lease,
+                host->generation(),
+                AuthorityDecisionId{"authority-restart-action"},
+                std::nullopt
+            );
+            REQUIRE(reserved.has_value());
+            REQUIRE(host->deliver(reserved->authority).has_value());
+            REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
+            return std::tuple{
+                prepared.project,
+                prepared.plugin,
+                prepared.runtimeArtifactRootHash,
+                operation.operationId,
+            };
+        }();
+        auto const& [project, plugin, artifactRootHash, operationId] = retained;
+        auto const beforeRead = ledgerBytes(databasePath);
+
+        auto const artifact = OperatorCoordinator::readActiveInstalledRuntimeArtifact(
+            production,
+            artifactRootHash
+        );
+        REQUIRE(artifact.has_value());
+        CHECK_MESSAGE(
+            ledgerBytes(databasePath) == beforeRead,
+            "read-only active selection must not consume restart recovery"
+        );
+
+        auto restarted = OperatorCoordinator::open(production);
+        REQUIRE(restarted.has_value());
+        auto recovered = restarted->recoveredUncertainDispatches();
+        REQUIRE(recovered.has_value());
+        REQUIRE(recovered->size() == 1U);
+        CHECK(recovered->front().operationId == operationId);
+        CHECK(recovered->front().expectedOperationRevision > 1U);
+        CHECK(recovered->front().expectedProjectStateRevision == 0U);
+
+        auto const manifest = sessionManifest(
+            project.registration,
+            artifactRootHash,
+            hashOf("agent"),
+            test_support::policyArtifactBytes()
+        );
+        auto const budgeted = restarted->resumeSession(
+            SessionResume{
+                .authenticatedControllerId = "controller-1",
+                .controlledTargetId        = "target-1",
+                .mode                      = SessionMode::Write,
+                .kind                      = ControllerKind::Agent,
+            },
+            manifest
+        );
+        REQUIRE_FALSE(budgeted.has_value());
+        CHECK_MESSAGE(
+            budgeted.error().message().contains(
+                "cannot resume across a process epoch"
+            ),
+            "budgeted Agent sessions must not resume across a process epoch"
+        );
+
+        auto controller = restarted->resumeSession(
+            SessionResume{
+                .authenticatedControllerId = "controller-1",
+                .controlledTargetId        = "target-1",
+                .mode                      = SessionMode::Write,
+                .kind                      = ControllerKind::Script,
+            },
+            manifest
+        );
+        REQUIRE(controller.has_value());
+        CHECK(controller->sessionId() == "session-1");
+        auto lease = restarted->acquireLease(*controller);
+        REQUIRE(lease.has_value());
+
+        auto stillRecovered = restarted->recoveredUncertainDispatches();
+        REQUIRE(stillRecovered.has_value());
+        REQUIRE(stillRecovered->size() == 1U);
+        CHECK(stillRecovered->front().operationId == operationId);
+        auto const committed = restarted->commitReconciliation(
+            plugin,
+            ReconciliationCommit{
+                .operationId = operationId,
+                .expectedOperationRevision =
+                    stillRecovered->front().expectedOperationRevision,
+                .expectedProjectStateRevision =
+                    stillRecovered->front().expectedProjectStateRevision,
+                .outcome = test_support::reconcileOutcome(
+                    project,
+                    plugin,
+                    operationId,
+                    "{\"disposition\":\"ambiguous\"}"
+                ),
+                .journalEvents = {},
+            }
+        );
+        REQUIRE(committed.has_value());
+        CHECK(committed->state == OperationState::Ambiguous);
+        auto const completed = restarted->recoveredUncertainDispatches();
+        REQUIRE(completed.has_value());
+        CHECK(completed->empty());
+    }
+
+    TEST_CASE("ambiguous prior sessions refuse automatic resume and remain readable")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto const production = temporary.path() / "production";
+        auto retained = [&temporary]()
+        {
+            auto prepared = prepareStore(temporary.path());
+            auto const manifest = sessionManifest(
+                prepared.project.registration,
+                prepared.runtimeArtifactRootHash,
+                hashOf("agent"),
+                test_support::policyArtifactBytes()
+            );
+            REQUIRE(prepared.store.provisionProjectInstance(
+                prepared.project.registration,
+                prepared.plugin,
+                ProjectInstanceBaseline{
+                    .projectInstanceKey  = "instance-ambiguous",
+                    .eventId             = "baseline-ambiguous",
+                    .sessionManifestHash = manifest.hash(),
+                    .entry = journalEntry(
+                        prepared.project,
+                        prepared.project.registration.baselineEventType(),
+                        "{\"kind\":\"baseline\"}"
+                    ),
+                }
+            ).has_value());
+            REQUIRE(prepared.store.pinSession(
+                SessionPin{
+                    .sessionId                 = "session-ambiguous",
+                    .authenticatedControllerId = "controller-1",
+                    .idempotencyNamespace      = "controller-ambiguous",
+                    .projectRegistrationHash =
+                        prepared.project.registration.hash(),
+                    .controllerCapabilities = {
+                        std::string{conformance::k_operateCapability},
+                    },
+                    .controlledTargetId = "target-1",
+                    .projectInstanceKey = "instance-ambiguous",
+                    .mode               = SessionMode::Write,
+                    .kind               = ControllerKind::Script,
+                },
+                manifest,
+                std::nullopt
+            ).has_value());
+            return std::pair{manifest, prepared.runtimeArtifactRootHash};
+        }();
+        auto const& [manifest, artifactRootHash] = retained;
+        {
+            auto restarted = OperatorCoordinator::open(production);
+            REQUIRE(restarted.has_value());
+            auto const resumed = restarted->resumeSession(
+                SessionResume{
+                    .authenticatedControllerId = "controller-1",
+                    .controlledTargetId        = "target-1",
+                    .mode                      = SessionMode::Write,
+                    .kind                      = ControllerKind::Script,
+                },
+                manifest
+            );
+            REQUIRE_FALSE(resumed.has_value());
+            CHECK_MESSAGE(
+                resumed.error().message().contains("More than one most-recent"),
+                "automatic resume must refuse equally recent prior sessions"
+            );
+        }
+
+        CHECK(OperatorCoordinator::readActiveInstalledRuntimeArtifact(
+            production,
+            artifactRootHash
+        ).has_value());
     }
 
     // Only not_delivered proves an external effect absent, and only a Host that
