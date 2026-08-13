@@ -11,7 +11,7 @@
 > `engine -> annotation`、第四节的 `cycle_page` 与 `cycle_find`,**都已作废**:
 > element 与 page 上移到第二层 Luau,C++ 只保留 `cycle_match` / `cycle_read` /
 > `cycle_click` 三个原语,外加项目文件读写。读本文这几处时以
-> [`2026-07-31-script-owned-page-model.md`](2026-07-31-script-owned-page-model.md)
+> [`2026-07-31-script-owned-page-model.md`](../archive/plans/2026-07-31-script-owned-page-model.md)
 > 为准,该文尚未实施。
 
 > **2026-08-12。** 上面那条注记的最后一句已经过期两次:那份文档于 2026-08-12 作废,
@@ -61,7 +61,7 @@
 
 > **修订 2026-08-01**:「动作授权四要件」那一行少了一项。element 与 page 上移第二层
 > 之后,四要件里的**「已解析页面授权该元素」随模型一起上移**,由可信第二层执法
-> (见 [`2026-07-31-script-owned-page-model.md`](2026-07-31-script-owned-page-model.md)
+> (见 [`2026-07-31-script-owned-page-model.md`](../archive/plans/2026-07-31-script-owned-page-model.md)
 > §五)。C++ 保留的是:hit 来自本票据的同帧匹配、指纹兼容、观察租约新鲜度、票据单次
 > 消费。表格那一格不改——它记的是当时的裁决;按本注读。
 

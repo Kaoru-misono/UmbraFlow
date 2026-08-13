@@ -11,7 +11,7 @@ chaining the two clicks that navigate between them.
 > workbench Preview went with the GUI, and `modules/annotation` — including
 > `annotation/recognition.cpp` and `SimilarityThreshold::maximumSad` — was
 > deleted with the C++ page model. Deciding artifact:
-> [the script-owned page model plan](../plans/2026-07-31-script-owned-page-model.md).
+> [the archived script-owned page model plan](../archive/plans/2026-07-31-script-owned-page-model.md).
 >
 > **What still transfers:** the conjunction itself, unchanged. The entry below is
 > restated against what holds it now — `observe.resolve_page`

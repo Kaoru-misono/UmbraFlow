@@ -2,7 +2,7 @@
 
 > Archived 2026-08-12: the l2-v2/page-model implementation shape was replaced
 > by Runtime v2. Surviving runtime and consumer work is owned by
-> [the consolidated outstanding plan](../../plans/2026-08-12-outstanding-work.md)
+> [the consolidated outstanding plan](2026-08-12-outstanding-work.md)
 > `T-001`–`T-007` and `C-001`–`C-011`; the old A–D phases are not executable
 > work.
 
@@ -10,7 +10,7 @@
 > 2026-08-03 开发者在 `标注过程.md` 写下状态脑暴段并确认「按这个方向走」,
 > 08-04 指示成文。上位文档:
 > [标注模型重构](2026-07-31-annotation-model-capabilities.md)(能力集合与引用,不重开)、
-> [script-owned](../../plans/2026-07-31-script-owned-page-model.md)(模型住工程文件,不重开)。
+> [script-owned](2026-07-31-script-owned-page-model.md)(模型住工程文件,不重开)。
 > 证据基线:uf-chaos 2026-08-03 真机——85 步菜单到菜单的 `daily.luau` 运行
 > (`frames/menu-to-menu5.jsonl`,21154 行 trace)与同日多次失败运行的教训。
 > 本文每一节结尾给证伪方式;没有证伪方式的段落只是措辞,可以随便改。

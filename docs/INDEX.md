@@ -46,6 +46,9 @@ The real dual-game attestation remains external and cannot be moved by fixtures.
 
 ## 4. Migration and evidence
 
+- [Framework capability survey](2026-08-14-framework-capability-survey.md) —
+  measured implementation-symbol-to-test map; it is not an unfinished-work
+  ledger.
 - [Runtime migration report](plans/2026-08-09-runtime-migration-report.md) —
   inherited baseline, dispositions and requirement-to-gate map. Verify it
   against current paths before relying on an old locator.

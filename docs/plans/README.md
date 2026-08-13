@@ -23,8 +23,7 @@ superseded and measurement-only plans live under
 - [Runtime model contract](2026-08-09-runtime-model-contract.md) — field-level
   prose beside the normative
   [`umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json).
-  Its pre-v2 body is known documentation debt owned by `D-002` in the consumer
-  execution authority; the file itself is excluded from the 2026-08-13 L4 lane.
+  Its body was rewritten against the current Runtime v2 schema on 2026-08-14.
 - [Runtime migration report](2026-08-09-runtime-migration-report.md) — the
   requirement-to-owner/schema/CTest map, with its baseline and disposition
   manifests. It is an execution record, not an unfinished-work list.
@@ -34,14 +33,14 @@ superseded and measurement-only plans live under
 
 ## Retained pre-v2 records
 
-- [Three-layer task system](2026-07-29-three-layer-task-system.md),
-  [three layers with the Agent operator](2026-08-01-three-layers-and-agent-operator.md),
-  and [script-owned page model](2026-07-31-script-owned-page-model.md) preserve
-  dated layer-design history. They are not current runtime-model authorities;
-  Runtime v2 supersedes their record shapes and vocabulary. Their still-open
-  behavioural questions live only under U13 in the consumer execution
-  authority. Source citations still prevent archiving the script-owned record;
-  moving those citations remains `D-003`.
+- [Three-layer task system](2026-07-29-three-layer-task-system.md) and
+  [three layers with the Agent operator](2026-08-01-three-layers-and-agent-operator.md)
+  preserve dated layer-design history. They are not current runtime-model
+  authorities; Runtime v2 supersedes their record shapes and vocabulary. The
+  script-owned page-model predecessor was
+  [archived on 2026-08-14](../archive/plans/2026-07-31-script-owned-page-model.md)
+  after its surviving `T-005` obligation moved into the live runtime contract.
+  Still-open behavior remains owned only by the consumer execution authority.
 
 ## Completed current audits
 
@@ -55,6 +54,13 @@ superseded and measurement-only plans live under
 
 The two JSON files beside the migration report are its machine-readable
 baseline and disposition data, not separate plans.
+
+## Archived on 2026-08-14
+
+- [Script-owned page model](../archive/plans/2026-07-31-script-owned-page-model.md)
+  — superseded by Runtime v2; surviving confirmation/recognition behavior is
+  deposited as `T-005` in the live runtime model contract and remains owned by
+  the consumer execution authority.
 
 ## Archived on 2026-08-12 in the consolidation pass
 

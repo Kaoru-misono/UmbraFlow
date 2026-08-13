@@ -1,861 +1,206 @@
-# Umbraflow Runtime Model Contract v1
+# Runtime model contract
 
-Status: frozen for P0 implementation
+> Rewritten 2026-08-14 for Runtime v2. The normative field authority is
+> [`schema/umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json);
+> this document explains that schema and the behavior implemented by the trusted
+> compiler and resolver. It defines no compatibility spelling for an earlier
+> model.
 
-Date: 2026-08-09
+## Authority and boundary
 
-> **Amended 2026-08-12 for `a1140a4`, which added readings to the runtime
-> model.** The amended passages are §2.6, §2.7, §3 and §4, each marked where it
-> starts. Two facts about the document as a whole belong with them, because the
-> amendments are written in names the rest of it does not use. The field-shape
-> authority is
-> [`umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json),
-> whose exact bytes the runtime-model file reader in `modules/task/` pins as
-> `k_runtimeModelSchemaHash`; the four v1 schema files listed below were deleted
-> with the surface they described, and `tests/test-runtime-surface.py` keeps
-> them deleted. And the
-> record vocabulary of §2 and §4 is the pre-v2 spelling — `Context`, `Target`,
-> `Identity`, `schema_version = 1` — while a model on disk is
-> `schema_version = 2` over `ui_target`, `locator`, `reader`, `binding`,
-> `surface` and `transition`. The amendments use the schema's names. Reconciling
-> the rest of §2 and §4 to them is a separate change and has not been made.
+`RuntimeModel` is immutable project data. C++ verifies the RuntimeArtifact's
+confined file and digest closure, then one trusted Luau compiler parses the TOML
+and enforces semantic references. Project code does not receive a second parser
+or a way to replace model authority at runtime.
 
-This document is the field-level contract for the annotation-system rewrite.
-It deliberately does not preserve the old `Page`, `Element`, `Reference`,
-`CapabilitySet`, `holding`, `exercised`, `screen`, or `expect` runtime model.
+The model describes UI semantics. It does not contain policy decisions,
+observations presented as declarations, controller coordinates supplied by a
+project, or annotation screenshots. Runtime results are evidence-bound values
+from one live cycle.
 
-The machine-readable contracts are:
+Every object is closed. Identifiers use the schema's one canonical spelling,
+asset paths live below `assets/`, rectangles are `[x, y, width, height]`, points
+are `[x, y]`, and sizes are `[width, height]`. The model declares
+`schema_version = 2`, `base_resolution`, `base_dpi`, and the collections of
+UiTargets, Locators, Readers, Bindings, optional Collections, Surfaces and
+Transitions.
 
-- [`umbraflow-runtime-v1.schema.json`](../../schema/umbraflow-runtime-v1.schema.json): runtime model and runtime result shapes;
-- [`umbraflow-offline-v1.schema.json`](../../schema/umbraflow-offline-v1.schema.json): frames, observations, assertions, candidates, conflicts, and patches;
-- [`umbraflow-annotator-api-v1.schema.json`](../../schema/umbraflow-annotator-api-v1.schema.json): backend/UI messages;
-- [`umbraflow-cpp-envelope-v1.schema.json`](../../schema/umbraflow-cpp-envelope-v1.schema.json): pre-VM facts.
+## Declarations
 
-The JSON schemas define field shape. The cross-object rules and runtime
-semantics below are part of the contract and must be implemented by the one
-semantic validator.
+### UiTarget, Locator and Reader
 
-## 1. Boundary and authority
+A `UiTarget` is semantic identity only: `{ id, kind }`, where `kind` is
+`control` or `region`. It has no placement and grants no action.
 
-```text
-offline frames / OCR / Agent proposals / review
-                         |
-                         | validate + accept + compile
-                         v
-runtime-model.toml + content-addressed locator assets
-                         |
-                         v
-Umbraflow runtime
-```
+A `Locator` is a named template detector with `{ id, kind = "template",
+asset_path, threshold }`. The threshold is in `[0, 1]`.
 
-The runtime package contains no annotation screenshots, raw OCR observations,
-Agent reasoning, assertions, review records, or regression matrices. A runtime
-observation cycle may hold a temporary live frame, but that frame is not the
-offline corpus.
+A text `Reader` declares `{ id, kind = "text", confidence_floor, layout,
+normalization }`. `layout` is required and is either:
 
-`umbraflow-runtime-v1.schema.json` is the single field-shape authority for
-the `RuntimeModel` encoded by `runtime-model.toml`, runtime model values,
-resolution values, and receipts. The
-Luau compiler is the single semantic validator. Python and TypeScript consume
-the schema and compiler protocol; they do not maintain independent enums.
+- `single_line`: read the declared rectangle as exactly one line, without line
+  detection;
+- `block`: locate and read every detected line in the rectangle.
 
-## 2. Runtime concepts
+There is no inferred or default layout. `normalization` is `raw`, `trim`, or
+`collapse_whitespace`.
 
-### 2.1 Context
+### Predicates and detectors
 
-```text
-Context { id }
-```
+A detector predicate is either `locator_present` naming one Locator or
+`text_equals` naming one Reader and an exact value. A detector has the three
+lists `all`, `any`, and `none`; at least `all` or `any` is non-empty. These
+three lists belong to a Binding variant's detector. They are not a Surface
+identity language.
 
-`Context` is a business/runtime environment, such as `camp` or
-`chaos_battle`. It is not a screenshot, a locator, or a visual page. Context
-IDs are unique in one model.
+### Binding
 
-### 2.2 Surface
-
-```text
-Surface {
-    id,
-    kind = scene | overlay | interrupt,
-    contexts: ContextId[],
-    covers?: SurfaceId[]
-}
-```
-
-`scene` is the base visible layer. `overlay` covers compatible lower surfaces.
-`interrupt` can appear independently of the current scene. There is no
-authored catch-all surface. Unknown UI is a runtime result and cannot grant an
-action.
-
-Rules:
-
-- `scene.contexts` is non-empty and `covers` is absent;
-- `overlay.contexts` and `covers` are non-empty; `covers` names only lower
-  `scene` or `overlay` surfaces and never an interrupt;
-- `interrupt.contexts` may be empty, meaning any context, and `covers` is
-  absent;
-- all referenced contexts and surfaces must exist;
-- a surface must have at least one binding with a positive identity predicate;
-- a surface identity is one non-empty list of Binding IDs, and every listed
-  Binding must be present. It has no `any` or `none` branch.
-
-> **Amended 2026-08-14 by `schema/umbraflow-runtime-v2.schema.json`.** Visual
-> alternatives now live in a Binding's non-empty `variants` list. Surface
-> identity is therefore only conjunction; the former flat `all`/`any`/`none`
-> object is not accepted.
-
-> **Amended 2026-08-13 for U13 `T-001`.** Runtime v2 uses the schema's required
-> `covers` list for every Surface. A scene's list is empty; an overlay or
-> interrupt names each compatible lower Surface. One interrupt that may cover
-> two base scenes is one Surface record whose list names both scenes, with one
-> identity and one action Binding. It is not duplicated into one annotation per
-> base. Resolution retains that same interrupt ID above either base, and the
-> action is authorised from the top interrupt Binding on both stacks.
-
-### 2.3 RuntimeState
-
-```text
-RuntimeState {
-    context: ContextId,
-    surfaces: SurfaceId[]  // bottom to top, exact visible order
-}
-```
-
-`surfaces` is non-empty and contains no duplicate ID. The bottom item is a
-scene. An overlay is valid only above a surface named by its `covers` relation;
-an interrupt is the top layer when present.
-
-### 2.4 Target
-
-```text
-Target {
-    id,
-    kind = control | label | indicator | collection | region,
-    geometry?: Geometry,
-    locators: LocatorId[],
-    readers: ReaderId[]
-}
-```
-
-A Target is a reusable semantic object. It does not identify a Surface and it
-does not grant an action. Shared targets are represented by multiple bindings;
-there is no runtime ownership field.
-
-`Geometry` is one of:
-
-- `fixed { kind, rect }`;
-- `collection { kind, rect, axis, item_size, spacing, max_items? }`;
-- `relative { kind, anchor: LocatorRef, offset }`.
-
-### 2.5 Locator and LocatorVariant
-
-```text
-LocatorRef { locator: LocatorId, variant?: LocatorVariantId }
-```
-
-`Locator` is one of:
-
-- `template`: a content-addressed template asset, optional search rectangle,
-  threshold, and/or variants;
-- `text`: an OCR reader and optional search rectangle;
-- `geometry`: a fixed rectangle;
-- `relative`: an anchor locator and offset;
-- `collection`: an item locator, axis, spacing, and optional maximum count.
-
-`LocatorVariant` is a concrete template asset variant belonging to one
-template locator. A variant inherits the parent locator's threshold and search
-rectangle when it does not override them. Template locators must have either
-an inline `asset` or at least one variant.
-
-Asset paths are relative to the runtime asset root, use `/` separators, and
-cannot escape the root. Every asset carries a lowercase SHA-256 digest.
-
-### 2.6 Reader
-
-`Reader` is a target-specific decoding contract:
-
-```text
-line      { id, target, kind, confidence_floor, normalization }
-block     { id, target, kind, confidence_floor, normalization, join }
-items     { id, target, kind, confidence_floor, item_kind, min_items?, max_items? }
-presence  { id, target, kind, confidence_floor }
-```
-
-`normalization` is `raw`, `trim`, or `collapse_whitespace`. Block `join` is
-`newline` or `space`. A measured confidence below `confidence_floor` produces
-`Unknown`, never `Absent`.
-
-> **Amended 2026-08-12 (`a1140a4`).** A Reader's value now leaves the resolver.
-> A Binding names Readers in `reads` (§2.7), and a resolved state reports the
-> normalised value of every such Reader it measured, attributed to the UiTarget
-> that Binding names. `confidence_floor` therefore decides reporting as well as
-> evidence: a measurement below the floor is absent from the reported readings
-> rather than reported with a reason and a score. The floor is the trusted
-> Reader's judgement, and a caller handed the failure could re-decide it. A
-> Reader costs one Host read out of the observation cycle's pool, so a model
-> that declares more `reads` than one cycle can pay for reports fewer readings
-> and never a wrong one.
-
-> **Amended 2026-08-13: a Reader declares its text layout.** Every Reader
-> carries a required `layout`, either `single_line` or `block`, with no default
-> and nothing inferred. `single_line` asserts the rectangle holds exactly one
-> line and skips line detection; `block` says the count is not known, so every
-> line the detector finds inside that rectangle is located and read. A block
-> Reader costs one Host read for the detection pass plus one per line located,
-> out of the same cycle pool. `text_equals` over a Reader holds only when the
-> reading is exactly one line equal to the value, which is a single_line
-> Reader's behaviour unchanged and refuses to invent a separator for a block.
-
-### 2.6a Ordered collection
-
-> **Amended 2026-08-13 (U13 `T-002`; deciding artifacts:
-> [`umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json)
-> and `test-resolution-v2.luau`).** A variable-cardinality ordered collection is
-> a Surface-scoped declaration:
->
-> ```text
-> Collection {
->     id,
->     surface: SurfaceId,
->     placement: {
->         kind = "detected",
->         search_rect: Rect,
->         reader: ReaderId,
->         order: left_to_right | top_to_bottom
->     }
-> }
-> ```
->
-> The Reader must declare `layout = "block"`. `search_rect` only bounds the
-> measurement and is never existence evidence. Once the Surface has resolved,
-> `cycle:resolve_collection(state, id)` runs that Reader and returns exactly
-> `{ count, items = [{ index, rect }, ...] }`: indices are zero-based and each
-> rectangle is the detector's exact image-space line rectangle. An absent read
-> resolves to count zero; Unknown returns no collection result and its reason.
->
-> The declared axis, not Reader adapter enumeration order, assigns indices.
-> Items are sorted by x for `left_to_right` and y for `top_to_bottom`; their
-> spans on that axis must not overlap. This makes indices stable across two
-> captures of one unchanged layout despite detector enumeration changes or
-> small rectangle jitter: an index cannot swap until two items cross, and a
-> crossing first becomes an ambiguous overlap that refuses resolution.
->
-> This Reader **does decide collection-item presence**, explicitly. That is the
-> reader-evidence half of U-04: every item exists because the trusted block
-> detector returned a line, never because a rectangle was calculated. It does
-> not change `Binding.reads`: a Reader named there remains reporting-only and
-> never decides that Binding's detector. Collection results also mint no Receipt
-> and authorize no action.
->
-> **Amended 2026-08-14 (correction to `2089d49`; deciding artifacts:
-> [`umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json)
-> and `test-resolution-v2.luau`).** Each Collection reporting read is
-> `{ reader, offset = [dx, dy], size = [w, h] }`, and its rectangle is
-> `[item.x + dx, item.y + dy, w, h]`. The detected item is one line of text, so
-> its width follows that text; the reporting read belongs to the containing
-> element and therefore carries that element's fixed extent. A derived rectangle
-> outside the frame is refused and never clamped.
-
-### 2.7 Binding
+A `Binding` connects one UiTarget to one Surface and owns its actionable
+placement:
 
 ```text
 Binding {
-    id,
-    surface: SurfaceId,
-    target: TargetId,
-    placement: Placement,
-    identity: Identity,
-    readers: ReaderId[],
-    actions: Action[]
+  id, surface, ui_target,
+  placement = { kind = "fixed", rect, action_point? },
+  variants = [ { name, detector }, ... ],
+  actions = [ ... ],
+  reads? = [ reader_id, ... ]
 }
 ```
 
-`Placement` is `target_geometry`, an explicit `rect`, or a relative anchor
-and offset. `readers` declares which target readers are exposed on this
-surface. `actions` declares the only actions that this surface grants for the
-target.
+`variants` is non-empty. There is no top-level `variant` member. A Binding is
+present only when exactly one variant detector is satisfied. No satisfied
+variant means the Binding is not present or remains Unknown according to its
+evidence; two or more satisfied variants produce an ambiguity and declaration
+order never breaks the tie. Variant names are unique within their Binding.
 
-`Identity` has three predicate lists:
+A Binding action is either a click or a key action. A click uses the fixed
+placement's `action_point`; it cannot carry an item-relative offset. A key
+action carries its key and cannot use an action point. A placement has an
+`action_point` exactly when a click needs one.
+
+`reads`, when present, names reporting Readers. Those reads do not decide the
+Binding's detector. Most Bindings report nothing and omit or leave this list
+empty.
+
+### Surface
+
+A `Surface` declares `{ id, kind, covers, identity }`. Its kind is `scene`,
+`overlay`, or `interrupt`; `covers` names the lower Surfaces with which it may
+form a stack.
+
+`identity` is one non-empty, duplicate-free list of required Binding ids. A
+Surface is present when every listed Binding is present. There is no
+`all`/`any`/`none` object at this level and no negative identity form. Visual
+alternatives are Binding variants, not Surface disjunctions.
+
+### Collection
+
+A `Collection` is an ordered variable-cardinality set of items on one Surface:
 
 ```text
-Identity {
-    all: IdentityPredicate[],
-    any: IdentityPredicate[],
-    none: IdentityPredicate[]
+Collection {
+  id, surface,
+  placement = {
+    kind = "detected", search_rect, reader,
+    order = "left_to_right" | "top_to_bottom",
+    slots = { origin, pitch, tolerance }
+  },
+  actions = [ ... ],
+  reads = [ { reader, offset = [dx, dy], size = [width, height] }, ... ]
 }
 ```
 
-`all` predicates must be present, at least one `any` predicate must be present
-when the list is non-empty, and every `none` predicate must be absent. An
-unknown result blocks resolution. A binding with no identity predicates is
-allowed for a read-only or action-only target, but cannot be the only identity
-evidence for its Surface.
-
-An identity predicate is either:
-
-```text
-{ kind = "locator_present", locator: LocatorRef }
-{ kind = "text_match", reader, operator = "equals", value: string }
-{ kind = "text_match", reader, operator = "contains_all", value: string[] }
-{ kind = "text_match", reader, operator = "present" }
-```
-
-The reader in a text predicate must belong to the binding target.
-
-> **Amended 2026-08-12 (`a1140a4`).** A Binding also carries `reads`: the IDs of
-> the Readers whose value it reports once its own predicates measure it present.
-> `reads` is optional and absent is the empty list — requiring it would put a
-> field on every Binding to record that it reports nothing. Every ID must name a
-> declared Reader, and no ID may repeat. A Reader named in `reads` reports and
-> never decides: it takes no part in this Binding's identity, which remains the
-> three predicate lists above.
-
-### 2.8 Action
-
-An action is a typed, binding-local authorization contract. It has a unique ID
-within its binding and one of these shapes:
-
-```text
-{ id, kind = "click", locator: LocatorRef, preconditions: Predicate[] }
-{ id, kind = "key", key, locator?: LocatorRef, preconditions: Predicate[] }
-{ id, kind = "scroll", axis, delta, locator?: LocatorRef, preconditions: Predicate[] }
-{ id, kind = "drag", locator, destination, preconditions: Predicate[] }
-```
-
-> **Amended 2026-08-12: two of these four exist.** The shipped shape is
-> `{ id, kind, proof_locator }` plus `key` when `kind` is `"key"`, and `kind` is
-> `"click"` or `"key"` and nothing else — `$defs.binding_action` in
-> `umbraflow-runtime-v2.schema.json`, built by `action()` in
-> `modules/task/runtime/model.luau`. `scroll` and `drag` were never implemented
-> and are proposals here rather than a surface anything refuses.
->
-> Two consequences the v1 text does not carry. Which key names exist is not
-> decided by this contract: `uf::KeyName` is the single definition, it is applied
-> to every key a model declares before the artifact is bound, and no second copy
-> of the set exists. And `placement.action_point` is present exactly when some
-> action is a `click`, so a Binding granting only keystrokes carries no
-> coordinate at all.
-
-`destination` is a point or locator reference. Preconditions are positive
-locator/text predicates and must all be present in the same observation cycle.
-An unknown precondition denies authorization. An action cannot refer to a
-locator, reader, or target outside its binding target.
-
-### 2.9 Transition
-
-```text
-Transition {
-    id,
-    from: StatePattern,
-    trigger: action | timeout | external,
-    to: StatePattern,
-    verification: { kind = "resolve", timeout_ms, attempts }
-}
-```
-
-`StatePattern` contains an exact context and an exact bottom-to-top surface
-stack. The runtime model stores declared transitions only. Observed
-transitions and expected test transitions are offline records.
-
-> **Amended 2026-08-13 for U13 `T-003`.** Runtime v2 makes that separation
-> executable. `$defs/transition` is declared policy in
-> `RuntimeModel.transitions`, and `$defs/transition_trigger` belongs only to that
-> declaration. An `$defs/observed_transition` is stored outside the model as
-> `{ kind = "observed_transition", transition, observed_to_surfaces }`; it names
-> the declaration instead of copying its trigger. The pure offline
-> `resolution.compare_transition` result carries independent frozen copies of
-> both `declared_to_surfaces` and `observed_to_surfaces` plus `matches_policy`.
-> Comparing a replay therefore reports a changed destination without changing
-> the model bytes that state policy.
-
-## 3. Runtime resolution and receipt
-
-Every resolution uses one observation cycle:
-
-```text
-open cycle
-  -> capture one frame
-  -> resolve_state(expected_surface_stack?)
-  -> when expected: evaluate that stack's identity predicates
-  -> when absent, or confirmation is not Present: evaluate every Surface
-  -> build a surface stack
-  -> return Resolution
-close cycle
-```
-
-> **Amended 2026-08-13 (`T-005`): confirmation and recognition have one
-> owner.** `cycle:resolve_state(expected_surface_stack?)` is the only runtime
-> verb that decides which Surface stack is visible. The expected value is the
-> complete bottom-to-top stack, not one top Surface: an overlay or interrupt
-> does not erase the scene below it, and an interrupt may cover more than one
-> scene. When the caller supplies that stack, the resolver confirms every
-> Surface identity in it and measures no competing Surface. Confirmation
-> succeeds only when every identity is `Present`; `Absent` and `Unknown` both
-> fail confirmation. A failed confirmation is not returned and is never
-> reinterpreted as negative evidence: the same `resolve_state` call escalates
-> to full resolution over all Surfaces on the same cycle and returns that
-> result. With no expected stack, full resolution runs immediately. The
-> trusted Luau resolver owns this policy; callers cannot select fail-closed,
-> escalation, or a second recognition entry point.
-
-Evidence is tri-state:
-
-```text
-Present(value, confidence, proof)
-Absent(proof)
-Unknown(reason, confidence?, proof?)
-```
-
-`Unknown` includes not measured, low confidence, OCR unreadable, locator
-failure, incompatible geometry, stale frame, and internal error. Lack of a
-measurement is never negative evidence. When visible content matches no
-declared Surface, `UnknownResolution.diagnostic` is
-`visible_content_matched_nothing`; this is diagnostic only and grants no
-receipt.
-
-`Resolution` is exactly one of:
-
-```text
-Resolved { kind, state, evidence[] }
-Ambiguous { kind, candidates[2..], conflicts[1..], evidence[] }
-UnknownResolution { kind, reason, evidence[], diagnostic? }
-```
-
-There is no first-match behavior. Candidate ordering is only a deterministic
-search order: interrupt, compatible overlays, scene. Within a layer, a tie or
-insufficient evidence margin produces `Ambiguous`. Context and `covers` rules
-must be satisfied before a candidate can enter the stack.
-
-> **Amended 2026-08-12 (`a1140a4`): readings.** A `Resolved` result also reports
-> what it read, through a second verb over the same open cycle. One reading is
->
-> ```text
-> Reading { ui_target, reader, kind, lines?, reason? }
-> ReadingLine { rect, text }
-> ```
->
-> with `kind` one of `read`, `absent` or `unknown`, `lines` present exactly when
-> it read, and `reason` present exactly when it could not. A reading is a list
-> of lines under either layout: a single_line Reader reports one element rather
-> than a second shape. The list is sorted by
-> `ui_target` then `reader`, so one world produces one document, and it carries
-> one entry per Reader every reporting Binding named — the failures included,
-> because a plugin that cannot separate "nothing is written here" from "this
-> frame was unreadable" has to fail closed on one blurry capture. The score is
-> still not carried: it has already been compared against the Reader's own
-> `confidence_floor`, and it differs between two captures of one unchanged
-> screen while this document is hashed into a decision basis. The schema calls
-> the list `state_readings` and one entry `binding_reading`.
->
-> A reading is attributed to the UiTarget and not to the Binding that carried
-> it. A Binding owns every visual variant sharing its placement and reads, so a
-> hover or highlight changes the matched variant without changing the reporting
-> subject. Multiple present Bindings of one UiTarget still report nothing,
-> because those Bindings name distinct placements or roles. The serialized
-> resolution is hashed into `state_resolution_hash` and through it into
-> `decision_basis_hash`. The confidence score is excluded for the same
-> reason and not for economy — a score differs between two captures of one
-> unchanged screen, and a recapture that is semantically equal must remain one
-> decision. The pre-normalisation text is excluded with it; the raw read is what
-> the Reader exists to narrow.
->
-> **Amended 2026-08-13: each line's rectangle is carried, and IS hashed.** Under
-> `block` that rectangle is the detector's measurement, in the coordinate space
-> of the image, and two captures of one unchanged screen can move it — measured
-> on a real frame, the same three lines came back one to two pixels apart when
-> the surrounding region changed. It is hashed with the rest of the document
-> anyway, which is the ruling: the score has no decision left in it once the
-> floor has judged it, while the rect is where a plugin acts, and a decision
-> basis that omits an input a plugin can branch on would let a frozen plan be
-> re-derived into a different action without the basis moving. Unsoundness
-> outranks an extra approval. Under `single_line` the rect is the Binding's
-> declared placement and cannot move at all.
->
-> A Binding contributes a reading only while its own predicates measure it
-> present, because a Reader reads that Binding's rectangle and reading through a
-> Binding that is not showing returns whatever is at those pixels instead. Two
-> present Bindings that share a UiTarget report nothing for it: which instance
-> is on screen is exactly what an ambiguity means, and resolution already
-> refuses to guess it. A reading that did not clear its Reader's
-> `confidence_floor`, or that was unreadable, is reported as `unknown` with its
-> closed-vocabulary reason and without rejected text or confidence.
->
-> A **Binding `reads` reading** is not detector evidence. It carries no evidence
-> ID, it never appears in a receipt's `evidence_ids`, and it authorizes nothing.
-> `Ambiguous` and `UnknownResolution` report no readings, because a state that
-> resolved no Surface has nothing to attribute one to. **Amended 2026-08-13 by
-> the `T-002` collection ruling above:** a Collection's dedicated block Reader
-> is the detector evidence for its items; that separate field is not
-> `Binding.reads` and still mints no Receipt.
-
-Only a framework-minted `Resolved` result can mint a `Receipt`. A receipt is:
-
-```text
-Receipt {
-    kind = "receipt",
-    id,
-    ticket_id,
-    cycle_id,
-    frame_id,
-    model_hash,
-    state: RuntimeState,
-    surface: SurfaceId,
-    binding: BindingId,
-    action: ActionId,
-    evidence_ids: EvidenceId[],
-    authorization: { ticket_id, cycle_id, target, action }
-}
-```
-
-`observe.click` and all other action verbs must verify that the receipt is
-framework-minted, belongs to the current ticket and cycle, uses the current
-model hash, names the requested binding action, and has fresh proof from the
-same cycle. `Ambiguous` and `UnknownResolution` never mint a receipt.
-
-The JSON shape is not a construction authority. User Lua tables with the same
-fields are not receipts; minting remains private to the trusted framework.
-
-## 4. `runtime-model.toml` field contract
-
-The TOML file maps directly to `RuntimeModel`:
-
-```text
-schema_version       integer, required, exactly 1
-base_resolution      [positive integer, positive integer], required
-base_dpi             [positive integer, positive integer], required
-[[context]]           Context
-[[target]]            Target
-[[locator]]           Locator
-[[locator_variant]]   LocatorVariant
-[[reader]]            Reader
-[[collection]]        Collection
-[[surface]]           Surface
-[[binding]]           Binding
-[[transition]]        Transition
-```
-
-All record IDs are unique within their record type. Unknown fields are a
-validation error. Empty arrays are explicit: `locator_variant`, `reader`, and
-`transition` may be empty; the other runtime record collections have the
-minimums in the machine schema.
-
-> **Amended 2026-08-12 (`a1140a4`).** A binding record may carry
-> `reads = ["reader_id", ...]`. It is the one authored field readings add: it is
-> optional, absent is the empty list, every ID must name a declared reader
-> record, and a repeated ID is a validation error. A reading itself is a runtime
-> value and is never written to `runtime-model.toml`. The fragment below predates
-> the v2 model and the current schema rejects it; write `reads` against the
-> schema named at the head of this document, not against the fragment.
-
-The following is a complete valid fragment:
-
-```toml
-schema_version = 1
-base_resolution = [1920, 1080]
-base_dpi = [96, 96]
-
-[[context]]
-id = "camp"
-
-[[target]]
-id = "confirm_button"
-kind = "control"
-locators = ["confirm_button_visual"]
-readers = ["confirm_button_text"]
-
-[target.geometry]
-kind = "fixed"
-rect = [100, 200, 180, 64]
-
-[[locator]]
-id = "confirm_button_visual"
-target = "confirm_button"
-kind = "template"
-threshold = 0.92
-variants = ["confirm_button_enabled"]
-
-[[locator_variant]]
-id = "confirm_button_enabled"
-locator = "confirm_button_visual"
-asset = { path = "templates/confirm_enabled.png", sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
-
-[[reader]]
-id = "confirm_button_text"
-target = "confirm_button"
-kind = "line"
-confidence_floor = 0.80
-normalization = "trim"
-
-[[surface]]
-id = "camp_scene"
-kind = "scene"
-contexts = ["camp"]
-
-[[surface]]
-id = "training_confirm"
-kind = "overlay"
-contexts = ["camp"]
-covers = ["camp_scene"]
-
-# Amended 2026-08-14: this historical sketch predates the locked RuntimeModel
-# field shapes. Use schema/umbraflow-runtime-v2.schema.json for authored data;
-# in particular, Binding detectors live under variants and Surface identity is
-# one list of Binding IDs.
-
-[[binding]]
-id = "training_confirm_confirm_button"
-surface = "training_confirm"
-target = "confirm_button"
-placement = { kind = "target_geometry" }
-readers = ["confirm_button_text"]
-
-[binding.identity]
-all = [
-  { kind = "locator_present", locator = { locator = "confirm_button_visual", variant = "confirm_button_enabled" } },
-  { kind = "text_match", reader = "confirm_button_text", operator = "equals", value = "确认" }
-]
-any = []
-none = []
-
-[[binding.actions]]
-id = "click"
-kind = "click"
-locator = { locator = "confirm_button_visual", variant = "confirm_button_enabled" }
-preconditions = []
-
-[[transition]]
-id = "camp_to_training_confirm"
-from = { context = "camp", surfaces = ["camp_scene"] }
-trigger = { kind = "external", name = "training_opened" }
-to = { context = "camp", surfaces = ["camp_scene", "training_confirm"] }
-verification = { kind = "resolve", timeout_ms = 2000, attempts = 3 }
-```
-
-The semantic validator additionally checks every reference, target/locator
-ownership, reader ownership, locator variant parent, Surface stack legality,
-unique action IDs within a binding, action references, and transition state
-references. JSON Schema alone cannot enforce these relationships.
-
-## 5. Offline evidence and CandidateModel
-
-Offline objects use `umbraflow-offline-v1.schema.json` and never appear in the
-runtime package.
-
-### Frame
-
-```text
-Frame {
-    id,
-    asset: { path, sha256, width, height },
-    captured_at,
-    source: exploration_trace | manual_capture | import,
-    tags[]?
-}
-```
-
-The asset path points to the annotation corpus. Its hash identifies the exact
-frame used by observations; it is not a runtime locator asset.
-
-### Observation
-
-```text
-Observation {
-    id,
-    frame_id,
-    subject: target | surface | region,
-    measurement: template_score | ocr | geometry | item_count,
-    classification: present | absent | unknown,
-    confidence,
-    provenance
-}
-```
-
-An observation is an Agent or tool measurement, not a model assertion. OCR
-measurements retain text, line boxes, confidence, and the measured rectangle.
-
-### Assertion
-
-```text
-Assertion {
-    id,
-    frame_id,
-    claim: surface_identity | target_locator | text |
-           action_permission | surface_stack,
-    outcome: present | absent | unknown,
-    supporting_observations[],
-    review: open | accepted | rejected | superseded,
-    provenance
-}
-```
-
-No assertion means unreviewed. It does not mean absent. An assertion marked
-`unknown` is a reviewed uncertainty and cannot be compiled as negative
-runtime evidence.
-
-### CandidateModel
-
-```text
-CandidateModel {
-    id,
-    project_id,
-    revision,
-    status: candidate | accepted | rejected | compiled,
-    source_frame_ids[],
-    targets: CandidateTarget[],
-    entities: CandidateGeneric[],
-    patches: Patch[],
-    conflicts: Conflict[]
-}
-```
-
-`CandidateTarget.value` is a runtime Target. Other candidate entities use the
-same runtime object definitions in their `value` field and declare
-`entity_kind`. A CandidateModel may be incomplete, but it must never be
-silently treated as an accepted runtime model.
-
-### Patch
-
-A Patch is semantic, not a raw TOML edit:
-
-```text
-Patch {
-    id,
-    change: create_entity | set_field | grant_action | revoke_action |
-            merge_entities | split_entity,
-    summary,
-    confidence,
-    risk: low | medium | high | critical,
-    evidence_ids[],
-    conflict_ids[]?,
-    provenance,
-    status: proposed | accepted | rejected | applied | superseded
-}
-```
-
-High and critical action patches require explicit human acceptance. Agent code
-may propose and validate them but may not apply them to accepted runtime data.
-Unknown-to-known promotion, arbitrary ambiguity resolution, and automatic
-shared-target ownership are prohibited patch changes.
-
-## 6. Annotator backend/UI API
-
-The backend exposes JSON over the existing local tool transport. The API is
-revisioned and uses optimistic concurrency through `candidate_revision`.
-Every mutating request must include the revision it reviewed; a stale revision
-returns `revision_conflict` and changes nothing.
-
-| Method and path | Request | Response |
-|---|---|---|
-| `GET /api/schema` | none | `SchemaManifest` |
-| `GET /api/candidates` | `status`, `cursor` query | `ListCandidatesResponse` |
-| `GET /api/candidates/{id}` | none | `CandidateModel` |
-| `POST /api/candidates/{id}/patches/{patch}/accept` | `DecisionRequest` | `DecisionResponse` |
-| `POST /api/candidates/{id}/patches/{patch}/reject` | `DecisionRequest` | `DecisionResponse` |
-| `POST /api/candidates/{id}/compile` | `CompileRequest` | `CompileResponse` |
-| `POST /api/candidates/{id}/validate` | revision | `ValidationResponse` |
-| `GET /api/candidates/{id}/conflicts` | none | conflict list from CandidateModel |
-| `GET /api/candidates/{id}/provenance` | none | provenance records |
-
-The backend operations are exactly:
-
-```text
-list_candidates()
-get_candidate(id)
-accept_patch(candidate_id, patch_id, candidate_revision)
-reject_patch(candidate_id, patch_id, candidate_revision)
-compile_candidate(candidate_id, candidate_revision, write=false)
-run_validation(candidate_id, revision)
-get_conflicts(candidate_id)
-get_provenance(candidate_id)
-```
-
-The UI is a decision queue, not a raw TOML editor. It must show supporting
-frames, competing Surface candidates, semantic patch, expected runtime effect,
-blast radius, conflicts, and validation state. It must not expose the deleted
-Page/Element/Reference vocabulary. `write=false` is the default compile mode;
-the backend writes `runtime-model.toml` only after the candidate is accepted and
-validation succeeds.
-
-## 7. C++ pre-VM envelope
-
-Before a VM exists, C++ reads only the facts represented by
-`umbraflow-cpp-envelope-v1.schema.json`:
-
-```text
-PreVmFacts {
-    schema_version,
-    content_hash,       // SHA-256 of exact runtime-model.toml bytes
-    base_resolution,
-    base_dpi,
-    target_ids[],
-    surface_ids[]
-}
-```
-
-The authored top-level fields are `schema_version`, `base_resolution`,
-`base_dpi`, and the IDs in `[[target]]`/`[[surface]]`. C++ computes
-`content_hash` over the exact file bytes. The pre-VM reader must:
-
-- reject a missing or unsupported `schema_version`;
-- reject missing or malformed geometry fingerprint;
-- reject duplicate target or surface IDs;
-- reject an empty target or surface ID;
-- enforce the existing 4 MiB model-file cap;
-- validate script literal names against target and surface IDs;
-- avoid interpreting bindings, identity predicates, locator thresholds,
-  Surface selection, or transitions.
-
-C++ does not load annotation screenshots and does not become a second semantic
-model parser. Luau owns all cross-reference and recognition semantics.
-
-## 8. Exact implementation ownership after P0
-
-| Package | Owns | Must consume |
-|---|---|---|
-| P1 runtime model/compiler | constructors, TOML parsing, semantic validation, indexes | runtime schema |
-| P2 C++ envelope | pre-VM facts and name/hash checks | C++ envelope schema |
-| P3 resolver/receipt | tri-state evidence, stack resolution, authorization | runtime result definitions |
-| P4 graph/offline validation | declared vs observed transitions, replay, coverage | Transition and offline schemas |
-| P5 Agent backend | CandidateModel, Patch, Conflict, provenance, compile/validate calls | offline and API schemas |
-| P6 UI | decision queue and review actions | API schema only; no runtime internals |
-| P7 fixtures | synthetic models and evidence scenarios | all frozen schemas |
-
-P1 may add generated bindings under its own write set, but it may not change
-the field or enum contract without a new architecture decision. P2 must not
-add semantic validation. P5/P6 must not accept or expose old model names.
-
-## 9. Contract-level acceptance tests
-
-The following cases are mandatory for downstream agents:
-
-1. A scene plus a compatible overlay resolves to an ordered two-surface stack.
-2. An interrupt resolves above any scene without a project-maintained order.
-3. Two equally valid surfaces return `Ambiguous`, not first-match.
-4. Low-confidence OCR returns `Unknown`, not `Absent`.
-5. A catch-all-like frame returns `UnknownResolution` and no receipt.
-6. A shared target has multiple bindings with independent placement and action
-   grants.
-7. A receipt from another ticket, cycle, frame, or model hash is rejected.
-8. A binding action without a declared locator or precondition fails validation.
-9. An absent assertion is not generated when no assertion exists.
-10. A stale CandidateModel revision cannot accept or reject a patch.
-11. C++ can extract target/surface names and geometry without interpreting
-    binding semantics.
-12. `runtime-model.toml` contains no offline screenshot or assertion records.
-13. One collection declaration resolves one, two, and three detected items to
-    the corresponding count, stable zero-based spatial indices, and exact line
-    rectangles; reversing detector enumeration order does not change the
-    indices, while overlapping spatial spans refuse.
-
-## 10. Non-blocking open questions
-
-These do not change the frozen field contract:
-
-- the concrete template-matching algorithm and score normalization remain an
-  implementation choice of the vision primitive;
-- the local transport may later add server-sent progress events, but the JSON
-  resource and mutation shapes remain the same;
-- project-specific actions beyond click/key/scroll/drag require a future
-  explicit action-kind addition, not an untyped escape hatch;
-- the compiler may choose generated Luau/Python/TypeScript bindings, provided
-  they are generated from these schemas and do not become new authorities.
+The placement Reader is detector evidence and must have `layout = "block"`.
+Each detected line supplies an item's exact image-space rectangle. `order`
+sorts those rectangles into stable zero-based indices; overlapping spans on the
+ordering axis are ambiguous rather than inherited from detector enumeration.
+The declared regular slot layout uses the one-item `origin`, an even positive
+`pitch`, and a maximum assignment `tolerance`.
+
+The detected count and item rectangles are runtime results, not authored item
+geometry. A resolved Collection reports `completeness` as `complete`, `partial`,
+or `unknown` and always reports `count`. `complete` and `partial` carry items;
+`partial` may have gaps in slot indices. `unknown` carries no items. An absent
+detector read is a complete collection of count zero.
+
+Collection `reads` are reporting-only. Each read rectangle is derived from one
+measured item origin by adding the signed `offset` and then applying the
+declared absolute `size`; the size is not a delta. A rectangle leaving the
+frame is refused, never clamped.
+
+Collections own actions. A Collection click carries an origin-relative offset
+and is resolved for one item selected by zero-based index. Binding clicks and
+Collection clicks therefore have one spelling each: fixed `action_point` for a
+Binding, item-relative `offset` for a Collection.
+
+### Transition
+
+A declared `Transition` has `{ id, from_surfaces, trigger, to_surfaces }`.
+`from_surfaces` and `to_surfaces` are non-empty declared Surface stacks. Its
+trigger names an action and exactly one owner: either `binding` or `collection`,
+never both. A Collection item's index is supplied when that action is resolved;
+it is not part of the declaration.
+
+Declared destinations remain immutable model policy. An observation is stored
+outside `RuntimeModel` as `{ kind = "observed_transition", transition,
+observed_to_surfaces }`. Offline comparison returns both the declared and
+observed destinations plus `matches_policy`; it does not rewrite the declared
+Transition.
+
+## Resolution and reported values
+
+Resolution has two stages. `resolve_state` evaluates Surface identities and
+returns one `resolved_state`, `unknown_state`, or `ambiguous_state`.
+`resolve_binding` then resolves a named UiTarget, optionally constrained to a
+specific Binding, only against a resolved state from the same live cycle. State
+resolution never smuggles an actionable Binding into its result.
+
+A resolved state carries a stable `id`, its `ordered_surface_stack`, and the
+evidence used. An unknown state carries `reason` and evidence and may also carry
+`diagnostic`; visible content matching no Surface uses that optional diagnostic
+while other unknown cases remain explained by their reason. An ambiguous state
+carries candidates, conflicts and evidence.
+
+A resolved Binding carries state identity, Surface, UiTarget, Binding, selected
+variant and evidence. An unresolved Binding is either `unknown_binding` with a
+reason or `ambiguous_binding` with at least two candidates. Authorization of a
+resolved Binding produces a `receipt_request` bound to that same state,
+Binding, variant, action and evidence ids. A key request also carries the key;
+a click request does not.
+
+Every reported reading is a list of lines under both Reader layouts. Each line
+is `{ rect, text }`: a block read uses the detector's measured image-space
+rectangle, while a single-line read reports one element using the Binding's
+declared rectangle. There is no second scalar single-line shape. A Binding
+reading is `read`, `absent`, or `unknown`; only `read` has `lines`, and only
+`unknown` has an `unknown_reason`. Reported readings omit the confidence score
+after the Reader's floor has judged it, but retain line rectangles because
+geometry participates in the decision basis.
+
+## Confirmation and still-open behavior packages
+
+This document records current ownership; describing a package here does not
+close it.
+
+- `T-005` owns confirmation versus recognition. The one `resolve_state` API
+  confirms a caller-supplied expected Surface stack first. It returns that
+  stack only when every member confirms present with no Unknown or ambiguity;
+  otherwise the same call escalates to full Surface resolution. There is no
+  fallback API, interrupt-only escalation path, or second recognition entry
+  point. `T-005` remains owned by the consumer repository's canonical
+  execution plan.
+- `T-006` owns the Runtime v2 map verbs: atomic `drag(start, offset)`,
+  connectivity reading with stitched-map evaluation, and conditional
+  same-kind enumeration, each with its runtime and conformance gate. This prose
+  does not claim those verbs are complete.
+- `T-007` owns the remaining map rulings: wheel authorization, drag duration,
+  colour-key ownership, and the conditional-enumeration falsifier. This prose
+  does not choose those answers.
+- `T-009` owns whether a distinct “there is text here” capability is still
+  required now that Readers and reading outcomes exist. This document does not
+  infer that capability from `text_equals`, `read`, or `absent` and does not
+  close the question.
+
+The consumer repository's execution plan is the only unfinished-work ledger.
+The packages above are pointers to that owner, not duplicate work rows here.

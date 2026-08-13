@@ -3,13 +3,18 @@
 > **历史运行时记录（2026-08-13）。** 本文的页面/元素记录已被 Runtime v2 的
 > UiTarget、Locator、Reader、Binding、Surface 与 Transition 模型取代，不是当前
 > 字段权威。仍有价值的行为问题只由消费者执行权威 U13 拥有；当前字段形状唯一
-> 看 [`schema/umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json)。
+> 看 [`schema/umbraflow-runtime-v2.schema.json`](../../../schema/umbraflow-runtime-v2.schema.json)。
+>
+> Archived 2026-08-14 after its surviving confirmation/recognition obligation
+> was lifted into the live
+> [runtime model contract](../../plans/2026-08-09-runtime-model-contract.md#confirmation-and-still-open-behavior-packages)
+> as `T-005`. The consumer execution plan remains the only unfinished-work owner.
 
 状态:开发者裁决已定,代码未动。本文是落纸,不是提案。2026-08-01 融合修订见 §十二。
 
-本文修改 [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md)
+本文修改 [`2026-07-29-three-layer-task-system.md`](../../plans/2026-07-29-three-layer-task-system.md)
 的第一层边界,并作废
-[`2026-07-31-annotation-model-capabilities.md`](../archive/plans/2026-07-31-annotation-model-capabilities.md)
+[`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md)
 中关于模型归属的部分。能力模型本身的设计结论仍然有效,只是它的实现位置从 C++ 变成
 第二层 Luau。
 
@@ -210,7 +215,7 @@ my_grid_stride = 5
 > (dismiss_overlay)。拆的理由是量出来的——`dismiss_overlay` 的唯一锚点是
 > `season_flash_cards` / `season_mental_intro` 锚点集合的真子集,而 interrupt 排最前,
 > 于是那两页在模式机下永远认不出来。见
-> [状态层与策略插槽](../archive/plans/2026-08-04-state-layer-and-policy-slots.md) §3.4。
+> [状态层与策略插槽](2026-08-04-state-layer-and-policy-slots.md) §3.4。
 >
 > 本节下面那条「打断页要不要是一个显式的页面种类,未定」也就此有了答案:是,而且是两种。
 
@@ -247,14 +252,14 @@ element 的粒度,未定。
 
 ## 十二、2026-08-01 融合裁决
 
-同[目标形态 — 三层系统与 Agent 操作者](2026-08-01-three-layers-and-agent-operator.md)
+同[目标形态 — 三层系统与 Agent 操作者](../../plans/2026-08-01-three-layers-and-agent-operator.md)
 对齐时开发者当场裁的三条,记在这里,免得两份文档各说各的。
 
 **一、状态读出用有名字的 appearance。** 同一矩形上的互斥状态是**一个**元素带一张命名
 appearance 列表,命中身份上到脚本面(`hit.appearance == uf.appearances.speed_3x`);
 同日一度提过的替代方案——把 `speed_1x` / `speed_2x` / `speed_3x` 拆成各自独立的元素
 ——**否决**。沿用的是
-[标注模型文档](../archive/plans/2026-07-31-annotation-model-capabilities.md) §四之二.4(a),那一节的
+[标注模型文档](2026-07-31-annotation-model-capabilities.md) §四之二.4(a),那一节的
 定义边界与「页面决定的形态在引用侧钉死、每周期只搜一次」一并有效。术语统一写
 appearance(曾称 variant)。
 
@@ -273,7 +278,7 @@ upvalue 只交给第二层,业务环境暴露的是「点元素 / 点容器内�
 
 - **顶层形态**——Agent 是第三种操作者、探索/运行两种信任模式、教学与沉淀协议、动词
   全集(含滚轮、拖拽、同类枚举、语义等待)——见
-  [三层系统与 Agent 操作者](2026-08-01-three-layers-and-agent-operator.md)。本文管
+  [三层系统与 Agent 操作者](../../plans/2026-08-01-three-layers-and-agent-operator.md)。本文管
   物理归属,那份管能力面与形态。
 - **第十节「多实例元素」的方向已经有了**:就是该文档 §七 的**同类枚举**动词(区域内
   某类元素的全部命中,返回「类型 + 位置」清单)。粒度问题仍未定,但不再是空白。
