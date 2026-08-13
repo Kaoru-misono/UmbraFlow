@@ -92,6 +92,7 @@ placement = {
   search_rect = [120, 300, 1680, 300],
   reader = "options.text",
   order = "left_to_right",
+  slots = { origin = 631, pitch = 316, tolerance = 2 },
 }
 reads = [{ reader = "header.text", offset = [0, -40], size = [320, 40] }]
 
@@ -129,6 +130,9 @@ assert(
     runtime.collection_by_id.options.placement.search_rect[3] == 1680,
     "T-002 collection search rectangle must survive TOML compilation"
 )
+assert(runtime.collection_by_id.options.placement.slots.origin == 631)
+assert(runtime.collection_by_id.options.placement.slots.pitch == 316)
+assert(runtime.collection_by_id.options.placement.slots.tolerance == 2)
 assert(#runtime.collection_by_id.options.reads == 1)
 assert(runtime.collection_by_id.options.reads[1].offset[1] == 0)
 assert(runtime.collection_by_id.options.reads[1].offset[2] == -40)
@@ -231,6 +235,12 @@ end, "T-002 collection detector must require block layout")
 rejects(function()
     project.parse(replace(valid, '  reader = "options.text",\n', ""))
 end, "T-002 collection detector must require a Reader")
+rejects(function()
+    project.parse(replace(valid, '  slots = { origin = 631, pitch = 316, tolerance = 2 },\n', ""))
+end, "T-002 collection placement must require a slot layout")
+rejects(function()
+    project.parse(replace(valid, "pitch = 316", "pitch = 315"))
+end, "T-002 collection slot pitch must be even")
 rejects(function()
     project.parse(replace(valid, '  kind = "detected",\n', '  kind = "fixed",\n'))
 end, "T-002 collection placement must have one destructive spelling")

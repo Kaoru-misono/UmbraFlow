@@ -490,9 +490,52 @@ local function orderedCollectionLines(collection: any, lines: { any }): ({ any }
     return ordered, nil
 end
 
-local function collectionItems(collection: any, reading: any): ({ any }?, string?)
+local function fittedCollection(collection: any, ordered: { any }): any
+    local measuredCount = #ordered
+    if measuredCount == 0 then
+        return table.freeze({ completeness = "complete", count = 0, items = freezeList({}) })
+    end
+    local axis = if collection.placement.order == "left_to_right" then 1 else 2
+    local searchRect = collection.placement.search_rect
+    local searchStart = searchRect[axis]
+    local searchEnd = searchStart + searchRect[axis + 2]
+    local slots = collection.placement.slots
+    for layoutCount = measuredCount, math.huge do
+        local halfSpan = (layoutCount - 1) * slots.pitch / 2
+        local firstSlot = slots.origin - halfSpan
+        local lastSlot = slots.origin + halfSpan
+        if firstSlot < searchStart or lastSlot >= searchEnd then break end
+        local items = {}
+        local slotIndex = 0
+        local fits = true
+        for position, line in ordered do
+            local coordinate = line.rect[axis]
+            local slot = firstSlot + slotIndex * slots.pitch
+            while slotIndex < layoutCount and slot < coordinate - slots.tolerance do
+                slotIndex += 1
+                slot = firstSlot + slotIndex * slots.pitch
+            end
+            if slotIndex >= layoutCount or math.abs(coordinate - slot) > slots.tolerance then
+                fits = false
+                break
+            end
+            items[position] = { index = slotIndex, rect = line.rect }
+            slotIndex += 1
+        end
+        if fits then
+            return table.freeze({
+                completeness = if layoutCount == measuredCount then "complete" else "partial",
+                count = measuredCount,
+                items = items,
+            })
+        end
+    end
+    return table.freeze({ completeness = "unknown", count = measuredCount })
+end
+
+local function collectionItems(collection: any, reading: any): (any?, string?)
     if type(reading) ~= "table" then return nil, "not_measured" end
-    if reading.kind == "absent" then return {}, nil end
+    if reading.kind == "absent" then return fittedCollection(collection, {}), nil end
     if reading.kind ~= "read" or type(reading.lines) ~= "table" then
         local reason = if reading.kind == "unknown" and evidence.is_unknown_reason(reading.reason)
             then reading.reason
@@ -501,11 +544,7 @@ local function collectionItems(collection: any, reading: any): ({ any }?, string
     end
     local ordered, orderReason = orderedCollectionLines(collection, reading.lines)
     if ordered == nil then return nil, orderReason end
-    local items = {}
-    for position, line in ordered do
-        items[position] = { index = position - 1, rect = line.rect }
-    end
-    return items, nil
+    return fittedCollection(collection, ordered), nil
 end
 
 local function offsetItemRect(
@@ -556,10 +595,11 @@ function resolution.collection_read_targets(
         collection.id,
         collection.placement.reader
     )]
-    local items, itemReason = collectionItems(collection, reading)
-    if items == nil then return nil, itemReason end
+    local fitted, itemReason = collectionItems(collection, reading)
+    if fitted == nil then return nil, itemReason end
+    if fitted.items == nil then return freezeList({}), nil end
     local targets = {}
-    for _, item in items do
+    for _, item in fitted.items do
         for _, read in collection.reads do
             local area, areaReason = offsetItemRect(runtimeModel, item, read)
             if area == nil then return nil, areaReason end
@@ -626,8 +666,11 @@ function resolution.resolve_collection(
         collection.id,
         collection.placement.reader
     )]
-    local detectedItems, itemReason = collectionItems(collection, reading)
-    if detectedItems == nil then return nil, itemReason end
+    local fitted, itemReason = collectionItems(collection, reading)
+    if fitted == nil then return nil, itemReason end
+    if fitted.items == nil then
+        return table.freeze({ completeness = fitted.completeness, count = fitted.count }), nil
+    end
     local targets, targetReadReason = resolution.collection_read_targets(
         runtimeModel,
         cycle,
@@ -637,7 +680,7 @@ function resolution.resolve_collection(
     )
     if targets == nil then return nil, targetReadReason end
     local items = {}
-    for position, detected in detectedItems do
+    for position, detected in fitted.items do
         local readings = {}
         for _, read in collection.reads do
             table.insert(readings, reportedReading(
@@ -656,7 +699,11 @@ function resolution.resolve_collection(
             readings = freezeList(readings),
         })
     end
-    return table.freeze({ count = #items, items = freezeList(items) }), nil
+    return table.freeze({
+        completeness = fitted.completeness,
+        count = fitted.count,
+        items = freezeList(items),
+    }), nil
 end
 
 -- The Bindings a resolved state could report readings from: every Binding on a

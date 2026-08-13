@@ -464,6 +464,7 @@ local reading = model.compile({
                 search_rect = { 100, 80, 1080, 160 },
                 reader = "flavour.reader",
                 order = "left_to_right",
+                slots = { origin = 631, pitch = 316, tolerance = 2 },
             },
             reads = { { reader = "name.reader", offset = { 0, 50 }, size = { 240, 60 } } },
         },
@@ -760,14 +761,14 @@ end
 
 do
     local reversed = resolvedCollection({
-        { "Right", { 821, 100, 180, 40 } },
-        { "Middle", { 505, 100, 180, 40 } },
-        { "Left", { 189, 100, 180, 40 } },
+        { "Right", { 947, 100, 180, 40 } },
+        { "Middle", { 631, 100, 180, 40 } },
+        { "Left", { 315, 100, 180, 40 } },
     })
     local forward = resolvedCollection({
-        { "Left", { 189, 100, 180, 40 } },
-        { "Middle", { 505, 100, 180, 40 } },
-        { "Right", { 821, 100, 180, 40 } },
+        { "Left", { 315, 100, 180, 40 } },
+        { "Middle", { 631, 100, 180, 40 } },
+        { "Right", { 947, 100, 180, 40 } },
     })
     for position, item in reversed.items do
         local other = forward.items[position]
@@ -788,30 +789,31 @@ do
         },
         {
             lines = {
-                { "Left", { 392, 100, 180, 40 } },
-                { "Right", { 708, 100, 180, 40 } },
+                { "Left", { 473, 100, 180, 40 } },
+                { "Right", { 789, 100, 180, 40 } },
             },
             expected = {
-                { 392, 100, 180, 40 },
-                { 708, 100, 180, 40 },
+                { 473, 100, 180, 40 },
+                { 789, 100, 180, 40 },
             },
         },
         {
             lines = {
-                { "Left", { 189, 100, 180, 40 } },
-                { "Middle", { 505, 100, 180, 40 } },
-                { "Right", { 821, 100, 180, 40 } },
+                { "Left", { 315, 100, 180, 40 } },
+                { "Middle", { 631, 100, 180, 40 } },
+                { "Right", { 947, 100, 180, 40 } },
             },
             expected = {
-                { 189, 100, 180, 40 },
-                { 505, 100, 180, 40 },
-                { 821, 100, 180, 40 },
+                { 315, 100, 180, 40 },
+                { 631, 100, 180, 40 },
+                { 947, 100, 180, 40 },
             },
         },
     }
     for expectedCount, case in cases do
         local result = resolvedCollection(case.lines)
         assert(result.count == expectedCount, "T-002 count must follow detected item cardinality")
+        assert(result.completeness == "complete", "T-002 fitted item cardinality must be complete")
         assert(#result.items == expectedCount, "T-002 item list must match reported count")
         for position, item in result.items do
             assert(item.index == position - 1, "T-002 item index must be the stable spatial ordinal")
@@ -828,6 +830,40 @@ do
     end
 end
 
+-- The first two slots of a three-item layout cannot be mistaken for a complete
+-- two-item layout. All three slots are complete, while geometry fitting no
+-- layout reports unknown without inventing an item list.
+do
+    local partial = resolvedCollection({
+        { "Left", { 315, 100, 180, 40 } },
+        { "Middle", { 631, 100, 180, 40 } },
+    })
+    assert(
+        partial.completeness == "partial",
+        "collection completeness must report partial when a layout slot may be missing"
+    )
+    assert(partial.count == 2 and #partial.items == 2)
+
+    local complete = resolvedCollection({
+        { "Left", { 315, 100, 180, 40 } },
+        { "Middle", { 631, 100, 180, 40 } },
+        { "Right", { 947, 100, 180, 40 } },
+    })
+    assert(
+        complete.completeness == "complete",
+        "collection completeness must report complete when every layout slot is measured"
+    )
+
+    local unknown = resolvedCollection({
+        { "First", { 400, 100, 180, 40 } },
+        { "Second", { 700, 100, 180, 40 } },
+    })
+    assert(
+        unknown.completeness == "unknown" and unknown.items == nil,
+        "collection completeness must report unknown without items when no layout fits"
+    )
+end
+
 -- A Collection item is a detected line, so its width varies with its text. The
 -- read belongs to the containing element and keeps its declared width across
 -- items instead of inheriting either line's width.
@@ -841,8 +877,8 @@ do
         state,
         "options",
         collectionReading({
-            { "Short", { 100, 100, 51, 40 } },
-            { "A much longer title", { 500, 100, 160, 40 } },
+            { "Short", { 315, 100, 51, 40 } },
+            { "A much longer title", { 631, 100, 160, 40 } },
         })
     )
     assert(reason == nil and targets ~= nil)
@@ -906,7 +942,7 @@ do
         cycle,
         state,
         "options",
-        collectionReading({ { "Outside", { 1200, 100, 180, 40 } } })
+        collectionReading({ { "Outside", { 1105, 100, 180, 40 } } })
     )
     assert(
         result == nil and reason == "read_out_of_frame",

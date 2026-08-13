@@ -146,15 +146,26 @@
       }
     },
     "detected_collection_placement": {
-      "$comment": "A search region plus the trusted block Reader that detects every item inside it. search_rect bounds the measurement and is never evidence by itself. Each detected line supplies one item's exact image-space rectangle. order turns those measured rectangles into stable zero-based indices; overlapping spans on that axis are ambiguous and the resolver refuses them instead of inheriting detector enumeration order.",
+      "$comment": "A search region plus the trusted block Reader that detects every item inside it. search_rect bounds the measurement and is never evidence by itself. Each detected line supplies one item's exact image-space rectangle. order turns those measured rectangles into stable zero-based indices; overlapping spans on that axis are ambiguous and the resolver refuses them instead of inheriting detector enumeration order. slots describes the regular centred layout on that same axis. Its origin is the measured item-origin coordinate for a one-item layout. For n items, slot k is origin - (n - 1) * pitch / 2 + k * pitch. pitch must be even so every centred layout lands on integer coordinates.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "search_rect", "reader", "order"],
+      "required": ["kind", "search_rect", "reader", "order", "slots"],
       "properties": {
         "kind": { "const": "detected" },
         "search_rect": { "$ref": "#/$defs/rect" },
         "reader": { "$ref": "#/$defs/identifier" },
-        "order": { "enum": ["left_to_right", "top_to_bottom"] }
+        "order": { "enum": ["left_to_right", "top_to_bottom"] },
+        "slots": {
+          "$comment": "origin is the one-item slot coordinate on order's axis. pitch is the positive distance between adjacent slots and is even because halving an odd pitch would put centred even-cardinality layouts between integer pixels. tolerance is the maximum distance between a measured item origin and its assigned slot.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["origin", "pitch", "tolerance"],
+          "properties": {
+            "origin": { "type": "integer", "minimum": 0 },
+            "pitch": { "type": "integer", "minimum": 2 },
+            "tolerance": { "type": "integer", "minimum": 0 }
+          }
+        }
       }
     },
     "collection": {
@@ -574,7 +585,7 @@
       "items": { "$ref": "#/$defs/binding_reading" }
     },
     "collection_item": {
-      "$comment": "One item located by a collection's trusted block Reader. index is the zero-based spatial ordinal declared by the collection, not the Reader adapter's enumeration order. rect is copied exactly from the detected line in image coordinates.",
+      "$comment": "One item located by a collection's trusted block Reader. index is the zero-based slot ordinal declared by the collection, not the Reader adapter's enumeration order; a partial collection can therefore have gaps between indices. rect is copied exactly from the detected line in image coordinates.",
       "type": "object",
       "additionalProperties": false,
       "required": ["index", "rect", "readings"],
@@ -589,17 +600,25 @@
       }
     },
     "resolved_collection": {
-      "$comment": "The complete result of resolving one declared collection against one resolved state in the same live cycle. count equals the number of items and indices are exactly 0 through count-1; the trusted resolver enforces both relations. An absent Reader result resolves to count zero. Unknown reading or ambiguous spatial order produces no resolved_collection.",
+      "$comment": "The result of resolving one declared collection against one resolved state in the same live cycle. count is the number of detected items. complete and partial carry those measured items; partial slot indices may contain gaps. unknown means no detected-item-to-layout assignment exists within the search rectangle and carries no items list. An absent Reader result is a complete collection with count zero. Unknown Reader evidence or ambiguous spatial order still produces no resolved_collection.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["count", "items"],
+      "required": ["completeness", "count"],
       "properties": {
+        "completeness": { "enum": ["complete", "partial", "unknown"] },
         "count": { "type": "integer", "minimum": 0 },
         "items": {
           "type": "array",
           "items": { "$ref": "#/$defs/collection_item" }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "completeness": { "const": "unknown" } } },
+          "then": { "not": { "required": ["items"] } },
+          "else": { "required": ["items"] }
+        }
+      ]
     },
     "resolved_state": {
       "type": "object",

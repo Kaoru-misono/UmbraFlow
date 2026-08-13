@@ -7,7 +7,7 @@
 
 local model = {}
 model.schema = "umbraflow-runtime/v2"
-model.schema_hash = "0de6280c64268c76016974066b686b341b02cf33b35ab32a4380f63b04abce26"
+model.schema_hash = "72433231df31cdc18e8e88d21017a24e58c53b96e5b66c9d6b6bb96cf1647480"
 
 local runtimeModels: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 local semanticBytes: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any
@@ -405,9 +405,33 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
             search_rect = true,
             reader = true,
             order = true,
+            slots = true,
         })
         if placement.kind ~= "detected" then
             fail(what .. ".placement.kind", "must be detected")
+        end
+        local slotsWhat = what .. ".placement.slots"
+        local sourceSlots = object(slotsWhat, placement.slots)
+        only(slotsWhat, sourceSlots, { origin = true, pitch = true, tolerance = true })
+        local slotOrigin = integer(slotsWhat .. ".origin", sourceSlots.origin)
+        local slotPitch = positiveInteger(slotsWhat .. ".pitch", sourceSlots.pitch)
+        local slotTolerance = integer(slotsWhat .. ".tolerance", sourceSlots.tolerance)
+        if slotPitch % 2 ~= 0 then fail(slotsWhat .. ".pitch", "must be even") end
+        if slotTolerance < 0 then fail(slotsWhat .. ".tolerance", "must not be negative") end
+        local searchRect = rect(
+            what .. ".placement.search_rect",
+            placement.search_rect,
+            bounds
+        )
+        local order = enum(what .. ".placement.order", placement.order, {
+            left_to_right = true,
+            top_to_bottom = true,
+        })
+        local axis = if order == "left_to_right" then 1 else 2
+        if slotOrigin < searchRect[axis]
+            or slotOrigin >= searchRect[axis] + searchRect[axis + 2]
+        then
+            fail(slotsWhat .. ".origin", "must lie inside placement.search_rect on order's axis")
         end
         local reads = {}
         local seenReaders: { [string]: boolean } = {}
@@ -438,15 +462,13 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
             surface = identifier(what .. ".surface", source.surface),
             placement = table.freeze({
                 kind = "detected",
-                search_rect = rect(
-                    what .. ".placement.search_rect",
-                    placement.search_rect,
-                    bounds
-                ),
+                search_rect = searchRect,
                 reader = identifier(what .. ".placement.reader", placement.reader),
-                order = enum(what .. ".placement.order", placement.order, {
-                    left_to_right = true,
-                    top_to_bottom = true,
+                order = order,
+                slots = table.freeze({
+                    origin = slotOrigin,
+                    pitch = slotPitch,
+                    tolerance = slotTolerance,
                 }),
             }),
             reads = table.freeze(reads),

@@ -337,7 +337,12 @@ identity = ["title.identity"]
 
         [[nodiscard]] auto collectionRuntimeModel() -> std::string
         {
-            return runtimeModel() + R"toml(
+            auto result = runtimeModel();
+            auto constexpr baseResolution = std::string_view{"base_resolution = [3, 1]"};
+            auto const baseResolutionAt = result.find(baseResolution);
+            REQUIRE(baseResolutionAt != std::string::npos);
+            result.replace(baseResolutionAt, baseResolution.size(), "base_resolution = [5, 1]");
+            result += R"toml(
 [[reader]]
 id = "options.reader"
 kind = "text"
@@ -348,9 +353,10 @@ normalization = "trim"
 [[collection]]
 id = "options"
 surface = "screen"
-placement = { kind = "detected", search_rect = [0, 0, 3, 1], reader = "options.reader", order = "left_to_right" }
+placement = { kind = "detected", search_rect = [0, 0, 5, 1], reader = "options.reader", order = "left_to_right", slots = { origin = 2, pitch = 2, tolerance = 0 } }
 reads = []
 )toml";
+            return result;
         }
 
         [[nodiscard]] auto mixedLayoutReadingRuntimeModel() -> std::string
@@ -1559,7 +1565,7 @@ identity = ["screen.anchor"]
     // multi-item cases, so the exact result also proves that adapter enumeration
     // order is not item identity. A final unchanged three-item capture returns
     // left-to-right and must produce the same indices and rectangles.
-    TEST_CASE("A detected collection returns count stable index and exact rectangle")
+    TEST_CASE("A detected collection reports completeness stable slot index and exact rectangle")
     {
         auto const resolve = [](std::vector<ocr::TextLine> lines, FrameId frameId)
         {
@@ -1581,6 +1587,8 @@ identity = ["screen.anchor"]
                     {
                         std::byte{k_anchorGray},
                         std::byte{k_actionGray},
+                        std::byte{0},
+                        std::byte{0},
                         std::byte{0},
                     },
                     frameId
@@ -1607,7 +1615,7 @@ identity = ["screen.anchor"]
             {
                 ocr::TextLine{
                     .text   = "only",
-                    .bounds = pixelRect(1, 0, 1, 1),
+                    .bounds = pixelRect(2, 0, 1, 1),
                     .confidenceBp = 9'100,
                 },
             },
@@ -1615,7 +1623,7 @@ identity = ["screen.anchor"]
         );
         CHECK_MESSAGE(
             one
-                == R"({"count":1,"items":[{"index":0,"readings":[],"rect":[1,0,1,1]}]})",
+                == R"({"completeness":"complete","count":1,"items":[{"index":0,"readings":[],"rect":[2,0,1,1]}]})",
             "T-002 one-item Host result must report count, index and exact rectangle"
         );
 
@@ -1636,23 +1644,23 @@ identity = ["screen.anchor"]
         );
         CHECK_MESSAGE(
             two
-                == R"({"count":2,"items":[{"index":0,"readings":[],"rect":[0,0,1,1]},{"index":1,"readings":[],"rect":[2,0,1,1]}]})",
-            "T-002 two-item Host result must report count, indices and exact rectangles"
+                == R"({"completeness":"partial","count":2,"items":[{"index":0,"readings":[],"rect":[0,0,1,1]},{"index":1,"readings":[],"rect":[2,0,1,1]}]})",
+            "collection completeness must report partial when a layout slot may be missing"
         );
 
         auto const expectedThree = std::string{
-            R"({"count":3,"items":[{"index":0,"readings":[],"rect":[0,0,1,1]},{"index":1,"readings":[],"rect":[1,0,1,1]},{"index":2,"readings":[],"rect":[2,0,1,1]}]})"
+            R"({"completeness":"complete","count":3,"items":[{"index":0,"readings":[],"rect":[0,0,1,1]},{"index":1,"readings":[],"rect":[2,0,1,1]},{"index":2,"readings":[],"rect":[4,0,1,1]}]})"
         };
         auto const threeReversed = resolve(
             {
                 ocr::TextLine{
                     .text   = "right",
-                    .bounds = pixelRect(2, 0, 1, 1),
+                    .bounds = pixelRect(4, 0, 1, 1),
                     .confidenceBp = 9'100,
                 },
                 ocr::TextLine{
                     .text   = "middle",
-                    .bounds = pixelRect(1, 0, 1, 1),
+                    .bounds = pixelRect(2, 0, 1, 1),
                     .confidenceBp = 9'100,
                 },
                 ocr::TextLine{
@@ -1665,7 +1673,7 @@ identity = ["screen.anchor"]
         );
         CHECK_MESSAGE(
             threeReversed == expectedThree,
-            "T-002 three-item Host result must ignore detector enumeration order"
+            "collection completeness must report complete for all slots in any detector order"
         );
 
         auto const threeForward = resolve(
@@ -1677,12 +1685,12 @@ identity = ["screen.anchor"]
                 },
                 ocr::TextLine{
                     .text   = "middle",
-                    .bounds = pixelRect(1, 0, 1, 1),
+                    .bounds = pixelRect(2, 0, 1, 1),
                     .confidenceBp = 9'100,
                 },
                 ocr::TextLine{
                     .text   = "right",
-                    .bounds = pixelRect(2, 0, 1, 1),
+                    .bounds = pixelRect(4, 0, 1, 1),
                     .confidenceBp = 9'100,
                 },
             },
@@ -1690,7 +1698,27 @@ identity = ["screen.anchor"]
         );
         CHECK_MESSAGE(
             threeForward == expectedThree,
-            "T-002 unchanged captures must preserve indices and exact rectangles"
+            "collection completeness must report complete when every layout slot is measured"
+        );
+
+        auto const unknown = resolve(
+            {
+                ocr::TextLine{
+                    .text   = "first",
+                    .bounds = pixelRect(1, 0, 1, 1),
+                    .confidenceBp = 9'100,
+                },
+                ocr::TextLine{
+                    .text   = "second",
+                    .bounds = pixelRect(2, 0, 1, 1),
+                    .confidenceBp = 9'100,
+                },
+            },
+            FrameId{49}
+        );
+        CHECK_MESSAGE(
+            unknown == R"({"completeness":"unknown","count":2})",
+            "collection completeness must report unknown without items when no layout fits"
         );
     }
 
