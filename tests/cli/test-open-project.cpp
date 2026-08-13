@@ -13,11 +13,6 @@
 
 #include <task/runtime-model-file.hpp>
 
-// Six other test translation units carry a copy of repositoryRoot; the header
-// under tests/json is the one spelling for the files that can reach it, and a
-// relative include is what lets this file reach it without a seventh copy.
-#include "../json/repository-path.hpp"
-
 #include <doctest/doctest.h>
 
 #include <algorithm>
@@ -37,11 +32,6 @@ namespace uf::cli
 {
     namespace
     {
-        constexpr auto k_marker =
-            std::string_view{"examples/umbraflow/umbraflow-project.json"};
-
-        constexpr auto k_exemplar = std::string_view{"examples/umbraflow"};
-
         // The refusal exactly as the binary prints it, context and all. A
         // refusal that names the artifact root does so through Error::context,
         // which error().message() alone drops.
@@ -78,16 +68,13 @@ namespace uf::cli
         public:
             ExemplarCopy()
             {
-                auto const root = json::repositoryRoot(k_marker);
-                REQUIRE_FALSE(root.empty());
-
                 auto const unique = std::filesystem::path{
                     "uf-open-" + std::to_string(std::random_device{}()),
                 };
                 m_root = std::filesystem::temp_directory_path() / unique;
                 std::filesystem::remove_all(m_root);
                 std::filesystem::copy(
-                    root / k_exemplar,
+                    std::filesystem::path{UF_STAGED_UMBRAFLOW_PROJECT},
                     m_root,
                     std::filesystem::copy_options::recursive
                 );
@@ -143,11 +130,8 @@ namespace uf::cli
     // this suite states what a successful open produces.
     TEST_CASE("this repository's exemplar becomes plugins the registrar holds")
     {
-        auto const root = json::repositoryRoot(k_marker);
-        REQUIRE_FALSE(root.empty());
-
         auto const opened = openProjectProduct(
-            OpenArgs{.project = root / k_exemplar}
+            OpenArgs{.project = std::filesystem::path{UF_STAGED_UMBRAFLOW_PROJECT}}
         );
         INFO(why(opened));
         REQUIRE(opened.has_value());

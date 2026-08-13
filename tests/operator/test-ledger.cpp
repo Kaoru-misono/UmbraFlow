@@ -2231,7 +2231,7 @@ namespace uf::operator_runtime
         }
         CHECK_MESSAGE(
             sourceIdentity
-                == "sha256:96c4ef8ffb88bcb8ce85889d42426905ee3cad5cc2d65c7f498fbb2b7b9c4f71",
+                == "sha256:2a8fdd44c39346f1ee7d380b0c1cf0f51fa07b68db396a593446e3029421a23b",
             "the migration fixture must reproduce the exact U9 source identity"
         );
 
@@ -2745,6 +2745,28 @@ namespace uf::operator_runtime
             ledgerBytes(databasePath) == installed,
             "active installation selection must not mutate the Operator ledger"
         );
+    }
+
+    TEST_CASE("an open Coordinator selects its active compatible release internally")
+    {
+        auto temporary       = TemporaryDirectory{};
+        auto const production = temporary.path() / "production";
+        auto const release    = test_support::runtimeRelease(
+            temporary.path() / "active"
+        );
+        auto coordinator = OperatorCoordinator::open(production);
+        REQUIRE(coordinator.has_value());
+        REQUIRE(
+            coordinator->installRuntimeArtifact(installRequest(release, 0U))
+                .has_value()
+        );
+
+        auto const active = coordinator->openActiveInstalledRuntimeArtifact(
+            release.artifactRootHash
+        );
+        REQUIRE(active.has_value());
+        CHECK(active->installedGeneration() == 1U);
+        CHECK(active->rootHash() == release.artifactRootHash);
     }
 
     TEST_CASE("the read-only door bootstraps no Operator layout")

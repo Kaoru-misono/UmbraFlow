@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <format>
 #include <span>
 #include <string>
 #include <string_view>
@@ -209,6 +210,20 @@ namespace uf::operator_runtime
         }
 
         UF_UNREACHABLE_MSG("Unknown PolicyDecision value");
+    }
+
+    auto denyAllPolicyArtifact(
+        ContentHash const& operatorProtocolSchemaHash
+    ) -> std::string
+    {
+        return std::format(
+            "{{\"default_decision\":\"deny\","
+            "\"operator_protocol_schema_hash\":\"{}\","
+            "\"ordered_rules\":[],\"owned_by\":\"operator\","
+            "\"policy_id\":\"operator-deny-all\",\"policy_version\":\"1\","
+            "\"unknown_effect_decision\":\"deny\"}}",
+            operatorProtocolSchemaHash.hex()
+        );
     }
 
     VerifiedPolicyArtifact::VerifiedPolicyArtifact(

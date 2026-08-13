@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbraflow.dev/schema/declarative-workflow-tool/v1",
+  "title": "Umbraflow Declarative Workflow Tool v1",
+  "$comment": "The second tier of declarative tool, and the only one: a single-step tool is a schedule of one state and one step, so this shape absorbed the single-step schema rather than sitting beside it. Every bound here is enforced at admission, including the three that were previously stored and never compared against anything.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "tool_name",
+    "target_argument",
+    "allowed_instance_kinds",
+    "fresh_observation",
+    "ui_finding",
+    "states",
+    "steps",
+    "bounds"
+  ],
+  "properties": {
+    "schema": {
+      "const": "umbraflow-declarative-workflow-tool/v1"
+    },
+    "tool_name": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
+    },
+    "target_argument": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+    },
+    "allowed_instance_kinds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
+      }
+    },
+    "fresh_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_surface",
+        "require_unambiguous"
+      ],
+      "properties": {
+        "required_surface": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
+        },
+        "require_unambiguous": {
+          "const": true
+        }
+      }
+    },
+    "ui_finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "observed_instance_absent",
+            "observed_instance_present"
+          ]
+        }
+      }
+    },
+    "states": {
+      "$comment": "Finite and uniquely keyed. A wait state declares the observation budget it spends; a ui_action state declares the action it dispatches. Neither carries the other's member, so a state cannot be half of both.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["state_key", "kind", "observation_budget", "timeout_ms"],
+            "properties": {
+              "state_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+              },
+              "kind": { "const": "wait" },
+              "observation_budget": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16
+              },
+              "timeout_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60000
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["state_key", "kind", "ui_action", "timeout_ms"],
+            "properties": {
+              "state_key": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+              },
+              "kind": { "const": "ui_action" },
+              "ui_action": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
+              },
+              "timeout_ms": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60000
+              }
+            }
+          }
+        ]
+      }
+    },
+    "steps": {
+      "$comment": "The schedule: each entry names a declared state_key. Its length is the step count the bounds are checked against.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+      }
+    },
+    "bounds": {
+      "$comment": "All six are compared against counts computed from the schedule at admission. maximum_observations, maximum_waits and maximum_elapsed_ms were stored and never enforced until the schedule gave them something to count.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maximum_states",
+        "maximum_steps",
+        "maximum_dispatches",
+        "maximum_observations",
+        "maximum_waits",
+        "maximum_elapsed_ms"
+      ],
+      "properties": {
+        "maximum_states": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "maximum_steps": { "type": "integer", "minimum": 1, "maximum": 16 },
+        "maximum_dispatches": { "type": "integer", "minimum": 0, "maximum": 16 },
+        "maximum_observations": { "type": "integer", "minimum": 0, "maximum": 16 },
+        "maximum_waits": { "type": "integer", "minimum": 0, "maximum": 16 },
+        "maximum_elapsed_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600000
+        }
+      }
+    }
+  }
+}

@@ -80,7 +80,6 @@ namespace uf::cli
             Project,
             WindowHandle,
             Runtime,
-            InstalledGeneration,
             OcrModels,
             Budget,
             RecognitionTimeout,
@@ -97,10 +96,6 @@ namespace uf::cli
             ObserveFlagSpec{"--project", ObserveFlag::Project},
             ObserveFlagSpec{"--hwnd", ObserveFlag::WindowHandle},
             ObserveFlagSpec{"--runtime", ObserveFlag::Runtime},
-            ObserveFlagSpec{
-                "--installed-generation",
-                ObserveFlag::InstalledGeneration,
-            },
             ObserveFlagSpec{"--ocr-models", ObserveFlag::OcrModels},
             ObserveFlagSpec{"--budget", ObserveFlag::Budget},
             ObserveFlagSpec{
@@ -517,8 +512,6 @@ namespace uf::cli
         auto runtime      = std::optional<std::filesystem::path>{};
         auto ocrModels    = std::optional<std::filesystem::path>{};
 
-        auto installedGeneration = std::optional<uint64>{};
-
         auto budget             = k_defaultPixelComparisonBudget;
         auto recognitionTimeout = k_defaultRecognitionTimeout;
         auto trace              = std::filesystem::path{k_defaultObserveTracePath};
@@ -552,12 +545,6 @@ namespace uf::cli
             case ObserveFlag::Runtime:
                 runtime = std::filesystem::path{value};
                 break;
-            case ObserveFlag::InstalledGeneration:
-            {
-                UF_TRY_VALUE(parsed, parseUnsigned(value, name));
-                installedGeneration = parsed;
-                break;
-            }
             case ObserveFlag::OcrModels:
                 ocrModels = std::filesystem::path{value};
                 break;
@@ -595,27 +582,14 @@ namespace uf::cli
             return invalid("missing required argument --hwnd");
         }
 
-        // Zero is refused here rather than at the ledger so that the refusal
-        // names the flag. readInstalledRuntimeArtifact rejects it too, and its
-        // message names an installed generation nobody typed.
-        if (!installedGeneration || *installedGeneration == uint64{0})
-        {
-            return invalid(
-                "--installed-generation must name the positive CAS generation "
-                "the Operator recorded when this project's RuntimeArtifact was "
-                "installed"
-            );
-        }
-
         return ObserveArgs{
-            .project             = std::move(requiredProject),
-            .windowHandle        = *windowHandle,
-            .runtime             = std::move(requiredRuntime),
-            .installedGeneration = *installedGeneration,
-            .ocrModels           = std::move(requiredModels),
-            .budget              = budget,
-            .recognitionTimeout  = recognitionTimeout,
-            .trace               = std::move(trace),
+            .project            = std::move(requiredProject),
+            .windowHandle       = *windowHandle,
+            .runtime            = std::move(requiredRuntime),
+            .ocrModels          = std::move(requiredModels),
+            .budget             = budget,
+            .recognitionTimeout = recognitionTimeout,
+            .trace              = std::move(trace),
         };
     }
 
@@ -776,7 +750,7 @@ namespace uf::cli
         return
             "Usage:\n"
             "  umbra-flow observe --project DIR --hwnd 0xHANDLE --runtime DIR\n"
-            "                     --installed-generation N --ocr-models DIR "
+            "                     --ocr-models DIR "
             "[options]\n"
             "\n"
             "Runs the production path once, read only. It loads the project at\n"
@@ -810,8 +784,6 @@ namespace uf::cli
             "  --hwnd 0xHANDLE              Target handle from `umbra-flow targets`\n"
             "  --runtime DIR                Operator production root holding the\n"
             "                               installed RuntimeArtifact\n"
-            "  --installed-generation N     CAS generation that installation\n"
-            "                               recorded; positive\n"
             "  --ocr-models DIR             Directory holding\n"
             "                               ppocr-v6-small-rec and\n"
             "                               ppocr-v6-small-det\n"

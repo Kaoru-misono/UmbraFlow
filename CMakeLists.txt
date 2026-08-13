@@ -64,9 +64,11 @@ cpp_embed_framework_schemas(
     "${CMAKE_CURRENT_SOURCE_DIR}/schema"
     "${CMAKE_CURRENT_BINARY_DIR}/modules/schema"
     umbraflow-collection-fact-v1.schema.json
-    umbraflow-declarative-single-step-tool-v1.schema.json
+    umbraflow-declarative-workflow-tool-v1.schema.json
     umbraflow-fact-provenance-v1.schema.json
     umbraflow-fact-v1.schema.json
+    umbraflow-journal-v1.schema.json
+    umbraflow-operator-v1.schema.json
     umbraflow-policy-v1.schema.json
     umbraflow-project-registration-v1.schema.json
 )

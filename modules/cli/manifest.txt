@@ -36,7 +36,7 @@ unity_build = false
 # observe.hpp: what the observation established is restated there as strings.
 [dependencies]
 public = engine task
-private = deployment image json operator trace
+private = deployment image json operator service trace
 
 # controller is public because targets.hpp and candidate-selection.hpp name its
 # TargetCandidate, so a caller holding one has to see the type. user32 is

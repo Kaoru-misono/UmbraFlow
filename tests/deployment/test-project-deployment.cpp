@@ -1227,8 +1227,8 @@ namespace uf::deployment
     {
         auto const catalog = framework_schema::frameworkSchemaCatalog();
         CHECK_MESSAGE(
-            catalog.size() == 6U,
-            "framework schema catalog must contain exactly six declared sources"
+            catalog.size() == 8U,
+            "framework schema catalog must contain exactly eight declared sources"
         );
 
         auto const collectionFact = framework_schema::findFrameworkSchema(
@@ -1243,15 +1243,26 @@ namespace uf::deployment
         CHECK(collectionFact->sha256
               == "bb40059ed3a600c5248fc2a1736a07c1e3776bc58bdd2c14e5637adb658e57bb");
 
-        auto const singleStep = framework_schema::findFrameworkSchema(
-            "schema/umbraflow-declarative-single-step-tool-v1.schema.json"
+        auto const workflowTool = framework_schema::findFrameworkSchema(
+            "schema/umbraflow-declarative-workflow-tool-v1.schema.json"
         );
         REQUIRE_MESSAGE(
-            singleStep.has_value(),
-            "framework schema catalog must include declarative single-step tools"
+            workflowTool.has_value(),
+            "framework schema catalog must include declarative workflow tools"
         );
-        CHECK(singleStep->identity
-              == "https://umbraflow.dev/schema/declarative-single-step-tool/v1");
+        CHECK(workflowTool->identity
+              == "https://umbraflow.dev/schema/declarative-workflow-tool/v1");
+
+        // The product lifecycle facade reads the Operator protocol schema out of
+        // this catalog, so a catalog without it fails at first observe rather
+        // than at load.
+        auto const operatorProtocol = framework_schema::findFrameworkSchema(
+            "schema/umbraflow-operator-v1.schema.json"
+        );
+        REQUIRE_MESSAGE(
+            operatorProtocol.has_value(),
+            "framework schema catalog must include the Operator protocol schema"
+        );
 
         auto const provenance = framework_schema::findFrameworkSchema(
             "schema/umbraflow-fact-provenance-v1.schema.json"

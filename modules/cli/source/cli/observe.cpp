@@ -1,14 +1,8 @@
 #include "observe.hpp"
 
-#include <deployment/project-directory.hpp>
+#include <service/product-lifecycle.hpp>
 
-#include <operator/ledger.hpp>
-#include <operator/project-plugin.hpp>
-
-#include <task/platform/confined-file.hpp>
-#include <task/runtime-model-file.hpp>
 #include <task/task-context.hpp>
-#include <task/task-host.hpp>
 #include <task/ui-observation.hpp>
 
 #include <engine/session.hpp>
@@ -18,7 +12,6 @@
 
 #include <core/error/result.hpp>
 
-#include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
 #include <filesystem>
@@ -37,27 +30,6 @@ namespace uf::cli
         // of the entry that opened it.
         constexpr auto k_observeSessionId = std::string_view{"umbra-flow-observe"};
 
-        // The name every authority knows this project's RuntimeArtifact by, as
-        // this binary's own arithmetic over the manifest bytes the project
-        // carries. It is not a value the caller may state: a caller that named
-        // the digest could ask the ledger to open an installed generation under
-        // a hash the directory in front of it does not produce, and the check
-        // that ties the two would compare the caller against itself.
-        [[nodiscard]]
-        auto projectArtifactRootHash(
-            std::filesystem::path const& artifactRoot
-        ) -> Result<ContentHash>
-        {
-            UF_TRY_VALUE(root, task_platform::ConfinedRoot::open(artifactRoot));
-            UF_TRY_VALUE(
-                manifestBytes,
-                root.readFile(
-                    task::k_runtimeArtifactManifestFileName,
-                    task::k_maximumRuntimeManifestBytes
-                )
-            );
-            return sha256(manifestBytes);
-        }
     }
 
     auto observeProject(
@@ -80,78 +52,22 @@ namespace uf::cli
             );
         }
 
-        UF_TRY_VALUE(loaded, deployment::loadProductionProject(args.project, {}));
-        auto const* const p_deployment = loaded.findDeployment(
-            loaded.primaryDeployment
-        );
-        if (p_deployment == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "the project at {} declares no deployment named \"{}\"",
-                    loaded.directory.string(),
-                    loaded.primaryDeployment
-                )
-            );
-        }
-
-        // The registrar is local and nothing is invoked on the handle it
-        // returns. What registering establishes is that the plugin bytes this
-        // project pins compile and answer for this registration, which is the
-        // one thing a reader of this report needs to know about the party the
-        // resolution below would be handed to. Handing it over is not this
-        // verb's: the derive envelope is assembled by trusted Operator code
-        // inside OperatorCoordinator::createSnapshot, and reaching that needs a
-        // provisioned instance and a pinned session -- neither of which a
-        // project directory supplies.
-        auto registrar = operator_runtime::ProjectPluginRegistrar{};
         UF_TRY_VALUE(
-            plugin,
-            registrar.registerPlugin(
-                p_deployment->registration,
-                p_deployment->pluginBytes,
-                p_deployment->artifactBlobs,
-                p_deployment->schemaOwner
+            lifecycle,
+            service::ProductLifecycle::start(
+                service::ProductStart{
+                    .projectDirectory          = args.project,
+                    .runtimeDirectory          = args.runtime,
+                    .authenticatedControllerId = std::string{k_observeSessionId},
+                    .controllerCapabilities    = {},
+                    .controlledTargetId = std::format(
+                        "window-{}",
+                        args.windowHandle
+                    ),
+                }
             )
         );
-
-        UF_TRY_VALUE_CONTEXT(
-            rootHash,
-            projectArtifactRootHash(loaded.runtimeArtifactRoot),
-            std::format(
-                "the RuntimeArtifact at {} could not be named",
-                loaded.runtimeArtifactRoot.string()
-            )
-        );
-
-        // Read through the ledger's read-only door, and deliberately not through
-        // OperatorCoordinator::open: opening a coordinator is a restart, which
-        // advances the session epoch, drops every control lease, deactivates
-        // every session and resolves every unanswered dispatch. This verb takes
-        // none of those decisions, so it must not perform them to reach a pin it
-        // only reads. The refusal a mismatch produces is the check that ties
-        // this directory to what the Operator actually holds, and both of its
-        // sides were produced by different parties at different times.
-        UF_TRY_VALUE_CONTEXT(
-            installed,
-            operator_runtime::OperatorCoordinator::readInstalledRuntimeArtifact(
-                args.runtime,
-                args.installedGeneration,
-                rootHash
-            ),
-            std::format(
-                "the Operator root {} holds no installed generation {} pinned "
-                "to the RuntimeArtifact this project names",
-                args.runtime.string(),
-                args.installedGeneration
-            )
-        );
-        auto const installedGeneration = installed.installedGeneration();
-
-        auto host = task::TaskHost{};
-        UF_TRY_VALUE(generation, host.activateRuntimeArtifact(std::move(installed)));
-        UF_TRY_VALUE(binding, host.runtimeModelBinding(generation));
+        auto const identity = lifecycle.identity();
 
         UF_TRY_VALUE(sink, trace::FileTraceSink::createNew(args.trace));
 
@@ -163,7 +79,7 @@ namespace uf::cli
                 std::move(sink),
                 trace::TraceStreamSpec{
                     .sessionId           = std::string{k_observeSessionId},
-                    .sessionManifestHash = binding.semanticHash(),
+                    .sessionManifestHash = identity.runtimeModel.semanticHash(),
                     .producer            = std::string{k_observeSessionId},
                 }
             )
@@ -177,7 +93,7 @@ namespace uf::cli
                 recorder,
                 engine::EngineSessionConfig{
                     .liveFingerprint         = sources.liveFingerprint,
-                    .projectFingerprint      = binding.fingerprint(),
+                    .projectFingerprint      = identity.runtimeModel.fingerprint(),
                     .maximumPixelComparisons = args.budget,
                     .recognitionTimeout      = args.recognitionTimeout,
                 },
@@ -186,19 +102,20 @@ namespace uf::cli
         );
 
         auto context = task::TaskContext{std::move(session), recorder};
-        UF_TRY_VALUE(snapshot, host.observe(generation, context));
+        UF_TRY_VALUE(observed, lifecycle.observe(context));
+        auto const& snapshot = observed.ui;
 
         return ObservedState{
-            .project             = loaded.directory,
-            .runtimeArtifactRoot = loaded.runtimeArtifactRoot,
+            .project             = identity.projectDirectory,
+            .runtimeArtifactRoot = identity.runtimeArtifactRoot,
             .artifactRootHash    = snapshot.artifactRootHash().hex(),
-            .installedGeneration = installedGeneration,
-            .deployment          = p_deployment->name,
-            .pluginId            = plugin.pluginId(),
-            .registrationHash    = plugin.projectRegistrationHash().hex(),
+            .installedGeneration = identity.installedGeneration,
+            .deployment          = identity.deployment,
+            .pluginId            = identity.pluginId,
+            .registrationHash    = identity.registrationHash.hex(),
             .modelSemanticHash   = snapshot.semanticHash().hex(),
-            .modelWidth          = binding.fingerprint().width(),
-            .modelHeight         = binding.fingerprint().height(),
+            .modelWidth          = identity.runtimeModel.fingerprint().width(),
+            .modelHeight         = identity.runtimeModel.fingerprint().height(),
             .liveWidth           = sources.liveFingerprint.width(),
             .liveHeight          = sources.liveFingerprint.height(),
             .observationId       = snapshot.observationId(),

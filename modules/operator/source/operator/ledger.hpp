@@ -92,10 +92,15 @@ namespace uf::operator_runtime
 
     struct ProjectInstanceBaseline final
     {
-        std::string               projectInstanceKey{};
-        std::string               eventId{};
-        ContentHash               sessionManifestHash;
-        ValidatedJournalEntryData entry;
+        std::string projectInstanceKey{};
+        std::string eventId{};
+        ContentHash sessionManifestHash;
+
+        // No entry is the one spelling of a project with no baseline: the
+        // plugin reduces an empty Journal prefix against null, no Journal row
+        // is fabricated, and eventId must be empty. Operator still owns the
+        // resulting initial ProjectState and every later reduction.
+        std::optional<ValidatedJournalEntryData> entry{};
     };
 
     // The kinds of controller-visible fact appended to the ledger's one ordered
@@ -562,6 +567,16 @@ namespace uf::operator_runtime
         [[nodiscard]]
         static auto readActiveInstalledRuntimeArtifact(
             std::filesystem::path const& runtimeDirectory,
+            ContentHash const& compatibleArtifactRootHash
+        ) -> Result<task::InstalledRuntimeArtifact>;
+
+        // The writable Coordinator selects its own active compatible release.
+        // The installed generation is Operator-private CAS state, so a product
+        // caller supplies only the artifact root derived from the project it
+        // loaded. This is the sole writable-owner spelling; the static method
+        // above remains the no-Coordinator read-only door.
+        [[nodiscard]]
+        auto openActiveInstalledRuntimeArtifact(
             ContentHash const& compatibleArtifactRootHash
         ) -> Result<task::InstalledRuntimeArtifact>;
 

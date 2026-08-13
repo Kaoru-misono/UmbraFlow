@@ -309,11 +309,10 @@ namespace uf::deployment
     "properties": {
         "journal_events": {
             "type": "array",
-            "minItems": 1,
             "items": {"$ref": "#/$defs/JournalEvent"}
         },
         "prior_project_state": {
-            "$comment": "null for a baseline, which is a value here rather than an absent member.",
+            "$comment": "null for initial reduction. journal_events contains the declared baseline or is empty when the project declares none.",
             "oneOf": [
                 {"type": "null"},
                 {"$ref": "https://umbraflow.dev/schema/project/state"}

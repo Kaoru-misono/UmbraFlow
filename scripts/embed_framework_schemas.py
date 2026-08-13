@@ -23,6 +23,35 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# MSVC refuses a single string literal longer than 16380 bytes, and adjacent
+# literals concatenate with no such limit. The chunk is well under that so a
+# multi-byte character straddling a boundary still leaves both halves short
+# enough; splitting on a code point rather than a byte keeps each literal valid
+# UTF-8 on its own.
+_LITERAL_CHUNK = 4000
+
+
+def render_exact_bytes(text: str, delimiter: str) -> str:
+    if len(text.encode("utf-8")) <= _LITERAL_CHUNK:
+        return f'R"{delimiter}({text}){delimiter}"'
+    chunks: list[str] = []
+    current: list[str] = []
+    size = 0
+    for character in text:
+        width = len(character.encode("utf-8"))
+        if size + width > _LITERAL_CHUNK:
+            chunks.append("".join(current))
+            current, size = [], 0
+        current.append(character)
+        size += width
+    if current:
+        chunks.append("".join(current))
+    joined = "\n                                ".join(
+        f'R"{delimiter}({chunk}){delimiter}"' for chunk in chunks
+    )
+    return joined
+
+
 def render_entry(schema_dir: Path, relative_path: str) -> str:
     path = schema_dir / relative_path
     exact_bytes = path.read_bytes()
@@ -39,7 +68,7 @@ def render_entry(schema_dir: Path, relative_path: str) -> str:
             f'                .identity     = "{identity}",',
             f'                .relativePath = "schema/{relative_path}",',
             f'                .sha256       = "{digest}",',
-            f'                .exactBytes   = R"{delimiter}({text}){delimiter}",',
+            f"                .exactBytes   = {render_exact_bytes(text, delimiter)},",
             "            },",
         )
     )

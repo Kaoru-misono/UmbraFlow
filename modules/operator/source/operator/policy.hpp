@@ -28,6 +28,16 @@ namespace uf::operator_runtime
     auto policyDecisionWireName(PolicyDecision decision) noexcept
         -> std::string_view;
 
+    // A project that declares no policy gets this exact Operator-owned
+    // artifact: no rules, with both defaults fixed to deny. It is parameterized
+    // only by the exact Operator protocol schema it answers for. Projects may
+    // supply policy bytes as deployment input, but only Operator evaluates
+    // either form.
+    [[nodiscard]]
+    auto denyAllPolicyArtifact(
+        ContentHash const& operatorProtocolSchemaHash
+    ) -> std::string;
+
     // Which effects one rule speaks about. An empty list does not constrain its
     // dimension, which is why the artifact schema requires at least one of the
     // first two to be non-empty: a rule constraining neither would speak about

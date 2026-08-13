@@ -138,11 +138,6 @@ namespace uf::cli
     // author from typing a digest at all
     // (docs/archive/plans/2026-08-11-project-as-data.md 7.0 Q3).
     //
-    // installedGeneration is the one quantity neither the directory nor the
-    // ledger's public surface can answer for: it is the CAS compare-and-swap
-    // counter that installing a release advanced, the Operator exposes no
-    // reader for it, and installing here would be a write.
-    //
     // The model directory is required for OcrArgs' reason, one layer further
     // down: TaskContext::cycleRead answers a session with no OCR adapter
     // with UnsupportedCapability, and a Reader the model declared would
@@ -154,7 +149,6 @@ namespace uf::cli
         intptr                windowHandle{};
 
         std::filesystem::path runtime{};
-        uint64                installedGeneration{};
 
         std::filesystem::path ocrModels{};
 

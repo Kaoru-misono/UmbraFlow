@@ -476,7 +476,7 @@ namespace uf::operator_runtime
         // does not write it. docs/TODO.md "Delete-on-open has a deadline" owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:4acadc866e4214f480492df68dd883af708700b8a4dc0cbc9db6f91b3a7315bf"
+            "sha256:d96860862dc25fb6efb21d09f59dcc99e3eed9508a5b6a6766937a15b3186eb9"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -521,6 +521,18 @@ namespace uf::operator_runtime
             "revision INTEGER NOT NULL CHECK(revision > 0),"
             "policy_hash TEXT NOT NULL,"
             "available_tools TEXT NOT NULL"
+            ") STRICT"
+        };
+
+        constexpr auto k_projectInstancesDdl = std::string_view{
+            "CREATE TABLE project_instances("
+            "plugin_id TEXT NOT NULL,"
+            "project_instance_key TEXT NOT NULL,"
+            "project_registration_hash TEXT NOT NULL "
+            "REFERENCES project_registrations(registration_hash),"
+            "baseline_event_id TEXT UNIQUE,"
+            "PRIMARY KEY(plugin_id, project_instance_key),"
+            "UNIQUE(project_registration_hash, project_instance_key)"
             ") STRICT"
         };
 
@@ -623,6 +635,35 @@ namespace uf::operator_runtime
             return expectDone(database, insert.get());
         }
 
+        [[nodiscard]]
+        auto makeProjectBaselineOptional(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
+            UF_TRY(execute(
+                database,
+                "CREATE TABLE prior_project_instances("
+                "plugin_id TEXT NOT NULL,"
+                "project_instance_key TEXT NOT NULL,"
+                "project_registration_hash TEXT NOT NULL,"
+                "baseline_event_id TEXT) STRICT"
+            ));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO prior_project_instances SELECT plugin_id, "
+                "project_instance_key, project_registration_hash, "
+                "baseline_event_id FROM project_instances"
+            ));
+            UF_TRY(execute(database, "DROP TABLE project_instances"));
+            UF_TRY(execute(database, k_projectInstancesDdl));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO project_instances SELECT plugin_id, "
+                "project_instance_key, project_registration_hash, "
+                "baseline_event_id FROM prior_project_instances"
+            ));
+            return execute(database, "DROP TABLE prior_project_instances");
+        }
+
         // The corrected snapshot comment is stored DDL and therefore schema
         // identity even though it changes no column. The source identity is an
         // exact precondition, so this rewrite has one expected target row and
@@ -690,6 +731,7 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, k_sessionPoliciesDdl));
             UF_TRY(execute(database, k_availabilityHeadsDdl));
             UF_TRY(rewriteSnapshotIdentityComment(database));
+            UF_TRY(makeProjectBaselineOptional(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
 
             // No migration commits under an identity other than the exact
@@ -707,6 +749,7 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(execute(database, k_schemaIdentityTransitionsDdl));
             UF_TRY(rewriteSnapshotIdentityComment(database));
+            UF_TRY(makeProjectBaselineOptional(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -720,6 +763,20 @@ namespace uf::operator_runtime
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(rewriteSnapshotIdentityComment(database));
+            UF_TRY(makeProjectBaselineOptional(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        [[nodiscard]]
+        auto migrateProjectBaselineOptional(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(makeProjectBaselineOptional(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -749,6 +806,24 @@ namespace uf::operator_runtime
                     "sha256:1c6c1d2002646293e63aa90d258b64270ac35708485f68a35aee0066a527addb",
                 .targetIdentity = k_operatorDatabaseSchemaIdentity,
                 .apply          = migrateSnapshotIdentityComment,
+            },
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:4acadc866e4214f480492df68dd883af708700b8a4dc0cbc9db6f91b3a7315bf",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateProjectBaselineOptional,
+            },
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:1b70212548858e70daf7f120a0245d0af93fd3ff1e9cbab48d7dfa271b57f302",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateSnapshotIdentityComment,
+            },
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:2a8fdd44c39346f1ee7d380b0c1cf0f51fa07b68db396a593446e3029421a23b",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateOperatorU9Schema,
             },
         };
 
@@ -1459,15 +1534,6 @@ namespace uf::operator_runtime
                         canonical_manifest TEXT NOT NULL
                     ) STRICT;
 
-                    CREATE TABLE IF NOT EXISTS project_instances(
-                        plugin_id TEXT NOT NULL,
-                        project_instance_key TEXT NOT NULL,
-                        project_registration_hash TEXT NOT NULL
-                            REFERENCES project_registrations(registration_hash),
-                        baseline_event_id TEXT NOT NULL UNIQUE,
-                        PRIMARY KEY(plugin_id, project_instance_key),
-                        UNIQUE(project_registration_hash, project_instance_key)
-                    ) STRICT;
 )sql"
                 R"sql(
 
@@ -1991,6 +2057,7 @@ namespace uf::operator_runtime
 
                 )sql"
             ));
+            UF_TRY(execute(database, k_projectInstancesDdl));
             UF_TRY(execute(database, k_ledgerEventsDdl));
             UF_TRY(execute(database, k_sessionPoliciesDdl));
             UF_TRY(execute(database, k_availabilityHeadsDdl));
@@ -3692,6 +3759,23 @@ namespace uf::operator_runtime
         };
     }
 
+    auto OperatorCoordinator::openActiveInstalledRuntimeArtifact(
+        ContentHash const& compatibleArtifactRootHash
+    ) -> Result<task::InstalledRuntimeArtifact>
+    {
+        UF_TRY_VALUE(
+            installedGeneration,
+            activeInstalledGeneration(
+                m_impl->database.get(),
+                compatibleArtifactRootHash
+            )
+        );
+        return openInstalledRuntimeArtifact(
+            installedGeneration,
+            compatibleArtifactRootHash
+        );
+    }
+
     auto OperatorCoordinator::recoverUncertainDispatches() -> Result<uint64>
     {
         UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
@@ -3835,26 +3919,36 @@ namespace uf::operator_runtime
     ) -> Status
     {
         UF_TRY(requireName(baseline.projectInstanceKey, "project_instance_key"));
-        UF_TRY(requireName(baseline.eventId, "baseline event_id"));
-        if (
-            baseline.entry.projectRegistrationHash() != registration.hash()
-            || baseline.entry.projectRegistrationHash()
-                != plugin.projectRegistrationHash()
-        )
+        if (baseline.entry.has_value())
         {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Project baseline Journal data does not match the exact registration"
-            );
+            UF_TRY(requireName(baseline.eventId, "baseline event_id"));
+            if (
+                baseline.entry->projectRegistrationHash() != registration.hash()
+                || baseline.entry->projectRegistrationHash()
+                    != plugin.projectRegistrationHash()
+            )
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Project baseline Journal data does not match the exact registration"
+                );
+            }
+            if (
+                baseline.entry->namespacedEventType()
+                != registration.baselineEventType()
+            )
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "Project baseline event type does not match ProjectRegistration"
+                );
+            }
         }
-        if (
-            baseline.entry.namespacedEventType()
-            != registration.baselineEventType()
-        )
+        else if (!baseline.eventId.empty())
         {
             return fail(
-                AutomationErrorKind::ActionRejected,
-                "Project baseline event type does not match ProjectRegistration"
+                AutomationErrorKind::InvalidResource,
+                "A ProjectInstance with no baseline must not name a baseline event_id"
             );
         }
         if (
@@ -3868,12 +3962,17 @@ namespace uf::operator_runtime
                 "ProjectInstance provision requires the exact pinned ProjectPlugin"
             );
         }
-        // A baseline reduces exactly one Journal prefix: its own creation event
-        // against no prior state. Nothing here reads the database, so it is
-        // correct outside the transaction below.
-        auto const baselineEvents = std::array{
-            JournalAppend{.eventId = baseline.eventId, .entry = baseline.entry},
-        };
+        // Initial state is always the reduction of the complete Journal prefix.
+        // That prefix contains the declared baseline entry or is empty; no
+        // synthetic Journal event stands in for absence.
+        auto baselineEvents = std::vector<JournalAppend>{};
+        if (baseline.entry.has_value())
+        {
+            baselineEvents.emplace_back(JournalAppend{
+                .eventId = baseline.eventId,
+                .entry   = *baseline.entry,
+            });
+        }
         UF_TRY_VALUE(
             reducerInput,
             plugin.canonicalize(reduceEnvelopeJcs(baselineEvents, "null"))
@@ -3925,7 +4024,8 @@ namespace uf::operator_runtime
             existing,
             prepare(
                 m_impl->database.get(),
-                "SELECT 1 FROM project_instances WHERE plugin_id=?1 "
+                "SELECT project_registration_hash, baseline_event_id "
+                "FROM project_instances WHERE plugin_id=?1 "
                 "AND project_instance_key=?2"
             )
         );
@@ -3943,6 +4043,14 @@ namespace uf::operator_runtime
         ));
         if (sqlite3_step(existing.get()) == SQLITE_ROW)
         {
+            if (
+                !baseline.entry.has_value()
+                && columnText(existing.get(), 0) == registration.hash().hex()
+                && sqlite3_column_type(existing.get(), 1) == SQLITE_NULL
+            )
+            {
+                return transaction.commit();
+            }
             return fail(
                 AutomationErrorKind::ActionRejected,
                 "project_instance_key is immutable and already provisioned"
@@ -3975,64 +4083,87 @@ namespace uf::operator_runtime
             3,
             registration.hash().hex()
         ));
-        UF_TRY(bindText(m_impl->database.get(), instanceInsert.get(), 4, baseline.eventId));
+        if (baseline.entry.has_value())
+        {
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                instanceInsert.get(),
+                4,
+                baseline.eventId
+            ));
+        }
+        else if (sqlite3_bind_null(instanceInsert.get(), 4) != SQLITE_OK)
+        {
+            return databaseFailure(
+                m_impl->database.get(),
+                "could not bind absent ProjectInstance baseline"
+            );
+        }
         UF_TRY(expectDone(m_impl->database.get(), instanceInsert.get()));
 
-        UF_TRY_VALUE(
-            eventInsert,
-            prepare(
+        if (baseline.entry.has_value())
+        {
+            UF_TRY_VALUE(
+                eventInsert,
+                prepare(
+                    m_impl->database.get(),
+                    "INSERT INTO journal_events(event_id, plugin_id, project_instance_key, "
+                    "sequence, prior_project_state_revision, session_manifest_hash, "
+                    "operation_id, namespaced_event_type, payload_schema_hash, "
+                    "opaque_project_payload, provenance) "
+                    "VALUES(?1, ?2, ?3, 0, NULL, ?4, NULL, ?5, ?6, ?7, ?8)"
+                )
+            );
+            UF_TRY(bindText(
                 m_impl->database.get(),
-                "INSERT INTO journal_events(event_id, plugin_id, project_instance_key, "
-                "sequence, prior_project_state_revision, session_manifest_hash, operation_id, "
-                "namespaced_event_type, payload_schema_hash, opaque_project_payload, "
-                "provenance) "
-                "VALUES(?1, ?2, ?3, 0, NULL, ?4, NULL, ?5, ?6, ?7, ?8)"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), eventInsert.get(), 1, baseline.eventId));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            eventInsert.get(),
-            2,
-            registration.pluginId()
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            eventInsert.get(),
-            3,
-            baseline.projectInstanceKey
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            eventInsert.get(),
-            4,
-            baseline.sessionManifestHash.hex()
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            eventInsert.get(),
-            5,
-            baseline.entry.namespacedEventType()
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            eventInsert.get(),
-            6,
-            baseline.entry.payloadSchemaHash().hex()
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            eventInsert.get(),
-            7,
-            baseline.entry.payload().bytes()
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            eventInsert.get(),
-            8,
-            baseline.entry.provenance().bytes()
-        ));
-        UF_TRY(expectDone(m_impl->database.get(), eventInsert.get()));
+                eventInsert.get(),
+                1,
+                baseline.eventId
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                eventInsert.get(),
+                2,
+                registration.pluginId()
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                eventInsert.get(),
+                3,
+                baseline.projectInstanceKey
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                eventInsert.get(),
+                4,
+                baseline.sessionManifestHash.hex()
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                eventInsert.get(),
+                5,
+                baseline.entry->namespacedEventType()
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                eventInsert.get(),
+                6,
+                baseline.entry->payloadSchemaHash().hex()
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                eventInsert.get(),
+                7,
+                baseline.entry->payload().bytes()
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                eventInsert.get(),
+                8,
+                baseline.entry->provenance().bytes()
+            ));
+            UF_TRY(expectDone(m_impl->database.get(), eventInsert.get()));
+        }
 
         UF_TRY_VALUE(
             stateInsert,

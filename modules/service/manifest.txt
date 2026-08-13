@@ -1,0 +1,14 @@
+[module]
+name = service
+type = static
+version = 0.1.0
+
+[build]
+unity_build = false
+
+# The product lifecycle composition root. Deployment supplies project-owned
+# bytes and validators; Operator remains the sole ledger, policy and command
+# authority; Task owns activation, observation and delivery.
+[dependencies]
+public = core deployment operator task
+private = domain engine ocr schema trace
