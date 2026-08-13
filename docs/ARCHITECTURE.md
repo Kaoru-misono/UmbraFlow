@@ -1,6 +1,6 @@
 # Architecture
 
-> Amended 2026-08-09: the v1.9 spec bundle and
+> Amended 2026-08-13: the Runtime v2 spec bundle and
 > [breaking rewrite authority](plans/2026-08-09-runtime-hardening-rewrite.md)
 > replace the former Context/Page/Target runtime description. This file now
 > records module ownership only and deliberately does not duplicate wire
@@ -14,8 +14,8 @@ Read in this order:
 2. [migration report](plans/2026-08-09-runtime-migration-report.md);
 3. checked-in schemas named by that report.
 
-The read-only consumer bundle is v1.13; its root is
-`c8e559a1ee6618246778ac465842976b7445fbe10a20a2edaf77ca047ec6e5f0`.
+The read-only consumer bundle is v1.18; its root is
+`ac8c3fa652fb1601645d0c0bc04359bc75c9d08dc2883aa31ddeb94912f38ec4`.
 No game entity, tool name, state field, Journal event, or content schema belongs
 in this repository's generic core.
 
@@ -36,6 +36,10 @@ in this repository's generic core.
 > *(Corrected again 2026-08-12: v1.13 records the consumer repository's
 > product/conformance split and archived evidence paths. The hardening rewrite
 > and `scripts/check_spec_bundle.py` moved together to root `c8e559a1…ec6e5f0`.)*
+>
+> *(Corrected 2026-08-13: the current pin is v1.18 at the root stated above.
+> The earlier values in this dated amendment are historical evidence, not
+> alternate accepted pins.)*
 
 ## Module direction
 

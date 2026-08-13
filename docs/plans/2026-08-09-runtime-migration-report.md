@@ -4,8 +4,8 @@ Status: G0 execution map
 Date: 2026-08-09
 Scope: `umbraflow-cpp` only; no consumer-project writes
 
-This report binds the v1.13 spec root
-`c8e559a1ee6618246778ac465842976b7445fbe10a20a2edaf77ca047ec6e5f0`
+This report binds the v1.18 spec root
+`ac8c3fa652fb1601645d0c0bc04359bc75c9d08dc2883aa31ddeb94912f38ec4`
 to the inherited upstream baseline rooted at
 `55444b02a8ace9fe7493e5175618ef0a67d87402087874b7972187ac71ed8ac7`.
 
@@ -15,6 +15,11 @@ to the inherited upstream baseline rooted at
 > through v1.10, v1.11 and v1.12 to v1.13; no requirement row, owner, schema
 > path or CTest ID below changed with it. v1.13 records the consumer's
 > product/conformance split and follows two evidence records into `legacy/`.
+>
+> Amended 2026-08-13: the committed bundle is v1.18 at the root above. The full
+> bundle gate verified five pinned documents plus the manifest root. Numeric
+> CTest totals below were removed because later work added gates; the named IDs,
+> not a copied count, are the contract.
 
 The executable specification resolutions derived from the product bundle are
 fixed by
@@ -204,7 +209,7 @@ fixtures cannot satisfy them.
 | A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `contract-agent-a07` and CTEST `schema-agent-a07` — **closed**: `contract-agent-a07` proves both acceptance clauses — the displaced lease is refused a reservation the live lease is then granted, and a second Host still carrying the displaced fence cannot deliver it — after being extended 2026-08-11 (`bed456f`) to run the schedule the first clause needed. Reopened earlier the same day (`07abc3e`) on a misreading that substituted the 需求 sentence for the first 验收 clause. See [the archived next-block record](../archive/plans/2026-08-10-next-block.md) §2 |
 | A-08 | Operator recovery | OP:`ExternalInputFinding/OperationState` | CTEST `contract-agent-a08` |
 
-Where the 59 gates are declared, as of 2026-08-11:
+Where the named requirement gates were declared as of 2026-08-11:
 
 - `tests/operator/test-product-contract.cpp` — `schema-product-p01`-`p03` and
   `contract-product-p01`-`p04`, `p06`;
@@ -232,8 +237,9 @@ The requirement rows above are necessary but not sufficient. These additional
 local CTest IDs prevent a complete-looking conformance suite from hiding deleted
 regressions or forbidden compatibility surface. Stop condition 2 requires this
 report to carry every local CTest ID, so the list below is the whole of
-`ctest -N` that the 59 gates above do not already name. With them it is 83
-registered tests, which is what a green run must report:
+`ctest -N` that the requirement table above does not already name. A green run
+must report and execute every named ID; this document deliberately carries no
+total that can drift when a gate is added:
 
 - CTEST `check-repository-surface`
 - Four aggregates under the `CONFORMANCE` label, each running every compiled

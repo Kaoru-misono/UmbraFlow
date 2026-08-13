@@ -23,22 +23,35 @@ superseded and measurement-only plans live under
 - [Runtime model contract](2026-08-09-runtime-model-contract.md) — field-level
   prose beside the normative
   [`umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json).
-  Its pre-v2 body is known documentation debt owned by `D-002` in the
-  consolidated plan.
+  Its pre-v2 body is known documentation debt owned by `D-002` in the consumer
+  execution authority; the file itself is excluded from the 2026-08-13 L4 lane.
 - [Runtime migration report](2026-08-09-runtime-migration-report.md) — the
   requirement-to-owner/schema/CTest map, with its baseline and disposition
   manifests. It is an execution record, not an unfinished-work list.
 - [Product form and roadmap](2026-07-21-product-form-and-roadmap.md) — product
   direction and milestone intent. Current execution status comes from the
-  consolidated plan, not its old phase prose.
-- [Three-layer task system](2026-07-29-three-layer-task-system.md) and
-  [three layers with the Agent operator](2026-08-01-three-layers-and-agent-operator.md)
-  — retained layer and product-shape decisions, amended wherever Runtime v2
-  overrides their old Page/Element vocabulary.
-- [Script-owned page model](2026-07-31-script-owned-page-model.md) — superseded
-  predecessor retained temporarily because source comments still cite it.
-  Moving those citations and archiving the file is consolidated row `D-003`;
-  its one surviving design question is `T-005`.
+  consumer execution authority, not its old phase prose.
+
+## Retained pre-v2 records
+
+- [Three-layer task system](2026-07-29-three-layer-task-system.md),
+  [three layers with the Agent operator](2026-08-01-three-layers-and-agent-operator.md),
+  and [script-owned page model](2026-07-31-script-owned-page-model.md) preserve
+  dated layer-design history. They are not current runtime-model authorities;
+  Runtime v2 supersedes their record shapes and vocabulary. Their still-open
+  behavioural questions live only under U13 in the consumer execution
+  authority. Source citations still prevent archiving the script-owned record;
+  moving those citations remains `D-003`.
+
+## Completed current audits
+
+- [Carried-debt re-audit](../2026-08-13-carried-debt-reaudit.md) — D-004
+  dispositions measured against current code and mapped to the one execution
+  authority.
+- [Cross-repository v1.18 audit](../2026-08-13-cross-repository-audit.md)
+  — D-005, superseding the v1.9 report.
+- [Retroactive core admission review](../2026-08-13-core-admission-review.md)
+  — O-005 rulings for all fifteen imported files.
 
 The two JSON files beside the migration report are its machine-readable
 baseline and disposition data, not separate plans.

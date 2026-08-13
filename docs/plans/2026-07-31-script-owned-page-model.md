@@ -1,5 +1,10 @@
 # 页面模型上移到脚本层 — 目标架构
 
+> **历史运行时记录（2026-08-13）。** 本文的页面/元素记录已被 Runtime v2 的
+> UiTarget、Locator、Reader、Binding、Surface 与 Transition 模型取代，不是当前
+> 字段权威。仍有价值的行为问题只由消费者执行权威 U13 拥有；当前字段形状唯一
+> 看 [`schema/umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json)。
+
 状态:开发者裁决已定,代码未动。本文是落纸,不是提案。2026-08-01 融合修订见 §十二。
 
 本文修改 [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md)

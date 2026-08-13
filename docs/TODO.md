@@ -10,13 +10,11 @@
 > here, not moved:**
 >
 > - The boxes were ticked against a build and a test run on 2026-08-10, the
->   first this tree ever had. **Every G2/G4 tick predates eight Operator DDL
->   fingerprint changes** and has not been re-run against them. The fingerprint
->   is `k_operatorDatabaseSchemaIdentity` in
->   `modules/operator/source/operator/ledger.cpp`, over 24 tables; an
->   `operator-runtime.sqlite` from any earlier date is refused
->   at open and left untouched, never migrated and never replaced. What that
->   fingerprint is and is not is ruled below, under the delete-on-open deadline.
+>   first this tree ever had. **Every G2/G4 tick predates later Operator DDL
+>   changes** and has not been re-run against them. Schema identity lives only
+>   in `modules/operator/source/operator/ledger.cpp`. Exact-pair migrations now
+>   preserve recognised older audit chains; unregistered identities are
+>   refused without replacement. The current ruling is below.
 > - **The `linux-analysis` CI job does not compile**, under the project's own
 >   `-Wunsafe-buffer-usage` and under clang-tidy with `WarningsAsErrors: '*'`.
 >   That is now tracked as O-002 in the consumer repository's
@@ -198,8 +196,8 @@ can run. Nothing here is owed.
 - [x] `conformance/exemplars/*` become project **directories** under `examples/`.
       Data a project author copies, not C++ a consumer links.
       **Closed 2026-08-12, verified against the tree rather than against a
-      commit message.** `conformance/exemplars/` does not exist, no `.cpp` or
-      `.hpp` anywhere names `provideProject` or `ProvidedProject`, and the root
+      commit message.** `conformance/exemplars/` does not exist, the retired
+      provider seam is absent from C++, and the root
       `CMakeLists.txt` registers both runs by directory —
       `uf_add_conformance_run(PROJECT umbraflow DIRECTORY .../examples/umbraflow)`
       and the same for `arcana-expedition`, the second one being the whole of
@@ -298,129 +296,35 @@ can run. Nothing here is owed.
       Those jobs are currently blocked by the repository's CI billing state, so
       the gate exists but has not run.
 
-## Delete-on-open has a deadline, and the deadline is C3
+## Operator schema migration
 
-Opened 2026-08-12. [The correction record](archive/plans/2026-08-12-todo-correction-record.md)
-— the amendments that stood at the top of this file until 2026-08-12 — records
-the Operator DDL fingerprint moving repeatedly and states, in passing, that "an
-operator database from any earlier date is refused at open and deleted, never
-migrated".
-That is history, and it is also a live decision with an expiry date that nothing
-was tracking. This section is where the expiry lives, together with the ruling
-below on what schema identity is; it owns nothing else.
+> Amended 2026-08-13: the 2026-08-12 delete-on-open deadline is closed by
+> `O-007`. `OperatorCoordinator::open` now applies only migrations registered
+> for an exact source/target schema-identity pair, verifies the exact target
+> before commit, records the transition, and otherwise refuses without a
+> fallback or replacement. The read-only door never migrates. The sole
+> authoritative identity value remains in
+> `modules/operator/source/operator/ledger.cpp`; this document intentionally
+> carries no copied fingerprint or table count.
+>
+> The falsification evidence remains in `tests/operator/test-ledger.cpp`: a
+> registered source migrates and preserves audit rows, an unregistered source
+> is refused unchanged, the read-only door refuses rather than migrating, and a
+> committed migration reopens under the exact target identity. The historical
+> deadline and its earlier refusal-only rationale remain in the dated
+> [correction record](archive/plans/2026-08-12-todo-correction-record.md).
 
-### Ruled 2026-08-12: the exact stored DDL is the sole schema identity
-
-The **exact stored DDL fingerprint is the sole schema identity** and the sole
-acceptance mechanism. `verifyExactDatabaseSchema`
-(`modules/operator/source/operator/ledger.cpp`) is the one gate both the
-coordinator door and the read-only door run, and `initialize` also runs it
-against a schema it has just created:
-
-- The fingerprint is
-  `k_operatorDatabaseSchemaIdentity`, sha256 over every `sqlite_schema` row
-  ordered by `(type, name)` with each of its four columns written as
-  `<byte length>:<value>`. Its authoritative value is the constant in that
-  source file, over 24 tables.
-- **`PRAGMA user_version` has no identity role and no upgrade role.** The DDL no
-  longer writes it, nothing reads it, and no future schema break may bump it.
-  A second version number beside the fingerprint is a second thing that can be
-  right when the fingerprint is wrong.
-- **A non-empty database whose identity differs is refused and left byte-identical.**
-  The open writes nothing, deletes nothing and upgrades nothing.
-
-The fingerprint did not move when `PRAGMA user_version=1` left the DDL: the
-canonicalization covers `sqlite_schema` rows, and a `PRAGMA` is not one. The
-value above was recomputed independently — a second SQLite running the same DDL
-and a second implementation of the canonicalization — rather than copied from
-the constant it is compared against.
-
-What this fixes for a migration author, which is the whole of what `O-007` may
-assume from here: a migration is **keyed by an exact source identity and an
-exact target identity** — the two fingerprint strings, not a version ordering.
-There is no `v1`, no "before/after", no monotonic number to compare, so a
-migration cannot be selected by range and cannot be applied to a database it was
-not written against. Whatever `O-007` builds — an upgrade, an export-then-refuse,
-a versioned read path — it registers under the pair `(source identity, target
-identity)`, it may run only when the database's computed identity equals the
-source exactly, and it must produce a database whose computed identity equals
-the target exactly. Absence of a registered pair is a refusal, never a default,
-and never a replacement.
-
-For `U2e`, which settles DDL fingerprint changes: changing the DDL block is
-changing the identity. Recompute `k_operatorDatabaseSchemaIdentity` from a
-freshly created database in the same change — `initialize` verifies immediately
-after creating the schema, so a forgotten recomputation cannot ship green — and
-from the first `C3` run onward, pair that recomputation with an `O-007`
-migration keyed `(old identity, new identity)`.
-
-Falsified 2026-08-12 by three independent mutations, each reverted:
-inserting one space into the `runtime_artifacts` DDL reddens
-`a created schema must equal the pinned exact DDL schema identity`; neutralizing
-the fingerprint comparison in `verifyExactDatabaseSchema` reddens
-`a different exact DDL identity must not be upgraded or replaced`; and re-adding
-a `PRAGMA user_version` guard to the database-open gate reddens
-`a user_version the Operator never writes must not refuse the open`. The two
-cases are in `tests/operator/test-ledger.cpp` under `test-operator`.
-
-- [ ] Before a mutation is delivered to a real target on a user's behalf, an
-      Operator database written by an earlier build must stop being something a
-      person deletes in order to get moving.
-
-      **What is deleted today.** `OperatorCoordinator::open`
-      (`modules/operator/source/operator/ledger.cpp`) refuses any database whose
-      canonicalized DDL text does not hash to
-      `k_operatorDatabaseSchemaIdentity` in that source file.
-      The code refuses; it neither migrates nor deletes. Deleting the file is
-      what a developer then does by hand, and what goes with it is not a cache:
-      `journal_events`, `ledger_events`, `operations`, `operation_plans`,
-      `operation_steps`, `dispatches`, `approvals`, `authority_decisions`,
-      `control_transitions` and `reconciliations` are the record of what was
-      proposed, authorized, delivered and reconciled — an Agent's journal, its
-      operations and its audit chain.
-
-      **Why that is acceptable now.** Nothing built here has acted on a real
-      target on anyone's behalf. Every Operator database in existence was
-      written by a test, a fixture, or a developer's own exploration, so the
-      chain being discarded is an account nobody is owed. Under exactly that
-      condition, refusing at the fingerprint is the better trade: a schema
-      break is loud and immediate, instead of buying a migration path for
-      records that have no subject.
-
-      **When it stops being acceptable: C3.** On the consuming project's phase
-      axis — `uf-chaos` §11, C0 extraction and projection, C1 content slice, C2
-      read-only observation and state, **C3 the first mutation**, C4 expansion
-      and Agent — C0 through C2 change nothing outside the project, so a
-      database deleted at those levels still records nothing owed. C3 is the
-      level at which a plan is approved, an action is delivered to a real
-      client, and a Journal records that it happened on someone's behalf. From
-      the first C3 run onward the audit chain is the account of what was done to
-      a real target, and a product may not delete that on open — not to accept a
-      schema change, and not for anything else. The upstream half of the same
-      boundary is G4 First Mutation; see
-      [the consumer attestation](archive/plans/2026-08-11-consumer-attestation.md) §6.
-
-      **This row does not design the answer, and does not assume it is
-      migration.** Exporting the chain before refusing, a versioned read path, a
-      refusal that leaves the file untouched and names where the records went —
-      all are open. What this row fixes is the deadline: whoever takes a project
-      into C3 owes a decision here first, and reaching C3 with delete-on-open
-      still in force is the outcome this row exists to prevent.
+- [x] Replace manual delete-and-recreate handling before the first real C3
+      mutation. Done 2026-08-13 by exact-pair, audit-preserving migration with
+      fail-closed refusal for every unregistered source.
 
 ## G0 — contract and inherited baseline
 
-- [x] Pin the four-document consumer bundle at root
-      `c8e559a1ee6618246778ac465842976b7445fbe10a20a2edaf77ca047ec6e5f0`
-      (v1.13). Was `c4760bb5…bfb6a966` (v1.9), stale from v1.10 on 2026-08-12;
-      v1.11 was never written down anywhere, and v1.12 preceded the final
-      product/conformance archive correction.
-- [x] Re-pin the gate at v1.12. Done 2026-08-12. `scripts/check_spec_bundle.py`'s
-      root pin and
-      [the hardening rewrite](plans/2026-08-09-runtime-hardening-rewrite.md):10-18
-      both read v1.12 root `b3306dde…de51cda5`.
-- [x] Re-pin the gate at v1.13. Done 2026-08-12 with the consumer archive move:
-      the hardening rewrite and the gate's root pin both read root
-      `c8e559a1…ec6e5f0`, and the full bundle gate reads the consumer directory.
+- [x] Pin and verify the committed five-document consumer bundle. Revalidated
+      2026-08-13 at v1.18, root
+      `ac8c3fa652fb1601645d0c0bc04359bc75c9d08dc2883aa31ddeb94912f38ec4`;
+      the implementation plan remains deliberately outside the bundle. Earlier
+      pin history is retained in the archived cross-repository audit.
 - [x] Record base commit, rejected stash and the 101-entry dirty baseline
       manifest.
 - [x] Assign exactly one disposition to all 101 inherited dirty paths
@@ -444,7 +348,7 @@ cases are in `tests/operator/test-ledger.cpp` under `test-operator`.
 - [x] Make active documentation point to this authority without copying old
       Context/Page/Target semantics. Done 2026-08-12, and what was checked is
       worth stating because "active documentation" is now a smaller set than it
-      was. The five documents a reader meets first —
+      was. The first-screen authority set —
       [`docs/INDEX.md`](INDEX.md), [`docs/ARCHITECTURE.md`](ARCHITECTURE.md),
       this file, [`docs/plans/README.md`](plans/README.md) and `CONTEXT.md` —
       each reach

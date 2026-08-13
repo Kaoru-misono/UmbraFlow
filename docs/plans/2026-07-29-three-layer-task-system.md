@@ -1,5 +1,11 @@
 # 三层 Task System — 目标架构与实施计划
 
+> **历史运行时记录（2026-08-13）。** 本文保留三层边界与当时的行为理由，
+> 不再定义任何当前运行时记录、字段或类型。正文中的 pre-v2 事件与页面模型只按
+> 2026-07-29 的历史证据阅读；当前字段形状唯一看
+> [`schema/umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json)，
+> 尚未闭合的行为唯一看消费者执行权威的 U13。
+
 > **第一层边界已改(2026-07-31 开发者裁决)。** 三层划分本身有效,观察周期与票据账本
 > 有效。但第三节第一层清单里的 `resolvePage` 与 `findAction`、依赖方向图里的
 > `engine -> annotation`、第四节的 `cycle_page` 与 `cycle_find`,**都已作废**:
@@ -948,12 +954,12 @@ task.native_call         序号 / 原语 / 入参身份 / outcome / error kind /
                          durationMillis(仅 settle)
 ```
 
-> **补记 2026-07-30(`ed38124`)——事件表多一条,而且每一行多一个字段**:
+> **历史补记 2026-07-30(`ed38124`)——事件表当时多一条,而且每一行多一个来源字段**:
 >
 > - **多的那条事件是 `engine.key_delivered`**,每投出一次按键一条,记录它花掉的 observation
 >   来自哪一帧、按了哪个键。它**没有坐标**,与 `engine.action_delivered` 的差别就在这里:
 >   按键本来就没有坐标,一个杜撰的坐标会让读 trace 的人以为那里发生过一次定位。
-> - **多的那个字段是 `frontEnd`**,取值 `"task"` 或 `"operator"`,由 `TraceRecorder` 盖在
+> - **多的那个字段是来源分类**,当时区分 task 与 operator,由 `TraceRecorder` 盖在
 >   **每一条**事件上,与 `seq` / `runId` / `generationId` 同列。它属于**盖章**而不属于事件:
 >   能力面现在有两个同级消费者(task 跑的受信任 Luau framework,和从进程外送命令的操作者),
 >   「这件事是谁做的」对每一行都要问一次,所以答案由 recorder 为整次 run 持有一份并写到每一
@@ -964,13 +970,12 @@ task.native_call         序号 / 原语 / 入参身份 / outcome / error kind /
 >   > 为了量一个裸窗口而驱动它。它够不到项目,
 >   > 于是没有 generation、没有能力面,也**写不出这个 schema 的任何一行**:每一行都带
 >   > `runId` 与 `generationId`,而它两者皆无。它把同一个值盖在自己的 results 文件上,
->   > 拼写来自新公开的 `trace::frontEndWireName`。把它放进同一个枚举而不是另造一个词,
+>   > 拼写来自当时公开的 trace 来源转换函数。把它放进同一个枚举而不是另造一个词,
 >   > 是因为「是谁驱动了这个目标」是一个问题、一套答案;拼成两套,正是「第三个值被报成第二个」
->   > 的成因——`TaskHost::Generation::claimFrontEnd` 原来那个三目表达式会一字不差地这么干,
->   > 现在它调 `frontEndWireName`。
+>   > 的成因——旧实现原来那个三目表达式会一字不差地这么干，后来统一走转换函数。
 > - **`TaskHost` 交给 recorder 的就是它闩住的那个前端值**,所以「一条流归属谁」与「产生它的
 >   互斥」是同一件事,而不是两件必须彼此吻合的事。互斥本身见本节下面的校验状态机与 §13。
-> - **`frontEnd` 同时是一条协议规则,不只是标签**:§12 的校验状态机在 operator 流上**拒绝
+> - **来源分类同时是一条协议规则,不只是标签**:§12 的校验状态机在 operator 流上**拒绝
 >   `framework.*`**,报 `InternalInvariant`。那八条事件描述的是受信任 Luau framework 自己的
 >   结构,而 operator 流上没有那个 framework,这样一行只可能是宿主 bug 把 task 的结构安到了
 >   操作者头上。拒绝它,这个字段才是权威而不是装饰。因此本节「两个失败 kind 的分界」那份
@@ -978,7 +983,7 @@ task.native_call         序号 / 原语 / 入参身份 / outcome / error kind /
 >
 >   > **更正(2026-07-31):规则写的是「不是 task 流就拒」,不是「operator 流就拒」。**
 >   > 差别在第三个值出现时才显形:后加的前端由构造继承这条拒绝,而不是靠谁记得去列它。
->   > `tests/trace/test-stream-validator.cpp` 用 `FrontEnd::Annotation` 钉住了这一点。
+>   > 当时的 stream-validator 用第三种来源值钉住了这一点。该标识符已经退役。
 
 > **补记 2026-07-29(阶段 2c `c37ee5b`)——`run.finished` 的 error kind 是真 kind 了**:
 > 在此之前,一个**没人捕获**的 Tier B 错误穿出脚本时,`script` 只知道「栈顶是个非字符串

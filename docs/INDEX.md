@@ -28,27 +28,19 @@ records:
   consumer obligations and documentation cleanup. Its predecessor is archived at
   [`docs/archive/plans/2026-08-12-outstanding-work.md`](archive/plans/2026-08-12-outstanding-work.md),
   which names where every row went.
-- [Current execution checklist](TODO.md) retains the two release-gate boxes that
-  are useful as checkboxes. It is not a second complete work inventory.
+- [Current execution checklist](TODO.md) retains useful release-gate checkboxes.
+  It is not a second complete work inventory.
 - [Plans index](plans/README.md) lists current authorities and every archived
   plan.
 
 ## 3. Current blockers
 
-The exact acceptance criteria live in the consumer repository's parallel
-implementation plan. In dependency order, the immediate blockers are:
-
-1. Finalize the consumer's uncommitted v1.14 bundle and re-pin only committed,
-   jointly reviewed bytes (`O-001`).
-2. Make `linux-analysis` compile clean with a reported object denominator
-   (`O-002`).
-3. Run the W2-W7 adversarial round and obtain the missing G0 PASS verdicts
-   (`O-003`).
-4. Run the current head through remote CI (`O-004`).
-5. Finish the retroactive `core` admission review (`O-005`).
-6. Give `a03` and `a05` per-requirement behavioural gate IDs (`O-006`).
-7. Replace delete-and-recreate Operator database handling before consumer C3
-   (`O-007`).
+The exact dependency order and acceptance criteria live only in the consumer
+repository's `docs/architecture/parallel-implementation-plan.md`. Do not copy
+its changing status rows here. The 2026-08-13 documentation audits are
+[indexed with the current plans](plans/README.md); they report completed review
+evidence and point every surviving divergence back to that single execution
+authority.
 
 The real dual-game attestation remains external and cannot be moved by fixtures.
 
@@ -57,18 +49,16 @@ The real dual-game attestation remains external and cannot be moved by fixtures.
 - [Runtime migration report](plans/2026-08-09-runtime-migration-report.md) —
   inherited baseline, dispositions and requirement-to-gate map. Verify it
   against current paths before relying on an old locator.
-- Operator databases are currently refused on exact DDL mismatch rather than
-  migrated, and refusal leaves the file untouched. The exact stored DDL is the
-  sole schema identity, ruled 2026-08-12 in
-  [the execution checklist](TODO.md) under the delete-on-open deadline, which
-  also states what a migration must name. The deadline for replacing that
-  development-only behaviour is `O-007` in the consumer repository's parallel
-  implementation plan.
+- Operator database identity and mismatch handling are governed by the current
+  implementation and the consumer execution authority. The 2026-08-12
+  development-only delete-on-open description is historical; `O-007` landed on
+  2026-08-13.
 - A consumer writes a project directory and runs
   `umbra-flow-conformance --project <directory>`; it compiles no Umbraflow C++.
-- The checked-in upstream pin is v1.13. A dirty v1.14 draft exists in the
-  read-only consumer worktree as of 2026-08-12, so the full bundle check is
-  expected to refuse until `O-001` is completed.
+- The committed consumer bundle is v1.18 and pins five documents plus the
+  bundle root. The implementation plan is deliberately outside the bundle.
+  On 2026-08-13 the full check reported `SPEC BUNDLE: VERIFIED` at root
+  `ac8c3fa652fb1601645d0c0bc04359bc75c9d08dc2883aa31ddeb94912f38ec4`.
 
 ## Before investigating a failure
 
