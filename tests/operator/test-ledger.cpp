@@ -11,6 +11,8 @@
 #include "project-fixture.hpp"
 #include "unsafe/operator-database-probe.hpp"
 
+#include <core/error/contracts.hpp>
+
 #include <domain/content-hash.hpp>
 
 #include <doctest/doctest.h>
@@ -957,6 +959,85 @@ namespace uf::operator_runtime
             REQUIRE(scope.has_value());
             return *std::move(scope);
         }
+
+        [[nodiscard]]
+        auto normativeProjectObservationErrorWireName(
+            ProjectObservationErrorCode code
+        ) -> std::string_view
+        {
+            switch (code)
+            {
+            case ProjectObservationErrorCode::MalformedAuthorityInput:
+                return "MalformedAuthorityInput";
+            case ProjectObservationErrorCode::MalformedProposal:
+                return "MalformedProposal";
+            case ProjectObservationErrorCode::PreconditionNameNotNamespaced:
+                return "PreconditionNameNotNamespaced";
+            case ProjectObservationErrorCode::PreconditionStatusOutsideFactDomain:
+                return "PreconditionStatusOutsideFactDomain";
+            case ProjectObservationErrorCode::InvalidWorldScopeGeneration:
+                return "InvalidWorldScopeGeneration";
+            case ProjectObservationErrorCode::DuplicatePreconditionName:
+                return "DuplicatePreconditionName";
+            case ProjectObservationErrorCode::DuplicateObservedInstanceLocalRef:
+                return "DuplicateObservedInstanceLocalRef";
+            case ProjectObservationErrorCode::ObservedInstanceParentMissing:
+                return "ObservedInstanceParentMissing";
+            case ProjectObservationErrorCode::ObservedInstanceParentCycle:
+                return "ObservedInstanceParentCycle";
+            case ProjectObservationErrorCode::ObservedInstanceIdentitySchemaNotRegistered:
+                return "ObservedInstanceIdentitySchemaNotRegistered";
+            case ProjectObservationErrorCode::SemanticIdentityBasisSchemaViolation:
+                return "SemanticIdentityBasisSchemaViolation";
+            case ProjectObservationErrorCode::ObservedInstanceCollision:
+                return "ObservedInstanceCollision";
+            case ProjectObservationErrorCode::ObservedInstanceScopeMismatch:
+                return "ObservedInstanceScopeMismatch";
+            case ProjectObservationErrorCode::ObservedInstanceStale:
+                return "ObservedInstanceStale";
+            }
+            UF_UNREACHABLE_MSG("Unknown ProjectObservationErrorCode test value");
+        }
+
+        template <typename Value>
+        auto expectProjectObservationError(
+            Result<Value> const& result,
+            ProjectObservationErrorCode expected
+        ) -> void
+        {
+            auto const expectedWireName = normativeProjectObservationErrorWireName(
+                expected
+            );
+            CAPTURE(expectedWireName);
+            REQUIRE_MESSAGE(
+                !result.has_value(),
+                std::format(
+                    "{} must be a refusal",
+                    expectedWireName
+                )
+            );
+            CHECK_MESSAGE(
+                projectObservationErrorCode(result.error()) == expected,
+                std::format(
+                    "the refusal must name the exact normative code {}",
+                    expectedWireName
+                )
+            );
+            CHECK_MESSAGE(
+                projectObservationErrorWireName(expected) == expectedWireName,
+                std::format(
+                    "the public wire code must be exactly {}",
+                    expectedWireName
+                )
+            );
+            CHECK_MESSAGE(
+                result.error().detailCode().message() == expectedWireName,
+                std::format(
+                    "the emitted wire code must be exactly {}",
+                    expectedWireName
+                )
+            );
+        }
     }
 
     // The two operator protocol readers, on documents this registration's
@@ -1219,9 +1300,10 @@ namespace uf::operator_runtime
             })
         );
         REQUIRE(changedScope.has_value());
-        CHECK(
+        CHECK_MESSAGE(
             changedScope->observedInstances()[0].observedInstanceId.value()
-            != eventId
+                != eventId,
+            "changing only the run scope must mint an isolated ID"
         );
     }
 
@@ -1233,20 +1315,6 @@ namespace uf::operator_runtime
             prepared.project.registration
         );
         auto const scope = runScope();
-        auto const expectCode = [](
-            Result<ProjectObservation> const& result,
-            ProjectObservationErrorCode expected
-        )
-        {
-            CAPTURE(projectObservationErrorWireName(expected));
-            REQUIRE_FALSE(result.has_value());
-            CHECK(projectObservationErrorCode(result.error()) == expected);
-            CHECK(
-                result.error().detailCode().message()
-                == projectObservationErrorWireName(expected)
-            );
-        };
-
         auto invalidStatusAndName = observationProposal({});
         invalidStatusAndName.projectToolPreconditions.front().status =
             static_cast<ProjectToolPreconditionStatus>(0xFFU);
@@ -1256,7 +1324,7 @@ namespace uf::operator_runtime
                 .status = ProjectToolPreconditionStatus::Known,
             }
         );
-        expectCode(
+        expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
                 prepared.plugin,
@@ -1270,7 +1338,7 @@ namespace uf::operator_runtime
         auto invalidStatus = observationProposal({});
         invalidStatus.projectToolPreconditions.front().status =
             static_cast<ProjectToolPreconditionStatus>(0xFFU);
-        expectCode(
+        expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
                 prepared.plugin,
@@ -1288,7 +1356,7 @@ namespace uf::operator_runtime
         duplicatePrecondition.projectToolPreconditions.emplace_back(
             duplicatePrecondition.projectToolPreconditions.front()
         );
-        expectCode(
+        expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
                 prepared.plugin,
@@ -1299,7 +1367,7 @@ namespace uf::operator_runtime
             ProjectObservationErrorCode::DuplicatePreconditionName
         );
 
-        expectCode(
+        expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
                 prepared.plugin,
@@ -1318,7 +1386,7 @@ namespace uf::operator_runtime
             ProjectObservationErrorCode::DuplicateObservedInstanceLocalRef
         );
 
-        expectCode(
+        expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
                 prepared.plugin,
@@ -1327,12 +1395,12 @@ namespace uf::operator_runtime
                 observationProposal({
                     observedInstanceProposal(
                         "cycle-a",
-                        "overlay.a",
+                        "overlay.same",
                         std::string{"cycle-b"}
                     ),
                     observedInstanceProposal(
                         "cycle-b",
-                        "overlay.b",
+                        "overlay.same",
                         std::string{"cycle-a"}
                     ),
                     observedInstanceProposal(
@@ -1360,7 +1428,7 @@ namespace uf::operator_runtime
         });
         cycleBeforeRegistration.observedInstanceProposals.back().identitySchemaId =
             "https://fixture.example/identity/unregistered/v1";
-        expectCode(
+        expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
                 prepared.plugin,
@@ -1382,7 +1450,7 @@ namespace uf::operator_runtime
         });
         unregisteredBeforeBasis.observedInstanceProposals.back().identitySchemaId =
             "https://fixture.example/identity/unregistered/v1";
-        expectCode(
+        expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
                 prepared.plugin,
@@ -1393,7 +1461,7 @@ namespace uf::operator_runtime
             ProjectObservationErrorCode::ObservedInstanceIdentitySchemaNotRegistered
         );
 
-        expectCode(
+        expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
                 prepared.plugin,
@@ -1412,12 +1480,45 @@ namespace uf::operator_runtime
             ),
             ProjectObservationErrorCode::SemanticIdentityBasisSchemaViolation
         );
+    }
 
-        expectCode(
+    TEST_CASE("missing observed instance parent emits ObservedInstanceParentMissing")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto schemas = observedInstanceIdentitySchemas(
+            prepared.project.registration
+        );
+        expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
                 prepared.plugin,
-                scope,
+                runScope(),
+                schemas,
+                observationProposal({
+                    observedInstanceProposal(
+                        "orphan",
+                        "overlay.orphan",
+                        std::string{"missing"}
+                    ),
+                })
+            ),
+            ProjectObservationErrorCode::ObservedInstanceParentMissing
+        );
+    }
+
+    TEST_CASE("duplicate observed instance authority emits ObservedInstanceCollision")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto schemas = observedInstanceIdentitySchemas(
+            prepared.project.registration
+        );
+        expectProjectObservationError(
+            prepared.store.publishProjectObservation(
+                prepared.lease,
+                prepared.plugin,
+                runScope(),
                 schemas,
                 observationProposal({
                     observedInstanceProposal("duplicate-a", "overlay.same"),
@@ -1428,7 +1529,49 @@ namespace uf::operator_runtime
         );
     }
 
-    TEST_CASE("observed instance authorization checks scope before freshness")
+    TEST_CASE("collision precedes registration scope mismatch")
+    {
+        auto temporary     = TemporaryDirectory{};
+        auto prepared      = test_support::prepareStore(temporary.path());
+        auto foreignSource = k_pluginSource;
+        foreignSource += "\n-- exact registration variant\n";
+        auto const foreign = makeProject("fixture.alpha", foreignSource);
+        auto foreignSchemas = observedInstanceIdentitySchemas(
+            foreign.registration
+        );
+        REQUIRE(
+            foreign.registration.hash()
+            != prepared.project.registration.hash()
+        );
+
+        expectProjectObservationError(
+            prepared.store.publishProjectObservation(
+                prepared.lease,
+                prepared.plugin,
+                runScope(),
+                foreignSchemas,
+                observationProposal({
+                    observedInstanceProposal("foreign", "overlay.foreign"),
+                })
+            ),
+            ProjectObservationErrorCode::ObservedInstanceScopeMismatch
+        );
+        expectProjectObservationError(
+            prepared.store.publishProjectObservation(
+                prepared.lease,
+                prepared.plugin,
+                runScope(),
+                foreignSchemas,
+                observationProposal({
+                    observedInstanceProposal("duplicate-a", "overlay.same"),
+                    observedInstanceProposal("duplicate-b", "overlay.same"),
+                })
+            ),
+            ProjectObservationErrorCode::ObservedInstanceCollision
+        );
+    }
+
+    TEST_CASE("fresh observed instance membership is accepted")
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = test_support::prepareStore(temporary.path());
@@ -1455,19 +1598,57 @@ namespace uf::operator_runtime
         );
         REQUIRE(allowed.has_value());
         CHECK(allowed->value() == id);
+    }
 
-        auto const wrongScope = prepared.store.resolveObservedInstance(
+    TEST_CASE("cross-run observed instance use emits ObservedInstanceScopeMismatch")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto schemas = observedInstanceIdentitySchemas(
+            prepared.project.registration
+        );
+        auto const scope = runScope();
+        auto first = prepared.store.publishProjectObservation(
             prepared.lease,
-            runScope("run-8", 8U),
-            *first,
-            id
+            prepared.plugin,
+            scope,
+            schemas,
+            observationProposal({
+                observedInstanceProposal("first", "overlay.first"),
+            })
         );
-        REQUIRE_FALSE(wrongScope.has_value());
-        CHECK(
-            projectObservationErrorCode(wrongScope.error())
-            == ProjectObservationErrorCode::ObservedInstanceScopeMismatch
+        REQUIRE(first.has_value());
+        auto const id = first->observedInstances()[0].observedInstanceId.value();
+        expectProjectObservationError(
+            prepared.store.resolveObservedInstance(
+                prepared.lease,
+                runScope("run-8", 8U),
+                *first,
+                id
+            ),
+            ProjectObservationErrorCode::ObservedInstanceScopeMismatch
         );
+    }
 
+    TEST_CASE("absent fresh member emits ObservedInstanceStale")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto schemas = observedInstanceIdentitySchemas(
+            prepared.project.registration
+        );
+        auto const scope = runScope();
+        auto first = prepared.store.publishProjectObservation(
+            prepared.lease,
+            prepared.plugin,
+            scope,
+            schemas,
+            observationProposal({
+                observedInstanceProposal("first", "overlay.first"),
+            })
+        );
+        REQUIRE(first.has_value());
+        auto const id = first->observedInstances()[0].observedInstanceId.value();
         auto second = prepared.store.publishProjectObservation(
             prepared.lease,
             prepared.plugin,
@@ -1478,28 +1659,55 @@ namespace uf::operator_runtime
             })
         );
         REQUIRE(second.has_value());
-        auto const wrongScopeAndStale = prepared.store.resolveObservedInstance(
-            prepared.lease,
-            runScope("run-8", 8U),
-            *second,
-            id
-        );
-        REQUIRE_FALSE(wrongScopeAndStale.has_value());
-        CHECK_MESSAGE(
-            projectObservationErrorCode(wrongScopeAndStale.error())
-                == ProjectObservationErrorCode::ObservedInstanceScopeMismatch,
-            "scope authorization must precede fresh-observation membership"
-        );
         auto const stale = prepared.store.resolveObservedInstance(
             prepared.lease,
             scope,
             *second,
             id
         );
-        REQUIRE_FALSE(stale.has_value());
-        CHECK(
-            projectObservationErrorCode(stale.error())
-            == ProjectObservationErrorCode::ObservedInstanceStale
+        expectProjectObservationError(
+            stale,
+            ProjectObservationErrorCode::ObservedInstanceStale
+        );
+    }
+
+    TEST_CASE("scope mismatch precedes stale observed instance membership")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto schemas = observedInstanceIdentitySchemas(
+            prepared.project.registration
+        );
+        auto const scope = runScope();
+        auto first = prepared.store.publishProjectObservation(
+            prepared.lease,
+            prepared.plugin,
+            scope,
+            schemas,
+            observationProposal({
+                observedInstanceProposal("first", "overlay.first"),
+            })
+        );
+        REQUIRE(first.has_value());
+        auto const id = first->observedInstances()[0].observedInstanceId.value();
+        auto second = prepared.store.publishProjectObservation(
+            prepared.lease,
+            prepared.plugin,
+            scope,
+            schemas,
+            observationProposal({
+                observedInstanceProposal("second", "overlay.second"),
+            })
+        );
+        REQUIRE(second.has_value());
+        expectProjectObservationError(
+            prepared.store.resolveObservedInstance(
+                prepared.lease,
+                runScope("run-8", 8U),
+                *second,
+                id
+            ),
+            ProjectObservationErrorCode::ObservedInstanceScopeMismatch
         );
     }
 
@@ -1582,6 +1790,104 @@ namespace uf::operator_runtime
         );
     }
 
+    TEST_CASE("observed instance authority isolates exact registrations")
+    {
+        auto temporary     = TemporaryDirectory{};
+        auto variantSource = k_pluginSource;
+        variantSource += "\n-- exact registration variant\n";
+        auto const observeRegistration = [](
+            std::filesystem::path const& path,
+            std::string_view source
+        )
+        {
+            auto prepared = prepareStore(path, source);
+            auto schemas = observedInstanceIdentitySchemas(
+                prepared.project.registration
+            );
+            auto observation = prepared.store.publishProjectObservation(
+                prepared.lease,
+                prepared.plugin,
+                runScope(),
+                schemas,
+                observationProposal({
+                    observedInstanceProposal("same", "overlay.registration"),
+                })
+            );
+            REQUIRE(observation.has_value());
+            return std::tuple{
+                prepared.project.registration.pluginId(),
+                prepared.project.registration.hash(),
+                std::string{
+                    observation->observedInstances()[0].observedInstanceId.value()
+                },
+                prepared.store.databasePath(),
+            };
+        };
+        auto const [
+            firstPluginId,
+            firstRegistrationHash,
+            firstObservedInstanceId,
+            firstDatabasePath
+        ] = observeRegistration(
+            temporary.path() / "registration-a",
+            k_pluginSource
+        );
+        auto const [
+            secondPluginId,
+            secondRegistrationHash,
+            secondObservedInstanceId,
+            secondDatabasePath
+        ] = observeRegistration(
+            temporary.path() / "registration-b",
+            variantSource
+        );
+        REQUIRE(firstPluginId == secondPluginId);
+        REQUIRE(firstRegistrationHash != secondRegistrationHash);
+
+        auto firstProbe = test_support::OperatorDatabaseProbe{
+            firstDatabasePath,
+        };
+        auto secondProbe = test_support::OperatorDatabaseProbe{
+            secondDatabasePath,
+        };
+        auto const firstRows = firstProbe.readRows(
+            "SELECT canonical_authority FROM observed_instance_bindings"
+        );
+        auto const secondRows = secondProbe.readRows(
+            "SELECT canonical_authority FROM observed_instance_bindings"
+        );
+        REQUIRE(firstRows.size() == 1U);
+        REQUIRE(firstRows.front().size() == 1U);
+        REQUIRE(secondRows.size() == 1U);
+        REQUIRE(secondRows.front().size() == 1U);
+        auto const& firstAuthority  = firstRows.front().front();
+        auto const& secondAuthority = secondRows.front().front();
+        CHECK_MESSAGE(
+            firstAuthority.contains(
+                "\"project_registration_hash\":\""
+                + firstRegistrationHash.hex()
+                + "\""
+            ),
+            "the first canonical authority must bind its exact registration"
+        );
+        CHECK_MESSAGE(
+            secondAuthority.contains(
+                "\"project_registration_hash\":\""
+                + secondRegistrationHash.hex()
+                + "\""
+            ),
+            "the second canonical authority must bind its exact registration"
+        );
+        CHECK_MESSAGE(
+            firstAuthority != secondAuthority,
+            "changing only the exact registration must change canonical authority"
+        );
+        CHECK_MESSAGE(
+            firstObservedInstanceId != secondObservedInstanceId,
+            "different exact registrations must mint isolated IDs"
+        );
+    }
+
     TEST_CASE("observed instance mint separates project and registration domains")
     {
         auto temporary = TemporaryDirectory{};
@@ -1648,9 +1954,10 @@ namespace uf::operator_runtime
             })
         );
         REQUIRE(otherProject.has_value());
-        CHECK(
+        CHECK_MESSAGE(
             otherProject->observedInstances()[0].observedInstanceId.value()
-            != firstId
+                != firstId,
+            "changing only the project instance must mint an isolated ID"
         );
         auto const crossProject = prepared.store.resolveObservedInstance(
             *projectLease,
@@ -1658,10 +1965,9 @@ namespace uf::operator_runtime
             *otherProject,
             firstId
         );
-        REQUIRE_FALSE(crossProject.has_value());
-        CHECK(
-            projectObservationErrorCode(crossProject.error())
-            == ProjectObservationErrorCode::ObservedInstanceScopeMismatch
+        expectProjectObservationError(
+            crossProject,
+            ProjectObservationErrorCode::ObservedInstanceScopeMismatch
         );
 
         auto const foreignSource = test_support::pluginSource("fixture.foreign");
@@ -1735,10 +2041,9 @@ namespace uf::operator_runtime
             *foreignObservation,
             firstId
         );
-        REQUIRE_FALSE(crossRegistration.has_value());
-        CHECK(
-            projectObservationErrorCode(crossRegistration.error())
-            == ProjectObservationErrorCode::ObservedInstanceScopeMismatch
+        expectProjectObservationError(
+            crossRegistration,
+            ProjectObservationErrorCode::ObservedInstanceScopeMismatch
         );
     }
 

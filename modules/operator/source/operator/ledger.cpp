@@ -5170,23 +5170,10 @@ namespace uf::operator_runtime
                 lease
             )
         );
-        if (
-            plugin.pluginId() != derivedContext.pluginId
-            || plugin.pluginHash().hex() != derivedContext.pluginHash
-            || plugin.projectRegistrationHash()
-                != derivedContext.projectRegistrationHash
-            || identitySchemas.projectRegistrationHash()
-                != derivedContext.projectRegistrationHash
-        )
-        {
-            return fail(
-                ProjectObservationErrorCode::ObservedInstanceScopeMismatch,
-                "Observed instance authorities do not match the active registration"
-            );
-        }
 
         // Registration closure membership is a whole-proposal pass and must
-        // outrank every basis violation, irrespective of proposal order.
+        // outrank every basis violation, collision and scope refusal,
+        // irrespective of proposal order.
         for (auto const& instance : proposal.observedInstanceProposals)
         {
             if (!identitySchemas.contains(instance.identitySchemaId))
@@ -5237,6 +5224,21 @@ namespace uf::operator_runtime
                 );
             }
             minted.emplace_back(ObservedInstanceId{std::move(observedInstanceId)});
+        }
+
+        if (
+            plugin.pluginId() != derivedContext.pluginId
+            || plugin.pluginHash().hex() != derivedContext.pluginHash
+            || plugin.projectRegistrationHash()
+                != derivedContext.projectRegistrationHash
+            || identitySchemas.projectRegistrationHash()
+                != derivedContext.projectRegistrationHash
+        )
+        {
+            return fail(
+                ProjectObservationErrorCode::ObservedInstanceScopeMismatch,
+                "Observed instance authorities do not match the active registration"
+            );
         }
 
         auto indexes = std::map<std::string, std::size_t>{};
