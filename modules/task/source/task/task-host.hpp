@@ -35,6 +35,11 @@
 #include <variant>
 #include <vector>
 
+namespace uf::operator_runtime
+{
+    class OperatorTaskHost;
+}
+
 namespace uf::task
 {
     inline constexpr auto k_defaultMaxScriptRuntime = script::k_defaultMaxRuntime;
@@ -119,6 +124,11 @@ namespace uf::task
     // A generation can never change kind. Production therefore has no route to
     // authoring files or screenshots, and Annotation cannot masquerade as a
     // deployment artifact.
+    //
+    // Control-target ruling: one TaskHost is permanently bound to the first
+    // controlled target whose fence it adopts. It never carries per-target
+    // fences or per-target Receipt authority. A production owner that needs a
+    // different controlled target owns a different TaskHost for that target.
     class TaskHost final
     {
         enum class GenerationKind : uint8
@@ -207,6 +217,7 @@ namespace uf::task
         };
 
         friend struct TaskHostTestAccess;
+        friend class operator_runtime::OperatorTaskHost;
 
         class Generation;
         class RuntimeNativeState;
@@ -282,6 +293,16 @@ namespace uf::task
         auto deliver(
             DispatchAuthority authority,
             Receipt const& receipt,
+            TaskContext& context
+        ) -> Result<HostDeliveryReport>;
+
+        // Production selection: the supplied context holds at most one open
+        // cycle, and a cycle carries at most one unconsumed Receipt. The
+        // production owner therefore asks for that Receipt by context rather
+        // than receiving an opaque Host token from a caller.
+        [[nodiscard]]
+        auto deliver(
+            DispatchAuthority authority,
             TaskContext& context
         ) -> Result<HostDeliveryReport>;
 

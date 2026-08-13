@@ -360,12 +360,28 @@ Every resolution uses one observation cycle:
 ```text
 open cycle
   -> capture one frame
-  -> evaluate all applicable surfaces
-  -> evaluate all identity predicates
+  -> resolve_state(expected_surface_stack?)
+  -> when expected: evaluate that stack's identity predicates
+  -> when absent, or confirmation is not Present: evaluate every Surface
   -> build a surface stack
   -> return Resolution
 close cycle
 ```
+
+> **Amended 2026-08-13 (`T-005`): confirmation and recognition have one
+> owner.** `cycle:resolve_state(expected_surface_stack?)` is the only runtime
+> verb that decides which Surface stack is visible. The expected value is the
+> complete bottom-to-top stack, not one top Surface: an overlay or interrupt
+> does not erase the scene below it, and an interrupt may cover more than one
+> scene. When the caller supplies that stack, the resolver confirms every
+> Surface identity in it and measures no competing Surface. Confirmation
+> succeeds only when every identity is `Present`; `Absent` and `Unknown` both
+> fail confirmation. A failed confirmation is not returned and is never
+> reinterpreted as negative evidence: the same `resolve_state` call escalates
+> to full resolution over all Surfaces on the same cycle and returns that
+> result. With no expected stack, full resolution runs immediately. The
+> trusted Luau resolver owns this policy; callers cannot select fail-closed,
+> escalation, or a second recognition entry point.
 
 Evidence is tri-state:
 
@@ -377,7 +393,10 @@ Unknown(reason, confidence?, proof?)
 
 `Unknown` includes not measured, low confidence, OCR unreadable, locator
 failure, incompatible geometry, stale frame, and internal error. Lack of a
-measurement is never negative evidence.
+measurement is never negative evidence. When visible content matches no
+declared Surface, `UnknownResolution.diagnostic` is
+`visible_content_matched_nothing`; this is diagnostic only and grants no
+receipt.
 
 `Resolution` is exactly one of:
 
@@ -442,8 +461,8 @@ must be satisfied before a candidate can enter the stack.
 > present Bindings that share a UiTarget report nothing for it: which instance
 > is on screen is exactly what an ambiguity means, and resolution already
 > refuses to guess it. A reading that did not clear its Reader's
-> `confidence_floor`, or that was unreadable, is absent from the list rather
-> than present with a reason.
+> `confidence_floor`, or that was unreadable, is reported as `unknown` with its
+> closed-vocabulary reason and without rejected text or confidence.
 >
 > A **Binding `reads` reading** is not detector evidence. It carries no evidence
 > ID, it never appears in a receipt's `evidence_ids`, and it authorizes nothing.

@@ -23,6 +23,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -296,6 +297,44 @@ id = "screen"
 kind = "scene"
 covers = []
 identity = { all = ["screen.anchor"], any = [], none = [] }
+)toml";
+        }
+
+        // A real Reader sits in the Surface identity path: its OCR result is
+        // consumed as detector evidence rather than inserted as a fixture
+        // literal. This is the narrow model T05 needs to distinguish silence,
+        // readable garbage, and a score below the Reader's floor.
+        [[nodiscard]] auto ocrIdentityRuntimeModel() -> std::string
+        {
+            return R"toml(schema_version = 2
+base_resolution = [3, 1]
+base_dpi = [96, 96]
+
+[[ui_target]]
+id = "title"
+kind = "region"
+
+[[reader]]
+id = "title.reader"
+kind = "text"
+confidence_floor = 0.5
+layout = "single_line"
+normalization = "collapse_whitespace"
+
+[[binding]]
+id = "title.identity"
+surface = "screen"
+ui_target = "title"
+variant = "default"
+placement = { kind = "fixed", rect = [0, 0, 1, 1] }
+detector = { all = [{ kind = "text_equals", reader = "title.reader", value = "Settings" }], any = [], none = [] }
+actions = []
+
+[[surface]]
+id = "screen"
+kind = "scene"
+covers = []
+identity = { all = ["title.identity"], any = [], none = [] }
 )toml";
         }
 
@@ -637,6 +676,32 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
             == "unknown_state:unknown_scene_competitor"
         );
         CHECK(runtime.actions().clicks() == 0U);
+    }
+
+    TEST_CASE("T-004 T10 visible unmatched content emits a diagnostic")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const generation = loadedRuntime(host, directory);
+        auto runtime = RuntimeContext{
+            frame({std::byte{42}, std::byte{42}, std::byte{42}}, FrameId{54}),
+            1'000
+        };
+
+        auto const observed = host.observe(generation, runtime.context());
+        REQUIRE(observed.has_value());
+        CHECK_MESSAGE(
+            observed->canonicalJcs()
+            == R"({"diagnostic":"visible_content_matched_nothing",)"
+               R"("kind":"unknown_state","reason":"no_scene_candidate"})",
+            "T-004 T10 visible unmatched content must emit its diagnostic"
+        );
+        CHECK(
+            observed->canonicalJcs().find(
+                R"("diagnostic":"visible_content_matched_nothing")"
+            )
+            != std::string::npos
+        );
     }
 
     TEST_CASE("contract-runtime-u06")
@@ -1296,7 +1361,8 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         REQUIRE(unresolved.has_value());
         CHECK(
             unresolved->canonicalJcs()
-            == R"({"kind":"unknown_state","reason":"no_scene_candidate"})"
+            == R"({"diagnostic":"visible_content_matched_nothing",)"
+               R"("kind":"unknown_state","reason":"no_scene_candidate"})"
         );
         CHECK(unresolved->stateResolutionHash() == hash(unresolved->canonicalJcs()));
 
@@ -1796,6 +1862,102 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
             second->canonicalJcs().find(R"("ordered_surface_stack":["screen"])")
             != std::string::npos
         );
+    }
+
+    // T-004 / T05. Each case crosses the real EngineSession Reader boundary and
+    // feeds the OCR result into a Surface identity predicate. Silence and
+    // readable garbage are negative evidence; a line below the declared floor
+    // is Unknown evidence. All three leave the Surface unresolved and make a
+    // Binding non-actionable.
+    TEST_CASE("T-004 T05 real OCR failures leave Surface identity unresolved")
+    {
+        struct Case final
+        {
+            std::string_view name{};
+            std::string_view text{};
+            std::string_view reason{};
+            uint32           confidenceBp{};
+            bool             silent{};
+        };
+
+        auto constexpr cases = std::array{
+            Case{
+                .name   = "nothing",
+                .reason = "no_scene_candidate",
+                .silent = true,
+            },
+            Case{
+                .name   = "garbage",
+                .text   = "not settings",
+                .reason = "no_scene_candidate",
+
+                .confidenceBp = 9'000,
+            },
+            Case{
+                .name   = "below floor",
+                .text   = "Settings",
+                .reason = "unknown_scene_competitor",
+
+                .confidenceBp = 1'000,
+            },
+        };
+
+        for (auto const& testCase : cases)
+        {
+            CAPTURE(testCase.name);
+            auto const directory = TemporaryDirectory{};
+            auto host = TaskHost{};
+            auto const rootHash = publish(
+                directory.path(),
+                ocrIdentityRuntimeModel(),
+                std::vector<ArtifactFile>{}
+            );
+            auto const generation = TaskHostTestAccess::activate(
+                host,
+                directory.path(),
+                rootHash
+            );
+            REQUIRE(generation.has_value());
+
+            auto reader = std::unique_ptr<ocr::IOcrEngine>{};
+            if (testCase.silent)
+            {
+                reader = std::make_unique<SilentReader>();
+            }
+            else
+            {
+                reader = std::make_unique<ScriptedReader>(
+                    std::string{testCase.text},
+                    testCase.confidenceBp
+                );
+            }
+            auto runtime = RuntimeContext{
+                frame({std::byte{42}, std::byte{42}, std::byte{42}}, FrameId{55}),
+                1'000,
+                std::move(reader)
+            };
+            auto const actual = runText(
+                host,
+                *generation,
+                runtime,
+                R"lua(
+                    local cycle = observe.open(project.load_project())
+                    local state = cycle:resolve_state({ "screen" })
+                    local binding = cycle:resolve_binding(state, "title")
+                    local request, reason = cycle:authorize(binding, "activate")
+                    cycle:close()
+                    return tostring(state.kind) .. ":" .. tostring(state.reason) .. ":"
+                        .. tostring(binding.kind) .. ":" .. tostring(reason) .. ":"
+                        .. tostring(request == nil)
+                )lua"
+            );
+            auto const expected = "unknown_state:" + std::string{testCase.reason}
+                + ":unknown_binding:binding_not_actionable:true";
+            CHECK_MESSAGE(
+                actual == expected,
+                "T-004 T05 real OCR failures must leave Surface identity unresolved"
+            );
+        }
     }
 
     // Below the floor is not a text, and it is not silence either. The plugin is

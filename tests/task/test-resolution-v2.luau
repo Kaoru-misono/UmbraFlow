@@ -27,6 +27,7 @@ local runtime = model.compile({
         { id = "dialog_anchor", kind = "region" },
         { id = "save", kind = "control" },
         { id = "retry", kind = "control" },
+        { id = "leave", kind = "control" },
     },
     locators = {
         { id = "scene.locator", kind = "template", asset_path = "assets/scene.png", threshold = 0.9 },
@@ -35,6 +36,8 @@ local runtime = model.compile({
         { id = "save.primary", kind = "template", asset_path = "assets/save-primary.png", threshold = 0.9 },
         { id = "save.alternate", kind = "template", asset_path = "assets/save-alternate.png", threshold = 0.9 },
         { id = "retry.locator", kind = "template", asset_path = "assets/retry.png", threshold = 0.9 },
+        { id = "leave.scene", kind = "template", asset_path = "assets/leave-scene.png", threshold = 0.9 },
+        { id = "leave.other", kind = "template", asset_path = "assets/leave-other.png", threshold = 0.9 },
     },
     readers = {},
     bindings = {
@@ -44,6 +47,8 @@ local runtime = model.compile({
         { id = "save.primary", surface = "dialog", ui_target = "save", variant = "primary", placement = placement(800, 600, true), detector = detector("save.primary"), actions = { { id = "activate", kind = "click", proof_locator = "save.primary" } } },
         { id = "save.alternate", surface = "dialog", ui_target = "save", variant = "alternate", placement = placement(950, 600, true), detector = detector("save.alternate"), actions = { { id = "activate", kind = "click", proof_locator = "save.alternate" } } },
         { id = "retry.enabled", surface = "network_retry", ui_target = "retry", variant = "enabled", placement = placement(560, 500, true), detector = detector("retry.locator"), actions = { { id = "retry", kind = "click", proof_locator = "retry.locator" } } },
+        { id = "leave.scene", surface = "scene", ui_target = "leave", variant = "default", placement = placement(100, 600, true), detector = detector("leave.scene"), actions = { { id = "leave", kind = "click", proof_locator = "leave.scene" } } },
+        { id = "leave.other", surface = "other", ui_target = "leave", variant = "default", placement = placement(900, 600, true), detector = detector("leave.other"), actions = { { id = "leave", kind = "click", proof_locator = "leave.other" } } },
     },
     collections = {},
     surfaces = {
@@ -183,6 +188,105 @@ do
             and outcomes.scene.authorized
             and outcomes.other.authorized,
         "T-001 the same interrupt and action must resolve and authorize over two different base scenes"
+    )
+end
+
+-- T-005: one API confirms the expected stack and owns escalation. A confirmed
+-- expectation ignores an Unknown competitor; the same world without an
+-- expectation therefore proves that the fast result was confirmation rather
+-- than full resolution. An absent expectation then proves that failure runs
+-- full resolution and returns the scene that is actually present.
+do
+    local confirmationCycle = evidence.begin_cycle()
+    local confirmationRecords = stateRecords(
+        confirmationCycle,
+        "present",
+        "unknown",
+        "absent"
+    )
+    local confirmed = resolution.resolve_state(
+        runtime,
+        confirmationCycle,
+        confirmationRecords,
+        { "scene" }
+    )
+    local fullyResolved = resolution.resolve_state(
+        runtime,
+        confirmationCycle,
+        confirmationRecords
+    )
+
+    local escalationCycle = evidence.begin_cycle()
+    local escalationRecords = stateRecords(
+        escalationCycle,
+        "present",
+        "absent",
+        "absent"
+    )
+    local escalated = resolution.resolve_state(
+        runtime,
+        escalationCycle,
+        escalationRecords,
+        { "other" }
+    )
+    assert(
+        confirmed.kind == "resolved_state"
+            and confirmed.ordered_surface_stack[1] == "scene"
+            and fullyResolved.kind == "unknown_state"
+            and escalated.kind == "resolved_state"
+            and escalated.ordered_surface_stack[1] == "scene",
+        "T-005 resolve_state must confirm only the expected stack and escalate a failed confirmation to full resolution"
+    )
+    evidence.end_cycle(confirmationCycle)
+    evidence.end_cycle(escalationCycle)
+end
+
+-- T-004 / T06: one semantic target is bound independently on two different
+-- Surfaces. Each world resolves the same target and action through the Binding
+-- belonging to its active Surface; no target ownership field participates.
+do
+    local outcomes = {}
+    for _, world in {
+        {
+            surface = "scene",
+            scene = "present",
+            other = "absent",
+            binding = "leave.scene",
+            locator = "leave.scene",
+        },
+        {
+            surface = "other",
+            scene = "absent",
+            other = "present",
+            binding = "leave.other",
+            locator = "leave.other",
+        },
+    } do
+        local cycle = evidence.begin_cycle()
+        local records = stateRecords(cycle, world.scene, world.other, "absent")
+        local hostProof = table.freeze({ surface = world.surface })
+        put(records, cycle, world.binding, world.locator, "present", hostProof)
+        local state = resolution.resolve_state(runtime, cycle, records)
+        local binding = resolution.resolve_binding(runtime, cycle, state, "leave", nil, records)
+        local request, reason = resolution.authorize(runtime, cycle, binding, "leave")
+        outcomes[world.surface] = {
+            binding = binding.binding,
+            target = binding.ui_target,
+            action = if request == nil then nil else request.action,
+            authorized = request ~= nil and reason == nil,
+        }
+        evidence.end_cycle(cycle)
+    end
+    assert(
+        outcomes.scene.target == "leave"
+            and outcomes.other.target == "leave"
+            and outcomes.scene.binding == "leave.scene"
+            and outcomes.other.binding == "leave.other"
+            and outcomes.scene.action == "leave"
+            and outcomes.other.action == "leave"
+            and outcomes.scene.authorized
+            and outcomes.other.authorized,
+        "T-004 T06 the same shared target must resolve and authorize through bindings on two different Surfaces"
     )
 end
 

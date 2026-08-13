@@ -232,23 +232,15 @@ function observe.open(runtimeModel: any): any
     local cycle = {}
     cycles[cycle] = state
 
-    function cycle:resolve_state(): any
+    function cycle:resolve_state(expectedStack: { any }?): any
         local current = requireCycle(self)
-        local measured: { [string]: boolean } = {}
-        for _, surface in current.model.surfaces do
-            for _, group in { surface.identity.all, surface.identity.any, surface.identity.none } do
-                for _, bindingId in group do
-                    if not measured[bindingId] then
-                        measured[bindingId] = true
-                        measureBinding(current, current.model.binding_by_id[bindingId])
-                    end
-                end
-            end
-        end
         return resolution.resolve_state(
             current.model,
             current.evidence_cycle,
-            current.predicate_records
+            function(binding: any, predicate: any): any
+                return measurePredicate(current, binding, predicate)
+            end,
+            expectedStack
         )
     end
 

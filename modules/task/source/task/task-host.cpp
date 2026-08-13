@@ -93,6 +93,7 @@ namespace uf::task
                 ordered_surface_stack = state.ordered_surface_stack,
                 readings = readings,
                 reason = reason,
+                diagnostic = state.diagnostic,
             })
         )lua"};
 
@@ -835,6 +836,32 @@ namespace uf::task
             );
         }
         return report(DeliveryOutcome::Delivered, {}, *std::move(delivered));
+    }
+
+    auto TaskHost::deliver(
+        DispatchAuthority authority,
+        TaskContext& context
+    ) -> Result<HostDeliveryReport>
+    {
+        auto const found = std::ranges::find_if(
+            m_receipts,
+            [&context](PendingReceipt const& pending)
+            {
+                return context.requireReceiptCycle(
+                    pending.cycle,
+                    pending.evidenceCycleOrdinal
+                ).has_value();
+            }
+        );
+        if (found == m_receipts.end())
+        {
+            return fail(
+                AutomationErrorKind::StaleObservation,
+                "the delivery context holds no pending Host Receipt"
+            );
+        }
+        auto const receipt = Receipt{m_hostNonce, found->ordinal};
+        return deliver(std::move(authority), receipt, context);
     }
 
     auto TaskHost::adoptControlFence(ControlFence fence) -> Status

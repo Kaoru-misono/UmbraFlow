@@ -118,7 +118,9 @@ local function evaluateBinding(binding: any, recordsByKey: any, cycle: any): any
     for _, predicate in detectorRecords(binding.detector) do
         local predicateKey = model.predicate_key(predicate)
         local measurementKey = model.measurement_key(binding.id, predicate)
-        local record = supplied[measurementKey]
+        local record = if type(recordsByKey) == "function"
+            then recordsByKey(binding, predicate)
+            else supplied[measurementKey]
         local outcome = evidence.result_of(record, cycle)
         if outcome == nil then
             record = evidence.unknown(cycle, "not_measured", {
@@ -180,11 +182,12 @@ local function evaluateSurface(
     }
 end
 
-local function unknownState(reason: string, evaluations: { any }): any
+local function unknownState(reason: string, evaluations: { any }, diagnostic: string?): any
     return table.freeze({
         kind = "unknown_state",
         reason = reason,
         evidence = allEvidence(evaluations),
+        diagnostic = diagnostic,
     })
 end
 
@@ -197,9 +200,62 @@ local function ambiguousState(candidates: { any }, reason: string, evaluations: 
     })
 end
 
-function resolution.resolve_state(runtimeModel: any, cycle: any, recordsByKey: any): any
+local function resolvedState(
+    runtimeModel: any,
+    cycle: any,
+    stack: { any },
+    evaluations: { any }
+): any
+    nextStateId += 1
+    local result = table.freeze({
+        kind = "resolved_state",
+        id = "state-resolution-" .. tostring(nextStateId),
+        ordered_surface_stack = copyList(stack),
+        evidence = allEvidence(evaluations),
+    })
+    stateLedger[result] = {
+        cycle = cycle,
+        model = runtimeModel,
+        stack = result.ordered_surface_stack,
+    }
+    return result
+end
+
+local function confirmExpected(
+    runtimeModel: any,
+    cycle: any,
+    recordsByKey: any,
+    expectedStack: { any }
+): any?
+    local evaluations = {}
+    for _, surfaceId in expectedStack do
+        local evaluated = evaluateSurface(
+            runtimeModel,
+            runtimeModel.surface_by_id[surfaceId],
+            recordsByKey,
+            cycle
+        )
+        table.insert(evaluations, evaluated)
+        if evaluated.kind ~= "present" then return nil end
+    end
+    return resolvedState(runtimeModel, cycle, expectedStack, evaluations)
+end
+
+function resolution.resolve_state(
+    runtimeModel: any,
+    cycle: any,
+    recordsByKey: any,
+    expectedStack: { any }?
+): any
     if not model.is_runtime_model(runtimeModel) then error("resolve_state needs RuntimeModel v2", 2) end
     if not evidence.is_cycle_live(cycle) then error("resolve_state needs a live framework cycle", 2) end
+    if expectedStack ~= nil then
+        if not model.valid_surface_stack(runtimeModel, expectedStack) then
+            error("resolve_state expected stack must be a declared Surface stack", 2)
+        end
+        local confirmed = confirmExpected(runtimeModel, cycle, recordsByKey, expectedStack)
+        if confirmed ~= nil then return confirmed end
+    end
 
     local evaluations = {}
     local scenes = {}
@@ -217,7 +273,13 @@ function resolution.resolve_state(runtimeModel: any, cycle: any, recordsByKey: a
     end
 
     if unknownScenes > 0 then return unknownState("unknown_scene_competitor", evaluations) end
-    if #scenes == 0 then return unknownState("no_scene_candidate", evaluations) end
+    if #scenes == 0 then
+        return unknownState(
+            "no_scene_candidate",
+            evaluations,
+            if #presentLayers == 0 then "visible_content_matched_nothing" else nil
+        )
+    end
     if #scenes > 1 then
         local candidates = {}
         for _, scene in scenes do
@@ -259,19 +321,7 @@ function resolution.resolve_state(runtimeModel: any, cycle: any, recordsByKey: a
         return ambiguousState({}, "invalid_surface_stack", evaluations)
     end
 
-    nextStateId += 1
-    local result = table.freeze({
-        kind = "resolved_state",
-        id = "state-resolution-" .. tostring(nextStateId),
-        ordered_surface_stack = freezeList(stack),
-        evidence = allEvidence(evaluations),
-    })
-    stateLedger[result] = {
-        cycle = cycle,
-        model = runtimeModel,
-        stack = result.ordered_surface_stack,
-    }
-    return result
+    return resolvedState(runtimeModel, cycle, stack, evaluations)
 end
 
 -- Compares an offline observation with declared policy. The observation names
