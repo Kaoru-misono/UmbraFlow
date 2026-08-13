@@ -17,6 +17,7 @@ local sectionLists: { [string]: string } = {
     reader = "readers",
     binding = "bindings",
     collection = "collections",
+    stitched_map = "stitched_maps",
     surface = "surfaces",
     transition = "transitions",
 }
@@ -40,7 +41,20 @@ local sectionFields: { [string]: { [string]: boolean } } = {
         actions = true,
         reads = true,
     },
-    collection = { id = true, surface = true, placement = true, actions = true, reads = true },
+    collection = {
+        id = true,
+        surface = true,
+        placement = true,
+        actions = true,
+        reads = true,
+        predicate = true,
+    },
+    stitched_map = {
+        id = true,
+        collection = true,
+        colour_key = true,
+        minimum_ratio = true,
+    },
     surface = { id = true, kind = true, covers = true, identity = true },
     transition = { id = true, from_surfaces = true, trigger = true, to_surfaces = true },
 }
@@ -234,6 +248,7 @@ local function parseToml(text: string): any
         readers = {},
         bindings = {},
         collections = {},
+        stitched_maps = {},
         surfaces = {},
         transitions = {},
     }

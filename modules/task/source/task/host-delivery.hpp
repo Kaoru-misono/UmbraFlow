@@ -96,12 +96,13 @@ namespace uf::task
         TransportUnknown,
     };
 
-    // What one delivery posted, as the engine described it. A sum type because
-    // a Receipt authorizes one input of one kind and the two carry different
-    // evidence: an ActReceipt names the client-space point, a KeyReceipt names
-    // the key and no point, which is the whole reason engine keeps them apart
-    // rather than inventing a coordinate for a keystroke.
-    using DeliveredInput = std::variant<engine::ActReceipt, engine::KeyReceipt>;
+    // What one delivery posted, as the engine described it. Each alternative is
+    // the engine's receipt for the one input kind the Runtime Receipt authorized.
+    using DeliveredInput = std::variant<
+        engine::ActReceipt,
+        engine::KeyReceipt,
+        engine::DragReceipt
+    >;
 
     // What one TaskHost::deliver did with one Receipt. Constructible only by
     // TaskHost, so a ledger that demands one cannot be told about a delivery

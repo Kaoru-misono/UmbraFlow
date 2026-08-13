@@ -760,6 +760,17 @@ namespace uf::task
         return m_session.pressKey(std::move(observation), key);
     }
 
+    auto TaskContext::deliverReceiptDrag(
+        CycleTicket ticket,
+        PixelPoint start,
+        PixelPoint end,
+        MonotonicInstant::Duration travel
+    ) -> Result<engine::DragReceipt>
+    {
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+        return m_session.drag(std::move(observation), start, end, travel);
+    }
+
     // The six below share one shape and it is deliberate: spend the cycle, hand
     // the observation to the engine verb that owns the act, and write the
     // front-end's line only once the act has landed. The spend comes first on

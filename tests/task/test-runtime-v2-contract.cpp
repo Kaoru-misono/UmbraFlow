@@ -468,6 +468,21 @@ identity = ["screen.anchor"]
 )toml";
         }
 
+        [[nodiscard]] auto dragRuntimeModel() -> std::string
+        {
+            auto result = runtimeModel();
+            auto constexpr click = std::string_view{
+                R"({ id = "activate", kind = "click", proof_locator = "confirm-mark" })"
+            };
+            auto constexpr drag = std::string_view{
+                R"({ id = "activate", kind = "drag", offset = [1, 0], duration_ms = 600, proof_locator = "confirm-mark" })"
+            };
+            auto const at = result.find(click);
+            REQUIRE(at != std::string::npos);
+            result.replace(at, click.size(), drag);
+            return result;
+        }
+
         auto const k_runtimeKeyAction = UiActionUnderTest{
             .surface  = "screen",
             .uiTarget = "commit",
@@ -481,6 +496,24 @@ identity = ["screen.anchor"]
             auto const rootHash = publish(
                 directory.path(),
                 keyRuntimeModel(),
+                runtimeAssets()
+            );
+            auto const generation = TaskHostTestAccess::activate(
+                host,
+                directory.path(),
+                rootHash
+            );
+            REQUIRE(generation.has_value());
+            return *generation;
+        }
+
+        [[nodiscard]]
+        auto loadedDragRuntime(TaskHost& host, TemporaryDirectory const& directory)
+            -> GenerationId
+        {
+            auto const rootHash = publish(
+                directory.path(),
+                dragRuntimeModel(),
                 runtimeAssets()
             );
             auto const generation = TaskHostTestAccess::activate(
@@ -876,6 +909,58 @@ identity = ["screen.anchor"]
         auto const posted = runtime.actions().lastKey();
         REQUIRE(posted.has_value());
         CHECK(posted->value() == "E");
+    }
+
+    TEST_CASE("T-006 Runtime drag is one authorized delivery with declared offset and duration")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const generation = loadedDragRuntime(host, directory);
+        auto const fence = controlFence(7);
+        REQUIRE(TaskHostTestAccess::adoptControlFence(host, fence).has_value());
+        auto const authority = dispatchAuthority(fence, generation);
+        auto runtime = RuntimeContext{
+            frame(
+                {std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}},
+                FrameId{61}
+            ),
+            1'000
+        };
+        auto const minted = TaskHostTestAccess::run(
+            host,
+            generation,
+            runtime.context(),
+            authorizeActionSource(k_runtimeUiAction)
+        );
+        REQUIRE(minted.has_value());
+        CHECK(runtime.actions().drags() == 0U);
+
+        auto const delivered = TaskHostTestAccess::deliver(
+            host,
+            authority,
+            TaskHostTestAccess::pendingReceipt(host, k_runtimeUiAction),
+            runtime.context()
+        );
+        REQUIRE(delivered.has_value());
+        CHECK(delivered->outcome() == DeliveryOutcome::Delivered);
+        CHECK_MESSAGE(
+            runtime.actions().drags() == 1U,
+            "T-006 atomic drag must reach the action sink as exactly one authorized delivery"
+        );
+        REQUIRE(runtime.actions().lastDragStart().has_value());
+        REQUIRE(runtime.actions().lastDragEnd().has_value());
+        REQUIRE(runtime.actions().lastDragTravel().has_value());
+        CHECK(runtime.actions().lastDragStart()->x() == doctest::Approx(1.0));
+        CHECK_MESSAGE(
+            runtime.actions().lastDragEnd()->x() == doctest::Approx(2.0),
+            "T-006 drag endpoint must equal its measured start plus declared offset"
+        );
+        CHECK(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                *runtime.actions().lastDragTravel()
+            ).count()
+            == 600
+        );
     }
 
     // Every key-path error is TransportUnknown, for the reason the click path's
@@ -1417,7 +1502,7 @@ identity = ["screen.anchor"]
     // The whole reading path, from the trusted Reader to the bytes a plugin is
     // handed. Nothing below asserts against a string this file also produced:
     // the text comes out of the scripted Reader, the normalization out of the
-    // page model, and the document out of the resolver.
+    // RuntimeModel, and the document out of the resolver.
     TEST_CASE("TaskHost::observe reports what a present Binding's Reader read")
     {
         auto const directory = TemporaryDirectory{};

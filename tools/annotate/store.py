@@ -2301,7 +2301,7 @@ class AnnotationStore:
         except ValueError as error:
             raise StoreError(str(error)) from error
         if runtime_manifest["page_model"]["sha256"] != runtime_model_hash:
-            raise StoreError("RuntimeArtifact page model does not match the replayed RuntimeModel")
+            raise StoreError("RuntimeArtifact model does not match the replayed RuntimeModel")
         release_manifest_bytes = self._validate_release_manifest(
             release_manifest,
             candidate_id=candidate_id,

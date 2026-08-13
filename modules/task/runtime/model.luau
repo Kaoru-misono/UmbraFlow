@@ -7,7 +7,7 @@
 
 local model = {}
 model.schema = "umbraflow-runtime/v2"
-model.schema_hash = "c2adda700841dd228952d1fef6eb268ab2a7117c2e1b09f1365e1da75adc1120"
+model.schema_hash = "d47030ed22c65a224654f2fe7c7a594053f1bbc01b0b0663392ccde389d736fb"
 
 local runtimeModels: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 local semanticBytes: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any
@@ -395,9 +395,9 @@ local function placementBuilder(bounds: { number }): (string, any) -> any
     end
 end
 
--- One action an owner grants, in one of the two kinds a target offers. A
--- Binding click takes its point from fixed_placement; a Collection click uses
--- the same item-origin offset spelling as a Collection read.
+-- One action an owner grants. A Binding click or drag starts at
+-- fixed_placement.action_point; a Collection click uses the same item-origin
+-- offset spelling as a Collection read.
 local function actionBuilder(itemRelative: boolean): (string, any) -> any
     return function(what: string, value: any): any
         local source = object(what, value)
@@ -439,8 +439,48 @@ local function actionBuilder(itemRelative: boolean): (string, any) -> any
                 proof_locator = identifier(what .. ".proof_locator", source.proof_locator),
             })
         end
-        fail(what .. ".kind", "must be click or key")
+        if source.kind == "drag" and not itemRelative then
+            only(what, source, {
+                id = true,
+                kind = true,
+                offset = true,
+                duration_ms = true,
+                proof_locator = true,
+            })
+            local values = dense(what .. ".offset", source.offset)
+            if #values ~= 2 then
+                fail(what .. ".offset", "must contain exactly two integers")
+            end
+            return table.freeze({
+                id = identifier(what .. ".id", source.id),
+                kind = "drag",
+                offset = table.freeze({
+                    integer(what .. ".offset[1]", values[1]),
+                    integer(what .. ".offset[2]", values[2]),
+                }),
+                duration_ms = integer(what .. ".duration_ms", source.duration_ms),
+                proof_locator = identifier(what .. ".proof_locator", source.proof_locator),
+            })
+        end
+        fail(
+            what .. ".kind",
+            if itemRelative then "must be click or key" else "must be click, key, or drag"
+        )
     end
+end
+
+local function collectionPredicate(what: string, value: any): any
+    local source = object(what, value)
+    if source.kind ~= "text_equals" then
+        fail(what .. ".kind", "must be text_equals")
+    end
+    only(what, source, { kind = true, reader = true, value = true })
+    if type(source.value) ~= "string" then fail(what .. ".value", "must be a string") end
+    return table.freeze({
+        kind = "text_equals",
+        reader = identifier(what .. ".reader", source.reader),
+        value = source.value,
+    })
 end
 
 local function collectionBuilder(bounds: { number }): (string, any) -> any
@@ -452,6 +492,7 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
             placement = true,
             actions = true,
             reads = true,
+            predicate = true,
         })
         local placement = object(what .. ".placement", source.placement)
         only(what .. ".placement", placement, {
@@ -529,6 +570,9 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
             }),
             actions = actions,
             reads = table.freeze(reads),
+            predicate = if source.predicate == nil
+                then nil
+                else collectionPredicate(what .. ".predicate", source.predicate),
         })
     end
 end
@@ -573,13 +617,25 @@ local function bindingBuilder(bounds: { number }): (string, any) -> any
         -- number in the model that nothing measures and nothing delivers.
         local aimed = false
         for _, valueAction in actions do
-            if valueAction.kind == "click" then aimed = true end
+            if valueAction.kind == "click" or valueAction.kind == "drag" then aimed = true end
         end
         if aimed and placement.action_point == nil then
-            fail(what .. ".placement", "needs action_point when a click is granted")
+            fail(what .. ".placement", "needs action_point when a point action is granted")
         end
         if not aimed and placement.action_point ~= nil then
-            fail(what .. ".placement.action_point", "is not allowed without a click")
+            fail(what .. ".placement.action_point", "is not allowed without a point action")
+        end
+        for _, valueAction in actions do
+            if valueAction.kind == "drag" then
+                local endX = placement.action_point[1] + valueAction.offset[1]
+                local endY = placement.action_point[2] + valueAction.offset[2]
+                if endX < 0 or endY < 0 or endX >= bounds[1] or endY >= bounds[2] then
+                    fail(what .. ".actions", "contains a drag whose endpoint leaves base_resolution")
+                end
+                if valueAction.duration_ms < 0 or valueAction.duration_ms > 750 then
+                    fail(what .. ".actions", "contains a drag outside the 0..750 ms travel bound")
+                end
+            end
         end
         -- Absent reads is the empty list and not a second shape: a Binding that
         -- reports nothing has nothing to say here, and requiring every Binding
@@ -636,6 +692,41 @@ local function transition(what: string, value: any): any
             action = identifier(what .. ".trigger.action", trigger.action),
         }),
         to_surfaces = stringList(what .. ".to_surfaces", source.to_surfaces, true),
+    })
+end
+
+local function stitchedMap(what: string, value: any): any
+    local source = object(what, value)
+    only(what, source, {
+        id = true,
+        collection = true,
+        colour_key = true,
+        minimum_ratio = true,
+    })
+    local key = object(what .. ".colour_key", source.colour_key)
+    only(what .. ".colour_key", key, {
+        red = true,
+        green = true,
+        blue = true,
+        tolerance = true,
+    })
+    local function channel(name: string, valueChannel: any): number
+        local result = integer(what .. ".colour_key." .. name, valueChannel)
+        if result < 0 or result > 255 then
+            fail(what .. ".colour_key." .. name, "must be between 0 and 255")
+        end
+        return result
+    end
+    return table.freeze({
+        id = identifier(what .. ".id", source.id),
+        collection = identifier(what .. ".collection", source.collection),
+        colour_key = table.freeze({
+            red = channel("red", key.red),
+            green = channel("green", key.green),
+            blue = channel("blue", key.blue),
+            tolerance = channel("tolerance", key.tolerance),
+        }),
+        minimum_ratio = unit(what .. ".minimum_ratio", source.minimum_ratio),
     })
 end
 
@@ -705,6 +796,7 @@ function model.compile(value: any): any
         readers = true,
         bindings = true,
         collections = true,
+        stitched_maps = true,
         surfaces = true,
         transitions = true,
     })
@@ -723,6 +815,11 @@ function model.compile(value: any): any
     )
     local surfaces = records("RuntimeModel.surfaces", source.surfaces, surface)
     local transitions = records("RuntimeModel.transitions", source.transitions, transition)
+    local stitchedMaps = records(
+        "RuntimeModel.stitched_maps",
+        if source.stitched_maps == nil then {} else source.stitched_maps,
+        stitchedMap
+    )
     if #uiTargets == 0 then fail("RuntimeModel.ui_targets", "must not be empty") end
     if #surfaces == 0 then fail("RuntimeModel.surfaces", "must not be empty") end
 
@@ -733,6 +830,7 @@ function model.compile(value: any): any
     local collectionById = mapById("RuntimeModel.collections", collections)
     local surfaceById = mapById("RuntimeModel.surfaces", surfaces)
     local transitionById = mapById("RuntimeModel.transitions", transitions)
+    local stitchedMapById = mapById("RuntimeModel.stitched_maps", stitchedMaps)
 
     local assetPaths = {}
     local seenAssetPath: { [string]: boolean } = {}
@@ -845,6 +943,25 @@ function model.compile(value: any): any
         for _, valueRead in valueCollection.reads do
             requireRef("collection '" .. valueCollection.id .. "' reads", readerById, valueRead.reader)
         end
+        if valueCollection.predicate ~= nil then
+            requireRef(
+                "collection '" .. valueCollection.id .. "' predicate",
+                readerById,
+                valueCollection.predicate.reader
+            )
+            local predicateReaderDeclared = false
+            for _, valueRead in valueCollection.reads do
+                if valueRead.reader == valueCollection.predicate.reader then
+                    predicateReaderDeclared = true
+                end
+            end
+            if not predicateReaderDeclared then
+                fail(
+                    "collection '" .. valueCollection.id .. "' predicate",
+                    "must name a Reader declared in collection.reads"
+                )
+            end
+        end
         for _, valueAction in valueCollection.actions do
             requireRef("action '" .. valueAction.id .. "'", locatorById, valueAction.proof_locator)
         end
@@ -856,6 +973,10 @@ function model.compile(value: any): any
         table.insert(rows, valueCollection)
     end
     for id, rows in collectionsBySurface do collectionsBySurface[id] = table.freeze(rows) end
+
+    for _, valueMap in stitchedMaps do
+        requireRef("stitched_map '" .. valueMap.id .. "'", collectionById, valueMap.collection)
+    end
 
     for _, valueSurface in surfaces do
         for _, covered in valueSurface.covers do
@@ -893,6 +1014,7 @@ function model.compile(value: any): any
         collections = collections,
         surfaces = surfaces,
         transitions = transitions,
+        stitched_maps = stitchedMaps,
     })
     local runtimeModel: any = table.freeze({
         schema_version = semanticModel.schema_version,
@@ -905,6 +1027,7 @@ function model.compile(value: any): any
         collections = semanticModel.collections,
         surfaces = semanticModel.surfaces,
         transitions = semanticModel.transitions,
+        stitched_maps = semanticModel.stitched_maps,
         asset_paths = assetPaths,
         declared_surface_ids = sortedUnique(surfaceIds),
         declared_ui_target_ids = sortedUnique(uiTargetIds),
@@ -917,6 +1040,7 @@ function model.compile(value: any): any
         collection_by_id = collectionById,
         surface_by_id = surfaceById,
         transition_by_id = transitionById,
+        stitched_map_by_id = stitchedMapById,
         bindings_by_surface = table.freeze(bindingsBySurface),
         collections_by_surface = table.freeze(collectionsBySurface),
     })

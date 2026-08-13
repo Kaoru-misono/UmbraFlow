@@ -1028,15 +1028,15 @@ namespace uf::engine
     {
         auto const identity = observation.m_frameIdentity;
 
-        // What survives of the coordinate authorization now the element and page
-        // are layer two's: the geometry must still be what the page model was
-        // authored against, the frame still within its lease. Both refuse here,
+        // What survives of coordinate authorization after semantic identity
+        // moved to Runtime v2: geometry must still be what the project authored
+        // against, and the frame must remain within its lease. Both refuse here,
         // before any sink call.
         if (m_config.liveFingerprint != m_config.projectFingerprint)
         {
             auto mismatch = fail(
                 AutomationErrorKind::TargetCompatibilityUnverified,
-                "live size or DPI does not match the page model's fingerprint"
+                "live size or DPI does not match the RuntimeModel fingerprint"
             );
             UF_TRY(rejectAction(identity, mismatch.error(), std::nullopt));
             return mismatch;

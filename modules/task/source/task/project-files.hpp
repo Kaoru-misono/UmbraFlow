@@ -15,13 +15,13 @@ namespace uf::task
     // The largest project file the host will read or write in one call. Without a
     // bound a script could ask the host to hold an arbitrary file in memory, and a
     // run's memory ceiling would be a property of whatever happens to be in the
-    // project directory. Eight mebibytes is far above any page model a project
+    // project directory. Eight mebibytes is far above any RuntimeModel a project
     // writes -- the largest authored so far is tens of kilobytes -- and far below
     // the frame budget a run already lives inside.
     inline constexpr auto k_maximumProjectFileBytes = std::size_t{8} * 1024U * 1024U;
 
     // Reads and writes files inside ONE project directory, and refuses every name
-    // that would leave it. The page model lives in the trusted Luau layer, so
+    // that would leave it. RuntimeModel lives in the trusted Luau layer, so
     // layer one has to hand the script layer a way to reach its own project's
     // bytes, and "which bytes" is then an argument a script supplies; the
     // confinement below is the whole of what stops that argument from naming the

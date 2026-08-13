@@ -88,11 +88,9 @@ namespace uf::engine
     {
         ProjectFingerprint liveFingerprint;
 
-        // The geometry the page model this session serves was authored at,
-        // supplied rather than read off a loaded project because the engine loads
-        // none -- the model is layer two's, stated at the top of its own project
-        // file (docs/plans/2026-07-31-script-owned-page-model.md 4). The click
-        // edge's compatibility refusal and the raw match's consult this.
+        // The geometry this session serves was authored at, supplied rather
+        // than read from RuntimeModel because the engine does not interpret it.
+        // Coordinate compatibility refusal and raw matching consult this.
         ProjectFingerprint projectFingerprint;
 
         uint64                     maximumPixelComparisons{};
@@ -528,8 +526,8 @@ namespace uf::engine
         // revalidated immediately before the post, and the observation is spent
         // so one frame delivers at most one input.
         //
-        // It does NOT enforce that a resolved page authorises the element: there
-        // is no element and no page here. Naming a bare coordinate is therefore
+        // It does NOT enforce that a resolved Binding authorizes the point: no
+        // RuntimeModel identity reaches this layer. Naming a bare coordinate is
         // the trusted framework's privilege and never a business script's --
         // modules/task/runtime/observe.luau enforces "only click what this page
         // authorises" (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
@@ -570,9 +568,9 @@ namespace uf::engine
         // pressKey()'s reason: the verb names no screen position. The fingerprint
         // check and the lease-age refusal are absent for that reason too.
         //
-        // The lease still travels to the sink, which is a delivery requirement
-        // rather than an authorization one -- see IActionSink::scroll, where the
-        // open question about aiming a scroll is recorded.
+        // The lease still travels to the sink as delivery material. The
+        // exploration-only authority and bound-target aim are ruled at
+        // IActionSink::scroll.
         [[nodiscard]]
         auto scroll(
             Observation&& observation,

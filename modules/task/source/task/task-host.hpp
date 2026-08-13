@@ -174,13 +174,21 @@ namespace uf::task
             ProjectFingerprint       fingerprint;
         };
 
+        // PixelPoint has no default state, so every drag intent construction
+        // supplies both endpoints.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+        struct TrustedDragInput final
+        {
+            PixelPoint                 start;
+            PixelPoint                 end;
+            MonotonicInstant::Duration travel{};
+        };
+
         // What one Receipt authorizes the Host to deliver. A sum type because
-        // exactly one of the two is true of any Receipt: a click names the
-        // point the model measured, a keystroke names a key and no point at
-        // all. Two optional members could spell both or neither, and defaulting
-        // a key's coordinate to (0,0) would put a number into the delivery path
-        // that nothing measured.
-        using TrustedReceiptInput = std::variant<PixelPoint, KeyName>;
+        // exactly one shape is true of any Receipt: a click names one point, a
+        // keystroke names a key and no point, and a drag names both endpoints
+        // plus the project's declared travel duration.
+        using TrustedReceiptInput = std::variant<PixelPoint, KeyName, TrustedDragInput>;
 
         // No in-class initializer for the input: neither alternative has a
         // default state, so the variant has none either and every construction

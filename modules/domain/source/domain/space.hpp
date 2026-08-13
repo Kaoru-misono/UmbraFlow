@@ -284,8 +284,9 @@ namespace uf
     // model must not be compared against it.
     //
     // It lives in domain rather than beside the model that states it, because
-    // the model is a Luau value: the script-owned page model declares its
-    // geometry at the top of runtime-model.toml and hands it down. The engine
+    // the model is a Luau value: the Runtime v2 authority in
+    // schema/umbraflow-runtime-v2.schema.json declares base_resolution and
+    // base_dpi in runtime-model.toml and hands them down. The engine
     // compares a live measurement against whatever its caller supplied, and that
     // comparison must not drag the model's vocabulary into the engine.
     class ProjectFingerprint final

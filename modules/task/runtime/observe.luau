@@ -335,6 +335,32 @@ function observe.open(runtimeModel: any): any
         )
     end
 
+    function cycle:stitched_map_connectivity_targets(
+        mapId: any,
+        collection: any
+    ): (any?, string?)
+        local current = requireCycle(self)
+        return resolution.stitched_map_connectivity_targets(
+            current.model,
+            mapId,
+            collection
+        )
+    end
+
+    function cycle:evaluate_stitched_map(
+        mapId: any,
+        collection: any,
+        readings: any
+    ): (any?, string?)
+        local current = requireCycle(self)
+        return resolution.evaluate_stitched_map(
+            current.model,
+            mapId,
+            collection,
+            readings
+        )
+    end
+
     function cycle:resolve_binding(resolvedState: any, uiTarget: any, bindingId: any?): any
         local current = requireCycle(self)
         local candidates = resolution.binding_candidates(
@@ -381,6 +407,8 @@ function observe.open(runtimeModel: any): any
                 action = payload.request.action,
                 action_kind = payload.request.action_kind,
                 key = payload.request.key,
+                offset = payload.request.offset,
+                duration_ms = payload.request.duration_ms,
                 placement = payload.placement,
                 proof_locator = payload.proof_locator,
             })

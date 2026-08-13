@@ -822,6 +822,19 @@ namespace uf::task
             {
                 UF_TRY_VALUE(pressed, context.deliverReceiptKey(pending.cycle, key));
                 return DeliveredInput{pressed};
+            },
+            [&context, &pending](TrustedDragInput const& drag) -> Result<DeliveredInput>
+            {
+                UF_TRY_VALUE(
+                    delivered,
+                    context.deliverReceiptDrag(
+                        pending.cycle,
+                        drag.start,
+                        drag.end,
+                        drag.travel
+                    )
+                );
+                return DeliveredInput{delivered};
             }
         );
         if (!delivered.has_value())

@@ -700,6 +700,29 @@ local function reportedReading(subjectId: string, readerId: string, reading: any
     })
 end
 
+local function collectionPredicateMatches(
+    collection: any,
+    itemIndex: number,
+    supplied: any
+): (boolean?, string?)
+    local predicate = collection.predicate
+    if predicate == nil then return true, nil end
+    local reading = supplied[model.collection_item_reading_key(
+        collection.id,
+        itemIndex,
+        predicate.reader
+    )]
+    if type(reading) ~= "table" then return nil, "predicate_not_measured" end
+    if reading.kind == "absent" then return false, nil end
+    if reading.kind ~= "read" or type(reading.lines) ~= "table" then
+        return nil, "predicate_unreadable"
+    end
+    for _, line in reading.lines do
+        if type(line) == "table" and line.text == predicate.value then return true, nil end
+    end
+    return false, nil
+end
+
 -- Resolves one variable-cardinality collection against the same live state
 -- that made its Surface available. A bare search rectangle contributes nothing:
 -- only an absent or successful answer from the collection's trusted block
@@ -738,7 +761,14 @@ function resolution.resolve_collection(
     )
     if targets == nil then return nil, targetReadReason end
     local items = {}
-    for position, detected in fitted.items do
+    for _, detected in fitted.items do
+        local matches, predicateReason = collectionPredicateMatches(
+            collection,
+            detected.index,
+            supplied
+        )
+        if matches == nil then return nil, predicateReason end
+        if not matches then continue end
         local readings = {}
         for _, read in collection.reads do
             table.insert(readings, reportedReading(
@@ -751,15 +781,15 @@ function resolution.resolve_collection(
                 )]
             ))
         end
-        items[position] = table.freeze({
+        table.insert(items, table.freeze({
             index = detected.index,
             rect = detected.rect,
             readings = freezeList(readings),
-        })
+        }))
     end
     return table.freeze({
         completeness = fitted.completeness,
-        count = fitted.count,
+        count = #items,
         items = freezeList(items),
     }), nil
 end
@@ -1050,6 +1080,8 @@ function resolution.authorize(
         -- told which key to deliver rather than reading it back out of a model
         -- it does not interpret.
         key = selected.key,
+        offset = selected.offset,
+        duration_ms = selected.duration_ms,
         evidence_ids = freezeList(evidenceIds),
     })
     requestLedger[request] = {
@@ -1070,6 +1102,142 @@ function resolution.take_receipt_request(request: any, cycle: any): any?
     requestLedger[request] = nil
     if entry == nil or entry.cycle ~= cycle or not evidence.is_cycle_live(cycle) then return nil end
     return entry.payload
+end
+
+local function stitchedMapDeclaration(runtimeModel: any, mapId: any): (any?, string?)
+    if not model.is_runtime_model(runtimeModel) then return nil, "invalid_runtime_model" end
+    if type(mapId) ~= "string" then return nil, "unknown_stitched_map" end
+    local declaration = runtimeModel.stitched_map_by_id[mapId]
+    if declaration == nil then return nil, "unknown_stitched_map" end
+    return declaration, nil
+end
+
+local function stitchedItems(collection: any): ({ any }?, string?)
+    if type(collection) ~= "table"
+        or collection.completeness == "unknown"
+        or type(collection.items) ~= "table"
+        or collection.count ~= #collection.items
+    then
+        return nil, "stitched_collection_unresolved"
+    end
+    local seen: { [number]: boolean } = {}
+    for _, item in collection.items do
+        if type(item) ~= "table"
+            or type(item.index) ~= "number"
+            or item.index % 1 ~= 0
+            or item.index < 0
+            or seen[item.index]
+            or type(item.rect) ~= "table"
+            or #item.rect ~= 4
+        then
+            return nil, "stitched_collection_invalid"
+        end
+        seen[item.index] = true
+        for _, coordinate in item.rect do
+            if type(coordinate) ~= "number" or coordinate % 1 ~= 0 then
+                return nil, "stitched_collection_invalid"
+            end
+        end
+        if item.rect[1] < 0 or item.rect[2] < 0 or item.rect[3] < 1 or item.rect[4] < 1 then
+            return nil, "stitched_collection_invalid"
+        end
+    end
+    return collection.items, nil
+end
+
+-- Returns every connectivity read the assembled-map evaluator requires. The
+-- coordinates belong to the stitched image supplied by the project, so they
+-- are deliberately not bounded by RuntimeModel.base_resolution: doing that
+-- would silently reintroduce the one-screen page assumption this verb removes.
+function resolution.stitched_map_connectivity_targets(
+    runtimeModel: any,
+    mapId: any,
+    collection: any
+): ({ any }?, string?)
+    local declaration, declarationReason = stitchedMapDeclaration(runtimeModel, mapId)
+    if declaration == nil then return nil, declarationReason end
+    local items, itemsReason = stitchedItems(collection)
+    if items == nil then return nil, itemsReason end
+    local targets = {}
+    for fromPosition = 1, #items do
+        local from = items[fromPosition]
+        for toPosition = fromPosition + 1, #items do
+            local to = items[toPosition]
+            table.insert(targets, table.freeze({
+                from = from.index,
+                to = to.index,
+                start = table.freeze({
+                    from.rect[1] + math.floor(from.rect[3] / 2),
+                    from.rect[2] + math.floor(from.rect[4] / 2),
+                }),
+                finish = table.freeze({
+                    to.rect[1] + math.floor(to.rect[3] / 2),
+                    to.rect[2] + math.floor(to.rect[4] / 2),
+                }),
+                colour_key = declaration.colour_key,
+            }))
+        end
+    end
+    return freezeList(targets), nil
+end
+
+function resolution.evaluate_stitched_map(
+    runtimeModel: any,
+    mapId: any,
+    collection: any,
+    readings: any
+): (any?, string?)
+    local declaration, declarationReason = stitchedMapDeclaration(runtimeModel, mapId)
+    if declaration == nil then return nil, declarationReason end
+    local targets, targetsReason = resolution.stitched_map_connectivity_targets(
+        runtimeModel,
+        mapId,
+        collection
+    )
+    if targets == nil then return nil, targetsReason end
+    if type(readings) ~= "table" or #readings ~= #targets then
+        return nil, "connectivity_incomplete"
+    end
+    local supplied: { [string]: number } = {}
+    for _, reading in readings do
+        if type(reading) ~= "table"
+            or type(reading.from) ~= "number"
+            or type(reading.to) ~= "number"
+            or type(reading.ratio) ~= "number"
+            or reading.ratio < 0
+            or reading.ratio > 1
+        then
+            return nil, "connectivity_invalid"
+        end
+        local key = tostring(reading.from) .. ":" .. tostring(reading.to)
+        if supplied[key] ~= nil then return nil, "connectivity_duplicate" end
+        supplied[key] = reading.ratio
+    end
+    local edges = {}
+    local evaluations = {}
+    for _, target in targets do
+        local key = tostring(target.from) .. ":" .. tostring(target.to)
+        local ratio = supplied[key]
+        if ratio == nil then return nil, "connectivity_incomplete" end
+        local connected = ratio >= declaration.minimum_ratio
+        table.insert(evaluations, table.freeze({
+            from = target.from,
+            to = target.to,
+            ratio = ratio,
+            connected = connected,
+        }))
+        if connected then
+            table.insert(edges, table.freeze({ from = target.from, to = target.to }))
+        end
+    end
+    return table.freeze({
+        kind = "resolved_stitched_map",
+        map = declaration.id,
+        collection = declaration.collection,
+        nodes = collection.items,
+        edges = freezeList(edges),
+        connectivity = freezeList(evaluations),
+    }), nil
 end
 
 return table.freeze(resolution)

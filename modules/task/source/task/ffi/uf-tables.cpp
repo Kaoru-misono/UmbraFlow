@@ -75,11 +75,13 @@ namespace uf::task
         {
             Click,
             Key,
+            Drag,
         };
 
         constexpr auto k_receiptActionKinds = std::array{
             std::pair{std::string_view{"click"}, ReceiptActionKind::Click},
             std::pair{std::string_view{"key"}, ReceiptActionKind::Key},
+            std::pair{std::string_view{"drag"}, ReceiptActionKind::Drag},
         };
 
         // The layouts a Reader may declare, spelled as the model spells them.
@@ -1298,6 +1300,50 @@ namespace uf::task
             return result;
         }
 
+        [[nodiscard]]
+        static auto tableSignedPair(
+            lua_State* state,
+            int table,
+            char const* field,
+            std::string_view name
+        ) -> std::array<int32, 2>
+        {
+            auto const absolute = lua_absindex(state, table);
+            lua_rawgetfield(state, absolute, field);
+            if (lua_type(state, -1) != LUA_TTABLE || lua_objlen(state, -1) != 2U)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    std::string{name} + " must contain two integers"
+                );
+            }
+            auto const values = lua_absindex(state, -1);
+            lua_rawgeti(state, values, 1);
+            lua_rawgeti(state, values, 2);
+            auto const result = std::array{
+                signedInteger(state, -2, name),
+                signedInteger(state, -1, name),
+            };
+            lua_pop(state, 3);
+            return result;
+        }
+
+        [[nodiscard]]
+        static auto tableMillis(
+            lua_State* state,
+            int table,
+            char const* field,
+            std::string_view name
+        ) -> MonotonicInstant::Duration
+        {
+            auto const absolute = lua_absindex(state, table);
+            lua_rawgetfield(state, absolute, field);
+            auto const result = millisDuration(state, -1, name);
+            lua_pop(state, 1);
+            return result;
+        }
+
         static auto requireStringField(
             lua_State* state,
             int table,
@@ -1941,6 +1987,53 @@ namespace uf::task
                         raiseFromError(state, &runtimeContext, key.error());
                     }
                     return TrustedReceiptInput{*key};
+                }
+                case ReceiptActionKind::Drag:
+                {
+                    requireAbsentField(state, 3, "key", "Runtime Receipt drag");
+                    auto const start = tablePoint(
+                        state,
+                        placement,
+                        "action_point",
+                        "Runtime Receipt drag start"
+                    );
+                    auto const offset = tableSignedPair(
+                        state,
+                        3,
+                        "offset",
+                        "Runtime Receipt drag offset"
+                    );
+                    auto const endX = int64{start.x()} + int64{offset[0]};
+                    auto const endY = int64{start.y()} + int64{offset[1]};
+                    if (
+                        !measuredPlacement
+                        || endX < 0
+                        || endY < 0
+                        || endX > int64{std::numeric_limits<uint32>::max()}
+                        || endY > int64{std::numeric_limits<uint32>::max()}
+                    )
+                    {
+                        raiseTierB(
+                            state,
+                            AutomationErrorKind::InvalidResource,
+                            "Runtime Receipt drag leaves the measured frame"
+                        );
+                    }
+                    return TrustedReceiptInput{
+                        TrustedDragInput{
+                            .start  = start,
+                            .end    = PixelPoint{
+                                static_cast<uint32>(endX),
+                                static_cast<uint32>(endY),
+                            },
+                            .travel = tableMillis(
+                                state,
+                                3,
+                                "duration_ms",
+                                "Runtime Receipt drag duration"
+                            ),
+                        }
+                    };
                 }
                 }
 

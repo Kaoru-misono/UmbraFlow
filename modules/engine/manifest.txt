@@ -6,9 +6,8 @@ version = 0.1.0
 [build]
 unity_build = false
 
-# annotation is gone from this list as of the script-owned page model's first
-# retirement wave (docs/plans/2026-07-31-script-owned-page-model.md 9). The
-# engine loads no catalog, resolves no page and authorises against no reference:
+# The engine loads no RuntimeModel, resolves no semantic identity, and authorizes
+# against no declaration:
 # what it still needs -- the frame identity, the project fingerprint, the
 # decoded template and the search -- lives in domain and vision.
 #

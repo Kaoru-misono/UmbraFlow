@@ -96,6 +96,13 @@ placement = {
 }
 actions = [{ id = "pick", kind = "click", proof_locator = "save.template", offset = [12, 18] }]
 reads = [{ reader = "header.text", offset = [0, -40], size = [320, 40] }]
+predicate = { kind = "text_equals", reader = "header.text", value = "Enabled" }
+
+[[stitched_map]]
+id = "route"
+collection = "options"
+colour_key = { red = 184, green = 92, blue = 31, tolerance = 12 }
+minimum_ratio = 0.75
 
 [[surface]]
 id = "settings"
@@ -141,6 +148,10 @@ assert(runtime.collection_by_id.options.reads[1].offset[1] == 0)
 assert(runtime.collection_by_id.options.reads[1].offset[2] == -40)
 assert(runtime.collection_by_id.options.reads[1].size[1] == 320)
 assert(runtime.collection_by_id.options.reads[1].size[2] == 40)
+assert(runtime.collection_by_id.options.predicate.value == "Enabled")
+assert(runtime.stitched_map_by_id.route.collection == "options")
+assert(runtime.stitched_map_by_id.route.colour_key.red == 184)
+assert(runtime.stitched_map_by_id.route.minimum_ratio == 0.75)
 assert(runtime.locator_by_id["save.template"].asset_path == "assets/templates/save.png")
 assert(runtime.locator_by_id["save.template"].sha256 == nil)
 assert(runtime.asset_paths[1] == "assets/templates/header.png")
@@ -224,6 +235,7 @@ end
 
 local clickAction = '{ id = "activate", kind = "click", proof_locator = "save.template" }'
 local keyAction = '{ id = "activate", kind = "key", key = "ENTER", proof_locator = "save.template" }'
+local dragAction = '{ id = "pan", kind = "drag", offset = [-400, 0], duration_ms = 600, proof_locator = "save.template" }'
 local actionPointLine = '  action_point = [1710, 965],\n'
 
 -- A collection's Reader is its item detector, so the declaration accepts only
@@ -269,6 +281,17 @@ assert(keyed.binding_by_id["settings.save"].placement.action_point == nil)
 -- set. A model granting no keystroke publishes an empty list rather than none.
 assert(ids(keyed.declared_key_names) == "ENTER")
 assert(ids(runtime.declared_key_names) == "")
+
+local dragging = project.parse(replace(valid, clickAction, dragAction))
+assert(dragging.binding_by_id["settings.save"].actions[1].kind == "drag")
+assert(dragging.binding_by_id["settings.save"].actions[1].offset[1] == -400)
+assert(dragging.binding_by_id["settings.save"].actions[1].duration_ms == 600)
+rejects(function()
+    project.parse(replace(valid, clickAction, replace(dragAction, ", duration_ms = 600", "")))
+end, "T-006 drag duration must be explicit")
+rejects(function()
+    project.parse(replace(valid, clickAction, replace(dragAction, "[-400, 0]", "[400, 400]")))
+end, "T-006 drag endpoint must remain in base_resolution")
 
 -- A key carrying a coordinate, a click without one, a key with no name, a click
 -- carrying one, and a kind nothing delivers: five refusals, one rule each.

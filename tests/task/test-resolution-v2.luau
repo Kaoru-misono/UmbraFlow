@@ -482,6 +482,28 @@ local reading = model.compile({
             },
             reads = { { reader = "name.reader", offset = { 0, 50 }, size = { 240, 60 } } },
         },
+        {
+            id = "map.nodes",
+            surface = "scene",
+            placement = {
+                kind = "detected",
+                search_rect = { 100, 80, 1080, 160 },
+                reader = "flavour.reader",
+                order = "left_to_right",
+                slots = { origin = 631, pitch = 316, tolerance = 2 },
+            },
+            actions = {},
+            reads = { { reader = "name.reader", offset = { 0, 50 }, size = { 240, 60 } } },
+            predicate = { kind = "text_equals", reader = "name.reader", value = "wanted" },
+        },
+    },
+    stitched_maps = {
+        {
+            id = "route",
+            collection = "map.nodes",
+            colour_key = { red = 184, green = 92, blue = 31, tolerance = 12 },
+            minimum_ratio = 0.75,
+        },
     },
     surfaces = {
         { id = "scene", kind = "scene", covers = {}, identity = { "scene.identity", "count.primary" } },
@@ -1066,6 +1088,90 @@ do
         })
     )
     assert(result == nil and reason == "ambiguous_order", "T-002 ambiguous spatial order must refuse")
+    evidence.end_cycle(cycle)
+end
+
+-- T-006/T-007: one Collection predicate controls conditional enumeration. The
+-- exact count and spatial order are one runnable falsifier: changing the count,
+-- swapping either member, or changing the declared predicate from "wanted"
+-- makes the named assertion fail.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    local supplied = {
+        [model.collection_reading_key("map.nodes", "flavour.reader")] = readBlock({
+            { "First", { 315, 100, 180, 40 } },
+            { "Second", { 631, 100, 180, 40 } },
+            { "Third", { 947, 100, 180, 40 } },
+        }),
+        [model.collection_item_reading_key("map.nodes", 0, "name.reader")] =
+            readValue("wanted"),
+        [model.collection_item_reading_key("map.nodes", 1, "name.reader")] =
+            readValue("skip"),
+        [model.collection_item_reading_key("map.nodes", 2, "name.reader")] =
+            readValue("wanted"),
+    }
+    local enumerated, reason = resolution.resolve_collection(
+        reading,
+        cycle,
+        state,
+        "map.nodes",
+        supplied
+    )
+    assert(reason == nil and enumerated ~= nil)
+    assert(
+        enumerated.count == 2
+            and #enumerated.items == 2
+            and enumerated.items[1].index == 0
+            and enumerated.items[2].index == 2,
+        "T-007 conditional enumeration must preserve predicate, count, and spatial order"
+    )
+
+    -- The assembled coordinates deliberately exceed base_resolution. A
+    -- one-screen evaluator would reject them or clip them; this one requests
+    -- all three unordered pair reads and evaluates the complete topology.
+    local assembled = {
+        completeness = "complete",
+        count = 3,
+        items = {
+            { index = 0, rect = { 1400, 100, 40, 40 }, readings = {} },
+            { index = 2, rect = { 1800, 100, 40, 40 }, readings = {} },
+            { index = 4, rect = { 2200, 100, 40, 40 }, readings = {} },
+        },
+    }
+    local targets, targetReason = resolution.stitched_map_connectivity_targets(
+        reading,
+        "route",
+        assembled
+    )
+    assert(targetReason == nil and targets ~= nil and #targets == 3)
+    assert(
+        targets[1].start[1] == 1420
+            and targets[3].finish[1] == 2220
+            and targets[1].colour_key.red == 184,
+        "T-006 connectivity reads must use assembled-map coordinates and the project colour key"
+    )
+    local evaluated, evaluationReason = resolution.evaluate_stitched_map(
+        reading,
+        "route",
+        assembled,
+        {
+            { from = 0, to = 2, ratio = 0.90 },
+            { from = 0, to = 4, ratio = 0.10 },
+            { from = 2, to = 4, ratio = 0.80 },
+        }
+    )
+    assert(evaluationReason == nil and evaluated ~= nil)
+    assert(
+        #evaluated.nodes == 3
+            and #evaluated.edges == 2
+            and evaluated.edges[1].from == 0
+            and evaluated.edges[1].to == 2
+            and evaluated.edges[2].from == 2
+            and evaluated.edges[2].to == 4,
+        "T-006 stitched-map evaluation must preserve the complete assembled topology"
+    )
     evidence.end_cycle(cycle)
 end
 

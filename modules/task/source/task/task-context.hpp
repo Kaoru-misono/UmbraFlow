@@ -88,7 +88,7 @@ namespace uf::task
     // How many crops one observation cycle may charge. A third dimension for the
     // read budget's reason: a crop is a copy plus a PNG encode over a
     // caller-chosen rectangle, so a shared pool would let one whole-panel crop
-    // starve a page's template matching. Exhaustion is RecognitionIncomplete and
+    // starve RuntimeModel template matching. Exhaustion is RecognitionIncomplete and
     // never an empty answer -- a refused crop established nothing about the
     // screen, and this verb has no score to contradict a fail-open "no pixels".
     //
@@ -255,6 +255,14 @@ namespace uf::task
         auto deliverReceiptKey(CycleTicket ticket, KeyName key)
             -> Result<engine::KeyReceipt>;
 
+        [[nodiscard]]
+        auto deliverReceiptDrag(
+            CycleTicket ticket,
+            PixelPoint start,
+            PixelPoint end,
+            MonotonicInstant::Duration travel
+        ) -> Result<engine::DragReceipt>;
+
     public:
         explicit TaskContext(
             engine::EngineSession session,
@@ -289,9 +297,8 @@ namespace uf::task
         // search with no candidate position; a budget, deadline or cancel stop is
         // a FAILURE, never a miss.
         //
-        // It requires no resolved page: the refined region, the pinned appearance
-        // and the interact edge a page's reference row used to supply are the
-        // caller's now, because the script-owned model puts those facts there.
+        // It requires no resolved Binding: the refined region and pinned
+        // appearance are supplied by the trusted Runtime layer.
         //
         // The same template searched in the same region of the same cycle reaches
         // the engine ONCE and is answered from CycleAnswers afterwards. The

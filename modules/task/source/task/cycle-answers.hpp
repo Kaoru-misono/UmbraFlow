@@ -32,10 +32,9 @@ namespace uf::task
     // model choice -- this stops being sound and must gain that input or be
     // removed.
     //
-    // WHAT MAKES IT PAY is that a page model shares elements between pages: five
-    // pages of the reference project identify by one page_title element, so
-    // resolving every declared page against one screen asks for that one
-    // rectangle once per page. Measured over that project's 85 screens, the
+    // RuntimeModel Bindings can share one predicate measurement, so resolving
+    // several candidate Surfaces against one frame asks for that rectangle once.
+    // Measured over the reference corpus, the
     // matrix asked for 6903 reads at 5843 distinct (cycle, rect) questions and
     // 3495 searches at 2295 distinct ones.
     //
@@ -86,7 +85,7 @@ namespace uf::task
         // mints its first ordinal as one.
         uint64 m_cycleOrdinal{};
 
-        // Linear lookup, and it stays that way while the bound is one screen's
+        // Linear lookup, and it stays that way while the bound is one frame's
         // distinct regions -- 76 at the widest over the reference project, against
         // an OCR read that costs 2-13 ms.
         std::vector<ReadEntry>  m_reads{};

@@ -388,9 +388,13 @@ identity = ["panel.anchor"]
 
     class ActionSink final : public engine::IActionSink
     {
-        uint32                 m_clicks{};
-        uint32                 m_keys{};
-        std::optional<KeyName> m_lastKey{};
+        uint32                                    m_clicks{};
+        uint32                                    m_keys{};
+        uint32                                    m_drags{};
+        std::optional<KeyName>                    m_lastKey{};
+        std::optional<Point<ClientSpace>>         m_lastDragStart{};
+        std::optional<Point<ClientSpace>>         m_lastDragEnd{};
+        std::optional<MonotonicInstant::Duration> m_lastDragTravel{};
 
         bool m_refuseClicks{};
         bool m_refuseKeys{};
@@ -451,12 +455,16 @@ identity = ["panel.anchor"]
 
         [[nodiscard]]
         auto drag(
-            Point<ClientSpace>,
-            Point<ClientSpace>,
-            MonotonicInstant::Duration,
+            Point<ClientSpace> start,
+            Point<ClientSpace> end,
+            MonotonicInstant::Duration travel,
             ObservationLease const&
         ) -> Status override
         {
+            ++m_drags;
+            m_lastDragStart  = start;
+            m_lastDragEnd    = end;
+            m_lastDragTravel = travel;
             return ok();
         }
 
@@ -470,8 +478,29 @@ identity = ["panel.anchor"]
 
         [[nodiscard]] auto keys() const noexcept -> uint32 { return m_keys; }
 
+        [[nodiscard]] auto drags() const noexcept -> uint32 { return m_drags; }
+
         [[nodiscard]]
         auto lastKey() const noexcept -> std::optional<KeyName> { return m_lastKey; }
+
+        [[nodiscard]]
+        auto lastDragStart() const noexcept -> std::optional<Point<ClientSpace>>
+        {
+            return m_lastDragStart;
+        }
+
+        [[nodiscard]]
+        auto lastDragEnd() const noexcept -> std::optional<Point<ClientSpace>>
+        {
+            return m_lastDragEnd;
+        }
+
+        [[nodiscard]]
+        auto lastDragTravel() const noexcept
+            -> std::optional<MonotonicInstant::Duration>
+        {
+            return m_lastDragTravel;
+        }
 
         auto refuseClicks() noexcept -> void { m_refuseClicks = true; }
 

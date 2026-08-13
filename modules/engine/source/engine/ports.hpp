@@ -132,11 +132,12 @@ namespace uf::engine
         // dropping it would remove the controller's D0 fence exactly as dropping
         // it from click() would.
         //
-        // WHICH position a scroll is aimed at is deliberately open
-        // (docs/plans/2026-08-01-three-layers-and-agent-operator.md section 9 item
-        // 5). Until it is settled an implementation aims at the bound target
-        // itself; when it is, the point arrives here as a parameter and nothing
-        // about the lease changes.
+        // A wheel is authorized only by an exploration observation cycle. It
+        // aims at the bound target itself and is not a Runtime Receipt action:
+        // Runtime v2 has no declared semantic hover container to authorize.
+        // No new gate is needed for this ruling because the closed Runtime
+        // action vocabulary structurally rejects `scroll`, while the existing
+        // exploration verb already exercises observation-cycle delivery.
         //
         // `notches` crosses as a plain count because its bound is not
         // platform-neutral: Windows carries the delta in a signed 16-bit word, so
@@ -236,7 +237,7 @@ namespace uf::engine
         //
         // The implementation MUST NOT press, release, or hold any button. That is
         // the entire difference from click(), and it is what lets the engine admit
-        // this verb where the page model authorises no activation.
+        // this verb without inventing an activation action.
         [[nodiscard]]
         virtual auto movePointer(
             Point<ClientSpace> point,

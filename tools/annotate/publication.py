@@ -186,7 +186,7 @@ class Publisher:
         if len(paths) != len(set(paths)):
             raise StoreError("RuntimeArtifact asset paths are not unique")
         if manifest["page_model"]["size"] <= 0 or manifest["page_model"]["size"] > _MAX_MODEL_BYTES:
-            raise StoreError("RuntimeArtifact page model violates the Host size ceiling")
+            raise StoreError("RuntimeArtifact model violates the Host size ceiling")
         if any(item["size"] <= 0 or item["size"] > _MAX_ASSET_BYTES for item in assets):
             raise StoreError("RuntimeArtifact asset violates the Host size ceiling")
         return manifest
@@ -231,7 +231,7 @@ class Publisher:
         assets: Mapping[str, tuple[str, str]],
     ) -> tuple[dict[str, Any], bytes, str]:
         if not model_content or len(model_content) > _MAX_MODEL_BYTES:
-            raise StoreError("compiled page model violates the RuntimeArtifact schema ceiling")
+            raise StoreError("compiled RuntimeModel violates the RuntimeArtifact schema ceiling")
         if len(assets) > _MAX_ASSETS:
             raise StoreError("candidate has too many deployable assets")
         temporary = Path(tempfile.mkdtemp(prefix="artifact-", dir=self.store.staging))
