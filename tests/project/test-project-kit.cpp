@@ -149,6 +149,12 @@ namespace uf::project
         inline constexpr auto k_observedInstanceId = std::string_view{
             "oi1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         };
+        inline constexpr auto k_singleStepDeclarationInput = std::string_view{
+            "declarative-tools/chaos.project/dismiss-known-overlay.json"
+        };
+        inline constexpr auto k_generatedSingleStepAdapter = std::string_view{
+            "generated/adapters/chaos.project/dismiss-known-overlay.luau"
+        };
 
         [[nodiscard]]
         auto validSingleStepDeclaration() -> std::string
@@ -170,6 +176,26 @@ namespace uf::project
     "timeout_ms": 3000
   }
 })json";
+        }
+
+        [[nodiscard]]
+        auto initializedSingleStepWorkspace(
+            TemporaryWorkspace const& workspace
+        ) -> Status
+        {
+            writeFile(
+                workspace.source() / k_singleStepDeclarationInput,
+                validSingleStepDeclaration()
+            );
+            return initProject(
+                ProjectInitSpec{
+                    .sourceDirectory = workspace.source(),
+                    .buildDirectory  = workspace.build(),
+                    .inputs          = {
+                        std::filesystem::path{k_singleStepDeclarationInput},
+                    },
+                }
+            );
         }
 
         [[nodiscard]]
@@ -365,6 +391,62 @@ namespace uf::project
                 workspace.build() / k_buildReceiptName
             ),
             "project build must write its receipt under the build directory"
+        );
+    }
+
+    TEST_CASE("project build regenerates five-function adapters solely from declared source")
+    {
+        auto const workspace = TemporaryWorkspace{
+            "uf-project-single-step-generation"
+        };
+        auto const initialized = initializedSingleStepWorkspace(workspace);
+        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+        auto const sourceBefore = snapshotTree(workspace.source());
+        auto const directories  = ProjectDirectories{
+            .sourceDirectory = workspace.source(),
+            .buildDirectory  = workspace.build(),
+        };
+
+        auto const built = buildProject(directories);
+        REQUIRE_MESSAGE(built.has_value(), messageOf(built));
+        REQUIRE_MESSAGE(
+            snapshotTree(workspace.source()) == sourceBefore,
+            "adapter generation must not change its declared source"
+        );
+
+        auto const expected = generateDeclarativeSingleStepAdapter(
+            "chaos.project",
+            validSingleStepDeclaration()
+        );
+        auto const expectedMessage = (
+            expected.has_value()
+                ? std::string{}
+                : std::string{expected.error().message()}
+        );
+        REQUIRE_MESSAGE(
+            expected.has_value(),
+            expectedMessage
+        );
+        auto snapshot = snapshotTree(workspace.build());
+        REQUIRE_MESSAGE(
+            snapshot.contains(std::string{k_generatedSingleStepAdapter}),
+            "project build must generate the named single-step adapter"
+        );
+        CHECK_MESSAGE(
+            snapshot.at(std::string{k_generatedSingleStepAdapter}) == *expected,
+            "generated adapter bytes must come from the declared source"
+        );
+
+        writeFile(
+            workspace.build() / k_generatedSingleStepAdapter,
+            "hand edited\n"
+        );
+        auto const rebuilt = buildProject(directories);
+        REQUIRE_MESSAGE(rebuilt.has_value(), messageOf(rebuilt));
+        snapshot = snapshotTree(workspace.build());
+        CHECK_MESSAGE(
+            snapshot.at(std::string{k_generatedSingleStepAdapter}) == *expected,
+            "a generated adapter must never become the next build's input"
         );
     }
 

@@ -1,6 +1,6 @@
-# The offline Project Kit build boundary. It owns source input declarations and
-# generated build receipts; later Project Kit stages extend this module without
-# making generated files inputs to the next build.
+# The offline Project Kit build boundary. It owns source input declarations,
+# generated five-function adapters and build receipts. Generation reads only
+# declared source paths, and replaces its output subtree on every build.
 
 [module]
 name = project

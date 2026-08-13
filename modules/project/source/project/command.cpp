@@ -315,6 +315,8 @@ namespace uf::project
             "  project check --source PATH --build PATH\n"
             "\n"
             "Initializes the declared source inputs, builds only into the build\n"
-            "directory, and checks the declared inputs and build receipt.\n";
+            "directory, and checks the declared inputs and generated artifacts.\n"
+            "A declared declarative-tools/PLUGIN_ID/NAME.json input generates\n"
+            "generated/adapters/PLUGIN_ID/NAME.luau.\n";
     }
 }

@@ -1,5 +1,7 @@
 #include "project-kit.hpp"
 
+#include "declarative-single-step-tool.hpp"
+
 #include <core/error/result.hpp>
 
 #include <domain/error.hpp>
@@ -10,6 +12,7 @@
 #include <fstream>
 #include <ios>
 #include <iterator>
+#include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -26,6 +29,19 @@ namespace uf::project
         };
         constexpr auto k_buildReceiptHeader = std::string_view{
             "umbraflow-project-kit-build-v1"
+        };
+        constexpr auto k_declarativeToolDirectory = std::string_view{
+            "declarative-tools"
+        };
+        constexpr auto k_generatedDirectory = std::string_view{"generated"};
+        constexpr auto k_generatedAdapterDirectory = std::string_view{
+            "adapters"
+        };
+
+        struct GeneratedAdapter final
+        {
+            std::filesystem::path relativePath{};
+            std::string           bytes{};
         };
 
         [[nodiscard]]
@@ -433,6 +449,347 @@ namespace uf::project
         }
 
         [[nodiscard]]
+        auto generatedAdapters(
+            std::filesystem::path const& sourceDirectory,
+            std::vector<std::string> const& inputs
+        ) -> Result<std::vector<GeneratedAdapter>>
+        {
+            auto adapters = std::vector<GeneratedAdapter>{};
+            for (auto const& input : inputs)
+            {
+                auto const inputPath = std::filesystem::path{input};
+                auto components      = std::vector<std::filesystem::path>{};
+                for (auto const& component : inputPath)
+                {
+                    components.emplace_back(component);
+                }
+                if (
+                    components.empty()
+                    || components.front() != k_declarativeToolDirectory
+                )
+                {
+                    continue;
+                }
+                if (
+                    components.size() != 3U
+                    || components.back().extension() != ".json"
+                    || components.back().stem().empty()
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "declared single-step tool input must be "
+                            "declarative-tools/<plugin-id>/<name>.json: \"{}\"",
+                            input
+                        )
+                    );
+                }
+
+                auto const pluginId = components[1].generic_string();
+                UF_TRY_VALUE(
+                    declaration,
+                    readText(
+                        sourceDirectory / inputPath,
+                        "single-step declaration"
+                    )
+                );
+                UF_TRY_VALUE_CONTEXT(
+                    adapter,
+                    generateDeclarativeSingleStepAdapter(pluginId, declaration),
+                    std::format(
+                        "generating adapter from declared input \"{}\"",
+                        input
+                    )
+                );
+                auto adapterName = components.back();
+                adapterName.replace_extension(".luau");
+                adapters.emplace_back(
+                    GeneratedAdapter{
+                        .relativePath = std::filesystem::path{pluginId}
+                            / adapterName,
+                        .bytes        = std::move(adapter),
+                    }
+                );
+            }
+            return adapters;
+        }
+
+        [[nodiscard]]
+        auto generatedAdapterRoot(
+            std::filesystem::path const& buildDirectory
+        ) -> std::filesystem::path
+        {
+            return buildDirectory
+                / k_generatedDirectory
+                / k_generatedAdapterDirectory;
+        }
+
+        [[nodiscard]]
+        auto generatedAdapterName(
+            std::filesystem::path const& relativePath
+        ) -> std::string
+        {
+            return (
+                std::filesystem::path{k_generatedDirectory}
+                / k_generatedAdapterDirectory
+                / relativePath
+            ).generic_string();
+        }
+
+        [[nodiscard]]
+        auto replaceGeneratedAdapterDirectory(
+            std::filesystem::path const& buildDirectory
+        ) -> Status
+        {
+            UF_TRY_VALUE(build, resolvedPath(buildDirectory, "build"));
+            auto const adapterRoot = generatedAdapterRoot(build);
+            if (!isWithinOrEqual(adapterRoot, build))
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "generated adapter directory leaves the project build tree"
+                );
+            }
+
+            auto error        = std::error_code{};
+            auto const status = std::filesystem::symlink_status(
+                adapterRoot,
+                error
+            );
+            if (
+                error
+                && error != std::errc::no_such_file_or_directory
+            )
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format(
+                        "cannot inspect generated adapter directory \"{}\": {}",
+                        adapterRoot.string(),
+                        error.message()
+                    )
+                );
+            }
+            if (!error && std::filesystem::is_symlink(status))
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "generated adapter directory must not be a link: \"{}\"",
+                        adapterRoot.string()
+                    )
+                );
+            }
+
+            error = std::error_code{};
+            std::filesystem::remove_all(adapterRoot, error);
+            if (error)
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format(
+                        "cannot replace generated adapter directory \"{}\": {}",
+                        adapterRoot.string(),
+                        error.message()
+                    )
+                );
+            }
+            error = std::error_code{};
+            std::filesystem::create_directories(adapterRoot, error);
+            if (error)
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format(
+                        "cannot create generated adapter directory \"{}\": {}",
+                        adapterRoot.string(),
+                        error.message()
+                    )
+                );
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto writeGeneratedAdapters(
+            std::filesystem::path const& buildDirectory,
+            std::vector<GeneratedAdapter> const& adapters
+        ) -> Status
+        {
+            auto const adapterRoot = generatedAdapterRoot(buildDirectory);
+            for (auto const& adapter : adapters)
+            {
+                auto const path = adapterRoot / adapter.relativePath;
+                auto error      = std::error_code{};
+                std::filesystem::create_directories(
+                    path.parent_path(),
+                    error
+                );
+                if (error)
+                {
+                    return fail(
+                        AutomationErrorKind::IoFailure,
+                        std::format(
+                            "cannot create generated adapter parent \"{}\": {}",
+                            path.parent_path().string(),
+                            error.message()
+                        )
+                    );
+                }
+                UF_TRY(writeText(path, adapter.bytes, "generated adapter"));
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto expectedAdapterDirectories(
+            std::set<std::string> const& files
+        ) -> std::set<std::string>
+        {
+            auto directories = std::set<std::string>{};
+            for (auto const& file : files)
+            {
+                auto current = std::filesystem::path{file}.parent_path();
+                while (!current.empty())
+                {
+                    directories.emplace(current.generic_string());
+                    current = current.parent_path();
+                }
+            }
+            return directories;
+        }
+
+        [[nodiscard]]
+        auto validateGeneratedAdapters(
+            std::filesystem::path const& buildDirectory,
+            std::vector<GeneratedAdapter> const& adapters
+        ) -> Status
+        {
+            auto const adapterRoot = generatedAdapterRoot(buildDirectory);
+            auto expectedFiles     = std::set<std::string>{};
+            for (auto const& adapter : adapters)
+            {
+                expectedFiles.emplace(adapter.relativePath.generic_string());
+            }
+            auto const expectedDirectories = expectedAdapterDirectories(
+                expectedFiles
+            );
+            auto actualFiles = std::set<std::string>{};
+
+            auto error    = std::error_code{};
+            auto iterator = std::filesystem::recursive_directory_iterator{
+                adapterRoot,
+                std::filesystem::directory_options::none,
+                error,
+            };
+            if (error)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "generated project artifact directory \"{}\" is missing",
+                        generatedAdapterName({})
+                    )
+                );
+            }
+            auto const end = std::filesystem::recursive_directory_iterator{};
+            for (; !error && iterator != end; iterator.increment(error))
+            {
+                auto const status = iterator->symlink_status(error);
+                if (error)
+                {
+                    break;
+                }
+                auto const relative = iterator->path().lexically_relative(
+                    adapterRoot
+                );
+                auto const spelling     = relative.generic_string();
+                auto const artifactName = generatedAdapterName(relative);
+                if (std::filesystem::is_symlink(status))
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "generated project artifact \"{}\" must not be a link",
+                            artifactName
+                        )
+                    );
+                }
+                if (std::filesystem::is_directory(status))
+                {
+                    if (!expectedDirectories.contains(spelling))
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "generated project artifact \"{}\" has no "
+                                "declared source",
+                                artifactName
+                            )
+                        );
+                    }
+                    continue;
+                }
+                if (
+                    status.type() != std::filesystem::file_type::regular
+                    || !expectedFiles.contains(spelling)
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "generated project artifact \"{}\" has no "
+                            "declared source",
+                            artifactName
+                        )
+                    );
+                }
+                actualFiles.emplace(spelling);
+            }
+            if (error)
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format(
+                        "cannot enumerate generated adapter directory \"{}\": {}",
+                        adapterRoot.string(),
+                        error.message()
+                    )
+                );
+            }
+
+            for (auto const& adapter : adapters)
+            {
+                auto const spelling = adapter.relativePath.generic_string();
+                if (!actualFiles.contains(spelling))
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "generated project artifact \"{}\" is missing",
+                            generatedAdapterName(adapter.relativePath)
+                        )
+                    );
+                }
+                auto const path = adapterRoot / adapter.relativePath;
+                UF_TRY_VALUE(bytes, readText(path, "generated adapter"));
+                if (bytes != adapter.bytes)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "generated project artifact \"{}\" does not match "
+                            "its declared source",
+                            generatedAdapterName(adapter.relativePath)
+                        )
+                    );
+                }
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
         auto renderList(
             std::string_view header,
             std::vector<std::string> const& inputs
@@ -568,7 +925,13 @@ namespace uf::project
         UF_TRY(validateDirectories(directories));
         UF_TRY_VALUE(inputs, declaredInputs(directories.buildDirectory));
         UF_TRY(validateDeclaredInputs(directories.sourceDirectory, inputs));
+        UF_TRY_VALUE(
+            adapters,
+            generatedAdapters(directories.sourceDirectory, inputs)
+        );
         UF_TRY(ensureBuildDirectory(directories.buildDirectory));
+        UF_TRY(replaceGeneratedAdapterDirectory(directories.buildDirectory));
+        UF_TRY(writeGeneratedAdapters(directories.buildDirectory, adapters));
 
         auto const receiptPath = directories.buildDirectory / k_buildReceiptName;
         return writeText(
@@ -583,6 +946,11 @@ namespace uf::project
         UF_TRY(validateDirectories(directories));
         UF_TRY_VALUE(inputs, declaredInputs(directories.buildDirectory));
         UF_TRY(validateDeclaredInputs(directories.sourceDirectory, inputs));
+        UF_TRY_VALUE(
+            adapters,
+            generatedAdapters(directories.sourceDirectory, inputs)
+        );
+        UF_TRY(validateGeneratedAdapters(directories.buildDirectory, adapters));
 
         auto const receiptPath = directories.buildDirectory / k_buildReceiptName;
         UF_TRY_VALUE(receipt, readText(receiptPath, "build receipt"));
