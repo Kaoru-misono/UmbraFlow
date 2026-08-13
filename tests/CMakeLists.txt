@@ -505,11 +505,13 @@ if(TARGET ${PROJECT_NAME}_operator)
         NAME test-operator
         SOURCES
             operator/test-ledger.cpp
+            operator/test-lifecycle-facade.cpp
             operator/test-manifest.cpp
             operator/test-operation.cpp
             operator/test-tool-authority.cpp
         LIBS
             ${PROJECT_NAME}_operator
+            ${PROJECT_NAME}_service
             ${PROJECT_NAME}_image
             # project-fixture.hpp builds its five authorities out of
             # modules/deployment, which is where the validators now live.
@@ -651,6 +653,9 @@ cpp_add_test(
 )
 target_include_directories(test-cli PRIVATE
     "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}"
+)
+target_compile_definitions(test-cli PRIVATE
+    UF_STAGED_UMBRAFLOW_PROJECT="${UF_STAGED_UMBRAFLOW_PROJECT}"
 )
 # cli links engine publicly, which links ocr publicly.
 if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
