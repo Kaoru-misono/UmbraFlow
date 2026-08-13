@@ -26,20 +26,37 @@ file(REMOVE_RECURSE "${UF_PROJECT_TEST_ROOT}")
 file(MAKE_DIRECTORY "${SOURCE_DIRECTORY}" "${DECLARATIVE_DIRECTORY}")
 file(WRITE "${INPUT_PATH}" "declared input\n")
 file(WRITE "${DECLARATIVE_PATH}" [=[{
-  "schema": "umbraflow-declarative-single-step-tool/v1",
+  "schema": "umbraflow-declarative-workflow-tool/v1",
   "tool_name": "chaos.dismiss_known_overlay",
   "target_argument": "observed_instance_id",
   "allowed_instance_kinds": ["chaos.overlay"],
-  "ui_action": "chaos.ui.dismiss_overlay",
   "fresh_observation": {
     "required_surface": "chaos.overlay_layer",
     "require_unambiguous": true
   },
   "ui_finding": {"kind": "observed_instance_absent"},
+  "states": [
+    {
+      "state_key": "await-overlay",
+      "kind": "wait",
+      "observation_budget": 1,
+      "timeout_ms": 1000
+    },
+    {
+      "state_key": "dismiss-overlay",
+      "kind": "ui_action",
+      "ui_action": "chaos.ui.dismiss_overlay",
+      "timeout_ms": 2000
+    }
+  ],
+  "steps": ["await-overlay", "dismiss-overlay"],
   "bounds": {
-    "max_dispatches": 1,
-    "max_observations": 3,
-    "timeout_ms": 3000
+    "maximum_states": 2,
+    "maximum_steps": 2,
+    "maximum_dispatches": 1,
+    "maximum_observations": 2,
+    "maximum_waits": 1,
+    "maximum_elapsed_ms": 3000
   }
 }]=])
 file(SHA256 "${INPUT_PATH}" SOURCE_HASH_BEFORE)

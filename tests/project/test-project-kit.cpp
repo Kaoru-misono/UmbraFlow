@@ -1,5 +1,5 @@
 #include <project/project-kit.hpp>
-#include <project/declarative-single-step-tool.hpp>
+#include <project/declarative-workflow-tool.hpp>
 
 #include <script/pure-data-program.hpp>
 
@@ -167,7 +167,7 @@ namespace uf::project
             );
         }
 
-        inline constexpr auto k_singleStepEntryPoints = std::array{
+        inline constexpr auto k_workflowEntryPoints = std::array{
             std::string_view{"derive"},
             std::string_view{"plan"},
             std::string_view{"next_step"},
@@ -178,10 +178,10 @@ namespace uf::project
         inline constexpr auto k_observedInstanceId = std::string_view{
             "oi1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         };
-        inline constexpr auto k_singleStepDeclarationInput = std::string_view{
+        inline constexpr auto k_workflowDeclarationInput = std::string_view{
             "declarative-tools/chaos.project/dismiss-known-overlay.json"
         };
-        inline constexpr auto k_generatedSingleStepAdapter = std::string_view{
+        inline constexpr auto k_generatedWorkflowAdapter = std::string_view{
             "generated/adapters/chaos.project/dismiss-known-overlay.luau"
         };
         inline constexpr auto k_generatedToolCatalog = std::string_view{
@@ -190,47 +190,61 @@ namespace uf::project
         inline constexpr auto k_generatedFrameworkSchemaCatalog = std::string_view{
             "generated/framework-schemas/framework-schema-catalog-v1.json"
         };
-        inline constexpr auto k_generatedArtifactRegistration = std::string_view{
-            "generated/registrations/artifact-roots-v1.json"
-        };
 
         [[nodiscard]]
-        auto validSingleStepDeclaration() -> std::string
+        auto validWorkflowDeclaration() -> std::string
         {
             return R"json({
-  "schema": "umbraflow-declarative-single-step-tool/v1",
+  "schema": "umbraflow-declarative-workflow-tool/v1",
   "tool_name": "chaos.dismiss_known_overlay",
   "target_argument": "observed_instance_id",
   "allowed_instance_kinds": ["chaos.overlay"],
-  "ui_action": "chaos.ui.dismiss_overlay",
   "fresh_observation": {
     "required_surface": "chaos.overlay_layer",
     "require_unambiguous": true
   },
   "ui_finding": {"kind": "observed_instance_absent"},
+  "states": [
+    {
+      "state_key": "await-overlay",
+      "kind": "wait",
+      "observation_budget": 1,
+      "timeout_ms": 1000
+    },
+    {
+      "state_key": "dismiss-overlay",
+      "kind": "ui_action",
+      "ui_action": "chaos.ui.dismiss_overlay",
+      "timeout_ms": 2000
+    }
+  ],
+  "steps": ["await-overlay", "dismiss-overlay"],
   "bounds": {
-    "max_dispatches": 1,
-    "max_observations": 3,
-    "timeout_ms": 3000
+    "maximum_states": 2,
+    "maximum_steps": 2,
+    "maximum_dispatches": 1,
+    "maximum_observations": 2,
+    "maximum_waits": 1,
+    "maximum_elapsed_ms": 3000
   }
 })json";
         }
 
         [[nodiscard]]
-        auto initializedSingleStepWorkspace(
+        auto initializedWorkflowWorkspace(
             TemporaryWorkspace const& workspace
         ) -> Status
         {
             writeFile(
-                workspace.source() / k_singleStepDeclarationInput,
-                validSingleStepDeclaration()
+                workspace.source() / k_workflowDeclarationInput,
+                validWorkflowDeclaration()
             );
             return initProject(
                 ProjectInitSpec{
                     .sourceDirectory = workspace.source(),
                     .buildDirectory  = workspace.build(),
                     .inputs          = {
-                        std::filesystem::path{k_singleStepDeclarationInput},
+                        std::filesystem::path{k_workflowDeclarationInput},
                     },
                 }
             );
@@ -302,18 +316,18 @@ namespace uf::project
             auto const position = input.find(before);
             REQUIRE_MESSAGE(
                 position != std::string::npos,
-                "single-step vector mutation must name existing source bytes"
+                "workflow vector mutation must name existing source bytes"
             );
             input.replace(position, before.size(), after);
             return input;
         }
 
         [[nodiscard]]
-        auto generatedSingleStepProgram() -> script::PureDataProgram
+        auto generatedWorkflowProgram() -> script::PureDataProgram
         {
-            auto const generated = generateDeclarativeSingleStepAdapter(
+            auto const generated = generateDeclarativeWorkflowAdapter(
                 "chaos.project",
-                validSingleStepDeclaration()
+                validWorkflowDeclaration()
             );
             auto const generatedMessage = (
                 generated.has_value()
@@ -327,7 +341,7 @@ namespace uf::project
             auto compiled = script::PureDataProgram::compile(
                 "chaos.project",
                 *generated,
-                k_singleStepEntryPoints,
+                k_workflowEntryPoints,
                 {}
             );
             auto const compiledMessage = (
@@ -492,9 +506,9 @@ namespace uf::project
     TEST_CASE("project build regenerates five-function adapters solely from declared source")
     {
         auto const workspace = TemporaryWorkspace{
-            "uf-project-single-step-generation"
+            "uf-project-workflow-generation"
         };
-        auto const initialized = initializedSingleStepWorkspace(workspace);
+        auto const initialized = initializedWorkflowWorkspace(workspace);
         REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
         auto const sourceBefore = snapshotTree(workspace.source());
         auto const directories  = ProjectBuildSpec{
@@ -510,9 +524,9 @@ namespace uf::project
             "adapter generation must not change its declared source"
         );
 
-        auto const expected = generateDeclarativeSingleStepAdapter(
+        auto const expected = generateDeclarativeWorkflowAdapter(
             "chaos.project",
-            validSingleStepDeclaration()
+            validWorkflowDeclaration()
         );
         auto const expectedMessage = (
             expected.has_value()
@@ -525,23 +539,23 @@ namespace uf::project
         );
         auto snapshot = snapshotTree(workspace.build());
         REQUIRE_MESSAGE(
-            snapshot.contains(std::string{k_generatedSingleStepAdapter}),
-            "project build must generate the named single-step adapter"
+            snapshot.contains(std::string{k_generatedWorkflowAdapter}),
+            "project build must generate the named workflow adapter"
         );
         CHECK_MESSAGE(
-            snapshot.at(std::string{k_generatedSingleStepAdapter}) == *expected,
+            snapshot.at(std::string{k_generatedWorkflowAdapter}) == *expected,
             "generated adapter bytes must come from the declared source"
         );
 
         writeFile(
-            workspace.build() / k_generatedSingleStepAdapter,
+            workspace.build() / k_generatedWorkflowAdapter,
             "hand edited\n"
         );
         auto const rebuilt = buildProject(directories);
         REQUIRE_MESSAGE(rebuilt.has_value(), messageOf(rebuilt));
         snapshot = snapshotTree(workspace.build());
         CHECK_MESSAGE(
-            snapshot.at(std::string{k_generatedSingleStepAdapter}) == *expected,
+            snapshot.at(std::string{k_generatedWorkflowAdapter}) == *expected,
             "a generated adapter must never become the next build's input"
         );
     }
@@ -765,8 +779,8 @@ namespace uf::project
     {
         auto const first  = TemporaryWorkspace{"uf-project-determinism-first"};
         auto const second = TemporaryWorkspace{"uf-project-determinism-second"};
-        auto const firstInitialized  = initializedSingleStepWorkspace(first);
-        auto const secondInitialized = initializedSingleStepWorkspace(second);
+        auto const firstInitialized  = initializedWorkflowWorkspace(first);
+        auto const secondInitialized = initializedWorkflowWorkspace(second);
         REQUIRE_MESSAGE(
             firstInitialized.has_value(),
             messageOf(firstInitialized)
@@ -807,21 +821,21 @@ namespace uf::project
         REQUIRE(inputs->items().size() == 1U);
         CHECK_MESSAGE(
             inputs->items().front().find("path")->string()
-                == k_singleStepDeclarationInput,
+                == k_workflowDeclarationInput,
             "the hand-written plugin must be pinned as an input"
         );
         for (auto const& artifact : artifacts->items())
         {
             CHECK_MESSAGE(
                 artifact.find("path")->string()
-                    != k_singleStepDeclarationInput,
+                    != k_workflowDeclarationInput,
                 "the hand-written plugin must not enter the RuntimeArtifact closure"
             );
         }
 
         writeFile(
-            second.source() / k_singleStepDeclarationInput,
-            validSingleStepDeclaration() + "\n"
+            second.source() / k_workflowDeclarationInput,
+            validWorkflowDeclaration() + "\n"
         );
         auto const changedBuilt = buildProject(secondSpec);
         REQUIRE_MESSAGE(changedBuilt.has_value(), messageOf(changedBuilt));
@@ -877,7 +891,7 @@ namespace uf::project
     TEST_CASE("project release is immutable stable complete and excludes inputs")
     {
         auto const workspace = TemporaryWorkspace{"uf-project-release"};
-        auto const initialized = initializedSingleStepWorkspace(workspace);
+        auto const initialized = initializedWorkflowWorkspace(workspace);
         REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
         auto const candidate = ProjectBuildSpec{
             .sourceDirectory = workspace.source(),
@@ -902,7 +916,7 @@ namespace uf::project
         CHECK(first->filename().string().size() == 64U);
         auto const releaseSnapshot = snapshotTree(*first);
         CHECK_FALSE_MESSAGE(
-            releaseSnapshot.contains(std::string{k_singleStepDeclarationInput}),
+            releaseSnapshot.contains(std::string{k_workflowDeclarationInput}),
             "a hand-written plugin input must not be copied into the release"
         );
 
@@ -1087,162 +1101,158 @@ namespace uf::project
         );
     }
 
-    TEST_CASE("single-step golden refusals emit their normative error codes")
+    TEST_CASE("workflow declaration refuses every exceeded bound")
     {
-        struct InvalidCase final
+        struct BoundCase final
         {
             std::string name{};
+            std::string before{};
+            std::string after{};
             std::string expectedError{};
-            std::string document{};
+            std::string assertion{};
         };
 
-        auto const valid = validSingleStepDeclaration();
         auto const cases = std::array{
-            InvalidCase{
-                .name          = "coordinate_injection",
-                .expectedError = "ClosedSchema",
-                .document      = replacedOnce(
-                    valid,
-                    R"json("bounds": {)json",
-                    R"json("coordinates": [100, 200], "bounds": {)json"
-                ),
+            BoundCase{
+                .name          = "state",
+                .before        = "\"maximum_states\": 2",
+                .after         = "\"maximum_states\": 1",
+                .expectedError = "WorkflowStateBound",
+                .assertion     = "exceeding the state bound must be refused",
             },
-            InvalidCase{
-                .name          = "more_than_one_dispatch",
-                .expectedError = "SingleStepDispatchBound",
-                .document      = replacedOnce(
-                    valid,
-                    R"json("max_dispatches": 1)json",
-                    R"json("max_dispatches": 2)json"
-                ),
+            BoundCase{
+                .name          = "step",
+                .before        = "\"maximum_steps\": 2",
+                .after         = "\"maximum_steps\": 1",
+                .expectedError = "WorkflowStepBound",
+                .assertion     = "exceeding the step bound must be refused",
             },
-            InvalidCase{
-                .name          = "hidden_script",
-                .expectedError = "ClosedSchema",
-                .document      = replacedOnce(
-                    valid,
-                    R"json("bounds": {)json",
-                    R"json("script": "while true do end", "bounds": {)json"
-                ),
+            BoundCase{
+                .name          = "dispatch",
+                .before        = "\"maximum_dispatches\": 1",
+                .after         = "\"maximum_dispatches\": 0",
+                .expectedError = "WorkflowDispatchBound",
+                .assertion     = "exceeding the dispatch bound must be refused",
             },
-            InvalidCase{
-                .name          = "ambiguous_observation_allowed",
-                .expectedError = "AmbiguousObservationAllowed",
-                .document      = replacedOnce(
-                    valid,
-                    R"json("require_unambiguous": true)json",
-                    R"json("require_unambiguous": false)json"
-                ),
+            BoundCase{
+                .name          = "observation",
+                .before        = "\"maximum_observations\": 2",
+                .after         = "\"maximum_observations\": 1",
+                .expectedError = "WorkflowObservationBound",
+                .assertion     = "exceeding the observation bound must be refused",
             },
-            InvalidCase{
-                .name          = "missing_fresh_observation_guard",
-                .expectedError = "IncompleteSingleStep",
-                .document      = replacedOnce(
-                    valid,
-                    R"json(  "fresh_observation": {
-    "required_surface": "chaos.overlay_layer",
-    "require_unambiguous": true
-  },
-)json",
-                    ""
-                ),
+            BoundCase{
+                .name          = "wait",
+                .before        = "\"maximum_waits\": 1",
+                .after         = "\"maximum_waits\": 0",
+                .expectedError = "WorkflowWaitBound",
+                .assertion     = "exceeding the wait bound must be refused",
             },
-            InvalidCase{
-                .name          = "ui_finding_without_kind",
-                .expectedError = "IncompleteSingleStep",
-                .document      = replacedOnce(
-                    valid,
-                    R"json({"kind": "observed_instance_absent"})json",
-                    "{}"
-                ),
-            },
-            InvalidCase{
-                .name          = "second_target_binding_in_ui_finding",
-                .expectedError = "ClosedSchema",
-                .document      = replacedOnce(
-                    valid,
-                    R"json({"kind": "observed_instance_absent"})json",
-                    R"json({"kind": "observed_instance_absent", )json"
-                    R"json("target_argument": "some_other_argument"})json"
-                ),
-            },
-            InvalidCase{
-                .name          = "fresh_observation_with_undeclared_member",
-                .expectedError = "ClosedSchema",
-                .document      = replacedOnce(
-                    valid,
-                    R"json("require_unambiguous": true)json",
-                    R"json("require_unambiguous": true, "settle_delay_ms": 250)json"
-                ),
-            },
-            InvalidCase{
-                .name          = "bounds_with_undeclared_member",
-                .expectedError = "ClosedSchema",
-                .document      = replacedOnce(
-                    valid,
-                    R"json("timeout_ms": 3000)json",
-                    R"json("timeout_ms": 3000, "max_retries": 5)json"
-                ),
-            },
-            InvalidCase{
-                .name          = "empty_allowed_instance_kinds",
-                .expectedError = "SingleStepInstanceKindsEmpty",
-                .document      = replacedOnce(
-                    valid,
-                    R"json(["chaos.overlay"])json",
-                    "[]"
-                ),
-            },
-            InvalidCase{
-                .name          = "observation_bound_below_one",
-                .expectedError = "SingleStepObservationBound",
-                .document      = replacedOnce(
-                    valid,
-                    R"json("max_observations": 3)json",
-                    R"json("max_observations": 0)json"
-                ),
-            },
-            InvalidCase{
-                .name          = "timeout_bound_below_one",
-                .expectedError = "SingleStepTimeoutBound",
-                .document      = replacedOnce(
-                    valid,
-                    R"json("timeout_ms": 3000)json",
-                    R"json("timeout_ms": 0)json"
-                ),
-            },
-            InvalidCase{
-                .name          = "tool_name_not_namespaced",
-                .expectedError = "MalformedSingleStepTool",
-                .document      = replacedOnce(
-                    valid,
-                    "chaos.dismiss_known_overlay",
-                    "dismiss_known_overlay"
-                ),
+            BoundCase{
+                .name          = "elapsed",
+                .before        = "\"maximum_elapsed_ms\": 3000",
+                .after         = "\"maximum_elapsed_ms\": 2999",
+                .expectedError = "WorkflowElapsedBound",
+                .assertion     = "exceeding the elapsed bound must be refused",
             },
         };
 
         for (auto const& testCase : cases)
         {
-            auto const generated = generateDeclarativeSingleStepAdapter(
+            auto const generated = generateDeclarativeWorkflowAdapter(
                 "chaos.project",
-                testCase.document
+                replacedOnce(
+                    validWorkflowDeclaration(),
+                    testCase.before,
+                    testCase.after
+                )
             );
             CAPTURE(testCase.name);
-            REQUIRE_FALSE_MESSAGE(
-                generated.has_value(),
-                "locked invalid single-step vector must be refused"
-            );
+            REQUIRE_FALSE_MESSAGE(generated.has_value(), testCase.assertion);
             CHECK_MESSAGE(
                 generated.error().message().starts_with(testCase.expectedError),
-                "single-step refusal must emit the vector's normative error code"
+                testCase.assertion
             );
         }
     }
 
-    TEST_CASE("generated dismiss-known-overlay tool runs through the five-function SPI")
+    // The bounded workflow ABSORBED the single-step tool rather than replacing
+    // it: a schedule of one state and one step is the single-step case, and the
+    // single-step generator was deleted on that basis. Nothing else proves the
+    // degenerate schedule still works, and a shape that supports a case no test
+    // exercises is a claim rather than a capability.
+    TEST_CASE("a one-state, one-step schedule is still a whole tool")
     {
-        auto const program = generatedSingleStepProgram();
+        auto const declaration = R"json({
+  "schema": "umbraflow-declarative-workflow-tool/v1",
+  "tool_name": "chaos.dismiss_known_overlay",
+  "target_argument": "observed_instance_id",
+  "allowed_instance_kinds": ["chaos.overlay"],
+  "fresh_observation": {
+    "required_surface": "chaos.overlay_layer",
+    "require_unambiguous": true
+  },
+  "ui_finding": {"kind": "observed_instance_absent"},
+  "states": [
+    {
+      "state_key": "dismiss-overlay",
+      "kind": "ui_action",
+      "ui_action": "chaos.ui.dismiss_overlay",
+      "timeout_ms": 2000
+    }
+  ],
+  "steps": ["dismiss-overlay"],
+  "bounds": {
+    "maximum_states": 1,
+    "maximum_steps": 1,
+    "maximum_dispatches": 1,
+    "maximum_observations": 1,
+    "maximum_waits": 0,
+    "maximum_elapsed_ms": 2000
+  }
+})json";
+
+        auto const generated = generateDeclarativeWorkflowAdapter(
+            "chaos.project",
+            declaration
+        );
+        REQUIRE_MESSAGE(
+            generated.has_value(),
+            "a one-step schedule must generate an adapter"
+        );
+
+        auto compiled = script::PureDataProgram::compile(
+            "chaos.project",
+            *generated,
+            k_workflowEntryPoints,
+            {}
+        );
+        REQUIRE_MESSAGE(
+            compiled.has_value(),
+            "a one-step adapter must compile against the five entry points"
+        );
+
+        auto const present = observation(true);
+        auto const planned = invoked(
+            *compiled,
+            "plan",
+            adapterInput(present, true)
+        );
+        auto const* limits = planned.find("workflow_limits");
+        REQUIRE(limits != nullptr);
+        CHECK_MESSAGE(
+            limits->find("maximum_steps")->number() == 1.0,
+            "a one-step schedule must carry a step bound of one"
+        );
+        CHECK_MESSAGE(
+            limits->find("maximum_waits")->number() == 0.0,
+            "a schedule with no wait state must carry a wait bound of zero"
+        );
+    }
+
+    TEST_CASE("generated bounded workflow runs through the five-function SPI")
+    {
+        auto const program = generatedWorkflowProgram();
         auto const present = observation(true);
 
         auto const derived = invoked(program, "derive", parsedJson("{}"));
@@ -1258,61 +1268,65 @@ namespace uf::project
             "plan",
             adapterInput(present, true)
         );
-        auto const* effects = planned.find("effects");
-        REQUIRE(effects != nullptr);
-        CHECK_MESSAGE(
-            effects->items().empty(),
-            "single-step declaration must not submit an expected domain effect"
-        );
         auto const* limits = planned.find("workflow_limits");
         REQUIRE(limits != nullptr);
-        REQUIRE(limits->find("maximum_dispatches") != nullptr);
+        CHECK_MESSAGE(
+            limits->find("maximum_steps")->number() == 2.0,
+            "bounded workflow plan must carry its finite step bound"
+        );
         CHECK_MESSAGE(
             limits->find("maximum_dispatches")->number() == 1.0,
-            "generated single-step plan must allow exactly one dispatch"
+            "bounded workflow plan must carry its finite dispatch bound"
         );
-        REQUIRE(limits->find("maximum_observations") != nullptr);
         CHECK_MESSAGE(
-            limits->find("maximum_observations")->number() == 3.0,
-            "generated single-step plan must carry its finite observation bound"
+            limits->find("maximum_observations")->number() == 2.0,
+            "bounded workflow plan must carry its finite observation bound"
         );
-        REQUIRE(limits->find("maximum_elapsed_ms") != nullptr);
+        CHECK_MESSAGE(
+            limits->find("maximum_waits")->number() == 1.0,
+            "bounded workflow plan must carry its finite wait bound"
+        );
         CHECK_MESSAGE(
             limits->find("maximum_elapsed_ms")->number() == 3000.0,
-            "generated single-step plan must carry its finite timeout"
+            "bounded workflow plan must carry its finite elapsed bound"
         );
 
-        auto const step = invoked(
-            program,
-            "next_step",
-            adapterInput(present, false)
-        );
-        auto const* action = step.find("action");
-        REQUIRE(action != nullptr);
-        REQUIRE(action->find("action_id") != nullptr);
+        auto stepInput = [&present](uint32 stepIndex) -> json::Value
+        {
+            auto text = std::string{
+                R"json({"canonical_args":{"observed_instance_id":")json"
+            };
+            text += k_observedInstanceId;
+            text += R"json("},"project_observation":)json";
+            text += present;
+            text += R"json(,"project_state":{},"step_index":)json";
+            text += std::to_string(stepIndex);
+            text += '}';
+            return parsedJson(text);
+        };
+
+        auto const wait = invoked(program, "next_step", stepInput(1U));
         CHECK_MESSAGE(
-            action->find("action_id")->string() == "chaos.ui.dismiss_overlay",
-            "generated action must use the declared namespaced UI action"
+            wait.find("action") == nullptr,
+            "the first bounded state must produce a real WaitIntent"
         );
-        REQUIRE(action->find("canonical_parameters") != nullptr);
-        auto const* target = action->find("canonical_parameters")
-            ->find("observed_instance_id");
-        REQUIRE(target != nullptr);
+        REQUIRE(wait.find("condition") != nullptr);
+        REQUIRE(wait.find("observation_budget") != nullptr);
         CHECK_MESSAGE(
-            action->find("canonical_parameters")->members().size() == 1U,
-            "generated action must carry exactly one target binding"
+            wait.find("observation_budget")->number() == 1.0,
+            "the wait state must carry its declared observation budget"
+        );
+
+        auto const action = invoked(program, "next_step", stepInput(2U));
+        REQUIRE(action.find("action") != nullptr);
+        CHECK_MESSAGE(
+            action.find("action")->find("action_id")->string()
+                == "chaos.ui.dismiss_overlay",
+            "the second bounded state must dispatch its declared UI action"
         );
         CHECK_MESSAGE(
-            target->string() == k_observedInstanceId,
-            "generated action must bind its only target from canonical args"
-        );
-        auto const* expectedUiPostconditions = step.find(
-            "expected_ui_postconditions"
-        );
-        REQUIRE(expectedUiPostconditions != nullptr);
-        CHECK_MESSAGE(
-            expectedUiPostconditions->items().empty(),
-            "single-step declaration must not smuggle in a UI result assertion"
+            action.find("step_key")->string() == "dismiss-overlay",
+            "the workflow must advance to its second named state"
         );
 
         auto const reconciled = invoked(
@@ -1320,45 +1334,12 @@ namespace uf::project
             "reconcile",
             adapterInput(observation(false), false)
         );
-        auto const* disposition = reconciled.find("disposition");
-        REQUIRE(disposition != nullptr);
-        CHECK_MESSAGE(
-            disposition->string() == "continue",
-            "UI finding must not mark the Operation Confirmed"
-        );
-        CHECK_MESSAGE(
-            reconciled.find("effects") == nullptr,
-            "UI finding must not submit an expected domain effect"
-        );
-        auto const* journalEvents = reconciled.find("journal_events");
-        REQUIRE(journalEvents != nullptr);
-        CHECK_MESSAGE(
-            journalEvents->items().empty(),
-            "UI finding must not submit a domain event"
-        );
-        auto const* observedOutcomes = reconciled.find("observed_outcomes");
-        REQUIRE(observedOutcomes != nullptr);
-        CHECK_MESSAGE(
-            observedOutcomes->items().empty(),
-            "UI finding must remain evidence rather than become an observed outcome"
-        );
         auto const* findings = reconciled.find("findings");
         REQUIRE(findings != nullptr);
-        REQUIRE_MESSAGE(
-            findings->items().size() == 1U,
-            "a genuinely absent target must produce one UI finding"
-        );
-        auto const& finding = findings->items().front();
-        REQUIRE(finding.find("kind") != nullptr);
-        CHECK_MESSAGE(
-            finding.find("kind")->string() == "observed_instance_absent",
-            "reconcile must return the declaration's UI finding as evidence"
-        );
-        REQUIRE(finding.find("observed_instance_id") != nullptr);
-        CHECK_MESSAGE(
-            finding.find("observed_instance_id")->string()
-                == k_observedInstanceId,
-            "UI finding must refer to the declaration's sole canonical target"
+        REQUIRE(findings->items().size() == 1U);
+        CHECK(
+            findings->items().front().find("kind")->string()
+            == "observed_instance_absent"
         );
 
         auto const reduced = invoked(program, "reduce", parsedJson("{}"));
@@ -1366,104 +1347,58 @@ namespace uf::project
         CHECK(reduced.members().empty());
     }
 
-    TEST_CASE("generated single-step adapter names stale observed-instance refusal")
+    TEST_CASE("missing step observation stops the bounded workflow")
     {
-        auto const program = generatedSingleStepProgram();
-        auto const stale = program.invoke(
-            "next_step",
-            adapterInput(observation(false), false)
+        auto const program = generatedWorkflowProgram();
+        auto const missing = parsedJson(
+            R"json({
+                "canonical_args": {
+                    "observed_instance_id":
+                        "oi1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                "project_observation": null,
+                "project_state": {},
+                "step_index": 2
+            })json"
         );
+        auto const result = program.invoke("next_step", missing);
 
         REQUIRE_FALSE_MESSAGE(
-            stale.has_value(),
-            "next_step must refuse a target absent from the fresh observation"
+            result.has_value(),
+            "a step whose observation is missing must not advance the workflow"
         );
         CHECK_MESSAGE(
-            stale.error().message().find("ObservedInstanceStale")
+            result.error().message().find("MissingStepObservation")
                 != std::string_view::npos,
-            "stale target refusal must name ObservedInstanceStale"
+            "missing observation refusal must name the fresh-evidence property"
         );
     }
 
-    TEST_CASE("generated single-step adapter rejects an undeclared target kind")
+    TEST_CASE("workflow declaration is closed and uniquely names every state")
     {
-        auto const program = generatedSingleStepProgram();
-        auto const wrongKind = program.invoke(
-            "next_step",
-            adapterInput(observation(true, "chaos.dialog"), false)
+        auto const undeclared = generateDeclarativeWorkflowAdapter(
+            "chaos.project",
+            replacedOnce(
+                validWorkflowDeclaration(),
+                "\"bounds\": {",
+                "\"script\": \"while true do end\", \"bounds\": {"
+            )
         );
+        REQUIRE_FALSE(undeclared.has_value());
+        CHECK(undeclared.error().message().starts_with("ClosedSchema"));
 
-        REQUIRE_FALSE_MESSAGE(
-            wrongKind.has_value(),
-            "next_step must reject a target kind outside allowed_instance_kinds"
+        auto const duplicate = generateDeclarativeWorkflowAdapter(
+            "chaos.project",
+            replacedOnce(
+                validWorkflowDeclaration(),
+                "\"state_key\": \"dismiss-overlay\"",
+                "\"state_key\": \"await-overlay\""
+            )
         );
-        CHECK_MESSAGE(
-            wrongKind.error().message().find("SingleStepTargetKindRejected")
-                != std::string_view::npos,
-            "target-kind refusal must name SingleStepTargetKindRejected"
+        REQUIRE_FALSE(duplicate.has_value());
+        CHECK(
+            duplicate.error().message().find("state_key values must be unique")
+            != std::string_view::npos
         );
-    }
-
-    TEST_CASE("generated finding distinguishes lost Surface evidence from target absence")
-    {
-        struct SurfaceCase final
-        {
-            std::string name{};
-            bool        fresh{};
-            std::string resolution{};
-            bool        unambiguous{};
-            std::string expectedError{};
-        };
-        auto const cases = std::array{
-            SurfaceCase{
-                .name          = "page vanished",
-                .fresh         = false,
-                .resolution    = "resolved",
-                .unambiguous   = true,
-                .expectedError = "StaleObservation",
-            },
-            SurfaceCase{
-                .name          = "recognition lost",
-                .fresh         = true,
-                .resolution    = "unresolved",
-                .unambiguous   = true,
-                .expectedError = "FreshSurfaceUnresolved",
-            },
-            SurfaceCase{
-                .name          = "recognition ambiguous",
-                .fresh         = true,
-                .resolution    = "resolved",
-                .unambiguous   = false,
-                .expectedError = "FreshSurfaceAmbiguous",
-            },
-        };
-        auto const program = generatedSingleStepProgram();
-
-        for (auto const& testCase : cases)
-        {
-            auto const result = program.invoke(
-                "reconcile",
-                adapterInput(
-                    observation(
-                        false,
-                        "chaos.overlay",
-                        testCase.fresh,
-                        testCase.resolution,
-                        testCase.unambiguous
-                    ),
-                    false
-                )
-            );
-            CAPTURE(testCase.name);
-            REQUIRE_FALSE_MESSAGE(
-                result.has_value(),
-                "reconcile must not collapse invalid Surface evidence into target absence"
-            );
-            CHECK_MESSAGE(
-                result.error().message().find(testCase.expectedError)
-                    != std::string_view::npos,
-                "Surface guard refusal must name the failed evidence property"
-            );
-        }
     }
 }

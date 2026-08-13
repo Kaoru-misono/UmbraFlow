@@ -1,6 +1,6 @@
 #include "project-kit.hpp"
 
-#include "declarative-single-step-tool.hpp"
+#include "declarative-workflow-tool.hpp"
 #include "tool-catalog.hpp"
 
 #include <core/error/result.hpp>
@@ -538,7 +538,7 @@ namespace uf::project
                     return fail(
                         AutomationErrorKind::InvalidResource,
                         std::format(
-                            "declared single-step tool input must be "
+                            "declared workflow tool input must be "
                             "declarative-tools/<plugin-id>/<name>.json: \"{}\"",
                             input
                         )
@@ -550,12 +550,12 @@ namespace uf::project
                     declaration,
                     readText(
                         sourceDirectory / inputPath,
-                        "single-step declaration"
+                        "workflow declaration"
                     )
                 );
                 UF_TRY_VALUE_CONTEXT(
                     adapter,
-                    generateDeclarativeSingleStepAdapter(pluginId, declaration),
+                    generateDeclarativeWorkflowAdapter(pluginId, declaration),
                     std::format(
                         "generating adapter from declared input \"{}\"",
                         input

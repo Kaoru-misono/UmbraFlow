@@ -9,9 +9,9 @@ namespace uf::project
 {
     // Produces one ordinary ProjectPlugin module with the sole runtime SPI:
     // derive, plan, next_step, reconcile and reduce. The declaration grants no
-    // script, closure, coordinate, fallback action or Host capability.
+    // script, closure, coordinate or Host capability.
     [[nodiscard]]
-    auto generateDeclarativeSingleStepAdapter(
+    auto generateDeclarativeWorkflowAdapter(
         std::string_view pluginId,
         std::string_view declarationBytes
     ) -> Result<std::string>;
