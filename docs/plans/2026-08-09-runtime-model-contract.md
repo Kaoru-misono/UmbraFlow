@@ -98,6 +98,14 @@ Rules:
 - a surface must have at least one binding with a positive identity predicate;
 - a surface identity may not consist only of forbidden (`none`) predicates.
 
+> **Amended 2026-08-13 for U13 `T-001`.** Runtime v2 uses the schema's required
+> `covers` list for every Surface. A scene's list is empty; an overlay or
+> interrupt names each compatible lower Surface. One interrupt that may cover
+> two base scenes is one Surface record whose list names both scenes, with one
+> identity and one action Binding. It is not duplicated into one annotation per
+> base. Resolution retains that same interrupt ID above either base, and the
+> action is authorised from the top interrupt Binding on both stacks.
+
 ### 2.3 RuntimeState
 
 ```text
@@ -333,6 +341,17 @@ Transition {
 `StatePattern` contains an exact context and an exact bottom-to-top surface
 stack. The runtime model stores declared transitions only. Observed
 transitions and expected test transitions are offline records.
+
+> **Amended 2026-08-13 for U13 `T-003`.** Runtime v2 makes that separation
+> executable. `$defs/transition` is declared policy in
+> `RuntimeModel.transitions`, and `$defs/transition_trigger` belongs only to that
+> declaration. An `$defs/observed_transition` is stored outside the model as
+> `{ kind = "observed_transition", transition, observed_to_surfaces }`; it names
+> the declaration instead of copying its trigger. The pure offline
+> `resolution.compare_transition` result carries independent frozen copies of
+> both `declared_to_surfaces` and `observed_to_surfaces` plus `matches_policy`.
+> Comparing a replay therefore reports a changed destination without changing
+> the model bytes that state policy.
 
 ## 3. Runtime resolution and receipt
 

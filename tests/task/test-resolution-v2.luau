@@ -26,6 +26,7 @@ local runtime = model.compile({
         { id = "other_anchor", kind = "region" },
         { id = "dialog_anchor", kind = "region" },
         { id = "save", kind = "control" },
+        { id = "retry", kind = "control" },
     },
     locators = {
         { id = "scene.locator", kind = "template", asset_path = "assets/scene.png", threshold = 0.9 },
@@ -33,6 +34,7 @@ local runtime = model.compile({
         { id = "dialog.locator", kind = "template", asset_path = "assets/dialog.png", threshold = 0.9 },
         { id = "save.primary", kind = "template", asset_path = "assets/save-primary.png", threshold = 0.9 },
         { id = "save.alternate", kind = "template", asset_path = "assets/save-alternate.png", threshold = 0.9 },
+        { id = "retry.locator", kind = "template", asset_path = "assets/retry.png", threshold = 0.9 },
     },
     readers = {},
     bindings = {
@@ -41,26 +43,92 @@ local runtime = model.compile({
         { id = "dialog.identity", surface = "dialog", ui_target = "dialog_anchor", variant = "default", placement = placement(400, 100, false), detector = detector("dialog.locator"), actions = {} },
         { id = "save.primary", surface = "dialog", ui_target = "save", variant = "primary", placement = placement(800, 600, true), detector = detector("save.primary"), actions = { { id = "activate", kind = "click", proof_locator = "save.primary" } } },
         { id = "save.alternate", surface = "dialog", ui_target = "save", variant = "alternate", placement = placement(950, 600, true), detector = detector("save.alternate"), actions = { { id = "activate", kind = "click", proof_locator = "save.alternate" } } },
+        { id = "retry.enabled", surface = "network_retry", ui_target = "retry", variant = "enabled", placement = placement(560, 500, true), detector = detector("retry.locator"), actions = { { id = "retry", kind = "click", proof_locator = "retry.locator" } } },
     },
     collections = {},
     surfaces = {
         { id = "scene", kind = "scene", covers = {}, identity = { all = { "scene.identity" }, any = {}, none = {} } },
         { id = "other", kind = "scene", covers = {}, identity = { all = { "other.identity" }, any = {}, none = {} } },
         { id = "dialog", kind = "overlay", covers = { "scene" }, identity = { all = { "dialog.identity" }, any = {}, none = {} } },
+        { id = "network_retry", kind = "interrupt", covers = { "scene", "other" }, identity = { all = { "retry.enabled" }, any = {}, none = {} } },
     },
-    transitions = {},
+    transitions = {
+        {
+            id = "dialog.saved",
+            from_surfaces = { "scene", "dialog" },
+            trigger = { binding = "save.primary", action = "activate" },
+            to_surfaces = { "scene" },
+        },
+    },
 })
 
-local function record(cycle: any, binding: string, locator: string, kind: string): any
+-- T-003 / T11-equivalent: the offline observation is a real mismatch. Its
+-- destination remains in the comparison while the declared policy and its
+-- canonical model bytes survive unchanged.
+do
+    local declaredBytes = model.canonical_bytes(runtime)
+    local comparison, reason = resolution.compare_transition(runtime, {
+        kind = "observed_transition",
+        transition = "dialog.saved",
+        observed_to_surfaces = { "other" },
+    })
+    assert(
+        comparison ~= nil and reason == nil,
+        "T-003 a valid offline transition observation must produce a comparison"
+    )
+    local report = comparison :: any
+    assert(
+        report.matches_policy == false
+            and report.declared_to_surfaces[1] == "scene"
+            and report.observed_to_surfaces[1] == "other"
+            and report.declared_to_surfaces ~= runtime.transition_by_id["dialog.saved"].to_surfaces
+            and runtime.transition_by_id["dialog.saved"].to_surfaces[1] == "scene"
+            and model.canonical_bytes(runtime) == declaredBytes,
+        "T-003 an observed destination differing from policy must report the mismatch without rewriting the model"
+    )
+
+    local matching = resolution.compare_transition(runtime, {
+        kind = "observed_transition",
+        transition = "dialog.saved",
+        observed_to_surfaces = { "scene" },
+    })
+    assert(
+        matching ~= nil and matching.matches_policy == true,
+        "T-003 an observed destination equal to policy must report a match"
+    )
+end
+
+local function record(
+    cycle: any,
+    binding: string,
+    locator: string,
+    kind: string,
+    hostProof: any?
+): any
     local source = { kind = "template", binding = binding, locator = locator }
-    if kind == "present" then return evidence.present(cycle, source, { locator = locator }, 0.99) end
+    if kind == "present" then
+        return evidence.present(cycle, source, { locator = locator }, 0.99, hostProof)
+    end
     if kind == "absent" then return evidence.absent(cycle, source) end
     return evidence.unknown(cycle, "locator_failed", source)
 end
 
-local function put(result: any, cycle: any, binding: string, locator: string, kind: string)
+local function put(
+    result: any,
+    cycle: any,
+    binding: string,
+    locator: string,
+    kind: string,
+    hostProof: any?
+)
     local predicate = { kind = "locator_present", locator = locator }
-    result[model.measurement_key(binding, predicate)] = record(cycle, binding, locator, kind)
+    result[model.measurement_key(binding, predicate)] = record(
+        cycle,
+        binding,
+        locator,
+        kind,
+        hostProof
+    )
 end
 
 local function stateRecords(cycle: any, scene: string, other: string, dialog: string): any
@@ -68,7 +136,54 @@ local function stateRecords(cycle: any, scene: string, other: string, dialog: st
     put(result, cycle, "scene.identity", "scene.locator", scene)
     put(result, cycle, "other.identity", "other.locator", other)
     put(result, cycle, "dialog.identity", "dialog.locator", dialog)
+    put(result, cycle, "retry.enabled", "retry.locator", "absent")
     return result
+end
+
+-- T-001 / T03-equivalent: one declared interrupt, one Binding and one action
+-- resolve over two different base scenes. The covers list carries compatibility;
+-- no second annotation stands in for the same interrupt on the second base.
+do
+    local interrupt = runtime.surface_by_id.network_retry
+    local outcomes = {}
+    for _, base in {
+        { id = "scene", scene = "present", other = "absent" },
+        { id = "other", scene = "absent", other = "present" },
+    } do
+        local cycle = evidence.begin_cycle()
+        local records = stateRecords(cycle, base.scene, base.other, "absent")
+        local hostProof = table.freeze({ base = base.id })
+        put(records, cycle, "retry.enabled", "retry.locator", "present", hostProof)
+        local state = resolution.resolve_state(runtime, cycle, records)
+        local resolved = state.kind == "resolved_state"
+            and state.ordered_surface_stack[1] == base.id
+            and state.ordered_surface_stack[2] == interrupt.id
+        local binding = if resolved
+            then resolution.resolve_binding(runtime, cycle, state, "retry", nil, records)
+            else nil
+        local request = nil
+        local reason = "binding_not_resolved"
+        if binding ~= nil and binding.kind == "resolved_binding" then
+            request, reason = resolution.authorize(runtime, cycle, binding, "retry")
+        end
+        outcomes[base.id] = {
+            interrupt = interrupt,
+            binding = if binding == nil then nil else binding.binding,
+            action = if request == nil then nil else request.action,
+            authorized = request ~= nil and reason == nil,
+        }
+        evidence.end_cycle(cycle)
+    end
+    assert(
+        outcomes.scene.interrupt == outcomes.other.interrupt
+            and outcomes.scene.binding == "retry.enabled"
+            and outcomes.other.binding == "retry.enabled"
+            and outcomes.scene.action == "retry"
+            and outcomes.other.action == "retry"
+            and outcomes.scene.authorized
+            and outcomes.other.authorized,
+        "T-001 the same interrupt and action must resolve and authorize over two different base scenes"
+    )
 end
 
 do

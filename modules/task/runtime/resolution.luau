@@ -17,6 +17,20 @@ local function freezeList(values: { any }): { any }
     return table.freeze(values)
 end
 
+local function copyList(values: { any }): { any }
+    local result = {}
+    for index, value in values do result[index] = value end
+    return freezeList(result)
+end
+
+local function sameList(left: { any }, right: { any }): boolean
+    if #left ~= #right then return false end
+    for index, value in left do
+        if right[index] ~= value then return false end
+    end
+    return true
+end
+
 local function summaries(records: { any }, cycle: any): { any }
     local result = {}
     local seen: { [string]: boolean } = {}
@@ -258,6 +272,45 @@ function resolution.resolve_state(runtimeModel: any, cycle: any, recordsByKey: a
         stack = result.ordered_surface_stack,
     }
     return result
+end
+
+-- Compares an offline observation with declared policy. The observation names
+-- its declaration rather than duplicating its trigger, so a replay cannot
+-- become a second policy authority. Both destinations in the returned report
+-- are owned frozen copies: retaining the report cannot retain a mutable caller
+-- table or rewrite the RuntimeModel it was compared with.
+function resolution.compare_transition(
+    runtimeModel: any,
+    observedTransition: any
+): (any?, string?)
+    if not model.is_runtime_model(runtimeModel) or type(observedTransition) ~= "table" then
+        return nil, "invalid_observed_transition"
+    end
+    for field in observedTransition do
+        if field ~= "kind" and field ~= "transition" and field ~= "observed_to_surfaces" then
+            return nil, "invalid_observed_transition"
+        end
+    end
+    if observedTransition.kind ~= "observed_transition"
+        or type(observedTransition.transition) ~= "string"
+    then
+        return nil, "invalid_observed_transition"
+    end
+    local declared = runtimeModel.transition_by_id[observedTransition.transition]
+    if declared == nil then return nil, "unknown_transition" end
+    if not model.valid_surface_stack(runtimeModel, observedTransition.observed_to_surfaces) then
+        return nil, "invalid_observed_destination"
+    end
+
+    local declaredDestination = copyList(declared.to_surfaces)
+    local observedDestination = copyList(observedTransition.observed_to_surfaces)
+    return table.freeze({
+        kind = "transition_comparison",
+        transition = declared.id,
+        declared_to_surfaces = declaredDestination,
+        observed_to_surfaces = observedDestination,
+        matches_policy = sameList(declaredDestination, observedDestination),
+    }), nil
 end
 
 local function unknownBinding(reason: string, evaluations: { any }): any

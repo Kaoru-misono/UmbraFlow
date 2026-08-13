@@ -286,6 +286,7 @@
       }
     },
     "transition_trigger": {
+      "$comment": "The action that declares policy intent. An observed transition names its declared transition by ID and never duplicates this trigger, so replay data cannot become a second policy authority.",
       "type": "object",
       "additionalProperties": false,
       "required": ["binding", "action"],
@@ -295,6 +296,7 @@
       }
     },
     "transition": {
+      "$comment": "One declared policy transition stored in RuntimeModel.transitions. Its destination is immutable model input; observed destinations use observed_transition instead of changing this record.",
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "from_surfaces", "trigger", "to_surfaces"],
@@ -313,6 +315,51 @@
           "items": { "$ref": "#/$defs/identifier" },
           "uniqueItems": true
         }
+      }
+    },
+    "observed_transition": {
+      "$comment": "One replayable observation stored outside RuntimeModel. transition joins it to declared policy; observed_to_surfaces records what resolution actually reached and never replaces the declaration's to_surfaces.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "transition", "observed_to_surfaces"],
+      "properties": {
+        "kind": { "const": "observed_transition" },
+        "transition": { "$ref": "#/$defs/identifier" },
+        "observed_to_surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "transition_comparison": {
+      "$comment": "The offline comparison of one observed_transition with its declared policy. Both destinations are reported so a mismatch remains reviewable without consulting mutable model state.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "transition",
+        "declared_to_surfaces",
+        "observed_to_surfaces",
+        "matches_policy"
+      ],
+      "properties": {
+        "kind": { "const": "transition_comparison" },
+        "transition": { "$ref": "#/$defs/identifier" },
+        "declared_to_surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        },
+        "observed_to_surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        },
+        "matches_policy": { "type": "boolean" }
       }
     },
     "runtime_model": {
