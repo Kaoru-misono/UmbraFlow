@@ -30,31 +30,28 @@ threshold = 1
 id = "expedition.camp.banner"
 surface = "expedition.surface"
 ui_target = "expedition.camp"
-variant = "primary"
 placement = { kind = "fixed", rect = [108, 92, 16, 16] }
-detector = { all = [{ kind = "locator_present", locator = "expedition.banner" }], any = [], none = [] }
+variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "expedition.banner" }], any = [], none = [] } }]
 actions = []
 
 [[binding]]
 id = "expedition.orders.primary"
 surface = "expedition.surface"
 ui_target = "expedition.orders"
-variant = "primary"
 placement = { kind = "fixed", rect = [1200, 738, 16, 16] }
-detector = { all = [{ kind = "locator_present", locator = "expedition.march-mark" }], any = [], none = [] }
+variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "expedition.march-mark" }], any = [], none = [] } }]
 actions = [{ id = "expedition.advance", kind = "key", key = "E", proof_locator = "expedition.march-mark" }]
 
 [[binding]]
 id = "expedition.target.primary"
 surface = "expedition.surface"
 ui_target = "expedition.target"
-variant = "primary"
 placement = { kind = "fixed", rect = [1284, 738, 16, 16], action_point = [1292, 746] }
-detector = { all = [{ kind = "locator_present", locator = "expedition.march-mark" }], any = [], none = [] }
+variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "expedition.march-mark" }], any = [], none = [] } }]
 actions = [{ id = "expedition.press", kind = "click", proof_locator = "expedition.march-mark" }]
 
 [[surface]]
 id = "expedition.surface"
 kind = "scene"
 covers = []
-identity = { all = ["expedition.camp.banner"], any = [], none = [] }
+identity = ["expedition.camp.banner"]

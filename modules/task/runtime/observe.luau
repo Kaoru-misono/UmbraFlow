@@ -122,16 +122,16 @@ local function readLines(reader: any, reading: any): any
     return { kind = "read", lines = table.freeze(lines), confidence = lowest }
 end
 
-local function readText(state: any, subject: any, readerId: string): any
-    local collection = subject.placement.kind == "detected"
-    local key = if collection
-        then model.collection_reading_key(subject.id, readerId)
-        else model.reading_key(subject.id, readerId)
+local function readText(
+    state: any,
+    key: string,
+    readerId: string,
+    area: { number }
+): any
     local cached = state.reader_values[key]
     if cached ~= nil then return cached end
     local reader = state.model.reader_by_id[readerId]
     if reader == nil then error("RuntimeModel references unknown Reader '" .. readerId .. "'", 3) end
-    local area = if collection then subject.placement.search_rect else subject.placement.rect
     -- The Reader's own layout travels to the Host, which runs a different
     -- pipeline for each: the model states how many lines its rectangle holds
     -- and the Host never guesses.
@@ -167,7 +167,12 @@ local function measurePredicate(state: any, binding: any, predicate: any): any
     if predicate.kind == "locator_present" then
         record = measureLocator(state, binding, predicate.locator)
     else
-        local reading = readText(state, binding, predicate.reader)
+        local reading = readText(
+            state,
+            model.reading_key(binding.id, predicate.reader),
+            predicate.reader,
+            binding.placement.rect
+        )
         local source = { kind = "text", binding = binding.id, reader = predicate.reader }
         if reading.kind == "unknown" then
             record = evidence.unknown(
@@ -200,8 +205,10 @@ local function measurePredicate(state: any, binding: any, predicate: any): any
 end
 
 local function measureBinding(state: any, binding: any)
-    for _, group in { binding.detector.all, binding.detector.any, binding.detector.none } do
-        for _, predicate in group do measurePredicate(state, binding, predicate) end
+    for _, variant in binding.variants do
+        for _, group in { variant.detector.all, variant.detector.any, variant.detector.none } do
+            for _, predicate in group do measurePredicate(state, binding, predicate) end
+        end
     end
 end
 
@@ -269,7 +276,12 @@ function observe.open(runtimeModel: any): any
                 current.predicate_records
             ) do
                 for _, readerId in binding.reads do
-                    readText(current, binding, readerId)
+                    readText(
+                        current,
+                        model.reading_key(binding.id, readerId),
+                        readerId,
+                        binding.placement.rect
+                    )
                 end
             end
         end
@@ -296,7 +308,24 @@ function observe.open(runtimeModel: any): any
         )
         if resolved ~= nil or reason ~= "not_measured" then return resolved, reason end
         local collection = current.model.collection_by_id[collectionId]
-        readText(current, collection, collection.placement.reader)
+        readText(
+            current,
+            model.collection_reading_key(collection.id, collection.placement.reader),
+            collection.placement.reader,
+            collection.placement.search_rect
+        )
+        local targets = resolution.collection_read_targets(
+            current.model,
+            current.evidence_cycle,
+            resolvedState,
+            collectionId,
+            current.reader_values
+        )
+        if targets ~= nil then
+            for _, target in targets do
+                readText(current, target.key, target.reader, target.rect)
+            end
+        end
         return resolution.resolve_collection(
             current.model,
             current.evidence_cycle,

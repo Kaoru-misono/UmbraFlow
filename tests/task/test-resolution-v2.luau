@@ -9,6 +9,10 @@ local function detector(locator: string): any
     }
 end
 
+local function variants(name: string, value: any): any
+    return { { name = name, detector = value } }
+end
+
 local function placement(x: number, y: number, actionable: boolean): any
     return {
         kind = "fixed",
@@ -41,21 +45,38 @@ local runtime = model.compile({
     },
     readers = {},
     bindings = {
-        { id = "scene.identity", surface = "scene", ui_target = "scene_anchor", variant = "default", placement = placement(10, 10, false), detector = detector("scene.locator"), actions = {} },
-        { id = "other.identity", surface = "other", ui_target = "other_anchor", variant = "default", placement = placement(10, 10, false), detector = detector("other.locator"), actions = {} },
-        { id = "dialog.identity", surface = "dialog", ui_target = "dialog_anchor", variant = "default", placement = placement(400, 100, false), detector = detector("dialog.locator"), actions = {} },
-        { id = "save.primary", surface = "dialog", ui_target = "save", variant = "primary", placement = placement(800, 600, true), detector = detector("save.primary"), actions = { { id = "activate", kind = "click", proof_locator = "save.primary" } } },
-        { id = "save.alternate", surface = "dialog", ui_target = "save", variant = "alternate", placement = placement(950, 600, true), detector = detector("save.alternate"), actions = { { id = "activate", kind = "click", proof_locator = "save.alternate" } } },
-        { id = "retry.enabled", surface = "network_retry", ui_target = "retry", variant = "enabled", placement = placement(560, 500, true), detector = detector("retry.locator"), actions = { { id = "retry", kind = "click", proof_locator = "retry.locator" } } },
-        { id = "leave.scene", surface = "scene", ui_target = "leave", variant = "default", placement = placement(100, 600, true), detector = detector("leave.scene"), actions = { { id = "leave", kind = "click", proof_locator = "leave.scene" } } },
-        { id = "leave.other", surface = "other", ui_target = "leave", variant = "default", placement = placement(900, 600, true), detector = detector("leave.other"), actions = { { id = "leave", kind = "click", proof_locator = "leave.other" } } },
+        { id = "scene.identity", surface = "scene", ui_target = "scene_anchor", placement = placement(10, 10, false), variants = variants("default", detector("scene.locator")), actions = {} },
+        { id = "other.identity", surface = "other", ui_target = "other_anchor", placement = placement(10, 10, false), variants = variants("default", detector("other.locator")), actions = {} },
+        { id = "dialog.identity", surface = "dialog", ui_target = "dialog_anchor", placement = placement(400, 100, false), variants = variants("default", detector("dialog.locator")), actions = {} },
+        {
+            id = "save.primary", surface = "dialog", ui_target = "save",
+            placement = placement(800, 600, true),
+            variants = {
+                { name = "primary", detector = detector("save.primary") },
+                {
+                    name = "alternate",
+                    detector = {
+                        all = {
+                            { kind = "locator_present", locator = "save.primary" },
+                            { kind = "locator_present", locator = "save.alternate" },
+                        },
+                        any = {},
+                        none = {},
+                    },
+                },
+            },
+            actions = { { id = "activate", kind = "click", proof_locator = "save.primary" } },
+        },
+        { id = "retry.enabled", surface = "network_retry", ui_target = "retry", placement = placement(560, 500, true), variants = variants("enabled", detector("retry.locator")), actions = { { id = "retry", kind = "click", proof_locator = "retry.locator" } } },
+        { id = "leave.scene", surface = "scene", ui_target = "leave", placement = placement(100, 600, true), variants = variants("default", detector("leave.scene")), actions = { { id = "leave", kind = "click", proof_locator = "leave.scene" } } },
+        { id = "leave.other", surface = "other", ui_target = "leave", placement = placement(900, 600, true), variants = variants("default", detector("leave.other")), actions = { { id = "leave", kind = "click", proof_locator = "leave.other" } } },
     },
     collections = {},
     surfaces = {
-        { id = "scene", kind = "scene", covers = {}, identity = { all = { "scene.identity" }, any = {}, none = {} } },
-        { id = "other", kind = "scene", covers = {}, identity = { all = { "other.identity" }, any = {}, none = {} } },
-        { id = "dialog", kind = "overlay", covers = { "scene" }, identity = { all = { "dialog.identity" }, any = {}, none = {} } },
-        { id = "network_retry", kind = "interrupt", covers = { "scene", "other" }, identity = { all = { "retry.enabled" }, any = {}, none = {} } },
+        { id = "scene", kind = "scene", covers = {}, identity = { "scene.identity" } },
+        { id = "other", kind = "scene", covers = {}, identity = { "other.identity" } },
+        { id = "dialog", kind = "overlay", covers = { "scene" }, identity = { "dialog.identity" } },
+        { id = "network_retry", kind = "interrupt", covers = { "scene", "other" }, identity = { "retry.enabled" } },
     },
     transitions = {
         {
@@ -294,7 +315,7 @@ do
     local cycle = evidence.begin_cycle()
     local records = stateRecords(cycle, "present", "absent", "present")
     put(records, cycle, "save.primary", "save.primary", "present")
-    put(records, cycle, "save.alternate", "save.alternate", "absent")
+    put(records, cycle, "save.primary", "save.alternate", "absent")
     local state = resolution.resolve_state(runtime, cycle, records)
     assert(state.kind == "resolved_state")
     assert(state.ordered_surface_stack[1] == "scene")
@@ -343,16 +364,34 @@ do
     evidence.end_cycle(cycle)
 end
 
--- A known Binding cannot outrank an Unknown same-target variant.
+-- One satisfied variant cannot outrank an Unknown competitor in its Binding.
 do
     local cycle = evidence.begin_cycle()
     local records = stateRecords(cycle, "present", "absent", "present")
     put(records, cycle, "save.primary", "save.primary", "present")
-    put(records, cycle, "save.alternate", "save.alternate", "unknown")
+    put(records, cycle, "save.primary", "save.alternate", "unknown")
     local state = resolution.resolve_state(runtime, cycle, records)
     local binding = resolution.resolve_binding(runtime, cycle, state, "save", "save.primary", records)
     assert(binding.kind == "unknown_binding")
     assert(binding.reason == "unknown_competitor")
+    evidence.end_cycle(cycle)
+end
+
+-- Two satisfied variants inside one Binding are reported by the existing
+-- ambiguous_binding shape. Declaration order never selects one silently.
+do
+    local cycle = evidence.begin_cycle()
+    local records = stateRecords(cycle, "present", "absent", "present")
+    put(records, cycle, "save.primary", "save.primary", "present")
+    put(records, cycle, "save.primary", "save.alternate", "present")
+    local state = resolution.resolve_state(runtime, cycle, records)
+    local binding = resolution.resolve_binding(runtime, cycle, state, "save", nil, records)
+    assert(
+        binding.kind == "ambiguous_binding"
+            and binding.candidates[1] == "save.primary:primary"
+            and binding.candidates[2] == "save.primary:alternate",
+        "two satisfied variants in one Binding must report ambiguous_binding"
+    )
     evidence.end_cycle(cycle)
 end
 
@@ -383,34 +422,37 @@ local reading = model.compile({
     },
     bindings = {
         {
-            id = "scene.identity", surface = "scene", ui_target = "scene_anchor", variant = "default",
-            placement = placement(10, 10, false), detector = detector("scene.locator"), actions = {},
+            id = "scene.identity", surface = "scene", ui_target = "scene_anchor",
+            placement = placement(10, 10, false),
+            variants = variants("default", detector("scene.locator")), actions = {},
         },
         {
-            id = "title.primary", surface = "scene", ui_target = "title", variant = "primary",
-            placement = placement(100, 10, false), detector = detector("title.locator"), actions = {},
-            reads = { "name.reader", "flavour.reader" },
+            id = "title.primary", surface = "scene", ui_target = "title",
+            placement = placement(100, 10, false),
+            variants = {
+                { name = "primary", detector = detector("title.locator") },
+                { name = "alternate", detector = detector("title.alt.locator") },
+            },
+            actions = {}, reads = { "name.reader", "flavour.reader" },
         },
         {
-            id = "title.alternate", surface = "scene", ui_target = "title", variant = "alternate",
-            placement = placement(200, 10, false), detector = detector("title.alt.locator"), actions = {},
-            reads = { "name.reader" },
-        },
-        {
-            id = "count.primary", surface = "scene", ui_target = "count", variant = "primary",
-            placement = placement(300, 10, false), detector = detector("count.locator"), actions = {},
+            id = "count.primary", surface = "scene", ui_target = "count",
+            placement = placement(300, 10, false),
+            variants = variants("primary", detector("count.locator")), actions = {},
             reads = { "count.reader" },
         },
         -- On a Surface the stack below never contains. Its own detector is
         -- present, so only the stack keeps its reading out of the report.
         {
-            id = "dialog.title", surface = "dialog", ui_target = "dialog_title", variant = "primary",
-            placement = placement(400, 10, false), detector = detector("dialog.title.locator"), actions = {},
+            id = "dialog.title", surface = "dialog", ui_target = "dialog_title",
+            placement = placement(400, 10, false),
+            variants = variants("primary", detector("dialog.title.locator")), actions = {},
             reads = { "name.reader" },
         },
         {
-            id = "dialog.identity", surface = "dialog", ui_target = "dialog_anchor", variant = "default",
-            placement = placement(500, 10, false), detector = detector("dialog.locator"), actions = {},
+            id = "dialog.identity", surface = "dialog", ui_target = "dialog_anchor",
+            placement = placement(500, 10, false),
+            variants = variants("default", detector("dialog.locator")), actions = {},
         },
     },
     collections = {
@@ -423,13 +465,14 @@ local reading = model.compile({
                 reader = "flavour.reader",
                 order = "left_to_right",
             },
+            reads = { { reader = "name.reader", offset = { 1, 1, -2, -2 } } },
         },
     },
     surfaces = {
-        { id = "scene", kind = "scene", covers = {}, identity = { all = { "scene.identity" }, any = {}, none = {} } },
+        { id = "scene", kind = "scene", covers = {}, identity = { "scene.identity", "count.primary" } },
         {
             id = "dialog", kind = "overlay", covers = { "scene" },
-            identity = { all = { "dialog.identity" }, any = {}, none = {} },
+            identity = { "dialog.identity" },
         },
     },
     transitions = {},
@@ -448,13 +491,14 @@ assert(not pcall(function()
         readers = {},
         bindings = {
             {
-                id = "scene.identity", surface = "scene", ui_target = "scene_anchor", variant = "default",
-                placement = placement(10, 10, false), detector = detector("scene.locator"), actions = {},
+                id = "scene.identity", surface = "scene", ui_target = "scene_anchor",
+                placement = placement(10, 10, false),
+                variants = variants("default", detector("scene.locator")), actions = {},
                 reads = { "undeclared.reader" },
             },
         },
         surfaces = {
-            { id = "scene", kind = "scene", covers = {}, identity = { all = { "scene.identity" }, any = {}, none = {} } },
+            { id = "scene", kind = "scene", covers = {}, identity = { "scene.identity" } },
         },
         transitions = {},
     })
@@ -472,11 +516,24 @@ local function readingRecords(cycle: any, title: string, alternate: string, coun
     local result = {}
     put(result, cycle, "scene.identity", "scene.locator", "present")
     put(result, cycle, "title.primary", "title.locator", title)
-    put(result, cycle, "title.alternate", "title.alt.locator", alternate)
+    put(result, cycle, "title.primary", "title.alt.locator", alternate)
     put(result, cycle, "count.primary", "count.locator", count)
     put(result, cycle, "dialog.identity", "dialog.locator", "absent")
     put(result, cycle, "dialog.title", "dialog.title.locator", "present")
     return result
+end
+
+-- Surface identity is one conjunction. Satisfying only the first of two named
+-- Bindings cannot resolve the Surface.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "absent", "absent", "absent")
+    local state = resolution.resolve_state(reading, cycle, records)
+    assert(
+        state.kind == "unknown_state" and state.reason == "no_scene_candidate",
+        "a Surface identity naming two Bindings must require both to be present"
+    )
+    evidence.end_cycle(cycle)
 end
 
 local function reads(pairs_: { { any } }): any
@@ -639,9 +696,9 @@ do
     evidence.end_cycle(cycle)
 end
 
--- Two present variants of one UiTarget: that UiTarget reports nothing, because
--- which instance is on screen is exactly what an ambiguity means. The other
--- UiTarget is unaffected, so the refusal is scoped rather than total.
+-- Two present variants of one Binding: that Binding reports nothing because
+-- its visual state is ambiguous. The other UiTarget is unaffected, so the
+-- refusal is scoped rather than total.
 do
     local cycle = evidence.begin_cycle()
     local records = readingRecords(cycle, "present", "present", "present")
@@ -650,7 +707,7 @@ do
     local reported = resolution.resolve_readings(reading, cycle, state, records, reads({
         { "title.primary", "name.reader", readValue("Wandering Merchant") },
         { "title.primary", "flavour.reader", readValue("A stranger blocks the road.") },
-        { "title.alternate", "name.reader", readValue("Wandering Merchant") },
+        { "title.primary", "name.reader", readValue("Wandering Merchant") },
         { "count.primary", "count.reader", readValue("3") },
     }))
     assert(#reported == 1)
@@ -758,6 +815,7 @@ do
         assert(#result.items == expectedCount, "T-002 item list must match reported count")
         for position, item in result.items do
             assert(item.index == position - 1, "T-002 item index must be the stable spatial ordinal")
+            assert(#item.readings == 1, "each Collection item must report every declared read")
             local expected = case.expected[position]
             assert(
                 item.rect[1] == expected[1]
@@ -768,6 +826,68 @@ do
             )
         end
     end
+end
+
+-- A declared item read uses the measured item rectangle and travels on that
+-- item in the same three-outcome shape as a Binding reading.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    local supplied = collectionReading({ { "Only", { 631, 100, 180, 40 } } })
+    local targets, targetReason = resolution.collection_read_targets(
+        reading,
+        cycle,
+        state,
+        "options",
+        supplied
+    )
+    assert(targetReason == nil and targets ~= nil)
+    assert(
+        targets[1].rect[1] == 632
+            and targets[1].rect[2] == 101
+            and targets[1].rect[3] == 178
+            and targets[1].rect[4] == 38,
+        "a Collection read offset must be applied to its measured item rectangle"
+    )
+    supplied[model.collection_item_reading_key("options", 0, "name.reader")] =
+        readValue("Wandering Merchant")
+    local result, reason = resolution.resolve_collection(
+        reading,
+        cycle,
+        state,
+        "options",
+        supplied
+    )
+    assert(reason == nil and result ~= nil)
+    assert(
+        result.items[1].readings[1].kind == "read"
+            and result.items[1].readings[1].reader == "name.reader"
+            and result.items[1].readings[1].lines[1].text == "Wandering Merchant",
+        "a Collection item must report the Reader result from its offset rectangle"
+    )
+    evidence.end_cycle(cycle)
+end
+
+
+-- Applying a Collection read offset must remain inside the frame. The resolver
+-- refuses the whole Collection instead of clamping the requested rectangle.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    local result, reason = resolution.resolve_collection(
+        reading,
+        cycle,
+        state,
+        "options",
+        collectionReading({ { "Outside", { 1200, 100, 180, 40 } } })
+    )
+    assert(
+        result == nil and reason == "read_out_of_frame",
+        "a Collection read whose offset rectangle leaves the frame must be refused"
+    )
+    evidence.end_cycle(cycle)
 end
 
 -- A bare search rectangle never produces an item. Only an absent result from

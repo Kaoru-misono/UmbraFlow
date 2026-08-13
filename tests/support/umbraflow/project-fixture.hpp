@@ -741,25 +741,23 @@ threshold = 1
 id = "fixture.surface.anchor"
 surface = "fixture.surface"
 ui_target = "fixture.marker"
-variant = "primary"
 placement = { kind = "fixed", rect = [0, 0, 1, 1] }
-detector = { all = [{ kind = "locator_present", locator = "fixture.anchor" }], any = [], none = [] }
+variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "fixture.anchor" }], any = [], none = [] } }]
 actions = []
 
 [[binding]]
 id = "fixture.target.primary"
 surface = "fixture.surface"
 ui_target = "fixture.target"
-variant = "primary"
 placement = { kind = "fixed", rect = [1, 0, 1, 1], action_point = [1, 0] }
-detector = { all = [{ kind = "locator_present", locator = "fixture.mark" }], any = [], none = [] }
+variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "fixture.mark" }], any = [], none = [] } }]
 actions = [{ id = "fixture.press", kind = "click", proof_locator = "fixture.mark" }]
 
 [[surface]]
 id = "fixture.surface"
 kind = "scene"
 covers = []
-identity = { all = ["fixture.surface.anchor"], any = [], none = [] }
+identity = ["fixture.surface.anchor"]
 )toml";
     }
 
@@ -776,16 +774,15 @@ identity = { all = ["fixture.surface.anchor"], any = [], none = [] }
 id = "fixture.panel.anchor"
 surface = "fixture.panel"
 ui_target = "fixture.marker"
-variant = "primary"
 placement = { kind = "fixed", rect = [1, 0, 1, 1] }
-detector = { all = [{ kind = "locator_present", locator = "fixture.mark" }], any = [], none = [] }
+variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "fixture.mark" }], any = [], none = [] } }]
 actions = []
 
 [[surface]]
 id = "fixture.panel"
 kind = "scene"
 covers = []
-identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
+identity = ["fixture.panel.anchor"]
 )toml";
     }
 

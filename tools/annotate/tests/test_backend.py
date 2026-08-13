@@ -144,9 +144,8 @@ def runtime_model(*, threshold: float = 0.9, with_asset: bool = True) -> dict:
                 "id": "camp-confirm",
                 "surface": "camp-scene",
                 "ui_target": "confirm-button",
-                "variant": "default",
                 "placement": placement,
-                "detector": detector,
+                "variants": [{"name": "default", "detector": detector}],
                 "actions": actions,
             }
         ],
@@ -155,7 +154,7 @@ def runtime_model(*, threshold: float = 0.9, with_asset: bool = True) -> dict:
                 "id": "camp-scene",
                 "kind": "scene",
                 "covers": [],
-                "identity": {"all": ["camp-confirm"], "any": [], "none": []},
+                "identity": ["camp-confirm"],
             }
         ],
         "transitions": [],

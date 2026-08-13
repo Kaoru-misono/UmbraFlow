@@ -110,12 +110,12 @@ local function detectorRecords(detector: any): { any }
     return result
 end
 
-local function evaluateBinding(binding: any, recordsByKey: any, cycle: any): any
+local function evaluateVariant(binding: any, variant: any, recordsByKey: any, cycle: any): any
     local supplied = if type(recordsByKey) == "table" then recordsByKey else {}
     local used = {}
     local recordByPredicate: { [string]: any } = {}
     local outcomeByPredicate: { [string]: any } = {}
-    for _, predicate in detectorRecords(binding.detector) do
+    for _, predicate in detectorRecords(variant.detector) do
         local predicateKey = model.predicate_key(predicate)
         local measurementKey = model.measurement_key(binding.id, predicate)
         local record = if type(recordsByKey) == "function"
@@ -135,18 +135,53 @@ local function evaluateBinding(binding: any, recordsByKey: any, cycle: any): any
         table.insert(used, record)
     end
     local combined = combine(
-        binding.detector.all,
-        binding.detector.any,
-        binding.detector.none,
+        variant.detector.all,
+        variant.detector.any,
+        variant.detector.none,
         function(predicate: any): any return outcomeByPredicate[model.predicate_key(predicate)] end
     )
     return {
         kind = combined.kind,
         confidence = combined.confidence,
         binding = binding,
+        variant = variant,
         records = used,
         record_by_predicate = recordByPredicate,
         evidence = summaries(used, cycle),
+    }
+end
+
+local function evaluateBinding(binding: any, recordsByKey: any, cycle: any): any
+    local evaluations = {}
+    local present = {}
+    local unknown = false
+    for _, variant in binding.variants do
+        local evaluated = evaluateVariant(binding, variant, recordsByKey, cycle)
+        table.insert(evaluations, evaluated)
+        if evaluated.kind == "present" then table.insert(present, evaluated) end
+        if evaluated.kind == "unknown" then unknown = true end
+    end
+
+    local kind = "absent"
+    if #present > 1 then
+        kind = "ambiguous"
+    elseif unknown then
+        kind = "unknown"
+    elseif #present == 1 then
+        kind = "present"
+    end
+    local selected = if #present == 1 then present[1] else nil
+    local variants = {}
+    for _, evaluated in present do table.insert(variants, evaluated.variant.name) end
+    return {
+        kind = kind,
+        confidence = if selected == nil then nil else selected.confidence,
+        binding = binding,
+        variant = if selected == nil then nil else selected.variant.name,
+        variants = freezeList(variants),
+        records = if selected == nil then {} else selected.records,
+        record_by_predicate = if selected == nil then {} else selected.record_by_predicate,
+        evidence = allEvidence(evaluations),
     }
 end
 
@@ -157,25 +192,30 @@ local function evaluateSurface(
     cycle: any
 ): any
     local evaluations = {}
-    local byBinding: { [string]: any } = {}
-    for _, group in { surface.identity.all, surface.identity.any, surface.identity.none } do
-        for _, bindingId in group do
-            if byBinding[bindingId] == nil then
-                local evaluated = evaluateBinding(runtimeModel.binding_by_id[bindingId], recordsByKey, cycle)
-                byBinding[bindingId] = evaluated
-                table.insert(evaluations, evaluated)
-            end
+    local absent = false
+    local unknown = false
+    local ambiguous = false
+    local weakest = 1
+    for _, bindingId in surface.identity do
+        local evaluated = evaluateBinding(runtimeModel.binding_by_id[bindingId], recordsByKey, cycle)
+        table.insert(evaluations, evaluated)
+        if evaluated.kind == "absent" then absent = true end
+        if evaluated.kind == "unknown" then unknown = true end
+        if evaluated.kind == "ambiguous" then ambiguous = true end
+        if evaluated.kind == "present" and evaluated.confidence < weakest then
+            weakest = evaluated.confidence
         end
     end
-    local combined = combine(
-        surface.identity.all,
-        surface.identity.any,
-        surface.identity.none,
-        function(bindingId: any): any return byBinding[bindingId] end
-    )
+    local kind = if ambiguous
+        then "ambiguous"
+        elseif absent
+        then "absent"
+        elseif unknown
+        then "unknown"
+        else "present"
     return {
-        kind = combined.kind,
-        confidence = combined.confidence,
+        kind = kind,
+        confidence = if kind == "present" then weakest else nil,
         surface = surface,
         binding_evaluations = evaluations,
         evidence = allEvidence(evaluations),
@@ -269,6 +309,12 @@ function resolution.resolve_state(
             if evaluated.kind == "unknown" then unknownScenes += 1 end
         elseif evaluated.kind == "present" then
             table.insert(presentLayers, surface)
+        end
+    end
+
+    for _, evaluated in evaluations do
+        if evaluated.kind == "ambiguous" then
+            return ambiguousState({}, "ambiguous_binding_variant", evaluations)
         end
     end
 
@@ -444,6 +490,118 @@ local function orderedCollectionLines(collection: any, lines: { any }): ({ any }
     return ordered, nil
 end
 
+local function collectionItems(collection: any, reading: any): ({ any }?, string?)
+    if type(reading) ~= "table" then return nil, "not_measured" end
+    if reading.kind == "absent" then return {}, nil end
+    if reading.kind ~= "read" or type(reading.lines) ~= "table" then
+        local reason = if reading.kind == "unknown" and evidence.is_unknown_reason(reading.reason)
+            then reading.reason
+            else "ocr_unreadable"
+        return nil, reason
+    end
+    local ordered, orderReason = orderedCollectionLines(collection, reading.lines)
+    if ordered == nil then return nil, orderReason end
+    local items = {}
+    for position, line in ordered do
+        items[position] = { index = position - 1, rect = line.rect }
+    end
+    return items, nil
+end
+
+local function offsetItemRect(
+    runtimeModel: any,
+    item: any,
+    read: any
+): ({ number }?, string?)
+    local base = item.rect
+    local offset = read.offset
+    if type(base) ~= "table" or #base ~= 4 then return nil, "ocr_unreadable" end
+    for _, value in base do
+        if type(value) ~= "number" or value % 1 ~= 0 then return nil, "ocr_unreadable" end
+    end
+    local area = {
+        base[1] + offset[1],
+        base[2] + offset[2],
+        base[3] + offset[3],
+        base[4] + offset[4],
+    }
+    if area[1] < 0
+        or area[2] < 0
+        or area[3] < 1
+        or area[4] < 1
+        or area[1] + area[3] > runtimeModel.base_resolution[1]
+        or area[2] + area[4] > runtimeModel.base_resolution[2]
+    then
+        return nil, "read_out_of_frame"
+    end
+    return freezeList(area), nil
+end
+
+function resolution.collection_read_targets(
+    runtimeModel: any,
+    cycle: any,
+    resolvedState: any,
+    collectionId: any,
+    readingsByKey: any
+): ({ any }?, string?)
+    local collection, targetReason = collectionTarget(
+        runtimeModel,
+        cycle,
+        resolvedState,
+        collectionId
+    )
+    if collection == nil then return nil, targetReason end
+    local supplied = if type(readingsByKey) == "table" then readingsByKey else {}
+    local reading = supplied[model.collection_reading_key(
+        collection.id,
+        collection.placement.reader
+    )]
+    local items, itemReason = collectionItems(collection, reading)
+    if items == nil then return nil, itemReason end
+    local targets = {}
+    for _, item in items do
+        for _, read in collection.reads do
+            local area, areaReason = offsetItemRect(runtimeModel, item, read)
+            if area == nil then return nil, areaReason end
+            table.insert(targets, table.freeze({
+                key = model.collection_item_reading_key(
+                    collection.id,
+                    item.index,
+                    read.reader
+                ),
+                reader = read.reader,
+                rect = area,
+            }))
+        end
+    end
+    return freezeList(targets), nil
+end
+
+local function reportedReading(subjectId: string, readerId: string, reading: any): any
+    local kind = "unknown"
+    local lines = nil
+    local reason = "not_measured"
+    if type(reading) == "table" then
+        if reading.kind == "read" and type(reading.lines) == "table" then
+            kind = "read"
+            lines = reading.lines
+            reason = nil
+        elseif reading.kind == "absent" then
+            kind = "absent"
+            reason = nil
+        elseif reading.kind == "unknown" and evidence.is_unknown_reason(reading.reason) then
+            reason = reading.reason
+        end
+    end
+    return table.freeze({
+        ui_target = subjectId,
+        reader = readerId,
+        kind = kind,
+        lines = lines,
+        reason = reason,
+    })
+end
+
 -- Resolves one variable-cardinality collection against the same live state
 -- that made its Surface available. A bare search rectangle contributes nothing:
 -- only an absent or successful answer from the collection's trusted block
@@ -468,23 +626,34 @@ function resolution.resolve_collection(
         collection.id,
         collection.placement.reader
     )]
-    if type(reading) ~= "table" then return nil, "not_measured" end
-    if reading.kind == "absent" then
-        return table.freeze({ count = 0, items = freezeList({}) }), nil
-    end
-    if reading.kind ~= "read" or type(reading.lines) ~= "table" then
-        local reason = if reading.kind == "unknown" and evidence.is_unknown_reason(reading.reason)
-            then reading.reason
-            else "ocr_unreadable"
-        return nil, reason
-    end
-    local ordered, orderReason = orderedCollectionLines(collection, reading.lines)
-    if ordered == nil then return nil, orderReason end
+    local detectedItems, itemReason = collectionItems(collection, reading)
+    if detectedItems == nil then return nil, itemReason end
+    local targets, targetReadReason = resolution.collection_read_targets(
+        runtimeModel,
+        cycle,
+        resolvedState,
+        collectionId,
+        supplied
+    )
+    if targets == nil then return nil, targetReadReason end
     local items = {}
-    for position, line in ordered do
+    for position, detected in detectedItems do
+        local readings = {}
+        for _, read in collection.reads do
+            table.insert(readings, reportedReading(
+                collection.id,
+                read.reader,
+                supplied[model.collection_item_reading_key(
+                    collection.id,
+                    detected.index,
+                    read.reader
+                )]
+            ))
+        end
         items[position] = table.freeze({
-            index = position - 1,
-            rect = line.rect,
+            index = detected.index,
+            rect = detected.rect,
+            readings = freezeList(readings),
         })
     end
     return table.freeze({ count = #items, items = freezeList(items) }), nil
@@ -529,13 +698,10 @@ end
 -- Binding must not cost a read, and a rule spelled twice would agree by test
 -- rather than by construction.
 --
--- The report is keyed by UiTarget rather than by Binding because a Binding is a
--- UiTarget plus a visual variant, and the variant that matches flips between two
--- captures of one unchanged instance whenever a hover or a highlight has its own
--- Binding -- which would move state_resolution_hash and every decision basis
--- under it.  The cost is that two present Bindings of one UiTarget cannot be
--- told apart, so that UiTarget reports nothing at all: which instance is on
--- screen is precisely what resolve_binding already refuses to guess.
+-- A Binding owns every visual variant sharing its placement and reads, so a
+-- variant change does not change which reporting subject exists. Multiple
+-- present Bindings of one UiTarget remain ambiguous because they are distinct
+-- placements or roles, and that UiTarget alone reports nothing.
 function resolution.reading_targets(
     runtimeModel: any,
     cycle: any,
@@ -614,31 +780,11 @@ function resolution.resolve_readings(
         recordsByKey
     ) do
         for _, readerId in binding.reads do
-            local reading = supplied[model.reading_key(binding.id, readerId)]
-            local kind = "unknown"
-            local lines = nil
-            local reason = "not_measured"
-            if type(reading) == "table" then
-                if reading.kind == "read" and type(reading.lines) == "table" then
-                    kind = "read"
-                    lines = reading.lines
-                    reason = nil
-                elseif reading.kind == "absent" then
-                    kind = "absent"
-                    reason = nil
-                elseif reading.kind == "unknown"
-                    and evidence.is_unknown_reason(reading.reason)
-                then
-                    reason = reading.reason
-                end
-            end
-            table.insert(result, table.freeze({
-                ui_target = binding.ui_target,
-                reader = readerId,
-                kind = kind,
-                lines = lines,
-                reason = reason,
-            }))
+            table.insert(result, reportedReading(
+                binding.ui_target,
+                readerId,
+                supplied[model.reading_key(binding.id, readerId)]
+            ))
         end
     end
     table.sort(result, function(left: any, right: any): boolean
@@ -677,12 +823,27 @@ function resolution.resolve_binding(
 
     local evaluations = {}
     local present = {}
+    local ambiguous = {}
     local hasUnknown = false
     for _, candidate in candidates do
         local evaluated = evaluateBinding(candidate, recordsByKey, cycle)
         table.insert(evaluations, evaluated)
         if evaluated.kind == "unknown" then hasUnknown = true end
         if evaluated.kind == "present" then table.insert(present, evaluated) end
+        if evaluated.kind == "ambiguous" then table.insert(ambiguous, evaluated) end
+    end
+    if #ambiguous > 0 then
+        local candidates = {}
+        for _, evaluated in ambiguous do
+            for _, variant in evaluated.variants do
+                table.insert(candidates, evaluated.binding.id .. ":" .. variant)
+            end
+        end
+        return table.freeze({
+            kind = "ambiguous_binding",
+            candidates = freezeList(candidates),
+            evidence = allEvidence(evaluations),
+        })
     end
     if hasUnknown then return unknownBinding("unknown_competitor", evaluations) end
     if #present == 0 then return unknownBinding("no_binding_candidate", evaluations) end
@@ -708,7 +869,7 @@ function resolution.resolve_binding(
         surface = selected.binding.surface,
         ui_target = selected.binding.ui_target,
         binding = selected.binding.id,
-        variant = selected.binding.variant,
+        variant = selected.variant,
         evidence = selected.evidence,
     })
     bindingLedger[result] = {

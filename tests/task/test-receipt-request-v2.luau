@@ -6,6 +6,10 @@ local function detector(locator: string): any
     return { all = { { kind = "locator_present", locator = locator } }, any = {}, none = {} }
 end
 
+local function variants(name: string, value: any): any
+    return { { name = name, detector = value } }
+end
+
 local runtime = model.compile({
     schema_version = 2,
     base_resolution = { 800, 600 },
@@ -25,18 +29,16 @@ local runtime = model.compile({
             id = "screen.identity",
             surface = "screen",
             ui_target = "title",
-            variant = "default",
             placement = { kind = "fixed", rect = { 10, 10, 200, 50 } },
-            detector = detector("title.locator"),
+            variants = variants("default", detector("title.locator")),
             actions = {},
         },
         {
             id = "confirm.enabled",
             surface = "screen",
             ui_target = "confirm",
-            variant = "enabled",
             placement = { kind = "fixed", rect = { 550, 480, 180, 70 }, action_point = { 640, 515 } },
-            detector = detector("confirm.locator"),
+            variants = variants("enabled", detector("confirm.locator")),
             actions = { { id = "activate", kind = "click", proof_locator = "confirm.locator" } },
         },
         -- The same Surface and the same proof, granting a keystroke instead:
@@ -45,9 +47,8 @@ local runtime = model.compile({
             id = "commit.enabled",
             surface = "screen",
             ui_target = "commit",
-            variant = "enabled",
             placement = { kind = "fixed", rect = { 300, 480, 180, 70 } },
-            detector = detector("confirm.locator"),
+            variants = variants("enabled", detector("confirm.locator")),
             actions = {
                 { id = "commit", kind = "key", key = "ENTER", proof_locator = "confirm.locator" },
             },
@@ -55,7 +56,7 @@ local runtime = model.compile({
     },
     collections = {},
     surfaces = {
-        { id = "screen", kind = "scene", covers = {}, identity = { all = { "screen.identity" }, any = {}, none = {} } },
+        { id = "screen", kind = "scene", covers = {}, identity = { "screen.identity" } },
     },
     transitions = {},
 })

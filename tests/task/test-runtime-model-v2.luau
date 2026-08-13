@@ -48,36 +48,40 @@ normalization = "trim"
 id = "settings.header"
 surface = "settings"
 ui_target = "header"
-variant = "default"
 placement = {
   kind = "fixed",
   rect = [40, 30, 600, 80],
 }
-detector = {
-  all = [
-    { kind = "locator_present", locator = "header.template" },
-    { kind = "text_equals", reader = "header.text", value = "Settings" },
-  ],
-  any = [],
-  none = [],
-}
+variants = [{
+  name = "default",
+  detector = {
+    all = [
+      { kind = "locator_present", locator = "header.template" },
+      { kind = "text_equals", reader = "header.text", value = "Settings" },
+    ],
+    any = [],
+    none = [],
+  },
+}]
 actions = []
 
 [[binding]]
 id = "settings.save"
 surface = "settings"
 ui_target = "save_button"
-variant = "enabled"
 placement = {
   kind = "fixed",
   rect = [1600, 920, 220, 90],
   action_point = [1710, 965],
 }
-detector = {
-  all = [{ kind = "locator_present", locator = "save.template" }],
-  any = [],
-  none = [],
-}
+variants = [{
+  name = "enabled",
+  detector = {
+    all = [{ kind = "locator_present", locator = "save.template" }],
+    any = [],
+    none = [],
+  },
+}]
 actions = [{ id = "activate", kind = "click", proof_locator = "save.template" }]
 
 [[collection]]
@@ -89,12 +93,13 @@ placement = {
   reader = "options.text",
   order = "left_to_right",
 }
+reads = []
 
 [[surface]]
 id = "settings"
 kind = "scene"
 covers = []
-identity = { all = ["settings.header"], any = [], none = [] }
+identity = ["settings.header"]
 
 [[transition]]
 id = "settings.saved"
@@ -113,7 +118,7 @@ assert(runtime.schema_version == 2)
 assert(runtime.ui_target_by_id.save_button.kind == "control")
 assert(runtime.ui_target_by_id.save_button.placement == nil)
 assert(runtime.ui_target_by_id.save_button.variant == nil)
-assert(runtime.binding_by_id["settings.save"].variant == "enabled")
+assert(runtime.binding_by_id["settings.save"].variants[1].name == "enabled")
 assert(runtime.binding_by_id["settings.save"].placement.rect[1] == 1600)
 assert(runtime.binding_by_id["settings.save"].placement.action_point[1] == 1710)
 assert(
@@ -124,6 +129,7 @@ assert(
     runtime.collection_by_id.options.placement.search_rect[3] == 1680,
     "T-002 collection search rectangle must survive TOML compilation"
 )
+assert(#runtime.collection_by_id.options.reads == 0)
 assert(runtime.locator_by_id["save.template"].asset_path == "assets/templates/save.png")
 assert(runtime.locator_by_id["save.template"].sha256 == nil)
 assert(runtime.asset_paths[1] == "assets/templates/header.png")
@@ -173,7 +179,7 @@ rejects(function()
     ))
 end)
 rejects(function()
-    project.parse(string.gsub(valid, 'variant = "enabled"', 'variant = "enabled"\nvariant = "other"'))
+    project.parse(string.gsub(valid, 'name = "enabled"', 'name = "enabled"\n  variant = "other"'))
 end)
 
 -- A Reader states its layout and inherits nothing. There is no default because

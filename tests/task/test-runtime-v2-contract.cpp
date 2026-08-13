@@ -277,18 +277,16 @@ normalization = "collapse_whitespace"
 id = "screen.anchor"
 surface = "screen"
 ui_target = "screen-marker"
-variant = "primary"
 placement = { kind = "fixed", rect = [0, 0, 1, 1] }
-detector = { all = [{ kind = "locator_present", locator = "screen-anchor" }], any = [], none = [] }
+variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "screen-anchor" }], any = [], none = [] } }]
 actions = []
 
 [[binding]]
 id = "title.primary"
 surface = "screen"
 ui_target = "title"
-variant = "primary"
 placement = { kind = "fixed", rect = [1, 0, 1, 1] }
-detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] }
+variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] } }]
 actions = []
 reads = ["title.reader"]
 
@@ -296,7 +294,7 @@ reads = ["title.reader"]
 id = "screen"
 kind = "scene"
 covers = []
-identity = { all = ["screen.anchor"], any = [], none = [] }
+identity = ["screen.anchor"]
 )toml";
         }
 
@@ -325,16 +323,15 @@ normalization = "collapse_whitespace"
 id = "title.identity"
 surface = "screen"
 ui_target = "title"
-variant = "default"
 placement = { kind = "fixed", rect = [0, 0, 1, 1] }
-detector = { all = [{ kind = "text_equals", reader = "title.reader", value = "Settings" }], any = [], none = [] }
+variants = [{ name = "default", detector = { all = [{ kind = "text_equals", reader = "title.reader", value = "Settings" }], any = [], none = [] } }]
 actions = []
 
 [[surface]]
 id = "screen"
 kind = "scene"
 covers = []
-identity = { all = ["title.identity"], any = [], none = [] }
+identity = ["title.identity"]
 )toml";
         }
 
@@ -352,6 +349,7 @@ normalization = "trim"
 id = "options"
 surface = "screen"
 placement = { kind = "detected", search_rect = [0, 0, 3, 1], reader = "options.reader", order = "left_to_right" }
+reads = []
 )toml";
         }
 
@@ -401,9 +399,8 @@ normalization = "collapse_whitespace"
 id = "subtitle.primary"
 surface = "screen"
 ui_target = "subtitle"
-variant = "primary"
 placement = { kind = "fixed", rect = [2, 0, 1, 1] }
-detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] }
+variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] } }]
 actions = []
 reads = ["subtitle.reader"]
 )toml";
@@ -444,25 +441,23 @@ threshold = 1
 id = "screen.anchor"
 surface = "screen"
 ui_target = "screen-marker"
-variant = "primary"
 placement = { kind = "fixed", rect = [0, 0, 1, 1] }
-detector = { all = [{ kind = "locator_present", locator = "screen-anchor" }], any = [], none = [] }
+variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "screen-anchor" }], any = [], none = [] } }]
 actions = []
 
 [[binding]]
 id = "commit.primary"
 surface = "screen"
 ui_target = "commit"
-variant = "primary"
 placement = { kind = "fixed", rect = [1, 0, 1, 1] }
-detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] }
+variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] } }]
 actions = [{ id = "activate", kind = "key", key = "E", proof_locator = "confirm-mark" }]
 
 [[surface]]
 id = "screen"
 kind = "scene"
 covers = []
-identity = { all = ["screen.anchor"], any = [], none = [] }
+identity = ["screen.anchor"]
 )toml";
         }
 
@@ -1620,7 +1615,7 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         );
         CHECK_MESSAGE(
             one
-                == R"({"count":1,"items":[{"index":0,"rect":[1,0,1,1]}]})",
+                == R"({"count":1,"items":[{"index":0,"readings":[],"rect":[1,0,1,1]}]})",
             "T-002 one-item Host result must report count, index and exact rectangle"
         );
 
@@ -1641,12 +1636,12 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
         );
         CHECK_MESSAGE(
             two
-                == R"({"count":2,"items":[{"index":0,"rect":[0,0,1,1]},{"index":1,"rect":[2,0,1,1]}]})",
+                == R"({"count":2,"items":[{"index":0,"readings":[],"rect":[0,0,1,1]},{"index":1,"readings":[],"rect":[2,0,1,1]}]})",
             "T-002 two-item Host result must report count, indices and exact rectangles"
         );
 
         auto const expectedThree = std::string{
-            R"({"count":3,"items":[{"index":0,"rect":[0,0,1,1]},{"index":1,"rect":[1,0,1,1]},{"index":2,"rect":[2,0,1,1]}]})"
+            R"({"count":3,"items":[{"index":0,"readings":[],"rect":[0,0,1,1]},{"index":1,"readings":[],"rect":[1,0,1,1]},{"index":2,"readings":[],"rect":[2,0,1,1]}]})"
         };
         auto const threeReversed = resolve(
             {

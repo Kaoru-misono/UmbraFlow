@@ -96,7 +96,13 @@ Rules:
   absent;
 - all referenced contexts and surfaces must exist;
 - a surface must have at least one binding with a positive identity predicate;
-- a surface identity may not consist only of forbidden (`none`) predicates.
+- a surface identity is one non-empty list of Binding IDs, and every listed
+  Binding must be present. It has no `any` or `none` branch.
+
+> **Amended 2026-08-14 by `schema/umbraflow-runtime-v2.schema.json`.** Visual
+> alternatives now live in a Binding's non-empty `variants` list. Surface
+> identity is therefore only conjunction; the former flat `all`/`any`/`none`
+> object is not accepted.
 
 > **Amended 2026-08-13 for U13 `T-001`.** Runtime v2 uses the schema's required
 > `covers` list for every Surface. A scene's list is empty; an overlay or
@@ -433,11 +439,12 @@ must be satisfied before a candidate can enter the stack.
 > the list `state_readings` and one entry `binding_reading`.
 >
 > A reading is attributed to the UiTarget and not to the Binding that carried
-> it, because a Binding is a UiTarget plus a visual variant: the variant a hover
-> or a highlight selects differs between two captures of one semantic instance,
-> and the serialized resolution is hashed into `state_resolution_hash` and
-> through it into `decision_basis_hash`, so a binding ID would move the decision
-> on a hover. The confidence score is excluded for the same
+> it. A Binding owns every visual variant sharing its placement and reads, so a
+> hover or highlight changes the matched variant without changing the reporting
+> subject. Multiple present Bindings of one UiTarget still report nothing,
+> because those Bindings name distinct placements or roles. The serialized
+> resolution is hashed into `state_resolution_hash` and through it into
+> `decision_basis_hash`. The confidence score is excluded for the same
 > reason and not for economy — a score differs between two captures of one
 > unchanged screen, and a recapture that is semantically equal must remain one
 > decision. The pre-normalisation text is excluded with it; the raw read is what
@@ -580,6 +587,11 @@ id = "training_confirm"
 kind = "overlay"
 contexts = ["camp"]
 covers = ["camp_scene"]
+
+# Amended 2026-08-14: this historical sketch predates the locked RuntimeModel
+# field shapes. Use schema/umbraflow-runtime-v2.schema.json for authored data;
+# in particular, Binding detectors live under variants and Surface identity is
+# one list of Binding IDs.
 
 [[binding]]
 id = "training_confirm_confirm_button"

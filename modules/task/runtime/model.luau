@@ -1,13 +1,13 @@
 --!strict
 -- Immutable RuntimeModel v2 compiler.
 --
--- UiTarget is semantic identity only.  Every visual variant and every pixel
--- coordinate belongs to one Binding.  A Binding still needs positive measured
--- evidence: its placement is never evidence by itself.
+-- UiTarget is semantic identity only. Every pixel coordinate belongs to one
+-- Binding, and that Binding owns every visual variant sharing the coordinate.
+-- A Binding still needs positive measured evidence: placement is never evidence.
 
 local model = {}
 model.schema = "umbraflow-runtime/v2"
-model.schema_hash = "5265f1b63a426703a06879c3e83b188363af170952ed87c291d21f15aa17466b"
+model.schema_hash = "276ba76976a66ff0ebc2c9f99090d5fba984c5462a5ef070733184d6705caa88"
 
 local runtimeModels: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 local semanticBytes: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any
@@ -256,6 +256,19 @@ function model.collection_reading_key(collectionId: any, readerId: any): string
         .. identifier("reader_id", readerId)
 end
 
+function model.collection_item_reading_key(
+    collectionId: any,
+    itemIndex: any,
+    readerId: any
+): string
+    return "collection:"
+        .. identifier("collection_id", collectionId)
+        .. ":item:"
+        .. tostring(integer("item_index", itemIndex))
+        .. ":read:"
+        .. identifier("reader_id", readerId)
+end
+
 local function predicate(what: string, value: any): any
     local source = object(what, value)
     if source.kind == "locator_present" then
@@ -305,24 +318,7 @@ local function detector(what: string, value: any): any
 end
 
 local function identity(what: string, value: any): any
-    local source = object(what, value)
-    only(what, source, { all = true, any = true, none = true })
-    local result = table.freeze({
-        all = stringList(what .. ".all", source.all),
-        any = stringList(what .. ".any", source.any),
-        none = stringList(what .. ".none", source.none),
-    })
-    if #result.all + #result.any == 0 then
-        fail(what, "needs a positive Binding in all or any")
-    end
-    local seen: { [string]: boolean } = {}
-    for _, group in { result.all, result.any, result.none } do
-        for _, id in group do
-            if seen[id] then fail(what, "repeats Binding '" .. id .. "'") end
-            seen[id] = true
-        end
-    end
-    return result
+    return stringList(what, value, true)
 end
 
 local function uiTarget(what: string, value: any): any
@@ -402,7 +398,7 @@ end
 local function collectionBuilder(bounds: { number }): (string, any) -> any
     return function(what: string, value: any): any
         local source = object(what, value)
-        only(what, source, { id = true, surface = true, placement = true })
+        only(what, source, { id = true, surface = true, placement = true, reads = true })
         local placement = object(what .. ".placement", source.placement)
         only(what .. ".placement", placement, {
             kind = true,
@@ -412,6 +408,31 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
         })
         if placement.kind ~= "detected" then
             fail(what .. ".placement.kind", "must be detected")
+        end
+        local reads = {}
+        local seenReaders: { [string]: boolean } = {}
+        for index, valueRead in dense(what .. ".reads", source.reads) do
+            local read = object(what .. ".reads[" .. tostring(index) .. "]", valueRead)
+            local readWhat = what .. ".reads[" .. tostring(index) .. "]"
+            only(readWhat, read, { reader = true, offset = true })
+            local readerId = identifier(readWhat .. ".reader", read.reader)
+            if seenReaders[readerId] then
+                fail(what .. ".reads", "repeats Reader '" .. readerId .. "'")
+            end
+            seenReaders[readerId] = true
+            local values = dense(readWhat .. ".offset", read.offset)
+            if #values ~= 4 then
+                fail(readWhat .. ".offset", "must contain exactly four integers")
+            end
+            reads[index] = table.freeze({
+                reader = readerId,
+                offset = table.freeze({
+                    integer(readWhat .. ".offset[1]", values[1]),
+                    integer(readWhat .. ".offset[2]", values[2]),
+                    integer(readWhat .. ".offset[3]", values[3]),
+                    integer(readWhat .. ".offset[4]", values[4]),
+                }),
+            })
         end
         return table.freeze({
             id = identifier(what .. ".id", source.id),
@@ -429,8 +450,18 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
                     top_to_bottom = true,
                 }),
             }),
+            reads = table.freeze(reads),
         })
     end
+end
+
+local function bindingVariant(what: string, value: any): any
+    local source = object(what, value)
+    only(what, source, { name = true, detector = true })
+    return table.freeze({
+        name = identifier(what .. ".name", source.name),
+        detector = detector(what .. ".detector", source.detector),
+    })
 end
 
 -- One action a Binding grants, in one of the two kinds a target offers.
@@ -479,12 +510,20 @@ local function bindingBuilder(bounds: { number }): (string, any) -> any
             id = true,
             surface = true,
             ui_target = true,
-            variant = true,
             placement = true,
-            detector = true,
+            variants = true,
             actions = true,
             reads = true,
         })
+        local variants = records(what .. ".variants", source.variants, bindingVariant)
+        if #variants == 0 then fail(what .. ".variants", "must not be empty") end
+        local variantByName = {}
+        for _, valueVariant in variants do
+            if variantByName[valueVariant.name] then
+                fail(what .. ".variants", "contains duplicate name '" .. valueVariant.name .. "'")
+            end
+            variantByName[valueVariant.name] = true
+        end
         local actions = records(what .. ".actions", source.actions, action)
         mapById(what .. ".actions", actions)
         local placement = buildPlacement(what .. ".placement", source.placement)
@@ -513,9 +552,8 @@ local function bindingBuilder(bounds: { number }): (string, any) -> any
             id = identifier(what .. ".id", source.id),
             surface = identifier(what .. ".surface", source.surface),
             ui_target = identifier(what .. ".ui_target", source.ui_target),
-            variant = identifier(what .. ".variant", source.variant),
             placement = placement,
-            detector = detector(what .. ".detector", source.detector),
+            variants = variants,
             actions = actions,
             reads = reads,
         })
@@ -688,25 +726,37 @@ function model.compile(value: any): any
     for _, valueBinding in bindings do
         requireRef("binding '" .. valueBinding.id .. "'", surfaceById, valueBinding.surface)
         local target = requireRef("binding '" .. valueBinding.id .. "'", targetById, valueBinding.ui_target)
-        detectorRefs("binding '" .. valueBinding.id .. "' detector", valueBinding.detector, locatorById, readerById)
+        for _, valueVariant in valueBinding.variants do
+            detectorRefs(
+                "binding '" .. valueBinding.id .. "' variant '" .. valueVariant.name .. "' detector",
+                valueVariant.detector,
+                locatorById,
+                readerById
+            )
+        end
         for _, readerId in valueBinding.reads do
             requireRef("binding '" .. valueBinding.id .. "' reads", readerById, readerId)
         end
         if #valueBinding.actions > 0 and target.kind ~= "control" then
             fail("binding '" .. valueBinding.id .. "'", "cannot grant actions to a region UiTarget")
         end
-        local positiveLocators: { [string]: boolean } = {}
-        for _, group in { valueBinding.detector.all, valueBinding.detector.any } do
-            for _, valuePredicate in group do
-                if valuePredicate.kind == "locator_present" then
-                    positiveLocators[valuePredicate.locator] = true
+        for _, valueVariant in valueBinding.variants do
+            local positiveLocators: { [string]: boolean } = {}
+            for _, group in { valueVariant.detector.all, valueVariant.detector.any } do
+                for _, valuePredicate in group do
+                    if valuePredicate.kind == "locator_present" then
+                        positiveLocators[valuePredicate.locator] = true
+                    end
                 end
             end
-        end
-        for _, valueAction in valueBinding.actions do
-            requireRef("action '" .. valueAction.id .. "'", locatorById, valueAction.proof_locator)
-            if not positiveLocators[valueAction.proof_locator] then
-                fail("action '" .. valueAction.id .. "'", "proof_locator must be positive Binding evidence")
+            for _, valueAction in valueBinding.actions do
+                requireRef("action '" .. valueAction.id .. "'", locatorById, valueAction.proof_locator)
+                if not positiveLocators[valueAction.proof_locator] then
+                    fail(
+                        "action '" .. valueAction.id .. "'",
+                        "proof_locator must be positive evidence in every Binding variant"
+                    )
+                end
             end
         end
         local rows = bindingsBySurface[valueBinding.surface]
@@ -736,6 +786,9 @@ function model.compile(value: any): any
                 "must name a block Reader"
             )
         end
+        for _, valueRead in valueCollection.reads do
+            requireRef("collection '" .. valueCollection.id .. "' reads", readerById, valueRead.reader)
+        end
         local rows = collectionsBySurface[valueCollection.surface]
         if rows == nil then
             rows = {}
@@ -750,12 +803,10 @@ function model.compile(value: any): any
             if covered == valueSurface.id then fail("surface '" .. valueSurface.id .. "'", "cannot cover itself") end
             requireRef("surface '" .. valueSurface.id .. "'", surfaceById, covered)
         end
-        for _, group in { valueSurface.identity.all, valueSurface.identity.any, valueSurface.identity.none } do
-            for _, bindingId in group do
-                local valueBinding = requireRef("surface '" .. valueSurface.id .. "' identity", bindingById, bindingId)
-                if valueBinding.surface ~= valueSurface.id then
-                    fail("surface '" .. valueSurface.id .. "' identity", "must use a Binding on that Surface")
-                end
+        for _, bindingId in valueSurface.identity do
+            local valueBinding = requireRef("surface '" .. valueSurface.id .. "' identity", bindingById, bindingId)
+            if valueBinding.surface ~= valueSurface.id then
+                fail("surface '" .. valueSurface.id .. "' identity", "must use a Binding on that Surface")
             end
         end
     end

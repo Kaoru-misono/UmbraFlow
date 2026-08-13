@@ -223,25 +223,23 @@ threshold = 1
 id = "screen.anchor"
 surface = "screen"
 ui_target = "screen-marker"
-variant = "primary"
 placement = { kind = "fixed", rect = [0, 0, 1, 1] }
-detector = { all = [{ kind = "locator_present", locator = "screen-anchor" }], any = [], none = [] }
+variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "screen-anchor" }], any = [], none = [] } }]
 actions = []
 
 [[binding]]
 id = "confirm.primary"
 surface = "screen"
 ui_target = "confirm"
-variant = "primary"
 placement = { kind = "fixed", rect = [1, 0, 1, 1], action_point = [1, 0] }
-detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] }
+variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] } }]
 actions = [{ id = "activate", kind = "click", proof_locator = "confirm-mark" }]
 
 [[surface]]
 id = "screen"
 kind = "scene"
 covers = []
-identity = { all = ["screen.anchor"], any = [], none = [] }
+identity = ["screen.anchor"]
 )toml";
     }
 
@@ -256,16 +254,15 @@ identity = { all = ["screen.anchor"], any = [], none = [] }
 id = "panel.anchor"
 surface = "panel"
 ui_target = "screen-marker"
-variant = "primary"
 placement = { kind = "fixed", rect = [1, 0, 1, 1] }
-detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] }
+variants = [{ name = "primary", detector = { all = [{ kind = "locator_present", locator = "confirm-mark" }], any = [], none = [] } }]
 actions = []
 
 [[surface]]
 id = "panel"
 kind = "scene"
 covers = []
-identity = { all = ["panel.anchor"], any = [], none = [] }
+identity = ["panel.anchor"]
 )toml";
     }
 

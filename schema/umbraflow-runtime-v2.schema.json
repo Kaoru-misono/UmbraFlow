@@ -129,30 +129,11 @@
       ]
     },
     "surface_identity": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["all", "any", "none"],
-      "properties": {
-        "all": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/identifier" },
-          "uniqueItems": true
-        },
-        "any": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/identifier" },
-          "uniqueItems": true
-        },
-        "none": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/identifier" },
-          "uniqueItems": true
-        }
-      },
-      "anyOf": [
-        { "properties": { "all": { "minItems": 1 } } },
-        { "properties": { "any": { "minItems": 1 } } }
-      ]
+      "$comment": "A Surface is present only when every listed Binding is present. Alternative visual states belong to one Binding's variants rather than creating a disjunction here.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/identifier" },
+      "uniqueItems": true
     },
     "fixed_placement": {
       "type": "object",
@@ -177,14 +158,42 @@
       }
     },
     "collection": {
-      "$comment": "An ordered, variable-cardinality collection on one Surface. Its item count and item placements are runtime results, never authored geometry. The placement's Reader is detector evidence for the items and must declare block layout; this is distinct from a Reader named by Binding.reads, which remains reporting-only and never decides a Binding detector.",
+      "$comment": "An ordered, variable-cardinality collection on one Surface. Its item count and item placements are runtime results, never authored geometry. The placement's Reader is detector evidence for the items and must declare block layout. A Reader named in reads REPORTS from each measured item rectangle and never decides whether the Collection or an item exists; only the placement's detector Reader decides that.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "surface", "placement"],
+      "required": ["id", "surface", "placement", "reads"],
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
         "surface": { "$ref": "#/$defs/identifier" },
-        "placement": { "$ref": "#/$defs/detected_collection_placement" }
+        "placement": { "$ref": "#/$defs/detected_collection_placement" },
+        "reads": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/collection_read" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "collection_read_offset": {
+      "$comment": "The [dx, dy, dw, dh] delta applied to one measured item rectangle. The resulting rectangle must have positive extent and remain wholly inside the frame; leaving the frame is a refusal, never a clamp.",
+      "type": "array",
+      "prefixItems": [
+        { "type": "integer" },
+        { "type": "integer" },
+        { "type": "integer" },
+        { "type": "integer" }
+      ],
+      "items": false,
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "collection_read": {
+      "$comment": "One reporting-only Reader and the delta from each item's measured rectangle that it reads. It REPORTS and never decides Collection or item presence.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reader", "offset"],
+      "properties": {
+        "reader": { "$ref": "#/$defs/identifier" },
+        "offset": { "$ref": "#/$defs/collection_read_offset" }
       }
     },
     "click_action": {
@@ -226,18 +235,21 @@
         "id",
         "surface",
         "ui_target",
-        "variant",
         "placement",
-        "detector",
+        "variants",
         "actions"
       ],
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
         "surface": { "$ref": "#/$defs/identifier" },
         "ui_target": { "$ref": "#/$defs/identifier" },
-        "variant": { "$ref": "#/$defs/identifier" },
         "placement": { "$ref": "#/$defs/fixed_placement" },
-        "detector": { "$ref": "#/$defs/detector" },
+        "variants": {
+          "$comment": "The visual states sharing this Binding's target, placement, actions and reads. Exactly one detector must be satisfied for the Binding to be present; two satisfied variants are an ambiguity, never a declaration-order pick. Variant names are unique within the Binding and the trusted compiler enforces that relation.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/binding_variant" }
+        },
         "actions": {
           "type": "array",
           "items": { "$ref": "#/$defs/binding_action" }
@@ -269,6 +281,15 @@
           }
         }
       ]
+    },
+    "binding_variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "detector"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "detector": { "$ref": "#/$defs/detector" }
+      }
     },
     "surface": {
       "type": "object",
@@ -549,7 +570,7 @@
       ]
     },
     "state_readings": {
-      "$comment": "Every reading a resolved state reports, ordered by ui_target then reader so one world produces one document. One entry per Reader every reporting Binding named, whatever the outcome, so the length is decided by the model and the resolved stack rather than by what the Host managed to answer. It is keyed by UiTarget rather than by Binding because a Binding names a visual variant, and the variant a hover or a highlight selects changes between two captures of one semantic instance. Two present Bindings sharing a UiTarget report nothing for it: which instance is on screen is exactly what an ambiguity means.",
+      "$comment": "Every reading a resolved state reports, ordered by ui_target then reader so one world produces one document. One entry per Reader every reporting Binding named, whatever the outcome, so the length is decided by the model and the resolved stack rather than by what the Host managed to answer. A Binding owns the visual variants that share its placement and reads, so changing which one matches does not change the reporting subject. Multiple present Bindings sharing a UiTarget still report nothing for it because they are distinct placements or roles and therefore remain ambiguous.",
       "type": "array",
       "items": { "$ref": "#/$defs/binding_reading" }
     },
@@ -557,10 +578,15 @@
       "$comment": "One item located by a collection's trusted block Reader. index is the zero-based spatial ordinal declared by the collection, not the Reader adapter's enumeration order. rect is copied exactly from the detected line in image coordinates.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["index", "rect"],
+      "required": ["index", "rect", "readings"],
       "properties": {
         "index": { "type": "integer", "minimum": 0 },
-        "rect": { "$ref": "#/$defs/rect" }
+        "rect": { "$ref": "#/$defs/rect" },
+        "readings": {
+          "$comment": "One result for every reporting-only Reader the Collection declares, in declaration order.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/binding_reading" }
+        }
       }
     },
     "resolved_collection": {
