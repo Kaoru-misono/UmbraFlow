@@ -593,6 +593,36 @@ return {
                             .has_value());
         }
 
+        // Two roots with one supplied, because a refusal that says only "the
+        // closure is incomplete" leaves the reader to find which of them is
+        // absent -- and with one root the message cannot be wrong about it.
+        SUBCASE("the refusal names the root that is missing")
+        {
+            auto registrar = ProjectPluginRegistrar{};
+            auto fixture   = registrationFixture(
+                "fixture.catalogue",
+                k_cataloguePlugin,
+                {
+                    // Registration requires root names sorted by UTF-8 bytes.
+                    artifactRoot("attestations", k_otherRoot),
+                    artifactRoot("content", k_contentRoot),
+                }
+            );
+            auto const result = registrar.registerPlugin(
+                fixture.registration,
+                std::string{k_cataloguePlugin},
+                {artifactBlob("content", std::string{k_contentRoot})},
+                fixture.schemaOwner
+            );
+            REQUIRE_FALSE(result.has_value());
+            CHECK_MESSAGE(
+                result.error().message()
+                    == "ProjectPlugin artifact blob is missing for registered "
+                       "root 'attestations'",
+                "a missing blob must be refused by name, not by category"
+            );
+        }
+
         SUBCASE("extra blob is rejected")
         {
             auto registrar = ProjectPluginRegistrar{};

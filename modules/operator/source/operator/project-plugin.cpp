@@ -24,9 +24,6 @@ namespace uf::operator_runtime
     namespace
     {
         constexpr auto k_maximumCanonicalBytes = std::size_t{1024U} * 1024U;
-        constexpr auto k_maximumArtifactCount = std::size_t{64U};
-        constexpr auto k_maximumArtifactBytes = std::size_t{4U} * 1024U * 1024U;
-        constexpr auto k_maximumTotalArtifactBytes = std::size_t{16U} * 1024U * 1024U;
 
         constexpr auto k_functions = std::array{
             std::pair{ProjectPluginFunction::Derive, std::string_view{"derive"}},
@@ -75,7 +72,8 @@ namespace uf::operator_runtime
             -> Result<std::vector<script::PureDataProgram::Artifact>>
         {
             auto const& roots = registration.projectArtifactRoots();
-            if (roots.size() > k_maximumArtifactCount || exactBlobs.size() > k_maximumArtifactCount)
+            if (roots.size() > script::PureDataProgram::k_maximumArtifactCount
+                || exactBlobs.size() > script::PureDataProgram::k_maximumArtifactCount)
             {
                 return refuse("ProjectPlugin artifact root count exceeds its ceiling");
             }
@@ -84,11 +82,11 @@ namespace uf::operator_runtime
             auto totalBytes = std::size_t{0};
             for (auto& blob : exactBlobs)
             {
-                if (blob.bytes.size() > k_maximumArtifactBytes)
+                if (blob.bytes.size() > script::PureDataProgram::k_maximumArtifactBytes)
                 {
                     return refuse("ProjectPlugin artifact exceeds its byte ceiling");
                 }
-                if (totalBytes > k_maximumTotalArtifactBytes - blob.bytes.size())
+                if (totalBytes > script::PureDataProgram::k_maximumArtifactClosureBytes - blob.bytes.size())
                 {
                     return refuse("ProjectPlugin artifacts exceed their total ceiling");
                 }
@@ -109,11 +107,6 @@ namespace uf::operator_runtime
                     return refuse("ProjectPlugin received an unregistered artifact blob");
                 }
             }
-            if (blobsByName.size() != roots.size())
-            {
-                return refuse("ProjectPlugin artifact blob closure is incomplete");
-            }
-
             auto verified = std::vector<script::PureDataProgram::Artifact>{};
             verified.reserve(roots.size());
             for (auto const& root : roots)
@@ -121,7 +114,12 @@ namespace uf::operator_runtime
                 auto const found = blobsByName.find(root.name);
                 if (found == blobsByName.end())
                 {
-                    return refuse("ProjectPlugin artifact blob closure is incomplete");
+                    return refuse(
+                        "ProjectPlugin artifact blob is missing for registered "
+                        "root '"
+                        + root.name
+                        + "'"
+                    );
                 }
                 UF_TRY_VALUE(actualHash, sha256(std::as_bytes(std::span{found->second})));
                 if (actualHash != root.rootHash)
