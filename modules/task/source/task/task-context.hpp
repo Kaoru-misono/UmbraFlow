@@ -174,20 +174,6 @@ namespace uf::task
     class TaskContext final
     {
     public:
-        // What one loadTemplate produced: the ticket the script holds and the
-        // content hash of the blob it came from. The hash comes back rather than
-        // being recomputed because the caller's trace line needs it and the store
-        // already has it.
-        //
-        // No in-class initializer for the hash: ContentHash has no default state.
-        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
-        struct LoadedTemplate final
-        {
-            TemplateTicket ticket{};
-
-            ContentHash hash;
-        };
-
         // What the colour key a crop was cut under actually took. Reported
         // because the key is the one authoring decision nothing else measures: a
         // masked template that selects almost nothing, or almost everything,
@@ -554,12 +540,11 @@ namespace uf::task
             -> std::optional<TargetGeneration>;
 
         // Decodes one template PNG into this generation's template store and
-        // returns the ticket naming it, with the content hash of the blob for
-        // the caller's trace line. Identical bytes yield the same ticket.
+        // returns the ticket naming it. Identical bytes yield the same ticket.
         [[nodiscard]]
         auto loadTemplate(
             std::span<std::byte const> pngBytes
-        ) -> Result<LoadedTemplate>;
+        ) -> Result<TemplateTicket>;
 
         // Reads and writes one file inside the privileged annotation directory.
         // Production RuntimeArtifact bytes never pass through this authoring seam.

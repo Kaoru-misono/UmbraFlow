@@ -4,8 +4,6 @@
 #include "project-fixture.hpp"
 #include "schema-binding.hpp"
 
-#include <script/pure-data-program.hpp>
-
 #include <domain/content-hash.hpp>
 
 #include <doctest/doctest.h>
@@ -158,8 +156,6 @@ namespace uf::operator_runtime
         auto manifestSpec() -> SessionManifestSpec
         {
             return SessionManifestSpec{
-                .hostProtocolSchemaHash       = hashOf("host"),
-                .runtimeModelSchemaHash       = hashOf("runtime-schema"),
                 .runtimeModelArtifactRootHash = hashOf("runtime-root"),
                 .operatorProtocolSchemaHash   = hashOf("operator"),
                 .projectRegistrationHash      = hashOf("registration"),
@@ -628,7 +624,6 @@ namespace uf::operator_runtime
         CHECK(manifestDefinition.find("\"project_registration_hash\"") != std::string::npos);
         CHECK(manifestDefinition.find("\"policy_artifact_hash\"") != std::string::npos);
         CHECK(manifestDefinition.find("\"journal_envelope_schema_hash\"") != std::string::npos);
-        CHECK(manifestDefinition.find("\"plugin_environment_hash\"") != std::string::npos);
 
         auto const first  = SessionManifest::create(manifestSpec());
         auto const second = SessionManifest::create(manifestSpec());
@@ -643,16 +638,14 @@ namespace uf::operator_runtime
         // that leaves the canonical form changes both mints identically and
         // would pass every assertion above.
         using SpecField = ContentHash SessionManifestSpec::*;
-        constexpr auto fields = std::array<std::pair<std::string_view, SpecField>, 8U>{{
+        constexpr auto fields = std::array<std::pair<std::string_view, SpecField>, 6U>{{
             {"agent_profile_hash", &SessionManifestSpec::agentProfileHash},
-            {"host_protocol_schema_hash", &SessionManifestSpec::hostProtocolSchemaHash},
             {"journal_envelope_schema_hash", &SessionManifestSpec::journalEnvelopeSchemaHash},
             {"operator_protocol_schema_hash", &SessionManifestSpec::operatorProtocolSchemaHash},
             {"policy_artifact_hash", &SessionManifestSpec::policyArtifactHash},
             {"project_registration_hash", &SessionManifestSpec::projectRegistrationHash},
             {"runtime_model_artifact_root_hash",
              &SessionManifestSpec::runtimeModelArtifactRootHash},
-            {"runtime_model_schema_hash", &SessionManifestSpec::runtimeModelSchemaHash},
         }};
 
         for (auto const& [name, field] : fields)
@@ -670,26 +663,6 @@ namespace uf::operator_runtime
             );
         }
 
-        // The ninth value the manifest binds, which no spec field can move
-        // because no caller states it. The bridge source that wraps every
-        // plugin call, the global whitelist and the frozen tables published
-        // beside it are its whole preimage, and until it was bound here a
-        // framework upgrade that changed any of them changed what every plugin
-        // did under a session manifest whose hash had not moved.
-        CHECK(
-            first->canonicalBytes().find(
-                "\"plugin_environment_hash\":\"" + first->pluginEnvironmentHash().hex() + "\""
-            )
-            != std::string::npos
-        );
-
-        // And the mint reads it from the framework rather than restating a
-        // constant of its own: the same digest the script module publishes is
-        // the one this manifest carries, so a moved environment moves the
-        // manifest by construction.
-        auto const environment = script::pluginEnvironmentHash();
-        REQUIRE(environment.has_value());
-        CHECK(first->pluginEnvironmentHash() == *environment);
     }
 
     TEST_CASE("contract-state-s06")

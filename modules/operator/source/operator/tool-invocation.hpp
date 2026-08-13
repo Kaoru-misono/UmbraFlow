@@ -34,14 +34,12 @@ namespace uf::operator_runtime
         friend class ProjectToolCatalogSchemaOwner;
 
         ContentHash    m_projectRegistrationHash;
-        ContentHash    m_toolCatalogHash;
         std::string    m_toolName;
         CanonicalJson  m_canonicalArgs;
         ToolDescriptor m_descriptor;
 
         ValidatedToolInvocation(
             ContentHash projectRegistrationHash,
-            ContentHash toolCatalogHash,
             std::string toolName,
             CanonicalJson canonicalArgs,
             ToolDescriptor descriptor
@@ -49,7 +47,6 @@ namespace uf::operator_runtime
 
     public:
         [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
-        [[nodiscard]] auto toolCatalogHash() const -> ContentHash;
 
         [[nodiscard]]
         auto toolName() const noexcept UF_LIFETIME_BOUND -> std::string const&;

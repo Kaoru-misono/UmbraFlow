@@ -12,13 +12,11 @@ namespace uf::operator_runtime
 {
     ValidatedReconcileOutcome::ValidatedReconcileOutcome(
         ContentHash projectRegistrationHash,
-        ContentHash reconcileSchemaManifestHash,
         std::string operationId,
         ValidatedDocument proposal,
         ReconcileDisposition disposition
     )
         : m_projectRegistrationHash{projectRegistrationHash}
-        , m_reconcileSchemaManifestHash{reconcileSchemaManifestHash}
         , m_operationId{std::move(operationId)}
         , m_proposal{std::move(proposal)}
         , m_disposition{disposition}
@@ -29,12 +27,6 @@ namespace uf::operator_runtime
         -> ContentHash
     {
         return m_projectRegistrationHash;
-    }
-
-    auto ValidatedReconcileOutcome::reconcileSchemaManifestHash() const
-        -> ContentHash
-    {
-        return m_reconcileSchemaManifestHash;
     }
 
     auto ValidatedReconcileOutcome::operationId() const noexcept
@@ -128,7 +120,6 @@ namespace uf::operator_runtime
         );
         return ValidatedReconcileOutcome{
             m_projectRegistrationHash,
-            m_reconcileSchemaManifestHash,
             std::move(operationId),
             std::move(proposal),
             disposition,

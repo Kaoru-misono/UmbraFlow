@@ -461,13 +461,6 @@ namespace uf::operator_runtime
             return ok();
         }
 
-        // The database-kind marker, and never schema identity: 'UFOP' as a
-        // big-endian ASCII quad, which is what the DDL's
-        // PRAGMA application_id=1430671184 writes. The two spellings are joined
-        // by initialize(), which verifies this immediately after creating the
-        // schema.
-        constexpr auto k_operatorApplicationId = uint64{0x55464F50U};
-
         // The sole Operator schema identity: sha256 over the canonicalization
         // verifyExactDatabaseSchema builds -- every sqlite_schema row ordered
         // by (type, name), each of its four columns written as
@@ -485,7 +478,7 @@ namespace uf::operator_runtime
         // "Delete-on-open has a deadline" owns that policy and states what a
         // migration between two identities must name.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:f8d0ed7de66563574bb953983d3e24028c759913d00a65a976435044294f7ed6"
+            "sha256:584ba6c3f25069a91978c32bc3cf2d1d8a20d1fb1da0e4265b441f7a1d27cd67"
         };
 
         [[nodiscard]]
@@ -533,38 +526,6 @@ namespace uf::operator_runtime
                 );
             }
             return ok();
-        }
-
-        // The three mechanisms in their only order, each answering one
-        // question: application_id says the file is an Operator database,
-        // quick_check says its pages are readable, and the exact stored DDL
-        // says which Operator schema it is. Integrity precedes identity because
-        // a corrupt file would otherwise be reported as a different schema and
-        // sent to whoever writes migrations. Every statement is a read, so both
-        // doors apply this one gate.
-        [[nodiscard]]
-        auto verifyOperatorSchema(sqlite3* database) -> Status
-        {
-            UF_TRY_VALUE(
-                applicationId,
-                readDatabaseInteger(database, "PRAGMA application_id")
-            );
-            if (applicationId != k_operatorApplicationId)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "Database does not carry the Operator application identity"
-                );
-            }
-            UF_TRY_VALUE(integrity, readDatabaseText(database, "PRAGMA quick_check"));
-            if (integrity != "ok")
-            {
-                return fail(
-                    AutomationErrorKind::IoFailure,
-                    "Operator database quick_check failed"
-                );
-            }
-            return verifyExactDatabaseSchema(database);
         }
 
         // The one query that answers "does this ledger pin that generation to
@@ -1189,10 +1150,6 @@ namespace uf::operator_runtime
             }
 
             UF_TRY_VALUE(
-                applicationId,
-                readDatabaseInteger(database, "PRAGMA application_id")
-            );
-            UF_TRY_VALUE(
                 schemaObjectCount,
                 readDatabaseInteger(
                     database,
@@ -1201,19 +1158,7 @@ namespace uf::operator_runtime
             );
             if (schemaObjectCount != 0U)
             {
-                return verifyOperatorSchema(database);
-            }
-
-            // An empty schema under any application_id at all is another
-            // product's file: this DDL writes the marker in the same
-            // transaction that creates the tables, so no Operator database ever
-            // reaches here carrying one.
-            if (applicationId != 0U)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "Database does not carry the Operator application identity"
-                );
+                return verifyExactDatabaseSchema(database);
             }
 
             UF_TRY(execute(
@@ -1245,7 +1190,6 @@ namespace uf::operator_runtime
                             CHECK(installed_generation > 0),
                         artifact_root_hash TEXT NOT NULL
                             REFERENCES runtime_artifacts(artifact_root_hash),
-                        release_manifest_hash TEXT NOT NULL,
                         UNIQUE(installed_generation, artifact_root_hash)
                     ) STRICT;
 
@@ -1351,8 +1295,6 @@ namespace uf::operator_runtime
                         revision INTEGER NOT NULL CHECK(revision > 0),
                         project_registration_hash TEXT NOT NULL
                             REFERENCES project_registrations(registration_hash),
-                        plugin_hash TEXT NOT NULL,
-                        observation_schema_hash TEXT NOT NULL,
                         state_resolution_hash TEXT NOT NULL,
                         project_state_revision INTEGER NOT NULL
                             CHECK(project_state_revision >= 0),
@@ -1517,7 +1459,6 @@ namespace uf::operator_runtime
                         controlled_target_id TEXT NOT NULL,
                         mutating INTEGER NOT NULL CHECK(mutating IN (0, 1)),
                         state TEXT NOT NULL,
-                        frozen_plan_hash TEXT,
                         revision INTEGER NOT NULL CHECK(revision > 0),
                         plugin_id TEXT NOT NULL,
                         project_instance_key TEXT NOT NULL,
@@ -1717,7 +1658,6 @@ namespace uf::operator_runtime
                         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                         operation_id TEXT NOT NULL REFERENCES operations(operation_id),
                         disposition TEXT NOT NULL,
-                        proposal_hash TEXT NOT NULL,
                         canonical_proposal TEXT NOT NULL
                     ) STRICT;
 
@@ -1812,11 +1752,10 @@ namespace uf::operator_runtime
                         PRIMARY KEY(plugin_id, project_instance_key)
                     ) STRICT;
 
-                    PRAGMA application_id=1430671184;
                     COMMIT;
                 )sql"
             ));
-            return verifyOperatorSchema(database);
+            return verifyExactDatabaseSchema(database);
         }
 
         [[nodiscard]]
@@ -1900,7 +1839,7 @@ namespace uf::operator_runtime
             // No busy timeout: a live Coordinator holds an exclusive lock, so
             // a read-only command refuses immediately instead of stalling.
             UF_TRY(execute(database.get(), "PRAGMA trusted_schema=OFF"));
-            UF_TRY(verifyOperatorSchema(database.get()));
+            UF_TRY(verifyExactDatabaseSchema(database.get()));
             return ReadOnlyOperatorLayout{
                 .database            = std::move(database),
                 .runtimeArtifactRoot = runtimeArtifactRoot,
@@ -3084,8 +3023,8 @@ namespace uf::operator_runtime
             installationInsert,
             prepare(
                 m_impl->database.get(),
-                "INSERT INTO runtime_installations(installed_generation, "
-                "artifact_root_hash, release_manifest_hash) VALUES(?1, ?2, ?3)"
+                "INSERT INTO runtime_installations(installed_generation, artifact_root_hash) "
+                "VALUES(?1, ?2)"
             )
         );
         UF_TRY(bindInteger(
@@ -3099,12 +3038,6 @@ namespace uf::operator_runtime
             installationInsert.get(),
             2,
             release.artifactRootHash.hex()
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            installationInsert.get(),
-            3,
-            release.releaseManifestHash.hex()
         ));
         UF_TRY(expectDone(m_impl->database.get(), installationInsert.get()));
 
@@ -4772,7 +4705,7 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "SELECT revision, canonical_observation, observation_hash, "
                 "state_resolution_hash, project_state_revision, project_state_hash, "
-                "plugin_hash, project_registration_hash FROM project_observations "
+                "project_registration_hash FROM project_observations "
                 "WHERE plugin_id=?1 AND project_instance_key=?2 "
                 "ORDER BY revision DESC LIMIT 1"
             )
@@ -4797,8 +4730,6 @@ namespace uf::operator_runtime
             priorFingerprint += columnText(priorQuery.get(), 5);
             priorFingerprint += '\0';
             priorFingerprint += columnText(priorQuery.get(), 6);
-            priorFingerprint += '\0';
-            priorFingerprint += columnText(priorQuery.get(), 7);
             priorFingerprint += '\0';
             priorFingerprint += priorObservationId;
         }
@@ -4863,16 +4794,13 @@ namespace uf::operator_runtime
             );
         }
 
-        auto const observationHex        = derived.contentHash().hex();
-        auto const stateResolutionHex    = observation.stateResolutionHash().hex();
-        auto const observationSchemaHex  = plugin.projectObservationSchemaHash().hex();
-        auto currentFingerprint          = stateResolutionHex;
+        auto const observationHex     = derived.contentHash().hex();
+        auto const stateResolutionHex = observation.stateResolutionHash().hex();
+        auto currentFingerprint       = stateResolutionHex;
         currentFingerprint += '\0';
         currentFingerprint += std::to_string(projectStateRevision);
         currentFingerprint += '\0';
         currentFingerprint += projectStateHex;
-        currentFingerprint += '\0';
-        currentFingerprint += plugin.pluginHash().hex();
         currentFingerprint += '\0';
         currentFingerprint += plugin.projectRegistrationHash().hex();
         currentFingerprint += '\0';
@@ -4895,10 +4823,9 @@ namespace uf::operator_runtime
                 prepare(
                     m_impl->database.get(),
                     "INSERT INTO project_observations(plugin_id, project_instance_key, "
-                    "revision, project_registration_hash, plugin_hash, "
-                    "observation_schema_hash, state_resolution_hash, "
+                    "revision, project_registration_hash, state_resolution_hash, "
                     "project_state_revision, project_state_hash, canonical_observation, "
-                    "observation_hash) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+                    "observation_hash) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
                 )
             );
             UF_TRY(bindText(m_impl->database.get(), observationInsert.get(), 1, pluginId));
@@ -4924,42 +4851,30 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 observationInsert.get(),
                 5,
-                plugin.pluginHash().hex()
-            ));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                observationInsert.get(),
-                6,
-                observationSchemaHex
-            ));
-            UF_TRY(bindText(
-                m_impl->database.get(),
-                observationInsert.get(),
-                7,
                 stateResolutionHex
             ));
             UF_TRY(bindInteger(
                 m_impl->database.get(),
                 observationInsert.get(),
-                8,
+                6,
                 projectStateRevision
             ));
             UF_TRY(bindText(
                 m_impl->database.get(),
                 observationInsert.get(),
-                9,
+                7,
                 projectStateHex
             ));
             UF_TRY(bindText(
                 m_impl->database.get(),
                 observationInsert.get(),
-                10,
+                8,
                 derived.bytes()
             ));
             UF_TRY(bindText(
                 m_impl->database.get(),
                 observationInsert.get(),
-                11,
+                9,
                 observationHex
             ));
             UF_TRY(expectDone(m_impl->database.get(), observationInsert.get()));
@@ -5512,7 +5427,7 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "SELECT operation_id, command_fingerprint, tool_name, tool_version, "
                 "canonical_args, mutating, state, revision, "
-                "frozen_plan_hash, EXISTS(SELECT 1 FROM dispatches d WHERE "
+                "EXISTS(SELECT 1 FROM dispatches d WHERE "
                 "d.operation_id=operations.operation_id), session_id FROM operations "
                 "WHERE idempotency_namespace=?1 AND plugin_id=?2 "
                 "AND project_instance_key=?3 AND client_request_id=?4"
@@ -5547,7 +5462,7 @@ namespace uf::operator_runtime
             // an idempotency_namespace unique to one. Without this, the hit
             // path hands another session's operation id and revision back,
             // which is all transitionOperation needs to terminate it.
-            if (columnText(existingQuery.get(), 10) != controller.sessionId())
+            if (columnText(existingQuery.get(), 9) != controller.sessionId())
             {
                 return fail(
                     AutomationErrorKind::ActionRejected,
@@ -5562,8 +5477,7 @@ namespace uf::operator_runtime
             auto const revision = static_cast<uint64>(
                 sqlite3_column_int64(existingQuery.get(), 7)
             );
-            auto const frozen     = sqlite3_column_type(existingQuery.get(), 8) != SQLITE_NULL;
-            auto const dispatched = sqlite3_column_int(existingQuery.get(), 9) != 0;
+            auto const dispatched = sqlite3_column_int(existingQuery.get(), 8) != 0;
             UF_TRY(transaction.commit());
             return AcceptedCommand{
                 .operation = StoredOperation{
@@ -5571,7 +5485,7 @@ namespace uf::operator_runtime
                     .lookup        = CommandLookup::Existing,
                     .state         = state,
                     .revision      = revision,
-                    .planFrozen    = frozen,
+                    .planFrozen    = dispatched,
                     .hasDispatched = dispatched,
                 },
                 .commandFingerprint = commandFingerprint,
@@ -5885,8 +5799,7 @@ namespace uf::operator_runtime
             pendingQuery,
             prepare(
                 m_impl->database.get(),
-                "SELECT operation_id, revision, state, frozen_plan_hash, "
-                "EXISTS(SELECT 1 FROM dispatches d WHERE "
+                "SELECT operation_id, revision, state, EXISTS(SELECT 1 FROM dispatches d WHERE "
                 "d.operation_id=operations.operation_id) FROM operations "
                 "WHERE controlled_target_id=?1 AND state IN "
                 "('proposed', 'awaiting_approval', 'ready') LIMIT 1"
@@ -5901,10 +5814,8 @@ namespace uf::operator_runtime
                 sqlite3_column_int64(pendingQuery.get(), 1)
             );
             UF_TRY_VALUE(state, parseOperationState(columnText(pendingQuery.get(), 2)));
-            auto const planFrozen =
-                sqlite3_column_type(pendingQuery.get(), 3) != SQLITE_NULL;
-            auto const dispatched = sqlite3_column_int(pendingQuery.get(), 4) != 0;
-            UF_TRY_VALUE(machine, OperationMachine::restore(state, planFrozen, dispatched));
+            auto const dispatched = sqlite3_column_int(pendingQuery.get(), 3) != 0;
+            UF_TRY_VALUE(machine, OperationMachine::restore(state, dispatched, dispatched));
             UF_TRY_VALUE(
                 nextState,
                 machine.transition(OperationEvent::DecisionInputsChanged)
@@ -6183,8 +6094,7 @@ namespace uf::operator_runtime
             query,
             prepare(
                 m_impl->database.get(),
-                "SELECT o.state, o.revision, o.frozen_plan_hash, o.mutating, "
-                "EXISTS(SELECT 1 FROM dispatches d "
+                "SELECT o.state, o.revision, o.mutating, EXISTS(SELECT 1 FROM dispatches d "
                 "WHERE d.operation_id=o.operation_id) FROM operations o "
                 + std::string{k_liveControllerJoin}
                 + "WHERE o.operation_id=?1 AND session.active=1 "
@@ -6206,9 +6116,8 @@ namespace uf::operator_runtime
             return fail(AutomationErrorKind::ActionRejected, "Operation revision is stale");
         }
         UF_TRY_VALUE(state, parseOperationState(columnText(query.get(), 0)));
-        auto const frozen = sqlite3_column_type(query.get(), 2) != SQLITE_NULL;
-        auto const mutating = sqlite3_column_int(query.get(), 3) != 0;
-        auto const dispatched = sqlite3_column_int(query.get(), 4) != 0;
+        auto const mutating   = sqlite3_column_int(query.get(), 2) != 0;
+        auto const dispatched = sqlite3_column_int(query.get(), 3) != 0;
         if (event == OperationEvent::ReadCompleted && mutating)
         {
             return fail(
@@ -6216,7 +6125,7 @@ namespace uf::operator_runtime
                 "Operation event contradicts the command mutability"
             );
         }
-        UF_TRY_VALUE(machine, OperationMachine::restore(state, frozen, dispatched));
+        UF_TRY_VALUE(machine, OperationMachine::restore(state, dispatched, dispatched));
         UF_TRY_VALUE(nextState, machine.transition(event));
         UF_TRY_VALUE(nextRevision, checkedSqlIncrement(revision, "Operation revision"));
 
@@ -6566,7 +6475,7 @@ namespace uf::operator_runtime
                 "WHERE step.operation_id=o.operation_id AND step.step_kind='ui_action' "
                 "AND step.dispatch_sequence IS NULL), "
                 "observation.canonical_observation, state.canonical_opaque_payload, "
-                "o.frozen_plan_hash, EXISTS(SELECT 1 FROM dispatches d "
+                "EXISTS(SELECT 1 FROM dispatches d "
                 "WHERE d.operation_id=o.operation_id), "
                 "session.runtime_artifact_root_hash, o.tool_name, o.tool_version "
                 "FROM operations o "
@@ -6640,8 +6549,8 @@ namespace uf::operator_runtime
                 "Step Tool Catalog does not match the pinned session registration"
             );
         }
-        UF_TRY_VALUE(descriptor, catalog.describe(columnText(query.get(), 18)));
-        if (descriptor.toolVersion != columnText(query.get(), 19))
+        UF_TRY_VALUE(descriptor, catalog.describe(columnText(query.get(), 17)));
+        if (descriptor.toolVersion != columnText(query.get(), 18))
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
@@ -6683,7 +6592,7 @@ namespace uf::operator_runtime
 
         auto const planHashHex   = columnText(query.get(), 7);
         auto const canonicalPlan = columnText(query.get(), 8);
-        auto const sessionArtifactRoot = columnText(query.get(), 17);
+        auto const sessionArtifactRoot = columnText(query.get(), 16);
         UF_TRY_VALUE(planHash, parseHashColumn(planHashHex));
         auto const observationJcs  = columnText(query.get(), 13);
         auto const projectStateJcs = columnText(query.get(), 14);
@@ -6741,16 +6650,15 @@ namespace uf::operator_runtime
         // dispatch, so moving to Running for one would leave a state with no
         // outgoing edge; the first step of a plan is minted while the Operation
         // is already Ready or AwaitingApproval and needs no edge at all.
-        auto const frozen     = sqlite3_column_type(query.get(), 15) != SQLITE_NULL;
-        auto const dispatched = sqlite3_column_int(query.get(), 16) != 0;
+        auto const dispatched = sqlite3_column_int(query.get(), 15) != 0;
         UF_TRY_VALUE(requiredApprovals, readNameArray(columnText(query.get(), 10)));
         auto const approvalNeeded = !requiredApprovals.empty();
         auto nextState      = state;
-        auto nextFrozen     = frozen;
+        auto nextFrozen     = dispatched;
         auto nextDispatched = dispatched;
         if (state == OperationState::Reconciling && step.kind() == StepKind::UiAction)
         {
-            UF_TRY_VALUE(machine, OperationMachine::restore(state, frozen, dispatched));
+            UF_TRY_VALUE(machine, OperationMachine::restore(state, dispatched, dispatched));
             UF_TRY_VALUE(
                 advanced,
                 machine.transition(
@@ -6826,7 +6734,7 @@ namespace uf::operator_runtime
                 // matched on caller-supplied hashes authorises whatever it was
                 // handed. The pending step is found rather than selected, so
                 // the dispatch names nothing at all.
-                "SELECT o.state, o.revision, o.frozen_plan_hash, "
+                "SELECT o.state, o.revision, "
                 "COALESCE((SELECT MAX(dispatch_sequence) FROM dispatches d WHERE "
                 "d.operation_id=o.operation_id), 0), "
                 "(SELECT delivery_outcome FROM dispatches d WHERE "
@@ -6864,8 +6772,8 @@ namespace uf::operator_runtime
         }
         UF_TRY_VALUE(state, parseOperationState(columnText(query.get(), 0)));
         if (
-            columnText(query.get(), 5) != lease.sessionId
-            || columnText(query.get(), 6) != lease.controlledTargetId
+            columnText(query.get(), 4) != lease.sessionId
+            || columnText(query.get(), 5) != lease.controlledTargetId
         )
         {
             return fail(
@@ -6873,7 +6781,7 @@ namespace uf::operator_runtime
                 "Dispatch lease does not own the Operation target"
             );
         }
-        if (sqlite3_column_int(query.get(), 7) != 1)
+        if (sqlite3_column_int(query.get(), 6) != 1)
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
@@ -6882,21 +6790,21 @@ namespace uf::operator_runtime
         }
         UF_TRY(requireLiveLease(m_impl->database.get(), lease, "Dispatch lease is stale"));
 
-        auto const planHashHex      = columnText(query.get(), 8);
-        auto const decisionBasisHex = columnText(query.get(), 9);
+        auto const planHashHex      = columnText(query.get(), 7);
+        auto const decisionBasisHex = columnText(query.get(), 8);
         UF_TRY_VALUE(frozenPlanHash, parseHashColumn(planHashHex));
         UF_TRY_VALUE(decisionBasisHash, parseHashColumn(decisionBasisHex));
         auto const maximumDispatches = static_cast<uint64>(
-            sqlite3_column_int64(query.get(), 10)
+            sqlite3_column_int64(query.get(), 9)
         );
-        auto const stepIndex = static_cast<uint64>(sqlite3_column_int64(query.get(), 11));
-        auto const stepIntentHex = columnText(query.get(), 12);
+        auto const stepIndex = static_cast<uint64>(sqlite3_column_int64(query.get(), 10));
+        auto const stepIntentHex = columnText(query.get(), 11);
         UF_TRY_VALUE(stepIntentHash, parseHashColumn(stepIntentHex));
         auto const dispatchCount = static_cast<uint64>(
-            sqlite3_column_int64(query.get(), 13)
+            sqlite3_column_int64(query.get(), 12)
         );
         auto const targetGeneration = TargetGeneration::fromValue(
-            static_cast<uint64>(sqlite3_column_int64(query.get(), 14))
+            static_cast<uint64>(sqlite3_column_int64(query.get(), 13))
         );
         // Two counters because a wait step consumes a step and no dispatch.
         if (dispatchCount >= maximumDispatches)
@@ -6907,7 +6815,7 @@ namespace uf::operator_runtime
             );
         }
 
-        auto const priorSequence = static_cast<uint64>(sqlite3_column_int64(query.get(), 3));
+        auto const priorSequence = static_cast<uint64>(sqlite3_column_int64(query.get(), 2));
         auto const firstDispatch = priorSequence == 0U;
         if (firstDispatch)
         {
@@ -6953,18 +6861,11 @@ namespace uf::operator_runtime
                     "A subsequent dispatch requires a running frozen Operation"
                 );
             }
-            if (sqlite3_column_type(query.get(), 4) == SQLITE_NULL)
+            if (sqlite3_column_type(query.get(), 3) == SQLITE_NULL)
             {
                 return fail(
                     AutomationErrorKind::ActionRejected,
                     "A new dispatch cannot overtake the prior Host outcome"
-                );
-            }
-            if (columnText(query.get(), 2) != frozenPlanHash.hex())
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "A frozen Operation cannot change plan hash"
                 );
             }
         }
@@ -7108,14 +7009,13 @@ namespace uf::operator_runtime
             update,
             prepare(
                 m_impl->database.get(),
-                "UPDATE operations SET state='running', frozen_plan_hash=?1, revision=?2 "
-                "WHERE operation_id=?3 AND revision=?4"
+                "UPDATE operations SET state='running', revision=?1 "
+                "WHERE operation_id=?2 AND revision=?3"
             )
         );
-        UF_TRY(bindText(m_impl->database.get(), update.get(), 1, frozenPlanHash.hex()));
-        UF_TRY(bindInteger(m_impl->database.get(), update.get(), 2, nextRevision));
-        UF_TRY(bindText(m_impl->database.get(), update.get(), 3, operationId));
-        UF_TRY(bindInteger(m_impl->database.get(), update.get(), 4, revision));
+        UF_TRY(bindInteger(m_impl->database.get(), update.get(), 1, nextRevision));
+        UF_TRY(bindText(m_impl->database.get(), update.get(), 2, operationId));
+        UF_TRY(bindInteger(m_impl->database.get(), update.get(), 3, revision));
         UF_TRY(expectDone(m_impl->database.get(), update.get()));
         if (sqlite3_changes(m_impl->database.get()) != 1)
         {
@@ -7352,7 +7252,7 @@ namespace uf::operator_runtime
                 // holder chose authorises whatever those hashes name, which is
                 // how one step's approval comes to authorise another's.
                 "SELECT o.state, o.session_id, o.controlled_target_id, "
-                "o.command_fingerprint, o.frozen_plan_hash, plan.plan_hash, "
+                "o.command_fingerprint, plan.plan_hash, "
                 "plan.decision_basis_hash, plan.effect_envelope_hash, "
                 "step.step_intent_hash, plan.policy_hash, plan.required_approvals "
                 "FROM operations o "
@@ -7393,17 +7293,7 @@ namespace uf::operator_runtime
                 "Approval lease does not own the Operation target"
             );
         }
-        auto const frozenPlanHex = columnText(operationQuery.get(), 5);
-        if (
-            sqlite3_column_type(operationQuery.get(), 4) != SQLITE_NULL
-            && columnText(operationQuery.get(), 4) != frozenPlanHex
-        )
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "The Operation dispatched under a plan hash operation_plans does not hold"
-            );
-        }
+        auto const frozenPlanHex = columnText(operationQuery.get(), 4);
         UF_TRY(requireLiveLease(
             m_impl->database.get(),
             request.lease,
@@ -7416,7 +7306,7 @@ namespace uf::operator_runtime
         // set is an approval the policy never authorised.
         UF_TRY_VALUE(
             requiredApprovals,
-            readNameArray(columnText(operationQuery.get(), 10))
+            readNameArray(columnText(operationQuery.get(), 9))
         );
         if (!std::ranges::contains(requiredApprovals, request.approverCapability))
         {
@@ -7465,25 +7355,25 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             insert.get(),
             11,
-            columnText(operationQuery.get(), 8)
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            12,
-            columnText(operationQuery.get(), 6)
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            13,
             columnText(operationQuery.get(), 7)
         ));
         UF_TRY(bindText(
             m_impl->database.get(),
             insert.get(),
+            12,
+            columnText(operationQuery.get(), 5)
+        ));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            insert.get(),
+            13,
+            columnText(operationQuery.get(), 6)
+        ));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            insert.get(),
             14,
-            columnText(operationQuery.get(), 9)
+            columnText(operationQuery.get(), 8)
         ));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 15, request.approverPrincipal));
         UF_TRY(bindText(
@@ -7895,8 +7785,8 @@ namespace uf::operator_runtime
             reconciliationInsert,
             prepare(
                 m_impl->database.get(),
-                "INSERT INTO reconciliations(operation_id, disposition, proposal_hash, "
-                "canonical_proposal) VALUES(?1, ?2, ?3, ?4)"
+                "INSERT INTO reconciliations(operation_id, disposition, canonical_proposal) "
+                "VALUES(?1, ?2, ?3)"
             )
         );
         UF_TRY(bindText(
@@ -7915,12 +7805,6 @@ namespace uf::operator_runtime
             m_impl->database.get(),
             reconciliationInsert.get(),
             3,
-            commit.outcome.proposal().contentHash().hex()
-        ));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            reconciliationInsert.get(),
-            4,
             commit.outcome.proposal().bytes()
         ));
         UF_TRY(expectDone(m_impl->database.get(), reconciliationInsert.get()));

@@ -709,15 +709,9 @@ namespace uf::task
 
     auto TaskContext::loadTemplate(
         std::span<std::byte const> pngBytes
-    ) -> Result<LoadedTemplate>
+    ) -> Result<TemplateTicket>
     {
-        UF_TRY_VALUE(ticket, m_templates.load(pngBytes));
-        auto const* p_hash = m_templates.hashOf(ticket);
-        UF_CHECK(p_hash != nullptr);
-        return LoadedTemplate{
-            .ticket = ticket,
-            .hash   = *p_hash,
-        };
+        return m_templates.load(pngBytes);
     }
 
     auto TaskContext::projectRead(

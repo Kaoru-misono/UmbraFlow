@@ -671,8 +671,6 @@ namespace uf::operator_runtime::test_support
     {
         auto const result = SessionManifest::create(
             SessionManifestSpec{
-                .hostProtocolSchemaHash       = hashOf("host"),
-                .runtimeModelSchemaHash       = hashOf("runtime-schema"),
                 .runtimeModelArtifactRootHash = runtimeArtifactRootHash,
                 .operatorProtocolSchemaHash   = hashOf("operator"),
                 .projectRegistrationHash      = project.hash(),

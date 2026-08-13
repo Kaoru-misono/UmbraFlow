@@ -51,21 +51,20 @@ spelling until 2026-08-11 `07abc3e`, which renamed 14 files and left zero
 residual sites). The two spellings were bridged by a literal rename inside the
 ledger, `.controlledTargetId = controlledTargetKey`; that bridge was deleted
 rather than relocated. The rename moved the Operator DDL fingerprint to
-`sha256:be80aca714a29c976f53d4bdfe39571975a839027cc3efd15822db8a7df3e7b1` over
-the same 23 tables, so an `operator-runtime.sqlite` from before it is refused at
-open and deleted, never migrated.
+the value then recorded by `k_operatorDatabaseSchemaIdentity` in
+`modules/operator/source/operator/ledger.cpp`, over the same 23 tables, so an
+`operator-runtime.sqlite` from before it is refused at open and deleted, never
+migrated.
 
 > **Corrected 2026-08-12: the fingerprint above is one break out of date, and it
 > is not the only column rename this file was missing.** The current Operator
-> DDL fingerprint is
-> `sha256:500c07b10eb263c0f2d6001e0a8b9a90ddd2afd951130cef71f5dbbfbd66085a`,
-> over the same 23 tables, and it occurs exactly once in the tree at
-> `modules/operator/source/operator/ledger.cpp:429`, as
-> `k_operatorDatabaseSchemaIdentity`. It is the **sole** Operator schema
-> identity as of 2026-08-12 — `application_id` is a database-kind marker,
-> `quick_check` is integrity evidence, `user_version` carries nothing and is not
-> written, and a database whose identity differs is refused and left untouched
-> rather than deleted. The ruling and what it obliges a migration author to name
+> DDL fingerprint was the value then recorded by
+> `k_operatorDatabaseSchemaIdentity` in
+> `modules/operator/source/operator/ledger.cpp`, over the same 23 tables. It was
+> the **sole** Operator schema identity as of 2026-08-12; `user_version` carries
+> nothing and is not written, and a database whose identity differs is refused
+> and left untouched rather than deleted. The ruling and what it obliges a
+> migration author to name
 > are in [the execution checklist](docs/TODO.md), under the delete-on-open
 > deadline. It moved because
 > `journal_events` and `project_state` — both journal records — were made to
@@ -80,8 +79,9 @@ open and deleted, never migrated.
 > as of this correction.
 
 > **Re-settled 2026-08-13 by U8.** The current Operator DDL fingerprint is
-> `sha256:f4ac557ff316be6a3a5825193cf3f2fd45894206ffdbfcb4dbeed5074857b550`,
-> still over the same 23 tables and still the sole identity. Three columns moved
+> the value then recorded by `k_operatorDatabaseSchemaIdentity` in
+> `modules/operator/source/operator/ledger.cpp`, still over the same 23 tables
+> and still the sole identity. Three columns moved
 > with it: `sessions.controller_capabilities` is new and carries the exact JCS
 > array `capability_profile_hash` is now derived from, `operation_plans` gained
 > `policy_hash` and turned `required_approvals` from a 0/1 integer into the JCS
@@ -90,6 +90,16 @@ open and deleted, never migrated.
 > approval can be matched against that array. Each old spelling is gone rather
 > than accepted beside the new one, and a database at the previous identity is
 > refused at open as before.
+
+> **Re-settled 2026-08-13 by U2b.** The current Operator DDL fingerprint is
+> `k_operatorDatabaseSchemaIdentity` in
+> `modules/operator/source/operator/ledger.cpp`, over 24 tables, and remains the
+> sole identity. U2b added the Operator-private
+> `observed_instance_bindings` table and its immutability/cleanup-refusal triggers.
+> The table stores the canonical authority and opaque ID bidirectionally and has no scope
+> ownership or cascading deletion: cleanup remains impossible until a future
+> owner can prove every Journal, Operation, backup and audit reference expired
+> or was deleted. Scope closure alone therefore cannot remove a binding.
 
 **RuntimeArtifact** — a verified manifest, one `runtime-model.toml`, and the
 manifest-listed assets under `assets/`. Pinned as

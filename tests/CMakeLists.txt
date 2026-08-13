@@ -975,20 +975,15 @@ add_test(
     NAME test-check-safety
     COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/test-check-safety.py
 )
-# Pins only. The full run reads the frozen bundle out of the consumer repository
-# at an absolute path no CI runner has, and a form of the check that tolerated
-# its absence would pass whether or not the bundle agreed. The name says what
-# this gate delivers: agreement between the pinned hashes this repository states
-# in prose and the ones its own script carries.
 add_test(
-    NAME check-spec-pins
-    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/check_spec_bundle.py --pins-only
+    NAME check-spec-bundle
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/check_spec_bundle.py
 )
 set_tests_properties(
     check-repository-surface
     check-modules
     check-safety
-    check-spec-pins
+    check-spec-bundle
     test-check-safety
     PROPERTIES
     TIMEOUT 30

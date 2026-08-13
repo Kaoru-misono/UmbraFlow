@@ -137,26 +137,20 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "host_protocol_schema_hash",
-        "runtime_model_schema_hash",
         "runtime_model_artifact_root_hash",
         "operator_protocol_schema_hash",
         "project_registration_hash",
         "policy_artifact_hash",
         "journal_envelope_schema_hash",
-        "agent_profile_hash",
-        "plugin_environment_hash"
+        "agent_profile_hash"
       ],
       "properties": {
-        "host_protocol_schema_hash": { "$ref": "#/$defs/Hash" },
-        "runtime_model_schema_hash": { "$ref": "#/$defs/Hash" },
         "runtime_model_artifact_root_hash": { "$ref": "#/$defs/Hash" },
         "operator_protocol_schema_hash": { "$ref": "#/$defs/Hash" },
         "project_registration_hash": { "$ref": "#/$defs/Hash" },
         "policy_artifact_hash": { "$ref": "#/$defs/Hash" },
         "journal_envelope_schema_hash": { "$ref": "#/$defs/Hash" },
-        "agent_profile_hash": { "$ref": "#/$defs/Hash" },
-        "plugin_environment_hash": { "$ref": "#/$defs/Hash" }
+        "agent_profile_hash": { "$ref": "#/$defs/Hash" }
       }
     },
     "OperatorSession": {

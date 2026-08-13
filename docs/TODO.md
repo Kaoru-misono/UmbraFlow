@@ -10,10 +10,11 @@
 > here, not moved:**
 >
 > - The boxes were ticked against a build and a test run on 2026-08-10, the
->   first this tree ever had. **Every G2/G4 tick predates seven Operator DDL
+>   first this tree ever had. **Every G2/G4 tick predates eight Operator DDL
 >   fingerprint changes** and has not been re-run against them. The fingerprint
->   is now `sha256:f4ac557ff316be6a3a5825193cf3f2fd45894206ffdbfcb4dbeed5074857b550`
->   over 23 tables; an `operator-runtime.sqlite` from any earlier date is refused
+>   is `k_operatorDatabaseSchemaIdentity` in
+>   `modules/operator/source/operator/ledger.cpp`, over 24 tables; an
+>   `operator-runtime.sqlite` from any earlier date is refused
 >   at open and left untouched, never migrated and never replaced. What that
 >   fingerprint is and is not is ruled below, under the delete-on-open deadline.
 > - **The `linux-analysis` CI job does not compile**, under the project's own
@@ -304,26 +305,17 @@ below on what schema identity is; it owns nothing else.
 
 ### Ruled 2026-08-12: the exact stored DDL is the sole schema identity
 
-Three mechanisms used to take part in accepting an Operator database —
-`PRAGMA user_version == 1`, a byte-exact `sqlite_schema` fingerprint, and a
-separate expected-table-list check — and they could disagree. They no longer
-do, and each surviving mechanism answers exactly one question. All three are
-applied by `verifyOperatorSchema` (`modules/operator/source/operator/ledger.cpp`),
-the one gate both the coordinator door and the read-only door run, and which
-`initialize` also runs against a schema it has just created:
+The **exact stored DDL fingerprint is the sole schema identity** and the sole
+acceptance mechanism. `verifyExactDatabaseSchema`
+(`modules/operator/source/operator/ledger.cpp`) is the one gate both the
+coordinator door and the read-only door run, and `initialize` also runs it
+against a schema it has just created:
 
-- `PRAGMA application_id` is a **database-kind marker**: is this file an
-  Operator database at all. It is never schema identity.
-- `PRAGMA quick_check` is **integrity evidence**: are the pages readable. It
-  runs before identity, so a corrupt file is reported as corrupt rather than as
-  a different schema.
-- The **exact stored DDL fingerprint is the sole schema identity**:
+- The fingerprint is
   `k_operatorDatabaseSchemaIdentity`, sha256 over every `sqlite_schema` row
   ordered by `(type, name)` with each of its four columns written as
-  `<byte length>:<value>`. It is currently
-  `sha256:f4ac557ff316be6a3a5825193cf3f2fd45894206ffdbfcb4dbeed5074857b550` over
-  23 tables and occurs exactly once in the tree,
-  `modules/operator/source/operator/ledger.cpp:486`.
+  `<byte length>:<value>`. Its authoritative value is the constant in that
+  source file, over 24 tables.
 - **`PRAGMA user_version` has no identity role and no upgrade role.** The DDL no
   longer writes it, nothing reads it, and no future schema break may bump it.
   A second version number beside the fingerprint is a second thing that can be
@@ -361,7 +353,7 @@ inserting one space into the `runtime_artifacts` DDL reddens
 `a created schema must equal the pinned exact DDL schema identity`; neutralizing
 the fingerprint comparison in `verifyExactDatabaseSchema` reddens
 `a different exact DDL identity must not be upgraded or replaced`; and re-adding
-a `PRAGMA user_version` guard to `verifyOperatorSchema` reddens
+a `PRAGMA user_version` guard to the database-open gate reddens
 `a user_version the Operator never writes must not refuse the open`. The two
 cases are in `tests/operator/test-ledger.cpp` under `test-operator`.
 
@@ -372,9 +364,7 @@ cases are in `tests/operator/test-ledger.cpp` under `test-operator`.
       **What is deleted today.** `OperatorCoordinator::open`
       (`modules/operator/source/operator/ledger.cpp`) refuses any database whose
       canonicalized DDL text does not hash to
-      `k_operatorDatabaseSchemaIdentity`, currently
-      `sha256:f4ac557ff316be6a3a5825193cf3f2fd45894206ffdbfcb4dbeed5074857b550`;
-      see the ruling above for the two mechanisms that are not that one.
+      `k_operatorDatabaseSchemaIdentity` in that source file.
       The code refuses; it neither migrates nor deletes. Deleting the file is
       what a developer then does by hand, and what goes with it is not a cache:
       `journal_events`, `ledger_events`, `operations`, `operation_plans`,
@@ -419,18 +409,11 @@ cases are in `tests/operator/test-ledger.cpp` under `test-operator`.
       v1.11 was never written down anywhere, and v1.12 preceded the final
       product/conformance archive correction.
 - [x] Re-pin the gate at v1.12. Done 2026-08-12. `scripts/check_spec_bundle.py`'s
-      `FROZEN_BUNDLE` and the five digest lines it cross-checks in
+      root pin and
       [the hardening rewrite](plans/2026-08-09-runtime-hardening-rewrite.md):10-18
-      both read v1.12 root `b3306dde…de51cda5`, and
-      `python scripts/check_spec_bundle.py --pins-only` reports 5 pins matched
-      with 6/6 self-test controls. Before this the two copies stated v1.10 root
-      `adb7f29f…51049f` and agreed with each other, so `check-spec-pins` stayed
-      green while asserting a bundle two versions behind. **Agreement between the
-      two copies is still not freshness** — the gate detects an edited pin, not a
-      moved bundle — which is recorded at
-      [checks that cannot fail](pitfalls/checks-that-cannot-fail.md).
+      both read v1.12 root `b3306dde…de51cda5`.
 - [x] Re-pin the gate at v1.13. Done 2026-08-12 with the consumer archive move:
-      the hardening rewrite and `FROZEN_BUNDLE` both read root
+      the hardening rewrite and the gate's root pin both read root
       `c8e559a1…ec6e5f0`, and the full bundle gate reads the consumer directory.
 - [x] Record base commit, rejected stash and the 101-entry dirty baseline
       manifest.

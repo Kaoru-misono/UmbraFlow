@@ -100,13 +100,5 @@ namespace uf::task
         auto find(TemplateTicket ticket) const noexcept UF_LIFETIME_BOUND
             -> GrayTemplateImage const*;
 
-        // The content hash of the blob `ticket`'s template was decoded from, with
-        // the same null answer and the same borrow contract as find(). A second
-        // lookup rather than a field of the decoded image because vision, which
-        // owns the decoding, hashes nothing and must not name a project's
-        // content-address type.
-        [[nodiscard]]
-        auto hashOf(TemplateTicket ticket) const noexcept UF_LIFETIME_BOUND
-            -> ContentHash const*;
     };
 }

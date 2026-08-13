@@ -38,14 +38,12 @@ namespace uf::operator_runtime
         friend class ProjectReconcileSchemaOwner;
 
         ContentHash          m_projectRegistrationHash;
-        ContentHash          m_reconcileSchemaManifestHash;
         std::string          m_operationId;
         ValidatedDocument    m_proposal;
         ReconcileDisposition m_disposition;
 
         ValidatedReconcileOutcome(
             ContentHash projectRegistrationHash,
-            ContentHash reconcileSchemaManifestHash,
             std::string operationId,
             ValidatedDocument proposal,
             ReconcileDisposition disposition
@@ -53,7 +51,6 @@ namespace uf::operator_runtime
 
     public:
         [[nodiscard]] auto projectRegistrationHash() const -> ContentHash;
-        [[nodiscard]] auto reconcileSchemaManifestHash() const -> ContentHash;
 
         // The Operation this conclusion is about. Without it an outcome is
         // only bound to a registration, so a Confirmed conclusion reached for

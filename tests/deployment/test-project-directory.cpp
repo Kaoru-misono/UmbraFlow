@@ -1230,8 +1230,6 @@ namespace uf::deployment
         // that names the project it was pinned against.
         auto const manifest = operator_runtime::SessionManifest::create(
             operator_runtime::SessionManifestSpec{
-                .hostProtocolSchemaHash        = p_alpha->registration.hash(),
-                .runtimeModelSchemaHash        = p_alpha->registration.hash(),
                 .runtimeModelArtifactRootHash  = p_alpha->registration.hash(),
                 .operatorProtocolSchemaHash    = p_alpha->registration.hash(),
                 .projectRegistrationHash       = p_alpha->registration.hash(),

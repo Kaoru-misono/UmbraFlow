@@ -177,8 +177,6 @@ namespace uf::operator_runtime
         auto sessionSpec() -> SessionManifestSpec
         {
             return SessionManifestSpec{
-                .hostProtocolSchemaHash       = hashOf("host"),
-                .runtimeModelSchemaHash       = hashOf("runtime-schema"),
                 .runtimeModelArtifactRootHash = hashOf("runtime-root"),
                 .operatorProtocolSchemaHash   = hashOf("operator"),
                 .projectRegistrationHash      = hashOf("registration"),

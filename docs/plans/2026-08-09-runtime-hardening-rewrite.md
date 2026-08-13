@@ -25,8 +25,8 @@ The normative product input is the read-only v1.18 bundle at
 > `E:/github/uf-chaos/`. The opposite is true: measured on 2026-08-12,
 > `E:/github/uf-chaos/` does not exist and `E:/umbraflow-projects/uf-chaos/` is
 > the live checkout, clean and pushed to `github.com/Kaoru-misono/uf-chaos`. The
-> full check therefore could not run at all, and the CTest registration asks only
-> for `--pins-only`, so nothing noticed for three bundle versions.
+> full check therefore could not run at all, and the CTest registration then
+> read no consumer bytes, so nothing noticed for three bundle versions.
 >
 > The **membership** changed. `interface-contract-lock.md` joins as a pinned
 > member: it is the wire contract two repositories implement against in parallel,

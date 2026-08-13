@@ -33,13 +33,11 @@ namespace uf::operator_runtime
 
     ValidatedToolInvocation::ValidatedToolInvocation(
         ContentHash projectRegistrationHash,
-        ContentHash toolCatalogHash,
         std::string toolName,
         CanonicalJson canonicalArgs,
         ToolDescriptor descriptor
     )
         : m_projectRegistrationHash{projectRegistrationHash}
-        , m_toolCatalogHash{toolCatalogHash}
         , m_toolName{std::move(toolName)}
         , m_canonicalArgs{std::move(canonicalArgs)}
         , m_descriptor{std::move(descriptor)}
@@ -49,11 +47,6 @@ namespace uf::operator_runtime
     auto ValidatedToolInvocation::projectRegistrationHash() const -> ContentHash
     {
         return m_projectRegistrationHash;
-    }
-
-    auto ValidatedToolInvocation::toolCatalogHash() const -> ContentHash
-    {
-        return m_toolCatalogHash;
     }
 
     auto ValidatedToolInvocation::toolName() const noexcept -> std::string const&
@@ -185,7 +178,6 @@ namespace uf::operator_runtime
         );
         return ValidatedToolInvocation{
             m_projectRegistrationHash,
-            m_toolCatalogHash,
             std::move(toolName),
             std::move(canonicalArgs),
             std::move(descriptor),

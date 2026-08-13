@@ -29,11 +29,9 @@ in this repository's generic core.
 > applied here.
 >
 > *(Corrected 2026-08-12, later the same day: this note ended "`scripts/check_spec_bundle.py`
-> and its authority document still pin v1.10 — see TODO G0". Both copies have
-> since moved to v1.12 and agree; `python scripts/check_spec_bundle.py --pins-only`
-> reports 5 pins matched against
-> [the hardening rewrite](plans/2026-08-09-runtime-hardening-rewrite.md):10-18.
-> That TODO row is ticked.)*
+> and its authority document still pin v1.10 — see TODO G0". The full
+> `python scripts/check_spec_bundle.py` gate now reads the real consumer bundle
+> against the root pin. That TODO row is ticked.)*
 >
 > *(Corrected again 2026-08-12: v1.13 records the consumer repository's
 > product/conformance split and archived evidence paths. The hardening rewrite

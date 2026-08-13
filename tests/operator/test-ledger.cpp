@@ -782,8 +782,6 @@ namespace uf::operator_runtime
         {
             auto manifest = SessionManifest::create(
                 SessionManifestSpec{
-                    .hostProtocolSchemaHash       = hashOf("host"),
-                    .runtimeModelSchemaHash       = hashOf("runtime-schema"),
                     .runtimeModelArtifactRootHash = runtimeArtifactRootHash,
                     .operatorProtocolSchemaHash   = hashOf("operator"),
                     .projectRegistrationHash      = projectRegistrationHash,
@@ -1767,9 +1765,7 @@ namespace uf::operator_runtime
             "a different exact DDL identity must not be upgraded or replaced"
         );
 
-        // Names the guard, because a corrupt file or a foreign application_id
-        // would refuse this open just as flatly and prove nothing about
-        // identity.
+        // Names the guard so another open refusal cannot stand in for identity.
         CHECK_MESSAGE(
             refused.error().message().contains("schema identity"),
             "the refusal must come from the schema-identity gate"
@@ -1850,8 +1846,6 @@ namespace uf::operator_runtime
 
         auto movedResult = SessionManifest::create(
             SessionManifestSpec{
-                .hostProtocolSchemaHash       = hashOf("host"),
-                .runtimeModelSchemaHash       = hashOf("runtime-schema"),
                 .runtimeModelArtifactRootHash = prepared.runtimeArtifactRootHash,
                 .operatorProtocolSchemaHash   = hashOf("operator"),
                 .projectRegistrationHash      = prepared.project.registration.hash(),

@@ -71,10 +71,6 @@ namespace uf::operator_runtime::conformance
         );
         CHECK(mutating.descriptor().mutability == ToolMutability::Mutating);
         CHECK(mutating.projectRegistrationHash() == underTest.registration.hash());
-        CHECK(
-            mutating.toolCatalogHash()
-            == underTest.registration.toolCatalogHash()
-        );
         CHECK_FALSE(mutating.descriptor().toolVersion.empty());
 
         // The descriptor decides, so the read-only tool reaches the same

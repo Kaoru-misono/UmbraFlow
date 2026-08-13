@@ -98,14 +98,6 @@ namespace uf::task
         return p_entry == nullptr ? nullptr : &p_entry->image;
     }
 
-    auto TemplateStore::hashOf(
-        TemplateTicket ticket
-    ) const noexcept -> ContentHash const*
-    {
-        auto const* p_entry = findEntry(ticket);
-        return p_entry == nullptr ? nullptr : &p_entry->hash;
-    }
-
     auto TemplateStore::findEntry(
         TemplateTicket ticket
     ) const noexcept -> Entry const*

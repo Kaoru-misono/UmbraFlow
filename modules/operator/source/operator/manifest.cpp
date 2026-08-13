@@ -1,7 +1,5 @@
 #include "manifest.hpp"
 
-#include <script/pure-data-program.hpp>
-
 #include <core/text/json-text.hpp>
 #include <core/text/utf8.hpp>
 
@@ -90,29 +88,20 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto canonicalSessionManifest(
-            SessionManifestSpec const& spec,
-            ContentHash const& pluginEnvironmentHash
-        ) -> std::string
+        auto canonicalSessionManifest(SessionManifestSpec const& spec) -> std::string
         {
             auto output = std::string{"{\"agent_profile_hash\":"};
             appendHash(output, spec.agentProfileHash);
-            output += ",\"host_protocol_schema_hash\":";
-            appendHash(output, spec.hostProtocolSchemaHash);
             output += ",\"journal_envelope_schema_hash\":";
             appendHash(output, spec.journalEnvelopeSchemaHash);
             output += ",\"operator_protocol_schema_hash\":";
             appendHash(output, spec.operatorProtocolSchemaHash);
-            output += ",\"plugin_environment_hash\":";
-            appendHash(output, pluginEnvironmentHash);
             output += ",\"policy_artifact_hash\":";
             appendHash(output, spec.policyArtifactHash);
             output += ",\"project_registration_hash\":";
             appendHash(output, spec.projectRegistrationHash);
             output += ",\"runtime_model_artifact_root_hash\":";
             appendHash(output, spec.runtimeModelArtifactRootHash);
-            output += ",\"runtime_model_schema_hash\":";
-            appendHash(output, spec.runtimeModelSchemaHash);
             output.push_back('}');
             return output;
         }
@@ -334,12 +323,10 @@ namespace uf::operator_runtime
 
     SessionManifest::SessionManifest(
         SessionManifestSpec spec,
-        ContentHash pluginEnvironmentHash,
         std::string canonicalBytes,
         ContentHash hash
     )
         : m_spec{spec}
-        , m_pluginEnvironmentHash{pluginEnvironmentHash}
         , m_canonicalBytes{std::move(canonicalBytes)}
         , m_hash{hash}
     {
@@ -349,18 +336,13 @@ namespace uf::operator_runtime
         SessionManifestSpec const& spec
     ) -> Result<SessionManifest>
     {
-        // Read from the framework rather than accepted from the caller: the
-        // plugin environment is a property of this binary, and a manifest that
-        // let a caller name it would attest to whatever the caller remembered.
-        UF_TRY_VALUE(pluginEnvironment, script::pluginEnvironmentHash());
-        auto canonicalBytes = canonicalSessionManifest(spec, pluginEnvironment);
+        auto canonicalBytes = canonicalSessionManifest(spec);
         UF_TRY_VALUE(
             hash,
             sha256(std::as_bytes(std::span{canonicalBytes}))
         );
         return SessionManifest{
             spec,
-            pluginEnvironment,
             std::move(canonicalBytes),
             hash,
         };
@@ -401,8 +383,4 @@ namespace uf::operator_runtime
         return m_spec.agentProfileHash;
     }
 
-    auto SessionManifest::pluginEnvironmentHash() const -> ContentHash
-    {
-        return m_pluginEnvironmentHash;
-    }
 }

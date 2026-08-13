@@ -40,12 +40,6 @@ claims that cannot be made mechanical without inventing a second implementation.
 
 ## Current repository examples
 
-`scripts/check_spec_bundle.py` carries the consumer bundle v1.13 pin, while the
-hardening rewrite carries an independent checked-in copy. The gate can prove
-those copies agree. Freshness is proved only when the gate is run against the
-real consumer directory; comparing the two repository copies alone cannot
-detect that the consumer moved again.
-
 ProjectPlugin documents have an executable producer/consumer join:
 `ProjectSchemaOwner::validate` applies the pinned function-specific schema on
 every call. The value returned by its canonical validator is also the value the

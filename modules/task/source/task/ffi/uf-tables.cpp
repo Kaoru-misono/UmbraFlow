@@ -1601,7 +1601,7 @@ namespace uf::task
                 state,
                 AssetToken{
                     .generation = self.m_generation,
-                    .ticket     = loaded->ticket,
+                    .ticket     = *loaded,
                 },
                 k_assetType
             );
