@@ -658,6 +658,9 @@ cpp_add_test(
         project/test-project-kit.cpp
     LIBS
         ${PROJECT_NAME}_project
+        ${PROJECT_NAME}_script
+        ${PROJECT_NAME}_json
+        ${PROJECT_NAME}_domain
 )
 add_test(
     NAME test-project-cli

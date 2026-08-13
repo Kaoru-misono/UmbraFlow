@@ -1,16 +1,26 @@
 #include <project/project-kit.hpp>
+#include <project/declarative-single-step-tool.hpp>
+
+#include <script/pure-data-program.hpp>
+
+#include <json/value.hpp>
 
 #include <core/error/error.hpp>
 
+#include <domain/content-hash.hpp>
+
 #include <doctest/doctest.h>
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <ios>
 #include <map>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 
 namespace uf::project
 {
@@ -126,6 +136,182 @@ namespace uf::project
                     },
                 }
             );
+        }
+
+        inline constexpr auto k_singleStepEntryPoints = std::array{
+            std::string_view{"derive"},
+            std::string_view{"plan"},
+            std::string_view{"next_step"},
+            std::string_view{"reconcile"},
+            std::string_view{"reduce"},
+        };
+
+        inline constexpr auto k_observedInstanceId = std::string_view{
+            "oi1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        };
+
+        [[nodiscard]]
+        auto validSingleStepDeclaration() -> std::string
+        {
+            return R"json({
+  "schema": "umbraflow-declarative-single-step-tool/v1",
+  "tool_name": "chaos.dismiss_known_overlay",
+  "target_argument": "observed_instance_id",
+  "allowed_instance_kinds": ["chaos.overlay"],
+  "ui_action": "chaos.ui.dismiss_overlay",
+  "fresh_observation": {
+    "required_surface": "chaos.overlay_layer",
+    "require_unambiguous": true
+  },
+  "ui_finding": {"kind": "observed_instance_absent"},
+  "bounds": {
+    "max_dispatches": 1,
+    "max_observations": 3,
+    "timeout_ms": 3000
+  }
+})json";
+        }
+
+        [[nodiscard]]
+        auto replacedOnce(
+            std::string input,
+            std::string_view before,
+            std::string_view after
+        ) -> std::string
+        {
+            auto const position = input.find(before);
+            REQUIRE_MESSAGE(
+                position != std::string::npos,
+                "single-step vector mutation must name existing source bytes"
+            );
+            input.replace(position, before.size(), after);
+            return input;
+        }
+
+        [[nodiscard]]
+        auto generatedSingleStepProgram() -> script::PureDataProgram
+        {
+            auto const generated = generateDeclarativeSingleStepAdapter(
+                "chaos.project",
+                validSingleStepDeclaration()
+            );
+            auto const generatedMessage = (
+                generated.has_value()
+                    ? std::string{}
+                    : std::string{generated.error().message()}
+            );
+            REQUIRE_MESSAGE(
+                generated.has_value(),
+                generatedMessage
+            );
+            auto compiled = script::PureDataProgram::compile(
+                "chaos.project",
+                *generated,
+                k_singleStepEntryPoints,
+                {}
+            );
+            auto const compiledMessage = (
+                compiled.has_value()
+                    ? std::string{}
+                    : std::string{
+                          "generated adapter must expose only the derive, plan, "
+                          "next_step, reconcile and reduce SPI: "
+                      }
+                        + std::string{compiled.error().message()}
+            );
+            REQUIRE_MESSAGE(
+                compiled.has_value(),
+                compiledMessage
+            );
+            return *std::move(compiled);
+        }
+
+        [[nodiscard]]
+        auto parsedJson(std::string_view text) -> json::Value
+        {
+            auto parsed = json::parse(text);
+            auto const parsedMessage = (
+                parsed.has_value()
+                    ? std::string{}
+                    : std::string{parsed.error().message()}
+            );
+            REQUIRE_MESSAGE(
+                parsed.has_value(),
+                parsedMessage
+            );
+            return *std::move(parsed);
+        }
+
+        [[nodiscard]]
+        auto observation(
+            bool includesTarget,
+            std::string_view targetKind = "chaos.overlay",
+            bool surfaceFresh = true,
+            std::string_view surfaceResolution = "resolved",
+            bool surfaceUnambiguous = true
+        ) -> std::string
+        {
+            auto text = std::string{
+                R"json({"canonical_opaque_payload":{"surface_observations":[{"fresh":)json"
+            };
+            text += surfaceFresh ? "true" : "false";
+            text += R"json(,"resolution":")json";
+            text += surfaceResolution;
+            text += R"json(","surface_id":"chaos.overlay_layer","unambiguous":)json";
+            text += surfaceUnambiguous ? "true" : "false";
+            text += R"json(}]},"observed_instances":)json";
+            if (includesTarget)
+            {
+                text += R"json([{"kind":")json";
+                text += targetKind;
+                text += R"json(","observed_instance_id":")json";
+                text += k_observedInstanceId;
+                text += R"json("}])json";
+            }
+            else
+            {
+                text += "[]";
+            }
+            text += '}';
+            return text;
+        }
+
+        [[nodiscard]]
+        auto adapterInput(
+            std::string_view observationBytes,
+            bool includeTool
+        ) -> json::Value
+        {
+            auto text = std::string{R"json({"canonical_args":{"observed_instance_id":")json"};
+            text += k_observedInstanceId;
+            text += R"json("},"project_observation":)json";
+            text += observationBytes;
+            if (includeTool)
+            {
+                text += R"json(,"tool_name":"chaos.dismiss_known_overlay","tool_version":"1")json";
+            }
+            text += '}';
+            return parsedJson(text);
+        }
+
+        [[nodiscard]]
+        auto invoked(
+            script::PureDataProgram const& program,
+            std::string_view entryPoint,
+            json::Value const& input
+        ) -> json::Value
+        {
+            auto result = program.invoke(entryPoint, input);
+            auto const resultMessage = (
+                result.has_value()
+                    ? std::string{}
+                    : std::string{result.error().message()}
+            );
+            REQUIRE_MESSAGE(
+                result.has_value(),
+                resultMessage
+            );
+            return *std::move(result);
         }
     }
 
@@ -278,5 +464,409 @@ namespace uf::project
             std::filesystem::exists(nestedBuild / k_buildReceiptName),
             "overlap refusal must happen before a source-side receipt is written"
         );
+    }
+
+    TEST_CASE("single-step schema bytes match interface lock v1.18")
+    {
+        auto const bytes = declarativeSingleStepToolSchemaBytes();
+        CHECK_MESSAGE(
+            bytes.size() == 2368U,
+            "single-step schema byte count must match interface lock v1.18"
+        );
+        auto const digest = sha256(std::as_bytes(std::span{bytes}));
+        auto const digestMessage = (
+            digest.has_value()
+                ? std::string{}
+                : std::string{digest.error().message()}
+        );
+        REQUIRE_MESSAGE(
+            digest.has_value(),
+            digestMessage
+        );
+        CHECK_MESSAGE(
+            digest->hex()
+                == "96a739627927bf1218be2aa0d423cb02d3a249fcda1911183a9aeaa0c4fd5af3",
+            "single-step schema SHA-256 must match interface lock v1.18"
+        );
+    }
+
+    TEST_CASE("single-step golden refusals emit their normative error codes")
+    {
+        struct InvalidCase final
+        {
+            std::string name{};
+            std::string expectedError{};
+            std::string document{};
+        };
+
+        auto const valid = validSingleStepDeclaration();
+        auto const cases = std::array{
+            InvalidCase{
+                .name          = "coordinate_injection",
+                .expectedError = "ClosedSchema",
+                .document      = replacedOnce(
+                    valid,
+                    R"json("bounds": {)json",
+                    R"json("coordinates": [100, 200], "bounds": {)json"
+                ),
+            },
+            InvalidCase{
+                .name          = "more_than_one_dispatch",
+                .expectedError = "SingleStepDispatchBound",
+                .document      = replacedOnce(
+                    valid,
+                    R"json("max_dispatches": 1)json",
+                    R"json("max_dispatches": 2)json"
+                ),
+            },
+            InvalidCase{
+                .name          = "hidden_script",
+                .expectedError = "ClosedSchema",
+                .document      = replacedOnce(
+                    valid,
+                    R"json("bounds": {)json",
+                    R"json("script": "while true do end", "bounds": {)json"
+                ),
+            },
+            InvalidCase{
+                .name          = "ambiguous_observation_allowed",
+                .expectedError = "AmbiguousObservationAllowed",
+                .document      = replacedOnce(
+                    valid,
+                    R"json("require_unambiguous": true)json",
+                    R"json("require_unambiguous": false)json"
+                ),
+            },
+            InvalidCase{
+                .name          = "missing_fresh_observation_guard",
+                .expectedError = "IncompleteSingleStep",
+                .document      = replacedOnce(
+                    valid,
+                    R"json(  "fresh_observation": {
+    "required_surface": "chaos.overlay_layer",
+    "require_unambiguous": true
+  },
+)json",
+                    ""
+                ),
+            },
+            InvalidCase{
+                .name          = "ui_finding_without_kind",
+                .expectedError = "IncompleteSingleStep",
+                .document      = replacedOnce(
+                    valid,
+                    R"json({"kind": "observed_instance_absent"})json",
+                    "{}"
+                ),
+            },
+            InvalidCase{
+                .name          = "second_target_binding_in_ui_finding",
+                .expectedError = "ClosedSchema",
+                .document      = replacedOnce(
+                    valid,
+                    R"json({"kind": "observed_instance_absent"})json",
+                    R"json({"kind": "observed_instance_absent", )json"
+                    R"json("target_argument": "some_other_argument"})json"
+                ),
+            },
+            InvalidCase{
+                .name          = "fresh_observation_with_undeclared_member",
+                .expectedError = "ClosedSchema",
+                .document      = replacedOnce(
+                    valid,
+                    R"json("require_unambiguous": true)json",
+                    R"json("require_unambiguous": true, "settle_delay_ms": 250)json"
+                ),
+            },
+            InvalidCase{
+                .name          = "bounds_with_undeclared_member",
+                .expectedError = "ClosedSchema",
+                .document      = replacedOnce(
+                    valid,
+                    R"json("timeout_ms": 3000)json",
+                    R"json("timeout_ms": 3000, "max_retries": 5)json"
+                ),
+            },
+            InvalidCase{
+                .name          = "empty_allowed_instance_kinds",
+                .expectedError = "SingleStepInstanceKindsEmpty",
+                .document      = replacedOnce(
+                    valid,
+                    R"json(["chaos.overlay"])json",
+                    "[]"
+                ),
+            },
+            InvalidCase{
+                .name          = "observation_bound_below_one",
+                .expectedError = "SingleStepObservationBound",
+                .document      = replacedOnce(
+                    valid,
+                    R"json("max_observations": 3)json",
+                    R"json("max_observations": 0)json"
+                ),
+            },
+            InvalidCase{
+                .name          = "timeout_bound_below_one",
+                .expectedError = "SingleStepTimeoutBound",
+                .document      = replacedOnce(
+                    valid,
+                    R"json("timeout_ms": 3000)json",
+                    R"json("timeout_ms": 0)json"
+                ),
+            },
+            InvalidCase{
+                .name          = "tool_name_not_namespaced",
+                .expectedError = "MalformedSingleStepTool",
+                .document      = replacedOnce(
+                    valid,
+                    "chaos.dismiss_known_overlay",
+                    "dismiss_known_overlay"
+                ),
+            },
+        };
+
+        for (auto const& testCase : cases)
+        {
+            auto const generated = generateDeclarativeSingleStepAdapter(
+                "chaos.project",
+                testCase.document
+            );
+            CAPTURE(testCase.name);
+            REQUIRE_FALSE_MESSAGE(
+                generated.has_value(),
+                "locked invalid single-step vector must be refused"
+            );
+            CHECK_MESSAGE(
+                generated.error().message().starts_with(testCase.expectedError),
+                "single-step refusal must emit the vector's normative error code"
+            );
+        }
+    }
+
+    TEST_CASE("generated dismiss-known-overlay tool runs through the five-function SPI")
+    {
+        auto const program = generatedSingleStepProgram();
+        auto const present = observation(true);
+
+        auto const derived = invoked(program, "derive", parsedJson("{}"));
+        auto const* deriveSchema = derived.find("schema");
+        REQUIRE(deriveSchema != nullptr);
+        CHECK(
+            deriveSchema->string()
+            == "umbraflow-project-observation-proposal/v1"
+        );
+
+        auto const planned = invoked(
+            program,
+            "plan",
+            adapterInput(present, true)
+        );
+        auto const* effects = planned.find("effects");
+        REQUIRE(effects != nullptr);
+        CHECK_MESSAGE(
+            effects->items().empty(),
+            "single-step declaration must not submit an expected domain effect"
+        );
+        auto const* limits = planned.find("workflow_limits");
+        REQUIRE(limits != nullptr);
+        REQUIRE(limits->find("maximum_dispatches") != nullptr);
+        CHECK_MESSAGE(
+            limits->find("maximum_dispatches")->number() == 1.0,
+            "generated single-step plan must allow exactly one dispatch"
+        );
+        REQUIRE(limits->find("maximum_observations") != nullptr);
+        CHECK_MESSAGE(
+            limits->find("maximum_observations")->number() == 3.0,
+            "generated single-step plan must carry its finite observation bound"
+        );
+        REQUIRE(limits->find("maximum_elapsed_ms") != nullptr);
+        CHECK_MESSAGE(
+            limits->find("maximum_elapsed_ms")->number() == 3000.0,
+            "generated single-step plan must carry its finite timeout"
+        );
+
+        auto const step = invoked(
+            program,
+            "next_step",
+            adapterInput(present, false)
+        );
+        auto const* action = step.find("action");
+        REQUIRE(action != nullptr);
+        REQUIRE(action->find("action_id") != nullptr);
+        CHECK_MESSAGE(
+            action->find("action_id")->string() == "chaos.ui.dismiss_overlay",
+            "generated action must use the declared namespaced UI action"
+        );
+        REQUIRE(action->find("canonical_parameters") != nullptr);
+        auto const* target = action->find("canonical_parameters")
+            ->find("observed_instance_id");
+        REQUIRE(target != nullptr);
+        CHECK_MESSAGE(
+            action->find("canonical_parameters")->members().size() == 1U,
+            "generated action must carry exactly one target binding"
+        );
+        CHECK_MESSAGE(
+            target->string() == k_observedInstanceId,
+            "generated action must bind its only target from canonical args"
+        );
+        auto const* expectedUiPostconditions = step.find(
+            "expected_ui_postconditions"
+        );
+        REQUIRE(expectedUiPostconditions != nullptr);
+        CHECK_MESSAGE(
+            expectedUiPostconditions->items().empty(),
+            "single-step declaration must not smuggle in a UI result assertion"
+        );
+
+        auto const reconciled = invoked(
+            program,
+            "reconcile",
+            adapterInput(observation(false), false)
+        );
+        auto const* disposition = reconciled.find("disposition");
+        REQUIRE(disposition != nullptr);
+        CHECK_MESSAGE(
+            disposition->string() == "continue",
+            "UI finding must not mark the Operation Confirmed"
+        );
+        CHECK_MESSAGE(
+            reconciled.find("effects") == nullptr,
+            "UI finding must not submit an expected domain effect"
+        );
+        auto const* journalEvents = reconciled.find("journal_events");
+        REQUIRE(journalEvents != nullptr);
+        CHECK_MESSAGE(
+            journalEvents->items().empty(),
+            "UI finding must not submit a domain event"
+        );
+        auto const* observedOutcomes = reconciled.find("observed_outcomes");
+        REQUIRE(observedOutcomes != nullptr);
+        CHECK_MESSAGE(
+            observedOutcomes->items().empty(),
+            "UI finding must remain evidence rather than become an observed outcome"
+        );
+        auto const* findings = reconciled.find("findings");
+        REQUIRE(findings != nullptr);
+        REQUIRE_MESSAGE(
+            findings->items().size() == 1U,
+            "a genuinely absent target must produce one UI finding"
+        );
+        auto const& finding = findings->items().front();
+        REQUIRE(finding.find("kind") != nullptr);
+        CHECK_MESSAGE(
+            finding.find("kind")->string() == "observed_instance_absent",
+            "reconcile must return the declaration's UI finding as evidence"
+        );
+        REQUIRE(finding.find("observed_instance_id") != nullptr);
+        CHECK_MESSAGE(
+            finding.find("observed_instance_id")->string()
+                == k_observedInstanceId,
+            "UI finding must refer to the declaration's sole canonical target"
+        );
+
+        auto const reduced = invoked(program, "reduce", parsedJson("{}"));
+        CHECK(reduced.kind() == json::ValueKind::Object);
+        CHECK(reduced.members().empty());
+    }
+
+    TEST_CASE("generated single-step adapter names stale observed-instance refusal")
+    {
+        auto const program = generatedSingleStepProgram();
+        auto const stale = program.invoke(
+            "next_step",
+            adapterInput(observation(false), false)
+        );
+
+        REQUIRE_FALSE_MESSAGE(
+            stale.has_value(),
+            "next_step must refuse a target absent from the fresh observation"
+        );
+        CHECK_MESSAGE(
+            stale.error().message().find("ObservedInstanceStale")
+                != std::string_view::npos,
+            "stale target refusal must name ObservedInstanceStale"
+        );
+    }
+
+    TEST_CASE("generated single-step adapter rejects an undeclared target kind")
+    {
+        auto const program = generatedSingleStepProgram();
+        auto const wrongKind = program.invoke(
+            "next_step",
+            adapterInput(observation(true, "chaos.dialog"), false)
+        );
+
+        REQUIRE_FALSE_MESSAGE(
+            wrongKind.has_value(),
+            "next_step must reject a target kind outside allowed_instance_kinds"
+        );
+        CHECK_MESSAGE(
+            wrongKind.error().message().find("SingleStepTargetKindRejected")
+                != std::string_view::npos,
+            "target-kind refusal must name SingleStepTargetKindRejected"
+        );
+    }
+
+    TEST_CASE("generated finding distinguishes lost Surface evidence from target absence")
+    {
+        struct SurfaceCase final
+        {
+            std::string name{};
+            bool        fresh{};
+            std::string resolution{};
+            bool        unambiguous{};
+            std::string expectedError{};
+        };
+        auto const cases = std::array{
+            SurfaceCase{
+                .name          = "page vanished",
+                .fresh         = false,
+                .resolution    = "resolved",
+                .unambiguous   = true,
+                .expectedError = "StaleObservation",
+            },
+            SurfaceCase{
+                .name          = "recognition lost",
+                .fresh         = true,
+                .resolution    = "unresolved",
+                .unambiguous   = true,
+                .expectedError = "FreshSurfaceUnresolved",
+            },
+            SurfaceCase{
+                .name          = "recognition ambiguous",
+                .fresh         = true,
+                .resolution    = "resolved",
+                .unambiguous   = false,
+                .expectedError = "FreshSurfaceAmbiguous",
+            },
+        };
+        auto const program = generatedSingleStepProgram();
+
+        for (auto const& testCase : cases)
+        {
+            auto const result = program.invoke(
+                "reconcile",
+                adapterInput(
+                    observation(
+                        false,
+                        "chaos.overlay",
+                        testCase.fresh,
+                        testCase.resolution,
+                        testCase.unambiguous
+                    ),
+                    false
+                )
+            );
+            CAPTURE(testCase.name);
+            REQUIRE_FALSE_MESSAGE(
+                result.has_value(),
+                "reconcile must not collapse invalid Surface evidence into target absence"
+            );
+            CHECK_MESSAGE(
+                result.error().message().find(testCase.expectedError)
+                    != std::string_view::npos,
+                "Surface guard refusal must name the failed evidence property"
+            );
+        }
     }
 }
