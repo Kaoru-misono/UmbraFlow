@@ -256,6 +256,12 @@ can run. Nothing here is owed.
       dependency back on `conformance` is green with the node removed (14
       modules) and red with it present — `module dependency cycle: deployment ->
       operator -> conformance -> deployment`.
+      Amended 2026-08-13: the graph now reads 17 modules. The post-measurement
+      [offline Project Kit](../modules/project/source/project/project-kit.hpp)
+      and
+      [generated framework schema catalog](../modules/schema/source/schema/framework-schema-catalog.hpp)
+      are separate modules; the 15-module statement above remains the
+      measurement of the 2026-08-12 move.
       `scripts/check_cpp_format.py` and `scripts/check_safety.py` dropped
       `"conformance"` from `SOURCE_ROOTS` in the same change, for the same
       reason: it named a directory that no longer exists. Coverage rose rather

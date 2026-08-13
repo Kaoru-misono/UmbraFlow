@@ -34,6 +34,10 @@ namespace uf::operator_runtime
         Mutating,
     };
 
+    [[nodiscard]]
+    auto toolMutabilityWireName(ToolMutability mutability) noexcept
+        -> std::string_view;
+
     // Whether a tool's arguments and results are stated in the project's own
     // vocabulary, or in the machine's -- coordinates, pixels, key codes,
     // receipts, fencing tokens, bindings, frames. It is a property of the Tool
@@ -54,6 +58,9 @@ namespace uf::operator_runtime
         Privileged,
     };
 
+    [[nodiscard]]
+    auto toolSurfaceWireName(ToolSurface surface) noexcept -> std::string_view;
+
     // What redelivering one call of this tool would cost, declared strongest
     // first. The order is the whole of the type's meaning: a step may claim at
     // most the safety its tool declares, and `<=` on the enumerator is that
@@ -65,6 +72,10 @@ namespace uf::operator_runtime
         KeyedExternal,
         NonIdempotent,
     };
+
+    [[nodiscard]]
+    auto toolIdempotencyWireName(ToolIdempotency idempotency) noexcept
+        -> std::string_view;
 
     // OP:`UIActionIntent`.delivery_class, in the same strongest-first order.
     // There is no ReadSafe: a step that is delivered is not a read.
@@ -93,6 +104,9 @@ namespace uf::operator_runtime
         Reconcile,
         Stop,
     };
+
+    [[nodiscard]]
+    auto timeoutActionWireName(TimeoutAction action) noexcept -> std::string_view;
 
     // OP:`TimeoutPolicy`.
     struct TimeoutPolicy final

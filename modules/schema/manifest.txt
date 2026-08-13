@@ -1,0 +1,7 @@
+[module]
+name = schema
+type = static
+version = 0.1.0
+
+# Published framework schemas have one authored spelling under schema/. The
+# build embeds those exact bytes into this leaf module for runtime consumers.

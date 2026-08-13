@@ -26,6 +26,55 @@ namespace uf::operator_runtime
         UF_UNREACHABLE_MSG("Unknown Risk value");
     }
 
+    auto toolMutabilityWireName(ToolMutability mutability) noexcept
+        -> std::string_view
+    {
+        switch (mutability)
+        {
+        case ToolMutability::ReadOnly: return "read_only";
+        case ToolMutability::Mutating: return "mutating";
+        }
+
+        UF_UNREACHABLE_MSG("Unknown ToolMutability value");
+    }
+
+    auto toolSurfaceWireName(ToolSurface surface) noexcept -> std::string_view
+    {
+        switch (surface)
+        {
+        case ToolSurface::Semantic: return "semantic";
+        case ToolSurface::Privileged: return "privileged";
+        }
+
+        UF_UNREACHABLE_MSG("Unknown ToolSurface value");
+    }
+
+    auto toolIdempotencyWireName(ToolIdempotency idempotency) noexcept
+        -> std::string_view
+    {
+        switch (idempotency)
+        {
+        case ToolIdempotency::ReadSafe: return "read_safe";
+        case ToolIdempotency::DeliverySafe: return "delivery_safe";
+        case ToolIdempotency::KeyedExternal: return "keyed_external";
+        case ToolIdempotency::NonIdempotent: return "non_idempotent";
+        }
+
+        UF_UNREACHABLE_MSG("Unknown ToolIdempotency value");
+    }
+
+    auto timeoutActionWireName(TimeoutAction action) noexcept -> std::string_view
+    {
+        switch (action)
+        {
+        case TimeoutAction::Reobserve: return "reobserve";
+        case TimeoutAction::Reconcile: return "reconcile";
+        case TimeoutAction::Stop: return "stop";
+        }
+
+        UF_UNREACHABLE_MSG("Unknown TimeoutAction value");
+    }
+
     auto deliveryClassWithin(
         DeliveryClass claimed,
         ToolIdempotency declared

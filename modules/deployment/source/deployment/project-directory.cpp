@@ -14,6 +14,8 @@
 
 #include <image/png.hpp>
 
+#include <schema/framework-schema-catalog.hpp>
+
 #include <task/runtime-model-file.hpp>
 #include <task/platform/confined-file.hpp>
 
@@ -34,78 +36,8 @@ namespace uf::deployment
 {
     namespace
     {
-        // The exact bytes of schema/umbraflow-project-registration-v1.schema.json,
-        // including its two-space indent and its trailing newline.
-        // manifest_schema_hash is the sha256 of this text, so reformatting it
-        // is a different registration for every project in existence.
-        // tests/deployment/test-project-directory.cpp reads the file and holds
-        // it to this constant, so the published document and the enforcing one
-        // cannot drift apart in silence.
-        constexpr auto k_registrationSchema = std::string_view{
-            R"json({
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://umbraflow.local/schema/project-registration-v1",
-  "title": "Umbraflow ProjectRegistrationManifest v1",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "manifest_schema_hash",
-    "plugin_id",
-    "plugin_hash",
-    "tool_catalog_hash",
-    "project_state_schema_hash",
-    "project_observation_schema_hash",
-    "project_tool_precondition_schema_hash",
-    "reconcile_payload_schema_manifest_hash",
-    "journal_event_schema_manifest_hash",
-    "baseline_event_type",
-    "project_artifact_roots"
-  ],
-  "properties": {
-    "manifest_schema_hash": { "$ref": "#/$defs/hash" },
-    "plugin_id": { "$ref": "#/$defs/namespaced_name" },
-    "plugin_hash": { "$ref": "#/$defs/hash" },
-    "tool_catalog_hash": { "$ref": "#/$defs/hash" },
-    "project_state_schema_hash": { "$ref": "#/$defs/hash" },
-    "project_observation_schema_hash": { "$ref": "#/$defs/hash" },
-    "project_tool_precondition_schema_hash": { "$ref": "#/$defs/hash" },
-    "reconcile_payload_schema_manifest_hash": { "$ref": "#/$defs/hash" },
-    "journal_event_schema_manifest_hash": { "$ref": "#/$defs/hash" },
-    "baseline_event_type": { "$ref": "#/$defs/namespaced_name" },
-    "project_artifact_roots": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/artifact_root" }
-    }
-  },
-  "$defs": {
-    "hash": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
-    },
-    "root_name": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128,
-      "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)*$"
-    },
-    "namespaced_name": {
-      "type": "string",
-      "minLength": 3,
-      "maxLength": 128,
-      "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)+$"
-    },
-    "artifact_root": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["name", "root_hash"],
-      "properties": {
-        "name": { "$ref": "#/$defs/root_name" },
-        "root_hash": { "$ref": "#/$defs/hash" }
-      }
-    }
-  }
-}
-)json"
+        constexpr auto k_registrationSchemaPath = std::string_view{
+            "schema/umbraflow-project-registration-v1.schema.json"
         };
 
         // umbraflow-project.json: the document production reads.
@@ -1044,8 +976,12 @@ namespace uf::deployment
                         claim.member,
                         claim.name,
                         played.deployment,
-                        toolMutabilityWireName(carried->mutability),
-                        toolMutabilityWireName(claim.mutability)
+                        operator_runtime::toolMutabilityWireName(
+                            carried->mutability
+                        ),
+                        operator_runtime::toolMutabilityWireName(
+                            claim.mutability
+                        )
                     ));
                 }
             }
@@ -1167,11 +1103,6 @@ namespace uf::deployment
         };
     }
 
-    auto projectRegistrationSchemaBytes() -> std::string_view
-    {
-        return k_registrationSchema;
-    }
-
     auto ProjectDocumentInputLog::record(
         operator_runtime::ProjectPluginFunction function,
         std::string_view exactJcs
@@ -1247,16 +1178,32 @@ namespace uf::deployment
         );
 
         UF_TRY_VALUE(projectSchema, compile("umbraflow-project/v1", k_projectSchema));
+        auto const publishedRegistration =
+            framework_schema::findFrameworkSchema(k_registrationSchemaPath);
+        if (!publishedRegistration.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "generated framework schema catalog is missing "
+                    + std::string{k_registrationSchemaPath}
+            );
+        }
         UF_TRY_VALUE(
             registrationSchema,
-            compile("umbraflow-project-registration/v1", k_registrationSchema)
+            compile(
+                publishedRegistration->relativePath,
+                publishedRegistration->exactBytes
+            )
         );
         UF_TRY_VALUE(
             manifest,
             readValidated(projectSchema, k_projectManifestFileName, projectBytes)
         );
 
-        UF_TRY_VALUE(manifestSchemaHash, hashOf(k_registrationSchema));
+        UF_TRY_VALUE(
+            manifestSchemaHash,
+            hashOf(publishedRegistration->exactBytes)
+        );
         auto registrationOwner =
             operator_runtime::ProjectRegistrationSchemaOwner::create(
                 manifestSchemaHash,

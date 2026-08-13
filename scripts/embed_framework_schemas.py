@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the deployment module's framework schema catalog from schema/.
+"""Generate the framework schema module's runtime catalog from schema/.
 
 The published documents are carried as their exact bytes and as the sha256 of
 those bytes, so the runtime catalog and the file under schema/ cannot drift:
@@ -51,12 +51,12 @@ def main() -> None:
         render_entry(args.schema_dir, relative_path)
         for relative_path in sorted(args.schemas)
     )
-    output = f'''#include <deployment/framework-schema-catalog.hpp>
+    output = f'''#include <schema/framework-schema-catalog.hpp>
 
 #include <array>
 #include <span>
 
-namespace uf::deployment
+namespace uf::framework_schema
 {{
     auto frameworkSchemaCatalog() noexcept
         -> std::span<FrameworkSchemaDocument const>

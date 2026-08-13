@@ -577,7 +577,10 @@ namespace uf::json
             buffer << stream.rdbuf();
             sources.emplace_back(entry.path().filename().string(), buffer.str());
         }
-        REQUIRE(sources.size() == 11U);
+        REQUIRE_MESSAGE(
+            sources.size() == 12U,
+            "schema compile sweep must cover all 12 top-level schema/*.json sources"
+        );
 
         auto compiledCount = std::size_t{0};
         for (auto const& source : sources)
@@ -614,7 +617,10 @@ namespace uf::json
             }
             ++compiledCount;
         }
-        CHECK(compiledCount == 7U);
+        CHECK_MESSAGE(
+            compiledCount == 8U,
+            "eight repository schemas compile without an external reference set"
+        );
 
         // The cross-document schema compiles once its two siblings are in the
         // set, which is the whole of what the closed world buys.

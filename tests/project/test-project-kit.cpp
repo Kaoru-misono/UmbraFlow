@@ -61,14 +61,15 @@ namespace uf::project
             }
         };
 
+        template <typename Value>
         [[nodiscard]]
-        auto messageOf(Status const& status) -> std::string
+        auto messageOf(Result<Value> const& result) -> std::string
         {
-            if (status.has_value())
+            if (result.has_value())
             {
                 return std::string{};
             }
-            return std::string{status.error().message()};
+            return std::string{result.error().message()};
         }
 
         auto writeFile(
@@ -155,6 +156,9 @@ namespace uf::project
         inline constexpr auto k_generatedSingleStepAdapter = std::string_view{
             "generated/adapters/chaos.project/dismiss-known-overlay.luau"
         };
+        inline constexpr auto k_generatedToolCatalog = std::string_view{
+            "generated/tool-catalogs/chaos.project/tool-catalog-v1.json"
+        };
 
         [[nodiscard]]
         auto validSingleStepDeclaration() -> std::string
@@ -196,6 +200,62 @@ namespace uf::project
                     },
                 }
             );
+        }
+
+        [[nodiscard]]
+        auto requiredHash(std::string_view text) -> ContentHash
+        {
+            auto const digest = sha256(std::as_bytes(std::span{text}));
+            REQUIRE_MESSAGE(digest.has_value(), messageOf(digest));
+            return *digest;
+        }
+
+        [[nodiscard]]
+        auto toolCatalogDeclaration() -> ToolCatalogDeclaration
+        {
+            auto const payloadHash = requiredHash("effect payload schema");
+            return ToolCatalogDeclaration{
+                .comment  = "A generated catalog fixture.",
+                .pluginId = "chaos.project",
+                .toolPreconditionSchemaHash = requiredHash(
+                    "tool precondition schema"
+                ),
+                .effectPayloadSchemaHashes = {payloadHash},
+                .tools = {
+                    DeclaredTool{
+                        .name           = "chaos.dismiss_known_overlay",
+                        .argumentSchema = "DismissArguments",
+                        .descriptor     = operator_runtime::ToolDescriptor{
+                            .toolVersion          = "7",
+                            .requiredCapabilities = {"overlay"},
+                            .effectBounds = {
+                                operator_runtime::EffectBound{
+                                    .namespacedType    = "chaos.dismissed",
+                                    .scopeKind         = "overlay",
+                                    .payloadSchemaHash = payloadHash,
+                                    .maximumRisk       = operator_runtime::Risk::Medium,
+                                },
+                            },
+                            .uiActionBounds = {"chaos.ui.dismiss_overlay"},
+                            .limits = operator_runtime::WorkflowLimits{
+                                .maximumSteps        = 1,
+                                .maximumDispatches   = 1,
+                                .maximumObservations = 3,
+                                .maximumWaits        = 0,
+                                .maximumElapsedMillis = 3'000,
+                            },
+                            .timeout = operator_runtime::TimeoutPolicy{
+                                .maximumElapsedMillis = 3'000,
+                                .onTimeout = operator_runtime::TimeoutAction::Reconcile,
+                            },
+                            .mutability = operator_runtime::ToolMutability::Mutating,
+                            .surface    = operator_runtime::ToolSurface::Semantic,
+                            .idempotency =
+                                operator_runtime::ToolIdempotency::DeliverySafe,
+                        },
+                    },
+                },
+            };
         }
 
         [[nodiscard]]
@@ -375,9 +435,10 @@ namespace uf::project
         auto const sourceBefore = snapshotTree(workspace.source());
 
         auto const built = buildProject(
-            ProjectDirectories{
+            ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = workspace.build(),
+                .toolCatalogs    = {},
             }
         );
         REQUIRE_MESSAGE(built.has_value(), messageOf(built));
@@ -402,9 +463,10 @@ namespace uf::project
         auto const initialized = initializedSingleStepWorkspace(workspace);
         REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
         auto const sourceBefore = snapshotTree(workspace.source());
-        auto const directories  = ProjectDirectories{
+        auto const directories  = ProjectBuildSpec{
             .sourceDirectory = workspace.source(),
             .buildDirectory  = workspace.build(),
+            .toolCatalogs    = {},
         };
 
         auto const built = buildProject(directories);
@@ -450,14 +512,230 @@ namespace uf::project
         );
     }
 
+    TEST_CASE("project build regenerates Tool Catalogs solely from declared tools")
+    {
+        auto const workspace   = TemporaryWorkspace{"uf-project-tool-catalog"};
+        auto const initialized = initializedWorkspace(workspace);
+        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+        auto const declaration = toolCatalogDeclaration();
+        auto const sourceBefore = snapshotTree(workspace.source());
+        auto const spec = ProjectBuildSpec{
+            .sourceDirectory = workspace.source(),
+            .buildDirectory  = workspace.build(),
+            .toolCatalogs    = {declaration},
+        };
+
+        auto const built = buildProject(spec);
+        REQUIRE_MESSAGE(built.has_value(), messageOf(built));
+        REQUIRE_MESSAGE(
+            snapshotTree(workspace.source()) == sourceBefore,
+            "Tool Catalog generation must not change declared source"
+        );
+        auto snapshot = snapshotTree(workspace.build());
+        REQUIRE_MESSAGE(
+            snapshot.contains(std::string{k_generatedToolCatalog}),
+            "project build must generate the named Tool Catalog"
+        );
+        auto const& catalog = snapshot.at(std::string{k_generatedToolCatalog});
+        auto const document = parsedJson(catalog);
+        auto const* schema  = document.find("schema");
+        REQUIRE_MESSAGE(
+            schema != nullptr,
+            "generated Tool Catalog must carry its wire schema"
+        );
+        CHECK_MESSAGE(
+            schema->string() == "umbraflow-tool-catalog/v1",
+            "generated Tool Catalog must identify the v1 wire schema"
+        );
+
+        auto const* pluginId = document.find("plugin_id");
+        REQUIRE_MESSAGE(
+            pluginId != nullptr,
+            "generated Tool Catalog must carry its declared plugin id"
+        );
+        CHECK_MESSAGE(
+            pluginId->string() == "chaos.project",
+            "generated Tool Catalog must render its declared plugin id"
+        );
+
+        auto const* tools = document.find("tools");
+        REQUIRE_MESSAGE(
+            tools != nullptr,
+            "generated Tool Catalog must carry its declared tools"
+        );
+        REQUIRE_MESSAGE(
+            tools->items().size() == 1U,
+            "generated Tool Catalog must carry exactly its declared tools"
+        );
+        auto const& tool = tools->items().front();
+        auto const* name = tool.find("name");
+        REQUIRE_MESSAGE(
+            name != nullptr,
+            "generated Tool Catalog tool must carry its declared name"
+        );
+        CHECK_MESSAGE(
+            name->string() == "chaos.dismiss_known_overlay",
+            "generated Tool Catalog must render its declared tool name"
+        );
+
+        auto const* workflowLimits = tool.find("workflow_limits");
+        REQUIRE_MESSAGE(
+            workflowLimits != nullptr,
+            "generated Tool Catalog tool must carry its workflow limits"
+        );
+        auto const* maximumElapsed = workflowLimits->find("maximum_elapsed_ms");
+        REQUIRE_MESSAGE(
+            maximumElapsed != nullptr,
+            "generated Tool Catalog workflow limits must carry maximum elapsed"
+        );
+        CHECK_MESSAGE(
+            maximumElapsed->number() == 3000.0,
+            "generated Tool Catalog must render its declared workflow bound"
+        );
+
+        auto const* effectBounds = tool.find("effect_bounds");
+        REQUIRE_MESSAGE(
+            effectBounds != nullptr,
+            "generated Tool Catalog tool must carry its declared effects"
+        );
+        REQUIRE_MESSAGE(
+            effectBounds->items().size() == 1U,
+            "generated Tool Catalog tool must carry exactly its declared effects"
+        );
+        auto const* maximumRisk = effectBounds->items().front().find("maximum_risk");
+        REQUIRE_MESSAGE(
+            maximumRisk != nullptr,
+            "generated Tool Catalog effect must carry its declared risk"
+        );
+        CHECK_MESSAGE(
+            maximumRisk->string() == "medium",
+            "generated Tool Catalog must render its declared effect risk"
+        );
+
+        auto const* idempotency = tool.find("idempotency");
+        REQUIRE_MESSAGE(
+            idempotency != nullptr,
+            "generated Tool Catalog tool must carry its declared idempotency"
+        );
+        CHECK_MESSAGE(
+            idempotency->string() == "delivery_safe",
+            "generated Tool Catalog must render its declared idempotency"
+        );
+        auto const catalogBefore = catalog;
+
+        writeFile(workspace.build() / k_generatedToolCatalog, "hand edited\n");
+        auto const rebuilt = buildProject(spec);
+        REQUIRE_MESSAGE(rebuilt.has_value(), messageOf(rebuilt));
+        snapshot = snapshotTree(workspace.build());
+        CHECK_MESSAGE(
+            snapshot.at(std::string{k_generatedToolCatalog}) == catalogBefore,
+            "a generated Tool Catalog must never become the next build's input"
+        );
+    }
+
+    TEST_CASE("project check verifies the generated Tool Catalog closure by name")
+    {
+        auto const workspace   = TemporaryWorkspace{"uf-project-catalog-closure"};
+        auto const initialized = initializedWorkspace(workspace);
+        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+        auto const spec = ProjectBuildSpec{
+            .sourceDirectory = workspace.source(),
+            .buildDirectory  = workspace.build(),
+            .toolCatalogs    = {toolCatalogDeclaration()},
+        };
+        auto const built = buildProject(spec);
+        REQUIRE_MESSAGE(built.has_value(), messageOf(built));
+        auto const catalogPath = workspace.build() / k_generatedToolCatalog;
+
+        SUBCASE("altered")
+        {
+            writeFile(catalogPath, "hand edited\n");
+            auto const checked = checkProject(spec);
+            REQUIRE_FALSE_MESSAGE(
+                checked.has_value(),
+                "project check must reject an altered generated Tool Catalog"
+            );
+            CHECK_MESSAGE(
+                messageOf(checked).find(k_generatedToolCatalog) != std::string::npos,
+                "altered-catalog refusal must name its generated artifact"
+            );
+            CHECK_MESSAGE(
+                messageOf(checked).find("does not match its declared source")
+                    != std::string::npos,
+                "altered-catalog refusal must name the byte mismatch"
+            );
+        }
+
+        SUBCASE("missing")
+        {
+            REQUIRE(std::filesystem::remove(catalogPath));
+            auto const checked = checkProject(spec);
+            REQUIRE_FALSE_MESSAGE(
+                checked.has_value(),
+                "project check must reject a missing generated Tool Catalog"
+            );
+            CHECK_MESSAGE(
+                messageOf(checked).find(k_generatedToolCatalog) != std::string::npos,
+                "missing-catalog refusal must name its generated artifact"
+            );
+            CHECK_MESSAGE(
+                messageOf(checked).find("is missing") != std::string::npos,
+                "missing-catalog refusal must name the missing property"
+            );
+        }
+
+        SUBCASE("extra")
+        {
+            constexpr auto k_extra = std::string_view{
+                "generated/tool-catalogs/chaos.project/extra.json"
+            };
+            writeFile(workspace.build() / k_extra, "{}\n");
+            auto const checked = checkProject(spec);
+            REQUIRE_FALSE_MESSAGE(
+                checked.has_value(),
+                "project check must reject an extra generated Tool Catalog artifact"
+            );
+            CHECK_MESSAGE(
+                messageOf(checked).find(k_extra) != std::string::npos,
+                "extra-catalog refusal must name its generated artifact"
+            );
+            CHECK_MESSAGE(
+                messageOf(checked).find("has no declared source") != std::string::npos,
+                "extra-catalog refusal must name the absent declaration"
+            );
+        }
+
+        SUBCASE("linked")
+        {
+            auto const secondName = workspace.build() / "catalog-hard-link.json";
+            auto error            = std::error_code{};
+            std::filesystem::create_hard_link(catalogPath, secondName, error);
+            REQUIRE_FALSE(error);
+            auto const checked = checkProject(spec);
+            REQUIRE_FALSE_MESSAGE(
+                checked.has_value(),
+                "project check must reject a linked generated Tool Catalog"
+            );
+            CHECK_MESSAGE(
+                messageOf(checked).find(k_generatedToolCatalog) != std::string::npos,
+                "linked-catalog refusal must name its generated artifact"
+            );
+            CHECK_MESSAGE(
+                messageOf(checked).find("must not be a link") != std::string::npos,
+                "linked-catalog refusal must name the link property"
+            );
+        }
+    }
+
     TEST_CASE("project check names a declared input removed after build")
     {
         auto const workspace   = TemporaryWorkspace{"uf-project-missing-input"};
         auto const initialized = initializedWorkspace(workspace);
         REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
-        auto const directories = ProjectDirectories{
+        auto const directories = ProjectBuildSpec{
             .sourceDirectory = workspace.source(),
             .buildDirectory  = workspace.build(),
+            .toolCatalogs    = {},
         };
         auto const built = buildProject(directories);
         REQUIRE_MESSAGE(built.has_value(), messageOf(built));
@@ -486,9 +764,10 @@ namespace uf::project
         auto const workspace   = TemporaryWorkspace{"uf-project-stale-receipt"};
         auto const initialized = initializedWorkspace(workspace);
         REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
-        auto const directories = ProjectDirectories{
+        auto const directories = ProjectBuildSpec{
             .sourceDirectory = workspace.source(),
             .buildDirectory  = workspace.build(),
+            .toolCatalogs    = {},
         };
         auto const built = buildProject(directories);
         REQUIRE_MESSAGE(built.has_value(), messageOf(built));
@@ -528,9 +807,10 @@ namespace uf::project
         REQUIRE_FALSE(error);
 
         auto const built = buildProject(
-            ProjectDirectories{
+            ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = nestedBuild,
+                .toolCatalogs    = {},
             }
         );
 
@@ -545,30 +825,6 @@ namespace uf::project
         CHECK_FALSE_MESSAGE(
             std::filesystem::exists(nestedBuild / k_buildReceiptName),
             "overlap refusal must happen before a source-side receipt is written"
-        );
-    }
-
-    TEST_CASE("single-step schema bytes match interface lock v1.18")
-    {
-        auto const bytes = declarativeSingleStepToolSchemaBytes();
-        CHECK_MESSAGE(
-            bytes.size() == 2368U,
-            "single-step schema byte count must match interface lock v1.18"
-        );
-        auto const digest = sha256(std::as_bytes(std::span{bytes}));
-        auto const digestMessage = (
-            digest.has_value()
-                ? std::string{}
-                : std::string{digest.error().message()}
-        );
-        REQUIRE_MESSAGE(
-            digest.has_value(),
-            digestMessage
-        );
-        CHECK_MESSAGE(
-            digest->hex()
-                == "96a739627927bf1218be2aa0d423cb02d3a249fcda1911183a9aeaa0c4fd5af3",
-            "single-step schema SHA-256 must match interface lock v1.18"
         );
     }
 

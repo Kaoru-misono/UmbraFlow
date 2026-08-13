@@ -13,4 +13,4 @@ unity_build = false
 # further down. json declares `public = core` only, so the edge closes no cycle.
 [dependencies]
 public = core domain json task
-private = trace script operator_sqlite3
+private = trace script operator_sqlite3 schema

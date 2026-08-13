@@ -13,6 +13,8 @@
 #include <json/schema.hpp>
 #include <json/value.hpp>
 
+#include <schema/framework-schema-catalog.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -26,148 +28,9 @@ namespace uf::operator_runtime
 {
     namespace
     {
-        // The exact bytes of schema/umbraflow-policy-v1.schema.json. They are
-        // duplicated here rather than read from that path because a running
-        // Operator has no repository to read, and
-        // contract-policy-schema-matches-the-published-document holds the two
-        // byte for byte, so the duplicate cannot drift.
-        constexpr auto k_policyArtifactSchema = std::string_view{R"json({
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://umbraflow.local/schema/policy-v1",
-  "title": "Umbraflow Operator policy artifact v1",
-  "$ref": "#/$defs/PolicyArtifact",
-  "$defs": {
-    "Hash": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
-    },
-    "Identifier": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
-    },
-    "NamespacedIdentifier": {
-      "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
-    },
-    "Risk": {
-      "enum": ["read_only", "low", "medium", "high", "critical"]
-    },
-    "PolicyDecision": {
-      "enum": ["allow", "deny", "require_approval"]
-    },
-    "EffectSelector": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["tool_names", "effect_types", "scope_kinds"],
-      "properties": {
-        "tool_names": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/NamespacedIdentifier" },
-          "uniqueItems": true
-        },
-        "effect_types": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/NamespacedIdentifier" },
-          "uniqueItems": true
-        },
-        "scope_kinds": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/Identifier" },
-          "uniqueItems": true
-        }
-      },
-      "anyOf": [
-        { "properties": { "tool_names": { "minItems": 1 } } },
-        { "properties": { "effect_types": { "minItems": 1 } } }
-      ]
-    },
-    "ApprovalRequirement": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["approver_capability", "bind_exact_effects", "single_use"],
-      "properties": {
-        "approver_capability": { "$ref": "#/$defs/Identifier" },
-        "bind_exact_effects": { "const": true },
-        "single_use": { "const": true }
-      }
-    },
-    "PolicyRule": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "rule_id",
-        "priority",
-        "selector",
-        "maximum_risk",
-        "required_controller_capabilities",
-        "decision",
-        "approval"
-      ],
-      "properties": {
-        "rule_id": { "$ref": "#/$defs/Identifier" },
-        "priority": { "type": "integer", "minimum": 0 },
-        "selector": { "$ref": "#/$defs/EffectSelector" },
-        "maximum_risk": { "$ref": "#/$defs/Risk" },
-        "required_controller_capabilities": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/Identifier" },
-          "uniqueItems": true
-        },
-        "decision": { "$ref": "#/$defs/PolicyDecision" },
-        "approval": {
-          "oneOf": [
-            { "type": "null" },
-            { "$ref": "#/$defs/ApprovalRequirement" }
-          ]
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": { "decision": { "const": "require_approval" } },
-            "required": ["decision"]
-          },
-          "then": {
-            "properties": {
-              "approval": { "$ref": "#/$defs/ApprovalRequirement" }
-            }
-          },
-          "else": {
-            "properties": {
-              "approval": { "type": "null" }
-            }
-          }
-        }
-      ]
-    },
-    "PolicyArtifact": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "policy_id",
-        "policy_version",
-        "owned_by",
-        "operator_protocol_schema_hash",
-        "default_decision",
-        "unknown_effect_decision",
-        "ordered_rules"
-      ],
-      "properties": {
-        "policy_id": { "$ref": "#/$defs/Identifier" },
-        "policy_version": { "$ref": "#/$defs/Identifier" },
-        "owned_by": { "const": "operator" },
-        "operator_protocol_schema_hash": { "$ref": "#/$defs/Hash" },
-        "default_decision": { "const": "deny" },
-        "unknown_effect_decision": { "const": "deny" },
-        "ordered_rules": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/PolicyRule" }
-        }
-      }
-    }
-  }
-}
-)json"};
+        constexpr auto k_policyArtifactSchemaPath = std::string_view{
+            "schema/umbraflow-policy-v1.schema.json"
+        };
 
         struct DecisionName final
         {
@@ -348,11 +211,6 @@ namespace uf::operator_runtime
         UF_UNREACHABLE_MSG("Unknown PolicyDecision value");
     }
 
-    auto policyArtifactSchemaBytes() noexcept -> std::string_view
-    {
-        return k_policyArtifactSchema;
-    }
-
     VerifiedPolicyArtifact::VerifiedPolicyArtifact(
         PolicyArtifactClaims claims,
         std::string canonicalJcs,
@@ -379,11 +237,21 @@ namespace uf::operator_runtime
                 "PolicyArtifact bytes do not match the pinned session manifest"
             );
         }
+        auto const published = framework_schema::findFrameworkSchema(
+            k_policyArtifactSchemaPath
+        );
+        if (!published.has_value())
+        {
+            return refuse(
+                "generated framework schema catalog is missing "
+                + std::string{k_policyArtifactSchemaPath}
+            );
+        }
         UF_TRY_VALUE(
             schema,
             json::Schema::compile(json::Schema::Document{
-                .label      = "operator/policy-artifact",
-                .exactBytes = k_policyArtifactSchema,
+                .label      = published->relativePath,
+                .exactBytes = published->exactBytes,
             })
         );
         UF_TRY(adopt(

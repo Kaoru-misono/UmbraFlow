@@ -132,15 +132,6 @@ namespace uf::deployment
     [[nodiscard]]
     auto validateFrameworkFormat(std::string_view exactBytes) -> Status;
 
-    // The Tool Catalog document's own word for a mutability. That document's
-    // vocabulary belongs to this module -- the framework schema that judges the
-    // catalog and the table that reads it are both here -- so a caller whose
-    // refusal must name a mutability spells it through this rather than as a
-    // third copy of the two words.
-    [[nodiscard]]
-    auto toolMutabilityWireName(operator_runtime::ToolMutability mutability) noexcept
-        -> std::string_view;
-
     // The four schema-bearing validators one ProjectRegistration's authorities
     // are built from. Immutable and copyable: each accessor hands out a
     // std::function that keeps this state alive, so an authority outlives the

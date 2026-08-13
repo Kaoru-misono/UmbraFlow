@@ -13,7 +13,7 @@
       "project_observation_schema": "schema/project-observation-v1.schema.json",
       "tool_precondition_schema": "schema/tool-precondition-v1.schema.json",
       "reconcile_schema": "schema/reconcile-v1.schema.json",
-      "tool_catalog": "schema/expedition/tool-catalog-v1.json",
+      "tool_catalog": "generated/tool-catalogs/arcana.expedition/tool-catalog-v1.json",
       "journal_event_schema_manifest": "schema/expedition/journal-manifest-v1.json",
       "reconcile_manifest": "schema/expedition/reconcile-manifest-v1.json",
       "journal_payload_schemas": [
@@ -38,7 +38,7 @@
       "project_observation_schema": "schema/project-observation-v1.schema.json",
       "tool_precondition_schema": "schema/tool-precondition-v1.schema.json",
       "reconcile_schema": "schema/reconcile-v1.schema.json",
-      "tool_catalog": "schema/rival/tool-catalog-v1.json",
+      "tool_catalog": "generated/tool-catalogs/arcana.rival/tool-catalog-v1.json",
       "journal_event_schema_manifest": "schema/rival/journal-manifest-v1.json",
       "reconcile_manifest": "schema/rival/reconcile-manifest-v1.json",
       "journal_payload_schemas": [

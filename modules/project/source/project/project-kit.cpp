@@ -1,6 +1,7 @@
 #include "project-kit.hpp"
 
 #include "declarative-single-step-tool.hpp"
+#include "tool-catalog.hpp"
 
 #include <core/error/result.hpp>
 
@@ -37,8 +38,14 @@ namespace uf::project
         constexpr auto k_generatedAdapterDirectory = std::string_view{
             "adapters"
         };
+        constexpr auto k_generatedToolCatalogDirectory = std::string_view{
+            "tool-catalogs"
+        };
+        constexpr auto k_toolCatalogName = std::string_view{
+            "tool-catalog-v1.json"
+        };
 
-        struct GeneratedAdapter final
+        struct GeneratedArtifact final
         {
             std::filesystem::path relativePath{};
             std::string           bytes{};
@@ -145,17 +152,17 @@ namespace uf::project
 
         [[nodiscard]]
         auto validateDirectories(
-            ProjectDirectories const& directories
+            ProjectBuildSpec const& spec
         ) -> Status
         {
-            UF_TRY(requireDirectory(directories.sourceDirectory, "source"));
+            UF_TRY(requireDirectory(spec.sourceDirectory, "source"));
             UF_TRY_VALUE(
                 source,
-                resolvedPath(directories.sourceDirectory, "source")
+                resolvedPath(spec.sourceDirectory, "source")
             );
             UF_TRY_VALUE(
                 build,
-                resolvedPath(directories.buildDirectory, "build")
+                resolvedPath(spec.buildDirectory, "build")
             );
 
             if (isWithinOrEqual(build, source) || isWithinOrEqual(source, build))
@@ -173,7 +180,7 @@ namespace uf::project
 
             auto error = std::error_code{};
             auto const status = std::filesystem::status(
-                directories.buildDirectory,
+                spec.buildDirectory,
                 error
             );
             if (
@@ -185,7 +192,7 @@ namespace uf::project
                     AutomationErrorKind::IoFailure,
                     std::format(
                         "cannot inspect project build directory \"{}\": {}",
-                        directories.buildDirectory.string(),
+                        spec.buildDirectory.string(),
                         error.message()
                     )
                 );
@@ -200,7 +207,7 @@ namespace uf::project
                     AutomationErrorKind::InvalidResource,
                     std::format(
                         "project build path is not a directory: \"{}\"",
-                        directories.buildDirectory.string()
+                        spec.buildDirectory.string()
                     )
                 );
             }
@@ -452,9 +459,9 @@ namespace uf::project
         auto generatedAdapters(
             std::filesystem::path const& sourceDirectory,
             std::vector<std::string> const& inputs
-        ) -> Result<std::vector<GeneratedAdapter>>
+        ) -> Result<std::vector<GeneratedArtifact>>
         {
-            auto adapters = std::vector<GeneratedAdapter>{};
+            auto adapters = std::vector<GeneratedArtifact>{};
             for (auto const& input : inputs)
             {
                 auto const inputPath = std::filesystem::path{input};
@@ -505,7 +512,7 @@ namespace uf::project
                 auto adapterName = components.back();
                 adapterName.replace_extension(".luau");
                 adapters.emplace_back(
-                    GeneratedAdapter{
+                    GeneratedArtifact{
                         .relativePath = std::filesystem::path{pluginId}
                             / adapterName,
                         .bytes        = std::move(adapter),
@@ -516,45 +523,88 @@ namespace uf::project
         }
 
         [[nodiscard]]
-        auto generatedAdapterRoot(
-            std::filesystem::path const& buildDirectory
+        auto generatedToolCatalogs(
+            std::vector<ToolCatalogDeclaration> const& declarations
+        ) -> Result<std::vector<GeneratedArtifact>>
+        {
+            auto catalogs  = std::vector<GeneratedArtifact>{};
+            auto pluginIds = std::set<std::string>{};
+            catalogs.reserve(declarations.size());
+            for (auto const& declaration : declarations)
+            {
+                if (!pluginIds.emplace(declaration.pluginId).second)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "generated Tool Catalog declared plugin {} more than once",
+                            declaration.pluginId
+                        )
+                    );
+                }
+                UF_TRY_VALUE_CONTEXT(
+                    catalog,
+                    generateToolCatalog(declaration),
+                    std::format(
+                        "generating Tool Catalog for plugin {}",
+                        declaration.pluginId
+                    )
+                );
+                catalogs.emplace_back(GeneratedArtifact{
+                    .relativePath = std::filesystem::path{declaration.pluginId}
+                        / k_toolCatalogName,
+                    .bytes = std::move(catalog),
+                });
+            }
+            return catalogs;
+        }
+
+        [[nodiscard]]
+        auto generatedArtifactRoot(
+            std::filesystem::path const& buildDirectory,
+            std::string_view familyDirectory
         ) -> std::filesystem::path
         {
             return buildDirectory
                 / k_generatedDirectory
-                / k_generatedAdapterDirectory;
+                / familyDirectory;
         }
 
         [[nodiscard]]
-        auto generatedAdapterName(
+        auto generatedArtifactName(
+            std::string_view familyDirectory,
             std::filesystem::path const& relativePath
         ) -> std::string
         {
             return (
                 std::filesystem::path{k_generatedDirectory}
-                / k_generatedAdapterDirectory
+                / familyDirectory
                 / relativePath
             ).generic_string();
         }
 
         [[nodiscard]]
-        auto replaceGeneratedAdapterDirectory(
-            std::filesystem::path const& buildDirectory
+        auto replaceGeneratedArtifactDirectory(
+            std::filesystem::path const& buildDirectory,
+            std::string_view familyDirectory
         ) -> Status
         {
             UF_TRY_VALUE(build, resolvedPath(buildDirectory, "build"));
-            auto const adapterRoot = generatedAdapterRoot(build);
-            if (!isWithinOrEqual(adapterRoot, build))
+            auto const artifactRoot = generatedArtifactRoot(
+                build,
+                familyDirectory
+            );
+            if (!isWithinOrEqual(artifactRoot, build))
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "generated adapter directory leaves the project build tree"
+                    "generated artifact directory leaves the project build tree"
                 );
             }
 
             auto error        = std::error_code{};
             auto const status = std::filesystem::symlink_status(
-                adapterRoot,
+                artifactRoot,
                 error
             );
             if (
@@ -565,8 +615,8 @@ namespace uf::project
                 return fail(
                     AutomationErrorKind::IoFailure,
                     std::format(
-                        "cannot inspect generated adapter directory \"{}\": {}",
-                        adapterRoot.string(),
+                        "cannot inspect generated artifact directory \"{}\": {}",
+                        artifactRoot.string(),
                         error.message()
                     )
                 );
@@ -576,34 +626,33 @@ namespace uf::project
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     std::format(
-                        "generated adapter directory must not be a link: \"{}\"",
-                        adapterRoot.string()
+                        "generated artifact directory must not be a link: \"{}\"",
+                        artifactRoot.string()
                     )
                 );
             }
-
             error = std::error_code{};
-            std::filesystem::remove_all(adapterRoot, error);
+            std::filesystem::remove_all(artifactRoot, error);
             if (error)
             {
                 return fail(
                     AutomationErrorKind::IoFailure,
                     std::format(
-                        "cannot replace generated adapter directory \"{}\": {}",
-                        adapterRoot.string(),
+                        "cannot replace generated artifact directory \"{}\": {}",
+                        artifactRoot.string(),
                         error.message()
                     )
                 );
             }
             error = std::error_code{};
-            std::filesystem::create_directories(adapterRoot, error);
+            std::filesystem::create_directories(artifactRoot, error);
             if (error)
             {
                 return fail(
                     AutomationErrorKind::IoFailure,
                     std::format(
-                        "cannot create generated adapter directory \"{}\": {}",
-                        adapterRoot.string(),
+                        "cannot create generated artifact directory \"{}\": {}",
+                        artifactRoot.string(),
                         error.message()
                     )
                 );
@@ -612,15 +661,19 @@ namespace uf::project
         }
 
         [[nodiscard]]
-        auto writeGeneratedAdapters(
+        auto writeGeneratedArtifacts(
             std::filesystem::path const& buildDirectory,
-            std::vector<GeneratedAdapter> const& adapters
+            std::string_view familyDirectory,
+            std::vector<GeneratedArtifact> const& artifacts
         ) -> Status
         {
-            auto const adapterRoot = generatedAdapterRoot(buildDirectory);
-            for (auto const& adapter : adapters)
+            auto const artifactRoot = generatedArtifactRoot(
+                buildDirectory,
+                familyDirectory
+            );
+            for (auto const& artifact : artifacts)
             {
-                auto const path = adapterRoot / adapter.relativePath;
+                auto const path = artifactRoot / artifact.relativePath;
                 auto error      = std::error_code{};
                 std::filesystem::create_directories(
                     path.parent_path(),
@@ -631,19 +684,19 @@ namespace uf::project
                     return fail(
                         AutomationErrorKind::IoFailure,
                         std::format(
-                            "cannot create generated adapter parent \"{}\": {}",
+                            "cannot create generated artifact parent \"{}\": {}",
                             path.parent_path().string(),
                             error.message()
                         )
                     );
                 }
-                UF_TRY(writeText(path, adapter.bytes, "generated adapter"));
+                UF_TRY(writeText(path, artifact.bytes, "generated artifact"));
             }
             return ok();
         }
 
         [[nodiscard]]
-        auto expectedAdapterDirectories(
+        auto expectedArtifactDirectories(
             std::set<std::string> const& files
         ) -> std::set<std::string>
         {
@@ -661,25 +714,29 @@ namespace uf::project
         }
 
         [[nodiscard]]
-        auto validateGeneratedAdapters(
+        auto validateGeneratedArtifacts(
             std::filesystem::path const& buildDirectory,
-            std::vector<GeneratedAdapter> const& adapters
+            std::string_view familyDirectory,
+            std::vector<GeneratedArtifact> const& artifacts
         ) -> Status
         {
-            auto const adapterRoot = generatedAdapterRoot(buildDirectory);
+            auto const artifactRoot = generatedArtifactRoot(
+                buildDirectory,
+                familyDirectory
+            );
             auto expectedFiles     = std::set<std::string>{};
-            for (auto const& adapter : adapters)
+            for (auto const& artifact : artifacts)
             {
-                expectedFiles.emplace(adapter.relativePath.generic_string());
+                expectedFiles.emplace(artifact.relativePath.generic_string());
             }
-            auto const expectedDirectories = expectedAdapterDirectories(
+            auto const expectedDirectories = expectedArtifactDirectories(
                 expectedFiles
             );
             auto actualFiles = std::set<std::string>{};
 
             auto error    = std::error_code{};
             auto iterator = std::filesystem::recursive_directory_iterator{
-                adapterRoot,
+                artifactRoot,
                 std::filesystem::directory_options::none,
                 error,
             };
@@ -689,7 +746,7 @@ namespace uf::project
                     AutomationErrorKind::InvalidResource,
                     std::format(
                         "generated project artifact directory \"{}\" is missing",
-                        generatedAdapterName({})
+                        generatedArtifactName(familyDirectory, {})
                     )
                 );
             }
@@ -702,10 +759,13 @@ namespace uf::project
                     break;
                 }
                 auto const relative = iterator->path().lexically_relative(
-                    adapterRoot
+                    artifactRoot
                 );
                 auto const spelling     = relative.generic_string();
-                auto const artifactName = generatedAdapterName(relative);
+                auto const artifactName = generatedArtifactName(
+                    familyDirectory,
+                    relative
+                );
                 if (std::filesystem::is_symlink(status))
                 {
                     return fail(
@@ -731,6 +791,27 @@ namespace uf::project
                     }
                     continue;
                 }
+                if (std::filesystem::is_regular_file(status))
+                {
+                    auto const links = std::filesystem::hard_link_count(
+                        iterator->path(),
+                        error
+                    );
+                    if (error)
+                    {
+                        break;
+                    }
+                    if (links != 1U)
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "generated project artifact \"{}\" must not be a link",
+                                artifactName
+                            )
+                        );
+                    }
+                }
                 if (
                     status.type() != std::filesystem::file_type::regular
                     || !expectedFiles.contains(spelling)
@@ -752,36 +833,42 @@ namespace uf::project
                 return fail(
                     AutomationErrorKind::IoFailure,
                     std::format(
-                        "cannot enumerate generated adapter directory \"{}\": {}",
-                        adapterRoot.string(),
+                        "cannot enumerate generated artifact directory \"{}\": {}",
+                        artifactRoot.string(),
                         error.message()
                     )
                 );
             }
 
-            for (auto const& adapter : adapters)
+            for (auto const& artifact : artifacts)
             {
-                auto const spelling = adapter.relativePath.generic_string();
+                auto const spelling = artifact.relativePath.generic_string();
                 if (!actualFiles.contains(spelling))
                 {
                     return fail(
                         AutomationErrorKind::InvalidResource,
                         std::format(
                             "generated project artifact \"{}\" is missing",
-                            generatedAdapterName(adapter.relativePath)
+                            generatedArtifactName(
+                                familyDirectory,
+                                artifact.relativePath
+                            )
                         )
                     );
                 }
-                auto const path = adapterRoot / adapter.relativePath;
-                UF_TRY_VALUE(bytes, readText(path, "generated adapter"));
-                if (bytes != adapter.bytes)
+                auto const path = artifactRoot / artifact.relativePath;
+                UF_TRY_VALUE(bytes, readText(path, "generated artifact"));
+                if (bytes != artifact.bytes)
                 {
                     return fail(
                         AutomationErrorKind::InvalidResource,
                         std::format(
                             "generated project artifact \"{}\" does not match "
                             "its declared source",
-                            generatedAdapterName(adapter.relativePath)
+                            generatedArtifactName(
+                                familyDirectory,
+                                artifact.relativePath
+                            )
                         )
                     );
                 }
@@ -904,9 +991,10 @@ namespace uf::project
     auto initProject(ProjectInitSpec const& spec) -> Status
     {
         UF_TRY(validateDirectories(
-            ProjectDirectories{
+            ProjectBuildSpec{
                 .sourceDirectory = spec.sourceDirectory,
                 .buildDirectory  = spec.buildDirectory,
+                .toolCatalogs    = {},
             }
         ));
         UF_TRY_VALUE(inputs, canonicalInputs(spec));
@@ -920,20 +1008,37 @@ namespace uf::project
         );
     }
 
-    auto buildProject(ProjectDirectories const& directories) -> Status
+    auto buildProject(ProjectBuildSpec const& spec) -> Status
     {
-        UF_TRY(validateDirectories(directories));
-        UF_TRY_VALUE(inputs, declaredInputs(directories.buildDirectory));
-        UF_TRY(validateDeclaredInputs(directories.sourceDirectory, inputs));
+        UF_TRY(validateDirectories(spec));
+        UF_TRY_VALUE(inputs, declaredInputs(spec.buildDirectory));
+        UF_TRY(validateDeclaredInputs(spec.sourceDirectory, inputs));
         UF_TRY_VALUE(
             adapters,
-            generatedAdapters(directories.sourceDirectory, inputs)
+            generatedAdapters(spec.sourceDirectory, inputs)
         );
-        UF_TRY(ensureBuildDirectory(directories.buildDirectory));
-        UF_TRY(replaceGeneratedAdapterDirectory(directories.buildDirectory));
-        UF_TRY(writeGeneratedAdapters(directories.buildDirectory, adapters));
+        UF_TRY_VALUE(catalogs, generatedToolCatalogs(spec.toolCatalogs));
+        UF_TRY(ensureBuildDirectory(spec.buildDirectory));
+        UF_TRY(replaceGeneratedArtifactDirectory(
+            spec.buildDirectory,
+            k_generatedAdapterDirectory
+        ));
+        UF_TRY(writeGeneratedArtifacts(
+            spec.buildDirectory,
+            k_generatedAdapterDirectory,
+            adapters
+        ));
+        UF_TRY(replaceGeneratedArtifactDirectory(
+            spec.buildDirectory,
+            k_generatedToolCatalogDirectory
+        ));
+        UF_TRY(writeGeneratedArtifacts(
+            spec.buildDirectory,
+            k_generatedToolCatalogDirectory,
+            catalogs
+        ));
 
-        auto const receiptPath = directories.buildDirectory / k_buildReceiptName;
+        auto const receiptPath = spec.buildDirectory / k_buildReceiptName;
         return writeText(
             receiptPath,
             renderList(k_buildReceiptHeader, inputs),
@@ -941,18 +1046,28 @@ namespace uf::project
         );
     }
 
-    auto checkProject(ProjectDirectories const& directories) -> Status
+    auto checkProject(ProjectBuildSpec const& spec) -> Status
     {
-        UF_TRY(validateDirectories(directories));
-        UF_TRY_VALUE(inputs, declaredInputs(directories.buildDirectory));
-        UF_TRY(validateDeclaredInputs(directories.sourceDirectory, inputs));
+        UF_TRY(validateDirectories(spec));
+        UF_TRY_VALUE(inputs, declaredInputs(spec.buildDirectory));
+        UF_TRY(validateDeclaredInputs(spec.sourceDirectory, inputs));
         UF_TRY_VALUE(
             adapters,
-            generatedAdapters(directories.sourceDirectory, inputs)
+            generatedAdapters(spec.sourceDirectory, inputs)
         );
-        UF_TRY(validateGeneratedAdapters(directories.buildDirectory, adapters));
+        UF_TRY_VALUE(catalogs, generatedToolCatalogs(spec.toolCatalogs));
+        UF_TRY(validateGeneratedArtifacts(
+            spec.buildDirectory,
+            k_generatedAdapterDirectory,
+            adapters
+        ));
+        UF_TRY(validateGeneratedArtifacts(
+            spec.buildDirectory,
+            k_generatedToolCatalogDirectory,
+            catalogs
+        ));
 
-        auto const receiptPath = directories.buildDirectory / k_buildReceiptName;
+        auto const receiptPath = spec.buildDirectory / k_buildReceiptName;
         UF_TRY_VALUE(receipt, readText(receiptPath, "build receipt"));
         auto const expected = renderList(k_buildReceiptHeader, inputs);
         if (receipt != expected)

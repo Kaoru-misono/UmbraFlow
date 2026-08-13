@@ -19,10 +19,11 @@
 #include "arcana-expedition/project-schemas.hpp"
 #include "umbraflow/project-schemas.hpp"
 
-#include <deployment/framework-schema-catalog.hpp>
 #include <deployment/project-deployment.hpp>
 
 #include <operator/project-plugin.hpp>
+
+#include <schema/framework-schema-catalog.hpp>
 
 #include <doctest/doctest.h>
 
@@ -1222,29 +1223,77 @@ namespace uf::deployment
     // repository. Editing a byte under schema/ moves the generated digest and
     // reds this case; only a run against that repository proves the lock itself
     // has not moved, which is check_spec_bundle.py's job rather than this one's.
-    TEST_CASE("the framework schema catalog publishes the locked Fact family")
+    TEST_CASE("the framework schema catalog publishes every runtime schema source")
     {
-        auto const catalog = frameworkSchemaCatalog();
-        REQUIRE(catalog.size() == 3U);
+        auto const catalog = framework_schema::frameworkSchemaCatalog();
+        CHECK_MESSAGE(
+            catalog.size() == 6U,
+            "framework schema catalog must contain exactly six declared sources"
+        );
 
-        CHECK(catalog[0U].relativePath
-              == "schema/umbraflow-collection-fact-v1.schema.json");
-        CHECK(catalog[0U].identity
+        auto const collectionFact = framework_schema::findFrameworkSchema(
+            "schema/umbraflow-collection-fact-v1.schema.json"
+        );
+        REQUIRE_MESSAGE(
+            collectionFact.has_value(),
+            "framework schema catalog must include collection Fact"
+        );
+        CHECK(collectionFact->identity
               == "https://umbraflow.dev/schema/collection-fact/v1");
-        CHECK(catalog[0U].sha256
+        CHECK(collectionFact->sha256
               == "bb40059ed3a600c5248fc2a1736a07c1e3776bc58bdd2c14e5637adb658e57bb");
 
-        CHECK(catalog[1U].relativePath
-              == "schema/umbraflow-fact-provenance-v1.schema.json");
-        CHECK(catalog[1U].identity
+        auto const singleStep = framework_schema::findFrameworkSchema(
+            "schema/umbraflow-declarative-single-step-tool-v1.schema.json"
+        );
+        REQUIRE_MESSAGE(
+            singleStep.has_value(),
+            "framework schema catalog must include declarative single-step tools"
+        );
+        CHECK(singleStep->identity
+              == "https://umbraflow.dev/schema/declarative-single-step-tool/v1");
+
+        auto const provenance = framework_schema::findFrameworkSchema(
+            "schema/umbraflow-fact-provenance-v1.schema.json"
+        );
+        REQUIRE_MESSAGE(
+            provenance.has_value(),
+            "framework schema catalog must include Fact provenance"
+        );
+        CHECK(provenance->identity
               == "https://umbraflow.dev/schema/fact-provenance/v1");
-        CHECK(catalog[1U].sha256
+        CHECK(provenance->sha256
               == "4098bc91b6730a1ae5f1cea3b6e156f447469a531ee0e096eacba6adf552871b");
 
-        CHECK(catalog[2U].relativePath == "schema/umbraflow-fact-v1.schema.json");
-        CHECK(catalog[2U].identity == "https://umbraflow.dev/schema/fact/v1");
-        CHECK(catalog[2U].sha256
+        auto const fact = framework_schema::findFrameworkSchema(
+            "schema/umbraflow-fact-v1.schema.json"
+        );
+        REQUIRE_MESSAGE(
+            fact.has_value(),
+            "framework schema catalog must include Fact"
+        );
+        CHECK(fact->identity == "https://umbraflow.dev/schema/fact/v1");
+        CHECK(fact->sha256
               == "7a9af5e79e0dbf6c2be5126f34ddbf48469f28a00c6cc6766b4e447f30bdf0cf");
+
+        auto const policy = framework_schema::findFrameworkSchema(
+            "schema/umbraflow-policy-v1.schema.json"
+        );
+        REQUIRE_MESSAGE(
+            policy.has_value(),
+            "framework schema catalog must include Operator policy"
+        );
+        CHECK(policy->identity == "https://umbraflow.local/schema/policy-v1");
+
+        auto const registration = framework_schema::findFrameworkSchema(
+            "schema/umbraflow-project-registration-v1.schema.json"
+        );
+        REQUIRE_MESSAGE(
+            registration.has_value(),
+            "framework schema catalog must include project registration"
+        );
+        CHECK(registration->identity
+              == "https://umbraflow.local/schema/project-registration-v1");
     }
 
     // The ruling on run.ended-v1, made executable. A journal event type reaches

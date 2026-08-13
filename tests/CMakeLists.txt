@@ -411,12 +411,18 @@ cpp_add_test(
     LIBS
         ${PROJECT_NAME}_deployment
         ${PROJECT_NAME}_image
+        ${PROJECT_NAME}_project
+        ${PROJECT_NAME}_schema
 )
 # tests/ itself, so that the loader's cases reach tests/json/repository-path.hpp
 # rather than becoming a seventh copy of it.
 target_include_directories(test-deployment PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/support"
     "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+target_compile_definitions(test-deployment PRIVATE
+    UF_STAGED_UMBRAFLOW_PROJECT="${UF_STAGED_UMBRAFLOW_PROJECT}"
+    UF_STAGED_ARCANA_PROJECT="${UF_STAGED_ARCANA_PROJECT}"
 )
 
 cpp_add_test(
@@ -509,13 +515,11 @@ if(TARGET ${PROJECT_NAME}_operator)
             # project-fixture.hpp builds its five authorities out of
             # modules/deployment, which is where the validators now live.
             ${PROJECT_NAME}_deployment
+            ${PROJECT_NAME}_project
     )
     target_include_directories(test-operator PRIVATE
         "${UF_OPERATOR_FIXTURE_DIR}"
         "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}"
-        # tests/ itself, so that the policy schema case reaches
-        # tests/json/repository-path.hpp rather than becoming a seventh copy.
-        "${CMAKE_CURRENT_SOURCE_DIR}"
     )
     if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
         cpp_stage_runtime_libraries(test-operator ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
@@ -539,6 +543,7 @@ if(TARGET ${PROJECT_NAME}_operator)
             # declares it links the amalgamation itself.
             ${PROJECT_NAME}_operator_sqlite3
             ${PROJECT_NAME}_deployment
+            ${PROJECT_NAME}_project
             # contract-state-s05 asks whether the session manifest binds the
             # plugin environment the framework actually runs. The Operator keeps
             # script private, so the gate that compares the manifest's ninth
@@ -662,6 +667,45 @@ cpp_add_test(
         ${PROJECT_NAME}_json
         ${PROJECT_NAME}_domain
 )
+
+add_executable(generate-umbraflow-example
+    support/umbraflow/generate-example.cpp
+)
+cpp_apply_safety_profile(generate-umbraflow-example)
+cpp_apply_utf8_encoding(generate-umbraflow-example)
+target_link_libraries(generate-umbraflow-example PRIVATE
+    ${PROJECT_NAME}_project
+    ${PROJECT_NAME}_deployment
+)
+target_compile_features(generate-umbraflow-example PRIVATE cxx_std_23)
+
+add_executable(generate-arcana-example
+    support/arcana-expedition/generate-example.cpp
+)
+cpp_apply_safety_profile(generate-arcana-example)
+cpp_apply_utf8_encoding(generate-arcana-example)
+target_link_libraries(generate-arcana-example PRIVATE
+    ${PROJECT_NAME}_project
+    ${PROJECT_NAME}_deployment
+)
+target_compile_features(generate-arcana-example PRIVATE cxx_std_23)
+
+add_custom_target(generate-example-projects ALL
+    COMMAND $<TARGET_FILE:generate-umbraflow-example>
+        "${PROJECT_SOURCE_DIR}/examples/umbraflow"
+        "${UF_STAGED_UMBRAFLOW_PROJECT}"
+    COMMAND $<TARGET_FILE:generate-arcana-example>
+        "${PROJECT_SOURCE_DIR}/examples/arcana-expedition"
+        "${UF_STAGED_ARCANA_PROJECT}"
+    DEPENDS generate-umbraflow-example generate-arcana-example
+    COMMENT "[Project] Generating example Tool Catalogs"
+    VERBATIM
+)
+add_dependencies(test-deployment generate-example-projects)
+if(TARGET umbra-flow-conformance)
+    add_dependencies(umbra-flow-conformance generate-example-projects)
+endif()
+
 add_test(
     NAME test-project-cli
     COMMAND ${CMAKE_COMMAND}

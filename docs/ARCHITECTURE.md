@@ -42,14 +42,24 @@ in this repository's generic core.
 April2's manifest loader turns each direct child of `modules/` into one
 library. Dependencies remain acyclic:
 
+> Amended 2026-08-13: the
+> [framework schema catalog](../modules/schema/source/schema/framework-schema-catalog.hpp)
+> is a leaf module generated from the published files under `schema/`.
+> Deployment, Operator and Project depend on that one runtime catalog; none
+> owns a second schema spelling.
+
 ```text
 entry -> operator -> task -> engine -> {controller ports, ocr, vision, trace}
                     \-> script -> {core, domain}
+deployment -> {operator, task, json, image, schema}
+project    -> {operator, json, schema}
+operator   -> {task, json, trace, script, schema}
 controller -> {core, domain}
 vision     -> {core, domain, image}
 ocr        -> {core, domain, vision}
 trace      -> {core, domain, vision}
 image      -> {core, domain}
+schema     -> {}
 ```
 
 `core` remains the platform-free leaf. Adding or promoting a generic core
@@ -96,6 +106,7 @@ two runs of the suite rather than its home.
 | trusted RuntimeModel parser, evidence and two-stage resolution | `task/runtime` |
 | confined RuntimeArtifact verification and Host generation binding | `task` C++ boundary |
 | lease/fence, snapshots, plans, policy, approvals, Operation and reconciliation | `operator` |
+| published framework schema files and their generated exact-byte runtime catalog | `schema` |
 | generic immutable audit events | `trace` |
 | offline evidence, candidates, review, replay and publication | `tools/annotate` |
 | the Operator contract a consumer must satisfy, as runnable cases | `conformance` |

@@ -75,13 +75,6 @@ namespace uf::operator_runtime
         std::vector<PolicyRule> orderedRules{};
     };
 
-    // The exact schema bytes that judge a PolicyArtifact. Published so that
-    // schema/umbraflow-policy-v1.schema.json can be held to them: the file is
-    // the contract a consumer reads and these are the bytes that decide, and a
-    // schema document nothing applies is a check that cannot fail.
-    [[nodiscard]]
-    auto policyArtifactSchemaBytes() noexcept -> std::string_view;
-
     // What one policy evaluation is asked about. Every member is a call-scoped
     // borrow: evaluate builds no state from it, stores none of it, and it must
     // not be returned or stored by a caller either.

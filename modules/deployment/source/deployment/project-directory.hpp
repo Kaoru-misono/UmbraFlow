@@ -35,14 +35,6 @@ namespace uf::deployment
     inline constexpr auto k_conformanceManifestFileName =
         std::string_view{"umbraflow-conformance.json"};
 
-    // The exact bytes of schema/umbraflow-project-registration-v1.schema.json,
-    // which is the document manifest_schema_hash names. It is carried rather
-    // than opened because a loader that read it would have to be told where the
-    // framework's own tree is; tests/deployment holds the file and these bytes
-    // to each other, so the published document and the enforcing one cannot
-    // drift apart in silence.
-    [[nodiscard]] auto projectRegistrationSchemaBytes() -> std::string_view;
-
     // One Journal entry a project's own event schemas accept, as
     // umbraflow-conformance.json spells it.
     struct ProjectJournalDocument final

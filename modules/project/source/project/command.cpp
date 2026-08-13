@@ -144,10 +144,10 @@ namespace uf::project
         }
 
         [[nodiscard]]
-        auto parseProjectDirectories(
+        auto parseProjectBuildSpec(
             std::span<std::string const> raw,
             std::string_view action
-        ) -> Result<ProjectDirectories>
+        ) -> Result<ProjectBuildSpec>
         {
             UF_TRY_VALUE(parsed, parseProjectFlags(raw));
             if (!parsed.source || !parsed.build)
@@ -170,9 +170,10 @@ namespace uf::project
                     )
                 );
             }
-            return ProjectDirectories{
+            return ProjectBuildSpec{
                 .sourceDirectory = std::move(*parsed.source),
                 .buildDirectory  = std::move(*parsed.build),
+                .toolCatalogs    = {},
             };
         }
 
@@ -215,22 +216,22 @@ namespace uf::project
             std::span<std::string const> raw
         ) -> ProjectExitCode
         {
-            auto const directories = parseProjectDirectories(raw, "build");
-            if (!directories)
+            auto const spec = parseProjectBuildSpec(raw, "build");
+            if (!spec)
             {
-                std::cerr << directories.error().message() << '\n';
+                std::cerr << spec.error().message() << '\n';
                 std::cerr << projectUsageText();
                 return ProjectExitCode::Failure;
             }
 
-            auto const built = buildProject(*directories);
+            auto const built = buildProject(*spec);
             if (!built)
             {
                 return reportProjectError(built.error());
             }
             std::cout << std::format(
                 "project build: build=\"{}\"\n",
-                directories->buildDirectory.string()
+                spec->buildDirectory.string()
             );
             return ProjectExitCode::Success;
         }
@@ -240,23 +241,23 @@ namespace uf::project
             std::span<std::string const> raw
         ) -> ProjectExitCode
         {
-            auto const directories = parseProjectDirectories(raw, "check");
-            if (!directories)
+            auto const spec = parseProjectBuildSpec(raw, "check");
+            if (!spec)
             {
-                std::cerr << directories.error().message() << '\n';
+                std::cerr << spec.error().message() << '\n';
                 std::cerr << projectUsageText();
                 return ProjectExitCode::Failure;
             }
 
-            auto const checked = checkProject(*directories);
+            auto const checked = checkProject(*spec);
             if (!checked)
             {
                 return reportProjectError(checked.error());
             }
             std::cout << std::format(
                 "project check: source=\"{}\" build=\"{}\"\n",
-                directories->sourceDirectory.string(),
-                directories->buildDirectory.string()
+                spec->sourceDirectory.string(),
+                spec->buildDirectory.string()
             );
             return ProjectExitCode::Success;
         }

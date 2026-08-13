@@ -1,5 +1,7 @@
 #pragma once
 
+#include "tool-catalog.hpp"
+
 #include <core/error/result.hpp>
 
 #include <filesystem>
@@ -22,18 +24,19 @@ namespace uf::project
         std::vector<std::filesystem::path> inputs{};
     };
 
-    struct ProjectDirectories final
+    struct ProjectBuildSpec final
     {
-        std::filesystem::path sourceDirectory{};
-        std::filesystem::path buildDirectory{};
+        std::filesystem::path               sourceDirectory{};
+        std::filesystem::path               buildDirectory{};
+        std::vector<ToolCatalogDeclaration> toolCatalogs{};
     };
 
     [[nodiscard]]
     auto initProject(ProjectInitSpec const& spec) -> Status;
 
     [[nodiscard]]
-    auto buildProject(ProjectDirectories const& directories) -> Status;
+    auto buildProject(ProjectBuildSpec const& spec) -> Status;
 
     [[nodiscard]]
-    auto checkProject(ProjectDirectories const& directories) -> Status;
+    auto checkProject(ProjectBuildSpec const& spec) -> Status;
 }

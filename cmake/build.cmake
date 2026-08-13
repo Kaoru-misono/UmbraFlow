@@ -89,6 +89,25 @@ function(cpp_embed_framework_schemas TARGET_NAME SCHEMA_DIR GENERATED_DIR)
     )
     set(GENERATED_FILE "${GENERATED_DIR}/framework-schema-catalog.generated.cpp")
 
+    cmake_path(ABSOLUTE_PATH SCHEMA_DIR NORMALIZE
+        OUTPUT_VARIABLE ABSOLUTE_SCHEMA_DIR
+    )
+    cmake_path(ABSOLUTE_PATH GENERATED_DIR NORMALIZE
+        OUTPUT_VARIABLE ABSOLUTE_GENERATED_DIR
+    )
+    cmake_path(IS_PREFIX ABSOLUTE_SCHEMA_DIR "${ABSOLUTE_GENERATED_DIR}"
+        NORMALIZE GENERATED_INSIDE_SCHEMA
+    )
+    cmake_path(IS_PREFIX ABSOLUTE_GENERATED_DIR "${ABSOLUTE_SCHEMA_DIR}"
+        NORMALIZE SCHEMA_INSIDE_GENERATED
+    )
+    if(GENERATED_INSIDE_SCHEMA OR SCHEMA_INSIDE_GENERATED)
+        message(FATAL_ERROR
+            "[Embed] ${TARGET_NAME}: authored schema input and generated output "
+            "trees must be separate."
+        )
+    endif()
+
     add_custom_command(
         OUTPUT "${GENERATED_FILE}"
         COMMAND ${Python3_EXECUTABLE} "${EMBED_SCRIPT}"

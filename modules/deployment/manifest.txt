@@ -36,4 +36,4 @@ unity_build = false
 # own, so nothing image declares is named by anything this module publishes.
 [dependencies]
 public = core domain json operator task
-private = image
+private = image schema

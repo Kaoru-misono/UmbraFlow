@@ -60,12 +60,15 @@ set(CPP_MODULE_ROOTS
 cpp_scan_and_load_modules(${CPP_MODULE_ROOTS})
 
 cpp_embed_framework_schemas(
-    ${PROJECT_NAME}_deployment
+    ${PROJECT_NAME}_schema
     "${CMAKE_CURRENT_SOURCE_DIR}/schema"
-    "${CMAKE_CURRENT_BINARY_DIR}/modules/deployment"
+    "${CMAKE_CURRENT_BINARY_DIR}/modules/schema"
     umbraflow-collection-fact-v1.schema.json
+    umbraflow-declarative-single-step-tool-v1.schema.json
     umbraflow-fact-provenance-v1.schema.json
     umbraflow-fact-v1.schema.json
+    umbraflow-policy-v1.schema.json
+    umbraflow-project-registration-v1.schema.json
 )
 
 # The imported ONNX runtime is declared by modules/ocr/external, which names it
@@ -85,6 +88,22 @@ if(PROJECT_IS_TOP_LEVEL)
     option(CPP_BUILD_TESTS "Build this repository's own tests" ON)
 
     enable_testing()
+
+    set(UF_STAGED_EXAMPLE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/examples")
+    set(UF_STAGED_UMBRAFLOW_PROJECT "${UF_STAGED_EXAMPLE_ROOT}/umbraflow")
+    set(UF_STAGED_ARCANA_PROJECT "${UF_STAGED_EXAMPLE_ROOT}/arcana-expedition")
+    foreach(EXAMPLE_PROJECT IN ITEMS umbraflow arcana-expedition)
+        file(GLOB_RECURSE EXAMPLE_PROJECT_FILES CONFIGURE_DEPENDS
+            "${PROJECT_SOURCE_DIR}/examples/${EXAMPLE_PROJECT}/*"
+        )
+        set(EXAMPLE_STAGE "${UF_STAGED_EXAMPLE_ROOT}/${EXAMPLE_PROJECT}")
+        file(REMOVE_RECURSE "${EXAMPLE_STAGE}")
+        file(MAKE_DIRECTORY "${EXAMPLE_STAGE}")
+        file(COPY
+            "${PROJECT_SOURCE_DIR}/examples/${EXAMPLE_PROJECT}/"
+            DESTINATION "${EXAMPLE_STAGE}"
+        )
+    endforeach()
 
     # The Operator conformance suite's runs. The registration used to be included
     # outside this guard, so that a consumer's add_subdirectory of this
@@ -129,7 +148,7 @@ if(PROJECT_IS_TOP_LEVEL)
         # goes red when the ledger stops enforcing them.
         uf_add_conformance_run(
             PROJECT   umbraflow
-            DIRECTORY "${PROJECT_SOURCE_DIR}/examples/umbraflow"
+            DIRECTORY "${UF_STAGED_UMBRAFLOW_PROJECT}"
             DECLARED  ${UF_CONFORMANCE_DECLARED_CASES}
             CASES
                 contract-control-c01
@@ -148,7 +167,7 @@ if(PROJECT_IS_TOP_LEVEL)
         # modules/conformance knows either of them by name.
         uf_add_conformance_run(
             PROJECT   arcana
-            DIRECTORY "${PROJECT_SOURCE_DIR}/examples/arcana-expedition"
+            DIRECTORY "${UF_STAGED_ARCANA_PROJECT}"
         )
     endif()
 

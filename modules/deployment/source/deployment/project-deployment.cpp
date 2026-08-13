@@ -1,10 +1,10 @@
 #include "project-deployment.hpp"
 
-#include "framework-schema-catalog.hpp"
-
 #include <json/error.hpp>
 #include <json/schema.hpp>
 #include <json/value.hpp>
+
+#include <schema/framework-schema-catalog.hpp>
 
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
@@ -874,7 +874,7 @@ namespace uf::deployment
         auto sharedSchemaDocuments() -> std::vector<json::Schema::Document>
         {
             auto documents = std::vector<json::Schema::Document>{};
-            auto const catalog = frameworkSchemaCatalog();
+            auto const catalog = framework_schema::frameworkSchemaCatalog();
             documents.reserve(catalog.size());
             for (auto const& published : catalog)
             {
@@ -1038,26 +1038,14 @@ namespace uf::deployment
             return ok();
         }
 
-        struct MutabilityName final
-        {
-            std::string_view                 wire{};
-            operator_runtime::ToolMutability mutability{};
-        };
-
         constexpr auto k_mutabilities = std::array{
-            MutabilityName{"mutating", operator_runtime::ToolMutability::Mutating},
-            MutabilityName{"read_only", operator_runtime::ToolMutability::ReadOnly},
-        };
-
-        struct SurfaceName final
-        {
-            std::string_view              wire{};
-            operator_runtime::ToolSurface surface{};
+            operator_runtime::ToolMutability::ReadOnly,
+            operator_runtime::ToolMutability::Mutating,
         };
 
         constexpr auto k_surfaces = std::array{
-            SurfaceName{"privileged", operator_runtime::ToolSurface::Privileged},
-            SurfaceName{"semantic", operator_runtime::ToolSurface::Semantic},
+            operator_runtime::ToolSurface::Semantic,
+            operator_runtime::ToolSurface::Privileged,
         };
 
         struct DispositionName final
@@ -1138,26 +1126,11 @@ namespace uf::deployment
             operator_runtime::ToolDescriptor descriptor{};
         };
 
-        struct IdempotencyName final
-        {
-            std::string_view                  wire{};
-            operator_runtime::ToolIdempotency idempotency{};
-        };
-
         constexpr auto k_idempotencies = std::array{
-            IdempotencyName{
-                "delivery_safe",
-                operator_runtime::ToolIdempotency::DeliverySafe,
-            },
-            IdempotencyName{
-                "keyed_external",
-                operator_runtime::ToolIdempotency::KeyedExternal,
-            },
-            IdempotencyName{
-                "non_idempotent",
-                operator_runtime::ToolIdempotency::NonIdempotent,
-            },
-            IdempotencyName{"read_safe", operator_runtime::ToolIdempotency::ReadSafe},
+            operator_runtime::ToolIdempotency::ReadSafe,
+            operator_runtime::ToolIdempotency::DeliverySafe,
+            operator_runtime::ToolIdempotency::KeyedExternal,
+            operator_runtime::ToolIdempotency::NonIdempotent,
         };
 
         struct DeliveryClassName final
@@ -1181,16 +1154,10 @@ namespace uf::deployment
             },
         };
 
-        struct TimeoutActionName final
-        {
-            std::string_view                wire{};
-            operator_runtime::TimeoutAction action{};
-        };
-
         constexpr auto k_timeoutActions = std::array{
-            TimeoutActionName{"reconcile", operator_runtime::TimeoutAction::Reconcile},
-            TimeoutActionName{"reobserve", operator_runtime::TimeoutAction::Reobserve},
-            TimeoutActionName{"stop", operator_runtime::TimeoutAction::Stop},
+            operator_runtime::TimeoutAction::Reobserve,
+            operator_runtime::TimeoutAction::Reconcile,
+            operator_runtime::TimeoutAction::Stop,
         };
 
         [[nodiscard]]
@@ -1215,14 +1182,14 @@ namespace uf::deployment
             auto const action = std::ranges::find(
                 k_timeoutActions,
                 member(policy, "on_timeout").string(),
-                &TimeoutActionName::wire
+                operator_runtime::timeoutActionWireName
             );
             UF_CHECK(action != k_timeoutActions.end());
             return operator_runtime::TimeoutPolicy{
                 .maximumElapsedMillis = static_cast<uint64>(
                     member(policy, "maximum_elapsed_ms").number()
                 ),
-                .onTimeout = action->action,
+                .onTimeout = *action,
             };
         }
 
@@ -1542,18 +1509,6 @@ namespace uf::deployment
             compile(named->label, named->exactBytes, commonOnly)
         );
         return adopt(schema.validate(document), named->schemaName);
-    }
-
-    auto toolMutabilityWireName(operator_runtime::ToolMutability mutability) noexcept
-        -> std::string_view
-    {
-        auto const found = std::ranges::find(
-            k_mutabilities,
-            mutability,
-            &MutabilityName::mutability
-        );
-        UF_CHECK(found != k_mutabilities.end());
-        return found->wire;
     }
 
     auto canonicalJsonValidator() -> operator_runtime::CanonicalJsonValidator
@@ -1954,17 +1909,17 @@ namespace uf::deployment
             auto const mutability = std::ranges::find(
                 k_mutabilities,
                 member(tool, "mutability").string(),
-                &MutabilityName::wire
+                operator_runtime::toolMutabilityWireName
             );
             auto const surface = std::ranges::find(
                 k_surfaces,
                 member(tool, "surface").string(),
-                &SurfaceName::wire
+                operator_runtime::toolSurfaceWireName
             );
             auto const idempotency = std::ranges::find(
                 k_idempotencies,
                 member(tool, "idempotency").string(),
-                &IdempotencyName::wire
+                operator_runtime::toolIdempotencyWireName
             );
             UF_CHECK(mutability != k_mutabilities.end());
             UF_CHECK(surface != k_surfaces.end());
@@ -2040,9 +1995,9 @@ namespace uf::deployment
                         ),
                     },
                     .timeout     = readTimeoutPolicy(member(tool, "timeout_policy")),
-                    .mutability  = mutability->mutability,
-                    .surface     = surface->surface,
-                    .idempotency = idempotency->idempotency,
+                    .mutability  = *mutability,
+                    .surface     = *surface,
+                    .idempotency = *idempotency,
                 },
             });
         }

@@ -14,6 +14,8 @@
 
 #include <deployment/project-deployment.hpp>
 
+#include <project/tool-catalog.hpp>
+
 #include <core/error/contracts.hpp>
 #include <core/safety/annotations.hpp>
 
@@ -24,6 +26,8 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace uf::operator_runtime::conformance::expedition
 {
@@ -199,22 +203,104 @@ namespace uf::operator_runtime::conformance::expedition
     {
         std::string_view name{};
         std::string_view version{};
-        std::string_view mutability{};
+        ToolMutability   mutability{ToolMutability::Mutating};
     };
 
     inline constexpr auto k_toolSources = std::array{
-        ToolSource{"expedition.approval", "3", "mutating"},
-        ToolSource{"expedition.move", "3", "mutating"},
-        ToolSource{"expedition.survey", "2", "read_only"},
-        ToolSource{"expedition.trade", "3", "mutating"},
+        ToolSource{"expedition.approval", "3", ToolMutability::Mutating},
+        ToolSource{"expedition.move", "3", ToolMutability::Mutating},
+        ToolSource{"expedition.survey", "2", ToolMutability::ReadOnly},
+        ToolSource{"expedition.trade", "3", ToolMutability::Mutating},
     };
+
+    [[nodiscard]]
+    inline auto schemaHash(std::string_view bytes) -> ContentHash
+    {
+        auto const digest = sha256(std::as_bytes(std::span{bytes}));
+        UF_CHECK(digest.has_value());
+        return *digest;
+    }
 
     [[nodiscard]]
     inline auto schemaHashHex(std::string_view bytes) -> std::string
     {
-        auto const digest = sha256(std::as_bytes(std::span{bytes}));
-        UF_CHECK(digest.has_value());
-        return digest->hex();
+        return schemaHash(bytes).hex();
+    }
+
+    [[nodiscard]]
+    inline auto toolCatalogDeclaration(
+        std::string_view pluginId
+    ) -> project::ToolCatalogDeclaration
+    {
+        auto const payloadHash = schemaHash(k_effectPayloadSchema);
+        auto tools             = std::vector<project::DeclaredTool>{};
+        tools.reserve(k_toolSources.size());
+        for (auto const& tool : k_toolSources)
+        {
+            tools.emplace_back(project::DeclaredTool{
+                .name           = std::string{tool.name},
+                .argumentSchema = "MarchArguments",
+                .descriptor     = ToolDescriptor{
+                    .toolVersion          = std::string{tool.version},
+                    .requiredCapabilities = {},
+                    .effectBounds = {
+                        EffectBound{
+                            .namespacedType    = "expedition.march",
+                            .scopeKind         = "camp",
+                            .payloadSchemaHash = payloadHash,
+                            .maximumRisk       = Risk::High,
+                        },
+                    },
+                    .uiActionBounds = {"expedition.step"},
+                    .limits         = WorkflowLimits{
+                        .maximumSteps        = 8,
+                        .maximumDispatches   = 8,
+                        .maximumObservations = 256,
+                        .maximumWaits        = 64,
+                        .maximumElapsedMillis = 600'000,
+                    },
+                    .timeout = TimeoutPolicy{
+                        .maximumElapsedMillis = 60'000,
+                        .onTimeout            = TimeoutAction::Reobserve,
+                    },
+                    .mutability = tool.mutability,
+                    .surface    = ToolSurface::Semantic,
+                    .idempotency = tool.mutability == ToolMutability::ReadOnly
+                        ? ToolIdempotency::ReadSafe
+                        : ToolIdempotency::DeliverySafe,
+                },
+            });
+        }
+        return project::ToolCatalogDeclaration{
+            .comment = "The expedition's Tool Catalog. Every tool is stated in "
+                "the expedition's own vocabulary, so the catalog declares them "
+                "semantic; leaving that to the default would declare the opposite "
+                "by omission.",
+            .pluginId                   = std::string{pluginId},
+            .toolPreconditionSchemaHash = schemaHash(k_toolPreconditionSchema),
+            .effectPayloadSchemaHashes  = {payloadHash},
+            .tools                      = std::move(tools),
+        };
+    }
+
+    [[nodiscard]]
+    inline auto exampleToolCatalogDeclaration(
+        std::string_view pluginId,
+        ContentHash toolPreconditionSchemaHash,
+        ContentHash effectPayloadSchemaHash
+    ) -> project::ToolCatalogDeclaration
+    {
+        auto declaration                       = toolCatalogDeclaration(pluginId);
+        declaration.toolPreconditionSchemaHash = toolPreconditionSchemaHash;
+        declaration.effectPayloadSchemaHashes  = {effectPayloadSchemaHash};
+        for (auto& tool : declaration.tools)
+        {
+            for (auto& bound : tool.descriptor.effectBounds)
+            {
+                bound.payloadSchemaHash = effectPayloadSchemaHash;
+            }
+        }
+        return declaration;
     }
 
     // The three documents this deployment assembles rather than authors. Each
@@ -231,67 +317,17 @@ namespace uf::operator_runtime::conformance::expedition
         explicit DeploymentBundle(std::string_view pluginId)
             : m_pluginId{pluginId}
         {
-            m_toolCatalog = R"json({"$comment":)json"
-                R"json("The expedition's Tool Catalog. Every tool is stated in the )json"
-                R"json(expedition's own vocabulary, so the catalog declares them )json"
-                R"json(semantic; leaving that to the default would declare the )json"
-                R"json(opposite by omission.",)json"
-                R"json("effect_payload_sha256s":[)json";
-            auto first = true;
-            for (auto const bytes : k_effectPayloadSchemas)
-            {
-                if (!first)
-                {
-                    m_toolCatalog += ',';
-                }
-                first = false;
-                m_toolCatalog += '"';
-                m_toolCatalog += schemaHashHex(bytes);
-                m_toolCatalog += '"';
-            }
-            m_toolCatalog += R"json(],"plugin_id":")json"
-                + m_pluginId
-                + R"json(","schema":"umbraflow-tool-catalog/v1",)json"
-                  R"json("tool_precondition_sha256":")json"
-                + schemaHashHex(k_toolPreconditionSchema)
-                + R"json(","tools":[)json";
-            first = true;
-            for (auto const& tool : k_toolSources)
-            {
-                if (!first)
-                {
-                    m_toolCatalog += ',';
-                }
-                first = false;
-                m_toolCatalog += R"json({"argument_schema":"MarchArguments",)json"
-                    R"json("effect_bounds":[{"maximum_risk":"high",)json"
-                    R"json("namespaced_type":"expedition.march",)json"
-                    R"json("payload_schema_hash":")json";
-                m_toolCatalog += schemaHashHex(k_effectPayloadSchema);
-                m_toolCatalog += R"json(","scope_kind":"camp"}],)json"
-                                 R"json("idempotency":"delivery_safe","mutability":")json";
-                m_toolCatalog += tool.mutability;
-                m_toolCatalog += R"json(","name":")json";
-                m_toolCatalog += tool.name;
-                m_toolCatalog += R"json(","required_capabilities":[],)json"
-                                 R"json("surface":"semantic",)json"
-                                 R"json("timeout_policy":{"maximum_elapsed_ms":60000,)json"
-                                 R"json("on_timeout":"reobserve"},)json"
-                                 R"json("ui_action_bounds":["expedition.step"],)json"
-                                 R"json("version":")json";
-                m_toolCatalog += tool.version;
-                m_toolCatalog += R"json(","workflow_limits":{"maximum_dispatches":8,)json"
-                                 R"json("maximum_elapsed_ms":600000,)json"
-                                 R"json("maximum_observations":256,"maximum_steps":8,)json"
-                                 R"json("maximum_waits":64}})json";
-            }
-            m_toolCatalog += "]}";
+            auto catalog = project::generateToolCatalog(
+                toolCatalogDeclaration(pluginId)
+            );
+            UF_CHECK(catalog.has_value());
+            m_toolCatalog = *std::move(catalog);
 
             m_journalEventManifest = R"json({"$comment":)json"
                 R"json("One payload schema per namespaced event type the expedition )json"
                 R"json(can emit, and the sha256 of that schema's exact bytes.",)json"
                 R"json("payload_schemas":[)json";
-            first = true;
+            auto first = true;
             for (auto const& payload : k_journalPayloadSources)
             {
                 if (!first)

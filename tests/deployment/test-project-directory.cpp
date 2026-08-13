@@ -333,26 +333,6 @@ namespace uf::deployment
         }
     }
 
-    // The published document and the one the loader applies are the same bytes.
-    // manifest_schema_hash is the sha256 of them, so a reformatting of the file
-    // is a different registration for every project in existence, and this is
-    // the case that says so before anyone discovers it as a moved hash.
-    TEST_CASE("the registration schema the loader carries is the published file")
-    {
-        constexpr auto k_published =
-            std::string_view{"schema/umbraflow-project-registration-v1.schema.json"};
-        auto const root = json::repositoryRoot(k_published);
-        REQUIRE_FALSE(root.empty());
-
-        auto       stream = std::ifstream{root / k_published, std::ios::binary};
-        auto const onDisk = std::string{
-            std::istreambuf_iterator<char>{stream},
-            std::istreambuf_iterator<char>{},
-        };
-        REQUIRE_FALSE(onDisk.empty());
-        CHECK(onDisk == projectRegistrationSchemaBytes());
-    }
-
     // The specification states three documents by worked example, and this is
     // what keeps an example a document the framework accepts. Without it the
     // examples are prose beside a C++ string constant, which is the arrangement
@@ -412,9 +392,7 @@ namespace uf::deployment
     }
 
     // The two project directories this repository ships as data, read from the
-    // repository rather than built by the fixture above. Until 2.5 step 6
-    // switches the conformance suite onto them, nothing else opens them at all,
-    // so a byte edited in one would be noticed by nobody.
+    // generated build stage rather than built by the fixture above.
     //
     // The RuntimeArtifact half is here for a second reason. Its manifest is the
     // one file in a project directory that must be byte-exact, and the single
@@ -425,18 +403,13 @@ namespace uf::deployment
     // exclusion held.
     TEST_CASE("this repository's own example project directories load")
     {
-        constexpr auto k_marker =
-            std::string_view{"examples/umbraflow/umbraflow-project.json"};
-        auto const root = json::repositoryRoot(k_marker);
-        REQUIRE_FALSE(root.empty());
-
-        for (auto const example : std::array{
-                 std::string_view{"examples/umbraflow"},
-                 std::string_view{"examples/arcana-expedition"},
+        for (auto const& example : std::array{
+                 std::filesystem::path{UF_STAGED_UMBRAFLOW_PROJECT},
+                 std::filesystem::path{UF_STAGED_ARCANA_PROJECT},
              })
         {
-            INFO(example);
-            auto const loaded = loadProductionProject(root / example, {});
+            INFO(example.string());
+            auto const loaded = loadProductionProject(example, {});
             INFO(why(loaded));
             REQUIRE(loaded.has_value());
             CHECK(loaded->deployments.size() == 2U);
@@ -445,7 +418,7 @@ namespace uf::deployment
             // Each also ships the conformance fixture the suite runs against,
             // which is a second document and not a second reading of the one
             // above.
-            auto const suite = loadConformanceProject(root / example, {});
+            auto const suite = loadConformanceProject(example, {});
             INFO(why(suite));
             REQUIRE(suite.has_value());
             CHECK(suite->underTest.deployment != suite->foreign.deployment);

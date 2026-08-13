@@ -7,6 +7,8 @@
 
 #include <domain/error.hpp>
 
+#include <schema/framework-schema-catalog.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -22,106 +24,10 @@ namespace uf::project
 {
     namespace
     {
-        constexpr auto k_declarativeSingleStepToolSchema = std::string_view{R"json({
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://umbraflow.dev/schema/declarative-single-step-tool/v1",
-  "title": "Umbraflow Declarative Single Step Tool v1",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema",
-    "tool_name",
-    "target_argument",
-    "allowed_instance_kinds",
-    "ui_action",
-    "fresh_observation",
-    "ui_finding",
-    "bounds"
-  ],
-  "properties": {
-    "schema": {
-      "const": "umbraflow-declarative-single-step-tool/v1"
-    },
-    "tool_name": {
-      "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
-    },
-    "target_argument": {
-      "type": "string",
-      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
-    },
-    "allowed_instance_kinds": {
-      "type": "array",
-      "minItems": 1,
-      "uniqueItems": true,
-      "items": {
-        "type": "string",
-        "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
-      }
-    },
-    "ui_action": {
-      "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
-    },
-    "fresh_observation": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "required_surface",
-        "require_unambiguous"
-      ],
-      "properties": {
-        "required_surface": {
-          "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
-        },
-        "require_unambiguous": {
-          "const": true
-        }
-      }
-    },
-    "ui_finding": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "kind"
-      ],
-      "properties": {
-        "kind": {
-          "enum": [
-            "observed_instance_absent",
-            "observed_instance_present"
-          ]
-        }
-      }
-    },
-    "bounds": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "max_dispatches",
-        "max_observations",
-        "timeout_ms"
-      ],
-      "properties": {
-        "max_dispatches": {
-          "const": 1
-        },
-        "max_observations": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 16
-        },
-        "timeout_ms": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 60000
-        }
-      }
-    }
-  }
-}
-)json"};
+        constexpr auto k_declarativeSingleStepToolSchemaPath =
+            std::string_view{
+                "schema/umbraflow-declarative-single-step-tool-v1.schema.json"
+            };
 
         constexpr auto k_rootMembers = std::array{
             std::string_view{"schema"},
@@ -571,12 +477,24 @@ namespace uf::project
         [[nodiscard]]
         auto singleStepSchema() -> Result<json::Schema>
         {
-            static auto const s_schema = json::Schema::compile(
-                json::Schema::Document{
-                    .label      = "umbraflow-declarative-single-step-tool-v1",
-                    .exactBytes = k_declarativeSingleStepToolSchema,
+            static auto const s_schema = []() -> Result<json::Schema>
+            {
+                auto const published = framework_schema::findFrameworkSchema(
+                    k_declarativeSingleStepToolSchemaPath
+                );
+                if (!published.has_value())
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "generated framework schema catalog is missing "
+                            + std::string{k_declarativeSingleStepToolSchemaPath}
+                    );
                 }
-            );
+                return json::Schema::compile(json::Schema::Document{
+                    .label      = published->relativePath,
+                    .exactBytes = published->exactBytes,
+                });
+            }();
             if (!s_schema.has_value())
             {
                 return std::unexpected{s_schema.error().clone()};
@@ -811,11 +729,6 @@ return {
 )luau";
             return source;
         }
-    }
-
-    auto declarativeSingleStepToolSchemaBytes() noexcept -> std::string_view
-    {
-        return k_declarativeSingleStepToolSchema;
     }
 
     auto generateDeclarativeSingleStepAdapter(

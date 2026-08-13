@@ -18,8 +18,6 @@
 
 #include <core/error/result.hpp>
 
-#include <json/repository-path.hpp>
-
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
@@ -27,8 +25,6 @@
 
 #include <array>
 #include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -156,25 +152,6 @@ namespace uf::operator_runtime
                 }
             );
         }
-    }
-
-    TEST_CASE("the schema this Operator applies is the published policy document")
-    {
-        // A schema file with no call applying it is a check that cannot fail,
-        // and a second copy of one that drifts is worse. The Operator carries
-        // the bytes because a runtime has no repository to read; this is what
-        // keeps the two one document.
-        constexpr auto k_published =
-            std::string_view{"schema/umbraflow-policy-v1.schema.json"};
-        auto const root = json::repositoryRoot(k_published);
-        REQUIRE_FALSE(root.empty());
-        auto stream = std::ifstream{root / k_published, std::ios::binary};
-        auto const published = std::string{
-            std::istreambuf_iterator<char>{stream},
-            std::istreambuf_iterator<char>{},
-        };
-        REQUIRE_FALSE(published.empty());
-        CHECK(published == policyArtifactSchemaBytes());
     }
 
     TEST_CASE("a plan is bounded by its own tool's descriptor")
