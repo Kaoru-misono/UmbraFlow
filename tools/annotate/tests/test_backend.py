@@ -13,6 +13,7 @@ import os
 import re
 import socket
 import sqlite3
+import struct
 import subprocess
 import stat
 import tempfile
@@ -27,6 +28,12 @@ from referencing import Registry, Resource
 
 from tools.annotate import model_file
 from tools.annotate import store
+from tools.annotate.evidence import (
+    RECORDING_MAGIC,
+    EvidenceSet,
+    import_evidence,
+    propose_candidates,
+)
 from tools.annotate.contracts import validate as validate_contract
 from tools.annotate.jcs import CanonicalJsonError, jcs_bytes, load_exact_jcs
 from tools.annotate.model_file import compile_runtime_toml
@@ -1819,6 +1826,125 @@ class PublicationGateTests(WorkspaceTestCase):
                             **changes,
                         },
                     )
+
+
+class ProjectAuthoringFrontTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.material = self.root / "material"
+        self.evidence = self.root / "evidence"
+        self.material.mkdir()
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    @staticmethod
+    def tree(root: Path) -> dict[str, bytes]:
+        return {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in root.rglob("*")
+            if path.is_file()
+        }
+
+    def test_same_material_has_one_full_manifest_and_changed_bytes_change_identity(self) -> None:
+        path = self.material / "facts.json"
+        path.write_bytes(b'{"value":1}')
+
+        first = import_evidence(self.material, ["facts.json"], self.evidence)
+        second = import_evidence(self.material, ["facts.json"], self.evidence)
+        self.assertEqual(first.identity, second.identity)
+        self.assertEqual(first.manifest_bytes, second.manifest_bytes)
+
+        alias = self.material / "same-facts.json"
+        alias.write_bytes(path.read_bytes())
+        same_bytes = import_evidence(self.material, ["same-facts.json"], self.evidence)
+        self.assertEqual(first.identity, same_bytes.identity)
+        self.assertNotEqual(first.manifest_bytes, same_bytes.manifest_bytes)
+        self.assertEqual(
+            same_bytes.manifest["evidence"][0]["provenance"]["source"],
+            "same-facts.json",
+        )
+
+        path.write_bytes(b'{"value":2}')
+        changed = import_evidence(self.material, ["facts.json"], self.evidence)
+        self.assertNotEqual(first.identity, changed.identity)
+        self.assertNotEqual(first.manifest_bytes, changed.manifest_bytes)
+
+    def test_corrupt_material_is_refused_and_names_every_input(self) -> None:
+        (self.material / "valid.json").write_bytes(b'{"valid":true}')
+        corrupt = {
+            "broken.png": b"\x89PNG\r\n\x1a\n",
+            "broken.ufrec": RECORDING_MAGIC + struct.pack(">I", 8) + b"short",
+            "broken.json": b"this is not JSON",
+        }
+        for name, content in corrupt.items():
+            with self.subTest(name=name):
+                (self.material / name).write_bytes(content)
+                with self.assertRaisesRegex(ValueError, re.escape(name)):
+                    import_evidence(self.material, ["valid.json", name], self.evidence)
+
+    def test_candidate_evidence_is_a_live_dependency(self) -> None:
+        hints = {
+            "candidate_hints": [
+                {
+                    "confidence": 0.91,
+                    "kind": kind,
+                    "name": f"candidate-{index}",
+                    "reason": "explicit_declaration",
+                }
+                for index, kind in enumerate(
+                    ("UiTarget", "Fact", "tool", "identity_recipe"), start=1
+                )
+            ]
+        }
+        (self.material / "hints.json").write_bytes(jcs_bytes(hints))
+        evidence_set = import_evidence(self.material, ["hints.json"], self.evidence)
+
+        proposed = propose_candidates(evidence_set, self.material)
+        self.assertEqual(
+            {candidate["kind"] for candidate in proposed["candidates"]},
+            {"UiTarget", "Fact", "tool", "identity_recipe"},
+        )
+        evidence_ref = evidence_set.manifest["evidence"][0]["evidence_ref"]
+        self.assertTrue(
+            all(
+                candidate["evidence_refs"] == [evidence_ref]
+                for candidate in proposed["candidates"]
+            )
+        )
+
+        removed_manifest = copy.deepcopy(evidence_set.manifest)
+        removed_manifest["evidence"] = []
+        without_evidence = EvidenceSet(
+            identity=evidence_set.identity,
+            manifest=removed_manifest,
+            manifest_bytes=jcs_bytes(removed_manifest),
+        )
+        self.assertEqual(propose_candidates(without_evidence, self.material)["candidates"], [])
+
+    def test_proposing_does_not_write_models_artifacts_or_registrations(self) -> None:
+        hints = {
+            "candidate_hints": [
+                {
+                    "confidence": 0.8,
+                    "kind": "Fact",
+                    "name": "observed-balance",
+                    "reason": "observed_value",
+                }
+            ]
+        }
+        (self.material / "hints.json").write_bytes(jcs_bytes(hints))
+        evidence_set = import_evidence(self.material, ["hints.json"], self.evidence)
+        before = self.tree(self.root)
+
+        proposed = propose_candidates(evidence_set, self.material)
+
+        self.assertEqual(len(proposed["candidates"]), 1)
+        self.assertEqual(self.tree(self.root), before)
+        self.assertFalse(any("runtime-model" in path for path in before))
+        self.assertFalse(any("artifact" in path for path in before))
+        self.assertFalse(any("registration" in path for path in before))
 
 
 if __name__ == "__main__":

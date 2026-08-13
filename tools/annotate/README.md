@@ -43,6 +43,27 @@ exports:
 No database, candidate document, evidence blob, frame, replay report, or
 capability file is copied into the handoff.
 
+## Evidence import and candidate proposals
+
+`tools.annotate.evidence.import_evidence` imports external material into a
+content-addressed evidence-set manifest. The manifest records the source
+provenance and import time, but the material stays at its source and is never
+copied into the evidence set. PNG images, UFREC recordings, and JSON data are
+decoded before the set is committed; one corrupt input refuses the entire
+import and names that input.
+
+UFREC is a deliberately small offline recording container: `UFREC1` followed
+by a newline, then big-endian 32-bit frame lengths and frame bytes, terminated
+by a zero frame length. An absent terminator or a frame that ends early is a
+corrupt recording.
+
+`tools.annotate.evidence.propose_candidates` reads `candidate_hints` from
+imported JSON evidence and returns `UiTarget`, `Fact`, `tool`, and
+`identity_recipe` proposals. Every proposal carries its evidence reference,
+confidence, and one
+reason from the bounded authoring vocabulary. It is a pure proposal step: it
+writes no RuntimeModel, RuntimeArtifact, or ProjectRegistration.
+
 ## Trust bootstrap
 
 Create three random bearer files outside the workspace and protect each with

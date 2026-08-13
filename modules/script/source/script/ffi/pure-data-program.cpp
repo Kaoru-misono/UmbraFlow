@@ -56,11 +56,7 @@ namespace uf::script
     {
         constexpr auto k_maximumSourceBytes        = std::size_t{256U} * 1024U;
         constexpr auto k_maximumBytecodeBytes      = std::size_t{1024U} * 1024U;
-        constexpr auto k_maximumArtifactCount      = std::size_t{64U};
-        constexpr auto k_maximumArtifactBytes      = std::size_t{4U} * 1024U * 1024U;
-        constexpr auto k_maximumTotalArtifactBytes = std::size_t{16U} * 1024U * 1024U;
         constexpr auto k_maximumErrorBytes         = std::size_t{4096U};
-        constexpr auto k_memoryQuotaBytes          = std::size_t{16U} * 1024U * 1024U;
         constexpr auto k_interruptBudgetTicks      = uint64{2'000'000U};
         constexpr auto k_maximumRuntime            = std::chrono::seconds{2};
 
@@ -80,13 +76,15 @@ namespace uf::script
         // because an artifact is not a value whose size a plugin controls: the
         // host registers it, and the ceiling above exists for the 1 MiB
         // document a plugin does control. Like the depth bound, neither of
-        // these can refuse a value json::parse produced from bytes
-        // k_maximumArtifactBytes already admitted; they are kept, and stated
+        // these can refuse a value json::parse produced from bytes within
+        // PureDataProgram::k_maximumArtifactBytes. They are kept, and stated
         // unfalsifiable, because they are what would notice a value reaching
         // pushValue from anywhere but that parse. What actually binds an
         // artifact is the VM memory quota, and artifact.read fails there.
-        constexpr auto k_maximumArtifactValueNodes     = k_maximumArtifactBytes / 2U;
-        constexpr auto k_maximumArtifactValueTextBytes = k_maximumArtifactBytes;
+        constexpr auto k_maximumArtifactValueNodes =
+            PureDataProgram::k_maximumArtifactBytes / 2U;
+        constexpr auto k_maximumArtifactValueTextBytes =
+            PureDataProgram::k_maximumArtifactBytes;
 
         // Enough for every refusal pushValue spells. artifact.read hands its
         // text to luaL_error, which does not return, so the copy has to live in
@@ -204,7 +202,7 @@ return {
 
         struct VmRun final
         {
-            MemoryQuota quota{.limitBytes = k_memoryQuotaBytes};
+            MemoryQuota quota{.limitBytes = PureDataProgram::k_memoryQuotaBytes};
             InterruptState control{
                 .budgetTicks = k_interruptBudgetTicks,
             };
@@ -250,7 +248,8 @@ return {
         // members rather than constants because the two things pushed into a VM
         // are bounded by different facts: a call's input and output are the
         // 1 MiB document a plugin controls, while an artifact is host-
-        // registered and bounded by k_maximumArtifactBytes at admission.
+        // registered and bounded by PureDataProgram::k_maximumArtifactBytes at
+        // admission.
         struct ValueBudget final
         {
             std::size_t nodes{0};
@@ -1278,7 +1277,7 @@ return {
         {
             return refuse("pure data module requires a bounded entry-point set");
         }
-        if (artifacts.size() > k_maximumArtifactCount)
+        if (artifacts.size() > PureDataProgram::k_maximumArtifactCount)
         {
             return refuse("pure data artifact count exceeds its fixed ceiling");
         }
@@ -1290,11 +1289,14 @@ return {
             {
                 return refuse("pure data artifact root name is invalid");
             }
-            if (artifact.bytes.size() > k_maximumArtifactBytes)
+            if (artifact.bytes.size() > PureDataProgram::k_maximumArtifactBytes)
             {
                 return refuse("pure data artifact exceeds its fixed byte ceiling");
             }
-            if (totalArtifactBytes > k_maximumTotalArtifactBytes - artifact.bytes.size())
+            if (
+                totalArtifactBytes
+                > PureDataProgram::k_maximumArtifactClosureBytes - artifact.bytes.size()
+            )
             {
                 return refuse("pure data artifacts exceed their total byte ceiling");
             }

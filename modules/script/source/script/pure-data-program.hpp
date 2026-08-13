@@ -6,6 +6,7 @@
 
 #include <domain/content-hash.hpp>
 
+#include <cstddef>
 #include <memory>
 #include <span>
 #include <string>
@@ -36,6 +37,18 @@ namespace uf::script
     class PureDataProgram final
     {
     public:
+        static constexpr auto k_maximumArtifactCount = std::size_t{64U};
+        static constexpr auto k_maximumArtifactBytes = std::size_t{4U} * 1024U * 1024U;
+        static constexpr auto k_maximumArtifactClosureBytes =
+            std::size_t{16U} * 1024U * 1024U;
+        static constexpr auto k_memoryQuotaBytes = std::size_t{16U} * 1024U * 1024U;
+
+        // Artifact ceilings bound registered serialized input. The memory quota
+        // separately bounds one fresh VM's decoded live heap: JSON can expand
+        // while materializing, and several admitted artifacts can coexist in a
+        // call. Their equal 16 MiB values are therefore separate policies, not
+        // aliases or a promise that closure bytes fit in the VM.
+
         // The exact bytes one artifact root pins. They are an input to
         // compile() and are not retained: what a call reaches is the value
         // they denote, and no plugin can observe the serialization it came

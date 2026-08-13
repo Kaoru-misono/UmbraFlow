@@ -396,7 +396,7 @@
       "required": [
         "identity",
         "token",
-        "ui_observation",
+        "ui_snapshot",
         "project_observation",
         "project_state",
         "prior_project_observation",
@@ -408,7 +408,7 @@
       "properties": {
         "identity": { "$ref": "#/$defs/SnapshotIdentity" },
         "token": { "$ref": "#/$defs/SnapshotToken" },
-        "ui_observation": { "$ref": "#/$defs/CanonicalDocument" },
+        "ui_snapshot": { "$ref": "#/$defs/CanonicalDocument" },
         "project_observation": { "$ref": "#/$defs/OpaqueProjectDocument" },
         "project_state": { "$ref": "#/$defs/OpaqueProjectDocument" },
         "prior_project_observation": {
@@ -454,7 +454,7 @@
         "maximum_elapsed_ms": { "type": "integer", "minimum": 1 }
       }
     },
-    "ExpectedEffect": {
+    "EffectEnvelope": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -509,7 +509,7 @@
         "canonical_args": { "$ref": "#/$defs/CanonicalJsonValue" },
         "effects": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ExpectedEffect" }
+          "items": { "$ref": "#/$defs/EffectEnvelope" }
         },
         "allowed_ui_actions": {
           "type": "array",
@@ -545,7 +545,7 @@
         "decision_basis_hash": { "$ref": "#/$defs/Hash" },
         "effective_effects": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ExpectedEffect" }
+          "items": { "$ref": "#/$defs/EffectEnvelope" }
         },
         "risk": { "$ref": "#/$defs/Risk" },
         "allowed_ui_actions": {
@@ -898,7 +898,7 @@
         "effect_envelope_hash": { "$ref": "#/$defs/Hash" },
         "approved_effects": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ExpectedEffect" },
+          "items": { "$ref": "#/$defs/EffectEnvelope" },
           "minItems": 1
         },
         "controlled_target_id": { "$ref": "#/$defs/Identifier" },
@@ -1059,7 +1059,7 @@
         },
         "frozen_effective_effects": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ExpectedEffect" }
+          "items": { "$ref": "#/$defs/EffectEnvelope" }
         },
         "current_step": {
           "oneOf": [

@@ -1,0 +1,12 @@
+# The offline Project Authoring boundary. Evidence material remains outside the
+# repository and outside production artifacts; tools/annotate is the current
+# executable authority for importing it and proposing review candidates.
+
+[module]
+name = authoring
+type = static
+version = 0.1.0
+
+[dependencies]
+public = core domain
+private = image json task

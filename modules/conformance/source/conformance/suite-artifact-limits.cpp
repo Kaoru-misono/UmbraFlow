@@ -1,0 +1,64 @@
+#include "suite-support.hpp"
+
+#include <operator/project-plugin.hpp>
+
+#include <script/pure-data-program.hpp>
+
+#include <doctest/doctest.h>
+
+#include <array>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace uf::operator_runtime::conformance
+{
+    TEST_CASE("registration and VM admission share one artifact byte ceiling")
+    {
+        auto const oversized =
+            '"' + std::string(script::PureDataProgram::k_maximumArtifactBytes, 'x') + '"';
+
+        constexpr auto entryPoints = std::array<std::string_view, 1U>{"probe"};
+        auto const vmAdmission = script::PureDataProgram::compile(
+            "artifact-limit-probe",
+            "return { probe = function(input) return input end }",
+            entryPoints,
+            {
+                script::PureDataProgram::Artifact{
+                    .name  = "oversized",
+                    .bytes = oversized,
+                },
+            }
+        );
+        REQUIRE_FALSE(vmAdmission.has_value());
+        CHECK_MESSAGE(
+            vmAdmission.error().message()
+                == std::string_view{"pure data artifact exceeds its fixed byte ceiling"},
+            "VM admission must use PureDataProgram::k_maximumArtifactBytes"
+        );
+
+        auto const project    = loadedProject();
+        auto const& underTest = deploymentFor(project, ProjectRole::UnderTest);
+        auto blobs            = underTest.artifactBlobs;
+        blobs.emplace_back(
+            ProjectPluginRegistrar::ArtifactBlob{
+                .name  = "oversized",
+                .bytes = oversized,
+            }
+        );
+
+        auto registrar = ProjectPluginRegistrar{};
+        auto const registration = registrar.registerPlugin(
+            underTest.registration,
+            underTest.pluginBytes,
+            std::move(blobs),
+            underTest.schemaOwner
+        );
+        REQUIRE_FALSE(registration.has_value());
+        CHECK_MESSAGE(
+            registration.error().message()
+                == std::string_view{"ProjectPlugin artifact exceeds its byte ceiling"},
+            "registration must use PureDataProgram::k_maximumArtifactBytes"
+        );
+    }
+}
