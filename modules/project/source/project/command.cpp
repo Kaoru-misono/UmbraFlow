@@ -30,6 +30,7 @@ namespace uf::project
             Source,
             Build,
             Input,
+            Release,
         };
 
         struct ProjectFlagDefinition final
@@ -42,6 +43,7 @@ namespace uf::project
         {
             std::optional<std::filesystem::path> source{};
             std::optional<std::filesystem::path> build{};
+            std::optional<std::filesystem::path> release{};
             std::vector<std::filesystem::path>   inputs{};
         };
 
@@ -49,6 +51,7 @@ namespace uf::project
             ProjectFlagDefinition{"--source", ProjectFlag::Source},
             ProjectFlagDefinition{"--build", ProjectFlag::Build},
             ProjectFlagDefinition{"--input", ProjectFlag::Input},
+            ProjectFlagDefinition{"--release", ProjectFlag::Release},
         };
 
         [[nodiscard]]
@@ -111,6 +114,16 @@ namespace uf::project
                 case ProjectFlag::Input:
                     parsed.inputs.emplace_back(value);
                     break;
+                case ProjectFlag::Release:
+                    if (parsed.release)
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            "project argument \"--release\" appears more than once"
+                        );
+                    }
+                    parsed.release = std::filesystem::path{value};
+                    break;
                 }
             }
             return parsed;
@@ -134,6 +147,13 @@ namespace uf::project
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     "project init requires at least one --input RELATIVE_PATH"
+                );
+            }
+            if (parsed.release)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "project init does not accept --release"
                 );
             }
             return ProjectInitSpec{
@@ -160,12 +180,12 @@ namespace uf::project
                     )
                 );
             }
-            if (!parsed.inputs.empty())
+            if (!parsed.inputs.empty() || parsed.release)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     std::format(
-                        "project {} does not accept --input",
+                        "project {} accepts only --source and --build",
                         action
                     )
                 );
@@ -175,6 +195,58 @@ namespace uf::project
                 .buildDirectory  = std::move(*parsed.build),
                 .toolCatalogs    = {},
             };
+        }
+
+        [[nodiscard]]
+        auto parseProjectFreeze(
+            std::span<std::string const> raw
+        ) -> Result<ProjectFreezeSpec>
+        {
+            UF_TRY_VALUE(parsed, parseProjectFlags(raw));
+            if (!parsed.source || !parsed.build || !parsed.release)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "project freeze requires --source PATH, --build PATH and "
+                    "--release PATH"
+                );
+            }
+            if (!parsed.inputs.empty())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "project freeze does not accept --input"
+                );
+            }
+            return ProjectFreezeSpec{
+                .candidate = ProjectBuildSpec{
+                    .sourceDirectory = std::move(*parsed.source),
+                    .buildDirectory  = std::move(*parsed.build),
+                    .toolCatalogs    = {},
+                },
+                .releaseRoot = std::move(*parsed.release),
+            };
+        }
+
+        [[nodiscard]]
+        auto parseProjectRun(
+            std::span<std::string const> raw
+        ) -> Result<std::filesystem::path>
+        {
+            UF_TRY_VALUE(parsed, parseProjectFlags(raw));
+            if (
+                !parsed.release
+                || parsed.source
+                || parsed.build
+                || !parsed.inputs.empty()
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "project run requires only --release PATH"
+                );
+            }
+            return std::move(*parsed.release);
         }
 
         [[nodiscard]]
@@ -262,6 +334,57 @@ namespace uf::project
             return ProjectExitCode::Success;
         }
 
+        [[nodiscard]]
+        auto runProjectFreeze(
+            std::span<std::string const> raw
+        ) -> ProjectExitCode
+        {
+            auto const spec = parseProjectFreeze(raw);
+            if (!spec)
+            {
+                std::cerr << spec.error().message() << '\n';
+                std::cerr << projectUsageText();
+                return ProjectExitCode::Failure;
+            }
+
+            auto const release = freezeProject(*spec);
+            if (!release)
+            {
+                return reportProjectError(release.error());
+            }
+            std::cout << std::format(
+                "project freeze: release_id={} release=\"{}\"\n",
+                release->filename().string(),
+                release->string()
+            );
+            return ProjectExitCode::Success;
+        }
+
+        [[nodiscard]]
+        auto runProjectRun(
+            std::span<std::string const> raw
+        ) -> ProjectExitCode
+        {
+            auto const release = parseProjectRun(raw);
+            if (!release)
+            {
+                std::cerr << release.error().message() << '\n';
+                std::cerr << projectUsageText();
+                return ProjectExitCode::Failure;
+            }
+
+            auto const loaded = loadProjectRelease(*release);
+            if (!loaded)
+            {
+                return reportProjectError(loaded.error());
+            }
+            std::cout << std::format(
+                "project run: release_id={}\n",
+                release->filename().string()
+            );
+            return ProjectExitCode::Success;
+        }
+
         using ProjectCommandHandler = ProjectExitCode (*)(
             std::span<std::string const>
         );
@@ -276,6 +399,8 @@ namespace uf::project
             ProjectCommand{"init", &runProjectInit},
             ProjectCommand{"build", &runProjectBuild},
             ProjectCommand{"check", &runProjectCheck},
+            ProjectCommand{"freeze", &runProjectFreeze},
+            ProjectCommand{"run", &runProjectRun},
         };
     }
 
@@ -314,9 +439,12 @@ namespace uf::project
             "[--input RELATIVE_PATH ...]\n"
             "  project build --source PATH --build PATH\n"
             "  project check --source PATH --build PATH\n"
+            "  project freeze --source PATH --build PATH --release PATH\n"
+            "  project run --release RELEASE_DIRECTORY\n"
             "\n"
             "Initializes the declared source inputs, builds only into the build\n"
-            "directory, and checks the declared inputs and generated artifacts.\n"
+            "directory, checks the candidate, freezes a content-addressed\n"
+            "read-only release, and runs only a verified immutable release.\n"
             "A declared declarative-tools/PLUGIN_ID/NAME.json input generates\n"
             "generated/adapters/PLUGIN_ID/NAME.luau.\n";
     }

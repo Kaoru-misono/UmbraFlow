@@ -1,6 +1,7 @@
-# The offline Project Kit build boundary. It owns source input declarations,
-# generated five-function adapters and build receipts. Generation reads only
-# declared source paths, and replaces its output subtree on every build.
+# The offline Project Kit boundary owns declared source inputs, generated
+# artifact closures, complete digest manifests and immutable releases. A
+# generated artifact is a closure member; a hand-written input is not, and is
+# pinned by digest as an input instead.
 
 [module]
 name = project

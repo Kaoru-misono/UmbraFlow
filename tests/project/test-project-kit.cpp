@@ -47,6 +47,29 @@ namespace uf::project
             ~TemporaryWorkspace()
             {
                 auto error = std::error_code{};
+                auto iterator = std::filesystem::recursive_directory_iterator{
+                    m_path,
+                    std::filesystem::directory_options::skip_permission_denied,
+                    error,
+                };
+                auto const end = std::filesystem::recursive_directory_iterator{};
+                for (; !error && iterator != end; iterator.increment(error))
+                {
+                    std::filesystem::permissions(
+                        iterator->path(),
+                        std::filesystem::perms::owner_all,
+                        std::filesystem::perm_options::add,
+                        error
+                    );
+                }
+                error = std::error_code{};
+                std::filesystem::permissions(
+                    m_path,
+                    std::filesystem::perms::owner_all,
+                    std::filesystem::perm_options::add,
+                    error
+                );
+                error = std::error_code{};
                 std::filesystem::remove_all(m_path, error);
             }
 
@@ -58,6 +81,11 @@ namespace uf::project
             [[nodiscard]] auto build() const -> std::filesystem::path
             {
                 return m_path / "build";
+            }
+
+            [[nodiscard]] auto releases() const -> std::filesystem::path
+            {
+                return m_path / "releases";
             }
         };
 
@@ -158,6 +186,12 @@ namespace uf::project
         };
         inline constexpr auto k_generatedToolCatalog = std::string_view{
             "generated/tool-catalogs/chaos.project/tool-catalog-v1.json"
+        };
+        inline constexpr auto k_generatedFrameworkSchemaCatalog = std::string_view{
+            "generated/framework-schemas/framework-schema-catalog-v1.json"
+        };
+        inline constexpr auto k_generatedArtifactRegistration = std::string_view{
+            "generated/registrations/artifact-roots-v1.json"
         };
 
         [[nodiscard]]
@@ -725,6 +759,231 @@ namespace uf::project
                 "linked-catalog refusal must name the link property"
             );
         }
+    }
+
+    TEST_CASE("project rebuilds a complete byte-identical artifact set at two paths")
+    {
+        auto const first  = TemporaryWorkspace{"uf-project-determinism-first"};
+        auto const second = TemporaryWorkspace{"uf-project-determinism-second"};
+        auto const firstInitialized  = initializedSingleStepWorkspace(first);
+        auto const secondInitialized = initializedSingleStepWorkspace(second);
+        REQUIRE_MESSAGE(
+            firstInitialized.has_value(),
+            messageOf(firstInitialized)
+        );
+        REQUIRE_MESSAGE(
+            secondInitialized.has_value(),
+            messageOf(secondInitialized)
+        );
+        auto const firstSpec = ProjectBuildSpec{
+            .sourceDirectory = first.source(),
+            .buildDirectory  = first.build(),
+            .toolCatalogs    = {},
+        };
+        auto const secondSpec = ProjectBuildSpec{
+            .sourceDirectory = second.source(),
+            .buildDirectory  = second.build(),
+            .toolCatalogs    = {},
+        };
+
+        auto const firstBuilt  = buildProject(firstSpec);
+        auto const secondBuilt = buildProject(secondSpec);
+        REQUIRE_MESSAGE(firstBuilt.has_value(), messageOf(firstBuilt));
+        REQUIRE_MESSAGE(secondBuilt.has_value(), messageOf(secondBuilt));
+        auto const firstSnapshot  = snapshotTree(first.build());
+        auto const secondSnapshot = snapshotTree(second.build());
+        CHECK_MESSAGE(
+            firstSnapshot == secondSnapshot,
+            "the complete artifact set must be byte-identical at two build paths"
+        );
+
+        auto const manifest = parsedJson(firstSnapshot.at(
+            std::string{k_artifactManifestName}
+        ));
+        auto const* inputs    = manifest.find("inputs");
+        auto const* artifacts = manifest.find("artifacts");
+        REQUIRE(inputs != nullptr);
+        REQUIRE(artifacts != nullptr);
+        REQUIRE(inputs->items().size() == 1U);
+        CHECK_MESSAGE(
+            inputs->items().front().find("path")->string()
+                == k_singleStepDeclarationInput,
+            "the hand-written plugin must be pinned as an input"
+        );
+        for (auto const& artifact : artifacts->items())
+        {
+            CHECK_MESSAGE(
+                artifact.find("path")->string()
+                    != k_singleStepDeclarationInput,
+                "the hand-written plugin must not enter the RuntimeArtifact closure"
+            );
+        }
+
+        writeFile(
+            second.source() / k_singleStepDeclarationInput,
+            validSingleStepDeclaration() + "\n"
+        );
+        auto const changedBuilt = buildProject(secondSpec);
+        REQUIRE_MESSAGE(changedBuilt.has_value(), messageOf(changedBuilt));
+        auto const changedSnapshot = snapshotTree(second.build());
+        CHECK_MESSAGE(
+            changedSnapshot.at(std::string{k_artifactManifestName})
+                != firstSnapshot.at(std::string{k_artifactManifestName}),
+            "one changed source byte must change the full digest manifest"
+        );
+    }
+
+    TEST_CASE("project build rejects a registration outside the RuntimeArtifact closure")
+    {
+        auto const workspace = TemporaryWorkspace{
+            "uf-project-artifact-closure-negative"
+        };
+        auto const initialized = initializedWorkspace(workspace);
+        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+        auto const built = buildProject(
+            ProjectBuildSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.build(),
+                .toolCatalogs    = {},
+                .artifactBlobs = {
+                    ProjectArtifactBlobSpec{
+                        .name        = "facts",
+                        .sourceInput = "content/facts.txt",
+                    },
+                },
+                .registration = ProjectRegistrationBuildSpec{
+                    .artifactBlobNames = {"facts", "outside"},
+                },
+            }
+        );
+
+        REQUIRE_FALSE_MESSAGE(
+            built.has_value(),
+            "project build must reject a registration outside the closure"
+        );
+        CHECK_MESSAGE(
+            messageOf(built).find("outside the RuntimeArtifact closure")
+                != std::string::npos,
+            "closure refusal must land on the exact RuntimeArtifact property"
+        );
+        CHECK_FALSE_MESSAGE(
+            std::filesystem::exists(
+                workspace.build() / k_artifactManifestName
+            ),
+            "closure refusal must happen before build artifacts are written"
+        );
+    }
+
+    TEST_CASE("project release is immutable stable complete and excludes inputs")
+    {
+        auto const workspace = TemporaryWorkspace{"uf-project-release"};
+        auto const initialized = initializedSingleStepWorkspace(workspace);
+        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+        auto const candidate = ProjectBuildSpec{
+            .sourceDirectory = workspace.source(),
+            .buildDirectory  = workspace.build(),
+            .toolCatalogs    = {},
+        };
+        auto const built = buildProject(candidate);
+        REQUIRE_MESSAGE(built.has_value(), messageOf(built));
+        auto const spec = ProjectFreezeSpec{
+            .candidate   = candidate,
+            .releaseRoot = workspace.releases(),
+        };
+
+        auto const first = freezeProject(spec);
+        REQUIRE_MESSAGE(first.has_value(), messageOf(first));
+        auto const second = freezeProject(spec);
+        REQUIRE_MESSAGE(second.has_value(), messageOf(second));
+        CHECK_MESSAGE(
+            *first == *second,
+            "freezing the same candidate twice must produce one release id"
+        );
+        CHECK(first->filename().string().size() == 64U);
+        auto const releaseSnapshot = snapshotTree(*first);
+        CHECK_FALSE_MESSAGE(
+            releaseSnapshot.contains(std::string{k_singleStepDeclarationInput}),
+            "a hand-written plugin input must not be copied into the release"
+        );
+
+        auto error = std::error_code{};
+        auto const releaseStatus = std::filesystem::status(*first, error);
+        REQUIRE_FALSE(error);
+        CHECK_MESSAGE(
+            (
+                releaseStatus.permissions()
+                & std::filesystem::perms::owner_write
+            ) == std::filesystem::perms::none,
+            "the frozen release directory must be read-only"
+        );
+        auto pythonFiles = std::size_t{0};
+        for (auto const& entry : std::filesystem::recursive_directory_iterator{
+                 *first
+             })
+        {
+            error             = std::error_code{};
+            auto const status = entry.status(error);
+            REQUIRE_FALSE(error);
+            CHECK_MESSAGE(
+                (
+                    status.permissions()
+                    & std::filesystem::perms::owner_write
+                ) == std::filesystem::perms::none,
+                "every frozen release entry must be read-only"
+            );
+            if (entry.is_regular_file() && entry.path().extension() == ".py")
+            {
+                ++pythonFiles;
+            }
+        }
+        CHECK_MESSAGE(
+            pythonFiles == 0U,
+            "the complete frozen release must contain zero Python files"
+        );
+        auto const loaded = loadProjectRelease(*first);
+        REQUIRE_MESSAGE(loaded.has_value(), messageOf(loaded));
+
+        auto const payload = *first / k_generatedFrameworkSchemaCatalog;
+        auto stream = std::ofstream{
+            payload,
+            std::ios::binary | std::ios::app
+        };
+        CHECK_FALSE_MESSAGE(
+            stream.is_open(),
+            "a write attempt against a frozen artifact must be refused"
+        );
+        error = std::error_code{};
+        std::filesystem::permissions(
+            payload,
+            std::filesystem::perms::owner_write,
+            std::filesystem::perm_options::add,
+            error
+        );
+        REQUIRE_FALSE(error);
+        auto changedBytes = releaseSnapshot.at(
+            std::string{k_generatedFrameworkSchemaCatalog}
+        );
+        REQUIRE_FALSE(changedBytes.empty());
+        changedBytes.front() = changedBytes.front() == '{' ? '[' : '{';
+        writeFile(payload, changedBytes);
+        std::filesystem::permissions(
+            payload,
+            std::filesystem::perms::owner_read,
+            std::filesystem::perm_options::replace,
+            error
+        );
+        REQUIRE_FALSE(error);
+
+        auto const changed = loadProjectRelease(*first);
+        REQUIRE_FALSE_MESSAGE(
+            changed.has_value(),
+            "loading must refuse after one frozen byte changes"
+        );
+        CHECK_MESSAGE(
+            messageOf(changed).find("digest does not match")
+                != std::string::npos,
+            "modified-release refusal must land on the artifact digest guard"
+        );
     }
 
     TEST_CASE("project check names a declared input removed after build")

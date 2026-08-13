@@ -5,15 +5,22 @@
 
 #include <core/error/result.hpp>
 
+#include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
+#include <json/value.hpp>
+
+#include <schema/framework-schema-catalog.hpp>
+
 #include <algorithm>
-#include <filesystem>
+#include <cstddef>
 #include <format>
 #include <fstream>
 #include <ios>
 #include <iterator>
+#include <ranges>
 #include <set>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -31,6 +38,12 @@ namespace uf::project
         constexpr auto k_buildReceiptHeader = std::string_view{
             "umbraflow-project-kit-build-v1"
         };
+        constexpr auto k_artifactManifestSchema = std::string_view{
+            "umbraflow-project-kit-artifact-manifest/v1"
+        };
+        constexpr auto k_artifactRegistrationSchema = std::string_view{
+            "umbraflow-project-kit-artifact-registration/v1"
+        };
         constexpr auto k_declarativeToolDirectory = std::string_view{
             "declarative-tools"
         };
@@ -41,14 +54,53 @@ namespace uf::project
         constexpr auto k_generatedToolCatalogDirectory = std::string_view{
             "tool-catalogs"
         };
+        constexpr auto k_generatedFrameworkSchemaDirectory = std::string_view{
+            "framework-schemas"
+        };
+        constexpr auto k_generatedArtifactBlobDirectory = std::string_view{
+            "artifact-blobs"
+        };
+        constexpr auto k_generatedRegistrationDirectory = std::string_view{
+            "registrations"
+        };
         constexpr auto k_toolCatalogName = std::string_view{
             "tool-catalog-v1.json"
+        };
+        constexpr auto k_frameworkSchemaCatalogName = std::string_view{
+            "framework-schema-catalog-v1.json"
+        };
+        constexpr auto k_artifactRegistrationName = std::string_view{
+            "artifact-roots-v1.json"
         };
 
         struct GeneratedArtifact final
         {
             std::filesystem::path relativePath{};
             std::string           bytes{};
+        };
+
+        struct GeneratedArtifactFamily final
+        {
+            std::string                    directory{};
+            std::vector<GeneratedArtifact> artifacts{};
+        };
+
+        struct GeneratedProjectBuild final
+        {
+            std::vector<GeneratedArtifactFamily> families{};
+        };
+
+        struct ManifestRow final
+        {
+            std::string path{};
+            std::string digest{};
+            std::size_t size{};
+        };
+
+        struct ArtifactManifest final
+        {
+            std::vector<ManifestRow> inputs{};
+            std::vector<ManifestRow> artifacts{};
         };
 
         [[nodiscard]]
@@ -560,6 +612,214 @@ namespace uf::project
         }
 
         [[nodiscard]]
+        auto generatedFrameworkSchemaCatalog()
+            -> std::vector<GeneratedArtifact>
+        {
+            auto documents    = std::vector<json::Value>{};
+            auto const catalog = framework_schema::frameworkSchemaCatalog();
+            documents.reserve(catalog.size());
+            for (auto const& document : catalog)
+            {
+                documents.emplace_back(json::Value::ofObject({
+                    {
+                        "identity",
+                        json::Value::ofString(std::string{document.identity}),
+                    },
+                    {
+                        "path",
+                        json::Value::ofString(std::string{document.relativePath}),
+                    },
+                    {
+                        "sha256",
+                        json::Value::ofString(std::string{document.sha256}),
+                    },
+                }));
+            }
+
+            auto artifacts = std::vector<GeneratedArtifact>{};
+            artifacts.emplace_back(GeneratedArtifact{
+                .relativePath = k_frameworkSchemaCatalogName,
+                .bytes = json::canonicalBytes(json::Value::ofObject({
+                    {"documents", json::Value::ofArray(std::move(documents))},
+                    {
+                        "schema",
+                        json::Value::ofString(
+                            "umbraflow-framework-schema-catalog/v1"
+                        ),
+                    },
+                })),
+            });
+            return artifacts;
+        }
+
+        [[nodiscard]]
+        auto generatedArtifactClosure(
+            std::filesystem::path const& sourceDirectory,
+            std::vector<std::string> const& inputs,
+            std::vector<ProjectArtifactBlobSpec> const& declarations,
+            ProjectRegistrationBuildSpec const& registration
+        ) -> Result<std::vector<GeneratedArtifactFamily>>
+        {
+            auto normalizedDeclarations = declarations;
+            for (auto& declaration : normalizedDeclarations)
+            {
+                UF_TRY_VALUE(
+                    normalized,
+                    normalizeInputPath(declaration.sourceInput)
+                );
+                if (!std::ranges::binary_search(inputs, normalized))
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "project artifact blob \"{}\" names undeclared "
+                            "source input \"{}\"",
+                            declaration.name,
+                            normalized
+                        )
+                    );
+                }
+                declaration.sourceInput = std::filesystem::path{normalized};
+            }
+            std::ranges::sort(
+                normalizedDeclarations,
+                {},
+                &ProjectArtifactBlobSpec::name
+            );
+
+            auto registeredNames = registration.artifactBlobNames;
+            std::ranges::sort(registeredNames);
+            for (auto const& registeredName : registeredNames)
+            {
+                auto const declared = std::ranges::lower_bound(
+                    normalizedDeclarations,
+                    registeredName,
+                    {},
+                    &ProjectArtifactBlobSpec::name
+                );
+                if (
+                    declared == normalizedDeclarations.end()
+                    || declared->name != registeredName
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "project registration artifact blob \"{}\" is "
+                            "outside the RuntimeArtifact closure",
+                            registeredName
+                        )
+                    );
+                }
+            }
+
+            auto blobs = std::vector<GeneratedArtifact>{};
+            auto roots = std::vector<json::Value>{};
+            blobs.reserve(normalizedDeclarations.size());
+            roots.reserve(normalizedDeclarations.size());
+            for (auto const& declaration : normalizedDeclarations)
+            {
+                if (!std::ranges::binary_search(registeredNames, declaration.name))
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "RuntimeArtifact closure blob \"{}\" is absent "
+                            "from the project registration",
+                            declaration.name
+                        )
+                    );
+                }
+                UF_TRY_VALUE(
+                    bytes,
+                    readText(
+                        sourceDirectory / declaration.sourceInput,
+                        "artifact blob source"
+                    )
+                );
+                UF_TRY_VALUE(
+                    digest,
+                    sha256(std::as_bytes(std::span{bytes}))
+                );
+                roots.emplace_back(json::Value::ofObject({
+                    {"name", json::Value::ofString(declaration.name)},
+                    {"sha256", json::Value::ofString(digest.hex())},
+                }));
+                blobs.emplace_back(GeneratedArtifact{
+                    .relativePath = declaration.name + ".blob",
+                    .bytes        = std::move(bytes),
+                });
+            }
+
+            auto registrations = std::vector<GeneratedArtifact>{};
+            registrations.emplace_back(GeneratedArtifact{
+                .relativePath = k_artifactRegistrationName,
+                .bytes = json::canonicalBytes(json::Value::ofObject({
+                    {"artifact_roots", json::Value::ofArray(std::move(roots))},
+                    {
+                        "schema",
+                        json::Value::ofString(
+                            std::string{k_artifactRegistrationSchema}
+                        ),
+                    },
+                })),
+            });
+            auto families = std::vector<GeneratedArtifactFamily>{};
+            families.emplace_back(GeneratedArtifactFamily{
+                .directory = std::string{k_generatedArtifactBlobDirectory},
+                .artifacts = std::move(blobs),
+            });
+            families.emplace_back(GeneratedArtifactFamily{
+                .directory = std::string{k_generatedRegistrationDirectory},
+                .artifacts = std::move(registrations),
+            });
+            return families;
+        }
+
+        [[nodiscard]]
+        auto generatedProjectBuild(
+            ProjectBuildSpec const& spec,
+            std::vector<std::string> const& inputs
+        ) -> Result<GeneratedProjectBuild>
+        {
+            UF_TRY_VALUE(
+                adapters,
+                generatedAdapters(spec.sourceDirectory, inputs)
+            );
+            UF_TRY_VALUE(catalogs, generatedToolCatalogs(spec.toolCatalogs));
+            UF_TRY_VALUE(
+                closureFamilies,
+                generatedArtifactClosure(
+                    spec.sourceDirectory,
+                    inputs,
+                    spec.artifactBlobs,
+                    spec.registration
+                )
+            );
+
+            // RuntimeArtifact membership begins at generator output. Source
+            // inputs, including a hand-written plugin, are digest-pinned only.
+            auto families = std::vector<GeneratedArtifactFamily>{};
+            families.emplace_back(GeneratedArtifactFamily{
+                .directory = std::string{k_generatedAdapterDirectory},
+                .artifacts = std::move(adapters),
+            });
+            families.emplace_back(GeneratedArtifactFamily{
+                .directory = std::string{k_generatedToolCatalogDirectory},
+                .artifacts = std::move(catalogs),
+            });
+            families.emplace_back(GeneratedArtifactFamily{
+                .directory = std::string{k_generatedFrameworkSchemaDirectory},
+                .artifacts = generatedFrameworkSchemaCatalog(),
+            });
+            for (auto& family : closureFamilies)
+            {
+                families.emplace_back(std::move(family));
+            }
+            return GeneratedProjectBuild{.families = std::move(families)};
+        }
+
+        [[nodiscard]]
         auto generatedArtifactRoot(
             std::filesystem::path const& buildDirectory,
             std::string_view familyDirectory
@@ -691,6 +951,27 @@ namespace uf::project
                     );
                 }
                 UF_TRY(writeText(path, artifact.bytes, "generated artifact"));
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto writeGeneratedProjectBuild(
+            std::filesystem::path const& buildDirectory,
+            GeneratedProjectBuild const& generated
+        ) -> Status
+        {
+            for (auto const& family : generated.families)
+            {
+                UF_TRY(replaceGeneratedArtifactDirectory(
+                    buildDirectory,
+                    family.directory
+                ));
+                UF_TRY(writeGeneratedArtifacts(
+                    buildDirectory,
+                    family.directory,
+                    family.artifacts
+                ));
             }
             return ok();
         }
@@ -877,6 +1158,460 @@ namespace uf::project
         }
 
         [[nodiscard]]
+        auto validateGeneratedProjectBuild(
+            std::filesystem::path const& buildDirectory,
+            GeneratedProjectBuild const& generated
+        ) -> Status
+        {
+            for (auto const& family : generated.families)
+            {
+                UF_TRY(validateGeneratedArtifacts(
+                    buildDirectory,
+                    family.directory,
+                    family.artifacts
+                ));
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto manifestRow(
+            std::string path,
+            std::string_view bytes
+        ) -> Result<ManifestRow>
+        {
+            UF_TRY_VALUE(digest, sha256(std::as_bytes(std::span{bytes})));
+            return ManifestRow{
+                .path   = std::move(path),
+                .digest = digest.hex(),
+                .size   = bytes.size(),
+            };
+        }
+
+        [[nodiscard]]
+        auto manifestRowsValue(
+            std::vector<ManifestRow> const& rows
+        ) -> json::Value
+        {
+            auto values = std::vector<json::Value>{};
+            values.reserve(rows.size());
+            for (auto const& row : rows)
+            {
+                values.emplace_back(json::Value::ofObject({
+                    {"path", json::Value::ofString(row.path)},
+                    {"sha256", json::Value::ofString(row.digest)},
+                    {
+                        "size",
+                        json::Value::ofString(std::to_string(row.size)),
+                    },
+                }));
+            }
+            return json::Value::ofArray(std::move(values));
+        }
+
+        [[nodiscard]]
+        auto createArtifactManifest(
+            std::filesystem::path const& sourceDirectory,
+            std::vector<std::string> const& inputs,
+            GeneratedProjectBuild const& generated
+        ) -> Result<ArtifactManifest>
+        {
+            auto manifest = ArtifactManifest{};
+            manifest.inputs.reserve(inputs.size());
+            for (auto const& input : inputs)
+            {
+                UF_TRY_VALUE(
+                    bytes,
+                    readText(
+                        sourceDirectory / std::filesystem::path{input},
+                        "artifact manifest input"
+                    )
+                );
+                UF_TRY_VALUE(row, manifestRow(input, bytes));
+                manifest.inputs.emplace_back(std::move(row));
+            }
+
+            for (auto const& family : generated.families)
+            {
+                for (auto const& artifact : family.artifacts)
+                {
+                    UF_TRY_VALUE(
+                        row,
+                        manifestRow(
+                            generatedArtifactName(
+                                family.directory,
+                                artifact.relativePath
+                            ),
+                            artifact.bytes
+                        )
+                    );
+                    manifest.artifacts.emplace_back(std::move(row));
+                }
+            }
+            std::ranges::sort(manifest.inputs, {}, &ManifestRow::path);
+            std::ranges::sort(manifest.artifacts, {}, &ManifestRow::path);
+            return manifest;
+        }
+
+        [[nodiscard]]
+        auto renderArtifactManifest(ArtifactManifest const& manifest) -> std::string
+        {
+            return json::canonicalBytes(json::Value::ofObject({
+                {"artifacts", manifestRowsValue(manifest.artifacts)},
+                {"inputs", manifestRowsValue(manifest.inputs)},
+                {
+                    "schema",
+                    json::Value::ofString(std::string{k_artifactManifestSchema}),
+                },
+            }));
+        }
+
+        [[nodiscard]]
+        auto releaseArtifactRows(
+            std::string_view manifestBytes
+        ) -> Result<std::vector<ManifestRow>>
+        {
+            UF_TRY(json::requireExactCanonical(manifestBytes));
+            UF_TRY_VALUE(document, json::parse(manifestBytes));
+            auto const* schema    = document.find("schema");
+            auto const* artifacts = document.find("artifacts");
+            if (
+                schema == nullptr
+                || schema->string() != k_artifactManifestSchema
+                || artifacts == nullptr
+                || artifacts->kind() != json::ValueKind::Array
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "project release artifact manifest has the wrong shape"
+                );
+            }
+
+            auto rows = std::vector<ManifestRow>{};
+            rows.reserve(artifacts->items().size());
+            for (auto const& item : artifacts->items())
+            {
+                auto const* path   = item.find("path");
+                auto const* digest = item.find("sha256");
+                if (
+                    path == nullptr
+                    || path->kind() != json::ValueKind::String
+                    || digest == nullptr
+                    || digest->kind() != json::ValueKind::String
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "project release artifact manifest row has the wrong shape"
+                    );
+                }
+                UF_TRY_VALUE(normalized, normalizeInputPath(path->string()));
+                if (normalized != path->string())
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "project release artifact path is not canonical: \"{}\"",
+                            path->string()
+                        )
+                    );
+                }
+                rows.emplace_back(ManifestRow{
+                    .path   = std::move(normalized),
+                    .digest = std::string{digest->string()},
+                    .size   = 0U,
+                });
+            }
+            std::ranges::sort(rows, {}, &ManifestRow::path);
+            auto const duplicate = std::ranges::adjacent_find(
+                rows,
+                {},
+                &ManifestRow::path
+            );
+            if (duplicate != rows.end())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "project release artifact appears more than once: \"{}\"",
+                        duplicate->path
+                    )
+                );
+            }
+            return rows;
+        }
+
+        [[nodiscard]]
+        auto makeReadOnly(
+            std::filesystem::path const& releaseDirectory
+        ) -> Status
+        {
+            auto entries = std::vector<std::filesystem::path>{};
+            auto error   = std::error_code{};
+            auto iterator = std::filesystem::recursive_directory_iterator{
+                releaseDirectory,
+                std::filesystem::directory_options::none,
+                error,
+            };
+            auto const end = std::filesystem::recursive_directory_iterator{};
+            for (; !error && iterator != end; iterator.increment(error))
+            {
+                entries.emplace_back(iterator->path());
+            }
+            if (error)
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format(
+                        "cannot enumerate project release \"{}\": {}",
+                        releaseDirectory.string(),
+                        error.message()
+                    )
+                );
+            }
+
+            std::ranges::sort(
+                entries,
+                {},
+                [](std::filesystem::path const& path)
+                {
+                    return path.native().size();
+                }
+            );
+            for (auto const& entry : entries | std::views::reverse)
+            {
+                error = std::error_code{};
+                auto const status = std::filesystem::status(entry, error);
+                if (error)
+                {
+                    break;
+                }
+                auto const permissions = (
+                    std::filesystem::is_directory(status)
+                        ? std::filesystem::perms::owner_read
+                            | std::filesystem::perms::owner_exec
+                            | std::filesystem::perms::group_read
+                            | std::filesystem::perms::group_exec
+                            | std::filesystem::perms::others_read
+                            | std::filesystem::perms::others_exec
+                        : std::filesystem::perms::owner_read
+                            | std::filesystem::perms::group_read
+                            | std::filesystem::perms::others_read
+                );
+                std::filesystem::permissions(
+                    entry,
+                    permissions,
+                    std::filesystem::perm_options::replace,
+                    error
+                );
+                if (error)
+                {
+                    break;
+                }
+            }
+            if (!error)
+            {
+                std::filesystem::permissions(
+                    releaseDirectory,
+                    std::filesystem::perms::owner_read
+                        | std::filesystem::perms::owner_exec
+                        | std::filesystem::perms::group_read
+                        | std::filesystem::perms::group_exec
+                        | std::filesystem::perms::others_read
+                        | std::filesystem::perms::others_exec,
+                    std::filesystem::perm_options::replace,
+                    error
+                );
+            }
+            if (error)
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format(
+                        "cannot make project release read-only \"{}\": {}",
+                        releaseDirectory.string(),
+                        error.message()
+                    )
+                );
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto validateReleaseTree(
+            std::filesystem::path const& releaseDirectory,
+            std::vector<ManifestRow> const& rows
+        ) -> Status
+        {
+            auto error = std::error_code{};
+            auto const releaseStatus = std::filesystem::status(
+                releaseDirectory,
+                error
+            );
+            if (error)
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format(
+                        "cannot inspect project release \"{}\": {}",
+                        releaseDirectory.string(),
+                        error.message()
+                    )
+                );
+            }
+            if (
+                (
+                    releaseStatus.permissions()
+                    & std::filesystem::perms::owner_write
+                ) != std::filesystem::perms::none
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "project release directory is not read-only"
+                );
+            }
+            auto expectedFiles = std::set<std::string>{
+                std::string{k_artifactManifestName},
+            };
+            for (auto const& row : rows)
+            {
+                expectedFiles.emplace(row.path);
+            }
+            auto const expectedDirectories = expectedArtifactDirectories(
+                expectedFiles
+            );
+            auto actualFiles = std::set<std::string>{};
+
+            auto iterator = std::filesystem::recursive_directory_iterator{
+                releaseDirectory,
+                std::filesystem::directory_options::none,
+                error,
+            };
+            auto const end = std::filesystem::recursive_directory_iterator{};
+            for (; !error && iterator != end; iterator.increment(error))
+            {
+                auto const status = iterator->symlink_status(error);
+                if (error)
+                {
+                    break;
+                }
+                auto const name = iterator->path()
+                    .lexically_relative(releaseDirectory)
+                    .generic_string();
+                if (std::filesystem::is_symlink(status))
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "project release artifact \"{}\" must not be a link",
+                            name
+                        )
+                    );
+                }
+                if (std::filesystem::is_directory(status))
+                {
+                    if (!expectedDirectories.contains(name))
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "project release contains artifact outside its "
+                                "manifest: \"{}\"",
+                                name
+                            )
+                        );
+                    }
+                }
+                else if (
+                    !std::filesystem::is_regular_file(status)
+                    || !expectedFiles.contains(name)
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "project release contains artifact outside its "
+                            "manifest: \"{}\"",
+                            name
+                        )
+                    );
+                }
+                else
+                {
+                    actualFiles.emplace(name);
+                }
+
+                if (
+                    (
+                        status.permissions()
+                        & std::filesystem::perms::owner_write
+                    ) != std::filesystem::perms::none
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "project release artifact is not read-only: \"{}\"",
+                            name
+                        )
+                    );
+                }
+            }
+            if (error)
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format(
+                        "cannot enumerate project release \"{}\": {}",
+                        releaseDirectory.string(),
+                        error.message()
+                    )
+                );
+            }
+            if (!actualFiles.contains(std::string{k_artifactManifestName}))
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "project release artifact manifest is missing"
+                );
+            }
+            for (auto const& row : rows)
+            {
+                if (!actualFiles.contains(row.path))
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "project release artifact is missing: \"{}\"",
+                            row.path
+                        )
+                    );
+                }
+                UF_TRY_VALUE(
+                    bytes,
+                    readText(releaseDirectory / row.path, "release artifact")
+                );
+                UF_TRY_VALUE(
+                    digest,
+                    sha256(std::as_bytes(std::span{bytes}))
+                );
+                if (digest.hex() != row.digest)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "project release artifact digest does not match: \"{}\"",
+                            row.path
+                        )
+                    );
+                }
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
         auto renderList(
             std::string_view header,
             std::vector<std::string> const& inputs
@@ -1013,36 +1748,24 @@ namespace uf::project
         UF_TRY(validateDirectories(spec));
         UF_TRY_VALUE(inputs, declaredInputs(spec.buildDirectory));
         UF_TRY(validateDeclaredInputs(spec.sourceDirectory, inputs));
-        UF_TRY_VALUE(
-            adapters,
-            generatedAdapters(spec.sourceDirectory, inputs)
-        );
-        UF_TRY_VALUE(catalogs, generatedToolCatalogs(spec.toolCatalogs));
+        UF_TRY_VALUE(generated, generatedProjectBuild(spec, inputs));
         UF_TRY(ensureBuildDirectory(spec.buildDirectory));
-        UF_TRY(replaceGeneratedArtifactDirectory(
-            spec.buildDirectory,
-            k_generatedAdapterDirectory
-        ));
-        UF_TRY(writeGeneratedArtifacts(
-            spec.buildDirectory,
-            k_generatedAdapterDirectory,
-            adapters
-        ));
-        UF_TRY(replaceGeneratedArtifactDirectory(
-            spec.buildDirectory,
-            k_generatedToolCatalogDirectory
-        ));
-        UF_TRY(writeGeneratedArtifacts(
-            spec.buildDirectory,
-            k_generatedToolCatalogDirectory,
-            catalogs
-        ));
+        UF_TRY(writeGeneratedProjectBuild(spec.buildDirectory, generated));
 
         auto const receiptPath = spec.buildDirectory / k_buildReceiptName;
-        return writeText(
+        UF_TRY(writeText(
             receiptPath,
             renderList(k_buildReceiptHeader, inputs),
             "build receipt"
+        ));
+        UF_TRY_VALUE(
+            manifest,
+            createArtifactManifest(spec.sourceDirectory, inputs, generated)
+        );
+        return writeText(
+            spec.buildDirectory / k_artifactManifestName,
+            renderArtifactManifest(manifest),
+            "artifact manifest"
         );
     }
 
@@ -1051,21 +1774,8 @@ namespace uf::project
         UF_TRY(validateDirectories(spec));
         UF_TRY_VALUE(inputs, declaredInputs(spec.buildDirectory));
         UF_TRY(validateDeclaredInputs(spec.sourceDirectory, inputs));
-        UF_TRY_VALUE(
-            adapters,
-            generatedAdapters(spec.sourceDirectory, inputs)
-        );
-        UF_TRY_VALUE(catalogs, generatedToolCatalogs(spec.toolCatalogs));
-        UF_TRY(validateGeneratedArtifacts(
-            spec.buildDirectory,
-            k_generatedAdapterDirectory,
-            adapters
-        ));
-        UF_TRY(validateGeneratedArtifacts(
-            spec.buildDirectory,
-            k_generatedToolCatalogDirectory,
-            catalogs
-        ));
+        UF_TRY_VALUE(generated, generatedProjectBuild(spec, inputs));
+        UF_TRY(validateGeneratedProjectBuild(spec.buildDirectory, generated));
 
         auto const receiptPath = spec.buildDirectory / k_buildReceiptName;
         UF_TRY_VALUE(receipt, readText(receiptPath, "build receipt"));
@@ -1080,6 +1790,130 @@ namespace uf::project
                 )
             );
         }
+        UF_TRY_VALUE(
+            manifest,
+            createArtifactManifest(spec.sourceDirectory, inputs, generated)
+        );
+        auto const manifestPath = spec.buildDirectory / k_artifactManifestName;
+        UF_TRY_VALUE(actual, readText(manifestPath, "artifact manifest"));
+        if (actual != renderArtifactManifest(manifest))
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "project artifact manifest does not match the complete "
+                    "input pins and RuntimeArtifact closure: \"{}\"",
+                    manifestPath.string()
+                )
+            );
+        }
         return ok();
+    }
+
+    auto freezeProject(
+        ProjectFreezeSpec const& spec
+    ) -> Result<std::filesystem::path>
+    {
+        UF_TRY(checkProject(spec.candidate));
+        auto const manifestPath = (
+            spec.candidate.buildDirectory / k_artifactManifestName
+        );
+        UF_TRY_VALUE(
+            manifestBytes,
+            readText(manifestPath, "artifact manifest")
+        );
+        UF_TRY_VALUE(rows, releaseArtifactRows(manifestBytes));
+        UF_TRY_VALUE(
+            releaseDigest,
+            sha256(std::as_bytes(std::span{manifestBytes}))
+        );
+        auto const releaseDirectory = spec.releaseRoot / releaseDigest.hex();
+
+        auto error = std::error_code{};
+        if (std::filesystem::is_directory(releaseDirectory, error))
+        {
+            UF_TRY(loadProjectRelease(releaseDirectory));
+            return releaseDirectory;
+        }
+        if (error && error != std::errc::no_such_file_or_directory)
+        {
+            return fail(
+                AutomationErrorKind::IoFailure,
+                std::format(
+                    "cannot inspect project release \"{}\": {}",
+                    releaseDirectory.string(),
+                    error.message()
+                )
+            );
+        }
+
+        error = std::error_code{};
+        std::filesystem::create_directories(releaseDirectory, error);
+        if (error)
+        {
+            return fail(
+                AutomationErrorKind::IoFailure,
+                std::format(
+                    "cannot create project release \"{}\": {}",
+                    releaseDirectory.string(),
+                    error.message()
+                )
+            );
+        }
+        for (auto const& row : rows)
+        {
+            auto const source = spec.candidate.buildDirectory / row.path;
+            auto const target = releaseDirectory / row.path;
+            error             = std::error_code{};
+            std::filesystem::create_directories(target.parent_path(), error);
+            if (error)
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format(
+                        "cannot create project release artifact parent \"{}\": {}",
+                        target.parent_path().string(),
+                        error.message()
+                    )
+                );
+            }
+            UF_TRY_VALUE(bytes, readText(source, "candidate artifact"));
+            UF_TRY(writeText(target, bytes, "release artifact"));
+        }
+        UF_TRY(writeText(
+            releaseDirectory / k_artifactManifestName,
+            manifestBytes,
+            "release artifact manifest"
+        ));
+        UF_TRY(makeReadOnly(releaseDirectory));
+        UF_TRY(loadProjectRelease(releaseDirectory));
+        return releaseDirectory;
+    }
+
+    auto loadProjectRelease(
+        std::filesystem::path const& releaseDirectory
+    ) -> Status
+    {
+        UF_TRY(requireDirectory(releaseDirectory, "release"));
+        UF_TRY_VALUE(
+            manifestBytes,
+            readText(
+                releaseDirectory / k_artifactManifestName,
+                "release artifact manifest"
+            )
+        );
+        UF_TRY_VALUE(
+            releaseDigest,
+            sha256(std::as_bytes(std::span{manifestBytes}))
+        );
+        if (releaseDirectory.filename().string() != releaseDigest.hex())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "project release id does not match its artifact manifest"
+            );
+        }
+        UF_TRY_VALUE(rows, releaseArtifactRows(manifestBytes));
+        return validateReleaseTree(releaseDirectory, rows);
     }
 }
