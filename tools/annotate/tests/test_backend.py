@@ -555,6 +555,63 @@ class SchemaAndJcsTests(unittest.TestCase):
                 self.assertFalse(direct.is_valid(value))
                 self.assertTrue(model_file.validate_runtime_model(value))
 
+    def test_collection_action_and_transition_have_one_owner(self) -> None:
+        schema_path = Path("schema/umbraflow-runtime-v2.schema.json")
+        direct = Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
+        value = runtime_model()
+        value["readers"] = [
+            {
+                "id": "options-reader",
+                "kind": "text",
+                "confidence_floor": 0.8,
+                "layout": "block",
+                "normalization": "trim",
+            }
+        ]
+        value["collections"] = [
+            {
+                "id": "event-options",
+                "surface": "camp-scene",
+                "placement": {
+                    "kind": "detected",
+                    "search_rect": [100, 100, 600, 200],
+                    "reader": "options-reader",
+                    "order": "left_to_right",
+                    "slots": {"origin": 300, "pitch": 200, "tolerance": 2},
+                },
+                "actions": [
+                    {
+                        "id": "pick",
+                        "kind": "click",
+                        "proof_locator": "confirm-template",
+                        "offset": [40, 20],
+                    }
+                ],
+                "reads": [],
+            }
+        ]
+        value["transitions"] = [
+            {
+                "id": "event-picked",
+                "from_surfaces": ["camp-scene"],
+                "trigger": {"collection": "event-options", "action": "pick"},
+                "to_surfaces": ["camp-scene"],
+            }
+        ]
+        self.assertTrue(direct.is_valid(value))
+        self.assertEqual(model_file.validate_runtime_model(value), [])
+
+        both = copy.deepcopy(value)
+        both["transitions"][0]["trigger"]["binding"] = "camp-confirm"
+        self.assertFalse(
+            direct.is_valid(both),
+            "a transition trigger naming both a Binding and Collection must be refused",
+        )
+
+        missing_action = copy.deepcopy(value)
+        missing_action["transitions"][0]["trigger"]["action"] = "missing"
+        self.assertTrue(model_file.validate_runtime_model(missing_action))
+
     def test_runtime_artifact_schema_accepts_zero_assets_and_enforces_all_ceilings(self) -> None:
         sha = "a" * 64
         valid = {

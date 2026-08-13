@@ -7,7 +7,7 @@
 
 local model = {}
 model.schema = "umbraflow-runtime/v2"
-model.schema_hash = "72433231df31cdc18e8e88d21017a24e58c53b96e5b66c9d6b6bb96cf1647480"
+model.schema_hash = "c2adda700841dd228952d1fef6eb268ab2a7117c2e1b09f1365e1da75adc1120"
 
 local runtimeModels: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 local semanticBytes: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any
@@ -395,10 +395,64 @@ local function placementBuilder(bounds: { number }): (string, any) -> any
     end
 end
 
+-- One action an owner grants, in one of the two kinds a target offers. A
+-- Binding click takes its point from fixed_placement; a Collection click uses
+-- the same item-origin offset spelling as a Collection read.
+local function actionBuilder(itemRelative: boolean): (string, any) -> any
+    return function(what: string, value: any): any
+        local source = object(what, value)
+        if source.kind == "click" then
+            local fields: { [string]: boolean } = {
+                id = true,
+                kind = true,
+                proof_locator = true,
+            }
+            if itemRelative then fields.offset = true end
+            only(what, source, fields)
+            local offset = nil
+            if itemRelative then
+                local values = dense(what .. ".offset", source.offset)
+                if #values ~= 2 then
+                    fail(what .. ".offset", "must contain exactly two integers")
+                end
+                offset = table.freeze({
+                    integer(what .. ".offset[1]", values[1]),
+                    integer(what .. ".offset[2]", values[2]),
+                })
+            end
+            return table.freeze({
+                id = identifier(what .. ".id", source.id),
+                kind = "click",
+                proof_locator = identifier(what .. ".proof_locator", source.proof_locator),
+                offset = offset,
+            })
+        end
+        if source.kind == "key" then
+            only(what, source, { id = true, kind = true, key = true, proof_locator = true })
+            if type(source.key) ~= "string" or #source.key == 0 then
+                fail(what .. ".key", "must name a key")
+            end
+            return table.freeze({
+                id = identifier(what .. ".id", source.id),
+                kind = "key",
+                key = source.key,
+                proof_locator = identifier(what .. ".proof_locator", source.proof_locator),
+            })
+        end
+        fail(what .. ".kind", "must be click or key")
+    end
+end
+
 local function collectionBuilder(bounds: { number }): (string, any) -> any
     return function(what: string, value: any): any
         local source = object(what, value)
-        only(what, source, { id = true, surface = true, placement = true, reads = true })
+        only(what, source, {
+            id = true,
+            surface = true,
+            placement = true,
+            actions = true,
+            reads = true,
+        })
         local placement = object(what .. ".placement", source.placement)
         only(what .. ".placement", placement, {
             kind = true,
@@ -433,6 +487,8 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
         then
             fail(slotsWhat .. ".origin", "must lie inside placement.search_rect on order's axis")
         end
+        local actions = records(what .. ".actions", source.actions, actionBuilder(true))
+        mapById(what .. ".actions", actions)
         local reads = {}
         local seenReaders: { [string]: boolean } = {}
         for index, valueRead in dense(what .. ".reads", source.reads) do
@@ -471,6 +527,7 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
                     tolerance = slotTolerance,
                 }),
             }),
+            actions = actions,
             reads = table.freeze(reads),
         })
     end
@@ -483,44 +540,6 @@ local function bindingVariant(what: string, value: any): any
         name = identifier(what .. ".name", source.name),
         detector = detector(what .. ".detector", source.detector),
     })
-end
-
--- One action a Binding grants, in one of the two kinds a target offers.
---
--- A click names a coordinate and a keystroke names a key, and neither invents
--- the other: a key action carries no point, which is why placement.action_point
--- below is conditional on the kinds present rather than on there being actions
--- at all.
---
--- WHICH key names exist is deliberately not decided here. That vocabulary is
--- closed and has one definition, in the trusted C++ KeyName, which refuses a
--- name outside it and prints the whole set it refused against; the Host applies
--- it to every key this model declares before the artifact is bound. A second
--- copy of the set in Luau would be two vocabularies agreeing by test rather than
--- by construction.
-local function action(what: string, value: any): any
-    local source = object(what, value)
-    if source.kind == "click" then
-        only(what, source, { id = true, kind = true, proof_locator = true })
-        return table.freeze({
-            id = identifier(what .. ".id", source.id),
-            kind = "click",
-            proof_locator = identifier(what .. ".proof_locator", source.proof_locator),
-        })
-    end
-    if source.kind == "key" then
-        only(what, source, { id = true, kind = true, key = true, proof_locator = true })
-        if type(source.key) ~= "string" or #source.key == 0 then
-            fail(what .. ".key", "must name a key")
-        end
-        return table.freeze({
-            id = identifier(what .. ".id", source.id),
-            kind = "key",
-            key = source.key,
-            proof_locator = identifier(what .. ".proof_locator", source.proof_locator),
-        })
-    end
-    fail(what .. ".kind", "must be click or key")
 end
 
 local function bindingBuilder(bounds: { number }): (string, any) -> any
@@ -545,7 +564,7 @@ local function bindingBuilder(bounds: { number }): (string, any) -> any
             end
             variantByName[valueVariant.name] = true
         end
-        local actions = records(what .. ".actions", source.actions, action)
+        local actions = records(what .. ".actions", source.actions, actionBuilder(false))
         mapById(what .. ".actions", actions)
         local placement = buildPlacement(what .. ".placement", source.placement)
         -- The point exists exactly when something aims at it. A Binding that
@@ -600,12 +619,20 @@ local function transition(what: string, value: any): any
     local source = object(what, value)
     only(what, source, { id = true, from_surfaces = true, trigger = true, to_surfaces = true })
     local trigger = object(what .. ".trigger", source.trigger)
-    only(what .. ".trigger", trigger, { binding = true, action = true })
+    only(what .. ".trigger", trigger, { binding = true, collection = true, action = true })
+    if (trigger.binding == nil) == (trigger.collection == nil) then
+        fail(what .. ".trigger", "must name exactly one Binding or Collection")
+    end
     return table.freeze({
         id = identifier(what .. ".id", source.id),
         from_surfaces = stringList(what .. ".from_surfaces", source.from_surfaces, true),
         trigger = table.freeze({
-            binding = identifier(what .. ".trigger.binding", trigger.binding),
+            binding = if trigger.binding == nil
+                then nil
+                else identifier(what .. ".trigger.binding", trigger.binding),
+            collection = if trigger.collection == nil
+                then nil
+                else identifier(what .. ".trigger.collection", trigger.collection),
             action = identifier(what .. ".trigger.action", trigger.action),
         }),
         to_surfaces = stringList(what .. ".to_surfaces", source.to_surfaces, true),
@@ -742,6 +769,14 @@ function model.compile(value: any): any
             end
         end
     end
+    for _, valueCollection in collections do
+        for _, valueAction in valueCollection.actions do
+            table.insert(actionIds, valueAction.id)
+            if valueAction.kind == "key" then
+                table.insert(keyNames, valueAction.key)
+            end
+        end
+    end
 
     local bindingsBySurface: { [string]: { any } } = {}
     for _, valueBinding in bindings do
@@ -809,6 +844,9 @@ function model.compile(value: any): any
         end
         for _, valueRead in valueCollection.reads do
             requireRef("collection '" .. valueCollection.id .. "' reads", readerById, valueRead.reader)
+        end
+        for _, valueAction in valueCollection.actions do
+            requireRef("action '" .. valueAction.id .. "'", locatorById, valueAction.proof_locator)
         end
         local rows = collectionsBySurface[valueCollection.surface]
         if rows == nil then
@@ -898,17 +936,23 @@ function model.compile(value: any): any
         if not model.valid_surface_stack(runtimeModel, valueTransition.to_surfaces) then
             fail("transition '" .. valueTransition.id .. ".to_surfaces", "is not a valid Surface stack")
         end
-        local triggerBinding = requireRef(
-            "transition '" .. valueTransition.id .. "' trigger",
-            bindingById,
-            valueTransition.trigger.binding
-        )
+        local triggerOwner = if valueTransition.trigger.binding ~= nil
+            then requireRef(
+                "transition '" .. valueTransition.id .. "' trigger",
+                bindingById,
+                valueTransition.trigger.binding
+            )
+            else requireRef(
+                "transition '" .. valueTransition.id .. "' trigger",
+                collectionById,
+                valueTransition.trigger.collection
+            )
         local found = false
-        for _, valueAction in triggerBinding.actions do
+        for _, valueAction in triggerOwner.actions do
             if valueAction.id == valueTransition.trigger.action then found = true end
         end
         if not found then
-            fail("transition '" .. valueTransition.id .. "' trigger", "references an unknown Binding action")
+            fail("transition '" .. valueTransition.id .. "' trigger", "references an unknown owner action")
         end
     end
 

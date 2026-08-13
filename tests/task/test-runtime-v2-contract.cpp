@@ -354,6 +354,7 @@ normalization = "trim"
 id = "options"
 surface = "screen"
 placement = { kind = "detected", search_rect = [0, 0, 5, 1], reader = "options.reader", order = "left_to_right", slots = { origin = 2, pitch = 2, tolerance = 0 } }
+actions = []
 reads = []
 )toml";
             return result;

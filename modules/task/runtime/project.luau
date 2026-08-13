@@ -40,7 +40,7 @@ local sectionFields: { [string]: { [string]: boolean } } = {
         actions = true,
         reads = true,
     },
-    collection = { id = true, surface = true, placement = true, reads = true },
+    collection = { id = true, surface = true, placement = true, actions = true, reads = true },
     surface = { id = true, kind = true, covers = true, identity = true },
     transition = { id = true, from_surfaces = true, trigger = true, to_surfaces = true },
 }

@@ -94,6 +94,7 @@ placement = {
   order = "left_to_right",
   slots = { origin = 631, pitch = 316, tolerance = 2 },
 }
+actions = [{ id = "pick", kind = "click", proof_locator = "save.template", offset = [12, 18] }]
 reads = [{ reader = "header.text", offset = [0, -40], size = [320, 40] }]
 
 [[surface]]
@@ -105,7 +106,7 @@ identity = ["settings.header"]
 [[transition]]
 id = "settings.saved"
 from_surfaces = ["settings"]
-trigger = { binding = "settings.save", action = "activate" }
+trigger = { collection = "options", action = "pick" }
 to_surfaces = ["settings"]
 ]==]
 
@@ -133,6 +134,8 @@ assert(
 assert(runtime.collection_by_id.options.placement.slots.origin == 631)
 assert(runtime.collection_by_id.options.placement.slots.pitch == 316)
 assert(runtime.collection_by_id.options.placement.slots.tolerance == 2)
+assert(runtime.collection_by_id.options.actions[1].id == "pick")
+assert(runtime.collection_by_id.options.actions[1].offset[1] == 12)
 assert(#runtime.collection_by_id.options.reads == 1)
 assert(runtime.collection_by_id.options.reads[1].offset[1] == 0)
 assert(runtime.collection_by_id.options.reads[1].offset[2] == -40)
@@ -151,7 +154,7 @@ local function ids(values: { string }): string
 end
 assert(ids(runtime.declared_surface_ids) == "settings")
 assert(ids(runtime.declared_ui_target_ids) == "header,save_button")
-assert(ids(runtime.declared_action_ids) == "activate")
+assert(ids(runtime.declared_action_ids) == "activate,pick")
 rejects(function() runtime.declared_surface_ids[1] = "forged" end)
 assert(project.is_loaded(runtime) == false)
 rejects(function() runtime.ui_targets[1].kind = "control" end)
@@ -244,6 +247,16 @@ end, "T-002 collection slot pitch must be even")
 rejects(function()
     project.parse(replace(valid, '  kind = "detected",\n', '  kind = "fixed",\n'))
 end, "T-002 collection placement must have one destructive spelling")
+rejects(function()
+    project.parse(replace(
+        valid,
+        'trigger = { collection = "options", action = "pick" }',
+        'trigger = { binding = "settings.save", collection = "options", action = "pick" }'
+    ))
+end, "a transition trigger naming both a Binding and Collection must be refused")
+rejects(function()
+    project.parse(replace(valid, 'offset = [12, 18]', ''))
+end, "a Collection click must name one item-origin offset")
 
 local keyed = project.parse(
     replace(replace(valid, clickAction, keyAction), actionPointLine, "")

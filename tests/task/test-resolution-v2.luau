@@ -466,6 +466,20 @@ local reading = model.compile({
                 order = "left_to_right",
                 slots = { origin = 631, pitch = 316, tolerance = 2 },
             },
+            actions = {
+                {
+                    id = "pick",
+                    kind = "click",
+                    proof_locator = "title.locator",
+                    offset = { 20, 10 },
+                },
+                {
+                    id = "outside",
+                    kind = "click",
+                    proof_locator = "title.locator",
+                    offset = { 200, 10 },
+                },
+            },
             reads = { { reader = "name.reader", offset = { 0, 50 }, size = { 240, 60 } } },
         },
     },
@@ -862,6 +876,63 @@ do
         unknown.completeness == "unknown" and unknown.items == nil,
         "collection completeness must report unknown without items when no layout fits"
     )
+end
+
+-- One Collection declaration aims relative to whichever measured item index is
+-- selected. Different item origins must therefore produce different points.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    local supplied = collectionReading({
+        { "Left", { 473, 100, 180, 40 } },
+        { "Right", { 789, 100, 180, 40 } },
+    })
+    local left, leftReason = resolution.collection_action_point(
+        reading,
+        cycle,
+        state,
+        "options",
+        0,
+        "pick",
+        supplied
+    )
+    local right, rightReason = resolution.collection_action_point(
+        reading,
+        cycle,
+        state,
+        "options",
+        1,
+        "pick",
+        supplied
+    )
+    assert(leftReason == nil and rightReason == nil and left ~= nil and right ~= nil)
+    assert(
+        left[1] == 493 and left[2] == 110 and right[1] == 809 and right[2] == 110,
+        "a Collection click point must derive from the named item's measured rectangle"
+    )
+    evidence.end_cycle(cycle)
+end
+
+-- Item-relative action points leave the frame by refusal, never by clamping.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    local point, reason = resolution.collection_action_point(
+        reading,
+        cycle,
+        state,
+        "options",
+        3,
+        "outside",
+        collectionReading({ { "Outside", { 1105, 100, 17, 40 } } })
+    )
+    assert(
+        point == nil and reason == "action_point_out_of_frame",
+        "a Collection action point outside the frame must be refused"
+    )
+    evidence.end_cycle(cycle)
 end
 
 -- A Collection item is a detected line, so its width varies with its text. The

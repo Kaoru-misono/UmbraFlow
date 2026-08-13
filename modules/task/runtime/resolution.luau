@@ -547,6 +547,64 @@ local function collectionItems(collection: any, reading: any): (any?, string?)
     return fittedCollection(collection, ordered), nil
 end
 
+-- Resolves one Collection click against one measured item. The item index is
+-- the stable slot ordinal, not the Reader's enumeration position. The point is
+-- an item-origin delta and refuses the frame edge instead of being clamped.
+function resolution.collection_action_point(
+    runtimeModel: any,
+    cycle: any,
+    resolvedState: any,
+    collectionId: any,
+    itemIndex: any,
+    actionId: any,
+    readingsByKey: any
+): ({ number }?, string?)
+    local collection, targetReason = collectionTarget(
+        runtimeModel,
+        cycle,
+        resolvedState,
+        collectionId
+    )
+    if collection == nil then return nil, targetReason end
+    if type(itemIndex) ~= "number" or itemIndex % 1 ~= 0 or itemIndex < 0 then
+        return nil, "unknown_item"
+    end
+    if type(actionId) ~= "string" then return nil, "unknown_action" end
+    local selectedAction = nil
+    for _, action in collection.actions do
+        if action.id == actionId then selectedAction = action end
+    end
+    if selectedAction == nil then return nil, "unknown_action" end
+    if selectedAction.kind ~= "click" then return nil, "action_has_no_point" end
+
+    local supplied = if type(readingsByKey) == "table" then readingsByKey else {}
+    local reading = supplied[model.collection_reading_key(
+        collection.id,
+        collection.placement.reader
+    )]
+    local fitted, itemReason = collectionItems(collection, reading)
+    if fitted == nil then return nil, itemReason end
+    if fitted.items == nil then return nil, "unknown_item" end
+    local selectedItem = nil
+    for _, item in fitted.items do
+        if item.index == itemIndex then selectedItem = item end
+    end
+    if selectedItem == nil then return nil, "unknown_item" end
+
+    local point = {
+        selectedItem.rect[1] + selectedAction.offset[1],
+        selectedItem.rect[2] + selectedAction.offset[2],
+    }
+    if point[1] < 0
+        or point[2] < 0
+        or point[1] >= runtimeModel.base_resolution[1]
+        or point[2] >= runtimeModel.base_resolution[2]
+    then
+        return nil, "action_point_out_of_frame"
+    end
+    return freezeList(point), nil
+end
+
 local function offsetItemRect(
     runtimeModel: any,
     item: any,

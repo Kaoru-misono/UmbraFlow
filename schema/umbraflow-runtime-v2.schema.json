@@ -169,20 +169,40 @@
       }
     },
     "collection": {
-      "$comment": "An ordered, variable-cardinality collection on one Surface. Its item count and item placements are runtime results, never authored geometry. The placement's Reader is detector evidence for the items and must declare block layout. A Reader named in reads REPORTS from each measured item rectangle and never decides whether the Collection or an item exists; only the placement's detector Reader decides that.",
+      "$comment": "An ordered, variable-cardinality collection on one Surface. Its item count and item placements are runtime results, never authored geometry. The placement's Reader is detector evidence for the items and must declare block layout. A Reader named in reads REPORTS from each measured item rectangle and never decides whether the Collection or an item exists; only the placement's detector Reader decides that. A click action's offset is the [dx, dy] delta from ONE selected item's measured origin. The item is chosen by its zero-based index, and the derived point must remain inside the frame; leaving it is a refusal rather than a clamp. This is the same origin-delta rule collection_read.offset uses because a Collection has no single fixed placement in which an action_point could live.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "surface", "placement", "reads"],
+      "required": ["id", "surface", "placement", "actions", "reads"],
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
         "surface": { "$ref": "#/$defs/identifier" },
         "placement": { "$ref": "#/$defs/detected_collection_placement" },
+        "actions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/binding_action" }
+        },
         "reads": {
           "type": "array",
           "items": { "$ref": "#/$defs/collection_read" },
           "uniqueItems": true
         }
-      }
+      },
+      "allOf": [
+        {
+          "properties": {
+            "actions": {
+              "items": {
+                "if": {
+                  "properties": { "kind": { "const": "click" } },
+                  "required": ["kind"]
+                },
+                "then": { "required": ["offset"] },
+                "else": { "not": { "required": ["offset"] } }
+              }
+            }
+          }
+        }
+      ]
     },
     "collection_read_offset": {
       "$comment": "The [dx, dy] delta applied to one measured item's origin. Either component may be negative.",
@@ -213,7 +233,8 @@
       "properties": {
         "id": { "$ref": "#/$defs/identifier" },
         "kind": { "const": "click" },
-        "proof_locator": { "$ref": "#/$defs/identifier" }
+        "proof_locator": { "$ref": "#/$defs/identifier" },
+        "offset": { "$ref": "#/$defs/collection_read_offset" }
       }
     },
     "key_action": {
@@ -273,6 +294,14 @@
       },
       "allOf": [
         {
+          "$comment": "A Binding click aims through fixed_placement.action_point. An item-relative offset belongs only to a Collection click.",
+          "properties": {
+            "actions": {
+              "items": { "not": { "required": ["offset"] } }
+            }
+          }
+        },
+        {
           "$comment": "action_point exists exactly when some action needs a coordinate. The condition reads 'every action names no coordinate', which is also true of a Binding granting no action at all, so both of those forbid the point and only a click requires one. Dragging a coordinate through a keystroke would put a number in the model that nothing measures and nothing delivers.",
           "if": {
             "properties": {
@@ -317,14 +346,25 @@
       }
     },
     "transition_trigger": {
-      "$comment": "The action that declares policy intent. An observed transition names its declared transition by ID and never duplicates this trigger, so replay data cannot become a second policy authority.",
+      "$comment": "The action that declares policy intent. Exactly one owner is named: a Binding, or a Collection whose item will be chosen by index when the action is resolved. An observed transition names its declared transition by ID and never duplicates this trigger, so replay data cannot become a second policy authority.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["binding", "action"],
+      "required": ["action"],
       "properties": {
         "binding": { "$ref": "#/$defs/identifier" },
+        "collection": { "$ref": "#/$defs/identifier" },
         "action": { "$ref": "#/$defs/identifier" }
-      }
+      },
+      "oneOf": [
+        {
+          "required": ["binding"],
+          "not": { "required": ["collection"] }
+        },
+        {
+          "required": ["collection"],
+          "not": { "required": ["binding"] }
+        }
+      ]
     },
     "transition": {
       "$comment": "One declared policy transition stored in RuntimeModel.transitions. Its destination is immutable model input; observed destinations use observed_transition instead of changing this record.",

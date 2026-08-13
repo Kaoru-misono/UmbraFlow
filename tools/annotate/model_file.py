@@ -152,6 +152,7 @@ def validate_runtime_model(model: dict[str, Any]) -> list[dict[str, str]]:
     readers = _index(model["readers"], "readers", errors)
     surfaces = _index(model["surfaces"], "surfaces", errors)
     bindings = _index(model["bindings"], "bindings", errors)
+    collections = _index(model.get("collections", []), "collections", errors)
     _index(model["transitions"], "transitions", errors)
     for offset, locator in enumerate(model["locators"]):
         _validate_asset_path(locator["asset_path"], f"$.locators[{offset}].asset_path", errors)
@@ -267,6 +268,14 @@ def validate_runtime_model(model: dict[str, Any]) -> list[dict[str, str]]:
             errors.append(SchemaIssue("collection placement refers to a missing reader", f"$.collections[{offset}].placement.reader"))
         elif detector_reader["layout"] != "block":
             errors.append(SchemaIssue("collection placement reader must use block layout", f"$.collections[{offset}].placement.reader"))
+        action_ids: set[str] = set()
+        for action_offset, action in enumerate(collection["actions"]):
+            action_path = f"$.collections[{offset}].actions[{action_offset}]"
+            if action["id"] in action_ids:
+                errors.append(SchemaIssue("collection contains a duplicate action id", f"{action_path}.id"))
+            action_ids.add(action["id"])
+            if action["proof_locator"] not in locators:
+                errors.append(SchemaIssue("action proof locator is missing", f"{action_path}.proof_locator"))
         read_names: set[str] = set()
         for read_offset, read in enumerate(collection["reads"]):
             read_path = f"$.collections[{offset}].reads[{read_offset}].reader"
@@ -280,9 +289,14 @@ def validate_runtime_model(model: dict[str, Any]) -> list[dict[str, str]]:
             errors.append(SchemaIssue("from_surfaces is not a valid ordered surface stack", f"$.transitions[{offset}].from_surfaces"))
         if not _valid_surface_stack(transition["to_surfaces"], surfaces):
             errors.append(SchemaIssue("to_surfaces is not a valid ordered surface stack", f"$.transitions[{offset}].to_surfaces"))
-        binding = bindings.get(transition["trigger"]["binding"])
+        trigger = transition["trigger"]
+        owner = (
+            bindings.get(trigger["binding"])
+            if "binding" in trigger
+            else collections.get(trigger["collection"])
+        )
         action = transition["trigger"]["action"]
-        if binding is None or not any(row["id"] == action for row in binding["actions"]):
+        if owner is None or not any(row["id"] == action for row in owner["actions"]):
             errors.append(SchemaIssue("transition trigger is missing", f"$.transitions[{offset}].trigger"))
     return [{"path": error.path, "message": error.message} for error in errors]
 
@@ -342,6 +356,8 @@ def _canonical_model(model: dict[str, Any]) -> dict[str, Any]:
     for binding in result["bindings"]:
         binding["variants"].sort(key=lambda row: row["name"])
         binding["actions"].sort(key=lambda row: row["id"])
+    for collection in result["collections"]:
+        collection["actions"].sort(key=lambda row: row["id"])
     return result
 
 
