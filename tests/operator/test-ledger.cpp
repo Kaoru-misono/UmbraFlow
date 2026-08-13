@@ -244,6 +244,26 @@ namespace uf::operator_runtime
             return separators;
         }
 
+        auto restorePriorSnapshotIdentityComment(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            database.execute(R"sql(
+                PRAGMA writable_schema=ON;
+                UPDATE sqlite_schema SET sql=replace(
+                    sql,
+                    '                        -- token and snapshot_revision are deliberately outside
+                        -- canonical_parts: they name the stored row rather than
+                        -- the capture. observation_id remains inside and names
+                        -- the capture, so recapturing an identical world moves
+                        -- identity_hash while decision_basis_hash stays stable.
+                        token TEXT PRIMARY KEY,',
+                    '                        token TEXT PRIMARY KEY,'
+                ) WHERE type='table' AND name='snapshots';
+                PRAGMA writable_schema=OFF;
+            )sql");
+        }
+
         using test_support::canonical;
         using test_support::hashOf;
         using test_support::journalEntry;
@@ -347,6 +367,7 @@ namespace uf::operator_runtime
             OperatorCoordinator          store;
             ProjectPluginHandle          plugin;
             test_support::ProjectFixture project;
+            SessionManifest              manifest;
             OperatorPlanAuthority        planAuthority;
 
             // The authenticated controller every entry point is reached
@@ -454,6 +475,7 @@ namespace uf::operator_runtime
                 .store                   = std::move(store),
                 .plugin                  = projectPlugin,
                 .project                 = project,
+                .manifest                = manifest,
                 .planAuthority           = *std::move(planAuthority),
                 .controller              = *controller,
                 .lease                   = *lease,
@@ -2078,6 +2100,46 @@ namespace uf::operator_runtime
         );
     }
 
+    TEST_CASE("the corrected snapshot claim migrates under its exact identity pair")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        {
+            auto created = OperatorCoordinator::open(production);
+            REQUIRE(created.has_value());
+        }
+
+        auto sourceIdentity = std::string{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorSnapshotIdentityComment(prior);
+            sourceIdentity = exactSchemaIdentity(prior);
+        }
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(
+                migrated.has_value(),
+                "the registered comment-only identity pair must migrate: ",
+                migrated.error().message()
+            );
+        }
+
+        auto target = test_support::OperatorDatabaseProbe{databasePath};
+        auto const targetIdentity = exactSchemaIdentity(target);
+        CHECK(sourceIdentity != targetIdentity);
+        CHECK(
+            target.readRows(
+                "SELECT source_identity, target_identity "
+                "FROM schema_identity_transitions"
+            )
+            == std::vector<std::vector<std::string>>{
+                {sourceIdentity, targetIdentity},
+            }
+        );
+    }
+
     TEST_CASE("an unregistered exact identity pair is refused byte-identical")
     {
         auto temporary          = TemporaryDirectory{};
@@ -2164,6 +2226,7 @@ namespace uf::operator_runtime
                 "FROM prior_ledger_events"
             );
             priorSchema.execute("DROP TABLE prior_ledger_events");
+            restorePriorSnapshotIdentityComment(priorSchema);
             sourceIdentity = exactSchemaIdentity(priorSchema);
         }
         CHECK_MESSAGE(
@@ -2971,8 +3034,10 @@ namespace uf::operator_runtime
             std::nullopt
         ).has_value());
 
-        // A refused sink is the one situation the engine cannot describe, so
-        // the Host under-claims: the click may have landed before the failure.
+        // The engine exposes one Result for the whole delivery path, not a
+        // phase result. A refused sink therefore stays transport_unknown: the
+        // same result also covers a failure after the click reached the target,
+        // so narrowing an engine error to not_delivered would claim too much.
         host->refuseClicks();
         auto const unknown = host->deliverReport(dispatch->authority);
         REQUIRE(unknown.outcome() == task::DeliveryOutcome::TransportUnknown);
@@ -2984,6 +3049,11 @@ namespace uf::operator_runtime
         REQUIRE(reconciles.has_value());
         CHECK(reconciles->state == OperationState::Reconciling);
         CHECK(reconciles->planFrozen);
+        auto const recovery = prepared.store.recoveredUncertainDispatches();
+        REQUIRE(recovery.has_value());
+        REQUIRE(recovery->size() == 1U);
+        CHECK(recovery->front().operationId == operation.operationId);
+        CHECK(recovery->front().deliveryReason == unknown.reason());
         CHECK_FALSE(prepared.store.recordDeliveryOutcome(
             prepared.lease,
             reconciles->revision,
@@ -3037,68 +3107,49 @@ namespace uf::operator_runtime
         CHECK(committed->state == OperationState::Confirmed);
     }
 
-    // The live control_leases row is what a delivery report is matched against,
-    // and it is not the same fact as the authority_decisions row the reservation
-    // wrote: that row is an audit record and never moves, so after a release and
-    // a re-acquire the two disagree. The dispatch is still unanswered here, so
-    // the outcome compare-and-swap cannot be what refuses.
-    //
-    // The stranded dispatch this leaves behind is deliberate and is the whole of
-    // open question Q3: a release is voluntary and does not resolve what it
-    // abandons, so the next restart's recovery sweep is what answers for it.
-    TEST_CASE("a released lease cannot answer for the dispatch it reserved")
+    TEST_CASE("release resolves its unanswered dispatch before dropping authority")
     {
-        // One variable: whether the lease is released and re-acquired between
-        // the delivery and the record. Everything else is the same schedule, so
-        // the accepting run is the positive control for the refusing one.
-        auto const recordsAfter = [](bool reacquire)
-        {
-            auto temporary = TemporaryDirectory{};
-            auto prepared  = prepareStore(temporary.path());
-            auto const operation = createReadyOperation(
-                prepared,
-                "request-1",
-                "command-1"
-            );
-            auto host           = deliveringHost(prepared);
-            auto const reserved = prepared.store.reserveDispatch(
-                operation.operationId,
-                operation.revision,
-                prepared.lease,
-                host->generation(),
-                AuthorityDecisionId{"authority-1"},
-                std::nullopt
-            );
-            REQUIRE(reserved.has_value());
-            auto const displaced = host->deliverReport(reserved->authority);
-            REQUIRE(displaced.outcome() == task::DeliveryOutcome::Delivered);
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto const operation = createReadyOperation(
+            prepared,
+            "request-1",
+            "command-1"
+        );
+        auto host           = deliveringHost(prepared);
+        auto const reserved = prepared.store.reserveDispatch(
+            operation.operationId,
+            operation.revision,
+            prepared.lease,
+            host->generation(),
+            AuthorityDecisionId{"authority-1"},
+            std::nullopt
+        );
+        REQUIRE(reserved.has_value());
 
-            if (reacquire)
-            {
-                REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
-                auto const fresh = prepared.store.acquireLease(prepared.controller);
-                REQUIRE(fresh.has_value());
-                REQUIRE(fresh->leaseId != prepared.lease.leaseId);
-                REQUIRE(fresh->fencingToken > prepared.lease.fencingToken);
-            }
+        auto const releasedFence = prepared.store.releaseLease(prepared.lease);
+        REQUIRE(releasedFence.has_value());
+        CHECK(*releasedFence > prepared.lease.fencingToken);
 
-            return prepared.store.recordDeliveryOutcome(
-                prepared.lease,
-                reserved->operationRevision,
-                displaced
-            ).has_value();
-        };
+        auto const recovery = prepared.store.recoveredUncertainDispatches();
+        REQUIRE(recovery.has_value());
+        REQUIRE(recovery->size() == 1U);
+        CHECK(recovery->front().operationId == operation.operationId);
+        CHECK(
+            recovery->front().deliveryReason
+            == "lease release found this dispatch unanswered"
+        );
 
-        CHECK(recordsAfter(false));
-        CHECK_FALSE(recordsAfter(true));
+        // The Host may still return after release, but the in-transaction
+        // resolution already consumed the outcome CAS and the lease is gone.
+        CHECK_FALSE(prepared.store.recordDeliveryOutcome(
+            prepared.lease,
+            reserved->operationRevision,
+            host->deliverReport(reserved->authority)
+        ).has_value());
     }
 
-    // The restart sweep and a takeover run one body: the sweep names no target
-    // and answers for everything, a takeover names the one target it seized.
-    // Nothing else in this suite leaves a dispatch unanswered across a restart,
-    // so without this the sweep only ever ran over an empty set, where it cannot
-    // fail. A release strands one, which is what open() then has to answer for.
-    TEST_CASE("a restart answers for the dispatch a release stranded")
+    TEST_CASE("a restart preserves the uncertain dispatch release resolved")
     {
         auto temporary = TemporaryDirectory{};
         {
@@ -3122,11 +3173,9 @@ namespace uf::operator_runtime
             REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
         }
 
-        // Dropping the coordinator closes the database. The reopen runs the
-        // sweep, and a sweep that touched the wrong rows or lost a
-        // compare-and-swap fails the open rather than opening a store whose
-        // dispatch nobody answered for. One coordinator owns a runtime
-        // directory at a time, so each restart is its own scope.
+        // Dropping the coordinator closes the database. The reopen sweep sees
+        // the release-resolved row as answered and leaves its reconciliation
+        // work intact.
         {
             auto restarted = OperatorCoordinator::open(
                 temporary.path() / "production"
@@ -3138,6 +3187,148 @@ namespace uf::operator_runtime
         // resolved is no longer unanswered.
         auto again = OperatorCoordinator::open(temporary.path() / "production");
         REQUIRE(again.has_value());
+    }
+
+    TEST_CASE("ledger retention makes both subscription resync directions reachable")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto lease     = prepared.lease;
+
+        // Each complete lease cycle appends release and acquire facts. The
+        // retained stream holds 128 rows, so 65 cycles move its floor without
+        // fabricating database rows outside the production write path.
+        for (auto cycle = uint32{}; cycle < 65U; ++cycle)
+        {
+            REQUIRE(prepared.store.releaseLease(lease).has_value());
+            auto acquired = prepared.store.acquireLease(prepared.controller);
+            REQUIRE(acquired.has_value());
+            lease = *std::move(acquired);
+        }
+
+        auto const behind = prepared.store.subscribe(
+            prepared.controller,
+            SubscriptionCursor{0U},
+            1U
+        );
+        REQUIRE(behind.has_value());
+        auto const* p_retainedGap = std::get_if<ResyncRequired>(&*behind);
+        REQUIRE(p_retainedGap != nullptr);
+        CHECK(p_retainedGap->oldestAvailableCursor.value > 0U);
+        CHECK(p_retainedGap->requestedCursor.value == 0U);
+
+        auto const aheadCursor = SubscriptionCursor{
+            p_retainedGap->currentCursor.value + 1U,
+        };
+        auto const ahead = prepared.store.subscribe(
+            prepared.controller,
+            aheadCursor,
+            1U
+        );
+        REQUIRE(ahead.has_value());
+        auto const* p_foreignGap = std::get_if<ResyncRequired>(&*ahead);
+        REQUIRE(p_foreignGap != nullptr);
+        CHECK(p_foreignGap->requestedCursor == aheadCursor);
+        CHECK(
+            p_foreignGap->oldestAvailableCursor
+            == p_retainedGap->oldestAvailableCursor
+        );
+    }
+
+    TEST_CASE("snapshot retention preserves every retained observation join")
+    {
+        auto temporary        = TemporaryDirectory{};
+        auto const production = temporary.path() / "production";
+        auto const database   = production / "operator-runtime.sqlite";
+        auto retained = [&temporary]()
+        {
+            auto prepared = prepareStore(temporary.path());
+            return std::tuple{
+                prepared.project,
+                prepared.plugin,
+                prepared.manifest,
+                prepared.runtimeArtifactRootHash,
+                prepared.installedGeneration,
+            };
+        }();
+        auto const& [project, plugin, manifest, artifactRootHash, generation] = retained;
+
+        {
+            auto probe = test_support::OperatorDatabaseProbe{database};
+            probe.execute(R"sql(
+                WITH RECURSIVE revisions(value) AS (
+                    SELECT 2
+                    UNION ALL
+                    SELECT value + 1 FROM revisions WHERE value < 41
+                )
+                INSERT INTO project_observations(
+                    plugin_id, project_instance_key, revision,
+                    project_registration_hash, state_resolution_hash,
+                    project_state_revision, project_state_hash,
+                    canonical_observation, observation_hash
+                )
+                SELECT observation.plugin_id, observation.project_instance_key,
+                    revisions.value, observation.project_registration_hash,
+                    observation.state_resolution_hash,
+                    observation.project_state_revision,
+                    observation.project_state_hash,
+                    observation.canonical_observation,
+                    observation.observation_hash
+                FROM project_observations observation CROSS JOIN revisions
+                WHERE observation.revision=1;
+            )sql");
+        }
+
+        {
+            auto reopened = OperatorCoordinator::open(production);
+            REQUIRE(reopened.has_value());
+            auto controller = reopened->resumeSession(
+                SessionResume{
+                    .authenticatedControllerId = "controller-1",
+                    .controlledTargetId        = "target-1",
+                    .mode                      = SessionMode::Write,
+                    .kind                      = ControllerKind::Script,
+                },
+                manifest
+            );
+            REQUIRE(controller.has_value());
+            auto lease = reopened->acquireLease(*controller);
+            REQUIRE(lease.has_value());
+            auto installed = reopened->openInstalledRuntimeArtifact(
+                generation,
+                artifactRootHash
+            );
+            REQUIRE(installed.has_value());
+            auto observationHost = conformance::activateObservationHost(
+                *std::move(installed),
+                test_support::umbraflowProbeFrame(),
+                FrameId{708}
+            );
+            auto snapshot = reopened->createSnapshot(
+                *lease,
+                plugin,
+                project.toolCatalogSchemaOwner,
+                conformance::observeOnce(observationHost)
+            );
+            REQUIRE(snapshot.has_value());
+        }
+
+        auto probe = test_support::OperatorDatabaseProbe{database};
+        auto const rows = probe.readRows(
+            "SELECT (SELECT COUNT(*) FROM snapshots), "
+            "(SELECT COUNT(*) FROM project_observations), "
+            "(SELECT COUNT(*) FROM snapshots snapshot "
+            "LEFT JOIN project_observations observation "
+            "ON observation.plugin_id=snapshot.plugin_id "
+            "AND observation.project_instance_key=snapshot.project_instance_key "
+            "AND observation.revision=snapshot.project_observation_revision "
+            "WHERE observation.revision IS NULL)"
+        );
+        REQUIRE(rows.size() == 1U);
+        REQUIRE(rows.front().size() == 3U);
+        CHECK(rows.front()[0] == "2");
+        CHECK(rows.front()[1] == "33");
+        CHECK(rows.front()[2] == "0");
     }
 
     TEST_CASE(
@@ -3493,6 +3684,36 @@ namespace uf::operator_runtime
                "\"opaque_project_payload\":{\"value\":1},"
                "\"provenance\":" + std::string{k_fixtureProvenance} + "}],"
                "\"prior_project_state\":{\"revision\":0}}"
+        );
+    }
+
+    TEST_CASE("the snapshot project-state conjunction rejects a stale composition")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto const operation = reconcilingOperation(
+            prepared,
+            "request-1",
+            "command-1"
+        );
+        REQUIRE(prepared.store.commitReconciliation(
+            prepared.plugin,
+            confirmedCommit(
+                prepared,
+                operation,
+                0U,
+                "event-1",
+                "{\"value\":1}"
+            )
+        ).has_value());
+
+        CHECK_FALSE_MESSAGE(
+            prepared.store.submitCommand(
+                prepared.controller,
+                command(prepared.snapshot, "request-stale-snapshot"),
+                toolInvocation(prepared.project, "command-2")
+            ).has_value(),
+            "both project-state clauses together must reject the stale snapshot"
         );
     }
 

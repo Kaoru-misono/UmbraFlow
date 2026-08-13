@@ -166,11 +166,10 @@ namespace uf::operator_runtime
     // The read could not be served losslessly, so it is refused rather than
     // truncated: a reader handed a gap has no way to tell that it has one.
     //
-    // oldestAvailableCursor is read from the table rather than assumed. Nothing
-    // prunes ledger_events yet, so it is always 0 and the only cause a caller
-    // can produce today is a cursor from ahead of the head -- one minted
-    // against another database or another epoch. The branch that compares
-    // against it arrives with the pruning pass that makes it reachable.
+    // oldestAvailableCursor is read from the retained table rather than
+    // assumed. A cursor below it has lost rows to bounded retention; a cursor
+    // above currentCursor belongs to another database or epoch. Both refuse
+    // with this value instead of returning a batch that would hide the gap.
     struct ResyncRequired final
     {
         SubscriptionCursor requestedCursor{};
@@ -468,10 +467,13 @@ namespace uf::operator_runtime
 
     // Actionable recovery work retained in the ledger until reconciliation
     // leaves the reconciling state. The revision names match the two CAS
-    // inputs ReconciliationCommit consumes.
+    // inputs ReconciliationCommit consumes. deliveryReason is the ledger's
+    // stored account of why the Host outcome was uncertain; exposing it here
+    // keeps dispatches.delivery_reason from being write-only audit text.
     struct RecoveredUncertainDispatch final
     {
         std::string operationId{};
+        std::string deliveryReason{};
         uint64      expectedOperationRevision{};
         uint64      expectedProjectStateRevision{};
     };
@@ -652,6 +654,10 @@ namespace uf::operator_runtime
             std::string const& reason
         ) -> Result<ControlTakeover>;
 
+        // Voluntary release closes every unanswered dispatch on the target as
+        // transport_unknown and moves its Operation to reconciliation inside
+        // the same transaction that advances the fence and removes the lease.
+        // The returned fence is committed only after that resolution succeeds.
         [[nodiscard]]
         auto releaseLease(
             ControlLease const& lease

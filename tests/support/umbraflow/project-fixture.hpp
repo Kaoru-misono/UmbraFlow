@@ -319,6 +319,17 @@ namespace uf::operator_runtime::test_support
         "\n    }"
     };
 
+    inline auto const k_fixtureWaitIntent = std::string{
+        "{\n        condition = { settled = true }, observation_budget = 4,"
+        "\n        step_key = \"fixture.step\","
+        "\n        timeout_policy = { maximum_elapsed_ms = 5000, on_timeout = \"reobserve\" },"
+        "\n    }"
+    };
+
+    inline auto const k_fixtureUiThenWaitIntent = std::string{
+        "input.step_index == 1 and " + k_fixtureUiActionIntent + " or " + k_fixtureWaitIntent
+    };
+
     [[nodiscard]]
     inline auto hashOf(std::string_view value) -> ContentHash
     {
@@ -924,7 +935,10 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
     // bound, the approval edge and the tool mismatch: a proposal chosen by the
     // suite instead would be a proposal no plugin produced.
     [[nodiscard]]
-    inline auto pluginSource(std::string_view pluginId) -> std::string
+    inline auto pluginSource(
+        std::string_view pluginId,
+        std::string_view nextStepExpression = k_fixtureUiActionIntent
+    ) -> std::string
     {
         auto const ordinaryEffects = "{ " + fixtureEffect("alpha", "low") + ", "
             + fixtureEffect("beta", "medium") + " }";
@@ -1024,8 +1038,8 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         end
         return proposal
     end,
-    next_step = function(_input) return )LUAU";
-        source += k_fixtureUiActionIntent;
+    next_step = function(input) return )LUAU";
+        source += nextStepExpression;
         source += R"LUAU( end,
     reconcile = function(input) return input end,
     reduce = function(input)
@@ -1242,7 +1256,8 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
     [[nodiscard]]
     inline auto prepareStore(
         std::filesystem::path const& path,
-        std::string const& pluginId = "fixture.control"
+        std::string const& pluginId = "fixture.control",
+        std::string_view nextStepExpression = k_fixtureUiActionIntent
     ) -> PreparedStore
     {
         auto const release = runtimeRelease(path / "session-handoff");
@@ -1259,7 +1274,7 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         REQUIRE(installed.has_value());
         auto const artifactRootHash    = installed->rootHash();
         auto const installedGeneration = installed->installedGeneration();
-        auto const source = pluginSource(pluginId);
+        auto const source = pluginSource(pluginId, nextStepExpression);
         auto const project = makeProject(pluginId, source);
         auto const manifest = sessionManifest(
             project.registration,

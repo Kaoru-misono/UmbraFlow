@@ -476,7 +476,7 @@ namespace uf::operator_runtime
         // does not write it. docs/TODO.md "Delete-on-open has a deadline" owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:1c6c1d2002646293e63aa90d258b64270ac35708485f68a35aee0066a527addb"
+            "sha256:4acadc866e4214f480492df68dd883af708700b8a4dc0cbc9db6f91b3a7315bf"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -523,6 +523,14 @@ namespace uf::operator_runtime
             "available_tools TEXT NOT NULL"
             ") STRICT"
         };
+
+        // Retention is automatic at the write that creates each row. Snapshot
+        // and observation rows that an Operation still names are audit input
+        // and remain until that Operation has its own retention ruling; the
+        // unclaimed history around them is bounded here.
+        constexpr auto k_retainedLedgerEvents       = uint64{128};
+        constexpr auto k_retainedSnapshotHeads      = uint64{32};
+        constexpr auto k_retainedObservationHeads   = uint64{32};
 
         [[nodiscard]]
         auto exactDatabaseSchemaIdentity(sqlite3* database) -> Result<ContentHash>
@@ -615,6 +623,46 @@ namespace uf::operator_runtime
             return expectDone(database, insert.get());
         }
 
+        // The corrected snapshot comment is stored DDL and therefore schema
+        // identity even though it changes no column. The source identity is an
+        // exact precondition, so this rewrite has one expected target row and
+        // cannot become a general sqlite_schema editing path.
+        [[nodiscard]]
+        auto rewriteSnapshotIdentityComment(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, "PRAGMA writable_schema=ON"));
+            UF_TRY_VALUE(
+                update,
+                prepare(
+                    database,
+                    "UPDATE sqlite_schema SET sql=replace(sql, ?1, ?2) "
+                    "WHERE type='table' AND name='snapshots'"
+                )
+            );
+            auto constexpr prior = std::string_view{
+                "                        token TEXT PRIMARY KEY,"
+            };
+            auto constexpr corrected = std::string_view{
+                "                        -- token and snapshot_revision are deliberately outside\n"
+                "                        -- canonical_parts: they name the stored row rather than\n"
+                "                        -- the capture. observation_id remains inside and names\n"
+                "                        -- the capture, so recapturing an identical world moves\n"
+                "                        -- identity_hash while decision_basis_hash stays stable.\n"
+                "                        token TEXT PRIMARY KEY,"
+            };
+            UF_TRY(bindText(database, update.get(), 1, prior));
+            UF_TRY(bindText(database, update.get(), 2, corrected));
+            UF_TRY(expectDone(database, update.get()));
+            if (sqlite3_changes(database) != 1)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Snapshot DDL comment migration did not rewrite exactly one table"
+                );
+            }
+            return execute(database, "PRAGMA writable_schema=OFF");
+        }
+
         [[nodiscard]]
         auto migrateOperatorU9Schema(
             sqlite3* database,
@@ -641,6 +689,7 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, "DROP TABLE prior_ledger_events"));
             UF_TRY(execute(database, k_sessionPoliciesDdl));
             UF_TRY(execute(database, k_availabilityHeadsDdl));
+            UF_TRY(rewriteSnapshotIdentityComment(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
 
             // No migration commits under an identity other than the exact
@@ -657,6 +706,20 @@ namespace uf::operator_runtime
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(execute(database, k_schemaIdentityTransitionsDdl));
+            UF_TRY(rewriteSnapshotIdentityComment(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        [[nodiscard]]
+        auto migrateSnapshotIdentityComment(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(rewriteSnapshotIdentityComment(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -680,6 +743,12 @@ namespace uf::operator_runtime
                     "sha256:d4b8588784db487b928ef99e98e3adeff81f13530ea20375bd25a54a052d3968",
                 .targetIdentity = k_operatorDatabaseSchemaIdentity,
                 .apply          = migrateTransitionTableOnly,
+            },
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:1c6c1d2002646293e63aa90d258b64270ac35708485f68a35aee0066a527addb",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateSnapshotIdentityComment,
             },
         };
 
@@ -1579,12 +1648,12 @@ namespace uf::operator_runtime
                     -- token goes stale when the composed world moves and not
                     -- only when the lease does. One test asserts each scalar
                     -- equals its member in canonical_parts.
-                    --
-                    -- token and snapshot_revision are deliberately outside
-                    -- canonical_parts: they are record naming and not composed
-                    -- state, which is what makes two snapshots over an
-                    -- identical world share an identity_hash.
                     CREATE TABLE IF NOT EXISTS snapshots(
+                        -- token and snapshot_revision are deliberately outside
+                        -- canonical_parts: they name the stored row rather than
+                        -- the capture. observation_id remains inside and names
+                        -- the capture, so recapturing an identical world moves
+                        -- identity_hash while decision_basis_hash stays stable.
                         token TEXT PRIMARY KEY,
                         session_id TEXT NOT NULL REFERENCES sessions(session_id),
                         snapshot_revision INTEGER NOT NULL
@@ -2338,6 +2407,71 @@ namespace uf::operator_runtime
             return static_cast<uint64>(sqlite3_column_int64(query.get(), 0));
         }
 
+        // Keep a bounded working set without breaking the snapshot join. An
+        // Operation makes its snapshot an audit dependency, and a retained
+        // snapshot makes its ProjectObservation a composition dependency; both
+        // exceptions are expressed by the NOT EXISTS clauses rather than by a
+        // second lifetime flag that could disagree with the foreign keys.
+        [[nodiscard]]
+        auto pruneSnapshotHistory(
+            sqlite3* database,
+            std::string_view sessionId,
+            std::string_view pluginId,
+            std::string_view projectInstanceKey
+        ) -> Status
+        {
+            UF_TRY_VALUE(
+                snapshotPrune,
+                prepare(
+                    database,
+                    "DELETE FROM snapshots WHERE session_id=?1 "
+                    "AND token NOT IN (SELECT token FROM snapshots "
+                    "WHERE session_id=?1 ORDER BY snapshot_revision DESC LIMIT ?2) "
+                    "AND NOT EXISTS(SELECT 1 FROM operations operation "
+                    "WHERE operation.snapshot_token=snapshots.token)"
+                )
+            );
+            UF_TRY(bindText(database, snapshotPrune.get(), 1, sessionId));
+            UF_TRY(bindInteger(
+                database,
+                snapshotPrune.get(),
+                2,
+                k_retainedSnapshotHeads
+            ));
+            UF_TRY(expectDone(database, snapshotPrune.get()));
+
+            UF_TRY_VALUE(
+                observationPrune,
+                prepare(
+                    database,
+                    "DELETE FROM project_observations WHERE plugin_id=?1 "
+                    "AND project_instance_key=?2 AND revision NOT IN ("
+                    "SELECT revision FROM project_observations WHERE plugin_id=?1 "
+                    "AND project_instance_key=?2 ORDER BY revision DESC LIMIT ?3) "
+                    "AND NOT EXISTS(SELECT 1 FROM snapshots snapshot "
+                    "WHERE snapshot.plugin_id=project_observations.plugin_id "
+                    "AND snapshot.project_instance_key="
+                    "project_observations.project_instance_key "
+                    "AND snapshot.project_observation_revision="
+                    "project_observations.revision)"
+                )
+            );
+            UF_TRY(bindText(database, observationPrune.get(), 1, pluginId));
+            UF_TRY(bindText(
+                database,
+                observationPrune.get(),
+                2,
+                projectInstanceKey
+            ));
+            UF_TRY(bindInteger(
+                database,
+                observationPrune.get(),
+                3,
+                k_retainedObservationHeads
+            ));
+            return expectDone(database, observationPrune.get());
+        }
+
         // Appended in the same transaction as the fact it records, never after
         // it. SQLite allows one writer at a time and every mutating path here
         // opens BEGIN IMMEDIATE, so sequences are assigned in commit order and
@@ -2372,7 +2506,18 @@ namespace uf::operator_runtime
             {
                 return databaseFailure(database, "could not bind ledger event detail");
             }
-            return expectDone(database, insert.get());
+            UF_TRY(expectDone(database, insert.get()));
+            UF_TRY_VALUE(
+                prune,
+                prepare(
+                    database,
+                    "DELETE FROM ledger_events WHERE sequence NOT IN ("
+                    "SELECT sequence FROM ledger_events "
+                    "ORDER BY sequence DESC LIMIT ?1)"
+                )
+            );
+            UF_TRY(bindInteger(database, prune.get(), 1, k_retainedLedgerEvents));
+            return expectDone(database, prune.get());
         }
 
         // The clock the Agent time budget is measured on, read by the Operator
@@ -3569,7 +3714,11 @@ namespace uf::operator_runtime
             query,
             prepare(
                 m_impl->database.get(),
-                "SELECT operation.operation_id, operation.revision, state.revision "
+                "SELECT operation.operation_id, operation.revision, state.revision, "
+                "(SELECT dispatch.delivery_reason FROM dispatches dispatch "
+                "WHERE dispatch.operation_id=operation.operation_id "
+                "AND dispatch.delivery_outcome='transport_unknown' "
+                "ORDER BY dispatch.dispatch_sequence DESC LIMIT 1) "
                 "FROM operations operation "
                 "JOIN project_state state "
                 "ON state.plugin_id=operation.plugin_id "
@@ -3577,23 +3726,17 @@ namespace uf::operator_runtime
                 "WHERE operation.state='reconciling' AND EXISTS("
                 "SELECT 1 FROM dispatches dispatch "
                 "WHERE dispatch.operation_id=operation.operation_id "
-                "AND dispatch.delivery_outcome='transport_unknown' "
-                "AND dispatch.delivery_reason=?1) "
+                "AND dispatch.delivery_outcome='transport_unknown') "
                 "ORDER BY operation.operation_id"
             )
         );
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            query.get(),
-            1,
-            k_restartRecoveryReason
-        ));
         auto recovered = std::vector<RecoveredUncertainDispatch>{};
         auto step      = sqlite3_step(query.get());
         while (step == SQLITE_ROW)
         {
             recovered.emplace_back(RecoveredUncertainDispatch{
-                .operationId = columnText(query.get(), 0),
+                .operationId    = columnText(query.get(), 0),
+                .deliveryReason = columnText(query.get(), 3),
                 .expectedOperationRevision = static_cast<uint64>(
                     sqlite3_column_int64(query.get(), 1)
                 ),
@@ -4844,6 +4987,16 @@ namespace uf::operator_runtime
         }
         auto const nextFence = lease.fencingToken + 1U;
 
+        // Release is as final as takeover for the authority the Host may still
+        // be using. Resolve first, under this transaction and while the live
+        // lease still identifies the target, so no committed state can contain
+        // neither the lease nor an answer for its dispatch.
+        UF_TRY(resolveUnansweredDispatches(
+            m_impl->database.get(),
+            lease.controlledTargetId,
+            "lease release found this dispatch unanswered"
+        ));
+
         UF_TRY_VALUE(
             highWaterUpdate,
             prepare(
@@ -5521,6 +5674,13 @@ namespace uf::operator_runtime
         UF_TRY(bindInteger(m_impl->database.get(), insert.get(), 16, availabilityRevision));
         UF_TRY(expectDone(m_impl->database.get(), insert.get()));
 
+        UF_TRY(pruneSnapshotHistory(
+            m_impl->database.get(),
+            lease.sessionId,
+            pluginId,
+            projectInstanceKey
+        ));
+
         // The join point, read inside the transaction that published this
         // record. Nothing can commit between the composition and this read, so
         // a controller subscribing from here is handed exactly what happened
@@ -5999,14 +6159,13 @@ namespace uf::operator_runtime
             snapshotQuery,
             prepare(
                 m_impl->database.get(),
-                // The last two clauses are what make the token a reference to a
-                // COMPOSITION rather than to a lease: the snapshot goes stale
-                // when ProjectState moves under it, not only when control
-                // does. obs.project_state_revision=state.revision is not
-                // redundant with the clause above it -- it refuses a snapshot
-                // whose observation revision was reused from an earlier
-                // ProjectState, which is the only way the reuse rule in
-                // createSnapshot could otherwise carry a stale reading forward.
+                // The two project-state clauses together make the token a
+                // reference to a COMPOSITION rather than to a lease: the
+                // snapshot goes stale when ProjectState moves under it, not
+                // only when control does. Their conjunction is the guarded
+                // property; either clause is redundant by itself because both
+                // revisions come from the same in-transaction state read and
+                // that revision also participates in the derive fingerprint.
                 //
                 // The NOT EXISTS clause is what makes out-of-band human input
                 // stop the automation: a finding records the snapshot revision
@@ -6470,9 +6629,9 @@ namespace uf::operator_runtime
         UF_TRY(requireLiveBinding(m_impl->database.get(), controller));
         UF_TRY_VALUE(currentCursor, currentEventCursor(m_impl->database.get()));
 
-        // Derived rather than assumed. Nothing prunes ledger_events, so this is
-        // 0 whenever the table is non-empty and the head when it is empty; the
-        // day a retention pass lands, this is already the value it moves.
+        // Derived rather than assumed. Bounded retention moves this floor, and
+        // MIN(sequence) - 1 is the last cursor that can still be answered
+        // without hiding a deleted row.
         UF_TRY_VALUE(
             oldestQuery,
             prepare(
@@ -6492,12 +6651,10 @@ namespace uf::operator_runtime
             sqlite3_column_int64(oldestQuery.get(), 0)
         );
 
-        // A cursor past the head is a cursor from another database or another
-        // epoch. It is refused rather than answered with an empty batch,
-        // because "nothing has happened yet" and "you are reading a stream that
-        // is not this one" are different answers and only one of them means
-        // keep waiting.
-        if (after.value > currentCursor)
+        // Past the head means another database or epoch; below the floor means
+        // retention deleted part of the requested stream. Neither is an empty
+        // batch, because both require a fresh snapshot before continuing.
+        if (after.value > currentCursor || after.value < oldestCursor)
         {
             UF_TRY(transaction.commit());
             return SubscriptionRead{ResyncRequired{

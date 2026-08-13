@@ -64,7 +64,7 @@ endfunction()
 # are exactly these and are spelled in the vocabulary; what
 # UF_SCHEMA_ONLY_REQUIREMENTS enforces is that the set of requirements holding
 # no contract- gate at all cannot change without an edit here.
-set(UF_REQUIRED_DOCTEST_CONTRACTS
+set(UF_REQUIRED_CONTRACT_GATES
     contract-product-p01
     contract-product-p02
     contract-product-p03
@@ -115,7 +115,9 @@ set(UF_REQUIRED_DOCTEST_CONTRACTS
     schema-control-c13
     contract-agent-a01
     contract-agent-a02
+    contract-agent-a03
     contract-agent-a04
+    contract-agent-a05
     contract-agent-a06
     contract-agent-a07
     contract-agent-a08
@@ -188,10 +190,7 @@ endif()
 # gates and requires the two to agree, in both directions. That is as far as the
 # prefix can be held to account from here -- it makes a reclassification, which
 # is one keystroke on a name, an explicit edit to this list.
-set(UF_SCHEMA_ONLY_REQUIREMENTS
-    agent-a03
-    agent-a05
-)
+set(UF_SCHEMA_ONLY_REQUIREMENTS)
 
 # A suite is valid only when its requested IDs and concrete doctest declarations
 # are the same set. The global registry also rejects placeholders, cross-suite
@@ -307,7 +306,7 @@ function(cpp_add_contract_suite)
                 "contract-/schema- vocabulary: ${CONTRACT_CASE}"
             )
         endif()
-        list(FIND UF_REQUIRED_DOCTEST_CONTRACTS "${CONTRACT_CASE}" REQUIRED_CASE_INDEX)
+        list(FIND UF_REQUIRED_CONTRACT_GATES "${CONTRACT_CASE}" REQUIRED_CASE_INDEX)
         if(REQUIRED_CASE_INDEX EQUAL -1)
             message(FATAL_ERROR
                 "cpp_add_contract_suite(${ARG_TARGET}) rejects contract ID outside the migration report: ${CONTRACT_CASE}"
@@ -533,6 +532,7 @@ if(TARGET ${PROJECT_NAME}_operator)
             operator/test-state-contract.cpp
             operator/test-control-contract.cpp
             operator/test-agent-audit-contract.cpp
+            workflow/test-step-kind.cpp
         LIBS
             ${PROJECT_NAME}_operator
             ${PROJECT_NAME}_image
@@ -1050,8 +1050,37 @@ set_tests_properties(
     LABELS "CI"
 )
 
+# The authoring backend owns the behavioural halves of a03 and a05. Register
+# their focused unittest methods under the requirement IDs as well as retaining
+# the aggregate above, so either behaviour can fail its own gate.
+add_test(
+    NAME contract-agent-a03
+    COMMAND
+        ${Python3_EXECUTABLE} -m unittest
+        tools.annotate.tests.test_backend.ReplayBundleTests.test_bundle_is_the_five_part_closure_and_validates_against_the_checked_in_schema
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)
+add_test(
+    NAME contract-agent-a05
+    COMMAND
+        ${Python3_EXECUTABLE} -m unittest
+        tools.annotate.tests.test_backend.PublicationGateTests.test_each_gate_is_required_and_neither_is_satisfied_by_the_others_evidence
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+)
+set_tests_properties(
+    contract-agent-a03
+    contract-agent-a05
+    PROPERTIES
+    TIMEOUT 300
+    LABELS "CI;CONTRACT"
+)
+set_property(GLOBAL APPEND PROPERTY UF_REGISTERED_CONTRACT_CASES
+    contract-agent-a03
+    contract-agent-a05
+)
+
 get_property(REGISTERED_CONTRACT_CASES GLOBAL PROPERTY UF_REGISTERED_CONTRACT_CASES)
-set(SORTED_REQUIRED_CONTRACT_CASES ${UF_REQUIRED_DOCTEST_CONTRACTS})
+set(SORTED_REQUIRED_CONTRACT_CASES ${UF_REQUIRED_CONTRACT_GATES})
 set(SORTED_REGISTERED_CONTRACT_CASES ${REGISTERED_CONTRACT_CASES})
 list(SORT SORTED_REQUIRED_CONTRACT_CASES)
 list(SORT SORTED_REGISTERED_CONTRACT_CASES)
@@ -1110,7 +1139,7 @@ endforeach()
 list(SORT SHAPE_ONLY_REQUIREMENTS)
 set(SORTED_SCHEMA_ONLY_REQUIREMENTS ${UF_SCHEMA_ONLY_REQUIREMENTS})
 list(SORT SORTED_SCHEMA_ONLY_REQUIREMENTS)
-if(NOT SHAPE_ONLY_REQUIREMENTS STREQUAL SORTED_SCHEMA_ONLY_REQUIREMENTS)
+if(NOT "${SHAPE_ONLY_REQUIREMENTS}" STREQUAL "${SORTED_SCHEMA_ONLY_REQUIREMENTS}")
     message(FATAL_ERROR
         "The requirements that own no contract- gate are not the ones "
         "UF_SCHEMA_ONLY_REQUIREMENTS names; "
