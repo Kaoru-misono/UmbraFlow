@@ -93,7 +93,7 @@ placement = {
   reader = "options.text",
   order = "left_to_right",
 }
-reads = []
+reads = [{ reader = "header.text", offset = [0, -40], size = [320, 40] }]
 
 [[surface]]
 id = "settings"
@@ -129,7 +129,11 @@ assert(
     runtime.collection_by_id.options.placement.search_rect[3] == 1680,
     "T-002 collection search rectangle must survive TOML compilation"
 )
-assert(#runtime.collection_by_id.options.reads == 0)
+assert(#runtime.collection_by_id.options.reads == 1)
+assert(runtime.collection_by_id.options.reads[1].offset[1] == 0)
+assert(runtime.collection_by_id.options.reads[1].offset[2] == -40)
+assert(runtime.collection_by_id.options.reads[1].size[1] == 320)
+assert(runtime.collection_by_id.options.reads[1].size[2] == 40)
 assert(runtime.locator_by_id["save.template"].asset_path == "assets/templates/save.png")
 assert(runtime.locator_by_id["save.template"].sha256 == nil)
 assert(runtime.asset_paths[1] == "assets/templates/header.png")

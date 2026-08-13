@@ -246,6 +246,15 @@ presence  { id, target, kind, confidence_floor }
 > not change `Binding.reads`: a Reader named there remains reporting-only and
 > never decides that Binding's detector. Collection results also mint no Receipt
 > and authorize no action.
+>
+> **Amended 2026-08-14 (correction to `2089d49`; deciding artifacts:
+> [`umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json)
+> and `test-resolution-v2.luau`).** Each Collection reporting read is
+> `{ reader, offset = [dx, dy], size = [w, h] }`, and its rectangle is
+> `[item.x + dx, item.y + dy, w, h]`. The detected item is one line of text, so
+> its width follows that text; the reporting read belongs to the containing
+> element and therefore carries that element's fixed extent. A derived rectangle
+> outside the frame is refused and never clamped.
 
 ### 2.7 Binding
 

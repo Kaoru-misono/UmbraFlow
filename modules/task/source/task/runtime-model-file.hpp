@@ -31,7 +31,7 @@ namespace uf::task
         "af9d5dd9b1499359b165dd72694bb13a479dd5c5543b139ff7d22419d1855350"
     };
     inline constexpr auto k_runtimeModelSchemaHash = std::string_view{
-        "276ba76976a66ff0ebc2c9f99090d5fba984c5462a5ef070733184d6705caa88"
+        "0de6280c64268c76016974066b686b341b02cf33b35ab32a4380f63b04abce26"
     };
 
     // Each ceiling multiplies in std::size_t rather than widening a 32-bit

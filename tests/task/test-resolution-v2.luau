@@ -465,7 +465,7 @@ local reading = model.compile({
                 reader = "flavour.reader",
                 order = "left_to_right",
             },
-            reads = { { reader = "name.reader", offset = { 1, 1, -2, -2 } } },
+            reads = { { reader = "name.reader", offset = { 0, 50 }, size = { 240, 60 } } },
         },
     },
     surfaces = {
@@ -828,8 +828,34 @@ do
     end
 end
 
--- A declared item read uses the measured item rectangle and travels on that
--- item in the same three-outcome shape as a Binding reading.
+-- A Collection item is a detected line, so its width varies with its text. The
+-- read belongs to the containing element and keeps its declared width across
+-- items instead of inheriting either line's width.
+do
+    local cycle = evidence.begin_cycle()
+    local records = readingRecords(cycle, "present", "absent", "present")
+    local state = resolution.resolve_state(reading, cycle, records)
+    local targets, reason = resolution.collection_read_targets(
+        reading,
+        cycle,
+        state,
+        "options",
+        collectionReading({
+            { "Short", { 100, 100, 51, 40 } },
+            { "A much longer title", { 500, 100, 160, 40 } },
+        })
+    )
+    assert(reason == nil and targets ~= nil)
+    assert(
+        targets[1].rect[3] == 240 and targets[2].rect[3] == 240,
+        "a Collection read's derived width must not change with the item's width"
+    )
+    evidence.end_cycle(cycle)
+end
+
+-- A declared item read uses the measured item's origin and its own absolute
+-- extent, then travels on that item in the same three-outcome shape as a
+-- Binding reading.
 do
     local cycle = evidence.begin_cycle()
     local records = readingRecords(cycle, "present", "absent", "present")
@@ -844,11 +870,11 @@ do
     )
     assert(targetReason == nil and targets ~= nil)
     assert(
-        targets[1].rect[1] == 632
-            and targets[1].rect[2] == 101
-            and targets[1].rect[3] == 178
-            and targets[1].rect[4] == 38,
-        "a Collection read offset must be applied to its measured item rectangle"
+        targets[1].rect[1] == 631
+            and targets[1].rect[2] == 150
+            and targets[1].rect[3] == 240
+            and targets[1].rect[4] == 60,
+        "a Collection read must combine its origin offset with its absolute size"
     )
     supplied[model.collection_item_reading_key("options", 0, "name.reader")] =
         readValue("Wandering Merchant")
@@ -864,13 +890,12 @@ do
         result.items[1].readings[1].kind == "read"
             and result.items[1].readings[1].reader == "name.reader"
             and result.items[1].readings[1].lines[1].text == "Wandering Merchant",
-        "a Collection item must report the Reader result from its offset rectangle"
+        "a Collection item must report the Reader result from its derived rectangle"
     )
     evidence.end_cycle(cycle)
 end
 
-
--- Applying a Collection read offset must remain inside the frame. The resolver
+-- Applying a Collection read rectangle must remain inside the frame. The resolver
 -- refuses the whole Collection instead of clamping the requested rectangle.
 do
     local cycle = evidence.begin_cycle()
@@ -885,7 +910,7 @@ do
     )
     assert(
         result == nil and reason == "read_out_of_frame",
-        "a Collection read whose offset rectangle leaves the frame must be refused"
+        "a Collection read whose derived rectangle leaves the frame must be refused"
     )
     evidence.end_cycle(cycle)
 end

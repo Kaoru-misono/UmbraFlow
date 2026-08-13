@@ -522,8 +522,8 @@ local function offsetItemRect(
     local area = {
         base[1] + offset[1],
         base[2] + offset[2],
-        base[3] + offset[3],
-        base[4] + offset[4],
+        read.size[1],
+        read.size[2],
     }
     if area[1] < 0
         or area[2] < 0

@@ -174,26 +174,25 @@
       }
     },
     "collection_read_offset": {
-      "$comment": "The [dx, dy, dw, dh] delta applied to one measured item rectangle. The resulting rectangle must have positive extent and remain wholly inside the frame; leaving the frame is a refusal, never a clamp.",
+      "$comment": "The [dx, dy] delta applied to one measured item's origin. Either component may be negative.",
       "type": "array",
       "prefixItems": [
-        { "type": "integer" },
-        { "type": "integer" },
         { "type": "integer" },
         { "type": "integer" }
       ],
       "items": false,
-      "minItems": 4,
-      "maxItems": 4
+      "minItems": 2,
+      "maxItems": 2
     },
     "collection_read": {
-      "$comment": "One reporting-only Reader and the delta from each item's measured rectangle that it reads. It REPORTS and never decides Collection or item presence.",
+      "$comment": "One reporting-only Reader, an origin delta, and an absolute size; the resulting rectangle must remain wholly inside the frame, and leaving it is a refusal rather than a clamp. An item is one line of text whose width belongs to that text, while a read placed against it belongs to the containing element and therefore has that element's fixed extent.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["reader", "offset"],
+      "required": ["reader", "offset", "size"],
       "properties": {
         "reader": { "$ref": "#/$defs/identifier" },
-        "offset": { "$ref": "#/$defs/collection_read_offset" }
+        "offset": { "$ref": "#/$defs/collection_read_offset" },
+        "size": { "$ref": "#/$defs/size" }
       }
     },
     "click_action": {

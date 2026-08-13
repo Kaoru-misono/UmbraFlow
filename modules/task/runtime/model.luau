@@ -7,7 +7,7 @@
 
 local model = {}
 model.schema = "umbraflow-runtime/v2"
-model.schema_hash = "276ba76976a66ff0ebc2c9f99090d5fba984c5462a5ef070733184d6705caa88"
+model.schema_hash = "0de6280c64268c76016974066b686b341b02cf33b35ab32a4380f63b04abce26"
 
 local runtimeModels: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 local semanticBytes: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any
@@ -414,24 +414,23 @@ local function collectionBuilder(bounds: { number }): (string, any) -> any
         for index, valueRead in dense(what .. ".reads", source.reads) do
             local read = object(what .. ".reads[" .. tostring(index) .. "]", valueRead)
             local readWhat = what .. ".reads[" .. tostring(index) .. "]"
-            only(readWhat, read, { reader = true, offset = true })
+            only(readWhat, read, { reader = true, offset = true, size = true })
             local readerId = identifier(readWhat .. ".reader", read.reader)
             if seenReaders[readerId] then
                 fail(what .. ".reads", "repeats Reader '" .. readerId .. "'")
             end
             seenReaders[readerId] = true
             local values = dense(readWhat .. ".offset", read.offset)
-            if #values ~= 4 then
-                fail(readWhat .. ".offset", "must contain exactly four integers")
+            if #values ~= 2 then
+                fail(readWhat .. ".offset", "must contain exactly two integers")
             end
             reads[index] = table.freeze({
                 reader = readerId,
                 offset = table.freeze({
                     integer(readWhat .. ".offset[1]", values[1]),
                     integer(readWhat .. ".offset[2]", values[2]),
-                    integer(readWhat .. ".offset[3]", values[3]),
-                    integer(readWhat .. ".offset[4]", values[4]),
                 }),
+                size = size(readWhat .. ".size", read.size),
             })
         end
         return table.freeze({
