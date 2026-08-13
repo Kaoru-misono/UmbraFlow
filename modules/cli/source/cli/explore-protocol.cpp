@@ -481,6 +481,18 @@ namespace uf::cli
         }
         else if (auto const* p_text = value.text(); p_text != nullptr)
         {
+            if (!isValidUtf8(*p_text))
+            {
+                return exploreFailure(
+                    id,
+                    fail(
+                        AutomationErrorKind::InvalidResource,
+                        "a chunk answered with a string that is not valid UTF-8"
+                    ).error(),
+                    heap,
+                    ended
+                );
+            }
             result.text = *p_text;
         }
 

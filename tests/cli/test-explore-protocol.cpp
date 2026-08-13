@@ -268,6 +268,28 @@ namespace uf::cli
             }
         }
 
+        TEST_CASE("the explore JSON emitter refuses an invalid UTF-8 Luau string")
+        {
+            auto loneSurrogate = std::string{};
+            loneSurrogate.push_back(static_cast<char>(0xEDU));
+            loneSurrogate.push_back(static_cast<char>(0xA0U));
+            loneSurrogate.push_back(static_cast<char>(0x80U));
+
+            auto const line = exploreSuccess(
+                "a",
+                script::ScriptValue{loneSurrogate},
+                k_lineHeap,
+                false
+            );
+
+            CHECK_MESSAGE(
+                line.contains(R"("ok":false)"),
+                "the explore JSON emitter must refuse invalid UTF-8"
+            );
+            CHECK(line.contains("not valid UTF-8"));
+            CHECK(!line.contains(loneSurrogate));
+        }
+
         TEST_CASE("every answered chunk carries the heap against its ceiling")
         {
             // The ceiling is measured against garbage as well as live data, so a
