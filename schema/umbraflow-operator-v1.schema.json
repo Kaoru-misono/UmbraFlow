@@ -290,6 +290,8 @@
         "project_state_hash",
         "decision_basis_hash",
         "session_manifest_hash",
+        "policy_hash",
+        "available_tools",
         "availability_revision",
         "lease_id",
         "fencing_token"
@@ -307,6 +309,12 @@
         "project_state_hash": { "$ref": "#/$defs/Hash" },
         "decision_basis_hash": { "$ref": "#/$defs/Hash" },
         "session_manifest_hash": { "$ref": "#/$defs/Hash" },
+        "policy_hash": { "$ref": "#/$defs/Hash" },
+        "available_tools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NamespacedIdentifier" },
+          "uniqueItems": true
+        },
         "availability_revision": { "type": "integer", "minimum": 0 },
         "lease_id": { "$ref": "#/$defs/Identifier" },
         "fencing_token": { "$ref": "#/$defs/FencingToken" }
@@ -331,6 +339,8 @@
         "project_state_hash",
         "decision_basis_hash",
         "session_manifest_hash",
+        "policy_hash",
+        "available_tools",
         "availability_revision",
         "lease_id",
         "fencing_token"
@@ -351,6 +361,12 @@
         "project_state_hash": { "$ref": "#/$defs/Hash" },
         "decision_basis_hash": { "$ref": "#/$defs/Hash" },
         "session_manifest_hash": { "$ref": "#/$defs/Hash" },
+        "policy_hash": { "$ref": "#/$defs/Hash" },
+        "available_tools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NamespacedIdentifier" },
+          "uniqueItems": true
+        },
         "availability_revision": { "type": "integer", "minimum": 0 },
         "lease_id": { "$ref": "#/$defs/Identifier" },
         "fencing_token": { "$ref": "#/$defs/FencingToken" }
@@ -1159,7 +1175,6 @@
         "command_fingerprint",
         "sequence",
         "same_state_repetitions",
-        "elapsed_without_progress_ms",
         "last_operation_state"
       ],
       "properties": {
@@ -1167,7 +1182,6 @@
         "command_fingerprint": { "$ref": "#/$defs/Hash" },
         "sequence": { "type": "integer", "minimum": 0 },
         "same_state_repetitions": { "type": "integer", "minimum": 0 },
-        "elapsed_without_progress_ms": { "type": "integer", "minimum": 0 },
         "last_operation_state": { "$ref": "#/$defs/OperationState" }
       }
     }

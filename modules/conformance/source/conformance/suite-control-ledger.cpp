@@ -39,6 +39,10 @@ namespace uf::operator_runtime::conformance
         CHECK_FALSE(prepared.store.createSnapshot(
             prepared.lease,
             prepared.plugin,
+            deploymentFor(
+                prepared.project,
+                ProjectRole::UnderTest
+            ).toolCatalogSchemaOwner,
             observeAgain(prepared)
         ).has_value());
     }

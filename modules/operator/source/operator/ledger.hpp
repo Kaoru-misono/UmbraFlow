@@ -105,9 +105,20 @@ namespace uf::operator_runtime
     enum class LedgerEventKind : uint8
     {
         OperationCreated,
+        OperationStateChanged,
+        DeliveryOutcomeRecorded,
         ControlTransitioned,
         ExternalInputDetected,
     };
+
+    // Only the two event kinds that report a changed value carry one. The
+    // other kinds are complete in their kind and subject identity, so giving
+    // them a nullable string would admit combinations the stream never writes.
+    using LedgerEventDetail = std::variant<
+        std::monostate,
+        OperationState,
+        task::DeliveryOutcome
+    >;
 
     // How far a reader has got through that sequence: the sequence number of
     // the last event it has consumed, and 0 before the first one.
@@ -133,6 +144,7 @@ namespace uf::operator_runtime
         LedgerEventKind    kind{LedgerEventKind::OperationCreated};
         std::string        controlledTargetId{};
         std::string        subjectId{};
+        LedgerEventDetail  detail{};
 
         auto operator==(LedgerEvent const&) const -> bool = default;
     };
@@ -202,6 +214,8 @@ namespace uf::operator_runtime
         uint64                   snapshotRevision{};
         uint64                   projectStateRevision{};
         uint64                   availabilityRevision{};
+        ContentHash              policyHash;
+        std::vector<OfferedTool> availableTools{};
         StoredProjectObservation observation;
 
         // The join point between a snapshot and the event stream: the head of
@@ -649,13 +663,15 @@ namespace uf::operator_runtime
         //
         // There is no identity parameter and nothing replaces it: a caller that
         // supplied one could pin a snapshot to a world the ledger never held.
-        // The two values it does take cannot be fabricated either -- a
+        // The three values it does take cannot be fabricated either -- a
         // ProjectPluginHandle comes only from ProjectPluginRegistrar::findExact,
+        // a ProjectToolCatalogSchemaOwner only from the registered catalog,
         // and a UiObservationSnapshot only from TaskHost.
         [[nodiscard]]
         auto createSnapshot(
             ControlLease const& lease,
             ProjectPluginHandle const& plugin,
+            ProjectToolCatalogSchemaOwner const& catalog,
             task::UiObservationSnapshot const& observation
         ) -> Result<SnapshotRecord>;
 

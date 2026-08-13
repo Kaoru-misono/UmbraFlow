@@ -433,6 +433,7 @@ namespace uf::operator_runtime
             auto snapshot = store.createSnapshot(
                 *lease,
                 projectPlugin,
+                project.toolCatalogSchemaOwner,
                 conformance::observeOnce(observation)
             );
             REQUIRE(snapshot.has_value());
@@ -2139,11 +2140,37 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto priorSchema = test_support::OperatorDatabaseProbe{databasePath};
-            // The registered source is the otherwise-identical populated
-            // layout before the transition table joined its stored DDL.
-            priorSchema.execute("DROP TABLE schema_identity_transitions");
+            priorSchema.execute("DROP TABLE availability_heads");
+            priorSchema.execute("DROP TABLE session_policies");
+            priorSchema.execute(
+                "ALTER TABLE ledger_events RENAME TO prior_ledger_events"
+            );
+            priorSchema.execute(R"sql(
+                    CREATE TABLE IF NOT EXISTS ledger_events(
+                        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
+                        controlled_target_id TEXT NOT NULL,
+                        kind TEXT NOT NULL CHECK(kind IN (
+                            'operation_created', 'control_transitioned',
+                            'external_input_detected'
+                        )),
+                        subject_id TEXT NOT NULL
+                    ) STRICT;
+                )sql");
+            priorSchema.execute(
+                "INSERT INTO ledger_events(sequence, session_epoch, "
+                "controlled_target_id, kind, subject_id) SELECT sequence, "
+                "session_epoch, controlled_target_id, kind, subject_id "
+                "FROM prior_ledger_events"
+            );
+            priorSchema.execute("DROP TABLE prior_ledger_events");
             sourceIdentity = exactSchemaIdentity(priorSchema);
         }
+        CHECK_MESSAGE(
+            sourceIdentity
+                == "sha256:96c4ef8ffb88bcb8ce85889d42426905ee3cad5cc2d65c7f498fbb2b7b9c4f71",
+            "the migration fixture must reproduce the exact U9 source identity"
+        );
 
         REQUIRE(artifactRootHash.has_value());
         auto const beforeReadOnlyRefusal = ledgerBytes(databasePath);
@@ -2169,7 +2196,8 @@ namespace uf::operator_runtime
             auto upgraded = OperatorCoordinator::open(production);
             REQUIRE_MESSAGE(
                 upgraded.has_value(),
-                "a registered exact source-target pair must produce the pinned target identity"
+                "a registered exact source-target pair must produce the pinned target identity: ",
+                upgraded.error().message()
             );
         }
         {
@@ -2843,6 +2871,7 @@ namespace uf::operator_runtime
         CHECK_FALSE(prepared.store.createSnapshot(
             prepared.lease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             conformance::observeOnce(prepared.observation)
         ).has_value());
     }

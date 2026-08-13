@@ -387,7 +387,10 @@ namespace uf::operator_runtime
         CHECK(budget.find("\"maximum_observations\"") != std::string::npos);
         CHECK(budget.find("\"maximum_risk_units\"") != std::string::npos);
         CHECK(progress.find("\"same_state_repetitions\"") != std::string::npos);
-        CHECK(progress.find("\"elapsed_without_progress_ms\"") != std::string::npos);
+        CHECK_MESSAGE(
+            progress.find("\"elapsed_without_progress_ms\"") == std::string::npos,
+            "ProgressMarker must not claim an unread millisecond no-progress clock"
+        );
     }
 
     TEST_CASE("contract-agent-a01")
@@ -452,6 +455,7 @@ namespace uf::operator_runtime
         auto const elsewhereSnapshot = prepared.store.createSnapshot(
             *elsewhereLease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             test_support::observeAgain(prepared)
         );
         REQUIRE(elsewhereSnapshot.has_value());
@@ -555,6 +559,91 @@ namespace uf::operator_runtime
         // A read of nothing is a caller error rather than an empty answer: it
         // cannot make progress and would loop for ever if it were served.
         CHECK_FALSE(prepared.store.subscribe(agent, base, 0U).has_value());
+
+        auto const eventTemporary = TemporaryDirectory{};
+        auto       eventStore      = prepareStore(eventTemporary.path());
+        auto const eventBase       = eventStore.snapshot.eventCursor;
+        auto const readOperation = test_support::proposedOperation(
+            eventStore,
+            "request-state-event",
+            "observe-1"
+        );
+        auto const confirmed = eventStore.store.transitionOperation(
+            readOperation.operationId,
+            readOperation.revision,
+            OperationSignal::ReadCompleted
+        );
+        REQUIRE(confirmed.has_value());
+        auto const operation = test_support::reconcilingOperation(
+            eventStore,
+            "request-event-stream",
+            task::DeliveryOutcome::Delivered
+        );
+
+        auto const eventRead = eventStore.store.subscribe(
+            eventStore.controller,
+            eventBase,
+            16U
+        );
+        REQUIRE(eventRead.has_value());
+        auto const* eventBatch = std::get_if<SubscriptionBatch>(&*eventRead);
+        REQUIRE(eventBatch != nullptr);
+        auto const confirmedState = std::ranges::find_if(
+            eventBatch->events,
+            [&readOperation](LedgerEvent const& event)
+            {
+                return event.kind == LedgerEventKind::OperationStateChanged
+                    && event.subjectId == readOperation.operationId;
+            }
+        );
+        REQUIRE_MESSAGE(
+            confirmedState != eventBatch->events.end(),
+            "transitionOperation must publish the resulting Operation state"
+        );
+        auto const* confirmedDetail = std::get_if<OperationState>(
+            &confirmedState->detail
+        );
+        REQUIRE(confirmedDetail != nullptr);
+        CHECK_MESSAGE(
+            *confirmedDetail == OperationState::Confirmed,
+            "state event detail must be the Operation state committed by the transition"
+        );
+        auto const delivery = std::ranges::find(
+            eventBatch->events,
+            LedgerEventKind::DeliveryOutcomeRecorded,
+            &LedgerEvent::kind
+        );
+        REQUIRE_MESSAGE(
+            delivery != eventBatch->events.end(),
+            "recordDeliveryOutcome must publish its delivery outcome"
+        );
+        CHECK(delivery->subjectId == operation.operationId);
+        auto const* outcome = std::get_if<task::DeliveryOutcome>(&delivery->detail);
+        REQUIRE(outcome != nullptr);
+        CHECK_MESSAGE(
+            *outcome == task::DeliveryOutcome::Delivered,
+            "delivery event detail must be the outcome committed to the dispatch"
+        );
+
+        auto const state = std::ranges::find_if(
+            std::next(delivery),
+            eventBatch->events.end(),
+            [&operation](LedgerEvent const& event)
+            {
+                return event.kind == LedgerEventKind::OperationStateChanged
+                    && event.subjectId == operation.operationId;
+            }
+        );
+        REQUIRE_MESSAGE(
+            state != eventBatch->events.end(),
+            "recordDeliveryOutcome must publish the resulting Operation state"
+        );
+        auto const* operationState = std::get_if<OperationState>(&state->detail);
+        REQUIRE(operationState != nullptr);
+        CHECK_MESSAGE(
+            *operationState == OperationState::Reconciling,
+            "state event detail must be the Operation state committed with the outcome"
+        );
     }
 
     TEST_CASE("contract-agent-a02")
@@ -663,6 +752,7 @@ namespace uf::operator_runtime
             return prepared.store.createSnapshot(
                 lease,
                 prepared.plugin,
+                prepared.project.toolCatalogSchemaOwner,
                 test_support::observeAgain(prepared)
             );
         };
@@ -971,6 +1061,7 @@ namespace uf::operator_runtime
         auto const moved = prepared.store.createSnapshot(
             stuckLease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             conformance::observeOnce(unresolvedHost)
         );
         REQUIRE(moved.has_value());
@@ -1014,6 +1105,7 @@ namespace uf::operator_runtime
             auto const snapshot = prepared.store.createSnapshot(
                 *lease,
                 prepared.plugin,
+                prepared.project.toolCatalogSchemaOwner,
                 test_support::observeAgain(prepared)
             );
             REQUIRE(snapshot.has_value());

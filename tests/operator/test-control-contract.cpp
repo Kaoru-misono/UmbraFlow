@@ -184,6 +184,7 @@ namespace uf::operator_runtime
             CHECK(prepared.store.createSnapshot(
                 prepared.lease,
                 prepared.plugin,
+                prepared.project.toolCatalogSchemaOwner,
                 test_support::observeAgain(prepared)
             ).has_value());
             heldLease   = prepared.lease;
@@ -227,6 +228,7 @@ namespace uf::operator_runtime
         CHECK_FALSE(restarted->createSnapshot(
             *heldLease,
             *heldPlugin,
+            project->toolCatalogSchemaOwner,
             *heldReading
         ).has_value());
 

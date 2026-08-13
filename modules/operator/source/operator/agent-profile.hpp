@@ -18,10 +18,11 @@ namespace uf::operator_runtime
     // because the schema is the fixed side and a second spelling of one
     // ceiling is how two of them come to disagree.
     //
-    // There is deliberately no no-progress member: the frozen bundle's
-    // AgentBudget has none, and adding one would move
-    // operator_protocol_schema_hash and therefore every decision_basis_hash.
-    // The no-progress ceiling is k_agentNoProgressCeiling below.
+    // There is deliberately no no-progress millisecond member. The whole
+    // binding already has maximumElapsedMillis, while repeated unchanged
+    // state/command pairs are stopped by k_agentNoProgressCeiling below. A
+    // second elapsed axis would need another clock marker and another ceiling
+    // without distinguishing a state the two existing mechanisms leave open.
     struct AgentBudget final
     {
         uint64 maximumToolCalls{};

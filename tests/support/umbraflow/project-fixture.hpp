@@ -1232,6 +1232,7 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         auto snapshot = prepared.store.createSnapshot(
             prepared.lease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             observeAgain(prepared)
         );
         REQUIRE(snapshot.has_value());
@@ -1311,6 +1312,7 @@ identity = { all = ["fixture.panel.anchor"], any = [], none = [] }
         auto snapshot = store.createSnapshot(
             *lease,
             projectPlugin,
+            project.toolCatalogSchemaOwner,
             reading
         );
         REQUIRE(snapshot.has_value());

@@ -177,6 +177,8 @@ namespace uf::operator_runtime
         CHECK(parts.find("\"observation_id\"") != std::string::npos);
         CHECK(parts.find("\"project_state_revision\"") != std::string::npos);
         CHECK(parts.find("\"lease_id\"") != std::string::npos);
+        CHECK(parts.find("\"policy_hash\"") != std::string::npos);
+        CHECK(parts.find("\"available_tools\"") != std::string::npos);
         CHECK(state.find("\"last_journal_sequence\"") != std::string::npos);
         CHECK(state.find("\"canonical_opaque_payload\"") != std::string::npos);
     }
@@ -219,6 +221,7 @@ namespace uf::operator_runtime
         auto const first = prepared.store.createSnapshot(
             prepared.lease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             test_support::observeAgain(prepared)
         );
         REQUIRE(first.has_value());
@@ -260,6 +263,7 @@ namespace uf::operator_runtime
         auto const moved = prepared.store.createSnapshot(
             prepared.lease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             test_support::observeAgain(prepared)
         );
         REQUIRE(moved.has_value());
@@ -274,6 +278,7 @@ namespace uf::operator_runtime
         CHECK_FALSE(prepared.store.createSnapshot(
             prepared.lease,
             foreignPlugin,
+            foreignProject.toolCatalogSchemaOwner,
             test_support::observeAgain(prepared)
         ).has_value());
 
@@ -314,6 +319,7 @@ namespace uf::operator_runtime
         CHECK_FALSE(prepared.store.createSnapshot(
             prepared.lease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             otherReading
         ).has_value());
     }
@@ -393,6 +399,18 @@ namespace uf::operator_runtime
         CHECK(parts.find("\"project_state_revision\":0") != std::string::npos);
         CHECK(parts.find("\"project_observation_revision\":1") != std::string::npos);
         CHECK(parts.find("\"availability_revision\":1") != std::string::npos);
+        CHECK(
+            parts.find(
+                "\"policy_hash\":\"" + prepared.snapshot.policyHash.hex() + "\""
+            ) != std::string::npos
+        );
+        for (auto const& tool : prepared.snapshot.availableTools)
+        {
+            CHECK_MESSAGE(
+                parts.find("\"" + tool.name + "\"") != std::string::npos,
+                "SnapshotParts available_tools must name every offered tool"
+            );
+        }
         CHECK(parts.find("\"target_generation\":3") != std::string::npos);
 
         // Record naming is outside the parts, which is why re-observing an
@@ -404,6 +422,7 @@ namespace uf::operator_runtime
         auto const again = prepared.store.createSnapshot(
             prepared.lease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             test_support::observeAgain(prepared)
         );
         REQUIRE(again.has_value());
@@ -441,6 +460,7 @@ namespace uf::operator_runtime
         auto const different = prepared.store.createSnapshot(
             prepared.lease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             unresolved
         );
         REQUIRE(different.has_value());
@@ -487,6 +507,7 @@ namespace uf::operator_runtime
         auto const afterCommit = prepared.store.createSnapshot(
             prepared.lease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             test_support::observeAgain(prepared)
         );
         REQUIRE(afterCommit.has_value());
@@ -828,9 +849,9 @@ namespace uf::operator_runtime
 
         auto const before = prepared.snapshot;
 
-        // A takeover replaces the lease id, the fencing token, the lease
-        // revision and the control availability revision -- everything the
-        // identity carries about authority and nothing about content.
+        // A takeover replaces the lease id, fencing token and lease revision.
+        // It does not change the policy or filtered offer set, so it must not
+        // invent a new availability revision.
         auto const takeover = prepared.store.takeoverLease(prepared.controller, "human");
         REQUIRE(takeover.has_value());
         CHECK(takeover->lease.fencingToken > prepared.lease.fencingToken);
@@ -840,6 +861,7 @@ namespace uf::operator_runtime
         auto const after = prepared.store.createSnapshot(
             prepared.lease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             test_support::observeAgain(prepared)
         );
         REQUIRE(after.has_value());
@@ -848,7 +870,10 @@ namespace uf::operator_runtime
         // snapshot.
         CHECK(after->decisionBasisHash == before.decisionBasisHash);
         CHECK(after->identityHash != before.identityHash);
-        CHECK(after->availabilityRevision > before.availabilityRevision);
+        CHECK_MESSAGE(
+            after->availabilityRevision == before.availabilityRevision,
+            "lease churn must not masquerade as an availability-set revision"
+        );
 
         // The positive control. A committed reconciliation moves ProjectState,
         // which is one of the four inputs, so the basis must move with it --
@@ -887,6 +912,7 @@ namespace uf::operator_runtime
         auto const moved = prepared.store.createSnapshot(
             prepared.lease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             test_support::observeAgain(prepared)
         );
         REQUIRE(moved.has_value());
@@ -900,6 +926,151 @@ namespace uf::operator_runtime
             moved->canonicalParts.find(
                 "\"decision_basis_hash\":\"" + moved->decisionBasisHash.hex() + "\""
             ) != std::string::npos
+        );
+        auto availabilityTemporary = TemporaryDirectory{};
+        auto availabilityStore     = prepareStore(availabilityTemporary.path());
+        auto const availabilityBefore = availabilityStore.snapshot;
+        REQUIRE(availabilityStore.store.releaseLease(
+            availabilityStore.lease
+        ).has_value());
+
+        auto const policyManifest = test_support::sessionManifest(
+            availabilityStore.project.registration,
+            availabilityStore.runtimeArtifactRootHash,
+            hashOf("agent"),
+            "policy-variant"
+        );
+        auto pinSnapshot = [&availabilityStore, &policyManifest](
+                               std::string sessionId,
+                               std::string instanceId,
+                               std::vector<std::string> capabilities
+                           )
+        {
+            REQUIRE(availabilityStore.store.provisionProjectInstance(
+                availabilityStore.project.registration,
+                availabilityStore.plugin,
+                ProjectInstanceBaseline{
+                    .projectInstanceKey  = instanceId,
+                    .eventId             = "baseline-" + instanceId,
+                    .sessionManifestHash = policyManifest.hash(),
+                    .entry = journalEntry(
+                        availabilityStore.project,
+                        availabilityStore.project.registration.baselineEventType(),
+                        "{\"kind\":\"baseline\"}"
+                    ),
+                }
+            ).has_value());
+            REQUIRE(availabilityStore.store.pinSession(
+                SessionPin{
+                    .sessionId                 = sessionId,
+                    .authenticatedControllerId = "controller-availability",
+                    .idempotencyNamespace      = sessionId,
+                    .projectRegistrationHash =
+                        availabilityStore.project.registration.hash(),
+                    .controllerCapabilities = std::move(capabilities),
+                    .controlledTargetId     = "target-1",
+                    .projectInstanceKey     = instanceId,
+                    .mode                   = SessionMode::Write,
+                    .kind                   = ControllerKind::Script,
+                },
+                policyManifest,
+                std::nullopt
+            ).has_value());
+            auto const controller = availabilityStore.store.bindController(sessionId);
+            REQUIRE(controller.has_value());
+            auto const lease = availabilityStore.store.acquireLease(*controller);
+            REQUIRE(lease.has_value());
+            auto snapshot = availabilityStore.store.createSnapshot(
+                *lease,
+                availabilityStore.plugin,
+                availabilityStore.project.toolCatalogSchemaOwner,
+                test_support::observeAgain(availabilityStore)
+            );
+            REQUIRE(snapshot.has_value());
+            return std::pair{*lease, *std::move(snapshot)};
+        };
+
+        auto policySnapshot = pinSnapshot(
+            "session-policy",
+            "instance-policy",
+            {std::string{conformance::k_operateCapability}}
+        );
+        CHECK_MESSAGE(
+            policySnapshot.second.policyHash == policyManifest.policyArtifactHash(),
+            "snapshot identity must expose the session's exact policy hash"
+        );
+        CHECK_MESSAGE(
+            policySnapshot.second.availableTools.size()
+                == availabilityBefore.availableTools.size(),
+            "a policy-only change must preserve the actual offered-tool set"
+        );
+        CHECK_MESSAGE(
+            policySnapshot.second.availabilityRevision
+                == availabilityBefore.availabilityRevision + 1U,
+            "a policy-only change must advance availability exactly once"
+        );
+        CHECK_MESSAGE(
+            policySnapshot.second.canonicalParts.find(
+                "\"policy_hash\":\"" + policyManifest.policyArtifactHash().hex() + "\""
+            ) != std::string::npos,
+            "SnapshotParts identity must contain the exact policy hash"
+        );
+
+        REQUIRE(availabilityStore.store.releaseLease(
+            policySnapshot.first
+        ).has_value());
+        auto const expandedCapabilities = std::vector<std::string>{
+            std::string{conformance::k_operateCapability},
+            "authoring",
+        };
+        auto expandedSnapshot = pinSnapshot(
+            "session-tools",
+            "instance-tools",
+            expandedCapabilities
+        );
+        auto const expectedTools =
+            availabilityStore.project.toolCatalogSchemaOwner.offeredTools(
+                controllerProfile(ControllerKind::Script),
+                expandedCapabilities
+            );
+        REQUIRE_MESSAGE(
+            expandedSnapshot.second.availableTools.size() == expectedTools.size(),
+            "snapshot available_tools must have the filtered offer-set cardinality"
+        );
+        auto expectedToolsJcs = std::string{"["};
+        for (auto index = std::size_t{}; index < expectedTools.size(); ++index)
+        {
+            if (index != 0U)
+            {
+                expectedToolsJcs.push_back(',');
+            }
+            expectedToolsJcs += "\"" + expectedTools[index].name + "\"";
+            CHECK_MESSAGE(
+                expandedSnapshot.second.availableTools[index].name
+                    == expectedTools[index].name,
+                "snapshot available_tools must be the catalog's filtered live offer set"
+            );
+            CHECK(
+                expandedSnapshot.second.availableTools[index].version
+                == expectedTools[index].version
+            );
+        }
+        expectedToolsJcs.push_back(']');
+        CHECK_MESSAGE(
+            expandedSnapshot.second.canonicalParts.find(
+                "\"available_tools\":" + expectedToolsJcs
+            ) != std::string::npos,
+            "SnapshotParts identity must contain the exact filtered offer set"
+        );
+        CHECK_MESSAGE(
+            expandedSnapshot.second.availableTools.size()
+                > policySnapshot.second.availableTools.size(),
+            "adding a held capability must add tools to snapshot availability"
+        );
+        CHECK_MESSAGE(
+            expandedSnapshot.second.availabilityRevision
+                == policySnapshot.second.availabilityRevision + 1U,
+            "an offer-set change must advance availability exactly once"
         );
     }
 }

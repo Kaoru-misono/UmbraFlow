@@ -476,7 +476,7 @@ namespace uf::operator_runtime
         // does not write it. docs/TODO.md "Delete-on-open has a deadline" owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:96c4ef8ffb88bcb8ce85889d42426905ee3cad5cc2d65c7f498fbb2b7b9c4f71"
+            "sha256:1c6c1d2002646293e63aa90d258b64270ac35708485f68a35aee0066a527addb"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -486,6 +486,41 @@ namespace uf::operator_runtime
             "source_identity TEXT NOT NULL,"
             "target_identity TEXT NOT NULL,"
             "PRIMARY KEY(source_identity, target_identity)"
+            ") STRICT"
+        };
+
+        constexpr auto k_ledgerEventsDdl = std::string_view{
+            "CREATE TABLE ledger_events("
+            "sequence INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),"
+            "controlled_target_id TEXT NOT NULL,"
+            "kind TEXT NOT NULL,"
+            "subject_id TEXT NOT NULL,"
+            "detail TEXT,"
+            "CHECK((kind IN ('operation_created', 'control_transitioned', "
+            "'external_input_detected') AND detail IS NULL) OR "
+            "(kind='operation_state_changed' AND detail IN ("
+            "'proposed', 'awaiting_approval', 'ready', 'needs_revalidation', "
+            "'running', 'reconciling', 'confirmed', 'rejected', 'ambiguous', "
+            "'invalid', 'denied', 'cancelled', 'expired', 'diverged')) OR "
+            "(kind='delivery_outcome_recorded' AND detail IN ("
+            "'not_delivered', 'delivered', 'transport_unknown')))"
+            ") STRICT"
+        };
+
+        constexpr auto k_sessionPoliciesDdl = std::string_view{
+            "CREATE TABLE session_policies("
+            "session_id TEXT PRIMARY KEY REFERENCES sessions(session_id),"
+            "policy_hash TEXT NOT NULL"
+            ") STRICT"
+        };
+
+        constexpr auto k_availabilityHeadsDdl = std::string_view{
+            "CREATE TABLE availability_heads("
+            "controlled_target_id TEXT PRIMARY KEY,"
+            "revision INTEGER NOT NULL CHECK(revision > 0),"
+            "policy_hash TEXT NOT NULL,"
+            "available_tools TEXT NOT NULL"
             ") STRICT"
         };
 
@@ -562,13 +597,11 @@ namespace uf::operator_runtime
         };
 
         [[nodiscard]]
-        auto migrateToAuditPreservingSchema(
+        auto recordSchemaIdentityTransition(
             sqlite3* database,
             SchemaMigration const& migration
         ) -> Status
         {
-            UF_TRY_VALUE(transaction, Transaction::begin(database));
-            UF_TRY(execute(database, k_schemaIdentityTransitionsDdl));
             UF_TRY_VALUE(
                 insert,
                 prepare(
@@ -579,10 +612,52 @@ namespace uf::operator_runtime
             );
             UF_TRY(bindText(database, insert.get(), 1, migration.sourceIdentity));
             UF_TRY(bindText(database, insert.get(), 2, migration.targetIdentity));
-            UF_TRY(expectDone(database, insert.get()));
+            return expectDone(database, insert.get());
+        }
+
+        [[nodiscard]]
+        auto migrateOperatorU9Schema(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(execute(
+                database,
+                "CREATE TABLE IF NOT EXISTS schema_identity_transitions("
+                "source_identity TEXT NOT NULL,"
+                "target_identity TEXT NOT NULL,"
+                "PRIMARY KEY(source_identity, target_identity)"
+                ") STRICT"
+            ));
+            UF_TRY(execute(database, "ALTER TABLE ledger_events RENAME TO prior_ledger_events"));
+            UF_TRY(execute(database, k_ledgerEventsDdl));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO ledger_events(sequence, session_epoch, controlled_target_id, "
+                "kind, subject_id, detail) SELECT sequence, session_epoch, "
+                "controlled_target_id, kind, subject_id, NULL FROM prior_ledger_events"
+            ));
+            UF_TRY(execute(database, "DROP TABLE prior_ledger_events"));
+            UF_TRY(execute(database, k_sessionPoliciesDdl));
+            UF_TRY(execute(database, k_availabilityHeadsDdl));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
 
             // No migration commits under an identity other than the exact
             // target named by its registration.
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        [[nodiscard]]
+        auto migrateTransitionTableOnly(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(execute(database, k_schemaIdentityTransitionsDdl));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
         }
@@ -592,7 +667,19 @@ namespace uf::operator_runtime
                 .sourceIdentity =
                     "sha256:584ba6c3f25069a91978c32bc3cf2d1d8a20d1fb1da0e4265b441f7a1d27cd67",
                 .targetIdentity = k_operatorDatabaseSchemaIdentity,
-                .apply          = migrateToAuditPreservingSchema,
+                .apply          = migrateOperatorU9Schema,
+            },
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:96c4ef8ffb88bcb8ce85889d42426905ee3cad5cc2d65c7f498fbb2b7b9c4f71",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateOperatorU9Schema,
+            },
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:d4b8588784db487b928ef99e98e3adeff81f13530ea20375bd25a54a052d3968",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateTransitionTableOnly,
             },
         };
 
@@ -1481,27 +1568,6 @@ namespace uf::operator_runtime
                         reason TEXT NOT NULL
                     ) STRICT;
 
-                    -- The one append-only sequence every controller-visible
-                    -- fact is appended to, in the same transaction that causes
-                    -- it. It exists because control_transitions.sequence and
-                    -- reconciliations.sequence are independent counters and
-                    -- three counters cannot be one cursor.
-                    --
-                    -- The kind vocabulary lists exactly what is appended today.
-                    -- A value nothing writes would be a promise with no code,
-                    -- so the enumeration grows with its producer rather than
-                    -- ahead of it.
-                    CREATE TABLE IF NOT EXISTS ledger_events(
-                        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-                        session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
-                        controlled_target_id TEXT NOT NULL,
-                        kind TEXT NOT NULL CHECK(kind IN (
-                            'operation_created', 'control_transitioned',
-                            'external_input_detected'
-                        )),
-                        subject_id TEXT NOT NULL
-                    ) STRICT;
-
                     -- canonical_parts is the exact SnapshotParts JCS and is the
                     -- only thing identity_hash and decision_basis_hash are
                     -- recomputable from, which is what lets a test falsify the
@@ -1856,6 +1922,9 @@ namespace uf::operator_runtime
 
                 )sql"
             ));
+            UF_TRY(execute(database, k_ledgerEventsDdl));
+            UF_TRY(execute(database, k_sessionPoliciesDdl));
+            UF_TRY(execute(database, k_availabilityHeadsDdl));
             UF_TRY(execute(database, k_schemaIdentityTransitionsDdl));
             UF_TRY(verifyExactDatabaseSchema(database));
             return transaction.commit();
@@ -1968,6 +2037,16 @@ namespace uf::operator_runtime
             "operator restart found this dispatch unanswered"
         };
 
+        [[nodiscard]]
+        auto appendLedgerEvent(
+            sqlite3* database,
+            uint64 sessionEpoch,
+            std::string_view controlledTargetId,
+            LedgerEventKind kind,
+            std::string_view subjectId,
+            std::optional<std::string_view> detail = std::nullopt
+        ) -> Status;
+
         // Drives every dispatch nobody has answered for to transport_unknown and
         // its Operation to reconciling, one checked-increment CAS per row. An
         // empty controlledTargetId means every target, which is what a restart
@@ -1986,8 +2065,10 @@ namespace uf::operator_runtime
         ) -> Result<uint64>
         {
             auto scan = std::string{
-                "SELECT o.operation_id, o.revision, d.dispatch_sequence "
+                "SELECT o.operation_id, o.revision, d.dispatch_sequence, "
+                "session.session_epoch, o.controlled_target_id "
                 "FROM operations o JOIN dispatches d ON d.operation_id=o.operation_id "
+                "JOIN sessions session ON session.session_id=o.session_id "
                 "WHERE o.state='running' AND d.delivery_outcome IS NULL"
             };
             if (!controlledTargetId.empty())
@@ -2000,14 +2081,18 @@ namespace uf::operator_runtime
                 UF_TRY(bindText(database, query.get(), 1, controlledTargetId));
             }
 
-            auto pending   = std::vector<std::tuple<std::string, uint64, uint64>>{};
+            auto pending = std::vector<
+                std::tuple<std::string, uint64, uint64, uint64, std::string>
+            >{};
             auto queryStep = sqlite3_step(query.get());
             while (queryStep == SQLITE_ROW)
             {
                 pending.emplace_back(
                     columnText(query.get(), 0),
                     static_cast<uint64>(sqlite3_column_int64(query.get(), 1)),
-                    static_cast<uint64>(sqlite3_column_int64(query.get(), 2))
+                    static_cast<uint64>(sqlite3_column_int64(query.get(), 2)),
+                    static_cast<uint64>(sqlite3_column_int64(query.get(), 3)),
+                    columnText(query.get(), 4)
                 );
                 queryStep = sqlite3_step(query.get());
             }
@@ -2016,7 +2101,15 @@ namespace uf::operator_runtime
                 return databaseFailure(database, "could not scan pending dispatches");
             }
 
-            for (auto const& [operationId, revision, dispatchSequence] : pending)
+            for (
+                auto const& [
+                    operationId,
+                    revision,
+                    dispatchSequence,
+                    sessionEpoch,
+                    targetId
+                ] : pending
+            )
             {
                 UF_TRY_VALUE(
                     nextRevision,
@@ -2062,6 +2155,22 @@ namespace uf::operator_runtime
                         "Pending Operation resolution lost its CAS"
                     );
                 }
+                UF_TRY(appendLedgerEvent(
+                    database,
+                    sessionEpoch,
+                    targetId,
+                    LedgerEventKind::DeliveryOutcomeRecorded,
+                    operationId,
+                    deliveryOutcomeWireName(task::DeliveryOutcome::TransportUnknown)
+                ));
+                UF_TRY(appendLedgerEvent(
+                    database,
+                    sessionEpoch,
+                    targetId,
+                    LedgerEventKind::OperationStateChanged,
+                    operationId,
+                    operationStateWireName(OperationState::Reconciling)
+                ));
             }
             return static_cast<uint64>(pending.size());
         }
@@ -2084,6 +2193,9 @@ namespace uf::operator_runtime
             switch (kind)
             {
             case LedgerEventKind::OperationCreated: return "operation_created";
+            case LedgerEventKind::OperationStateChanged: return "operation_state_changed";
+            case LedgerEventKind::DeliveryOutcomeRecorded:
+                return "delivery_outcome_recorded";
             case LedgerEventKind::ControlTransitioned: return "control_transitioned";
             case LedgerEventKind::ExternalInputDetected: return "external_input_detected";
             }
@@ -2096,6 +2208,8 @@ namespace uf::operator_runtime
         {
             constexpr auto kinds = std::array{
                 LedgerEventKind::OperationCreated,
+                LedgerEventKind::OperationStateChanged,
+                LedgerEventKind::DeliveryOutcomeRecorded,
                 LedgerEventKind::ControlTransitioned,
                 LedgerEventKind::ExternalInputDetected,
             };
@@ -2114,6 +2228,80 @@ namespace uf::operator_runtime
                 );
             }
             return *match;
+        }
+
+        [[nodiscard]]
+        auto parseDeliveryOutcome(std::string_view value) -> Result<task::DeliveryOutcome>
+        {
+            constexpr auto outcomes = std::array{
+                task::DeliveryOutcome::NotDelivered,
+                task::DeliveryOutcome::Delivered,
+                task::DeliveryOutcome::TransportUnknown,
+            };
+            auto const match = std::ranges::find_if(
+                outcomes,
+                [value](task::DeliveryOutcome candidate)
+                {
+                    return deliveryOutcomeWireName(candidate) == value;
+                }
+            );
+            if (match == outcomes.end())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format("Unknown delivery outcome: {}", value)
+                );
+            }
+            return *match;
+        }
+
+        [[nodiscard]]
+        auto parseLedgerEventDetail(
+            sqlite3_stmt* row,
+            int column,
+            LedgerEventKind kind
+        ) -> Result<LedgerEventDetail>
+        {
+            switch (kind)
+            {
+            case LedgerEventKind::OperationStateChanged:
+            {
+                if (sqlite3_column_type(row, column) == SQLITE_NULL)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "Operation state event is missing its state"
+                    );
+                }
+                UF_TRY_VALUE(state, parseOperationState(columnText(row, column)));
+                return LedgerEventDetail{state};
+            }
+            case LedgerEventKind::DeliveryOutcomeRecorded:
+            {
+                if (sqlite3_column_type(row, column) == SQLITE_NULL)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "Delivery outcome event is missing its outcome"
+                    );
+                }
+                UF_TRY_VALUE(outcome, parseDeliveryOutcome(columnText(row, column)));
+                return LedgerEventDetail{outcome};
+            }
+            case LedgerEventKind::OperationCreated:
+            case LedgerEventKind::ControlTransitioned:
+            case LedgerEventKind::ExternalInputDetected:
+                if (sqlite3_column_type(row, column) != SQLITE_NULL)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "Ledger event kind must not carry a detail"
+                    );
+                }
+                return LedgerEventDetail{std::monostate{}};
+            }
+
+            UF_UNREACHABLE_MSG("Unknown LedgerEventKind value");
         }
 
         [[nodiscard]]
@@ -2160,7 +2348,8 @@ namespace uf::operator_runtime
             uint64 sessionEpoch,
             std::string_view controlledTargetId,
             LedgerEventKind kind,
-            std::string_view subjectId
+            std::string_view subjectId,
+            std::optional<std::string_view> detail
         ) -> Status
         {
             UF_TRY_VALUE(
@@ -2168,13 +2357,21 @@ namespace uf::operator_runtime
                 prepare(
                     database,
                     "INSERT INTO ledger_events(session_epoch, controlled_target_id, "
-                    "kind, subject_id) VALUES(?1, ?2, ?3, ?4)"
+                    "kind, subject_id, detail) VALUES(?1, ?2, ?3, ?4, ?5)"
                 )
             );
             UF_TRY(bindInteger(database, insert.get(), 1, sessionEpoch));
             UF_TRY(bindText(database, insert.get(), 2, controlledTargetId));
             UF_TRY(bindText(database, insert.get(), 3, ledgerEventWireName(kind)));
             UF_TRY(bindText(database, insert.get(), 4, subjectId));
+            if (detail)
+            {
+                UF_TRY(bindText(database, insert.get(), 5, *detail));
+            }
+            else if (sqlite3_bind_null(insert.get(), 5) != SQLITE_OK)
+            {
+                return databaseFailure(database, "could not bind ledger event detail");
+            }
             return expectDone(database, insert.get());
         }
 
@@ -2625,7 +2822,7 @@ namespace uf::operator_runtime
             return sha256(std::as_bytes(std::span{material}));
         }
 
-        // OP:`SnapshotParts`, all fifteen members in JCS order. It is the exact
+        // OP:`SnapshotParts`, all seventeen members in JCS order. It is the exact
         // text stored as snapshots.canonical_parts, so identity_hash is
         // recomputable from the row and a test can falsify the derivation
         // rather than only compare it against itself.
@@ -2634,8 +2831,10 @@ namespace uf::operator_runtime
             ContentHash      decisionBasisHash;
             ContentHash      projectObservationHash;
             ContentHash      projectStateHash;
+            ContentHash      policyHash;
             ContentHash      sessionManifestHash;
             ContentHash      stateResolutionHash;
+            std::string_view availableToolsJcs{};
             std::string_view controlledTargetId{};
             std::string_view leaseId{};
             std::string_view observationId{};
@@ -2653,6 +2852,8 @@ namespace uf::operator_runtime
         {
             auto output = std::string{"{\"availability_revision\":"};
             output += std::to_string(parts.availabilityRevision);
+            output += ",\"available_tools\":";
+            output += parts.availableToolsJcs;
             output += ",\"controlled_target_id\":";
             appendJsonString(output, parts.controlledTargetId);
             output += ",\"decision_basis_hash\":";
@@ -2663,6 +2864,8 @@ namespace uf::operator_runtime
             appendJsonString(output, parts.leaseId);
             output += ",\"observation_id\":";
             appendJsonString(output, parts.observationId);
+            output += ",\"policy_hash\":";
+            appendHashMember(output, parts.policyHash);
             output += ",\"project_instance_key\":";
             appendJsonString(output, parts.projectInstanceKey);
             output += ",\"project_observation_hash\":";
@@ -3969,6 +4172,41 @@ namespace uf::operator_runtime
             );
         }
 
+        UF_TRY_VALUE(
+            policyInsert,
+            prepare(
+                m_impl->database.get(),
+                "INSERT OR IGNORE INTO session_policies(session_id, policy_hash) "
+                "VALUES(?1, ?2)"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), policyInsert.get(), 1, pin.sessionId));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            policyInsert.get(),
+            2,
+            manifest.policyArtifactHash().hex()
+        ));
+        UF_TRY(expectDone(m_impl->database.get(), policyInsert.get()));
+        UF_TRY_VALUE(
+            policyQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT policy_hash FROM session_policies WHERE session_id=?1"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), policyQuery.get(), 1, pin.sessionId));
+        if (
+            sqlite3_step(policyQuery.get()) != SQLITE_ROW
+            || columnText(policyQuery.get(), 0) != manifest.policyArtifactHash().hex()
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "session_id already names a different policy artifact"
+            );
+        }
+
         if (agentProfile.has_value())
         {
             auto const budget = agentProfile->budget();
@@ -4150,6 +4388,41 @@ namespace uf::operator_runtime
         }
 
         UF_TRY_VALUE(
+            policyInsert,
+            prepare(
+                m_impl->database.get(),
+                "INSERT OR IGNORE INTO session_policies(session_id, policy_hash) "
+                "VALUES(?1, ?2)"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), policyInsert.get(), 1, sessionId));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            policyInsert.get(),
+            2,
+            manifest.policyArtifactHash().hex()
+        ));
+        UF_TRY(expectDone(m_impl->database.get(), policyInsert.get()));
+        UF_TRY_VALUE(
+            policyQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT policy_hash FROM session_policies WHERE session_id=?1"
+            )
+        );
+        UF_TRY(bindText(m_impl->database.get(), policyQuery.get(), 1, sessionId));
+        if (
+            sqlite3_step(policyQuery.get()) != SQLITE_ROW
+            || columnText(policyQuery.get(), 0) != manifest.policyArtifactHash().hex()
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Prior session policy does not match the supplied SessionManifest"
+            );
+        }
+
+        UF_TRY_VALUE(
             update,
             prepare(
                 m_impl->database.get(),
@@ -4196,7 +4469,7 @@ namespace uf::operator_runtime
             prepare(
                 m_impl->database.get(),
                 "SELECT authenticated_controller_id, controlled_target_id, "
-                "capability_profile_hash, session_epoch, controller_kind "
+                "capability_profile_hash, session_epoch, controller_kind, mode "
                 "FROM sessions WHERE session_id=?1 AND active=1 AND session_epoch=?2"
             )
         );
@@ -4216,6 +4489,14 @@ namespace uf::operator_runtime
         }
         UF_TRY_VALUE(capabilityHash, parseHashColumn(columnText(query.get(), 2)));
         UF_TRY_VALUE(kind, parseControllerKind(columnText(query.get(), 4)));
+        UF_TRY_VALUE(mode, parseSessionMode(columnText(query.get(), 5)));
+        if (kind == ControllerKind::Agent && mode == SessionMode::Read)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "An Agent cannot bind a read-mode session"
+            );
+        }
         return ControllerBinding{
             sessionId,
             columnText(query.get(), 0),
@@ -4650,6 +4931,7 @@ namespace uf::operator_runtime
     auto OperatorCoordinator::createSnapshot(
         ControlLease const& lease,
         ProjectPluginHandle const& plugin,
+        ProjectToolCatalogSchemaOwner const& catalog,
         task::UiObservationSnapshot const& observation
     ) -> Result<SnapshotRecord>
     {
@@ -4699,9 +4981,11 @@ namespace uf::operator_runtime
                 "SELECT session.project_instance_key, session.manifest_hash, "
                 "session.controlled_target_id, session.runtime_artifact_root_hash, "
                 "registration.plugin_id, registration.plugin_hash, "
-                "session.project_registration_hash, session.controller_kind "
+                "session.project_registration_hash, session.controller_kind, "
+                "session.controller_capabilities, policy.policy_hash "
                 "FROM sessions session JOIN project_registrations registration "
                 "ON registration.registration_hash=session.project_registration_hash "
+                "JOIN session_policies policy ON policy.session_id=session.session_id "
                 "WHERE session.session_id=?1 AND session.active=1 "
                 "AND session.session_epoch=?2"
             )
@@ -4732,6 +5016,7 @@ namespace uf::operator_runtime
             plugin.pluginId() != pluginId
             || plugin.pluginHash().hex() != columnText(sessionQuery.get(), 5)
             || plugin.projectRegistrationHash().hex() != columnText(sessionQuery.get(), 6)
+            || catalog.projectRegistrationHash().hex() != columnText(sessionQuery.get(), 6)
         )
         {
             return fail(
@@ -4762,6 +5047,22 @@ namespace uf::operator_runtime
         // equal. There is no caller-supplied instant either, for the reason
         // steadyMillisecondsNow states.
         UF_TRY_VALUE(snapshotKind, parseControllerKind(columnText(sessionQuery.get(), 7)));
+        UF_TRY_VALUE(
+            snapshotCapabilities,
+            readNameArray(columnText(sessionQuery.get(), 8))
+        );
+        auto availableTools = catalog.offeredTools(
+            controllerProfile(snapshotKind),
+            snapshotCapabilities
+        );
+        auto availableToolNames = std::vector<std::string>{};
+        availableToolNames.reserve(availableTools.size());
+        for (auto const& tool : availableTools)
+        {
+            availableToolNames.emplace_back(tool.name);
+        }
+        auto const availableToolsJcs = canonicalNameArray(availableToolNames);
+        UF_TRY_VALUE(policyHash, parseHashColumn(columnText(sessionQuery.get(), 9)));
         UF_TRY_VALUE(
             snapshotBudget,
             readAgentBudget(m_impl->database.get(), lease.sessionId, snapshotKind)
@@ -5010,15 +5311,12 @@ namespace uf::operator_runtime
             })
         );
 
-        // Operator-owned, monotonic, and moved by acquire/takeover/release,
-        // which is three of the four triggers the design lists for ControlState.
-        // Policy is the fourth and has no store yet.
         UF_TRY_VALUE(
             availabilityQuery,
             prepare(
                 m_impl->database.get(),
-                "SELECT COALESCE(MAX(sequence), 0) FROM control_transitions "
-                "WHERE controlled_target_id=?1"
+                "SELECT revision, policy_hash, available_tools "
+                "FROM availability_heads WHERE controlled_target_id=?1"
             )
         );
         UF_TRY(bindText(
@@ -5027,16 +5325,112 @@ namespace uf::operator_runtime
             1,
             controlledTargetId
         ));
-        if (sqlite3_step(availabilityQuery.get()) != SQLITE_ROW)
+        auto availabilityRevision = uint64{1};
+        auto const availabilityStep = sqlite3_step(availabilityQuery.get());
+        if (availabilityStep == SQLITE_ROW)
+        {
+            auto const priorAvailabilityRevision = static_cast<uint64>(
+                sqlite3_column_int64(availabilityQuery.get(), 0)
+            );
+            availabilityRevision = priorAvailabilityRevision;
+            if (
+                columnText(availabilityQuery.get(), 1) != policyHash.hex()
+                || columnText(availabilityQuery.get(), 2) != availableToolsJcs
+            )
+            {
+                UF_TRY_VALUE(
+                    nextRevision,
+                    checkedSqlIncrement(
+                        priorAvailabilityRevision,
+                        "availability revision"
+                    )
+                );
+                availabilityRevision = nextRevision;
+                UF_TRY_VALUE(
+                    availabilityUpdate,
+                    prepare(
+                        m_impl->database.get(),
+                        "UPDATE availability_heads SET revision=?2, policy_hash=?3, "
+                        "available_tools=?4 WHERE controlled_target_id=?1 AND revision=?5"
+                    )
+                );
+                UF_TRY(bindText(
+                    m_impl->database.get(),
+                    availabilityUpdate.get(),
+                    1,
+                    controlledTargetId
+                ));
+                UF_TRY(bindInteger(
+                    m_impl->database.get(),
+                    availabilityUpdate.get(),
+                    2,
+                    availabilityRevision
+                ));
+                UF_TRY(bindText(
+                    m_impl->database.get(),
+                    availabilityUpdate.get(),
+                    3,
+                    policyHash.hex()
+                ));
+                UF_TRY(bindText(
+                    m_impl->database.get(),
+                    availabilityUpdate.get(),
+                    4,
+                    availableToolsJcs
+                ));
+                UF_TRY(bindInteger(
+                    m_impl->database.get(),
+                    availabilityUpdate.get(),
+                    5,
+                    priorAvailabilityRevision
+                ));
+                UF_TRY(expectDone(m_impl->database.get(), availabilityUpdate.get()));
+                if (sqlite3_changes(m_impl->database.get()) != 1)
+                {
+                    return fail(
+                        AutomationErrorKind::ActionRejected,
+                        "Availability revision lost its compare-and-swap"
+                    );
+                }
+            }
+        }
+        else if (availabilityStep == SQLITE_DONE)
+        {
+            UF_TRY_VALUE(
+                availabilityInsert,
+                prepare(
+                    m_impl->database.get(),
+                    "INSERT INTO availability_heads(controlled_target_id, revision, "
+                    "policy_hash, available_tools) VALUES(?1, 1, ?2, ?3)"
+                )
+            );
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                availabilityInsert.get(),
+                1,
+                controlledTargetId
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                availabilityInsert.get(),
+                2,
+                policyHash.hex()
+            ));
+            UF_TRY(bindText(
+                m_impl->database.get(),
+                availabilityInsert.get(),
+                3,
+                availableToolsJcs
+            ));
+            UF_TRY(expectDone(m_impl->database.get(), availabilityInsert.get()));
+        }
+        else
         {
             return databaseFailure(
                 m_impl->database.get(),
                 "could not read the control availability revision"
             );
         }
-        auto const availabilityRevision = static_cast<uint64>(
-            sqlite3_column_int64(availabilityQuery.get(), 0)
-        );
 
         UF_TRY_VALUE(
             revisionQuery,
@@ -5066,8 +5460,10 @@ namespace uf::operator_runtime
             .decisionBasisHash          = decisionBasisHash,
             .projectObservationHash     = projectObservation.hash(),
             .projectStateHash           = projectStateHash,
+            .policyHash                 = policyHash,
             .sessionManifestHash        = sessionManifestHash,
             .stateResolutionHash        = observation.stateResolutionHash(),
+            .availableToolsJcs          = availableToolsJcs,
             .controlledTargetId         = controlledTargetId,
             .leaseId                    = lease.leaseId,
             .observationId              = observation.observationId(),
@@ -5144,6 +5540,8 @@ namespace uf::operator_runtime
             .snapshotRevision     = snapshotRevision,
             .projectStateRevision = projectStateRevision,
             .availabilityRevision = availabilityRevision,
+            .policyHash           = policyHash,
+            .availableTools       = std::move(availableTools),
             .observation          = std::move(projectObservation),
             .eventCursor          = SubscriptionCursor{eventCursor},
         };
@@ -5954,6 +6352,14 @@ namespace uf::operator_runtime
                     "Operation revision lost its CAS to an external input finding"
                 );
             }
+            UF_TRY(appendLedgerEvent(
+                m_impl->database.get(),
+                epoch,
+                target,
+                LedgerEventKind::OperationStateChanged,
+                operationId,
+                operationStateWireName(nextState)
+            ));
             frozenOperation = std::move(operationId);
         }
 
@@ -6109,7 +6515,7 @@ namespace uf::operator_runtime
             events,
             prepare(
                 m_impl->database.get(),
-                "SELECT sequence, kind, controlled_target_id, subject_id "
+                "SELECT sequence, kind, controlled_target_id, subject_id, detail "
                 "FROM ledger_events WHERE controlled_target_id=?1 AND sequence>?2 "
                 "ORDER BY sequence LIMIT ?3"
             )
@@ -6128,6 +6534,7 @@ namespace uf::operator_runtime
         while (step == SQLITE_ROW)
         {
             UF_TRY_VALUE(kind, parseLedgerEventKind(columnText(events.get(), 1)));
+            UF_TRY_VALUE(detail, parseLedgerEventDetail(events.get(), 4, kind));
             auto const sequence = static_cast<uint64>(
                 sqlite3_column_int64(events.get(), 0)
             );
@@ -6136,6 +6543,7 @@ namespace uf::operator_runtime
                 .kind               = kind,
                 .controlledTargetId = columnText(events.get(), 2),
                 .subjectId          = columnText(events.get(), 3),
+                .detail             = detail,
             });
 
             // The cursor follows what was delivered, never the head: a batch cut
@@ -6200,7 +6608,8 @@ namespace uf::operator_runtime
             prepare(
                 m_impl->database.get(),
                 "SELECT o.state, o.revision, o.mutating, EXISTS(SELECT 1 FROM dispatches d "
-                "WHERE d.operation_id=o.operation_id) FROM operations o "
+                "WHERE d.operation_id=o.operation_id), o.controlled_target_id "
+                "FROM operations o "
                 + std::string{k_liveControllerJoin}
                 + "WHERE o.operation_id=?1 AND session.active=1 "
                 "AND session.session_epoch=?2"
@@ -6255,6 +6664,14 @@ namespace uf::operator_runtime
         {
             return fail(AutomationErrorKind::ActionRejected, "Operation revision lost its CAS");
         }
+        UF_TRY(appendLedgerEvent(
+            m_impl->database.get(),
+            m_impl->sessionEpoch,
+            columnText(query.get(), 4),
+            LedgerEventKind::OperationStateChanged,
+            operationId,
+            operationStateWireName(nextState)
+        ));
         UF_TRY(transaction.commit());
         return StoredOperation{
             .operationId   = operationId,
@@ -6536,6 +6953,14 @@ namespace uf::operator_runtime
         {
             return fail(AutomationErrorKind::ActionRejected, "Operation revision lost its CAS");
         }
+        UF_TRY(appendLedgerEvent(
+            m_impl->database.get(),
+            lease.sessionEpoch,
+            lease.controlledTargetId,
+            LedgerEventKind::OperationStateChanged,
+            operationId,
+            operationStateWireName(nextState)
+        ));
         UF_TRY(transaction.commit());
         return FrozenPlan{
             .operation = StoredOperation{
@@ -6799,6 +7224,17 @@ namespace uf::operator_runtime
         if (sqlite3_changes(m_impl->database.get()) != 1)
         {
             return fail(AutomationErrorKind::ActionRejected, "Operation revision lost its CAS");
+        }
+        if (nextState != state)
+        {
+            UF_TRY(appendLedgerEvent(
+                m_impl->database.get(),
+                lease.sessionEpoch,
+                lease.controlledTargetId,
+                LedgerEventKind::OperationStateChanged,
+                operationId,
+                operationStateWireName(nextState)
+            ));
         }
         UF_TRY(transaction.commit());
         return PlannedStep{
@@ -7126,6 +7562,17 @@ namespace uf::operator_runtime
         {
             return fail(AutomationErrorKind::ActionRejected, "Operation revision lost its CAS");
         }
+        if (state != OperationState::Running)
+        {
+            UF_TRY(appendLedgerEvent(
+                m_impl->database.get(),
+                lease.sessionEpoch,
+                lease.controlledTargetId,
+                LedgerEventKind::OperationStateChanged,
+                operationId,
+                operationStateWireName(OperationState::Running)
+            ));
+        }
         UF_TRY(transaction.commit());
         return DispatchReservation{
             .authority = task::DispatchAuthority{
@@ -7319,6 +7766,23 @@ namespace uf::operator_runtime
         {
             return fail(AutomationErrorKind::ActionRejected, "Operation revision lost its CAS");
         }
+
+        UF_TRY(appendLedgerEvent(
+            m_impl->database.get(),
+            lease.sessionEpoch,
+            lease.controlledTargetId,
+            LedgerEventKind::DeliveryOutcomeRecorded,
+            operationId,
+            deliveryOutcomeWireName(report.outcome())
+        ));
+        UF_TRY(appendLedgerEvent(
+            m_impl->database.get(),
+            lease.sessionEpoch,
+            lease.controlledTargetId,
+            LedgerEventKind::OperationStateChanged,
+            operationId,
+            operationStateWireName(nextState)
+        ));
 
         UF_TRY(transaction.commit());
         return StoredOperation{
@@ -7562,7 +8026,8 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "SELECT o.state, o.revision, registration.plugin_id, "
                 "session.project_instance_key, session.manifest_hash, "
-                "registration.plugin_hash, session.project_registration_hash "
+                "registration.plugin_hash, session.project_registration_hash, "
+                "o.controlled_target_id "
                 "FROM operations o "
                 + std::string{k_liveControllerJoin}
                 + "JOIN project_registrations registration ON "
@@ -7950,6 +8415,15 @@ namespace uf::operator_runtime
         {
             return fail(AutomationErrorKind::ActionRejected, "Operation revision lost its CAS");
         }
+
+        UF_TRY(appendLedgerEvent(
+            m_impl->database.get(),
+            m_impl->sessionEpoch,
+            columnText(operationQuery.get(), 7),
+            LedgerEventKind::OperationStateChanged,
+            commit.operationId,
+            operationStateWireName(nextState)
+        ));
 
         UF_TRY(transaction.commit());
         return StoredOperation{

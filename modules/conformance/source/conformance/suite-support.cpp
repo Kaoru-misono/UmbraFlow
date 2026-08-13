@@ -361,7 +361,12 @@ namespace uf::operator_runtime::conformance
         // must be named where it was supplied.
         requireResolvedSurface(reading, vocabulary.uiAction.surface);
 
-        auto snapshot = store.createSnapshot(*lease, plugin, reading);
+        auto snapshot = store.createSnapshot(
+            *lease,
+            plugin,
+            deploymentFor(project, ProjectRole::UnderTest).toolCatalogSchemaOwner,
+            reading
+        );
         REQUIRE(snapshot.has_value());
 
         // "operator" is the exact operator protocol schema sessionManifest
@@ -437,6 +442,10 @@ namespace uf::operator_runtime::conformance
         auto snapshot = prepared.store.createSnapshot(
             prepared.lease,
             prepared.plugin,
+            deploymentFor(
+                prepared.project,
+                ProjectRole::UnderTest
+            ).toolCatalogSchemaOwner,
             observeAgain(prepared)
         );
         REQUIRE(snapshot.has_value());

@@ -279,6 +279,7 @@ namespace uf::operator_runtime
         auto humanSnapshot = prepared.store.createSnapshot(
             takeover->lease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             test_support::observeAgain(prepared)
         );
         REQUIRE(humanSnapshot.has_value());
@@ -321,19 +322,46 @@ namespace uf::operator_runtime
             == AutomationErrorKind::ActionRejected
         );
 
-        // The door is one door for reading too: an observing controller is
-        // authenticated exactly the same way and is refused control, rather
-        // than being refused later at the snapshot it could not have taken.
-        auto const observer = test_support::addController(
+        REQUIRE(prepared.store.provisionProjectInstance(
+            prepared.project.registration,
+            prepared.plugin,
+            ProjectInstanceBaseline{
+                .projectInstanceKey  = "instance-3",
+                .eventId             = "baseline-instance-3",
+                .sessionManifestHash = prepared.manifest.hash(),
+                .entry = test_support::journalEntry(
+                    prepared.project,
+                    prepared.project.registration.baselineEventType(),
+                    "{\"kind\":\"baseline\"}"
+                ),
+            }
+        ).has_value());
+        auto const pinnedAgent = test_support::agentProfileFor(
             prepared,
-            ControllerKind::Agent,
-            SessionMode::Read,
-            "session-3",
-            "instance-3",
-            "target-3",
             test_support::k_unconstrainedAgentBudget
         );
-        auto const denied = prepared.store.acquireLease(observer);
+        REQUIRE(prepared.store.pinSession(
+            SessionPin{
+                .sessionId                 = "session-3",
+                .authenticatedControllerId = "controller-1",
+                .idempotencyNamespace      = "controller-1",
+                .projectRegistrationHash   = prepared.project.registration.hash(),
+                .controllerCapabilities = {
+                    std::string{conformance::k_operateCapability},
+                },
+                .controlledTargetId = "target-3",
+                .projectInstanceKey = "instance-3",
+                .mode               = SessionMode::Read,
+                .kind               = ControllerKind::Agent,
+            },
+            pinnedAgent.manifest,
+            pinnedAgent.profile
+        ).has_value());
+        auto const denied = prepared.store.bindController("session-3");
+        CHECK_MESSAGE(
+            !denied.has_value(),
+            "a read-mode Agent must be refused at controller binding"
+        );
         REQUIRE_FALSE(denied.has_value());
         CHECK(
             automationErrorKind(denied.error()) == AutomationErrorKind::ActionRejected
@@ -461,11 +489,10 @@ namespace uf::operator_runtime
         );
         REQUIRE(second.has_value());
 
-        // Exactly three events since the first finding: the first finding
-        // itself, the read-only Operation, and the takeover. Each of the three
-        // producers is therefore read back here, which is the only reason the
-        // stored column is worth having.
-        CHECK(second->detectedAfterCursor == first->detectedAfterCursor + 3U);
+        // Exactly five events since the first detection point: the first
+        // finding's state change and finding event, the read-only Operation,
+        // its revalidation state change, and the takeover.
+        CHECK(second->detectedAfterCursor == first->detectedAfterCursor + 5U);
 
         // The revalidated Operation was in flight again, so the second finding
         // froze the same one.
@@ -511,6 +538,7 @@ namespace uf::operator_runtime
         auto const agentSnapshot = prepared.store.createSnapshot(
             *agentLease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             test_support::observeAgain(prepared)
         );
         REQUIRE(agentSnapshot.has_value());
@@ -528,6 +556,7 @@ namespace uf::operator_runtime
         auto const humanSnapshot = prepared.store.createSnapshot(
             *humanLease,
             prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
             test_support::observeAgain(prepared)
         );
         REQUIRE(humanSnapshot.has_value());
