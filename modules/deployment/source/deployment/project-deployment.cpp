@@ -112,7 +112,7 @@ namespace uf::deployment
             }
         },
         "StateResolution": {
-            "$comment": "What the trusted Luau resolver serializes: the kind, the ordered surface stack a resolved state carries, the readings that state reports, and the reason the other kinds failed. Absent members are absent rather than null, so only kind is required.",
+            "$comment": "What the trusted Luau resolver serializes: the kind, the ordered surface stack a resolved state carries, the readings that state reports, and the reason the other kinds failed. Absent members are absent rather than null, so only kind is required. diagnostic is carried only when visible content matched nothing, which is the one unknown that a bounded reason cannot describe; the resolver's other unknown branches send reason alone, so requiring it here would refuse them.",
             "type": "object",
             "additionalProperties": false,
             "required": ["kind"],
@@ -192,7 +192,8 @@ namespace uf::deployment
                         ]
                     }
                 },
-                "reason": {"type": "string", "minLength": 1}
+                "reason": {"type": "string", "minLength": 1},
+                "diagnostic": {"type": "string", "minLength": 1}
             }
         }
     }

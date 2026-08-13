@@ -345,6 +345,7 @@ LUAU_RUNTIME_PARSER_PATTERN = re.compile(
 )
 RUNTIME_MODEL_PARSER_SOURCE = "modules/task/runtime/project.luau"
 RUNTIME_MODEL_SCHEMA = "schema/umbraflow-runtime-v2.schema.json"
+STATE_RESOLUTION_SOURCE = "modules/task/runtime/resolution.luau"
 
 # The declaration of the Snapshot Coordinator's entry point, in the one header
 # that declares it. The rule below reads its parameter list.
@@ -359,6 +360,23 @@ CREATE_SNAPSHOT_DECLARATION_PATTERN = re.compile(
 # it cannot come back under a different case.
 CALLER_SNAPSHOT_IDENTITY_PATTERN = re.compile(
     r"[A-Za-z0-9_]*(?:identityHash|IdentityHash|identity_hash)"
+)
+
+MINT_BOUNDARIES = (
+    (
+        "StoredProjectObservation",
+        "modules/operator/source/operator/project-observation.hpp",
+        "OperatorCoordinator",
+        "modules/operator/source/operator/ledger.cpp",
+        "OperatorCoordinator::createSnapshot",
+    ),
+    (
+        "HostDeliveryReport",
+        "modules/task/source/task/host-delivery.hpp",
+        "TaskHost",
+        "modules/task/source/task/task-host.cpp",
+        "TaskHost::deliver",
+    ),
 )
 
 HOST_VALIDATION_MARKER_PATTERN = re.compile(
@@ -754,6 +772,68 @@ def reader_member_parity_errors(root: Path) -> list[str]:
     return ["RuntimeModel Reader member parity differs: " + "; ".join(differences)]
 
 
+def state_resolution_closed_object_errors(root: Path) -> list[str]:
+    resolver_path = root / STATE_RESOLUTION_SOURCE
+    schema_path = root / RUNTIME_MODEL_SCHEMA
+    if not resolver_path.is_file() or not schema_path.is_file():
+        return [
+            "StateResolution closed-object contract cannot find both the "
+            "resolver and published schema"
+        ]
+
+    resolver = executable_text(resolver_path, read_text(resolver_path))
+    returned = re.search(
+        r"\blocal\s+function\s+unknownState\b.*?"
+        r"\breturn\s+table\.freeze\s*\(\s*\{(?P<body>.*?)\}\s*\)",
+        resolver,
+        re.DOTALL,
+    )
+    if returned is None:
+        return [
+            "StateResolution closed-object contract cannot read the resolver's "
+            "unknownState table"
+        ]
+    resolver_fields = set(
+        re.findall(
+            r"^\s*([a-z][a-z0-9_]*)\s*=",
+            returned.group("body"),
+            re.MULTILINE,
+        )
+    )
+
+    try:
+        schema = json.loads(schema_path.read_bytes())
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        return [f"StateResolution closed-object contract found invalid schema: {error}"]
+    definitions = schema.get("$defs") if isinstance(schema, dict) else None
+    unknown = definitions.get("unknown_state") if isinstance(definitions, dict) else None
+    properties = unknown.get("properties") if isinstance(unknown, dict) else None
+    required = unknown.get("required") if isinstance(unknown, dict) else None
+    if not isinstance(properties, dict) or not isinstance(required, list):
+        return [
+            "StateResolution closed-object contract cannot read published schema "
+            "$defs.unknown_state"
+        ]
+    if unknown.get("additionalProperties") is not False:
+        return [
+            "StateResolution closed-object contract requires unknown_state to "
+            "refuse undeclared fields"
+        ]
+
+    schema_fields = set(properties)
+    expected_required = resolver_fields - {"diagnostic"}
+    actual_required = set(required)
+    if schema_fields == resolver_fields and actual_required == expected_required:
+        return []
+
+    return [
+        "StateResolution closed-object contract differs: resolver fields "
+        f"{sorted(resolver_fields)!r}, schema fields {sorted(schema_fields)!r}, "
+        f"required fields {sorted(actual_required)!r}, expected required fields "
+        f"{sorted(expected_required)!r}"
+    ]
+
+
 def snapshot_identity_errors(root: Path) -> list[str]:
     """createSnapshot must not accept a snapshot identity from its caller.
 
@@ -782,6 +862,81 @@ def snapshot_identity_errors(root: Path) -> list[str]:
             f"caller-supplied snapshot identity {offender.group(0)!r}"
         ]
     return []
+
+
+def mint_boundary_errors(root: Path) -> list[str]:
+    """Authority-bearing values keep exactly one friend and one mint site."""
+    errors: list[str] = []
+    sources = {
+        path: executable_text(path, read_text(path))
+        for path in first_party_sources(root)
+    }
+    for type_name, header_name, friend_name, source_name, owner_name in MINT_BOUNDARIES:
+        header = root / header_name
+        source = root / source_name
+        if not header.is_file() or not source.is_file():
+            errors.append(f"{type_name} mint boundary sources are missing")
+            continue
+
+        header_text = sources[header]
+        declaration = re.search(
+            rf"\bclass\s+{re.escape(type_name)}\s+final\s*\{{",
+            header_text,
+        )
+        if declaration is None:
+            errors.append(f"{header_name} declares no {type_name} class body")
+            continue
+        class_body = extract_braced_body(header_text, declaration.end() - 1)
+        if class_body is None:
+            errors.append(f"{header_name} has an unterminated {type_name} class body")
+            continue
+        friends = re.findall(r"\bfriend\s+class\s+([A-Za-z_:][A-Za-z0-9_:]*)\s*;", class_body)
+        if friends != [friend_name]:
+            errors.append(
+                f"{header_name}: {type_name} friends are {friends!r}, expected "
+                f"only {friend_name!r}"
+            )
+
+        mint_pattern = re.compile(
+            rf"(?:\breturn|=)\s*{re.escape(type_name)}\s*\{{"
+        )
+        mints = [
+            (path, match.start())
+            for path, text in sources.items()
+            for match in mint_pattern.finditer(text)
+        ]
+        if len(mints) != 1:
+            errors.append(
+                f"{type_name} has {len(mints)} production mint sites, expected exactly one"
+            )
+            continue
+        mint_path, mint_at = mints[0]
+        if mint_path != source:
+            errors.append(
+                f"{type_name}'s sole mint is outside {source_name}"
+            )
+            continue
+
+        source_text = sources[source]
+        owner = re.search(rf"\b{re.escape(owner_name)}\s*\(", source_text)
+        if owner is None:
+            errors.append(f"{source_name} declares no {owner_name} mint owner")
+            continue
+        owner_body_at = source_text.find("{", owner.end())
+        owner_body = (
+            None
+            if owner_body_at == -1
+            else extract_braced_body(source_text, owner_body_at)
+        )
+        if owner_body is None or not mint_pattern.search(owner_body):
+            errors.append(
+                f"{type_name}'s sole mint is not inside {owner_name}"
+            )
+        elif mint_at < owner_body_at:
+            errors.append(
+                f"{type_name}'s sole mint precedes {owner_name}'s body"
+            )
+    return errors
 
 
 def identifier_words(value: str) -> tuple[str, ...]:
@@ -1152,7 +1307,9 @@ def main() -> int:
             *retired_runtime_errors(root),
             *trusted_parser_errors(root),
             *reader_member_parity_errors(root),
+            *state_resolution_closed_object_errors(root),
             *snapshot_identity_errors(root),
+            *mint_boundary_errors(root),
             *generic_schema_errors(root),
             *readings_contract_errors(root),
             *receipt_validation_errors(root),

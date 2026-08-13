@@ -596,12 +596,14 @@
       }
     },
     "unknown_state": {
+      "$comment": "diagnostic is optional because only visible content that matches no Surface emits T-004 detail; other unknown states already carry their reason.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "reason", "evidence"],
       "properties": {
         "kind": { "const": "unknown_state" },
         "reason": { "type": "string", "minLength": 1 },
+        "diagnostic": { "type": "string", "minLength": 1 },
         "evidence": {
           "type": "array",
           "items": { "$ref": "#/$defs/evidence_summary" }

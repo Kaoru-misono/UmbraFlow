@@ -463,7 +463,11 @@ namespace uf::operator_runtime
             prepared.project.toolCatalogSchemaOwner,
             unresolved
         );
-        REQUIRE(different.has_value());
+        CAPTURE(different.has_value() ? std::string{} : different.error().message());
+        REQUIRE_MESSAGE(
+            different.has_value(),
+            "StateResolution closed-object contract must accept every resolver-emitted field"
+        );
         CHECK(different->identityHash != prepared.snapshot.identityHash);
         CHECK(different->decisionBasisHash != prepared.snapshot.decisionBasisHash);
 
