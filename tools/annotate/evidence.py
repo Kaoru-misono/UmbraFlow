@@ -6,10 +6,11 @@ import dataclasses
 import datetime
 import hashlib
 import json
+import subprocess
 import struct
 import zlib
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .jcs import jcs_bytes, load_exact_jcs
 from .safe_paths import (
@@ -42,6 +43,174 @@ class EvidenceSet:
     identity: str
     manifest: dict[str, Any]
     manifest_bytes: bytes
+
+
+@dataclasses.dataclass(frozen=True)
+class AcceptancePlan:
+    project_executable: Path
+    source_root: Path
+    build_root: Path
+    project_inputs: tuple[str, ...]
+    replay_command: tuple[str, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class AcceptanceResult:
+    candidate_id: str
+    declaration: Path
+    build_stdout: str
+    replay_stdout: str
+
+
+class CandidateExecutionError(RuntimeError):
+    pass
+
+
+@dataclasses.dataclass(frozen=True)
+class AmbiguityQuestion:
+    question_id: str
+    alternatives: tuple[dict[str, str], ...]
+    evidence_refs: tuple[str, ...]
+    kind: str = "ambiguity"
+
+
+@dataclasses.dataclass(frozen=True)
+class CapabilityExpansionQuestion:
+    question_id: str
+    capability_kind: str
+    capability_name: str
+    candidate_ids: tuple[str, ...]
+    evidence_refs: tuple[str, ...]
+    kind: str = "capability_expansion"
+
+
+AuthoringQuestion = AmbiguityQuestion | CapabilityExpansionQuestion
+
+
+class QuestionPolicy:
+    """Resolve evidence groups, remembering each question and its group-wide answer."""
+
+    def __init__(self, supported_capabilities: Iterable[tuple[str, str]] = ()) -> None:
+        self._supported_capabilities = set(supported_capabilities)
+        self._raised: dict[str, AuthoringQuestion] = {}
+        self._answers: dict[str, str] = {}
+
+    @staticmethod
+    def _question_id(material: Mapping[str, Any]) -> str:
+        return "sha256:" + _digest(jcs_bytes(material))
+
+    def answer(self, question_id: str, answer: str) -> None:
+        question = self._raised[question_id]
+        if isinstance(question, CapabilityExpansionQuestion):
+            self._supported_capabilities.add(
+                (question.capability_kind, question.capability_name)
+            )
+        self._answers[question_id] = answer
+
+    def resolve(
+        self,
+        candidates: Sequence[Mapping[str, Any]],
+        ask: Callable[[AuthoringQuestion], None],
+    ) -> dict[str, bool]:
+        decisions: dict[str, bool] = {}
+        groups: dict[str, list[Mapping[str, Any]]] = {}
+        for candidate in candidates:
+            groups.setdefault(candidate["decision_key"], []).append(candidate)
+
+        for decision_key, group in sorted(groups.items()):
+            blocked = False
+            for capability in sorted(
+                {
+                    (required["kind"], required["name"])
+                    for candidate in group
+                    if (required := candidate.get("required_capability")) is not None
+                }
+            ):
+                if capability in self._supported_capabilities:
+                    continue
+                candidate_ids = tuple(
+                    sorted(
+                        candidate["candidate_id"]
+                        for candidate in group
+                        if candidate.get("required_capability")
+                        == {"kind": capability[0], "name": capability[1]}
+                    )
+                )
+                evidence_refs = tuple(
+                    sorted(
+                        {
+                            reference
+                            for candidate in group
+                            for reference in candidate["evidence_refs"]
+                        }
+                    )
+                )
+                question_id = self._question_id(
+                    {
+                        "candidate_ids": list(candidate_ids),
+                        "capability": {"kind": capability[0], "name": capability[1]},
+                        "evidence_refs": list(evidence_refs),
+                        "kind": "capability_expansion",
+                    }
+                )
+                if question_id not in self._answers:
+                    blocked = True
+                    if question_id not in self._raised:
+                        question = CapabilityExpansionQuestion(
+                            question_id,
+                            capability[0],
+                            capability[1],
+                            candidate_ids,
+                            evidence_refs,
+                        )
+                        self._raised[question_id] = question
+                        ask(question)
+            if blocked:
+                continue
+
+            ordered = sorted(group, key=lambda candidate: candidate["candidate_id"])
+            if len(ordered) == 1:
+                decisions[ordered[0]["candidate_id"]] = True
+                continue
+
+            alternatives = tuple(
+                {
+                    "candidate_id": candidate["candidate_id"],
+                    "kind": candidate["kind"],
+                    "name": candidate["name"],
+                }
+                for candidate in ordered
+            )
+            evidence_refs = tuple(
+                sorted(
+                    {
+                        reference
+                        for candidate in ordered
+                        for reference in candidate["evidence_refs"]
+                    }
+                )
+            )
+            question_id = self._question_id(
+                {
+                    "alternatives": list(alternatives),
+                    "decision_key": decision_key,
+                    "evidence_refs": list(evidence_refs),
+                    "kind": "ambiguity",
+                }
+            )
+            answer = self._answers.get(question_id)
+            if answer is not None:
+                decisions.update(
+                    (candidate["candidate_id"], candidate["candidate_id"] == answer)
+                    for candidate in ordered
+                )
+            elif question_id not in self._raised:
+                question = AmbiguityQuestion(
+                    question_id, alternatives, evidence_refs
+                )
+                self._raised[question_id] = question
+                ask(question)
+        return decisions
 
 
 def _digest(content: bytes) -> str:
@@ -219,6 +388,34 @@ def _candidate_hints(path: Path, content: bytes) -> list[dict[str, Any]]:
     return hints
 
 
+def _candidate_declaration(path: Path, hint: Mapping[str, Any]) -> dict[str, str]:
+    declaration = hint.get("declaration")
+    if (
+        not isinstance(declaration, dict)
+        or set(declaration) != {"content", "path"}
+        or not isinstance(declaration["content"], str)
+        or not isinstance(declaration["path"], str)
+    ):
+        raise _refuse(path, "candidate declaration must carry exactly path and content")
+    confined_relative(declaration["path"])
+    return {"content": declaration["content"], "path": declaration["path"]}
+
+
+def _required_capability(path: Path, hint: Mapping[str, Any]) -> dict[str, str] | None:
+    capability = hint.get("required_capability")
+    if capability is None:
+        return None
+    if (
+        not isinstance(capability, dict)
+        or set(capability) != {"kind", "name"}
+        or capability["kind"] not in {"verb", "shape"}
+        or not isinstance(capability["name"], str)
+        or not capability["name"]
+    ):
+        raise _refuse(path, "required capability must name one verb or shape")
+    return {"kind": capability["kind"], "name": capability["name"]}
+
+
 def propose_candidates(evidence_set: EvidenceSet, source_root: Path) -> dict[str, Any]:
     root = source_root.absolute()
     require_plain_directory(root)
@@ -248,6 +445,8 @@ def propose_candidates(evidence_set: EvidenceSet, source_root: Path) -> dict[str
                 raise _refuse(path, "candidate confidence is outside [0, 1]")
             proposal = {
                 "confidence": confidence,
+                "decision_key": hint.get("decision_key"),
+                "declaration": _candidate_declaration(path, hint),
                 "evidence_refs": [row["evidence_ref"]],
                 "kind": kind,
                 "name": hint.get("name"),
@@ -255,7 +454,95 @@ def propose_candidates(evidence_set: EvidenceSet, source_root: Path) -> dict[str
             }
             if not isinstance(proposal["name"], str) or not proposal["name"]:
                 raise _refuse(path, "candidate name is empty")
+            if (
+                not isinstance(proposal["decision_key"], str)
+                or not proposal["decision_key"]
+            ):
+                raise _refuse(path, "candidate decision_key is empty")
+            required_capability = _required_capability(path, hint)
+            if required_capability is not None:
+                proposal["required_capability"] = required_capability
             proposal["candidate_id"] = "sha256:" + _digest(jcs_bytes(proposal))
             candidates.append(proposal)
     candidates.sort(key=lambda candidate: candidate["candidate_id"])
     return {"candidates": candidates, "schema": PROPOSAL_SCHEMA}
+
+
+def _run_candidate_step(
+    candidate_id: str,
+    step: str,
+    command: Sequence[str],
+    source_root: Path,
+) -> subprocess.CompletedProcess[str]:
+    completed = subprocess.run(
+        list(command),
+        cwd=source_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise CandidateExecutionError(
+            f'candidate "{candidate_id}" {step} failed: {detail}'
+        )
+    return completed
+
+
+def accept_candidate(
+    candidate: Mapping[str, Any],
+    plan: AcceptancePlan,
+) -> AcceptanceResult:
+    """Accept once: write the declaration, then build and replay without prompting."""
+
+    candidate_id = candidate["candidate_id"]
+    declaration = candidate["declaration"]
+    relative = confined_relative(declaration["path"])
+    source_root = plan.source_root.absolute()
+    require_plain_directory(source_root)
+    destination = source_root.joinpath(*relative.parts)
+    make_plain_directories(destination.parent)
+    write_new_file(destination, declaration["content"].encode("utf-8"))
+
+    inputs = tuple(sorted({*plan.project_inputs, relative.as_posix()}))
+    initialization_command = [
+        str(plan.project_executable),
+        "init",
+        "--source",
+        str(source_root),
+        "--build",
+        str(plan.build_root.absolute()),
+    ]
+    for project_input in inputs:
+        initialization_command.extend(("--input", project_input))
+    _run_candidate_step(
+        candidate_id,
+        "project init",
+        initialization_command,
+        source_root,
+    )
+    build = _run_candidate_step(
+        candidate_id,
+        "project build",
+        (
+            str(plan.project_executable),
+            "build",
+            "--source",
+            str(source_root),
+            "--build",
+            str(plan.build_root.absolute()),
+        ),
+        source_root,
+    )
+    replay = _run_candidate_step(
+        candidate_id,
+        "replay",
+        plan.replay_command,
+        source_root,
+    )
+    return AcceptanceResult(
+        candidate_id,
+        destination,
+        build.stdout,
+        replay.stdout,
+    )

@@ -60,9 +60,23 @@ corrupt recording.
 `tools.annotate.evidence.propose_candidates` reads `candidate_hints` from
 imported JSON evidence and returns `UiTarget`, `Fact`, `tool`, and
 `identity_recipe` proposals. Every proposal carries its evidence reference,
-confidence, and one
-reason from the bounded authoring vocabulary. It is a pure proposal step: it
-writes no RuntimeModel, RuntimeArtifact, or ProjectRegistration.
+confidence, declaration, decision key, and one reason from the bounded authoring
+vocabulary. It is a pure proposal step: it writes no RuntimeModel,
+RuntimeArtifact, or ProjectRegistration.
+
+`tools.annotate.evidence.accept_candidate` is the only transition from a
+proposal to a declaration. Acceptance writes that declaration, invokes the
+shipped `project init` to put it in the declared input set, invokes the shipped
+`project build` once, then invokes the configured replay once without an
+intermediate prompt. Any command failure identifies the candidate that caused
+it.
+
+`tools.annotate.evidence.QuestionPolicy` groups proposals by the decision their
+evidence supports. A singleton is settled without a question. Competing
+alternatives produce one `ambiguity` question carrying both the candidates and
+their evidence references; its answer settles the whole group. An unexpressible
+verb or shape instead produces the distinct `capability_expansion` question.
+(Finalized 2026-08-14 by the U7c/U7d acceptance contract.)
 
 ## Trust bootstrap
 

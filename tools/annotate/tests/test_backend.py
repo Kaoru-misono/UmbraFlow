@@ -30,7 +30,13 @@ from tools.annotate import model_file
 from tools.annotate import store
 from tools.annotate.evidence import (
     RECORDING_MAGIC,
+    AcceptancePlan,
+    AmbiguityQuestion,
+    CandidateExecutionError,
+    CapabilityExpansionQuestion,
     EvidenceSet,
+    QuestionPolicy,
+    accept_candidate,
     import_evidence,
     propose_candidates,
 )
@@ -1847,6 +1853,36 @@ class ProjectAuthoringFrontTests(unittest.TestCase):
             if path.is_file()
         }
 
+    @staticmethod
+    def hint(
+        name: str,
+        *,
+        decision_key: str = "one-decision",
+        kind: str = "Fact",
+        required_capability: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        hint: dict[str, object] = {
+            "confidence": 0.91,
+            "decision_key": decision_key,
+            "declaration": {
+                "content": f"declared {name}\n",
+                "path": f"declarations/{name}.txt",
+            },
+            "kind": kind,
+            "name": name,
+            "reason": "explicit_declaration",
+        }
+        if required_capability is not None:
+            hint["required_capability"] = required_capability
+        return hint
+
+    def proposals(self, hints: list[dict[str, object]]) -> list[dict]:
+        (self.material / "hints.json").write_bytes(
+            jcs_bytes({"candidate_hints": hints})
+        )
+        evidence_set = import_evidence(self.material, ["hints.json"], self.evidence)
+        return propose_candidates(evidence_set, self.material)["candidates"]
+
     def test_same_material_has_one_full_manifest_and_changed_bytes_change_identity(self) -> None:
         path = self.material / "facts.json"
         path.write_bytes(b'{"value":1}')
@@ -1887,12 +1923,11 @@ class ProjectAuthoringFrontTests(unittest.TestCase):
     def test_candidate_evidence_is_a_live_dependency(self) -> None:
         hints = {
             "candidate_hints": [
-                {
-                    "confidence": 0.91,
-                    "kind": kind,
-                    "name": f"candidate-{index}",
-                    "reason": "explicit_declaration",
-                }
+                self.hint(
+                    f"candidate-{index}",
+                    decision_key=f"decision-{index}",
+                    kind=kind,
+                )
                 for index, kind in enumerate(
                     ("UiTarget", "Fact", "tool", "identity_recipe"), start=1
                 )
@@ -1927,9 +1962,8 @@ class ProjectAuthoringFrontTests(unittest.TestCase):
         hints = {
             "candidate_hints": [
                 {
+                    **self.hint("observed-balance"),
                     "confidence": 0.8,
-                    "kind": "Fact",
-                    "name": "observed-balance",
                     "reason": "observed_value",
                 }
             ]
@@ -1945,6 +1979,129 @@ class ProjectAuthoringFrontTests(unittest.TestCase):
         self.assertFalse(any("runtime-model" in path for path in before))
         self.assertFalse(any("artifact" in path for path in before))
         self.assertFalse(any("registration" in path for path in before))
+
+    def test_accepted_candidate_completes_one_project_build_and_one_replay_without_input(
+        self,
+    ) -> None:
+        candidate = self.proposals([self.hint("accepted")])[0]
+        plan = AcceptancePlan(
+            project_executable=self.root / "bin" / "project",
+            source_root=self.root / "project-source",
+            build_root=self.root / "project-build",
+            project_inputs=("existing.txt",),
+            replay_command=("trusted-replay", "--fixed-corpus"),
+        )
+        plan.source_root.mkdir()
+        completed = [
+            subprocess.CompletedProcess([], 0, "initialized\n", ""),
+            subprocess.CompletedProcess([], 0, "built\n", ""),
+            subprocess.CompletedProcess([], 0, "replayed\n", ""),
+        ]
+
+        with unittest.mock.patch("tools.annotate.evidence.subprocess.run", side_effect=completed) as run:
+            result = accept_candidate(candidate, plan)
+
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(run.call_args_list[0].args[0][1], "init")
+        self.assertIn(candidate["declaration"]["path"], run.call_args_list[0].args[0])
+        self.assertEqual(run.call_args_list[1].args[0][1], "build")
+        self.assertEqual(run.call_args_list[2].args[0], list(plan.replay_command))
+        self.assertEqual(result.build_stdout, "built\n")
+        self.assertEqual(result.replay_stdout, "replayed\n")
+        self.assertEqual(result.declaration.read_text(), "declared accepted\n")
+
+    def test_project_build_failure_names_the_candidate_that_caused_it(self) -> None:
+        candidate = self.proposals([self.hint("broken")])[0]
+        source = self.root / "project-source"
+        source.mkdir()
+        plan = AcceptancePlan(
+            self.root / "bin" / "project",
+            source,
+            self.root / "project-build",
+            (),
+            ("trusted-replay",),
+        )
+        commands = [
+            subprocess.CompletedProcess([], 0, "initialized", ""),
+            subprocess.CompletedProcess([], 7, "", "bad declaration"),
+        ]
+
+        with unittest.mock.patch("tools.annotate.evidence.subprocess.run", side_effect=commands):
+            with self.assertRaisesRegex(
+                CandidateExecutionError, re.escape(candidate["candidate_id"])
+            ):
+                accept_candidate(candidate, plan)
+
+    def test_deciding_evidence_raises_zero_questions(self) -> None:
+        candidates = self.proposals([self.hint("decided")])
+        questions: list[object] = []
+
+        decisions = QuestionPolicy().resolve(candidates, questions.append)
+
+        self.assertEqual(questions, [])
+        self.assertEqual(decisions, {candidates[0]["candidate_id"]: True})
+
+    def test_ambiguous_evidence_question_carries_alternatives_and_evidence(self) -> None:
+        candidates = self.proposals(
+            [self.hint("left"), self.hint("right")]
+        )
+        questions: list[object] = []
+
+        QuestionPolicy().resolve(candidates, questions.append)
+
+        self.assertEqual(len(questions), 1)
+        question = questions[0]
+        self.assertIsInstance(question, AmbiguityQuestion)
+        assert isinstance(question, AmbiguityQuestion)
+        self.assertEqual(
+            {alternative["candidate_id"] for alternative in question.alternatives},
+            {candidate["candidate_id"] for candidate in candidates},
+        )
+        self.assertEqual(
+            set(question.evidence_refs),
+            set(candidates[0]["evidence_refs"]),
+        )
+
+    def test_one_ambiguity_raises_one_question_for_every_resting_candidate(self) -> None:
+        candidates = self.proposals(
+            [self.hint("first"), self.hint("second"), self.hint("third")]
+        )
+        questions: list[object] = []
+        policy = QuestionPolicy()
+
+        self.assertEqual(policy.resolve(candidates, questions.append), {})
+        self.assertEqual(policy.resolve(candidates, questions.append), {})
+        self.assertEqual(len(questions), 1)
+        question = questions[0]
+        assert isinstance(question, AmbiguityQuestion)
+        chosen = candidates[1]["candidate_id"]
+        policy.answer(question.question_id, chosen)
+        decisions = policy.resolve(candidates, questions.append)
+        self.assertEqual(len(questions), 1)
+        self.assertEqual(
+            decisions,
+            {
+                candidate["candidate_id"]: candidate["candidate_id"] == chosen
+                for candidate in candidates
+            },
+        )
+
+    def test_capability_expansion_is_not_an_ambiguity_question(self) -> None:
+        candidates = self.proposals(
+            [
+                self.hint(
+                    "drag-target",
+                    required_capability={"kind": "verb", "name": "drag"},
+                )
+            ]
+        )
+        questions: list[object] = []
+
+        QuestionPolicy().resolve(candidates, questions.append)
+
+        self.assertEqual(len(questions), 1)
+        self.assertIsInstance(questions[0], CapabilityExpansionQuestion)
+        self.assertNotIsInstance(questions[0], AmbiguityQuestion)
 
 
 if __name__ == "__main__":
