@@ -53,6 +53,34 @@ lists `all`, `any`, and `none`; at least `all` or `any` is non-empty. These
 three lists belong to a Binding variant's detector. They are not a Surface
 identity language.
 
+#### T-009 ruled 2026-08-14: no existence-by-text predicate, and `text_equals` leaves the detector
+
+`T-009` asked for a predicate meaning "this Reader found text here", so that an
+element with variable content could be declared present. It is ruled NOT NEEDED,
+and stronger than that: as posed it must not be built. Two independent reasons,
+and one finding that follows.
+
+The case that motivated it is already answered. It came from event option cards,
+whose titles differ every time, so `text_equals` could not say "a card is here".
+A detected Collection now runs a block Reader over a search rectangle and returns
+one item per detected line, each carrying its own rectangle — that IS existence
+established by detection rather than by comparison — and `completeness` says
+whether the set is whole. Nothing is left for a Binding-level predicate to add.
+
+What it asked for is barred by this model's own rule. A Binding's detector
+decides identity, because a Surface identity is a list of required Bindings. The
+rule is that text is evidence about what is on a Surface and never the identity
+of one. An existence-by-text predicate at detector level is exactly text
+deciding identity.
+
+The finding: `text_equals` is reachable from a detector TODAY, through the
+`predicate` union, which permits precisely what that rule forbids. Measured on
+2026-08-14, it has no caller — no model, fixture, example or consumer artifact
+uses it in a detector; only the parser knows the spelling. So the union
+collapses to `locator_present`, and `text_equals` survives only where it
+filters rather than decides: a Collection's `predicate`, which selects among
+members already found and never establishes that any of them is there.
+
 ### Binding
 
 A `Binding` connects one UiTarget to one Surface and owns its actionable
