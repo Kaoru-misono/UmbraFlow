@@ -82,24 +82,6 @@
         "receipt_id": { "$ref": "#/$defs/Identifier" }
       }
     },
-    "RuntimeModelBindingRef": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "binding_ref",
-        "controlled_target_id",
-        "target_generation",
-        "runtime_model_schema_hash",
-        "runtime_model_artifact_root_hash"
-      ],
-      "properties": {
-        "binding_ref": { "$ref": "#/$defs/Identifier" },
-        "controlled_target_id": { "$ref": "#/$defs/Identifier" },
-        "target_generation": { "type": "integer", "minimum": 1 },
-        "runtime_model_schema_hash": { "$ref": "#/$defs/Hash" },
-        "runtime_model_artifact_root_hash": { "$ref": "#/$defs/Hash" }
-      }
-    },
     "ControllerCapability": {
       "type": "object",
       "additionalProperties": false,
@@ -141,7 +123,6 @@
         "operator_protocol_schema_hash",
         "project_registration_hash",
         "policy_artifact_hash",
-        "journal_envelope_schema_hash",
         "agent_profile_hash"
       ],
       "properties": {
@@ -149,7 +130,6 @@
         "operator_protocol_schema_hash": { "$ref": "#/$defs/Hash" },
         "project_registration_hash": { "$ref": "#/$defs/Hash" },
         "policy_artifact_hash": { "$ref": "#/$defs/Hash" },
-        "journal_envelope_schema_hash": { "$ref": "#/$defs/Hash" },
         "agent_profile_hash": { "$ref": "#/$defs/Hash" }
       }
     },

@@ -258,13 +258,9 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "schema_hash",
         "fields"
       ],
       "properties": {
-        "schema_hash": {
-          "$ref": "#/$defs/hash"
-        },
         "fields": {
           "type": "array",
           "maxItems": 128,

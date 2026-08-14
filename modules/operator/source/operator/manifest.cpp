@@ -92,8 +92,6 @@ namespace uf::operator_runtime
         {
             auto output = std::string{"{\"agent_profile_hash\":"};
             appendHash(output, spec.agentProfileHash);
-            output += ",\"journal_envelope_schema_hash\":";
-            appendHash(output, spec.journalEnvelopeSchemaHash);
             output += ",\"operator_protocol_schema_hash\":";
             appendHash(output, spec.operatorProtocolSchemaHash);
             output += ",\"policy_artifact_hash\":";

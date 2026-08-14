@@ -261,7 +261,6 @@ namespace uf::operator_runtime::conformance
                 .operatorProtocolSchemaHash   = hashOf("operator"),
                 .projectRegistrationHash      = registration.hash(),
                 .policyArtifactHash           = hashOf(exactPolicyArtifactBytes),
-                .journalEnvelopeSchemaHash    = hashOf("journal-envelope"),
                 .agentProfileHash             = hashOf("agent"),
             }
         );

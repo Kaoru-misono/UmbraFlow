@@ -19,6 +19,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <variant>
@@ -66,9 +67,6 @@ namespace uf::trace
                 .eventType = std::move(eventType),
                 .audit     = AuditMetadata{
                     .actor = "operator.agent",
-                },
-                .payload   = TypedTracePayload{
-                    .schemaHash = hashOf('b'),
                 },
             };
         }
@@ -130,6 +128,79 @@ namespace uf::trace
             return lines;
         }
 
+        // The format string the envelope declares, read back out of the bytes.
+        [[nodiscard]]
+        auto envelopeSchema(std::string const& serialized) -> std::string
+        {
+            constexpr auto k_key = std::string_view{"\"schema\":\""};
+            auto const at = serialized.find(k_key);
+            REQUIRE(at != std::string::npos);
+            auto const begin = at + k_key.size();
+            auto const end   = serialized.find('"', begin);
+            REQUIRE(end != std::string::npos);
+            return serialized.substr(begin, end - begin);
+        }
+
+        // Every member name the emitted payload object carries, joined so a
+        // failure prints the intruder rather than only a count. A member name
+        // is a quoted token at depth one that a colon follows; the names inside
+        // the `fields` array sit deeper and are not members of the payload.
+        //
+        // This is a set, not a search for one spelling: a digest re-entering
+        // the payload under ANY name is red here. It has to be, because nothing
+        // in this repository validates a recorded stream against
+        // schema/umbraflow-trace-v2.schema.json -- there is no second detector
+        // behind this one.
+        [[nodiscard]]
+        auto payloadMembers(std::string const& serialized) -> std::string
+        {
+            constexpr auto k_key = std::string_view{"\"payload\":{"};
+            auto const at = serialized.find(k_key);
+            REQUIRE(at != std::string::npos);
+
+            auto joined = std::string{};
+            auto cursor = at + k_key.size();
+            auto depth  = std::size_t{1};
+            while (cursor < serialized.size() && depth > 0U)
+            {
+                auto const character = serialized[cursor];
+                if (character == '"')
+                {
+                    auto end = cursor + 1U;
+                    while (end < serialized.size() && serialized[end] != '"')
+                    {
+                        end += serialized[end] == '\\' ? 2U : 1U;
+                    }
+                    REQUIRE(end < serialized.size());
+                    if (
+                        depth == 1U
+                        && end + 1U < serialized.size()
+                        && serialized[end + 1U] == ':'
+                    )
+                    {
+                        if (!joined.empty())
+                        {
+                            joined.push_back(',');
+                        }
+                        joined += serialized.substr(cursor + 1U, end - cursor - 1U);
+                    }
+                    cursor = end + 1U;
+                    continue;
+                }
+                if (character == '{' || character == '[')
+                {
+                    ++depth;
+                }
+                else if (character == '}' || character == ']')
+                {
+                    --depth;
+                }
+                ++cursor;
+            }
+            REQUIRE(depth == 0U);
+            return joined;
+        }
+
         [[nodiscard]] auto uniqueTracePath() -> std::filesystem::path
         {
             static auto counter = uint64{};
@@ -179,17 +250,46 @@ namespace uf::trace
             "\"operator.agent\",\"producer\":\"operator.host\",\"references\":["
             "{{\"type\":\"observation\",\"id\":\"obs-1\"}},"
             "{{\"type\":\"operation\",\"id\":\"op-1\"}}]}}"
-            ",\"payload\":{{\"schema_hash\":\"{}\",\"fields\":["
+            ",\"payload\":{{\"fields\":["
             "{{\"name\":\"alpha\",\"type\":\"text\",\"value\":\"a\\\"b\\\\c\"}},"
             "{{\"name\":\"enabled\",\"type\":\"bool\",\"value\":true}},"
             "{{\"name\":\"offset\",\"type\":\"int64\",\"value\":-2}},"
             "{{\"name\":\"reason\",\"type\":\"null\"}},"
             "{{\"name\":\"zeta\",\"type\":\"uint64\",\"value\":7}}]}}}}",
             hashOf('a').hex(),
-            recorded.recordedAtUnixMillis(),
-            hashOf('b').hex()
+            recorded.recordedAtUnixMillis()
         );
         CHECK(serializeTraceEvent(recorded) == expected);
+    }
+
+    // What the trace envelope says about its own format, in two independent
+    // assertions. The whole-line comparison above would notice either change
+    // too, but it notices every change, so it cannot say which property moved:
+    // the format version is the `schema` string, and the payload carries no
+    // digest at all.
+    TEST_CASE("envelope names its format and its payload carries no digest")
+    {
+        auto sink         = std::make_unique<CollectingSink>();
+        auto sinkObserver = sink.get();
+        auto recorder     = TraceRecorder::create(std::move(sink), streamSpec());
+        REQUIRE(recorder.has_value());
+
+        auto event           = eventSpec("host.delivery");
+        event.payload.fields = {
+            TraceField{.name = "alpha", .value = std::string{"a"}},
+        };
+        REQUIRE(recorder->emit(event).has_value());
+        REQUIRE(sinkObserver->events().size() == 1U);
+
+        auto const serialized = serializeTraceEvent(sinkObserver->events().front());
+
+        // (a) The format this stream is in. It is the only thing that names the
+        // format now that the payload digest is gone, so a schema version bump
+        // that forgot this assertion would be a silent format change.
+        CHECK(envelopeSchema(serialized) == "umbraflow-trace/v2");
+
+        // (b) The payload's whole membership.
+        CHECK(payloadMembers(serialized) == "fields");
     }
 
     TEST_CASE("invalid input does not consume sequence")

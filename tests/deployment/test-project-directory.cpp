@@ -1315,7 +1315,6 @@ namespace uf::deployment
                 .operatorProtocolSchemaHash    = p_alpha->registration.hash(),
                 .projectRegistrationHash       = p_alpha->registration.hash(),
                 .policyArtifactHash            = p_alpha->registration.hash(),
-                .journalEnvelopeSchemaHash     = p_alpha->registration.hash(),
                 .agentProfileHash              = p_alpha->registration.hash(),
             }
         );

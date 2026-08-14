@@ -173,7 +173,7 @@ fixtures cannot satisfy them.
 | D-08 | Consumer plugin | OP:`ExpectedEffect/ObservedOutcome` + CP | EXTERNAL `attest-consumer-d08` |
 | D-09 | Consumer plugin | CP via PR:`project_artifact_roots` | EXTERNAL `attest-consumer-d09` |
 | U-01 | Host + trusted Runtime | RA + RM | CTEST `contract-runtime-u01` |
-| U-02 | Host binding | RA:`RuntimeArtifactManifest` + OP:`RuntimeModelBindingRef` | CTEST `contract-runtime-u02` |
+| U-02 | Host binding | RA:`RuntimeArtifactManifest` | CTEST `contract-runtime-u02` |
 | U-03 | trusted Runtime | RM:`UiTarget/Binding/StateResolution/BindingResolution` | CTEST `contract-runtime-u03` |
 | U-04 | trusted Runtime | RM:`Evidence/Geometry` | CTEST `contract-runtime-u04` |
 | U-05 | trusted Runtime | RM:`Evidence/StateResolution` | CTEST `contract-runtime-u05` |
@@ -208,6 +208,13 @@ fixtures cannot satisfy them.
 | A-06 | Deployment boundary | AW:`AuthoringCapabilityRoot` + RA | CTEST `contract-agent-a06` |
 | A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `contract-agent-a07` and CTEST `schema-agent-a07` — **closed**: `contract-agent-a07` proves both acceptance clauses — the displaced lease is refused a reservation the live lease is then granted, and a second Host still carrying the displaced fence cannot deliver it — after being extended 2026-08-11 (`bed456f`) to run the schedule the first clause needed. Reopened earlier the same day (`07abc3e`) on a misreading that substituted the 需求 sentence for the first 验收 clause. See [the archived next-block record](../archive/plans/2026-08-10-next-block.md) §2 |
 | A-08 | Operator recovery | OP:`ExternalInputFinding/OperationState` | CTEST `contract-agent-a08` |
+
+> Amended 2026-08-15: `U-02` named `OP:RuntimeModelBindingRef` alongside
+> `RA:RuntimeArtifactManifest`. That `$defs` entry was reached by no `$ref` and
+> named by no source — `contract-runtime-u02` never read it — and Stage H5 of
+> [the framework hash cleanup](2026-08-14-framework-hash-cleanup.md) deleted it.
+> The Host binding shape the row is about is `RA:RuntimeArtifactManifest`, which
+> is what the CTest checks.
 
 Where the named requirement gates were declared as of 2026-08-11:
 

@@ -181,7 +181,6 @@ namespace uf::operator_runtime
                 .operatorProtocolSchemaHash   = hashOf("operator"),
                 .projectRegistrationHash      = hashOf("registration"),
                 .policyArtifactHash           = hashOf("policy"),
-                .journalEnvelopeSchemaHash    = hashOf("journal"),
                 .agentProfileHash             = hashOf("agent"),
             };
         }

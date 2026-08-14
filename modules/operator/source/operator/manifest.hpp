@@ -131,7 +131,6 @@ namespace uf::operator_runtime
         ContentHash operatorProtocolSchemaHash;
         ContentHash projectRegistrationHash;
         ContentHash policyArtifactHash;
-        ContentHash journalEnvelopeSchemaHash;
         ContentHash agentProfileHash;
     };
 

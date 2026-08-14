@@ -9,7 +9,6 @@
 #include <core/types/integer.hpp>
 #include <core/utility/variant-match.hpp>
 
-#include <domain/content-hash.hpp>
 #include <domain/detection.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
@@ -50,15 +49,6 @@ namespace uf::engine
 {
     namespace
     {
-        [[nodiscard]] auto tracePayloadSchemaHash() -> ContentHash
-        {
-            auto const parsed = ContentHash::parse(
-                std::format("sha256:{}", trace::k_traceSchemaHash)
-            );
-            UF_CHECK(parsed.has_value());
-            return *parsed;
-        }
-
         // Every engine event uses the recorder-owned stream identity. A frame
         // reference adds only the generic capture join keys; pixels and other
         // replay material never enter Audit Trace.
@@ -95,8 +85,7 @@ namespace uf::engine
                     .references = std::move(references),
                 },
                 .payload   = trace::TypedTracePayload{
-                    .schemaHash = tracePayloadSchemaHash(),
-                    .fields     = std::move(fields),
+                    .fields = std::move(fields),
                 },
             };
         }

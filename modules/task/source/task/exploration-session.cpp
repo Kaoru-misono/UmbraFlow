@@ -6,7 +6,6 @@
 #include <task/task-host.hpp>
 #include <task/runtime-version.hpp>
 
-#include <core/error/contracts.hpp>
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
@@ -36,15 +35,6 @@ namespace uf::task
 {
     namespace
     {
-        [[nodiscard]] auto traceSchemaHash() -> ContentHash
-        {
-            auto const parsed = ContentHash::parse(
-                std::format("sha256:{}", trace::k_traceSchemaHash)
-            );
-            UF_CHECK(parsed.has_value());
-            return *parsed;
-        }
-
         [[nodiscard]]
         auto authoringTraceRootHash(
             std::string_view projectId,
@@ -94,7 +84,6 @@ namespace uf::task
                     },
                 },
                 .payload = trace::TypedTracePayload{
-                    .schemaHash = traceSchemaHash(),
                     .fields = {
                         trace::TraceField{
                             .name  = "project_id",

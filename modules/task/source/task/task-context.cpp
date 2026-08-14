@@ -15,8 +15,6 @@
 #include <core/time/poll-sleep.hpp>
 #include <core/types/integer.hpp>
 
-#include <domain/content-hash.hpp>
-
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
 #include <domain/space.hpp>
@@ -50,15 +48,6 @@ namespace uf::task
 {
     namespace
     {
-        [[nodiscard]] auto traceSchemaHash() -> ContentHash
-        {
-            auto const parsed = ContentHash::parse(
-                std::format("sha256:{}", trace::k_traceSchemaHash)
-            );
-            UF_CHECK(parsed.has_value());
-            return *parsed;
-        }
-
         // The exploration front end's own record of one act it delivered.
         //
         // The engine writes an engine.*_delivered line for the same act, and
@@ -94,8 +83,7 @@ namespace uf::task
                     },
                 },
                 .payload = trace::TypedTracePayload{
-                    .schemaHash = traceSchemaHash(),
-                    .fields     = std::move(fields),
+                    .fields = std::move(fields),
                 },
             };
         }
@@ -594,7 +582,6 @@ namespace uf::task
                 },
             },
             .payload = trace::TypedTracePayload{
-                .schemaHash = traceSchemaHash(),
                 .fields = {
                     trace::TraceField{.name = "x", .value = uint64{rect.x()}},
                     trace::TraceField{.name = "y", .value = uint64{rect.y()}},

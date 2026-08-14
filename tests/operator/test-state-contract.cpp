@@ -8,6 +8,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <filesystem>
@@ -152,6 +153,41 @@ namespace uf::operator_runtime
         using test_support::TemporaryDirectory;
         using test_support::toolInvocation;
 
+        // The member names a canonical SessionManifest actually carries, read
+        // out of the bytes rather than restated. The canonical form is a flat
+        // JCS object whose every value is a 64-hex digest, so quoted tokens
+        // alternate key, value, key, value and none of them can contain an
+        // escape; the REQUIREs below hold the reader to that shape instead of
+        // assuming it.
+        [[nodiscard]]
+        auto canonicalMemberNames(std::string const& canonical) -> std::vector<std::string>
+        {
+            REQUIRE(canonical.starts_with('{'));
+            REQUIRE(canonical.ends_with('}'));
+
+            auto names   = std::vector<std::string>{};
+            auto cursor  = std::size_t{1};
+            auto wantKey = true;
+            while (true)
+            {
+                auto const open = canonical.find('"', cursor);
+                if (open == std::string::npos)
+                {
+                    break;
+                }
+                auto const close = canonical.find('"', open + 1U);
+                REQUIRE(close != std::string::npos);
+                if (wantKey)
+                {
+                    names.emplace_back(canonical.substr(open + 1U, close - open - 1U));
+                }
+                wantKey = !wantKey;
+                cursor  = close + 1U;
+            }
+            REQUIRE(wantKey);
+            return names;
+        }
+
         [[nodiscard]]
         auto manifestSpec() -> SessionManifestSpec
         {
@@ -160,7 +196,6 @@ namespace uf::operator_runtime
                 .operatorProtocolSchemaHash   = hashOf("operator"),
                 .projectRegistrationHash      = hashOf("registration"),
                 .policyArtifactHash           = hashOf("policy"),
-                .journalEnvelopeSchemaHash    = hashOf("journal"),
                 .agentProfileHash             = hashOf("agent"),
             };
         }
@@ -648,7 +683,6 @@ namespace uf::operator_runtime
         CHECK(manifestDefinition.find("\"runtime_model_artifact_root_hash\"") != std::string::npos);
         CHECK(manifestDefinition.find("\"project_registration_hash\"") != std::string::npos);
         CHECK(manifestDefinition.find("\"policy_artifact_hash\"") != std::string::npos);
-        CHECK(manifestDefinition.find("\"journal_envelope_schema_hash\"") != std::string::npos);
 
         auto const first  = SessionManifest::create(manifestSpec());
         auto const second = SessionManifest::create(manifestSpec());
@@ -663,15 +697,30 @@ namespace uf::operator_runtime
         // that leaves the canonical form changes both mints identically and
         // would pass every assertion above.
         using SpecField = ContentHash SessionManifestSpec::*;
-        constexpr auto fields = std::array<std::pair<std::string_view, SpecField>, 6U>{{
+        constexpr auto fields = std::array<std::pair<std::string_view, SpecField>, 5U>{{
             {"agent_profile_hash", &SessionManifestSpec::agentProfileHash},
-            {"journal_envelope_schema_hash", &SessionManifestSpec::journalEnvelopeSchemaHash},
             {"operator_protocol_schema_hash", &SessionManifestSpec::operatorProtocolSchemaHash},
             {"policy_artifact_hash", &SessionManifestSpec::policyArtifactHash},
             {"project_registration_hash", &SessionManifestSpec::projectRegistrationHash},
             {"runtime_model_artifact_root_hash",
              &SessionManifestSpec::runtimeModelArtifactRootHash},
         }};
+
+        // The table is the manifest's whole membership, not a sample of it.
+        // Every member the canonical form carries is listed above, so a member
+        // that reaches the serializer without a row here -- and therefore
+        // without an accessor, a reader, or a refusal -- is reported by name.
+        // Without this the table would only cover what someone remembered to
+        // add to it, which is what journal_envelope_schema_hash rode in on
+        // until 2026-08-15.
+        for (auto const& member : canonicalMemberNames(first->canonicalBytes()))
+        {
+            CAPTURE(member);
+            CHECK(std::ranges::any_of(
+                fields,
+                [&member](auto const& entry) { return entry.first == member; }
+            ));
+        }
 
         for (auto const& [name, field] : fields)
         {

@@ -121,9 +121,13 @@ runtime_model_artifact_root_hash
 operator_protocol_schema_hash
 project_registration_hash
 policy_artifact_hash
-journal_envelope_schema_hash
 agent_profile_hash
 ```
+
+> Amended 2026-08-15: `journal_envelope_schema_hash` was removed from
+> `SessionManifest` — it was written and serialized but had no accessor, no
+> reader and no refusal. See Stage H5 of
+> [the framework hash cleanup](2026-08-14-framework-hash-cleanup.md).
 
 It uses the same JCS byte rule and
 `session_manifest_hash = sha256(exact manifest bytes)`. Version labels are

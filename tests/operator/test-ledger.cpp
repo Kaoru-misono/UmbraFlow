@@ -872,7 +872,6 @@ namespace uf::operator_runtime
                     .operatorProtocolSchemaHash   = hashOf("operator"),
                     .projectRegistrationHash      = projectRegistrationHash,
                     .policyArtifactHash           = hashOf("policy"),
-                    .journalEnvelopeSchemaHash    = hashOf("journal-envelope"),
                     .agentProfileHash             = hashOf("agent"),
                 }
             );
@@ -2855,7 +2854,6 @@ namespace uf::operator_runtime
                 .operatorProtocolSchemaHash   = hashOf("operator"),
                 .projectRegistrationHash      = prepared.project.registration.hash(),
                 .policyArtifactHash           = hashOf("a policy this session was not pinned to"),
-                .journalEnvelopeSchemaHash    = hashOf("journal-envelope"),
                 .agentProfileHash             = hashOf("agent"),
             }
         );

@@ -162,7 +162,28 @@ treats each name as one field will scope a change wrongly:
   RuntimeArtifact manifest it appears in `$defs.RuntimeModelBindingRef`
   (`schema/umbraflow-operator-v1.schema.json:85-101`). That definition is
   `$ref`-ed by nothing in `schema/`, and `RuntimeModelBindingRef` has zero
-  matches anywhere in `modules/` or `tests/`. It is an orphan.
+  matches anywhere in `modules/`, `tests/` or `entry/`. It is an orphan.
+
+  > **Corrected 2026-08-15, before implementing Stage H5.** Not being `$ref`-ed
+  > is *not* what makes it an orphan, and the original wording invited the wrong
+  > guard. Measured at HEAD `7d5ba0f`: the Operator protocol schema declares
+  > **50** `$defs`; **38** are the target of a `#/$defs/<name>` reference
+  > somewhere under `schema/`; **12 are `$ref`-ed by nothing** — `AgentBudget`,
+  > `ApprovalToken`, `ControllerCapability`, `DecisionBasis`,
+  > `ExternalInputFinding`, `PlanProposal`, `ProgressMarker`, `ProjectSnapshot`,
+  > `ResyncRequired`, `RuntimeModelBindingRef`, `SessionManifest` and
+  > `SnapshotParts`. Eleven of those twelve are top-level protocol shapes that
+  > contract tests and runtime code name by **bare definition name**, which is
+  > exactly why nothing `$ref`s them. Counting the `.c/.cc/.cpp/.h/.hpp/.luau`
+  > files under `modules/`, `tests/` and `entry/` that name each one outside a
+  > comment — the reading `definition_consumer_errors` in
+  > `tests/test-runtime-surface.py` performs — gives `SessionManifest` 20,
+  > `AgentBudget`, `PlanProposal` and `ResyncRequired` 4 each, `ApprovalToken`
+  > 3, `ExternalInputFinding` and `SnapshotParts` 2 each,
+  > `ControllerCapability`, `DecisionBasis`, `ProgressMarker` and
+  > `ProjectSnapshot` 1 each — and `RuntimeModelBindingRef` **0**. The property
+  > that isolates it is **having a consumer**, not being referenced. See
+  > [Stage H5](#stage-h5--delete-the-two-hash-carriers-nothing-reads).
 
 ### 2.4 File-level breadth
 
@@ -237,7 +258,7 @@ it and refuses a concrete mismatch.
 | `k_workspaceSqliteSchemaHash` and `workspace_sqlite_schema_hash` | ✓ | ✗ | ✗ | ✓ | Fails 2 and 3. The value is `sha256` over a JCS document naming the workspace application id, `user_version` and every schema object's normalized SQL (`tools/annotate/store.py:485`). What the Host needs to know is "is this workspace database a generation I understand" — a database revision. Condition 3 fails twice: `runtime-installation.hpp:31` and `tools/annotate/tests/test_backend.py:870` are both hand transcriptions of a value only `store.py` computes. |
 | `tests/deployment/test-project-deployment.cpp:1265, 1298, 1309` | ✓ | ✓ | ✗ | ✓ | Fails 3 alone. The catalog entries being asserted are generated correctly; the expectations are typed. Any byte edit to those three schemas turns the test red for no semantic reason, and the fix is a transcription. |
 | `SessionManifest.journal_envelope_schema_hash` (`schema/umbraflow-operator-v1.schema.json:144, 152`) | ✓ | ✓ | ✓ | ✗ | Fails 4 alone, and that is enough. It is written at `modules/service/source/service/product-lifecycle.cpp:256-273` and serialized at `modules/operator/source/operator/manifest.cpp:95-96`, but `SessionManifest` declares **no getter for it** — `modules/operator/source/operator/manifest.hpp` publishes 13 hash accessors (`:95-176`) and this is not one of them. Nothing resolves it and nothing refuses a mismatch. Contrast `operator_protocol_schema_hash`, which sits in the same manifest and *is* refused at `modules/operator/source/operator/effective-plan.cpp:905`; that contrast is what makes this a defect rather than a style. |
-| The orphan `$defs.RuntimeModelBindingRef` and its `runtime_model_schema_hash` / `runtime_model_artifact_root_hash` (`schema/umbraflow-operator-v1.schema.json:85-101`) | ✗ | ✗ | ✗ | ✗ | Fails all four by not existing anywhere else. No `$ref` reaches the definition, and `RuntimeModelBindingRef` has zero matches in `modules/` and `tests/`. Two hash fields in the published Operator protocol that no producer writes and no consumer reads. |
+| The orphan `$defs.RuntimeModelBindingRef` and its `runtime_model_schema_hash` / `runtime_model_artifact_root_hash` (`schema/umbraflow-operator-v1.schema.json:85-101`) | ✗ | ✗ | ✗ | ✗ | Fails all four by not existing anywhere else. No `$ref` reaches the definition **and** `RuntimeModelBindingRef` has zero matches in `modules/`, `tests/` or `entry/` — it is the conjunction that isolates it, since eleven other `$defs` are also unreferenced and every one of them is named by a source (see the correction note in §2.3). Two hash fields in the published Operator protocol that no producer writes and no consumer reads. |
 
 ### 3.2 Keepers — these stay, and the plan says so plainly
 
@@ -254,6 +275,15 @@ it and refuses a concrete mismatch.
 | The 40 runtime-computed Operator, journal and evidence hashes (plan, intent, state, evidence, capability, policy, registration, session and blob identities) | ✓ | ✓ | ✓ | mostly ✓ | Automatically produced, no authoring cost. The proposal's own "retain internally for now" section applies. The one measured condition-4 gap, `authority_decisions.decision_basis_hash` having no reader, is **already owned by consumer-plan row `U12d` item 3** and gets no row here. |
 
 ## 4. Stages
+
+> **Execution status, 2026-08-15.** **H5 and H1 are implemented in this
+> repository**; H4 was implemented separately. Every measurement in [§2](#2-measured-inventory)
+> and every classification in [§3](#3-classification-against-the-admission-rule)
+> was taken before those stages landed and is read as the record of what was
+> found, not as the current tree: `k_traceSchemaHash`, `TypedTracePayload::schemaHash`,
+> the trace envelope's `payload.schema_hash`, `SessionManifest.journal_envelope_schema_hash`
+> and `$defs.RuntimeModelBindingRef` no longer exist, and `SCHEMA_AUTHORITIES`
+> now holds four entries rather than five. H2 and H3 are not started.
 
 Each stage is independently deliverable, leaves the tree green on its own, and
 is ordered so that no stage depends on a later one. Each guard is stated with
@@ -437,30 +467,78 @@ which `tests/test-runtime-surface.py` already does from the same tree.
    (`schema/umbraflow-operator-v1.schema.json:85-101`) outright.
 
 **What replaces them.** Nothing. A field that no accessor exposes and no
-consumer refuses carries no information; a `$defs` entry that nothing `$ref`s
-carries none either. `session_manifest_hash` still covers the manifest's
-remaining bytes, so no aggregate identity is weakened.
+consumer refuses carries no information; a `$defs` entry that no `$ref` reaches
+and no source names carries none either. `session_manifest_hash` still covers
+the manifest's remaining bytes, so no aggregate identity is weakened.
 
 **Guard.** The existing SessionManifest field-coverage table in
 `tests/operator/test-state-contract.cpp:668` — every declared member must move
-`session_manifest_hash` — with the removed entry gone, plus an assertion that
-the canonical manifest definition no longer contains
-`"journal_envelope_schema_hash"` (the inverse of the present
-`test-state-contract.cpp:651`). For the second deletion, a schema check that
-every `$defs` entry in `umbraflow-operator-v1.schema.json` is reached by at
-least one `$ref`.
+`session_manifest_hash` — with the removed entry gone, plus a closure assertion
+that reads the member names out of `SessionManifest::canonicalBytes()` and
+requires every one of them to appear in that table. For the second deletion, a
+schema check that every `$defs` entry in `umbraflow-operator-v1.schema.json`
+**has a consumer**: it is either the target of a `#/$defs/<name>` reference
+somewhere under `schema/`, or its bare definition name appears in a first-party
+source under `modules/`, `tests/` or `entry/`.
+
+> **Corrected 2026-08-15, before implementing this stage.** The guard stated
+> here until now was a `$defs` **reachability** check — "every `$defs` entry is
+> reached by at least one `$ref`" — and that shape does not work. Measured at
+> HEAD `7d5ba0f` (see the correction note in [§2.3](#23-hash-fields-in-every-document-under-schema)):
+> of 50 `$defs`, **12** are `$ref`-ed by nothing, so a reachability rule is red
+> against twelve definitions on the day it is written and isolates nothing. It
+> would have to be silenced with an eleven-name allowlist, and a rule that
+> exempts by name whatever it is pointed at is the check-that-cannot-fail this
+> repository's own `docs/pitfalls/checks-that-cannot-fail.md` forbids: the
+> allowlist, not the code, would decide the outcome.
+>
+> The eleven other unreferenced definitions are not dead. They are top-level
+> protocol shapes — `SessionManifest`, `PlanProposal`, `DecisionBasis` and the
+> rest — that contract tests and runtime code name by **bare definition name**
+> (`definition(schema, "SessionManifest")` at
+> `tests/operator/test-state-contract.cpp:646` is the pattern), which is
+> precisely why no `$ref` points at them. Being unreferenced is therefore normal
+> for a protocol root and says nothing about whether anything uses it. The
+> property that actually distinguishes `RuntimeModelBindingRef` from all eleven
+> is that it has **no consumer of either kind**: no `$ref` and no name in any
+> source. That is the property the guard now states, and it needs no allowlist —
+> every entry passes on evidence found in the tree.
 
 **Falsification.** Re-add the field to `SessionManifestSpec` and the serializer
 without an accessor: the red must land on the "no orphan member" assertion, not
 on a JCS byte-count or ordering assertion — a red from ordering would mean the
-case is only noticing that the bytes changed. Re-add an unreferenced `$defs`
-entry: the red must land on the reachability check naming that entry. Confirm
-before starting that the reachability check is red **today** against
-`RuntimeModelBindingRef`; a check written after the deletion that has never been
-seen red is a check that cannot fail.
+case is only noticing that the bytes changed.
 
-**Estimate: 1–2 person-days.** Assumes the `$defs` reachability check is a new
-rule in `tests/test-runtime-surface.py` rather than a bespoke test, and that
+> **Corrected 2026-08-15, while implementing this stage.** The guard above said
+> "an assertion that the canonical manifest definition no longer contains
+> `"journal_envelope_schema_hash"` (the inverse of the present
+> `test-state-contract.cpp:651`)". Line 651 reads the **schema** text
+> (`definition(schema, "SessionManifest")`), so the inverse of it is a
+> schema-text assertion — and the falsification mutation prescribed here adds
+> the member to `SessionManifestSpec` and to the C++ serializer, which does not
+> touch the schema file. The guard as written could not go red on its own
+> falsification, and it would only ever have guarded one hard-coded name. The
+> closure assertion now specified reads the member names out of the canonical
+> bytes and requires the table to contain each: it goes red by name on any
+> member that reaches the serializer without a coverage row, which is the
+> "no orphan member" property the falsification is asking for.
+
+For the consumer check, two
+mutations: re-add a `$defs` entry that neither a `$ref` nor a source names, and
+the red must name that entry and only that entry; and take an entry that passes
+only through its source consumers — `ProgressMarker`, whose single consumer is
+`tests/operator/test-agent-audit-contract.cpp` — remove that one mention, and
+the red must name `ProgressMarker`, proving the source-consumer half of the
+disjunction is read rather than being a clause that always holds. Confirm before
+starting that the consumer check is red **today** against
+`RuntimeModelBindingRef` **and names nothing else**; a check written after the
+deletion that has never been seen red is a check that cannot fail, and a check
+seen red against twelve names has not isolated the one being deleted.
+
+**Estimate: 1–2 person-days.** Assumes the `$defs` consumer check is a new rule
+in `tests/test-runtime-surface.py` rather than a bespoke test — that file
+already owns the repository's structural schema gates and already reads both
+`schema/` and first-party sources from the same tree — and that
 `modules/operator/**` and `tests/operator/**` are not being edited by another
 lane at the time — both were mid-edit when this was measured.
 
@@ -503,7 +581,7 @@ reading this document.**
 | `H2` | Replace `annotation_workspace_schema_hash` and `workspace_sqlite_schema_hash` with `annotation_workspace_format` and `workspace_sqlite_revision` across `tools/annotate/{publication,store}.py`, the positional release-manifest reader and every fixture | An unsupported revision is refused with a message naming supported and supplied; deleting the comparison reddens the same case for the opposite reason; and the positive control passes — editing a comment inside the workspace DDL leaves the whole gate green |
 | `H3` | Replace `manifest_schema_hash` / `runtime_model_schema_hash` with `runtime_artifact_format` / `runtime_model_format`, replace Luau `model.schema_hash` with `model.format`, regenerate both example manifests, and delete `SCHEMA_AUTHORITIES` and `schema_authority_errors` once the table is empty | Format mismatch refused naming both numbers; a Luau/artifact format disagreement reddens at `finalizeRuntimeModel` rather than earlier in the parse; one mutated asset byte still reddens the closure refusal; and a cosmetic edit to `schema/umbraflow-runtime-v2.schema.json` leaves the gate green |
 | `H4` | Stop typing the three generated framework-catalog digests in `tests/deployment/test-project-deployment.cpp` | The three catalog entries are compared against digests recomputed from the checked-in files; stubbing the generator's digest computation reddens that comparison for all three, not the identity assertion |
-| `H5` | Delete `SessionManifest.journal_envelope_schema_hash` (written and serialized, but `SessionManifest` publishes no accessor for it and nothing refuses a mismatch) and the orphan `$defs.RuntimeModelBindingRef`, which no `$ref` reaches and no C++ names | Re-adding an unread manifest member reddens a "no orphan member" assertion rather than a byte-ordering one; a `$defs` reachability rule reddens on any unreferenced definition, and is demonstrated red against `RuntimeModelBindingRef` **before** the deletion |
+| `H5` | Delete `SessionManifest.journal_envelope_schema_hash` (written and serialized, but `SessionManifest` publishes no accessor for it and nothing refuses a mismatch) and the orphan `$defs.RuntimeModelBindingRef`, which no `$ref` reaches and no source names | Re-adding an unread manifest member reddens a "no orphan member" assertion rather than a byte-ordering one; a `$defs` **consumer** rule — every definition is either `$ref`-ed under `schema/` or named in a source under `modules/`, `tests/` or `entry/` — reddens on any definition with neither, is demonstrated red against `RuntimeModelBindingRef` **and nothing else before** the deletion, and its source-consumer half is shown live by deleting `ProgressMarker`'s single mention. A bare reachability rule is **not** acceptable here: 12 of the 50 `$defs` are `$ref`-ed by nothing because protocol roots are named rather than referenced |
 
 Rows deliberately **not** opened, because the consumer plan already owns them:
 Operator DDL schema identity (`U2a`) and `decision_basis_hash` having no reader

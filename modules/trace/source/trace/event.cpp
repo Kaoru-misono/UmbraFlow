@@ -175,9 +175,7 @@ namespace uf::trace
         appendJsonString(output, event.producer());
         output += ",\"references\":";
         appendReferences(output, event.audit().references);
-        output += "},\"payload\":{\"schema_hash\":";
-        appendJsonString(output, event.payload().schemaHash.hex());
-        output += ",\"fields\":";
+        output += "},\"payload\":{\"fields\":";
         appendFields(output, event.payload().fields);
         output += "}}";
         return output;

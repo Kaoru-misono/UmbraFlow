@@ -97,15 +97,6 @@ namespace uf::task
             })
         )lua"};
 
-        [[nodiscard]] auto traceSchemaHash() -> ContentHash
-        {
-            auto const parsed = ContentHash::parse(
-                std::format("sha256:{}", trace::k_traceSchemaHash)
-            );
-            UF_CHECK(parsed.has_value());
-            return *parsed;
-        }
-
         [[nodiscard]]
         auto runFinishedEvent(TaskRunReport const& report) -> trace::TraceEventSpec
         {
@@ -145,8 +136,7 @@ namespace uf::task
                 .eventType = "run.finished",
                 .audit     = trace::AuditMetadata{.actor = "host"},
                 .payload   = trace::TypedTracePayload{
-                    .schemaHash = traceSchemaHash(),
-                    .fields     = std::move(fields),
+                    .fields = std::move(fields),
                 },
             };
         }

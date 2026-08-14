@@ -100,6 +100,12 @@ The following are current manual copies of schema or database identity:
 - `detail::k_annotationWorkspaceSchemaHash`;
 - `detail::k_workspaceSqliteSchemaHash`.
 
+> Amended 2026-08-15: `trace::k_traceSchemaHash` is gone — Stage H1 of
+> [the framework hash cleanup](plans/2026-08-14-framework-hash-cleanup.md)
+> deleted it together with the trace envelope's `payload.schema_hash`, because
+> `k_traceSchema = "umbraflow-trace/v2"` already names the format in the same
+> envelope. The other five are as listed.
+
 `tests/test-runtime-surface.py` exists partly to keep these copies synchronized.
 The repository also already generates `FrameworkSchemaCatalog` from the exact
 files under `schema/`, so a second hand-authored digest is unnecessary where a

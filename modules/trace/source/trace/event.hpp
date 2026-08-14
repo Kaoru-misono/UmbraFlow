@@ -15,9 +15,6 @@ namespace uf::trace
     class TraceRecorder;
 
     inline constexpr auto k_traceSchema = std::string_view{"umbraflow-trace/v2"};
-    inline constexpr auto k_traceSchemaHash = std::string_view{
-        "b7fb253bae3bd4c4307751a3d43271e5adda91af0870a6dcf359fca91029ccc1"
-    };
 
     // Audit payloads deliberately have no byte, array, or nested-object value.
     // This keeps production Trace a small semantic stream rather than a covert
@@ -51,8 +48,6 @@ namespace uf::trace
 
     struct TypedTracePayload final
     {
-        ContentHash schemaHash;
-
         std::vector<TraceField> fields{};
     };
 
@@ -61,7 +56,7 @@ namespace uf::trace
         std::string eventType{};
 
         AuditMetadata     audit{};
-        TypedTracePayload payload;
+        TypedTracePayload payload{};
     };
 
     struct TraceStreamSpec final

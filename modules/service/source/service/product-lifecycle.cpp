@@ -34,9 +34,6 @@ namespace uf::service
         constexpr auto k_operatorSchemaPath = std::string_view{
             "schema/umbraflow-operator-v1.schema.json"
         };
-        constexpr auto k_journalSchemaPath = std::string_view{
-            "schema/umbraflow-journal-v1.schema.json"
-        };
         constexpr auto k_noAgentProfile = std::string_view{"null"};
 
         [[nodiscard]]
@@ -253,9 +250,7 @@ namespace uf::service
         );
 
         UF_TRY_VALUE(operatorSchema, publishedSchema(k_operatorSchemaPath));
-        UF_TRY_VALUE(journalSchema, publishedSchema(k_journalSchemaPath));
         UF_TRY_VALUE(operatorSchemaHash, hashOf(operatorSchema.exactBytes));
-        UF_TRY_VALUE(journalSchemaHash, hashOf(journalSchema.exactBytes));
         auto policyBytes = loaded.policyArtifactBytes.value_or(
             operator_runtime::denyAllPolicyArtifact(operatorSchemaHash)
         );
@@ -270,7 +265,6 @@ namespace uf::service
                     .operatorProtocolSchemaHash   = operatorSchemaHash,
                     .projectRegistrationHash      = selected.registration.hash(),
                     .policyArtifactHash           = policyHash,
-                    .journalEnvelopeSchemaHash    = journalSchemaHash,
                     .agentProfileHash             = noAgentProfileHash,
                 }
             )

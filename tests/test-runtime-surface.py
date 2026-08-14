@@ -226,11 +226,6 @@ REQUIRED_CHECK_TARGETS = frozenset({"check-repository-surface"})
 # entry existed the gate printed PASS with that pin stale.
 SCHEMA_AUTHORITIES = (
     (
-        "modules/trace/source/trace/event.hpp",
-        "k_traceSchemaHash",
-        "schema/umbraflow-trace-v2.schema.json",
-    ),
-    (
         "modules/task/runtime/model.luau",
         "model.schema_hash",
         "schema/umbraflow-runtime-v2.schema.json",
@@ -295,6 +290,37 @@ EMBEDDED_SCHEMA_LITERAL_PATTERN = re.compile(
     rf"{re.escape(READINGS_EMBEDDED_CONSTANT)}\s*=\s*std::string_view\s*\{{\s*"
     r'R"json\((.*?)\)json"\s*\}',
     re.DOTALL,
+)
+
+# The published Operator protocol, and the roots a definition's consumers may
+# live under. Every $defs entry there must have a consumer of one of two kinds:
+# a `#/$defs/<name>` reference from somewhere under schema/, or its bare
+# definition name written in a first-party source under one of these roots.
+#
+# WHY THE DISJUNCTION, AND WHY NOT PLAIN REACHABILITY. Being $ref-ed is not the
+# property that says a definition is alive here. A protocol root is named, not
+# referenced: `definition(schema, "SessionManifest")` in the contract tests
+# reads the entry out by its bare name, and nothing $refs it. Measured when this
+# rule was written, 12 of the schema's 50 $defs were the target of no $ref at
+# all, and 11 of them were live top-level shapes with 1 to 20 naming sources
+# each. A reachability rule is therefore red against a dozen definitions on the
+# day it is written; the only way to make it green is an allowlist naming those
+# eleven, and a rule that exempts by name whatever it is pointed at decides its
+# own outcome -- the defect docs/pitfalls/checks-that-cannot-fail.md is about.
+# The disjunction needs no allowlist: every entry passes on evidence found in
+# the tree, and one entry passed on neither and was deleted.
+#
+# The rule strips comments but keeps string literals, because a string literal
+# is how a protocol root is named: `definition(schema, "SessionManifest")` reads
+# the entry out by a quoted name, and stripping literals would report eight live
+# definitions as orphans. A mention that survives only inside a comment is not a
+# consumer and is reported. Only SOURCE_SUFFIXES files are read, so this gate's
+# own Python cannot license a definition by naming it -- a rule able to satisfy
+# itself would license exactly the orphan it exists to find.
+OPERATOR_PROTOCOL_SCHEMA = "schema/umbraflow-operator-v1.schema.json"
+DEFINITION_CONSUMER_ROOTS = ("entry", "modules", "tests")
+DEFINITION_REFERENCE_PATTERN = re.compile(
+    r'"\$ref"\s*:\s*"[^"]*#/\$defs/([A-Za-z0-9_]+)"'
 )
 
 COMMAND_PATTERN = re.compile(r'Command\s*\{\s*"([a-z0-9-]+)"')
@@ -384,6 +410,7 @@ HOST_VALIDATION_MARKER_PATTERN = re.compile(
     r"[A-Za-z_][A-Za-z0-9_]*)\)"
 )
 CPP_COMMENT_PATTERN = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
+LUAU_COMMENT_PATTERN = re.compile(r"--\[\[.*?\]\]|--[^\n]*", re.DOTALL)
 CMAKE_COMMENT_PATTERN = re.compile(r"#[^\n]*")
 CPP_NON_CODE_PATTERN = re.compile(
     r"//[^\n]*|/\*.*?\*/|R\"[^\s()\\]{0,16}\(.*?\)[^\s()\\]{0,16}\"|"
@@ -413,6 +440,15 @@ def first_party_sources(root: Path) -> Iterator[Path]:
 
 def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def uncommented_text(path: Path, text: str) -> str:
+    pattern = (
+        LUAU_COMMENT_PATTERN
+        if path.suffix.lower() == ".luau"
+        else CPP_COMMENT_PATTERN
+    )
+    return pattern.sub("", text)
 
 
 def executable_text(path: Path, text: str) -> str:
@@ -1055,6 +1091,60 @@ def receipt_validation_errors(root: Path) -> list[str]:
     return errors
 
 
+def definition_consumer_errors(root: Path) -> list[str]:
+    schema_root = root / "schema"
+    operator_schema = root / OPERATOR_PROTOCOL_SCHEMA
+    if not operator_schema.is_file():
+        return [f"{OPERATOR_PROTOCOL_SCHEMA} is missing"]
+
+    try:
+        schema = json.loads(operator_schema.read_bytes())
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        return [f"{OPERATOR_PROTOCOL_SCHEMA} is invalid: {error}"]
+
+    definitions = schema.get("$defs")
+    if not isinstance(definitions, dict) or not definitions:
+        return [f"{OPERATOR_PROTOCOL_SCHEMA} declares no $defs"]
+
+    referenced: set[str] = set()
+    for path in sorted(schema_root.glob("*.json")):
+        referenced.update(DEFINITION_REFERENCE_PATTERN.findall(read_text(path)))
+
+    named: set[str] = set()
+    unreferenced = frozenset(definitions) - referenced
+    if unreferenced:
+        patterns = {
+            name: re.compile(rf"\b{re.escape(name)}\b") for name in unreferenced
+        }
+        for consumer_root_name in DEFINITION_CONSUMER_ROOTS:
+            consumer_root = root / consumer_root_name
+            if not consumer_root.is_dir():
+                continue
+            for path in consumer_root.rglob("*"):
+                if (
+                    not path.is_file()
+                    or path.suffix.lower() not in SOURCE_SUFFIXES
+                    or any(
+                        part in VENDORED_DIRECTORY_NAMES
+                        for part in path.relative_to(root).parts
+                    )
+                ):
+                    continue
+                text = uncommented_text(path, read_text(path))
+                named.update(
+                    name
+                    for name in unreferenced - named
+                    if patterns[name].search(text)
+                )
+
+    roots = ", ".join(f"{name}/" for name in DEFINITION_CONSUMER_ROOTS)
+    return [
+        f"{OPERATOR_PROTOCOL_SCHEMA}: $defs.{name} has no consumer -- no $ref "
+        f"under schema/ reaches it and no source under {roots} names it"
+        for name in sorted(unreferenced - named)
+    ]
+
+
 def test_registration_errors(root: Path) -> list[str]:
     cmake_path = root / "tests/CMakeLists.txt"
     if not cmake_path.is_file():
@@ -1313,6 +1403,7 @@ def main() -> int:
             *generic_schema_errors(root),
             *readings_contract_errors(root),
             *receipt_validation_errors(root),
+            *definition_consumer_errors(root),
             *schema_authority_errors(root),
             *test_registration_errors(root),
         }

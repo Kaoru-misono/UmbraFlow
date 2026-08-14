@@ -48,9 +48,6 @@ namespace uf::trace
                 .audit     = AuditMetadata{
                     .actor = "operator.agent",
                 },
-                .payload   = TypedTracePayload{
-                    .schemaHash = hashOf('b'),
-                },
             };
         }
 

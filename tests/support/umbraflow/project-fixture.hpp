@@ -689,7 +689,6 @@ namespace uf::operator_runtime::test_support
                 .operatorProtocolSchemaHash   = hashOf("operator"),
                 .projectRegistrationHash      = project.hash(),
                 .policyArtifactHash           = hashOf(exactPolicyArtifactBytes),
-                .journalEnvelopeSchemaHash    = hashOf("journal-envelope"),
                 .agentProfileHash             = agentProfileHash,
             }
         );
