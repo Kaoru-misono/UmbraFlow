@@ -8,7 +8,29 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
+
+namespace
+{
+    // Reporting a fatal exception must not itself become the reason the process
+    // dies: std::cerr's inserters are not noexcept, and a throw out of a catch
+    // handler in main leaves nowhere to report it. A stream that fails while
+    // printing why an earlier failure happened has nothing further to say, so
+    // the exit code carries the outcome on its own.
+    [[nodiscard]]
+    auto reportFatalException(std::string_view what) noexcept -> int
+    {
+        try
+        {
+            std::cerr << "umbra-flow-conformance exception: " << what << '\n';
+        }
+        catch (...)
+        {
+        }
+        return 2;
+    }
+}
 
 auto main(int argumentCount, char const* const* p_arguments) -> int
 {
@@ -43,12 +65,10 @@ auto main(int argumentCount, char const* const* p_arguments) -> int
     }
     catch (std::exception const& error)
     {
-        std::cerr << "umbra-flow-conformance exception: " << error.what() << '\n';
-        return 2;
+        return reportFatalException(error.what());
     }
     catch (...)
     {
-        std::cerr << "umbra-flow-conformance exception: unknown failure\n";
-        return 2;
+        return reportFatalException("unknown failure");
     }
 }

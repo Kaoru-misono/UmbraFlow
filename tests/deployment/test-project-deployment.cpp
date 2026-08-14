@@ -19,6 +19,8 @@
 #include "arcana-expedition/project-schemas.hpp"
 #include "umbraflow/project-schemas.hpp"
 
+#include <core/safety/annotations.hpp>
+
 #include <deployment/project-deployment.hpp>
 
 #include <operator/project-plugin.hpp>
@@ -29,7 +31,9 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -158,6 +162,20 @@ namespace uf::deployment
             return outcome.has_value()
                 ? std::string{"<the sources built a deployment>"}
                 : std::string{outcome.error().message()};
+        }
+
+        // Engagement proved where the read happens rather than asserted a line
+        // above it. A REQUIRE two lines up is invisible to the analyzer and to
+        // anyone who later deletes it, so the check travels with the read.
+        template <typename T>
+        [[nodiscard]]
+        auto valueOf(std::optional<T> const& value UF_LIFETIME_BOUND) -> T const&
+        {
+            if (!value.has_value())
+            {
+                throw std::logic_error{"read of a disengaged optional"};
+            }
+            return *value;
         }
 
         // One reduce envelope carrying one fixture.progress event.
@@ -1126,7 +1144,10 @@ namespace uf::deployment
         constexpr auto k_inClosure =
             std::string_view{"no target in the document it names"};
 
-        auto const referencing = [](std::string_view identity) -> std::string
+        // Appending the view binds it to a reference, so it is odr-used and
+        // must be captured however constant it is.
+        auto const referencing =
+            [k_missingTarget](std::string_view identity) -> std::string
         {
             auto text = std::string{
                 R"json({"$schema":"https://json-schema.org/draft/2020-12/schema",)json"
@@ -1238,9 +1259,9 @@ namespace uf::deployment
             collectionFact.has_value(),
             "framework schema catalog must include collection Fact"
         );
-        CHECK(collectionFact->identity
+        CHECK(valueOf(collectionFact).identity
               == "https://umbraflow.dev/schema/collection-fact/v1");
-        CHECK(collectionFact->sha256
+        CHECK(valueOf(collectionFact).sha256
               == "bb40059ed3a600c5248fc2a1736a07c1e3776bc58bdd2c14e5637adb658e57bb");
 
         auto const workflowTool = framework_schema::findFrameworkSchema(
@@ -1250,7 +1271,7 @@ namespace uf::deployment
             workflowTool.has_value(),
             "framework schema catalog must include declarative workflow tools"
         );
-        CHECK(workflowTool->identity
+        CHECK(valueOf(workflowTool).identity
               == "https://umbraflow.dev/schema/declarative-workflow-tool/v1");
 
         // The product lifecycle facade reads the Operator protocol schema out of
@@ -1271,9 +1292,9 @@ namespace uf::deployment
             provenance.has_value(),
             "framework schema catalog must include Fact provenance"
         );
-        CHECK(provenance->identity
+        CHECK(valueOf(provenance).identity
               == "https://umbraflow.dev/schema/fact-provenance/v1");
-        CHECK(provenance->sha256
+        CHECK(valueOf(provenance).sha256
               == "4098bc91b6730a1ae5f1cea3b6e156f447469a531ee0e096eacba6adf552871b");
 
         auto const fact = framework_schema::findFrameworkSchema(
@@ -1283,8 +1304,8 @@ namespace uf::deployment
             fact.has_value(),
             "framework schema catalog must include Fact"
         );
-        CHECK(fact->identity == "https://umbraflow.dev/schema/fact/v1");
-        CHECK(fact->sha256
+        CHECK(valueOf(fact).identity == "https://umbraflow.dev/schema/fact/v1");
+        CHECK(valueOf(fact).sha256
               == "7a9af5e79e0dbf6c2be5126f34ddbf48469f28a00c6cc6766b4e447f30bdf0cf");
 
         auto const policy = framework_schema::findFrameworkSchema(
@@ -1294,7 +1315,7 @@ namespace uf::deployment
             policy.has_value(),
             "framework schema catalog must include Operator policy"
         );
-        CHECK(policy->identity == "https://umbraflow.local/schema/policy-v1");
+        CHECK(valueOf(policy).identity == "https://umbraflow.local/schema/policy-v1");
 
         auto const registration = framework_schema::findFrameworkSchema(
             "schema/umbraflow-project-registration-v1.schema.json"
@@ -1303,7 +1324,7 @@ namespace uf::deployment
             registration.has_value(),
             "framework schema catalog must include project registration"
         );
-        CHECK(registration->identity
+        CHECK(valueOf(registration).identity
               == "https://umbraflow.local/schema/project-registration-v1");
     }
 
