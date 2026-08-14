@@ -1,17 +1,25 @@
 #include "effective-plan.hpp"
 
 #include <core/error/contracts.hpp>
+#include <core/numeric/checked-arithmetic.hpp>
+#include <core/numeric/checked-cast.hpp>
 #include <core/text/json-text.hpp>
 #include <core/text/utf8.hpp>
+
+#include <json/value.hpp>
 
 #include <domain/error.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <iterator>
+#include <optional>
+#include <source_location>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -20,6 +28,51 @@ namespace uf::operator_runtime
 {
     namespace
     {
+        constexpr auto k_operatorPlanErrorCodes = std::array{
+            OperatorPlanErrorCode::PlannedUiTargetSubstituted,
+            OperatorPlanErrorCode::PlannedArgumentContradicted,
+        };
+
+        [[nodiscard]]
+        auto operatorPlanErrorDetailValue(
+            OperatorPlanErrorCode code
+        ) noexcept -> int
+        {
+            auto const underlying = checkedCast<int>(std::to_underlying(code));
+            UF_CHECK(underlying.has_value());
+            auto const encoded = checkedAdd(*underlying, 1);
+            UF_CHECK(encoded.has_value());
+            return *encoded;
+        }
+
+        class OperatorPlanErrorCategory final : public std::error_category
+        {
+        public:
+            [[nodiscard]] auto name() const noexcept -> char const* override
+            {
+                return "uf.operator.plan-authority";
+            }
+
+            [[nodiscard]] auto message(int value) const -> std::string override
+            {
+                for (auto const code : k_operatorPlanErrorCodes)
+                {
+                    if (operatorPlanErrorDetailValue(code) == value)
+                    {
+                        return std::string{operatorPlanErrorWireName(code)};
+                    }
+                }
+                return "UnknownOperatorPlanErrorCode";
+            }
+        };
+
+        [[nodiscard]]
+        auto operatorPlanErrorCategory() noexcept -> std::error_category const&
+        {
+            static auto const s_category = OperatorPlanErrorCategory{};
+            return s_category;
+        }
+
         auto appendHash(std::string& output, ContentHash const& hash) -> void
         {
             appendJsonString(output, hash.hex());
@@ -357,6 +410,204 @@ namespace uf::operator_runtime
             return false;
         }
 
+        // Every declared ui_target this value names, at any depth, as a string
+        // it holds rather than as a member name it spells.
+        //
+        // This is the same question requireDeclaredUi asks, pointed at the
+        // other document: whether a string here is a string the trusted
+        // RuntimeModel parser published. It reads no project meaning out of
+        // canonical_args and cannot -- it does not know which argument is the
+        // target, and never asks. A member name is deliberately not a hit: a
+        // plan whose arguments are keyed by a ui_target has still not chosen
+        // one, and treating a key as a choice would let an unrelated shape
+        // widen what a step may aim at.
+        //
+        // Recursion is bounded because json::parse is: it refuses beyond 64
+        // levels, so no accepted document can drive this deeper than that.
+        [[nodiscard]]
+        auto declaredUiTargetsIn(
+            json::Value const& value,
+            std::span<std::string const> declared
+        ) -> std::vector<std::string>
+        {
+            auto named = std::vector<std::string>{};
+            switch (value.kind())
+            {
+            case json::ValueKind::Null:
+            case json::ValueKind::Boolean:
+            case json::ValueKind::Number:
+                return named;
+            case json::ValueKind::String:
+                if (std::ranges::contains(declared, value.string()))
+                {
+                    named.emplace_back(value.string());
+                }
+                return named;
+            case json::ValueKind::Array:
+                for (auto const& item : value.items())
+                {
+                    auto found = declaredUiTargetsIn(item, declared);
+                    named.insert(
+                        named.end(),
+                        std::make_move_iterator(found.begin()),
+                        std::make_move_iterator(found.end())
+                    );
+                }
+                return named;
+            case json::ValueKind::Object:
+                for (auto const& member : value.members())
+                {
+                    auto found = declaredUiTargetsIn(member.second, declared);
+                    named.insert(
+                        named.end(),
+                        std::make_move_iterator(found.begin()),
+                        std::make_move_iterator(found.end())
+                    );
+                }
+                return named;
+            }
+
+            UF_UNREACHABLE_MSG("Unknown json::ValueKind value");
+        }
+
+        // The frozen plan's canonical_args, read out of the plan once because
+        // both rules below judge a step against them. The operator protocol
+        // types the member as any canonical JSON value, so this returns the
+        // value whatever kind it is and neither rule may assume an object.
+        [[nodiscard]]
+        auto frozenPlanArguments(
+            std::string_view canonicalPlan
+        ) -> Result<json::Value>
+        {
+            UF_TRY_VALUE(plan, json::parse(canonicalPlan));
+            auto const* p_arguments = plan.find("canonical_args");
+            if (p_arguments == nullptr)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "frozen plan carries no canonical_args"
+                );
+            }
+            return *p_arguments;
+        }
+
+        // Whether this step may aim where it says it does.
+        //
+        // The frozen plan's canonical_args are the Operation's own command
+        // arguments; mintPlan refuses a proposal that restates them
+        // differently, so they are what the caller chose and not what the
+        // plugin later decided. Where they name UI targets the installed
+        // RuntimeModel declares, those are the objects this plan is about, and
+        // a step aiming outside them is acting on something nobody planned --
+        // which the reconciliation afterwards would then judge against the
+        // planned object rather than the touched one.
+        //
+        // A plan whose arguments name no declared ui_target chose no object,
+        // so there is nothing here to contradict and the step's target is
+        // bounded by the RuntimeModel vocabulary alone. That is a real case
+        // and not a relaxation, but it is also the limit of what this rule can
+        // decide: which argument holds the target is declared per tool on the
+        // project side and never crosses into the Operator, so a plan naming
+        // two objects leaves a step free to aim at either.
+        //
+        // This rule owns action.ui_target_id, and requirePlannedArgumentValues
+        // below owns action.canonical_parameters. They are two obligations and
+        // not two spellings of one, because the two members are not the same
+        // kind of statement: a ui_target_id is a bare identifier carrying no
+        // member name, so nothing can match it against the plan except the
+        // plan's VALUES, while canonical_parameters carries member names and is
+        // therefore matched BY MEMBER. Neither comparison can be run on the
+        // other member, and neither rule can see what the other sees: this one
+        // cannot notice a contradicted argument, and that one is silent
+        // whenever the step restates no planned member at all -- silence the
+        // same plugin whose choice is in question can help itself to, by
+        // restating nothing, and silence that is structural whenever the plan's
+        // canonical_args are not an object.
+        [[nodiscard]]
+        auto requirePlannedUiTarget(
+            json::Value const& plannedArguments,
+            std::span<std::string const> declaredUiTargets,
+            std::string_view uiTargetId
+        ) -> Status
+        {
+            auto const planned = declaredUiTargetsIn(
+                plannedArguments,
+                declaredUiTargets
+            );
+            if (planned.empty() || std::ranges::contains(planned, uiTargetId))
+            {
+                return ok();
+            }
+            return fail(
+                OperatorPlanErrorCode::PlannedUiTargetSubstituted,
+                "UIActionIntent aims at a ui_target the frozen plan did not choose"
+            );
+        }
+
+        // Whether this step's own parameters agree with the plan they belong
+        // to: every member the step restates must carry the value the frozen
+        // plan's canonical_args gave that member.
+        //
+        // That decides the target exactly without anyone naming which member
+        // holds it. The declarative workflow adapter re-resolves the target
+        // from the fresh observation and writes it back as
+        // canonical_parameters[target_argument] -- see the comment above
+        // resolve_target in declarative-workflow-tool.cpp -- so a re-resolution
+        // that lands on another instance contradicts the member the caller
+        // stated, and is refused for contradicting it rather than for being a
+        // target, which the Operator still cannot recognise.
+        //
+        // A member the step restates that the plan never named is outside this
+        // rule and is accepted. canonical_parameters are a UI action's
+        // parameters and canonical_args are a command's arguments: they share a
+        // member name only where a project chose to, and the step intent schema
+        // says of canonical_parameters that no member of ProjectRegistrationClaims
+        // pins a schema for it and this framework has no authority to invent
+        // one. Refusing an unstated member would be exactly that invention --
+        // "every action parameter must have been a command argument" -- and
+        // would forbid every UI action that takes a parameter of its own. It
+        // would also judge one plugin statement against nothing, where the whole
+        // warrant for this rule is the caller's stated choice outranking the
+        // plugin's later one.
+        //
+        // Neither value being an object is the same answer for the same reason:
+        // a non-object names no member, so no member is restated and there is
+        // nothing to compare. It is the rule read literally and not a fallback
+        // branch -- requiring an object here would be the Operator narrowing a
+        // protocol member the protocol deliberately leaves open.
+        [[nodiscard]]
+        auto requirePlannedArgumentValues(
+            json::Value const& plannedArguments,
+            std::string_view canonicalParameters
+        ) -> Status
+        {
+            UF_TRY_VALUE(parameters, json::parse(canonicalParameters));
+            if (
+                plannedArguments.kind() != json::ValueKind::Object
+                || parameters.kind() != json::ValueKind::Object
+            )
+            {
+                return ok();
+            }
+            for (auto const& parameter : parameters.members())
+            {
+                auto const* p_planned = plannedArguments.find(parameter.first);
+                if (p_planned == nullptr)
+                {
+                    continue;
+                }
+                if (*p_planned != parameter.second)
+                {
+                    return fail(
+                        OperatorPlanErrorCode::PlannedArgumentContradicted,
+                        "UIActionIntent restates a planned argument with a value "
+                        "the frozen plan did not give it"
+                    );
+                }
+            }
+            return ok();
+        }
+
         // The identity of one step at one index. plan_hash already covers the
         // command fingerprint and the decision basis, so a step is bound to the
         // whole world its plan was frozen against; the decimal index is what
@@ -375,6 +626,57 @@ namespace uf::operator_runtime
             material += canonicalStep;
             return sha256(std::as_bytes(std::span{material}));
         }
+    }
+
+    auto operatorPlanErrorCode(
+        Error const& error
+    ) noexcept -> std::optional<OperatorPlanErrorCode>
+    {
+        auto const detail = error.detailCode();
+        if (detail.category() != operatorPlanErrorCategory())
+        {
+            return std::nullopt;
+        }
+        for (auto const code : k_operatorPlanErrorCodes)
+        {
+            if (operatorPlanErrorDetailValue(code) == detail.value())
+            {
+                return code;
+            }
+        }
+        return std::nullopt;
+    }
+
+    auto operatorPlanErrorWireName(
+        OperatorPlanErrorCode code
+    ) noexcept -> std::string_view
+    {
+        switch (code)
+        {
+        case OperatorPlanErrorCode::PlannedUiTargetSubstituted:
+            return "PlannedUiTargetSubstituted";
+        case OperatorPlanErrorCode::PlannedArgumentContradicted:
+            return "PlannedArgumentContradicted";
+        }
+
+        UF_UNREACHABLE_MSG("Unknown OperatorPlanErrorCode value");
+    }
+
+    auto fail(
+        OperatorPlanErrorCode code,
+        std::string message,
+        std::source_location location
+    ) -> std::unexpected<Error>
+    {
+        return uf::fail(
+            std::error_code{
+                operatorPlanErrorDetailValue(code),
+                operatorPlanErrorCategory(),
+            },
+            std::move(message),
+            {},
+            location
+        );
     }
 
     auto stepKindWireName(StepKind kind) noexcept -> std::string_view
@@ -871,6 +1173,31 @@ namespace uf::operator_runtime
                 m_runtimeModel,
                 inputs.runtimeArtifactRootHash,
                 claims
+            ));
+            UF_TRY(requireField(
+                claims.canonicalParameters,
+                "action canonical_parameters"
+            ));
+
+            // After the vocabulary and not before it: a name outside the
+            // installed model is refused for being outside it, so this
+            // refusal only ever means the step named a real ui_target that
+            // is not the one the plan chose.
+            //
+            // The aim is judged before the parameters so that each refusal
+            // keeps one meaning: a step that both aims elsewhere and restates
+            // the caller's argument as that other object is reported as the
+            // substituted target it is, and PlannedArgumentContradicted is
+            // only ever seen where the aim was the planned one.
+            UF_TRY_VALUE(planned, frozenPlanArguments(inputs.canonicalPlan));
+            UF_TRY(requirePlannedUiTarget(
+                planned,
+                m_runtimeModel.declaredUi().uiTargets,
+                claims.uiTargetId
+            ));
+            UF_TRY(requirePlannedArgumentValues(
+                planned,
+                claims.canonicalParameters
             ));
         }
         UF_TRY_VALUE(

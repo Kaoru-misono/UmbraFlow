@@ -14,6 +14,8 @@
 #include <domain/content-hash.hpp>
 
 #include <functional>
+#include <optional>
+#include <source_location>
 #include <span>
 #include <string>
 #include <string_view>
@@ -23,6 +25,54 @@ namespace uf::operator_runtime
 {
     class OperatorCoordinator;
     class OperatorPlanAuthority;
+
+    // The refusals the step mint makes that a caller has to be able to tell
+    // apart. Every other refusal at this boundary is an
+    // AutomationErrorKind::ActionRejected carrying a sentence, and a case can
+    // only recognise one of those by matching words in prose; a rule whose
+    // whole point is that it can be falsified needs a name asked for by
+    // identity. The family is the ProjectObservationErrorCode shape, for the
+    // same reason that one exists.
+    enum class OperatorPlanErrorCode : uint8
+    {
+        // A UI-action step aims at a ui_target the frozen plan did not choose.
+        // The plan's canonical_args are the Operation's own command arguments,
+        // not the plugin's -- mintPlan refuses a proposal that restates them
+        // differently -- so this is the caller's chosen object outranking the
+        // plugin's later choice, and never one plugin statement outranking
+        // another.
+        PlannedUiTargetSubstituted,
+
+        // A UI-action step's canonical_parameters restate a member of those
+        // same arguments with another value.
+        //
+        // It is a second code rather than a second use of the first because
+        // the act is different and so is what it refuses. The contradicted
+        // member need not hold a ui_target at all -- a quantity, a mode, any
+        // argument the caller stated -- so reporting it as a substituted
+        // target would name something the document does not say. Which member
+        // holds the target is a project-tier declaration that never reaches
+        // the Operator, which is exactly why this rule names no member and
+        // judges every one the step chose to restate.
+        PlannedArgumentContradicted,
+    };
+
+    [[nodiscard]]
+    auto operatorPlanErrorCode(
+        Error const& error
+    ) noexcept -> std::optional<OperatorPlanErrorCode>;
+
+    [[nodiscard]]
+    auto operatorPlanErrorWireName(
+        OperatorPlanErrorCode code
+    ) noexcept -> std::string_view;
+
+    [[nodiscard]]
+    auto fail(
+        OperatorPlanErrorCode code,
+        std::string message,
+        std::source_location location = std::source_location::current()
+    ) -> std::unexpected<Error>;
 
     // The two shapes a workflow step can take: OP:`UIActionIntent` and
     // OP:`WaitIntent`. A wait never reaches Host dispatch, so the kind decides
@@ -56,12 +106,33 @@ namespace uf::operator_runtime
     // forgot to fill them refuses every UI-action step loudly, rather than
     // passing a membership test against nothing. A Wait names no UI and leaves
     // all three empty.
+    //
+    // uiTargetId is held to a second rule beside the vocabulary one: where the
+    // frozen plan's canonical_args name declared ui_targets, it must be one of
+    // them, or the step is refused as PlannedUiTargetSubstituted.
     struct StepIntentClaims final
     {
         std::string stepKey{};
         std::string surfaceId{};
         std::string uiTargetId{};
         std::string actionId{};
+
+        // OP:`UIActionIntent`.action.canonical_parameters, as the exact
+        // canonical bytes of that value and not a parsed shape: it is compared
+        // against the frozen plan's canonical_args, which the Operator also
+        // holds as bytes, and the operator protocol types both as any canonical
+        // JSON value, so neither may be narrowed to an object here.
+        //
+        // Every member of it that the plan's canonical_args also name must
+        // carry the value the plan gave that member, or the step is refused as
+        // PlannedArgumentContradicted.
+        //
+        // Required for a UiAction step and empty for a Wait, for the reason the
+        // three identifiers above carry no meaning-bearing default: no
+        // canonical JSON value is the empty string, so an empty one can only
+        // mean a reader did not fill it, and mintStep refuses it rather than
+        // letting a member comparison pass against nothing.
+        std::string canonicalParameters{};
 
         // Both intents carry a timeout policy, and mintStep holds it to the
         // descriptor's: a step that could outlast what its tool declared would

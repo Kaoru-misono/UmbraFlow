@@ -25,8 +25,10 @@
 
 #include <array>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace uf::operator_runtime
@@ -124,6 +126,253 @@ namespace uf::operator_runtime
                     };
                 },
                 [](std::string_view, std::string_view) -> Status { return ok(); }
+            );
+        }
+
+        // The ui_target this fixture's next_step aims at, a second one the same
+        // RuntimeModel declares, and arguments naming the first. Both targets
+        // are declared, so requireDeclaredUi accepts either and the only thing
+        // that can tell them apart at the mint is the frozen plan.
+        constexpr auto k_plannedTarget   = std::string_view{"fixture.target"};
+        constexpr auto k_unplannedTarget = std::string_view{"fixture.marker"};
+        constexpr auto k_plannedArgs     = std::string_view{
+            R"({"observed_instance_id":"fixture.target"})"
+        };
+
+        // What a step's own canonical_parameters can say about the member those
+        // arguments named: the same value, another value, and nothing at all.
+        // Which member holds the target is never stated here, because the
+        // Operator is never told and the rule does not need to be.
+        constexpr auto k_agreeingParameters = std::string_view{
+            R"({"observed_instance_id":"fixture.target"})"
+        };
+        constexpr auto k_contradictingParameters = std::string_view{
+            R"({"observed_instance_id":"fixture.marker"})"
+        };
+        constexpr auto k_silentParameters = std::string_view{"{}"};
+
+        // A parameter no argument of this command names. It is a UI action's
+        // own parameter, which is the shape the step intent schema leaves the
+        // project to define.
+        constexpr auto k_unstatedParameters = std::string_view{
+            R"({"keystroke":"enter"})"
+        };
+
+        // Arguments naming no declared ui_target at all, and a step parameter
+        // contradicting one of them. Nothing about this pair is a UI target, so
+        // it is what separates the argument rule from the aim rule.
+        constexpr auto k_ordinaryArgs = std::string_view{R"({"value":1})"};
+        constexpr auto k_ordinaryContradiction = std::string_view{
+            R"({"value":9})"
+        };
+
+        // A catalog owner over this tool's own descriptor whose argument
+        // validator accepts any canonical arguments. The fixture's tool
+        // argument schema admits exactly {"value": 1..8}, so no Operation whose
+        // arguments name the object it is about can be created through the
+        // prepared catalog -- and such arguments are the whole subject of the
+        // two cases below.
+        [[nodiscard]]
+        auto catalogAcceptingAnyArguments(
+            test_support::PreparedStore const& prepared
+        ) -> Result<ProjectToolCatalogSchemaOwner>
+        {
+            UF_TRY_VALUE(
+                descriptor,
+                prepared.project.toolCatalogSchemaOwner.describe("command-1")
+            );
+            return ProjectToolCatalogSchemaOwner::create(
+                prepared.project.registration,
+                prepared.project.toolCatalogBytes,
+                [descriptor]() -> Result<std::vector<ToolCatalogEntry>>
+                {
+                    return std::vector<ToolCatalogEntry>{
+                        ToolCatalogEntry{
+                            .name       = "command-1",
+                            .descriptor = descriptor,
+                        },
+                    };
+                },
+                [](std::string_view, std::string_view) -> Status { return ok(); }
+            );
+        }
+
+        // The prepared project's own plugin, behind a schema owner that judges
+        // the exchanged documents' canonical form and nothing else.
+        //
+        // The two cases below need an Operation whose canonical_args name the
+        // object the plan is about -- the tool argument the declarative
+        // workflow tier calls target_argument. This fixture's tool argument
+        // schema declares one integer and closes the object, so the project's
+        // own deployment refuses such a call at the plan input, and that schema
+        // is shared with two other suites. Substituting the document validator
+        // is how a case presents a project whose catalog does declare such an
+        // argument, the way catalogWithTimeoutAction substitutes an argument
+        // validator. The registration, the plugin bytes and every hash the
+        // Operator checks are the prepared ones and are untouched.
+        [[nodiscard]]
+        auto pluginJudgingCanonicalFormOnly(
+            test_support::PreparedStore const& prepared
+        ) -> Result<ProjectPluginHandle>
+        {
+            UF_TRY_VALUE(
+                schemaOwner,
+                ProjectSchemaOwner::create(
+                    prepared.project.registration,
+                    ProjectDocumentSchemaBytes{
+                        .projectState       = test_support::k_projectStateSchema,
+                        .projectObservation = test_support::k_projectObservationSchema,
+                        .toolPrecondition   = test_support::k_toolPreconditionSchema,
+                    },
+                    deployment::canonicalJsonValidator(),
+                    [](
+                        ProjectPluginFunction,
+                        ProjectDocumentDirection,
+                        std::string_view
+                    ) -> Status { return ok(); }
+                )
+            );
+            auto registrar = ProjectPluginRegistrar{};
+            return registrar.registerPlugin(
+                prepared.project.registration,
+                test_support::pluginSource("fixture.control"),
+                {},
+                std::move(schemaOwner)
+            );
+        }
+
+        // What one case presents to the mint: the arguments the plan is frozen
+        // over, and the two members of the step intent a differently written
+        // plugin could have filled differently. An absent substitution leaves
+        // the fixture plugin's own claim in place, so each case states only the
+        // one thing it is about.
+        struct AimingCase final
+        {
+            std::string                plannedArgs{};
+            std::optional<std::string> substituteTarget{};
+            std::optional<std::string> substituteParameters{};
+        };
+
+        // An authority that freezes a plan over `plannedArgs` and reads the
+        // step the plugin produced as aiming at another ui_target, or as
+        // restating other parameters, or both.
+        //
+        // Every rewrite is reader-side for authorityWithTimeoutAction's reason:
+        // the readers are the seam the Operator reads the operator protocol
+        // through, so rewriting one claim is how a case presents a document
+        // another plugin could have produced without a second plugin.
+        // canonical_args has to be rewritten because mintPlan requires the
+        // proposal to restate the Operation's own arguments, and this fixture's
+        // plugin proposes a fixed {"value":1} for every tool.
+        [[nodiscard]]
+        auto authorityAiming(
+            test_support::PreparedStore& prepared,
+            AimingCase aiming
+        ) -> Result<OperatorPlanAuthority>
+        {
+            auto runtimeModel = prepared.observation.host->runtimeModelBinding(
+                prepared.observation.generation
+            );
+            REQUIRE(runtimeModel.has_value());
+            return OperatorPlanAuthority::create(
+                prepared.project.registration,
+                prepared.manifest,
+                *runtimeModel,
+                "operator",
+                test_support::policyArtifactBytes(),
+                [plannedArgs = std::move(aiming.plannedArgs)](
+                    ValidatedDocument const& proposal
+                ) -> Result<PlanProposalClaims>
+                {
+                    UF_TRY_VALUE(claims, deployment::readPlanProposal(proposal));
+                    claims.canonicalArgs = plannedArgs;
+                    return claims;
+                },
+                [
+                    substituteTarget     = std::move(aiming.substituteTarget),
+                    substituteParameters = std::move(aiming.substituteParameters)
+                ](ValidatedDocument const& intent) -> Result<StepIntentClaims>
+                {
+                    UF_TRY_VALUE(claims, deployment::readStepIntent(intent));
+                    if (substituteTarget.has_value())
+                    {
+                        claims.uiTargetId = *substituteTarget;
+                    }
+                    if (substituteParameters.has_value())
+                    {
+                        claims.canonicalParameters = *substituteParameters;
+                    }
+                    return claims;
+                }
+            );
+        }
+
+        // One Operation whose canonical_args name the object the plan is about,
+        // submitted through the permissive catalog above.
+        [[nodiscard]]
+        auto operationAiming(
+            test_support::PreparedStore& prepared,
+            ProjectToolCatalogSchemaOwner const& catalog,
+            std::string args
+        ) -> StoredOperation
+        {
+            auto const invocation = catalog.validate(
+                "command-1",
+                test_support::canonical(
+                    prepared.project.schemaOwner,
+                    std::move(args)
+                )
+            );
+            REQUIRE(invocation.has_value());
+            auto const submitted = prepared.store.submitCommand(
+                prepared.controller,
+                test_support::command(prepared.snapshot, "request-1"),
+                *invocation
+            );
+            REQUIRE(submitted.has_value());
+            return submitted->operation;
+        }
+
+        // One aiming case run end to end through the ledger: an Operation over
+        // its own arguments, a plan frozen from them, and the plugin's next
+        // step minted by OperatorCoordinator::mintNextStep. Every refusal below
+        // is one that entry produced -- no case reaches a comparison helper
+        // directly, and none could, since both are file-local to the Operator.
+        [[nodiscard]]
+        auto mintStepAiming(
+            test_support::PreparedStore& prepared,
+            AimingCase aiming
+        ) -> Result<PlannedStep>
+        {
+            auto const commandArgs = aiming.plannedArgs;
+            auto const catalog     = catalogAcceptingAnyArguments(prepared);
+            REQUIRE(catalog.has_value());
+            auto const plugin = pluginJudgingCanonicalFormOnly(prepared);
+            REQUIRE(plugin.has_value());
+            auto const authority = authorityAiming(prepared, std::move(aiming));
+            REQUIRE(authority.has_value());
+
+            auto const operation = operationAiming(
+                prepared,
+                *catalog,
+                commandArgs
+            );
+            auto const frozen = prepared.store.freezePlan(
+                operation.operationId,
+                operation.revision,
+                prepared.lease,
+                *plugin,
+                *catalog,
+                *authority
+            );
+            REQUIRE(frozen.has_value());
+            return prepared.store.mintNextStep(
+                frozen->operation.operationId,
+                frozen->operation.revision,
+                prepared.lease,
+                *plugin,
+                *catalog,
+                *authority
             );
         }
 
@@ -354,6 +603,248 @@ namespace uf::operator_runtime
                 "mintStep must accept each declared on_timeout value"
             );
         }
+    }
+
+    TEST_CASE("a step aiming at a ui_target the plan did not choose is refused")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const refused = mintStepAiming(
+            prepared,
+            AimingCase{
+                .plannedArgs      = std::string{k_plannedArgs},
+                .substituteTarget = std::string{k_unplannedTarget},
+            }
+        );
+        REQUIRE_MESSAGE(
+            !refused.has_value(),
+            "a step aiming at a ui_target the frozen plan did not choose must "
+            "be refused"
+        );
+        CHECK_MESSAGE(
+            operatorPlanErrorCode(refused.error())
+            == OperatorPlanErrorCode::PlannedUiTargetSubstituted,
+            "the refusal must name the exact normative code "
+            "PlannedUiTargetSubstituted"
+        );
+        CHECK_MESSAGE(
+            refused.error().detailCode().message() == "PlannedUiTargetSubstituted",
+            "the emitted wire code must be exactly PlannedUiTargetSubstituted"
+        );
+    }
+
+    TEST_CASE("a step aiming at the ui_target the plan chose still mints")
+    {
+        // The positive control for the case above. Everything is identical
+        // except that no substitution is read into the step, so a boundary that
+        // had simply started refusing every UI-action step would fail here.
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const minted = mintStepAiming(
+            prepared,
+            AimingCase{.plannedArgs = std::string{k_plannedArgs}}
+        );
+        REQUIRE_MESSAGE(
+            minted.has_value(),
+            "a step aiming at the ui_target the frozen plan chose must mint"
+        );
+        CHECK_MESSAGE(
+            minted->kind == StepKind::UiAction,
+            "the minted step must be the UI action the plugin proposed"
+        );
+        // The precondition that makes this a positive control rather than a
+        // second refusal: the target the plugin's own intent names is the one
+        // the plan's arguments name.
+        CHECK_MESSAGE(
+            test_support::k_fixtureUiActionIntent.contains(k_plannedTarget),
+            "the plugin's proposed ui_target must be the one the plan chose"
+        );
+        CHECK_MESSAGE(
+            k_plannedArgs.contains(k_plannedTarget),
+            "the plan's arguments must name the target the plugin aims at"
+        );
+    }
+
+    TEST_CASE("a step restating a planned argument with another value is refused")
+    {
+        // The exact rule, and the only one that can fire here: the step aims at
+        // the target the plan chose, so requirePlannedUiTarget is satisfied and
+        // the refusal can only be about the member the step restated.
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const refused = mintStepAiming(
+            prepared,
+            AimingCase{
+                .plannedArgs          = std::string{k_plannedArgs},
+                .substituteParameters = std::string{k_contradictingParameters},
+            }
+        );
+        REQUIRE_MESSAGE(
+            !refused.has_value(),
+            "a step whose canonical_parameters restate a planned argument with "
+            "another value must be refused"
+        );
+        CHECK_MESSAGE(
+            operatorPlanErrorCode(refused.error())
+            == OperatorPlanErrorCode::PlannedArgumentContradicted,
+            "the refusal must name the exact normative code "
+            "PlannedArgumentContradicted"
+        );
+        CHECK_MESSAGE(
+            refused.error().detailCode().message() == "PlannedArgumentContradicted",
+            "the emitted wire code must be exactly PlannedArgumentContradicted"
+        );
+    }
+
+    TEST_CASE("a step restating a planned argument unchanged still mints")
+    {
+        // The positive control for the case above, and the one that makes the
+        // rule falsifiable at all: a boundary that had started refusing every
+        // step which restates anything would fail here.
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const minted = mintStepAiming(
+            prepared,
+            AimingCase{
+                .plannedArgs          = std::string{k_plannedArgs},
+                .substituteParameters = std::string{k_agreeingParameters},
+            }
+        );
+        REQUIRE_MESSAGE(
+            minted.has_value(),
+            "a step restating a planned argument with the value the frozen plan "
+            "gave it must mint"
+        );
+        CHECK_MESSAGE(
+            k_agreeingParameters == k_plannedArgs,
+            "the restated member must carry exactly the planned value"
+        );
+    }
+
+    TEST_CASE("a step parameter the plan never named is outside the rule")
+    {
+        // The ruled direction: canonical_parameters are a UI action's own
+        // parameters, and the step intent schema leaves their shape to the
+        // project. A member no argument named is not a restatement of anything,
+        // so there is no planned value for it to contradict and the Operator
+        // has nothing to judge it against.
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const minted = mintStepAiming(
+            prepared,
+            AimingCase{
+                .plannedArgs          = std::string{k_plannedArgs},
+                .substituteParameters = std::string{k_unstatedParameters},
+            }
+        );
+        REQUIRE_MESSAGE(
+            minted.has_value(),
+            "a step parameter the frozen plan's canonical_args never named must "
+            "not refuse the step"
+        );
+        CHECK_MESSAGE(
+            !k_plannedArgs.contains("keystroke"),
+            "the parameter under test must be one the plan never named"
+        );
+    }
+
+    TEST_CASE("the argument rule refuses a contradiction that names no ui_target")
+    {
+        // Why the refusal needs a code of its own. Neither value here is a
+        // ui_target, so requirePlannedUiTarget sees nothing and reporting this
+        // as a substituted target would name something the documents do not
+        // say. It is a contradicted argument and nothing more.
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const refused = mintStepAiming(
+            prepared,
+            AimingCase{
+                .plannedArgs          = std::string{k_ordinaryArgs},
+                .substituteParameters = std::string{k_ordinaryContradiction},
+            }
+        );
+        REQUIRE_MESSAGE(
+            !refused.has_value(),
+            "a step contradicting a planned argument must be refused even when "
+            "no ui_target is involved"
+        );
+        CHECK_MESSAGE(
+            operatorPlanErrorCode(refused.error())
+            == OperatorPlanErrorCode::PlannedArgumentContradicted,
+            "a contradiction naming no ui_target must still be "
+            "PlannedArgumentContradicted"
+        );
+        CHECK_MESSAGE(
+            !k_ordinaryArgs.contains(k_plannedTarget),
+            "the arguments under test must name no declared ui_target"
+        );
+        CHECK_MESSAGE(
+            !k_ordinaryArgs.contains(k_unplannedTarget),
+            "the arguments under test must name no other declared ui_target"
+        );
+    }
+
+    TEST_CASE("a step restating nothing is still bound by the target the plan chose")
+    {
+        // Why both rules remain. canonical_parameters are written by the same
+        // plugin whose choice is in question, so a plugin can restate nothing
+        // and leave the exact rule with nothing to compare. The aim rule is
+        // what still refuses, over a member the plugin cannot empty.
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const refused = mintStepAiming(
+            prepared,
+            AimingCase{
+                .plannedArgs          = std::string{k_plannedArgs},
+                .substituteTarget     = std::string{k_unplannedTarget},
+                .substituteParameters = std::string{k_silentParameters},
+            }
+        );
+        REQUIRE_MESSAGE(
+            !refused.has_value(),
+            "a step restating no planned member must still be refused for "
+            "aiming outside the plan"
+        );
+        CHECK_MESSAGE(
+            operatorPlanErrorCode(refused.error())
+            == OperatorPlanErrorCode::PlannedUiTargetSubstituted,
+            "the aim rule must own this refusal, which the argument rule cannot "
+            "see"
+        );
+    }
+
+    TEST_CASE("a UI-action step with no canonical_parameters at all is refused")
+    {
+        // The claim carries no meaning-bearing default for the reason the three
+        // UI identifiers carry none: no canonical JSON value is the empty
+        // string, so an empty one can only mean a reader did not fill it, and a
+        // rule over an empty object would vacuously accept every step.
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        auto const refused = mintStepAiming(
+            prepared,
+            AimingCase{
+                .plannedArgs          = std::string{k_plannedArgs},
+                .substituteParameters = std::string{},
+            }
+        );
+        REQUIRE_MESSAGE(
+            !refused.has_value(),
+            "a UI-action step whose canonical_parameters are absent must be "
+            "refused rather than passing the member comparison vacuously"
+        );
+        CHECK_MESSAGE(
+            refused.error().message().contains("canonical_parameters"),
+            "the refusal must name canonical_parameters"
+        );
     }
 
     TEST_CASE("required_approvals is the ruled approver set, not a risk flag")

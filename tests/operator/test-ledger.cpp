@@ -1149,6 +1149,7 @@ namespace uf::operator_runtime
         CHECK(step->surfaceId == "fixture.surface");
         CHECK(step->uiTargetId == "fixture.target");
         CHECK(step->actionId == "fixture.press");
+        CHECK(step->canonicalParameters == "{\"value\":1}");
 
         // The one claim a ValidatedDocument does not carry, and the whole of
         // what each reader still refuses. Both documents are exact JCS this

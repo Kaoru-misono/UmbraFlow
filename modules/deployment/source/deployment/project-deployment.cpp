@@ -1644,12 +1644,20 @@ namespace uf::deployment
             &DeliveryClassName::wire
         );
         UF_CHECK(deliveryClass != k_deliveryClasses.end());
+        // canonical_parameters is re-serialized for the reason canonical_args
+        // is in readPlanProposal: the document is its own RFC 8785 form, so a
+        // member's canonical bytes are the bytes it occupied -- which is what
+        // lets mintStep compare it member by member against the frozen plan's
+        // arguments without either side being re-canonicalized on the way.
         return operator_runtime::StepIntentClaims{
             .stepKey    = std::string{member(document, "step_key").string()},
             .surfaceId  = std::string{member(*p_action, "surface_id").string()},
             .uiTargetId = std::string{member(*p_action, "ui_target_id").string()},
             .actionId   = std::string{member(*p_action, "action_id").string()},
-            .timeout    = timeout,
+            .canonicalParameters = json::canonicalBytes(
+                member(*p_action, "canonical_parameters")
+            ),
+            .timeout       = timeout,
             .deliveryClass = deliveryClass->deliveryClass,
             .kind          = operator_runtime::StepKind::UiAction,
         };
