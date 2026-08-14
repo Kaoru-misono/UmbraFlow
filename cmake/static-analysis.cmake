@@ -37,6 +37,13 @@ function(cpp_apply_static_analysis TARGET_NAME)
         list(APPEND CPP_CLANG_TIDY_COMMAND
             "--extra-arg=/EHsc"
             "--extra-arg=/D_CPPUNWIND=1"
+            # Clang's default instantiation depth is 1024, and MSVC's own headers
+            # exceed it while being parsed in clang-cl mode -- vision's frame
+            # analysis stopped the whole analysis build there, which is why that
+            # preset had never produced a clean result to read. The compiler that
+            # actually builds this code has no such ceiling, so this raises the
+            # ANALYSER to match rather than changing anything the build does.
+            "--extra-arg=-ftemplate-depth=4096"
         )
     endif()
 
