@@ -5,6 +5,8 @@
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
+#include <filesystem>
+#include <format>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -33,6 +35,7 @@ namespace uf::operator_runtime
 
     auto AgentProfile::verifyExact(
         SessionManifest const& manifest,
+        std::filesystem::path const& profilePath,
         std::string_view exactProfileBytes,
         AgentProfileValidator const& validate
     ) -> Result<AgentProfile>
@@ -52,7 +55,11 @@ namespace uf::operator_runtime
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "AgentProfile bytes do not match the manifest's agent_profile_hash"
+                std::format(
+                    "AgentProfile file bytes do not match the manifest's "
+                    "agent_profile_hash: \"{}\"",
+                    profilePath.string()
+                )
             );
         }
         UF_TRY_VALUE_CONTEXT(

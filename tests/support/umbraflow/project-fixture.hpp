@@ -1156,6 +1156,7 @@ identity = ["fixture.panel.anchor"]
         );
         auto profile = AgentProfile::verifyExact(
             manifest,
+            "agent-profile.json",
             bytes,
             agentProfileValidator()
         );

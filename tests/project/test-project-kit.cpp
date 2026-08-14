@@ -888,7 +888,7 @@ namespace uf::project
         );
     }
 
-    TEST_CASE("project release is immutable stable complete and excludes inputs")
+    TEST_CASE("fault matrix tamper names the altered frozen release file")
     {
         auto const workspace = TemporaryWorkspace{"uf-project-release"};
         auto const initialized = initializedWorkflowWorkspace(workspace);
@@ -997,6 +997,12 @@ namespace uf::project
             messageOf(changed).find("digest does not match")
                 != std::string::npos,
             "modified-release refusal must land on the artifact digest guard"
+        );
+        CHECK_MESSAGE(
+            messageOf(changed).find(
+                payload.lexically_relative(*first).generic_string()
+            ) != std::string::npos,
+            "modified-release refusal must name the altered file"
         );
     }
 

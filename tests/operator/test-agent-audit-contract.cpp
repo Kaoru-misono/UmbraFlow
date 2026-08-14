@@ -731,6 +731,7 @@ namespace uf::operator_runtime
 
         CHECK_FALSE(AgentProfile::verifyExact(
             unconstrained.manifest,
+            "agent-profile.json",
             test_support::agentProfileBytes(AgentBudget{
                 .maximumToolCalls     = 999U,
                 .maximumMutations     = 999U,

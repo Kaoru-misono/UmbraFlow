@@ -8,6 +8,7 @@
 
 #include <domain/content-hash.hpp>
 
+#include <filesystem>
 #include <functional>
 #include <string_view>
 
@@ -92,6 +93,7 @@ namespace uf::operator_runtime
         [[nodiscard]]
         static auto verifyExact(
             SessionManifest const& manifest,
+            std::filesystem::path const& profilePath,
             std::string_view exactProfileBytes,
             AgentProfileValidator const& validate
         ) -> Result<AgentProfile>;

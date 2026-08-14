@@ -131,7 +131,10 @@ namespace uf::operator_runtime
         CHECK(runtime.actions().clicks() == 1U);
     }
 
-    TEST_CASE("host controller fixture distinguishes two controlled targets")
+    TEST_CASE(
+        "fault matrix lease takeover reports in-flight dispatch and fences "
+        "the displaced controller"
+    )
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
@@ -169,14 +172,17 @@ namespace uf::operator_runtime
         CHECK(targetOneBeforeDispatch->resolvedDispatches == 0U);
 
         // The fence displaced by that takeover cannot begin the dispatch.
-        CHECK_FALSE(owner->coordinator().reserveDispatch(
-            ready.operationId,
-            ready.revision,
-            prepared.lease,
-            prepared.observation.generation,
-            AuthorityDecisionId{"authority-displaced"},
-            std::nullopt
-        ).has_value());
+        CHECK_FALSE_MESSAGE(
+            owner->coordinator().reserveDispatch(
+                ready.operationId,
+                ready.revision,
+                prepared.lease,
+                prepared.observation.generation,
+                AuthorityDecisionId{"authority-displaced"},
+                std::nullopt
+            ).has_value(),
+            "the displaced fence must not begin another dispatch"
+        );
         auto unanswered = owner->coordinator().reserveDispatch(
             ready.operationId,
             ready.revision,
@@ -202,6 +208,9 @@ namespace uf::operator_runtime
             "target-1 takeover while its dispatch is in flight"
         );
         REQUIRE(targetOneTakeover.has_value());
-        CHECK(targetOneTakeover->resolvedDispatches == 1U);
+        CHECK_MESSAGE(
+            targetOneTakeover->resolvedDispatches == 1U,
+            "takeover must report the dispatch already in flight"
+        );
     }
 }

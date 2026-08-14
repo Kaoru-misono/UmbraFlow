@@ -17,10 +17,10 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -30,6 +30,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -1687,7 +1688,7 @@ namespace uf::operator_runtime
         );
     }
 
-    TEST_CASE("absent fresh member emits ObservedInstanceStale")
+    TEST_CASE("fault matrix stale instance expires without emitting input")
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = test_support::prepareStore(temporary.path());
@@ -1716,11 +1717,34 @@ namespace uf::operator_runtime
             })
         );
         REQUIRE(second.has_value());
+        auto host = test_support::deliveringHost(prepared);
+        auto const operation = test_support::createReadyOperation(
+            prepared,
+            "request-stale-instance",
+            "command-1"
+        );
         auto const stale = prepared.store.resolveObservedInstance(
             prepared.lease,
             scope,
             *second,
             id
+        );
+        if (stale.has_value())
+        {
+            auto const reserved = prepared.store.reserveDispatch(
+                operation.operationId,
+                operation.revision,
+                prepared.lease,
+                host->generation(),
+                AuthorityDecisionId{"authority-stale-instance"},
+                std::nullopt
+            );
+            REQUIRE(reserved.has_value());
+            static_cast<void>(host->deliverReport(reserved->authority));
+        }
+        CHECK_MESSAGE(
+            host->clicks() == 0U,
+            "an expired observed instance must emit no input"
         );
         expectProjectObservationError(
             stale,
@@ -2656,7 +2680,7 @@ namespace uf::operator_runtime
         );
     }
 
-    TEST_CASE("a pin failure rolls the active release back and records the failure")
+    TEST_CASE("fault matrix migration failure rolls back the active release")
     {
         auto temporary     = TemporaryDirectory{};
         auto oldRoot       = std::optional<ContentHash>{};
@@ -2685,9 +2709,15 @@ namespace uf::operator_runtime
                 "the manifest mismatch must inject a failure after publication and before pin"
             );
             auto const active = prepared.store.activeRuntimeArtifactPin();
-            REQUIRE(active.has_value());
+            REQUIRE_MESSAGE(
+                active.has_value(),
+                "failed migration must leave a decidable active release"
+            );
             CHECK(active->installedGeneration == prepared.installedGeneration + 2U);
-            CHECK(active->artifactRootHash == prepared.runtimeArtifactRootHash);
+            CHECK_MESSAGE(
+                active->artifactRootHash == prepared.runtimeArtifactRootHash,
+                "failed migration must roll back to the previously pinned release"
+            );
         }
 
         REQUIRE(oldRoot.has_value());
@@ -3586,6 +3616,190 @@ namespace uf::operator_runtime
             reserved->operationRevision,
             host->deliverReport(reserved->authority)
         ).has_value());
+    }
+
+    TEST_CASE("fault matrix timeout never records an unreturned action as success")
+    {
+        auto temporary   = TemporaryDirectory{};
+        auto operationId = std::string{};
+        {
+            auto prepared = prepareStore(temporary.path());
+            auto const operation = createReadyOperation(
+                prepared,
+                "request-timeout",
+                "command-1"
+            );
+            operationId = operation.operationId;
+            auto host   = deliveringHost(prepared);
+            auto const reserved = prepared.store.reserveDispatch(
+                operation.operationId,
+                operation.revision,
+                prepared.lease,
+                host->generation(),
+                AuthorityDecisionId{"authority-timeout"},
+                std::nullopt
+            );
+            REQUIRE(reserved.has_value());
+
+            // The Host action lands, but the injected transport fault
+            // suppresses its return before the coordinator can record it.
+            auto const suppressed = host->deliverReport(reserved->authority);
+            REQUIRE(suppressed.outcome() == task::DeliveryOutcome::Delivered);
+            REQUIRE(host->clicks() == 1U);
+            REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
+        }
+
+        auto const rows = test_support::OperatorDatabaseProbe{
+            temporary.path() / "production" / "operator-runtime.sqlite"
+        }.readRows(
+            "SELECT delivery_outcome, coalesce(delivery_reason, '') FROM dispatches "
+            "WHERE operation_id='" + operationId + "'"
+        );
+        REQUIRE(rows.size() == 1U);
+        REQUIRE(rows.front().size() == 2U);
+        CHECK_MESSAGE(
+            rows.front()[0] == "transport_unknown",
+            "an unreturned Host action must be delivery-uncertain, never success"
+        );
+        CHECK(rows.front()[1] == "lease release found this dispatch unanswered");
+    }
+
+    TEST_CASE("fault matrix tamper names the altered signed evidence file")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto const original = test_support::agentProfileBytes(
+            test_support::k_unconstrainedAgentBudget
+        );
+        auto const evidencePath = temporary.path() / "agent-profile.json";
+        test_support::writeFile(evidencePath, original);
+
+        auto changed = original;
+        REQUIRE_FALSE(changed.empty());
+        changed.back() = changed.back() == '}' ? ']' : '}';
+        test_support::writeFile(evidencePath, changed);
+        auto stream = std::ifstream{evidencePath, std::ios::binary};
+        REQUIRE(stream.good());
+        auto const alteredBytes = std::string{
+            std::istreambuf_iterator<char>{stream},
+            std::istreambuf_iterator<char>{}
+        };
+        auto const manifest = sessionManifest(
+            prepared.project.registration,
+            prepared.runtimeArtifactRootHash,
+            hashOf(original),
+            test_support::policyArtifactBytes()
+        );
+        auto const verified = AgentProfile::verifyExact(
+            manifest,
+            evidencePath,
+            alteredBytes,
+            test_support::agentProfileValidator()
+        );
+        REQUIRE_FALSE_MESSAGE(
+            verified.has_value(),
+            "verification must refuse after one signed-evidence byte changes"
+        );
+        CHECK_MESSAGE(
+            verified.error().message().contains(evidencePath.string()),
+            "signed-evidence refusal must name the altered file"
+        );
+    }
+
+    TEST_CASE("fault matrix crash recovers a sent unrecorded mutation")
+    {
+        auto const root = std::filesystem::current_path();
+        if (!std::filesystem::is_regular_file(root / "fault-root"))
+        {
+            return;
+        }
+        auto const verify = std::filesystem::is_regular_file(
+            root / "verify-mode"
+        );
+
+        if (!verify)
+        {
+            auto prepared = prepareStore(root);
+            auto const operation = createReadyOperation(
+                prepared,
+                "request-crash",
+                "command-1"
+            );
+            auto host           = deliveringHost(prepared);
+            auto const reserved = prepared.store.reserveDispatch(
+                operation.operationId,
+                operation.revision,
+                prepared.lease,
+                host->generation(),
+                AuthorityDecisionId{"authority-crash"},
+                std::nullopt
+            );
+            REQUIRE(reserved.has_value());
+            auto const unrecorded = host->deliverReport(reserved->authority);
+            REQUIRE(unrecorded.outcome() == task::DeliveryOutcome::Delivered);
+            REQUIRE(host->clicks() == 1U);
+            test_support::writeFile(root / "operation-id", operation.operationId);
+            test_support::writeFile(root / "action-sent", "ready\n");
+
+            for (;;)
+            {
+                std::this_thread::sleep_for(std::chrono::hours{1});
+            }
+        }
+
+        auto operationStream = std::ifstream{root / "operation-id", std::ios::binary};
+        REQUIRE(operationStream.good());
+        auto const operationId = std::string{
+            std::istreambuf_iterator<char>{operationStream},
+            std::istreambuf_iterator<char>{}
+        };
+        {
+            auto reopened = OperatorCoordinator::open(root / "production");
+            REQUIRE(reopened.has_value());
+            auto const recovered = reopened->recoveredUncertainDispatches();
+            REQUIRE(recovered.has_value());
+            REQUIRE_MESSAGE(
+                recovered->size() == 1U,
+                "a sent but unrecorded mutation must restart explicitly uncertain"
+            );
+            CHECK(recovered->front().operationId == operationId);
+            CHECK_MESSAGE(
+                recovered->front().deliveryReason
+                    == "operator restart found this dispatch unanswered",
+                "a sent but unrecorded mutation must restart explicitly uncertain"
+            );
+        }
+
+        auto const audit = test_support::OperatorDatabaseProbe{
+            root / "production" / "operator-runtime.sqlite"
+        }.readRows(
+            "SELECT kind, coalesce(detail, '') FROM ledger_events "
+            "WHERE subject_id='" + operationId + "' ORDER BY sequence"
+        );
+        CHECK(std::ranges::contains(
+            audit,
+            std::vector<std::string>{
+                "delivery_outcome_recorded",
+                "transport_unknown",
+            }
+        ));
+        CHECK_MESSAGE(
+            std::ranges::contains(
+                audit,
+                std::vector<std::string>{
+                    "operation_state_changed",
+                    "reconciling",
+                }
+            ),
+            "restart recovery must preserve the audit sequence through reconciliation"
+        );
+        CHECK_FALSE(std::ranges::contains(
+            audit,
+            std::vector<std::string>{
+                "delivery_outcome_recorded",
+                "delivered",
+            }
+        ));
     }
 
     TEST_CASE("a restart preserves the uncertain dispatch release resolved")

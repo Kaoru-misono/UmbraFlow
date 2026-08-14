@@ -504,6 +504,7 @@ if(TARGET ${PROJECT_NAME}_operator)
     cpp_add_test(
         NAME test-operator
         SOURCES
+            operator/test-host-controller.cpp
             operator/test-ledger.cpp
             operator/test-lifecycle-facade.cpp
             operator/test-manifest.cpp
@@ -1033,6 +1034,55 @@ if(EXISTS ${PROJECT_SOURCE_DIR}/tests/assets/real-regression)
 endif()
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+if(TARGET test-operator)
+    add_test(
+        NAME fault-matrix-crash
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/fault-injection/run-crash.py"
+            $<TARGET_FILE:test-operator>
+            "${CMAKE_CURRENT_BINARY_DIR}/fault-injection"
+    )
+    add_test(
+        NAME fault-matrix-lease
+        COMMAND test-operator
+            "--test-case=fault matrix lease takeover reports in-flight dispatch and fences the displaced controller"
+    )
+    add_test(
+        NAME fault-matrix-stale
+        COMMAND test-operator
+            "--test-case=fault matrix stale instance expires without emitting input"
+    )
+    add_test(
+        NAME fault-matrix-timeout
+        COMMAND test-operator
+            "--test-case=fault matrix timeout never records an unreturned action as success"
+    )
+    add_test(
+        NAME fault-matrix-tamper
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/fault-injection/run-tamper.py"
+            $<TARGET_FILE:test-project>
+            $<TARGET_FILE:test-operator>
+    )
+    add_test(
+        NAME fault-matrix-migration
+        COMMAND test-operator
+            "--test-case=fault matrix migration failure rolls back the active release"
+    )
+    set_tests_properties(
+        fault-matrix-crash
+        fault-matrix-lease
+        fault-matrix-stale
+        fault-matrix-timeout
+        fault-matrix-tamper
+        fault-matrix-migration
+        PROPERTIES
+            LABELS "CI;FAULT-INJECTION"
+            TIMEOUT 60
+    )
+endif()
+
 # check-, not contract-: this runs a script over the tree, owns no requirement
 # id and compiles no doctest, so it is a sibling of check-modules and
 # check-safety rather than of the behavioural gates. It carried the contract-
