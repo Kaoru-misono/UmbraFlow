@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbraflow.dev/schema/project/directory",
+  "title": "umbraflow-project.json",
+  "$comment": "The one shape authority for umbraflow-project.json. The offline project kit and the runtime loader both compile these exact bytes out of the framework schema catalog, so no reader can accept a document another refuses; a second, narrower reader in either of them would be the weaker of two spellings and would decide. A deployment block IS its registration, stated as intent: it names files, and the loader derives every digest from the bytes it read. No member here is a hash and no project author types one. Every path member is typed as a bare non-empty string and given its spelling rule by requireManifestSpelling in modules/deployment/source/deployment/project-directory.cpp, because that rule is task_platform::ConfinedRoot's own (confined-file.hpp:52-55). Stating it a second time as a regular expression would be two spellings of one thing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "deployments",
+    "primary_deployment",
+    "runtime_artifact",
+    "schema"
+  ],
+  "properties": {
+    "$comment": {"type": "string"},
+    "schema": {"const": "umbraflow-project/v1"},
+    "runtime_artifact": {
+      "$comment": "A directory, not a file: the installer reads runtime-model.toml and runtime-artifact.manifest.json out of a root by those fixed names.",
+      "$ref": "#/$defs/Path"
+    },
+    "policy_artifact": {
+      "$comment": "Optional exact PolicyArtifact bytes. When absent, production uses the Operator-owned deny-all artifact; the project never evaluates policy.",
+      "$ref": "#/$defs/Path"
+    },
+    "primary_deployment": {"$ref": "#/$defs/DeploymentName"},
+    "deployments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/Deployment"}
+    }
+  },
+  "$defs": {
+    "Path": {"type": "string", "minLength": 1},
+    "PluginAuthoring": {
+      "$comment": "Which of the two authoring paths wrote the Luau module `plugin` names. `generated` is the declarative tier: the project kit produced the module from an umbraflow-declarative-workflow-tool/v1 declaration. `hand-written` is the exception: the author wrote the whole five-function module. The author states it because only the author knows it -- nothing in the module's bytes carries it, and a path convention would be a rule the kit knows and the loader cannot apply, which is how the two readers drift apart.",
+      "enum": ["generated", "hand-written"]
+    },
+    "PluginJustification": {
+      "$comment": "Why this deployment writes a whole five-function Luau module instead of a declarative-tools declaration: it must name the umbraflow-declarative-workflow-tool/v1 member or semantic that cannot express the behaviour. Required of a hand-written plugin and refused for a generated one, because demanding a reason from the declarative tier is demanding a false one. PRESENCE ONLY, over ASCII whitespace alone: the pattern refuses a value made of spaces, tabs, newlines, carriage returns, form feeds and vertical tabs, and accepts one made only of U+00A0 or any other non-ASCII space. No reader here judges whether the text is true, and no reader can; a justification that names the wrong member -- or that is a lone NO-BREAK SPACE -- is a review finding at plugin acceptance, not a refusal. See docs/pitfalls/checks-that-cannot-fail.md.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "[^ \\t\\n\\r\\f\\v]"
+    },
+    "DeploymentName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "NamespacedName": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)+$"
+    },
+    "Deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_blobs",
+        "baseline_event_type",
+        "effect_payload_schemas",
+        "journal_event_schema_manifest",
+        "journal_payload_schemas",
+        "name",
+        "plugin",
+        "plugin_authoring",
+        "plugin_id",
+        "project_observation_schema",
+        "project_state_schema",
+        "reconcile_manifest",
+        "reconcile_schema",
+        "tool_catalog",
+        "tool_precondition_schema"
+      ],
+      "properties": {
+        "$comment": {"type": "string"},
+        "name": {"$ref": "#/$defs/DeploymentName"},
+        "plugin_id": {"$ref": "#/$defs/NamespacedName"},
+        "baseline_event_type": {"$ref": "#/$defs/NamespacedName"},
+        "plugin": {"$ref": "#/$defs/Path"},
+        "plugin_authoring": {"$ref": "#/$defs/PluginAuthoring"},
+        "plugin_justification": {"$ref": "#/$defs/PluginJustification"},
+        "project_state_schema": {"$ref": "#/$defs/Path"},
+        "project_observation_schema": {"$ref": "#/$defs/Path"},
+        "tool_precondition_schema": {"$ref": "#/$defs/Path"},
+        "reconcile_schema": {"$ref": "#/$defs/Path"},
+        "tool_catalog": {"$ref": "#/$defs/Path"},
+        "journal_event_schema_manifest": {"$ref": "#/$defs/Path"},
+        "reconcile_manifest": {"$ref": "#/$defs/Path"},
+        "journal_payload_schemas": {
+          "$comment": "The payload schema files this deployment supplies. The journal event schema manifest names each of them by sha256 and never by path, so which file answers for which event type is decided by the bytes rather than by a name written down twice.",
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/Path"},
+          "uniqueItems": true
+        },
+        "effect_payload_schemas": {
+          "$comment": "The effect payload schema files this deployment supplies. No manifest names them: the Tool Catalog's effect_payload_sha256s names each by sha256, which is the only route their bytes have into tool_catalog_hash, and the payload_schema_hash inside an OP:ExpectedEffect is what selects which of them judges it.",
+          "type": "array",
+          "items": {"$ref": "#/$defs/Path"},
+          "uniqueItems": true
+        },
+        "artifact_blobs": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/ArtifactBlob"}
+        }
+      },
+      "if": {
+        "$comment": "The direct-plugin tier's admission gate, stated where both readers reach it. The guard restates required so this decision does not depend on which keyword the evaluator visits first.",
+        "required": ["plugin_authoring"],
+        "properties": {"plugin_authoring": {"const": "hand-written"}}
+      },
+      "then": {"required": ["plugin_justification"]},
+      "else": {
+        "$comment": "A generated adapter IS the declarative tier and has nothing to justify. The member is refused rather than ignored: a gate that accepted one here would be asking the declarative tier to invent a reason, which is the thing the justification exists to prevent.",
+        "properties": {"plugin_justification": false}
+      }
+    },
+    "ArtifactBlob": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "path"],
+      "properties": {
+        "$comment": {"type": "string"},
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)*$"
+        },
+        "path": {"$ref": "#/$defs/Path"}
+      }
+    }
+  }
+}

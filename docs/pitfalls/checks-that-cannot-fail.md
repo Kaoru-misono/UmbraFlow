@@ -87,15 +87,44 @@ is otherwise read as a promise and reviewed as a missing check.
 ### Demoting a hand-written plugin to the declarative tier
 
 Half of this rule is executable. Every deployment block of
-`umbraflow-project.json` that names a hand-written plugin must carry a non-empty
-`plugin_justification` naming the member or semantic of
-`umbraflow-declarative-workflow-tool/v1` that cannot express it.
-`validatePluginJustifications` in
-`modules/project/source/project/project-kit.cpp` refuses an absent or blank one
-from both `project build` and `project check`, and `k_projectSchema` in
-`modules/deployment/source/deployment/project-directory.cpp` refuses the same
-document at load through `required` and `"pattern": "\\S"`. Both check
+`umbraflow-project.json` whose `plugin_authoring` is `hand-written` must carry a
+non-empty `plugin_justification` naming the member or semantic of
+`umbraflow-declarative-workflow-tool/v1` that cannot express it, and every block
+whose `plugin_authoring` is `generated` must carry none.
+`schema/umbraflow-project-v1.schema.json` states both directions once, and both
+readers of the document compile those published bytes: `project build` and
+`project check` through `validateProjectManifest` in
+`modules/project/source/project/project-kit.cpp`, and the runtime load through
+`ProjectLoader::load` in
+`modules/deployment/source/deployment/project-directory.cpp`. The gate checks
 **presence only**.
+
+Three things about this gate are not what they look like, and each one cost a
+green run that proved nothing.
+
+*The tier is declared, not inferred.* A first version demanded a justification
+from every deployment with a `plugin` member, which included one naming a
+`generated/adapters/...` adapter the kit had just produced. That deployment IS
+the declarative tier and has no honest reason to give, so the rule as written
+forced an author on the default tier to invent one — the exact outcome the
+member exists to prevent. Nothing in a Luau module's bytes says which path wrote
+it, and the loader cannot see the kit's declared inputs or its output tree, so
+the fact is stated in the document and applied by both readers.
+
+*One document, one reader.* The kit used to carry its own reading of
+`umbraflow-project.json` because it cannot link the loader. That copy drifted:
+it accepted `"deployments": []`, an empty `plugin`, a numeric deployment `name`
+and any unknown member, all of which the loader refused, and it reported
+`{"deployments":[42]}` as "names no plugin", which is the wrong defect. Two
+readers of one shape means the weaker one decides wherever it runs first.
+
+*Blank means ASCII whitespace.* The pattern is
+`[^ \t\n\r\f\v]`, so a justification of `U+00A0` alone is **accepted**. That is
+stated in the schema's own `$comment` and asserted in
+`tests/project/test-project-manifest-shape.cpp`, because both readers previously
+claimed to refuse any whitespace-only value and neither did. A justification the
+gate cannot tell from blank is a review finding, on the same terms as one that
+is present and false.
 
 The other half — anything expressible at the declarative tier must be demoted to
 it — has no gate and will not be given one. Deciding it means deciding whether a

@@ -40,134 +40,17 @@ namespace uf::deployment
             "schema/umbraflow-project-registration-v1.schema.json"
         };
 
-        // umbraflow-project.json: the document production reads.
-        //
-        // Every path member is typed as a bare non-empty string and given its
-        // spelling rule by requireManifestSpelling below, because that rule is
-        // task_platform::ConfinedRoot's own (confined-file.hpp:52-55). Stating
-        // it a second time as a regular expression would be two spellings of
-        // one thing, and the weaker of the two would decide.
-        constexpr auto k_projectSchema = std::string_view{R"json({
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://umbraflow.dev/schema/project/directory",
-    "title": "umbraflow-project.json",
-    "$comment": "A deployment block IS its registration, stated as intent: it names files, and the loader derives every digest from the bytes it read. No member here is a hash and no project author types one.",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-        "deployments",
-        "primary_deployment",
-        "runtime_artifact",
-        "schema"
-    ],
-    "properties": {
-        "$comment": {"type": "string"},
-        "schema": {"const": "umbraflow-project/v1"},
-        "runtime_artifact": {
-            "$comment": "A directory, not a file: the installer reads runtime-model.toml and runtime-artifact.manifest.json out of a root by those fixed names.",
-            "$ref": "#/$defs/Path"
-        },
-        "policy_artifact": {
-            "$comment": "Optional exact PolicyArtifact bytes. When absent, production uses the Operator-owned deny-all artifact; the project never evaluates policy.",
-            "$ref": "#/$defs/Path"
-        },
-        "primary_deployment": {"$ref": "#/$defs/DeploymentName"},
-        "deployments": {
-            "type": "array",
-            "minItems": 1,
-            "items": {"$ref": "#/$defs/Deployment"}
-        }
-    },
-    "$defs": {
-        "Path": {"type": "string", "minLength": 1},
-        "PluginJustification": {
-            "$comment": "Why this deployment writes a whole five-function Luau module instead of a declarative-tools declaration: it must name the umbraflow-declarative-workflow-tool/v1 member or semantic that cannot express the behaviour. PRESENCE ONLY. No reader here judges whether the text is true, and no reader can; the pattern requires one non-whitespace character and nothing more. A justification that names the wrong member is a review finding at plugin acceptance, not a refusal -- see docs/pitfalls/checks-that-cannot-fail.md.",
-            "type": "string",
-            "minLength": 1,
-            "pattern": "\\S"
-        },
-        "DeploymentName": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128,
-            "pattern": "^[a-z][a-z0-9-]*$"
-        },
-        "NamespacedName": {
-            "type": "string",
-            "minLength": 3,
-            "maxLength": 128,
-            "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)+$"
-        },
-        "Deployment": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-                "artifact_blobs",
-                "baseline_event_type",
-                "effect_payload_schemas",
-                "journal_event_schema_manifest",
-                "journal_payload_schemas",
-                "name",
-                "plugin",
-                "plugin_id",
-                "plugin_justification",
-                "project_observation_schema",
-                "project_state_schema",
-                "reconcile_manifest",
-                "reconcile_schema",
-                "tool_catalog",
-                "tool_precondition_schema"
-            ],
-            "properties": {
-                "$comment": {"type": "string"},
-                "name": {"$ref": "#/$defs/DeploymentName"},
-                "plugin_id": {"$ref": "#/$defs/NamespacedName"},
-                "baseline_event_type": {"$ref": "#/$defs/NamespacedName"},
-                "plugin": {"$ref": "#/$defs/Path"},
-                "plugin_justification": {"$ref": "#/$defs/PluginJustification"},
-                "project_state_schema": {"$ref": "#/$defs/Path"},
-                "project_observation_schema": {"$ref": "#/$defs/Path"},
-                "tool_precondition_schema": {"$ref": "#/$defs/Path"},
-                "reconcile_schema": {"$ref": "#/$defs/Path"},
-                "tool_catalog": {"$ref": "#/$defs/Path"},
-                "journal_event_schema_manifest": {"$ref": "#/$defs/Path"},
-                "reconcile_manifest": {"$ref": "#/$defs/Path"},
-                "journal_payload_schemas": {
-                    "$comment": "The payload schema files this deployment supplies. The journal event schema manifest names each of them by sha256 and never by path, so which file answers for which event type is decided by the bytes rather than by a name written down twice.",
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {"$ref": "#/$defs/Path"},
-                    "uniqueItems": true
-                },
-                "effect_payload_schemas": {
-                    "$comment": "The effect payload schema files this deployment supplies. No manifest names them: the Tool Catalog's effect_payload_sha256s names each by sha256, which is the only route their bytes have into tool_catalog_hash, and the payload_schema_hash inside an OP:ExpectedEffect is what selects which of them judges it.",
-                    "type": "array",
-                    "items": {"$ref": "#/$defs/Path"},
-                    "uniqueItems": true
-                },
-                "artifact_blobs": {
-                    "type": "array",
-                    "items": {"$ref": "#/$defs/ArtifactBlob"}
-                }
-            }
-        },
-        "ArtifactBlob": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["name", "path"],
-            "properties": {
-                "$comment": {"type": "string"},
-                "name": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 128,
-                    "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)*$"
-                },
-                "path": {"$ref": "#/$defs/Path"}
-            }
-        }
-    }
-})json"};
+        // umbraflow-project.json: the document production reads. Its shape is
+        // stated once, under schema/, and reaches this loader as published
+        // bytes through the framework schema catalog. The offline project kit
+        // compiles the same bytes out of the same catalog
+        // (modules/project/source/project/project-kit.cpp), which is the whole
+        // reason the shape is not written here: uf::project cannot link
+        // uf::deployment, and a second reading of this document inside the kit
+        // was a weaker copy that accepted documents this one refused.
+        constexpr auto k_projectSchemaPath = std::string_view{
+            "schema/umbraflow-project-v1.schema.json"
+        };
 
         // umbraflow-conformance.json: the document only a conformance run
         // reads. loadProductionProject never opens it, and that separation is
@@ -323,6 +206,27 @@ namespace uf::deployment
                 ));
             }
             return *std::move(compiled);
+        }
+
+        // One published framework schema, by the path it is published under.
+        // Absent means the build embedded a different set than this source
+        // names, which is a defect in the build rather than in the project.
+        [[nodiscard]]
+        auto publishedSchema(std::string_view relativePath)
+            -> Result<framework_schema::FrameworkSchemaDocument>
+        {
+            auto const published = framework_schema::findFrameworkSchema(
+                relativePath
+            );
+            if (!published.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "generated framework schema catalog is missing "
+                        + std::string{relativePath}
+                );
+            }
+            return *published;
         }
 
         // Every reader below runs after json::Schema accepted the document, so
@@ -1189,22 +1093,20 @@ namespace uf::deployment
             )
         );
 
-        UF_TRY_VALUE(projectSchema, compile("umbraflow-project/v1", k_projectSchema));
-        auto const publishedRegistration =
-            framework_schema::findFrameworkSchema(k_registrationSchemaPath);
-        if (!publishedRegistration.has_value())
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "generated framework schema catalog is missing "
-                    + std::string{k_registrationSchemaPath}
-            );
-        }
+        UF_TRY_VALUE(publishedProject, publishedSchema(k_projectSchemaPath));
+        UF_TRY_VALUE(
+            projectSchema,
+            compile(publishedProject.relativePath, publishedProject.exactBytes)
+        );
+        UF_TRY_VALUE(
+            publishedRegistration,
+            publishedSchema(k_registrationSchemaPath)
+        );
         UF_TRY_VALUE(
             registrationSchema,
             compile(
-                publishedRegistration->relativePath,
-                publishedRegistration->exactBytes
+                publishedRegistration.relativePath,
+                publishedRegistration.exactBytes
             )
         );
         UF_TRY_VALUE(
@@ -1214,7 +1116,7 @@ namespace uf::deployment
 
         UF_TRY_VALUE(
             manifestSchemaHash,
-            hashOf(publishedRegistration->exactBytes)
+            hashOf(publishedRegistration.exactBytes)
         );
         auto registrationOwner =
             operator_runtime::ProjectRegistrationSchemaOwner::create(

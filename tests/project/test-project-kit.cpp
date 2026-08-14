@@ -152,6 +152,110 @@ namespace uf::project
             return snapshot;
         }
 
+        inline constexpr auto k_deploymentManifestInput = std::string_view{
+            "umbraflow-project.json"
+        };
+        inline constexpr auto k_handWrittenPlugin = std::string_view{
+            "plugin/dream.luau"
+        };
+        inline constexpr auto k_generatedPlugin = std::string_view{
+            "generated/adapters/acme.tool/do-work.luau"
+        };
+        inline constexpr auto k_handWrittenAuthoring = std::string_view{
+            R"json(      "plugin_authoring": "hand-written",
+)json"
+        };
+        inline constexpr auto k_generatedAuthoring = std::string_view{
+            R"json(      "plugin_authoring": "generated",
+)json"
+        };
+        inline constexpr auto k_statedJustification = std::string_view{
+            R"json(      "plugin_justification": "umbraflow-declarative-workflow-tool/v1 has no member that decides what a Reduce returns.",
+)json"
+        };
+
+        // The deployment manifest as a project author writes it, with the
+        // members under test spliced in exactly as given. The whole document is
+        // written rather than the few members the gate reads, so a fixture that
+        // stopped being a manifest could not go on satisfying the gate.
+        [[nodiscard]]
+        auto deploymentManifest(
+            std::string_view plugin,
+            std::string_view authoringMember,
+            std::string_view justificationMember
+        ) -> std::string
+        {
+            return std::string{R"json({
+  "schema": "umbraflow-project/v1",
+  "runtime_artifact": "runtime/artifact",
+  "primary_deployment": "dream",
+  "deployments": [
+    {
+      "name": "dream",
+      "plugin_id": "chaos.dream",
+      "baseline_event_type": "project.baseline_created",
+      "plugin": ")json"}
+                + std::string{plugin}
+                + R"json(",
+)json"
+                + std::string{authoringMember}
+                + std::string{justificationMember}
+                + R"json(      "project_state_schema": "schema/state.json",
+      "project_observation_schema": "schema/observation.json",
+      "tool_precondition_schema": "schema/precondition.json",
+      "reconcile_schema": "schema/reconcile.json",
+      "tool_catalog": "schema/catalog.json",
+      "journal_event_schema_manifest": "schema/journal-manifest.json",
+      "reconcile_manifest": "schema/reconcile-manifest.json",
+      "journal_payload_schemas": ["schema/journal-0.json"],
+      "effect_payload_schemas": [],
+      "artifact_blobs": []
+    }
+  ]
+})json";
+        }
+
+        // The manifest every workspace below holds at its source root, because
+        // a source tree with no umbraflow-project.json is not a project and
+        // `project build` refuses it. It is written but not declared, which is
+        // the point: the gate must not be reachable only through the declared
+        // input list.
+        [[nodiscard]]
+        auto acceptedDeploymentManifest() -> std::string
+        {
+            return deploymentManifest(
+                k_handWrittenPlugin,
+                k_handWrittenAuthoring,
+                k_statedJustification
+            );
+        }
+
+        auto writeRootManifest(
+            TemporaryWorkspace const& workspace,
+            std::string_view manifest
+        ) -> void
+        {
+            writeFile(workspace.source() / k_deploymentManifestInput, manifest);
+        }
+
+        [[nodiscard]]
+        auto initializedDeploymentWorkspace(
+            TemporaryWorkspace const& workspace,
+            std::string_view manifest
+        ) -> Status
+        {
+            writeRootManifest(workspace, manifest);
+            return initProject(
+                ProjectInitSpec{
+                    .sourceDirectory = workspace.source(),
+                    .buildDirectory  = workspace.build(),
+                    .inputs          = {
+                        std::filesystem::path{k_deploymentManifestInput},
+                    },
+                }
+            );
+        }
+
         [[nodiscard]]
         auto initializedWorkspace(
             TemporaryWorkspace const& workspace
@@ -159,6 +263,7 @@ namespace uf::project
         {
             writeFile(workspace.source() / "content" / "facts.txt", "facts\n");
             writeFile(workspace.source() / "decisions.txt", "decisions\n");
+            writeRootManifest(workspace, acceptedDeploymentManifest());
             return initProject(
                 ProjectInitSpec{
                     .sourceDirectory = workspace.source(),
@@ -243,74 +348,13 @@ namespace uf::project
                 workspace.source() / k_workflowDeclarationInput,
                 validWorkflowDeclaration()
             );
+            writeRootManifest(workspace, acceptedDeploymentManifest());
             return initProject(
                 ProjectInitSpec{
                     .sourceDirectory = workspace.source(),
                     .buildDirectory  = workspace.build(),
                     .inputs          = {
                         std::filesystem::path{k_workflowDeclarationInput},
-                    },
-                }
-            );
-        }
-
-        inline constexpr auto k_deploymentManifestInput = std::string_view{
-            "umbraflow-project.json"
-        };
-        inline constexpr auto k_handWrittenPlugin = std::string_view{
-            "plugin/dream.luau"
-        };
-
-        // The deployment manifest as a project author writes it, with the one
-        // member under test spliced in exactly as given. The whole document is
-        // written rather than the three members the gate reads, so a fixture
-        // that stopped being a manifest could not go on satisfying the gate.
-        [[nodiscard]]
-        auto deploymentManifest(std::string_view justificationMember) -> std::string
-        {
-            return std::string{R"json({
-  "schema": "umbraflow-project/v1",
-  "runtime_artifact": "runtime/artifact",
-  "primary_deployment": "dream",
-  "deployments": [
-    {
-      "name": "dream",
-      "plugin_id": "chaos.dream",
-      "baseline_event_type": "project.baseline_created",
-      "plugin": "plugin/dream.luau",
-)json"}
-                + std::string{justificationMember}
-                + R"json(      "project_state_schema": "schema/state.json",
-      "project_observation_schema": "schema/observation.json",
-      "tool_precondition_schema": "schema/precondition.json",
-      "reconcile_schema": "schema/reconcile.json",
-      "tool_catalog": "schema/catalog.json",
-      "journal_event_schema_manifest": "schema/journal-manifest.json",
-      "reconcile_manifest": "schema/reconcile-manifest.json",
-      "journal_payload_schemas": ["schema/journal-0.json"],
-      "effect_payload_schemas": [],
-      "artifact_blobs": []
-    }
-  ]
-})json";
-        }
-
-        [[nodiscard]]
-        auto initializedDeploymentWorkspace(
-            TemporaryWorkspace const& workspace,
-            std::string_view justificationMember
-        ) -> Status
-        {
-            writeFile(
-                workspace.source() / k_deploymentManifestInput,
-                deploymentManifest(justificationMember)
-            );
-            return initProject(
-                ProjectInitSpec{
-                    .sourceDirectory = workspace.source(),
-                    .buildDirectory  = workspace.build(),
-                    .inputs          = {
-                        std::filesystem::path{k_deploymentManifestInput},
                     },
                 }
             );
@@ -1047,9 +1091,15 @@ namespace uf::project
         );
     }
 
-    // The direct-plugin tier's admission gate, in all three directions. The
-    // accepted subcase is not decoration: without it a gate that refused every
-    // deployment manifest would satisfy the two refusals and prove nothing.
+    // The direct-plugin tier's admission gate, in every direction it has. The
+    // accepted subcases are not decoration: without them a gate that refused
+    // every deployment manifest would satisfy the refusals and prove nothing.
+    //
+    // The two generated subcases are the ones the first version of this gate
+    // got backwards. It demanded a justification from every deployment with a
+    // `plugin` member, including one naming an adapter the kit itself
+    // generated -- so an author staying on the declarative tier had to invent a
+    // reason, which is the exact failure the member exists to prevent.
     //
     // Presence only. No case here states that the text is a true reason, and
     // none can; whether a plugin could have been a declaration instead is
@@ -1057,9 +1107,21 @@ namespace uf::project
     // (docs/pitfalls/checks-that-cannot-fail.md).
     TEST_CASE("project refuses a hand-written plugin with no stated justification")
     {
-        auto const justification = std::string_view{
-            R"json(      "plugin_justification": "umbraflow-declarative-workflow-tool/v1 has no member that decides what a Reduce returns.",
-)json"
+        auto const specFor = [](
+            TemporaryWorkspace const& workspace,
+            std::string const& manifest
+        )
+        {
+            auto const initialized = initializedDeploymentWorkspace(
+                workspace,
+                manifest
+            );
+            REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+            return ProjectBuildSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.build(),
+                .toolCatalogs    = {},
+            };
         };
 
         SUBCASE("absent")
@@ -1067,16 +1129,14 @@ namespace uf::project
             auto const workspace = TemporaryWorkspace{
                 "uf-project-justification-absent"
             };
-            auto const initialized = initializedDeploymentWorkspace(
+            auto const spec = specFor(
                 workspace,
-                ""
+                deploymentManifest(
+                    k_handWrittenPlugin,
+                    k_handWrittenAuthoring,
+                    ""
+                )
             );
-            REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
-            auto const spec = ProjectBuildSpec{
-                .sourceDirectory = workspace.source(),
-                .buildDirectory  = workspace.build(),
-                .toolCatalogs    = {},
-            };
 
             // CHECK rather than REQUIRE so that neutralizing the gate reports
             // both commands in one run instead of stopping at the first.
@@ -1093,8 +1153,8 @@ namespace uf::project
                 "no justification"
             );
             CHECK_MESSAGE(
-                messageOf(checked).find(k_handWrittenPlugin) != std::string::npos,
-                "the refusal must name the hand-written plugin"
+                messageOf(checked).find("deployments[0]") != std::string::npos,
+                "the refusal must name the deployment block it judged"
             );
             CHECK_MESSAGE(
                 messageOf(checked).find("plugin_justification") != std::string::npos,
@@ -1107,17 +1167,15 @@ namespace uf::project
             auto const workspace = TemporaryWorkspace{
                 "uf-project-justification-blank"
             };
-            auto const initialized = initializedDeploymentWorkspace(
+            auto const spec = specFor(
                 workspace,
-                R"json(      "plugin_justification": " \t\n ",
+                deploymentManifest(
+                    k_handWrittenPlugin,
+                    k_handWrittenAuthoring,
+                    R"json(      "plugin_justification": " \t\n ",
 )json"
+                )
             );
-            REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
-            auto const spec = ProjectBuildSpec{
-                .sourceDirectory = workspace.source(),
-                .buildDirectory  = workspace.build(),
-                .toolCatalogs    = {},
-            };
 
             auto const built = buildProject(spec, {});
             CHECK_FALSE_MESSAGE(
@@ -1130,12 +1188,13 @@ namespace uf::project
                 "project check must refuse a whitespace-only justification"
             );
             CHECK_MESSAGE(
-                messageOf(checked).find(k_handWrittenPlugin) != std::string::npos,
-                "the refusal must name the hand-written plugin"
-            );
-            CHECK_MESSAGE(
                 messageOf(checked).find("plugin_justification") != std::string::npos,
                 "the refusal must name the blank member"
+            );
+            CHECK_MESSAGE(
+                messageOf(checked).find("pattern") != std::string::npos,
+                "a blank justification must be refused by the pattern, not by "
+                "the required clause an absent one trips"
             );
         }
 
@@ -1144,22 +1203,138 @@ namespace uf::project
             auto const workspace = TemporaryWorkspace{
                 "uf-project-justification-stated"
             };
-            auto const initialized = initializedDeploymentWorkspace(
-                workspace,
-                justification
-            );
-            REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
-            auto const spec = ProjectBuildSpec{
-                .sourceDirectory = workspace.source(),
-                .buildDirectory  = workspace.build(),
-                .toolCatalogs    = {},
-            };
+            auto const spec = specFor(workspace, acceptedDeploymentManifest());
 
             auto const built = buildProject(spec, {});
             REQUIRE_MESSAGE(built.has_value(), messageOf(built));
             auto const checked = checkProject(spec, {});
             REQUIRE_MESSAGE(checked.has_value(), messageOf(checked));
         }
+
+        SUBCASE("generated, stating none")
+        {
+            auto const workspace = TemporaryWorkspace{
+                "uf-project-justification-generated"
+            };
+            auto const spec = specFor(
+                workspace,
+                deploymentManifest(k_generatedPlugin, k_generatedAuthoring, "")
+            );
+
+            // A deployment naming a generated adapter owes no justification:
+            // the adapter IS the declarative tier.
+            auto const built = buildProject(spec, {});
+            REQUIRE_MESSAGE(built.has_value(), messageOf(built));
+            auto const checked = checkProject(spec, {});
+            REQUIRE_MESSAGE(checked.has_value(), messageOf(checked));
+        }
+
+        SUBCASE("generated, stating one")
+        {
+            auto const workspace = TemporaryWorkspace{
+                "uf-project-justification-generated-stated"
+            };
+            auto const spec = specFor(
+                workspace,
+                deploymentManifest(
+                    k_generatedPlugin,
+                    k_generatedAuthoring,
+                    k_statedJustification
+                )
+            );
+
+            auto const checked = checkProject(spec, {});
+            REQUIRE_FALSE_MESSAGE(
+                checked.has_value(),
+                "a justification beside a generated adapter is the invented "
+                "reason this member exists to keep out"
+            );
+            CHECK_MESSAGE(
+                messageOf(checked).find("plugin_justification") != std::string::npos,
+                "the refusal must name the member it refuses"
+            );
+        }
+    }
+
+    // The root document is what makes a source tree a project, so the kit reads
+    // it whether or not the author declared it as an input. Before 2026-08-14
+    // the gate ran only over the declared input list, which is the author's
+    // own: a source directory holding an unjustified hand-written plugin
+    // declaration passed both build and check as long as the manifest was left
+    // out of `project init`. The runtime loader still refused the directory, so
+    // nothing shipped broken -- but the two commands claimed a gate they did
+    // not have.
+    TEST_CASE("project check judges the root document the author did not declare")
+    {
+        auto const workspace = TemporaryWorkspace{"uf-project-manifest-undeclared"};
+        writeFile(workspace.source() / "dummy.txt", "dummy\n");
+        writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
+        writeRootManifest(
+            workspace,
+            deploymentManifest(k_handWrittenPlugin, k_handWrittenAuthoring, "")
+        );
+
+        auto const initialized = initProject(
+            ProjectInitSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.build(),
+                .inputs          = {std::filesystem::path{"dummy.txt"}},
+            }
+        );
+        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+        auto const spec = ProjectBuildSpec{
+            .sourceDirectory = workspace.source(),
+            .buildDirectory  = workspace.build(),
+            .toolCatalogs    = {},
+        };
+
+        auto const built = buildProject(spec, {});
+        CHECK_FALSE_MESSAGE(
+            built.has_value(),
+            "project build must judge umbraflow-project.json even when the "
+            "declared inputs do not name it"
+        );
+        auto const checked = checkProject(spec, {});
+        REQUIRE_FALSE_MESSAGE(
+            checked.has_value(),
+            "project check must judge umbraflow-project.json even when the "
+            "declared inputs do not name it"
+        );
+        CHECK_MESSAGE(
+            messageOf(checked).find("plugin_justification") != std::string::npos,
+            "the refusal must be the justification gate rather than an "
+            "unrelated failure"
+        );
+
+        // And a source tree with no root document at all is not a project,
+        // rather than a project whose gate is vacuous.
+        auto const bare = TemporaryWorkspace{"uf-project-manifest-absent"};
+        writeFile(bare.source() / "dummy.txt", "dummy\n");
+        auto const bareInit = initProject(
+            ProjectInitSpec{
+                .sourceDirectory = bare.source(),
+                .buildDirectory  = bare.build(),
+                .inputs          = {std::filesystem::path{"dummy.txt"}},
+            }
+        );
+        REQUIRE_MESSAGE(bareInit.has_value(), messageOf(bareInit));
+        auto const bareBuilt = buildProject(
+            ProjectBuildSpec{
+                .sourceDirectory = bare.source(),
+                .buildDirectory  = bare.build(),
+                .toolCatalogs    = {},
+            },
+            {}
+        );
+        REQUIRE_FALSE_MESSAGE(
+            bareBuilt.has_value(),
+            "a source tree with no umbraflow-project.json is not a project"
+        );
+        CHECK_MESSAGE(
+            messageOf(bareBuilt).find(k_deploymentManifestInput)
+                != std::string::npos,
+            "the refusal must name the document the tree lacks"
+        );
     }
 
     TEST_CASE("fault matrix tamper names the altered frozen release file")

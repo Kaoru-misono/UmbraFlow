@@ -62,6 +62,15 @@ library. Dependencies remain acyclic:
 > `authoring`, `project`, `cli` and `conformance` modules that the earlier
 > summary omitted. This is a factual correction to the manifest graph, not an
 > approval of the separate HostPlugin architecture proposal.
+>
+> Amended 2026-08-14: `umbraflow-project.json`'s shape is now one of the
+> published documents, at `schema/umbraflow-project-v1.schema.json`. It has two
+> readers in modules that cannot link one another — Deployment's runtime loader
+> and Project's offline kit — and the catalog is how both reach the same bytes.
+> Project cannot link Deployment (Deployment reaches Task, and `entry/project`
+> links Project and Core alone), so before this the kit carried a second,
+> weaker reading of the same document; that is the shape of drift the catalog
+> exists to prevent, and it is now closed for this document too.
 
 ```text
 entry/cli         -> {cli, core}

@@ -196,6 +196,7 @@ namespace uf::deployment
                 block += R"json("plugin":"plugin/)json";
                 block += name;
                 block += R"json(.luau",)json";
+                block += R"json("plugin_authoring":"hand-written",)json";
                 block += R"json("plugin_justification":"A fixture plugin that )json"
                     R"json(answers from constants: umbraflow-declarative-)json"
                     R"json(workflow-tool/v1 has no member that decides what a )json"
@@ -734,12 +735,13 @@ namespace uf::deployment
         CHECK(why(backslash).contains("'/'"));
     }
 
-    // The direct-plugin tier is the exception, so a deployment block that names
-    // a hand-written plugin must also say which member or semantic of
-    // umbraflow-declarative-workflow-tool/v1 cannot express it. Both halves are
-    // asserted because they are enforced by two different clauses: `required`
-    // catches the absent member and `"pattern": "\\S"` catches a member present
-    // and blank, and neither stands in for the other.
+    // The direct-plugin tier is the exception, so a deployment block whose
+    // plugin_authoring is "hand-written" must also say which member or semantic
+    // of umbraflow-declarative-workflow-tool/v1 cannot express it. Both halves
+    // are asserted because they are enforced by two different clauses:
+    // `required` under `then` catches the absent member and the
+    // PluginJustification pattern catches a member present and blank, and
+    // neither stands in for the other.
     //
     // PRESENCE ONLY. Nothing here judges whether the stated reason is true.
     TEST_CASE("a hand-written plugin without a stated justification is refused")
@@ -773,6 +775,67 @@ namespace uf::deployment
         auto const blank = fixture.load();
         REQUIRE_FALSE(blank.has_value());
         CHECK(why(blank).contains("pattern"));
+    }
+
+    // The other direction of the same rule, and the one the gate got backwards
+    // until 2026-08-14: a deployment whose plugin is an adapter the project kit
+    // generated IS the declarative tier, and owes no justification at all. A
+    // gate that demanded one from every deployment with a `plugin` member was
+    // asking the declarative tier to invent a reason it does not have, which is
+    // precisely what the member exists to prevent.
+    //
+    // The path is a generated one and the tier is stated in the document,
+    // because only the document can carry it: the loader has no access to the
+    // kit's declared inputs or its output tree, so a rule that read the path
+    // would be one the kit could apply and this loader could not.
+    TEST_CASE("a generated adapter owes no justification and is accepted")
+    {
+        auto const fixture = Fixture{};
+        REQUIRE(fixture.load().has_value());
+
+        constexpr auto k_generated = std::string_view{
+            "generated/adapters/fixture.alpha/dismiss-known-overlay.luau"
+        };
+        fixture.rewrite(k_generated, "return {plugin_id = \"fixture.alpha\"}\n");
+
+        auto const stated = Fixture::projectManifest();
+        auto const at     = stated.find(R"json("plugin_justification":")json");
+        REQUIRE(at != std::string::npos);
+        auto const end = stated.find(R"json(",)json", at);
+        REQUIRE(end != std::string::npos);
+        auto const member = stated.substr(at, end + 2U - at);
+
+        auto const declarative = substituted(
+            substituted(
+                substituted(stated, member, ""),
+                R"json("plugin":"plugin/alpha.luau")json",
+                std::string{R"json("plugin":")json"}
+                    + std::string{k_generated} + R"json(")json"
+            ),
+            R"json("plugin_authoring":"hand-written")json",
+            R"json("plugin_authoring":"generated")json"
+        );
+        fixture.rewrite("umbraflow-project.json", declarative);
+
+        auto const accepted = fixture.load();
+        INFO(why(accepted));
+        CHECK(accepted.has_value());
+
+        // And the inverse is a refusal rather than a member nobody reads. A
+        // justification beside a generated adapter is the false reason this
+        // rule exists to keep out, so the schema refuses the member instead of
+        // ignoring it.
+        fixture.rewrite(
+            "umbraflow-project.json",
+            substituted(
+                declarative,
+                R"json("plugin_authoring":"generated",)json",
+                R"json("plugin_authoring":"generated",)json" + member
+            )
+        );
+        auto const invented = fixture.load();
+        REQUIRE_FALSE(invented.has_value());
+        CHECK(why(invented).contains("plugin_justification"));
     }
 
     // R4. A named file must exist. This is the directory form of the exemplar

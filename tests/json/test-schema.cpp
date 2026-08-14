@@ -578,8 +578,8 @@ namespace uf::json
             sources.emplace_back(entry.path().filename().string(), buffer.str());
         }
         REQUIRE_MESSAGE(
-            sources.size() == 12U,
-            "schema compile sweep must cover all 12 top-level schema/*.json sources"
+            sources.size() == 13U,
+            "schema compile sweep must cover all 13 top-level schema/*.json sources"
         );
 
         auto compiledCount = std::size_t{0};
@@ -618,8 +618,8 @@ namespace uf::json
             ++compiledCount;
         }
         CHECK_MESSAGE(
-            compiledCount == 8U,
-            "eight repository schemas compile without an external reference set"
+            compiledCount == 9U,
+            "nine repository schemas compile without an external reference set"
         );
 
         // The cross-document schema compiles once its two siblings are in the

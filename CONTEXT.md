@@ -211,14 +211,47 @@ other file, and the loader derives each deployment's registration from that
 deployment's block and the digests of the files it read, then builds all five
 authorities from them. One deployment is enough and no tool has to be mutating.
 
-**plugin_justification** — the deployment-block member beside `plugin`, stating
-which member or semantic of `umbraflow-declarative-workflow-tool/v1` cannot
-express this hand-written plugin. Required of every deployment: the declarative
-tier is the default and the whole five-function Luau module is the exception.
+**plugin_authoring** — the deployment-block member that says which of the two
+authoring paths wrote the Luau module `plugin` names: `generated` for an adapter
+the project kit produced from an `umbraflow-declarative-workflow-tool/v1`
+declaration, `hand-written` for a whole five-function module. The author states
+it because only the author knows it: nothing in the module's bytes carries it,
+and a path convention would be a rule the kit could apply and the runtime loader
+could not, which is how two readers of one document drift apart.
+
+**plugin_justification** — the deployment-block member stating which member or
+semantic of `umbraflow-declarative-workflow-tool/v1` cannot express this
+hand-written plugin. Required of a deployment whose `plugin_authoring` is
+`hand-written` and refused from one whose `plugin_authoring` is `generated`: the
+declarative tier is the default and the whole five-function Luau module is the
+exception, and demanding a reason from the default is demanding a false one.
 Both `project check` and `loadProductionProject` refuse an absent or blank one,
 and neither judges whether the stated reason is true — that stays a review
 obligation at plugin acceptance
-([checks that cannot fail](docs/pitfalls/checks-that-cannot-fail.md)).
+([checks that cannot fail](docs/pitfalls/checks-that-cannot-fail.md)). Blank
+means ASCII whitespace: a justification of `U+00A0` alone is accepted, and is a
+review finding on the same terms as one that is present and false.
+_Avoid_: a version of this rule that reads the `plugin` path to decide which
+tier a deployment is on (retired 2026-08-14, and it had the rule inverted:
+it demanded a justification from every deployment with a `plugin` member,
+generated adapters included).
+
+**umbraflow-project.json's shape** — stated once, in
+`schema/umbraflow-project-v1.schema.json`, and reaching both of its readers as
+published bytes through the framework schema catalog. The two readers are
+`deployment::loadProductionProject` and the offline kit's `project build` /
+`project check`, and they live in modules that cannot link one another —
+`uf::deployment` reaches `uf::task`, while the `project` executable links
+`uf::project` and `uf::core` alone. The kit reads the document from the source
+root whether or not the author declared it as an input, and a source tree
+holding none is not a project.
+_Avoid_: `k_projectSchema` inside
+`modules/deployment/source/deployment/project-directory.cpp`, and
+`validatePluginJustifications` inside
+`modules/project/source/project/project-kit.cpp` (both retired 2026-08-14; the
+second was a weaker partial copy of the first that accepted an empty
+`deployments` array, an empty `plugin` path, a numeric deployment `name` and any
+unknown member).
 
 **ConformanceProject** — a `LoadedProject` plus the second root document,
 `umbraflow-conformance.json`, constructed by

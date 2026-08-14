@@ -700,6 +700,26 @@ if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
     )
 endif()
 
+# umbraflow-project.json is judged by the offline kit and by the runtime loader,
+# and those two live in modules that cannot link one another. This target is the
+# only place both are linked at once, which is what lets one case hand one
+# document to both and require the same sentence back. It cannot be a file
+# inside test-project or test-deployment for exactly that reason.
+cpp_add_test(
+    NAME test-project-manifest-shape
+    SOURCES
+        project/test-project-manifest-shape.cpp
+    LIBS
+        ${PROJECT_NAME}_project
+        ${PROJECT_NAME}_deployment
+)
+if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
+    cpp_stage_runtime_libraries(
+        test-project-manifest-shape
+        ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES}
+    )
+endif()
+
 add_executable(generate-umbraflow-example
     support/umbraflow/generate-example.cpp
 )

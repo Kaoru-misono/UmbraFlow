@@ -1248,8 +1248,8 @@ namespace uf::deployment
     {
         auto const catalog = framework_schema::frameworkSchemaCatalog();
         CHECK_MESSAGE(
-            catalog.size() == 8U,
-            "framework schema catalog must contain exactly eight declared sources"
+            catalog.size() == 9U,
+            "framework schema catalog must contain exactly nine declared sources"
         );
 
         auto const collectionFact = framework_schema::findFrameworkSchema(
@@ -1326,6 +1326,21 @@ namespace uf::deployment
         );
         CHECK(valueOf(registration).identity
               == "https://umbraflow.local/schema/project-registration-v1");
+
+        // umbraflow-project.json's shape, published because two readers that
+        // cannot link one another both compile it: the runtime loader and the
+        // offline project kit. No digest is asserted for it -- it is this
+        // repository's own document and is not a member of the consumer's
+        // interface lock, so a digest here would be pinned against nothing.
+        auto const directory = framework_schema::findFrameworkSchema(
+            "schema/umbraflow-project-v1.schema.json"
+        );
+        REQUIRE_MESSAGE(
+            directory.has_value(),
+            "framework schema catalog must include the project directory shape"
+        );
+        CHECK(valueOf(directory).identity
+              == "https://umbraflow.dev/schema/project/directory");
     }
 
     // The ruling on run.ended-v1, made executable. A journal event type reaches

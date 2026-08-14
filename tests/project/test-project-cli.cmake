@@ -25,6 +25,34 @@ set(GENERATED_ADAPTER_NAME
 file(REMOVE_RECURSE "${UF_PROJECT_TEST_ROOT}")
 file(MAKE_DIRECTORY "${SOURCE_DIRECTORY}" "${DECLARATIVE_DIRECTORY}")
 file(WRITE "${INPUT_PATH}" "declared input\n")
+
+# A source tree is a project only when it holds umbraflow-project.json at its
+# root, so the CLI's own rehearsal writes one. It is deliberately not declared
+# as an input: build and check judge it either way.
+file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
+  "schema": "umbraflow-project/v1",
+  "runtime_artifact": "runtime/artifact",
+  "primary_deployment": "dream",
+  "deployments": [
+    {
+      "name": "dream",
+      "plugin_id": "chaos.dream",
+      "baseline_event_type": "project.baseline_created",
+      "plugin": "generated/adapters/chaos.project/dismiss-known-overlay.luau",
+      "plugin_authoring": "generated",
+      "project_state_schema": "schema/state.json",
+      "project_observation_schema": "schema/observation.json",
+      "tool_precondition_schema": "schema/precondition.json",
+      "reconcile_schema": "schema/reconcile.json",
+      "tool_catalog": "generated/tool-catalogs/chaos.project/tool-catalog-v1.json",
+      "journal_event_schema_manifest": "schema/journal-manifest.json",
+      "reconcile_manifest": "schema/reconcile-manifest.json",
+      "journal_payload_schemas": ["schema/journal-0.json"],
+      "effect_payload_schemas": [],
+      "artifact_blobs": []
+    }
+  ]
+}]=])
 file(WRITE "${DECLARATIVE_PATH}" [=[{
   "schema": "umbraflow-declarative-workflow-tool/v1",
   "tool_name": "chaos.dismiss_known_overlay",

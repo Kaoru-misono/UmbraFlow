@@ -71,6 +71,7 @@ cpp_embed_framework_schemas(
     umbraflow-operator-v1.schema.json
     umbraflow-policy-v1.schema.json
     umbraflow-project-registration-v1.schema.json
+    umbraflow-project-v1.schema.json
 )
 
 # The imported ONNX runtime is declared by modules/ocr/external, which names it
