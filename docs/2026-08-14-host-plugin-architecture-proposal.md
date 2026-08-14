@@ -1,10 +1,81 @@
 # HostPlugin architecture proposal — 2026-08-14
 
-> **Status: revised proposal, not current execution authority.** This document
-> records a candidate architecture against repository commit `dc109bd`. It
-> neither changes the current contract in [ARCHITECTURE.md](ARCHITECTURE.md)
-> nor opens a second unfinished-work list. If an option is approved, its work
-> must first enter the consumer repository's canonical execution plan.
+> **Status: RULED ON 2026-08-15. Option A approved and widened; option B
+> refused; option C not considered.** The body below is retained as the
+> rationale that was judged. Where the body still recommends "approve at most B
+> initially", that recommendation is superseded by the ruling in this block. It
+> remains not an unfinished-work list: the consumer repository's
+> `docs/architecture/parallel-implementation-plan.md` is the only canonical
+> owner, and approved option A becomes real work only when its rows are lifted
+> there.
+>
+> **The ruling.**
+>
+> *Option A is approved, and widened by one defect the body missed.* Beside the
+> SessionManifest identity, the trace stream's session id is the constant
+> `k_observeSessionId = "umbra-flow-observe"`
+> (`modules/cli/source/cli/observe.cpp:31,81`), while the real `session-<hash>`
+> is already minted and pinned in `product-lifecycle.cpp`. Repairing only the
+> manifest hash leaves a trace file that still cannot be joined back to its
+> Operator session row, so both identities move into `ProductIdentity` together.
+> The lease repair also needs a sharper test than the body implies: a lease leak
+> self-heals across processes, because every `OperatorCoordinator::open` rotates
+> the session epoch and clears `control_leases`. With one verb per process there
+> is no symptom today. The test proving release must therefore go red on a
+> **second session inside one process**; a fixed single-run test guards nothing.
+>
+> *Option B is refused.* It is sold as purchasing evidence for the architecture,
+> and that evidence is free to read today. Only `explore` and `observe` share
+> provider assembly, the shared part is already extracted into
+> `platform::bindOcrEngine` and `platform::bindTarget`, and each verb's call site
+> is two lines; `open` binds no platform at all, `ocr` binds only OCR, `targets`
+> binds nothing. All five pilot units would be one-to-one wrappers — which is
+> this document's own stop condition, decidable at the design table without
+> spending 10–17 person-days to trigger it. The body's own "Current facts" note
+> that each seam has one shipped provider already implies this; it did not carry
+> the observation through to its recommendation. Two further facts weigh against
+> B and are not in the body: this repository has *deleted* provider variety
+> rather than accumulated it — `file-frame-source.cpp/.hpp` and the `check`,
+> `replay` and `run` commands are retired, with `tests/test-runtime-surface.py`
+> gating their return — and a pilot in which `observe` composes through
+> HostPlugin while four verbs compose explicitly is two spellings of one thing,
+> which this repository forbids and for which the body states no exit.
+>
+> *`ARCHITECTURE.md`'s deliberate-absence sentence is kept verbatim.* Nothing is
+> approved that would require amending it.
+>
+> *One body claim is corrected.* "TaskHost already owns two non-converting
+> generation kinds" is stated harder than the code: both entry points return the
+> same `GenerationId` type (`modules/task/source/task/task-host.hpp`), and the
+> isolation is a runtime refusal, not a type-level one. Acceptance item 10 is
+> therefore new work described as current state.
+>
+> *What replaces B.* The next worthwhile host-side composition work is not a
+> shell but a second real assembly root — the authoring front end becoming its
+> own front end, or the P2 resident host. On the day one exists, hoisting
+> `modules/cli/source/cli/platform/` into a shared module is a one-to-two-day
+> move, and whether an install shell is warranted becomes a question with
+> evidence behind it. Until then a shell would organise roughly 300 lines of
+> assembly against a stop-loss of 1,200.
+>
+> *On the original intent.* The commissioning intent was "everything is plugin".
+> Read as a host-side runtime plugin graph it is unreachable here and should stay
+> so: `SessionManifest` pins six identities at `start`, a snapshot's
+> `identityHash` answers "is this the same composed world", and the
+> reserve → deliver → record join is sealed behind a single friend declaration.
+> Read as "everything that varies with the game is a plugin, in data form", it is
+> already delivered — that is `ProjectPlugin`'s five-function SPI with no Host,
+> Receipt, controller, database, clock or filesystem authority exposed. The
+> intent is not refused; one of its two readings is finished and the other waits
+> on a second assembly root.
+>
+> ---
+>
+> **Original status block, retained.** This document records a candidate
+> architecture against repository commit `dc109bd`. It neither changes the
+> current contract in [ARCHITECTURE.md](ARCHITECTURE.md) nor opens a second
+> unfinished-work list. If an option is approved, its work must first enter the
+> consumer repository's canonical execution plan.
 >
 > Revised 2026-08-14 after independent review and developer direction to avoid
 > over-engineering and remove hand-maintained hash management. The revision
