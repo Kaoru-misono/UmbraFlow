@@ -93,11 +93,12 @@ Between them they enforce byte-level normalization, the module dependency graph,
 in full. They enforce alignment and data member initialization only in part:
 both are conservative recognizers that stay silent on declarations they cannot
 parse, so their residue is on the list below. The required `clang-analysis` CI
-job is meant to add clang-tidy lifetime, bounds, and member-init checks. As of
-2026-08-10 it does not compile, and its header diagnostics were discarded by an
-unusable header filter, so treat those checks as intent and the list below as
-reader-enforced until both are fixed — see the amendment opening
-`references/coding-standard.md`.
+job adds clang-tidy lifetime, bounds, member-init and exception-escape checks.
+Amended 2026-08-14 at `ce537f5`: the lane and header filter are repaired and a
+from-scratch run compiled 205 of 209 first-party translation units under fatal
+diagnostics. Treat a green complete analysis run as enforcement for the files
+it reaches; the list below remains reader-enforced where it says no tool owns a
+rule. See the dated amendments opening `references/coding-standard.md`.
 
 Nothing checks the items below. They are the ones that reach review unnoticed,
 so verify each one deliberately:

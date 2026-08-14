@@ -57,19 +57,38 @@ library. Dependencies remain acyclic:
 > crop rectangle. Project receives source bytes through a caller-owned hash
 > resolver, verifies each hash, and gives decoded images to Image; neither
 > module resolves source locations.
+>
+> Amended 2026-08-14 at `dc109bd`: the graph below now includes the `service`,
+> `authoring`, `project`, `cli` and `conformance` modules that the earlier
+> summary omitted. This is a factual correction to the manifest graph, not an
+> approval of the separate HostPlugin architecture proposal.
 
 ```text
-entry -> operator -> task -> engine -> {controller ports, ocr, vision, trace}
-                    \-> script -> {core, domain}
-deployment -> {operator, task, json, image, schema}
-project    -> {operator, image, json, schema}
-operator   -> {task, json, trace, script, schema}
-controller -> {core, domain}
-vision     -> {core, domain, image}
-ocr        -> {core, domain, vision}
-trace      -> {core, domain, vision}
-image      -> {core, domain}
-schema     -> {}
+entry/cli         -> {cli, core}
+entry/project     -> {project, core}
+entry/conformance -> conformance
+
+authoring   -> {core, domain, image, json, task}
+cli         -> {engine, task, deployment, image, json, operator, service, trace}
+                \-> controller on Windows
+conformance -> {core, deployment, domain, engine, image, operator, script,
+                task, trace}
+service     -> {core, deployment, operator, task, domain, engine, ocr, schema,
+                trace}
+deployment  -> {core, domain, json, operator, task, image, schema}
+project     -> {core, domain, operator, image, json, schema}
+operator    -> {core, domain, json, task, trace, script, schema}
+task        -> {core, domain, engine, ocr, script, trace, image}
+engine      -> {core, domain, ocr, trace, vision}
+script      -> {core, domain, json}
+ocr         -> {core, domain, vision}
+vision      -> {core, domain, image}
+controller  -> {core, domain}
+trace       -> {core, domain}
+image       -> {core, domain}
+json        -> core
+domain      -> core
+schema      -> {}
 ```
 
 `core` remains the platform-free leaf. Adding or promoting a generic core
@@ -116,8 +135,11 @@ two runs of the suite rather than its home.
 | trusted RuntimeModel parser, evidence and two-stage resolution | `task/runtime` |
 | confined RuntimeArtifact verification and Host generation binding | `task` C++ boundary |
 | lease/fence, snapshots, plans, policy, approvals, Operation and reconciliation | `operator` |
+| production lifecycle composition from a project directory through Operator and Host | `service` |
 | published framework schema files and their generated exact-byte runtime catalog | `schema` |
 | generic immutable audit events | `trace` |
+| offline Project Kit build, immutable release and project command | `project` |
+| offline Project Authoring C++ boundary | `authoring` |
 | offline evidence, candidates, review, replay and publication | `tools/annotate` |
 | the Operator contract a consumer must satisfy, as runnable cases | `conformance` |
 | game semantics and payload schemas | external ProjectPlugin consumer |

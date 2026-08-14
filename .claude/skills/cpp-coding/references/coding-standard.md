@@ -17,6 +17,14 @@ cast checks in `.clang-tidy`. It is the only intended check for parts of
 `linux-analysis`, and `macos-analysis` presets; the Windows one uses whatever
 clang-tidy is on `PATH`, in clang-cl mode, rather than the clang-23 CI pins.
 
+> **Amended 2026-08-14 (`ce537f5`, followed by `dc3c6b1`):** both defects in
+> the 2026-08-10 warning below are repaired. A clean from-scratch analysis run
+> compiled 205 of 209 first-party translation units with header diagnostics and
+> `WarningsAsErrors: '*'` active; the remaining exception-escape findings were
+> then closed without disabling a check. The older block remains as the reason
+> complete-object counts and a working header probe are required evidence, not
+> as a statement of current enforcement.
+>
 > **Amended 2026-08-10: the paragraph above states intent, not enforcement.**
 > Two independent defects, each owned by separate work in progress:
 >
@@ -435,12 +443,12 @@ Do not interleave stored state and methods.
 > `malloc`/`free`, `reinterpret_cast`, and `const_cast` outside an `unsafe/`,
 > `platform/`, or `ffi/` directory, and inside one still requires a
 > `// SAFETY:` comment within the preceding three
-> lines. The `clang-analysis` CI job is meant to cover part of the lifetime
+> lines. The `clang-analysis` CI job covers part of the lifetime
 > rules through `bugprone-dangling-handle`, `bugprone-use-after-move`, and
-> `cppcoreguidelines-owning-memory`; check the amendment at the top of this
-> document before counting that as enforcement (2026-08-10). Nothing checks the
-> ownership vocabulary or the construction order, which are the substance of
-> this section.
+> `cppcoreguidelines-owning-memory`; check the 2026-08-14 amendment and the
+> current complete-object count before counting that as enforcement. Nothing
+> checks the ownership vocabulary or the construction order, which are the
+> substance of this section.
 
 Ownership is expressed by values, members, and function signatures. Do not make
 types inherit a common base class solely to participate in an ownership model.
@@ -502,6 +510,15 @@ Construction follows a fixed decision order:
 4. Return `std::unique_ptr<Interface>` for runtime-polymorphic ownership.
 5. Return `std::shared_ptr<T const>` only for demonstrated shared immutable
    lifetime.
+
+Factories returning `Result<T>` and callers moving `T` through `UF_TRY_VALUE`
+must remain valid under `bugprone-exception-escape`. On the current standard
+library, a direct `std::map`, `std::set`, or `std::ofstream` member can make an
+owner's implicit move potentially throwing. Do not add `noexcept` to hide that
+fact. Build the owner in place where no move is required, or return
+`Result<std::unique_ptr<T>>` when exclusive indirection is the smaller honest
+contract. This constraint was measured and enforced by `dc3c6b1`; it is not a
+general reason to pointer-own otherwise ordinary values.
 
 ### Data member initialization
 
