@@ -2,6 +2,10 @@
 
 #include <operator/ledger.hpp>
 
+#include <core/error/result.hpp>
+
+#include <domain/error.hpp>
+
 #include "project-fixture.hpp"
 
 #include <doctest/doctest.h>
@@ -58,6 +62,62 @@ namespace uf::service
             REQUIRE(recoveries.has_value());
             return *std::move(recoveries);
         }
+    }
+
+    TEST_CASE("a failed close does not displace the failure a caller must act on")
+    {
+        auto work = Result<std::string>{
+            fail(AutomationErrorKind::InvalidResource, "the observation refused"),
+        };
+        auto closed = Status{
+            fail(AutomationErrorKind::IoFailure, "the lease could not be released"),
+        };
+
+        auto const reported = reportAfterClose(std::move(work), std::move(closed));
+        REQUIRE_FALSE(reported.has_value());
+        CHECK(
+            automationErrorKind(reported.error())
+            == AutomationErrorKind::InvalidResource
+        );
+        CHECK(reported.error().message() == "the observation refused");
+
+        // Kept, not merged away: a cleanup failure that left no trace would be
+        // a lease nobody can find out was not released.
+        auto const notes = reported.error().context();
+        CHECK_MESSAGE(
+            std::ranges::any_of(
+                notes,
+                [](std::string const& note)
+                {
+                    return note.contains("the lease could not be released");
+                }
+            ),
+            "the close failure must survive on the reported error"
+        );
+    }
+
+    TEST_CASE("a failed close that stands alone is the failure that is reported")
+    {
+        auto closed = Status{
+            fail(AutomationErrorKind::IoFailure, "the lease could not be released"),
+        };
+        auto const reported = reportAfterClose(
+            Result<std::string>{"the observation succeeded"},
+            std::move(closed)
+        );
+        REQUIRE_FALSE(reported.has_value());
+        CHECK(
+            automationErrorKind(reported.error())
+            == AutomationErrorKind::IoFailure
+        );
+        CHECK(reported.error().message() == "the lease could not be released");
+
+        auto const clean = reportAfterClose(
+            Result<std::string>{"the observation succeeded"},
+            ok()
+        );
+        REQUIRE(clean.has_value());
+        CHECK(*clean == "the observation succeeded");
     }
 
     TEST_CASE("lifecycle restart with unfinished state is read-only")

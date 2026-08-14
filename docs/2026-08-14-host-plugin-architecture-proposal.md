@@ -1,5 +1,32 @@
 # HostPlugin architecture proposal — 2026-08-14
 
+> **Implemented 2026-08-15 — option A only.** Both defects are closed and the
+> four Option A acceptance items are met. `cli::observeProject` now runs the
+> observation through an inner function and closes the lifecycle on one
+> unconditional path, combining the two outcomes through
+> `service::reportAfterClose`: the business failure stays primary, a failed
+> close is added to it as context, and a close that fails alone is the reported
+> error. `ProductIdentity` gained `sessionId` and `sessionManifestHash`, both
+> stored in `ProductLifecycle::Impl` at `start`, and the trace stream carries
+> them; the one constant split into `k_observeControllerId` and
+> `k_observeProducer`. Nothing from option B was implemented.
+>
+> **One correction to the ruling below, from the code.** The lease test cannot
+> go red on a second session inside one process either, and no test can.
+> `OperatorCoordinator::open` claims the database with
+> `PRAGMA locking_mode=EXCLUSIVE` and `BEGIN EXCLUSIVE` before it touches the
+> schema (`ledger.cpp:3585-3608`, called at `3783`), so a second
+> `ProductLifecycle::start` against a live runtime directory is refused with
+> "Another Operator coordinator holds this runtime directory" before any lease
+> is read; and once the first lifecycle is destroyed, `beginSessionEpoch`
+> deletes every `control_leases` row (`ledger.cpp:3652`) before the second
+> acquires. Both halves were run: a leaked lease left two acquires and no
+> release, and the next `start` in the same process still acquired its own
+> lease. What survives both is `control_transitions`, so the two cases in
+> `tests/cli/test-observe.cpp` assert instead that each run leaves one
+> `acquire` and one `release` under its own session id — on the success path
+> and on a failure after `start` — and each goes red when the close is removed.
+>
 > **Status: RULED ON 2026-08-15. Option A approved and widened; option B
 > refused; option C not considered.** The body below is retained as the
 > rationale that was judged. Where the body still recommends "approve at most B
@@ -178,6 +205,10 @@ Frame, action, OCR and trace each still have only one shipped production
 provider. Provider variability alone therefore does not justify a framework.
 
 ## Low-cost correctness baseline
+
+> Amended 2026-08-15: both defects below are closed. The present tense in this
+> section describes the tree as it was judged; the implementation note in the
+> status block says what replaced it.
 
 Two real defects are independent of HostPlugin and belong to option A.
 

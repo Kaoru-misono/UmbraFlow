@@ -651,6 +651,13 @@ cpp_add_test(
         # under test is handed on a real desktop.
         ${PROJECT_NAME}_operator
         ${PROJECT_NAME}_image
+        # Whether observe left the Operator holding a control lease is ledger
+        # state and reaches no verb result, so test-observe.cpp reads the
+        # control transitions out of the database the Operator created. The
+        # Operator keeps SQLite private, as it must, which is why the case that
+        # reads its storage links the amalgamation itself -- the same reason
+        # tests/operator/schema-binding.hpp does.
+        ${PROJECT_NAME}_operator_sqlite3
 )
 target_include_directories(test-cli PRIVATE
     "${UF_OPERATOR_CONTRACT_INCLUDE_DIR}"

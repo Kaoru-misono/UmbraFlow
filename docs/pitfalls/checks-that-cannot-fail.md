@@ -76,6 +76,23 @@ caller.
 changing them, inspect the discovered test list in addition to running the
 aggregate; a passing aggregate with a missing child is the defining false green.
 
+State that the runtime erases at startup cannot be asserted by looking for its
+absence afterwards. A control lease that `ProductLifecycle::shutdown` failed to
+release leaves no trace any later reader can find: `OperatorCoordinator::open`
+takes the database under `PRAGMA locking_mode=EXCLUSIVE` and `BEGIN EXCLUSIVE`
+before touching the schema, so a second coordinator against a live runtime
+directory is refused by that claim rather than by the lease, and once the first
+is gone `beginSessionEpoch` deletes every `control_leases` row before the next
+session acquires. Both halves were run on 2026-08-15: a lifecycle dropped
+without shutdown left two acquires and no release, and the next `start` in the
+same process still took its own lease. "Tear down, then check the lease is gone"
+and "start a second session and watch it be blocked" are therefore both green
+with the release deleted. What survives the erasure is the `control_transitions`
+row each acquire and release writes, and that is what
+`tests/cli/test-observe.cpp` reads. The general shape: when a startup path
+normalizes the state a test wants to observe, assert on the append-only record
+of the transition, not on the state.
+
 ## Checks that are review-only by design
 
 Some classifications are judgement calls, such as whether a test deserves a

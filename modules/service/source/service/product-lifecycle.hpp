@@ -16,6 +16,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace uf::service
@@ -62,6 +63,15 @@ namespace uf::service
         ContentHash               registrationHash;
         task::RuntimeModelBinding runtimeModel;
         uint64                    installedGeneration{};
+
+        // The two values that name this run inside the Operator: the session
+        // row that start pinned, and the SessionManifest hash it was admitted
+        // against. They are published because a stream a caller records beside
+        // this lifecycle has to be joinable back to that row, and a caller that
+        // minted its own name for the stream would name a session the ledger
+        // has never heard of.
+        std::string sessionId{};
+        ContentHash sessionManifestHash;
     };
 
     struct ProductObservation final
@@ -129,4 +139,32 @@ namespace uf::service
 
         [[nodiscard]] auto shutdown() -> Status;
     };
+
+    // Which failure a caller is told about when the work and the close that
+    // followed it both failed. The work's failure is the one a caller can act
+    // on, so it stays primary and the close failure is added to it as context
+    // rather than replacing it; a close that fails on its own is the only
+    // failure there is and is reported as itself. Written once here rather than
+    // at each site that closes a lifecycle, because a second spelling of this
+    // rule is a second answer to the same question.
+    template <typename Value>
+    [[nodiscard]]
+    auto reportAfterClose(Result<Value> outcome, Status closed) -> Result<Value>
+    {
+        if (!outcome.has_value())
+        {
+            if (closed.has_value())
+            {
+                return outcome;
+            }
+            auto error = std::move(outcome).error();
+            error.addContext(
+                "the product lifecycle also failed to close: "
+                + std::string{closed.error().message()}
+            );
+            return std::unexpected{std::move(error)};
+        }
+        UF_TRY(std::move(closed));
+        return outcome;
+    }
 }

@@ -143,6 +143,8 @@ namespace uf::service
         LifecycleAccess           access{LifecycleAccess::ReadOnly};
         task::RuntimeModelBinding runtimeModel;
         uint64                    installedGeneration{};
+        std::string               sessionId{};
+        ContentHash               sessionManifestHash;
 
         std::vector<operator_runtime::RecoveredUncertainDispatch> recoveries{};
 
@@ -340,6 +342,8 @@ namespace uf::service
             .access              = access,
             .runtimeModel        = binding,
             .installedGeneration = installedGeneration,
+            .sessionId           = std::move(sessionId),
+            .sessionManifestHash = sessionManifest.hash(),
             .recoveries          = std::move(recoveries),
             .shutdown            = false,
         });
@@ -362,6 +366,8 @@ namespace uf::service
             .registrationHash     = deployed.registration.hash(),
             .runtimeModel         = m_impl->runtimeModel,
             .installedGeneration  = m_impl->installedGeneration,
+            .sessionId            = m_impl->sessionId,
+            .sessionManifestHash  = m_impl->sessionManifestHash,
         };
     }
 
