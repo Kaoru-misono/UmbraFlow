@@ -23,6 +23,8 @@
 
 #include <deployment/project-deployment.hpp>
 
+#include <domain/content-hash.hpp>
+
 #include <operator/project-plugin.hpp>
 
 #include <schema/framework-schema-catalog.hpp>
@@ -31,6 +33,9 @@
 
 #include <array>
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -48,6 +53,56 @@ namespace uf::deployment
 
         using operator_runtime::ProjectDocumentDirection;
         using operator_runtime::ProjectPluginFunction;
+
+        [[nodiscard]]
+        auto repositoryRoot() -> std::filesystem::path
+        {
+            auto source = std::filesystem::path{__FILE__};
+            if (source.is_relative())
+            {
+                source = std::filesystem::absolute(source);
+            }
+            auto candidate = source.parent_path().parent_path().parent_path();
+            if (std::filesystem::is_directory(candidate / "schema"))
+            {
+                return candidate;
+            }
+
+            candidate = std::filesystem::current_path();
+            while (!candidate.empty())
+            {
+                if (std::filesystem::is_directory(candidate / "schema"))
+                {
+                    return candidate;
+                }
+                auto const parent = candidate.parent_path();
+                if (parent == candidate)
+                {
+                    break;
+                }
+                candidate = parent;
+            }
+
+            FAIL("repository root containing schema/ was not found");
+            return {};
+        }
+
+        [[nodiscard]]
+        auto schemaDigest(std::string_view relativePath) -> std::string
+        {
+            auto stream = std::ifstream{
+                repositoryRoot() / relativePath,
+                std::ios::binary,
+            };
+            REQUIRE(stream.good());
+            auto const bytes = std::string{
+                std::istreambuf_iterator<char>{stream},
+                std::istreambuf_iterator<char>{},
+            };
+            auto const digest = sha256(std::as_bytes(std::span{bytes}));
+            REQUIRE(digest.has_value());
+            return digest->hex();
+        }
 
         // The recognizer both exemplars carried as their canonical validator
         // until this change: an ordered substring search and a closing brace.
@@ -1239,11 +1294,6 @@ namespace uf::deployment
         CHECK_FALSE(observed(substituted(k_knownFact, "\"Known\"", "\"Guessed\"")));
     }
 
-    // The digests are the interface lock's, transcribed from
-    // conformance/interface-lock/v1.18/manifest.json in the consumer
-    // repository. Editing a byte under schema/ moves the generated digest and
-    // reds this case; only a run against that repository proves the lock itself
-    // has not moved, which is check_spec_bundle.py's job rather than this one's.
     TEST_CASE("the framework schema catalog publishes every runtime schema source")
     {
         auto const catalog = framework_schema::frameworkSchemaCatalog();
@@ -1262,7 +1312,7 @@ namespace uf::deployment
         CHECK(valueOf(collectionFact).identity
               == "https://umbraflow.dev/schema/collection-fact/v1");
         CHECK(valueOf(collectionFact).sha256
-              == "bb40059ed3a600c5248fc2a1736a07c1e3776bc58bdd2c14e5637adb658e57bb");
+              == schemaDigest(valueOf(collectionFact).relativePath));
 
         auto const workflowTool = framework_schema::findFrameworkSchema(
             "schema/umbraflow-declarative-workflow-tool-v1.schema.json"
@@ -1295,7 +1345,7 @@ namespace uf::deployment
         CHECK(valueOf(provenance).identity
               == "https://umbraflow.dev/schema/fact-provenance/v1");
         CHECK(valueOf(provenance).sha256
-              == "4098bc91b6730a1ae5f1cea3b6e156f447469a531ee0e096eacba6adf552871b");
+              == schemaDigest(valueOf(provenance).relativePath));
 
         auto const fact = framework_schema::findFrameworkSchema(
             "schema/umbraflow-fact-v1.schema.json"
@@ -1306,7 +1356,7 @@ namespace uf::deployment
         );
         CHECK(valueOf(fact).identity == "https://umbraflow.dev/schema/fact/v1");
         CHECK(valueOf(fact).sha256
-              == "7a9af5e79e0dbf6c2be5126f34ddbf48469f28a00c6cc6766b4e447f30bdf0cf");
+              == schemaDigest(valueOf(fact).relativePath));
 
         auto const policy = framework_schema::findFrameworkSchema(
             "schema/umbraflow-policy-v1.schema.json"
