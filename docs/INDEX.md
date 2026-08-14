@@ -33,7 +33,22 @@ records:
 - [Plans index](plans/README.md) lists current authorities and every archived
   plan.
 
-## 3. Current blockers
+## 3. Architecture proposals
+
+- [HostPlugin architecture proposal](2026-08-14-host-plugin-architecture-proposal.md)
+  — compares correctness-only, narrow-pilot and repository-migration options
+  for a DSH-inspired but deliberately small static typed-install model. It has
+  no generic Context, runtime service graph or composition hash, and strictly
+  separates trusted framework HostPlugins from external ProjectPlugins.
+- [Hash management simplification proposal](2026-08-14-hash-management-simplification-proposal.md)
+  — proposes zero developer-authored digests, removal of bundle/schema pins
+  used as compatibility versions, and retention only of automatically produced
+  aggregate content identity at real immutable-byte boundaries.
+
+Both are proposals, not current contract or a second unfinished-work list,
+until explicitly approved and admitted to the canonical execution plan.
+
+## 4. Current blockers
 
 The exact dependency order and acceptance criteria live only in the consumer
 repository's `docs/architecture/parallel-implementation-plan.md`. Do not copy
@@ -44,7 +59,7 @@ authority.
 
 The real dual-game attestation remains external and cannot be moved by fixtures.
 
-## 4. Migration and evidence
+## 5. Migration and evidence
 
 - [Framework capability survey](2026-08-14-framework-capability-survey.md) —
   measured implementation-symbol-to-test map; it is not an unfinished-work
