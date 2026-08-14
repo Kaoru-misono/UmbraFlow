@@ -331,10 +331,15 @@ namespace uf::operator_runtime
                 );
             }
         }
-        auto state = std::make_shared<State>(State{
-            .projectRegistrationHash = registration.hash(),
-            .schemas                 = std::move(validators),
-        });
+        // Built in place rather than as a designated-initialised temporary that
+        // is then moved. State holds a std::map, whose move constructor this
+        // standard library does not declare noexcept, so moving one here was the
+        // only reason the type could throw while being constructed. Two members,
+        // in declaration order.
+        auto state = std::make_shared<State>(
+            registration.hash(),
+            std::move(validators)
+        );
         return ObservedInstanceIdentitySchemas{
             std::shared_ptr<State const>{std::move(state)}
         };

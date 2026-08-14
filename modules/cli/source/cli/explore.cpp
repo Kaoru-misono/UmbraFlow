@@ -285,7 +285,7 @@ namespace uf::cli
                     execution.resultLine = line;
                 }
 
-                auto written = writer.write(execution.resultLine);
+                auto written = writer->write(execution.resultLine);
                 if (!written)
                 {
                     // A results file that cannot be written is session-ending, but

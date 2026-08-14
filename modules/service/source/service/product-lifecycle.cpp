@@ -128,12 +128,19 @@ namespace uf::service
         deployment::LoadedProject loaded;
         std::size_t               deploymentIndex{};
 
-        operator_runtime::ProjectPluginRegistrar registrar{};
-        operator_runtime::ProjectPluginHandle    plugin;
-        operator_runtime::OperatorTaskHost       operatorHost;
-        operator_runtime::OperatorPlanAuthority  planAuthority;
-        operator_runtime::ControllerBinding      controller;
-        operator_runtime::ControlLease           lease;
+        // The registrar is NOT held. registerPlugin returns the handle by value
+        // and the handle owns its own state through a shared_ptr, so keeping the
+        // registrar alive anchors nothing: measured 2026-08-14, the field was
+        // written once and never read, and findExact -- the only thing its map
+        // serves -- has no production caller. Holding it also gave Impl a
+        // std::map, whose move this standard library does not declare noexcept,
+        // which was the sole reason two types here could throw while being
+        // constructed.
+        operator_runtime::ProjectPluginHandle   plugin;
+        operator_runtime::OperatorTaskHost      operatorHost;
+        operator_runtime::OperatorPlanAuthority planAuthority;
+        operator_runtime::ControllerBinding     controller;
+        operator_runtime::ControlLease          lease;
 
         GenerationId              generation;
         LifecycleAccess           access{LifecycleAccess::ReadOnly};
@@ -330,7 +337,6 @@ namespace uf::service
         auto implementation = std::make_unique<Impl>(Impl{
             .loaded              = std::move(loaded),
             .deploymentIndex     = deploymentIndex,
-            .registrar           = std::move(registrar),
             .plugin              = std::move(plugin),
             .operatorHost        = std::move(operatorHost),
             .planAuthority       = std::move(planAuthority),

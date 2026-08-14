@@ -5,6 +5,7 @@
 #include <core/types/integer.hpp>
 
 #include <filesystem>
+#include <memory>
 #include <fstream>
 #include <string>
 #include <string_view>
@@ -85,21 +86,36 @@ namespace uf::cli
     // reads the file sees a line's outcome before the next one runs.
     class ResultWriter final
     {
+        // Reachable by make_unique inside create and by nothing else, which is
+        // how FileTraceSink already spells the same shape: a private constructor
+        // would force a raw allocation, and this repository does not allow one
+        // outside an unsafe, platform or ffi directory.
+        struct OpenTag final
+        {
+        };
+
         std::ofstream m_stream;
         std::string   m_label;
 
+    public:
         // NOT noexcept: std::ofstream's move constructor is not noexcept -- it
         // moves a basic_filebuf, which carries a locale and a buffer -- so this
         // promised something the standard library does not.
-        ResultWriter(std::ofstream stream, std::string label);
+        ResultWriter(OpenTag, std::ofstream stream, std::string label);
 
-    public:
         // `label` names the front-end in an append failure ("explore").
+        //
+        // Returns an owner rather than the value, because a Result<ResultWriter>
+        // has to move one, and moving one moves a std::ofstream, whose move this
+        // standard library does not declare noexcept. FileTraceSink::createNew
+        // already returns an owner for the same reason; a unique_ptr moves
+        // without throwing, so the type stops promising something it cannot keep
+        // instead of documenting that it breaks the promise.
         [[nodiscard]]
         static auto create(
             std::filesystem::path const& path,
             std::string_view label
-        ) -> Result<ResultWriter>;
+        ) -> Result<std::unique_ptr<ResultWriter>>;
 
         [[nodiscard]] auto write(std::string_view line) -> Status;
     };

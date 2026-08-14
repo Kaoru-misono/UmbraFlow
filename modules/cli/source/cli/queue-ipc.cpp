@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <format>
+#include <memory>
 #include <fstream>
 #include <ios>
 #include <string>
@@ -158,7 +159,7 @@ namespace uf::cli
         return lines;
     }
 
-    ResultWriter::ResultWriter(std::ofstream stream, std::string label)
+    ResultWriter::ResultWriter(OpenTag, std::ofstream stream, std::string label)
         : m_stream{std::move(stream)}
         , m_label{std::move(label)}
     {
@@ -167,7 +168,7 @@ namespace uf::cli
     auto ResultWriter::create(
         std::filesystem::path const& path,
         std::string_view label
-    ) -> Result<ResultWriter>
+    ) -> Result<std::unique_ptr<ResultWriter>>
     {
         auto stream = std::ofstream{};
         stream.open(path, std::ios::binary | std::ios::app);
@@ -177,7 +178,11 @@ namespace uf::cli
                 std::format("cannot open the results file {}", path.string())
             );
         }
-        return ResultWriter{std::move(stream), std::string{label}};
+        return std::make_unique<ResultWriter>(
+            ResultWriter::OpenTag{},
+            std::move(stream),
+            std::string{label}
+        );
     }
 
     auto ResultWriter::write(std::string_view line) -> Status
