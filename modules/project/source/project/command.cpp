@@ -296,7 +296,7 @@ namespace uf::project
                 return ProjectExitCode::Failure;
             }
 
-            auto const built = buildProject(*spec);
+            auto const built = buildProject(*spec, {});
             if (!built)
             {
                 return reportProjectError(built.error());
@@ -321,7 +321,7 @@ namespace uf::project
                 return ProjectExitCode::Failure;
             }
 
-            auto const checked = checkProject(*spec);
+            auto const checked = checkProject(*spec, {});
             if (!checked)
             {
                 return reportProjectError(checked.error());
@@ -347,7 +347,7 @@ namespace uf::project
                 return ProjectExitCode::Failure;
             }
 
-            auto const release = freezeProject(*spec);
+            auto const release = freezeProject(*spec, {});
             if (!release)
             {
                 return reportProjectError(release.error());

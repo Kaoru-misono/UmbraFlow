@@ -9,9 +9,12 @@
 
 #include <domain/content-hash.hpp>
 
+#include <image/png.hpp>
+
 #include <doctest/doctest.h>
 
 #include <array>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <ios>
@@ -21,6 +24,7 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace uf::project
 {
@@ -487,7 +491,8 @@ namespace uf::project
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = workspace.build(),
                 .toolCatalogs    = {},
-            }
+            },
+            {}
         );
         REQUIRE_MESSAGE(built.has_value(), messageOf(built));
 
@@ -501,6 +506,97 @@ namespace uf::project
             ),
             "project build must write its receipt under the build directory"
         );
+    }
+
+    TEST_CASE("project build cuts a declared template from content hashes")
+    {
+        auto const workspace = TemporaryWorkspace{
+            "uf-project-template-cut"
+        };
+        auto const initialized = initializedWorkspace(workspace);
+        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+        auto const firstPixels = std::vector<std::byte>{
+            std::byte{180}, std::byte{180}, std::byte{180}, std::byte{1},
+            std::byte{20}, std::byte{20}, std::byte{20}, std::byte{2},
+        };
+        auto const secondPixels = std::vector<std::byte>{
+            std::byte{180}, std::byte{180}, std::byte{180}, std::byte{3},
+            std::byte{220}, std::byte{220}, std::byte{220}, std::byte{4},
+        };
+        auto const firstEncoded = image::encodeRgbaPng(
+            "first-source",
+            2,
+            1,
+            firstPixels
+        );
+        auto const secondEncoded = image::encodeRgbaPng(
+            "second-source",
+            2,
+            1,
+            secondPixels
+        );
+        REQUIRE(firstEncoded.has_value());
+        REQUIRE(secondEncoded.has_value());
+        auto const firstHash  = sha256(*firstEncoded);
+        auto const secondHash = sha256(*secondEncoded);
+        REQUIRE(firstHash.has_value());
+        REQUIRE(secondHash.has_value());
+        auto const rect = PixelRect::create(0, 0, 2, 1);
+        REQUIRE(rect.has_value());
+
+        auto const resolver = TemplateSourceResolver{
+            [
+                first = *firstHash,
+                second = *secondHash,
+                firstBytes = *firstEncoded,
+                secondBytes = *secondEncoded
+            ](ContentHash const& requested) -> Result<std::vector<std::byte>>
+            {
+                if (requested == first)
+                {
+                    return firstBytes;
+                }
+                if (requested == second)
+                {
+                    return secondBytes;
+                }
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "unexpected template source hash"
+                );
+            }
+        };
+        auto const spec = ProjectBuildSpec{
+            .sourceDirectory = workspace.source(),
+            .buildDirectory  = workspace.build(),
+            .toolCatalogs    = {},
+            .templateCuts = {
+                ProjectTemplateCutSpec{
+                    .templatePath = "locator/mark.png",
+                    .sourceHashes = {*firstHash, *secondHash},
+                    .rect         = *rect,
+                },
+            },
+        };
+
+        auto const built = buildProject(spec, resolver);
+        REQUIRE_MESSAGE(built.has_value(), messageOf(built));
+        auto const snapshot = snapshotTree(workspace.build());
+        auto const artifact = std::string{
+            "generated/templates/locator/mark.png"
+        };
+        REQUIRE(snapshot.contains(artifact));
+        auto const& encodedTemplate = snapshot.at(artifact);
+        auto const decoded = image::decodePng(
+            std::as_bytes(std::span{encodedTemplate}),
+            artifact
+        );
+        REQUIRE(decoded.has_value());
+        CHECK(decoded->width == 2U);
+        CHECK(decoded->height == 1U);
+        CHECK(decoded->pixels.at(3) == std::byte{255});
+        CHECK(decoded->pixels.at(7) == std::byte{0});
+        CHECK(checkProject(spec, resolver).has_value());
     }
 
     TEST_CASE("project build regenerates five-function adapters solely from declared source")
@@ -517,7 +613,7 @@ namespace uf::project
             .toolCatalogs    = {},
         };
 
-        auto const built = buildProject(directories);
+        auto const built = buildProject(directories, {});
         REQUIRE_MESSAGE(built.has_value(), messageOf(built));
         REQUIRE_MESSAGE(
             snapshotTree(workspace.source()) == sourceBefore,
@@ -551,7 +647,7 @@ namespace uf::project
             workspace.build() / k_generatedWorkflowAdapter,
             "hand edited\n"
         );
-        auto const rebuilt = buildProject(directories);
+        auto const rebuilt = buildProject(directories, {});
         REQUIRE_MESSAGE(rebuilt.has_value(), messageOf(rebuilt));
         snapshot = snapshotTree(workspace.build());
         CHECK_MESSAGE(
@@ -573,7 +669,7 @@ namespace uf::project
             .toolCatalogs    = {declaration},
         };
 
-        auto const built = buildProject(spec);
+        auto const built = buildProject(spec, {});
         REQUIRE_MESSAGE(built.has_value(), messageOf(built));
         REQUIRE_MESSAGE(
             snapshotTree(workspace.source()) == sourceBefore,
@@ -672,7 +768,7 @@ namespace uf::project
         auto const catalogBefore = catalog;
 
         writeFile(workspace.build() / k_generatedToolCatalog, "hand edited\n");
-        auto const rebuilt = buildProject(spec);
+        auto const rebuilt = buildProject(spec, {});
         REQUIRE_MESSAGE(rebuilt.has_value(), messageOf(rebuilt));
         snapshot = snapshotTree(workspace.build());
         CHECK_MESSAGE(
@@ -691,14 +787,14 @@ namespace uf::project
             .buildDirectory  = workspace.build(),
             .toolCatalogs    = {toolCatalogDeclaration()},
         };
-        auto const built = buildProject(spec);
+        auto const built = buildProject(spec, {});
         REQUIRE_MESSAGE(built.has_value(), messageOf(built));
         auto const catalogPath = workspace.build() / k_generatedToolCatalog;
 
         SUBCASE("altered")
         {
             writeFile(catalogPath, "hand edited\n");
-            auto const checked = checkProject(spec);
+            auto const checked = checkProject(spec, {});
             REQUIRE_FALSE_MESSAGE(
                 checked.has_value(),
                 "project check must reject an altered generated Tool Catalog"
@@ -717,7 +813,7 @@ namespace uf::project
         SUBCASE("missing")
         {
             REQUIRE(std::filesystem::remove(catalogPath));
-            auto const checked = checkProject(spec);
+            auto const checked = checkProject(spec, {});
             REQUIRE_FALSE_MESSAGE(
                 checked.has_value(),
                 "project check must reject a missing generated Tool Catalog"
@@ -738,7 +834,7 @@ namespace uf::project
                 "generated/tool-catalogs/chaos.project/extra.json"
             };
             writeFile(workspace.build() / k_extra, "{}\n");
-            auto const checked = checkProject(spec);
+            auto const checked = checkProject(spec, {});
             REQUIRE_FALSE_MESSAGE(
                 checked.has_value(),
                 "project check must reject an extra generated Tool Catalog artifact"
@@ -759,7 +855,7 @@ namespace uf::project
             auto error            = std::error_code{};
             std::filesystem::create_hard_link(catalogPath, secondName, error);
             REQUIRE_FALSE(error);
-            auto const checked = checkProject(spec);
+            auto const checked = checkProject(spec, {});
             REQUIRE_FALSE_MESSAGE(
                 checked.has_value(),
                 "project check must reject a linked generated Tool Catalog"
@@ -800,8 +896,8 @@ namespace uf::project
             .toolCatalogs    = {},
         };
 
-        auto const firstBuilt  = buildProject(firstSpec);
-        auto const secondBuilt = buildProject(secondSpec);
+        auto const firstBuilt  = buildProject(firstSpec, {});
+        auto const secondBuilt = buildProject(secondSpec, {});
         REQUIRE_MESSAGE(firstBuilt.has_value(), messageOf(firstBuilt));
         REQUIRE_MESSAGE(secondBuilt.has_value(), messageOf(secondBuilt));
         auto const firstSnapshot  = snapshotTree(first.build());
@@ -837,7 +933,7 @@ namespace uf::project
             second.source() / k_workflowDeclarationInput,
             validWorkflowDeclaration() + "\n"
         );
-        auto const changedBuilt = buildProject(secondSpec);
+        auto const changedBuilt = buildProject(secondSpec, {});
         REQUIRE_MESSAGE(changedBuilt.has_value(), messageOf(changedBuilt));
         auto const changedSnapshot = snapshotTree(second.build());
         CHECK_MESSAGE(
@@ -868,7 +964,8 @@ namespace uf::project
                 .registration = ProjectRegistrationBuildSpec{
                     .artifactBlobNames = {"facts", "outside"},
                 },
-            }
+            },
+            {}
         );
 
         REQUIRE_FALSE_MESSAGE(
@@ -898,16 +995,16 @@ namespace uf::project
             .buildDirectory  = workspace.build(),
             .toolCatalogs    = {},
         };
-        auto const built = buildProject(candidate);
+        auto const built = buildProject(candidate, {});
         REQUIRE_MESSAGE(built.has_value(), messageOf(built));
         auto const spec = ProjectFreezeSpec{
             .candidate   = candidate,
             .releaseRoot = workspace.releases(),
         };
 
-        auto const first = freezeProject(spec);
+        auto const first = freezeProject(spec, {});
         REQUIRE_MESSAGE(first.has_value(), messageOf(first));
-        auto const second = freezeProject(spec);
+        auto const second = freezeProject(spec, {});
         REQUIRE_MESSAGE(second.has_value(), messageOf(second));
         CHECK_MESSAGE(
             *first == *second,
@@ -1016,13 +1113,13 @@ namespace uf::project
             .buildDirectory  = workspace.build(),
             .toolCatalogs    = {},
         };
-        auto const built = buildProject(directories);
+        auto const built = buildProject(directories, {});
         REQUIRE_MESSAGE(built.has_value(), messageOf(built));
 
         REQUIRE(std::filesystem::remove(
             workspace.source() / "content" / "facts.txt"
         ));
-        auto const checked = checkProject(directories);
+        auto const checked = checkProject(directories, {});
 
         REQUIRE_FALSE_MESSAGE(
             checked.has_value(),
@@ -1048,14 +1145,14 @@ namespace uf::project
             .buildDirectory  = workspace.build(),
             .toolCatalogs    = {},
         };
-        auto const built = buildProject(directories);
+        auto const built = buildProject(directories, {});
         REQUIRE_MESSAGE(built.has_value(), messageOf(built));
 
         writeFile(
             workspace.build() / k_buildReceiptName,
             "umbraflow-project-kit-build-v1\ndecisions.txt\n"
         );
-        auto const checked = checkProject(directories);
+        auto const checked = checkProject(directories, {});
 
         REQUIRE_FALSE_MESSAGE(
             checked.has_value(),
@@ -1090,7 +1187,8 @@ namespace uf::project
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = nestedBuild,
                 .toolCatalogs    = {},
-            }
+            },
+            {}
         );
 
         REQUIRE_FALSE_MESSAGE(

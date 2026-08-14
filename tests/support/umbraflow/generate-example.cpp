@@ -90,8 +90,8 @@ namespace uf::operator_runtime::test_support
                     ),
                 },
             };
-            UF_TRY(project::buildProject(spec));
-            return project::checkProject(spec);
+            UF_TRY(project::buildProject(spec, {}));
+            return project::checkProject(spec, {});
         }
     }
 }

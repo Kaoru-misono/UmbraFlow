@@ -91,8 +91,8 @@ namespace uf::operator_runtime::conformance::expedition
                     ),
                 },
             };
-            UF_TRY(project::buildProject(spec));
-            return project::checkProject(spec);
+            UF_TRY(project::buildProject(spec, {}));
+            return project::checkProject(spec, {});
         }
     }
 }

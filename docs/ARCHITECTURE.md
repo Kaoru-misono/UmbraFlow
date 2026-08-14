@@ -51,12 +51,18 @@ library. Dependencies remain acyclic:
 > is a leaf module generated from the published files under `schema/`.
 > Deployment, Operator and Project depend on that one runtime catalog; none
 > owns a second schema spelling.
+>
+> Amended 2026-08-14: Project depends on Image to generate template artifacts
+> from declarations containing a template path, source content hashes and a
+> crop rectangle. Project receives source bytes through a caller-owned hash
+> resolver, verifies each hash, and gives decoded images to Image; neither
+> module resolves source locations.
 
 ```text
 entry -> operator -> task -> engine -> {controller ports, ocr, vision, trace}
                     \-> script -> {core, domain}
 deployment -> {operator, task, json, image, schema}
-project    -> {operator, json, schema}
+project    -> {operator, image, json, schema}
 operator   -> {task, json, trace, script, schema}
 controller -> {core, domain}
 vision     -> {core, domain, image}

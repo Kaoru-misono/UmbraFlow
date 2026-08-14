@@ -8,6 +8,8 @@
 
 #include <domain/frame.hpp>
 
+#include <image/pixels.hpp>
+
 #include <cstddef>
 #include <format>
 #include <span>
@@ -103,14 +105,6 @@ namespace uf
     auto BgraImage::grayAt(uint32 x, uint32 y) const noexcept -> uint8
     {
         auto const pixel = pixelAt(x, y);
-        auto const weighted = (
-            uint32{77} * pixel.red
-            + uint32{150} * pixel.green
-            + uint32{29} * pixel.blue
-        );
-        // The weights sum to 256, so the shifted product never leaves a byte.
-        auto const gray = checkedCast<uint8>(weighted >> 8U);
-        UF_CHECK(gray.has_value());
-        return *gray;
+        return image::rgb8ToGray8(pixel.red, pixel.green, pixel.blue);
     }
 }

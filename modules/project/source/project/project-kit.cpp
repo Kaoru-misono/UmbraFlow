@@ -8,11 +8,15 @@
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
+#include <image/png.hpp>
+#include <image/template-cut.hpp>
+
 #include <json/value.hpp>
 
 #include <schema/framework-schema-catalog.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <format>
 #include <fstream>
@@ -53,6 +57,9 @@ namespace uf::project
         };
         constexpr auto k_generatedToolCatalogDirectory = std::string_view{
             "tool-catalogs"
+        };
+        constexpr auto k_generatedTemplateDirectory = std::string_view{
+            "templates"
         };
         constexpr auto k_generatedFrameworkSchemaDirectory = std::string_view{
             "framework-schemas"
@@ -612,6 +619,160 @@ namespace uf::project
         }
 
         [[nodiscard]]
+        auto byteString(std::span<std::byte const> bytes) -> std::string
+        {
+            auto output = std::string{};
+            output.reserve(bytes.size());
+            for (auto const value : bytes)
+            {
+                output.push_back(std::bit_cast<char>(value));
+            }
+            return output;
+        }
+
+        [[nodiscard]]
+        auto normalizeTemplatePath(
+            std::filesystem::path const& path
+        ) -> Result<std::filesystem::path>
+        {
+            auto normalized = path.lexically_normal();
+            if (
+                normalized.empty()
+                || normalized == std::filesystem::path{"."}
+                || normalized.is_absolute()
+                || normalized.has_root_name()
+                || normalized.has_root_directory()
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "generated template path must be relative: \"{}\"",
+                        path.string()
+                    )
+                );
+            }
+            for (auto const& component : normalized)
+            {
+                if (component == std::filesystem::path{".."})
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "generated template path leaves its artifact "
+                            "family: \"{}\"",
+                            path.string()
+                        )
+                    );
+                }
+            }
+            return normalized;
+        }
+
+        [[nodiscard]]
+        auto generatedTemplates(
+            std::vector<ProjectTemplateCutSpec> const& declarations,
+            TemplateSourceResolver const& resolveTemplateSource
+        ) -> Result<std::vector<GeneratedArtifact>>
+        {
+            if (!declarations.empty() && !resolveTemplateSource)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "project template cuts require a content-hash resolver"
+                );
+            }
+
+            auto templates = std::vector<GeneratedArtifact>{};
+            templates.reserve(declarations.size());
+            for (auto const& declaration : declarations)
+            {
+                if (declaration.sourceHashes.empty())
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "generated template \"{}\" requires at least "
+                            "one source hash",
+                            declaration.templatePath.string()
+                        )
+                    );
+                }
+                UF_TRY_VALUE(
+                    templatePath,
+                    normalizeTemplatePath(declaration.templatePath)
+                );
+
+                auto sources = std::vector<image::RgbaImage>{};
+                sources.reserve(declaration.sourceHashes.size());
+                for (auto const& sourceHash : declaration.sourceHashes)
+                {
+                    UF_TRY_VALUE_CONTEXT(
+                        encoded,
+                        resolveTemplateSource(sourceHash),
+                        std::format(
+                            "resolving template source {}",
+                            sourceHash.hex()
+                        )
+                    );
+                    UF_TRY_VALUE(actualHash, sha256(encoded));
+                    if (actualHash != sourceHash)
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "resolved template source {} has content hash {}",
+                                sourceHash.hex(),
+                                actualHash.hex()
+                            )
+                        );
+                    }
+                    UF_TRY_VALUE(
+                        source,
+                        image::decodePng(encoded, sourceHash.hex())
+                    );
+                    sources.emplace_back(std::move(source));
+                }
+
+                UF_TRY_VALUE(
+                    cut,
+                    image::cutRgba8Template(sources, declaration.rect)
+                );
+                UF_TRY_VALUE(
+                    encodedTemplate,
+                    image::encodeRgbaPng(
+                        templatePath.generic_string(),
+                        cut.image.width,
+                        cut.image.height,
+                        cut.image.pixels
+                    )
+                );
+                templates.emplace_back(GeneratedArtifact{
+                    .relativePath = std::move(templatePath),
+                    .bytes        = byteString(encodedTemplate),
+                });
+            }
+
+            std::ranges::sort(templates, {}, &GeneratedArtifact::relativePath);
+            auto const duplicate = std::ranges::adjacent_find(
+                templates,
+                {},
+                &GeneratedArtifact::relativePath
+            );
+            if (duplicate != templates.end())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "generated template path appears more than once: \"{}\"",
+                        duplicate->relativePath.string()
+                    )
+                );
+            }
+            return templates;
+        }
+
+        [[nodiscard]]
         auto generatedFrameworkSchemaCatalog()
             -> std::vector<GeneratedArtifact>
         {
@@ -779,7 +940,8 @@ namespace uf::project
         [[nodiscard]]
         auto generatedProjectBuild(
             ProjectBuildSpec const& spec,
-            std::vector<std::string> const& inputs
+            std::vector<std::string> const& inputs,
+            TemplateSourceResolver const& resolveTemplateSource
         ) -> Result<GeneratedProjectBuild>
         {
             UF_TRY_VALUE(
@@ -787,6 +949,10 @@ namespace uf::project
                 generatedAdapters(spec.sourceDirectory, inputs)
             );
             UF_TRY_VALUE(catalogs, generatedToolCatalogs(spec.toolCatalogs));
+            UF_TRY_VALUE(
+                templates,
+                generatedTemplates(spec.templateCuts, resolveTemplateSource)
+            );
             UF_TRY_VALUE(
                 closureFamilies,
                 generatedArtifactClosure(
@@ -807,6 +973,10 @@ namespace uf::project
             families.emplace_back(GeneratedArtifactFamily{
                 .directory = std::string{k_generatedToolCatalogDirectory},
                 .artifacts = std::move(catalogs),
+            });
+            families.emplace_back(GeneratedArtifactFamily{
+                .directory = std::string{k_generatedTemplateDirectory},
+                .artifacts = std::move(templates),
             });
             families.emplace_back(GeneratedArtifactFamily{
                 .directory = std::string{k_generatedFrameworkSchemaDirectory},
@@ -1743,12 +1913,18 @@ namespace uf::project
         );
     }
 
-    auto buildProject(ProjectBuildSpec const& spec) -> Status
+    auto buildProject(
+        ProjectBuildSpec const& spec,
+        TemplateSourceResolver const& resolveTemplateSource
+    ) -> Status
     {
         UF_TRY(validateDirectories(spec));
         UF_TRY_VALUE(inputs, declaredInputs(spec.buildDirectory));
         UF_TRY(validateDeclaredInputs(spec.sourceDirectory, inputs));
-        UF_TRY_VALUE(generated, generatedProjectBuild(spec, inputs));
+        UF_TRY_VALUE(
+            generated,
+            generatedProjectBuild(spec, inputs, resolveTemplateSource)
+        );
         UF_TRY(ensureBuildDirectory(spec.buildDirectory));
         UF_TRY(writeGeneratedProjectBuild(spec.buildDirectory, generated));
 
@@ -1769,12 +1945,18 @@ namespace uf::project
         );
     }
 
-    auto checkProject(ProjectBuildSpec const& spec) -> Status
+    auto checkProject(
+        ProjectBuildSpec const& spec,
+        TemplateSourceResolver const& resolveTemplateSource
+    ) -> Status
     {
         UF_TRY(validateDirectories(spec));
         UF_TRY_VALUE(inputs, declaredInputs(spec.buildDirectory));
         UF_TRY(validateDeclaredInputs(spec.sourceDirectory, inputs));
-        UF_TRY_VALUE(generated, generatedProjectBuild(spec, inputs));
+        UF_TRY_VALUE(
+            generated,
+            generatedProjectBuild(spec, inputs, resolveTemplateSource)
+        );
         UF_TRY(validateGeneratedProjectBuild(spec.buildDirectory, generated));
 
         auto const receiptPath = spec.buildDirectory / k_buildReceiptName;
@@ -1811,10 +1993,11 @@ namespace uf::project
     }
 
     auto freezeProject(
-        ProjectFreezeSpec const& spec
+        ProjectFreezeSpec const& spec,
+        TemplateSourceResolver const& resolveTemplateSource
     ) -> Result<std::filesystem::path>
     {
-        UF_TRY(checkProject(spec.candidate));
+        UF_TRY(checkProject(spec.candidate, resolveTemplateSource));
         auto const manifestPath = (
             spec.candidate.buildDirectory / k_artifactManifestName
         );

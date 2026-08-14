@@ -10,4 +10,4 @@ version = 0.1.0
 
 [dependencies]
 public = core domain operator
-private = json schema
+private = image json schema

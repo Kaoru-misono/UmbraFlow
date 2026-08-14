@@ -672,6 +672,7 @@ cpp_add_test(
         ${PROJECT_NAME}_script
         ${PROJECT_NAME}_json
         ${PROJECT_NAME}_domain
+        ${PROJECT_NAME}_image
 )
 
 add_executable(generate-umbraflow-example

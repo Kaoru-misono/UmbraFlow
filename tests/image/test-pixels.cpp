@@ -1,6 +1,7 @@
 #include "test-helpers.hpp"
 
 #include <image/pixels.hpp>
+#include <image/template-cut.hpp>
 
 #include <core/types/integer.hpp>
 #include <vision/sad.hpp>
@@ -130,6 +131,136 @@ namespace uf::image
         test_image::requireErrorKind(
             cropped.error(),
             AutomationErrorKind::InvalidResource
+        );
+    }
+
+    TEST_CASE("template cut weights a stable mark above changing ground")
+    {
+        auto firstPixels  = std::vector<std::byte>{};
+        auto secondPixels = std::vector<std::byte>{};
+        firstPixels.reserve(std::size_t{3} * 3U * 4U);
+        secondPixels.reserve(std::size_t{3} * 3U * 4U);
+        for (auto y = uint32{0}; y < 3U; ++y)
+        {
+            for (auto x = uint32{0}; x < 3U; ++x)
+            {
+                auto const mark = x == 1U || y == 1U;
+                auto const edge = !mark && x == y;
+                auto const first  = mark ? uint8{180} : edge ? uint8{100} : uint8{20};
+                auto const second = mark ? uint8{180} : edge ? uint8{200} : uint8{220};
+                for (auto channel = uint32{0}; channel < 3U; ++channel)
+                {
+                    firstPixels.emplace_back(asByte(first));
+                    secondPixels.emplace_back(asByte(second));
+                }
+                firstPixels.emplace_back(asByte(7));
+                secondPixels.emplace_back(asByte(9));
+            }
+        }
+
+        auto const rect = PixelRect::create(0, 0, 3, 3);
+        REQUIRE(rect.has_value());
+        auto const sources = std::array{
+            RgbaImage{.width = 3, .height = 3, .pixels = std::move(firstPixels)},
+            RgbaImage{.width = 3, .height = 3, .pixels = std::move(secondPixels)},
+        };
+        auto const cut = cutRgba8Template(sources, *rect);
+        REQUIRE(cut.has_value());
+        CHECK(cut->alphaDerivation == TemplateAlphaDerivation::ObservedSpread);
+
+        auto const alphaAt = [&cut](std::size_t pixel) -> uint8
+        {
+            return std::to_integer<uint8>(cut->image.pixels.at(pixel * 4U + 3U));
+        };
+        CHECK(alphaAt(4) == 255U);
+        CHECK(alphaAt(0) == 128U);
+        CHECK(alphaAt(2) == 0U);
+        CHECK(alphaAt(4) > alphaAt(2));
+    }
+
+    TEST_CASE("template cut denies full weight where every pixel moved")
+    {
+        // Equal channels make Gray8 equal to the channel value, so the three
+        // pixels below hold observed spreads of 60, 120 and 180. None of them
+        // held still, so none of them may carry a mark's full weight.
+        auto const rect = PixelRect::create(0, 0, 3, 1);
+        REQUIRE(rect.has_value());
+        auto const sources = std::array{
+            RgbaImage{
+                .width  = 3,
+                .height = 1,
+                .pixels = {
+                    asByte(60), asByte(60), asByte(60), asByte(0),
+                    asByte(60), asByte(60), asByte(60), asByte(0),
+                    asByte(60), asByte(60), asByte(60), asByte(0),
+                },
+            },
+            RgbaImage{
+                .width  = 3,
+                .height = 1,
+                .pixels = {
+                    asByte(120), asByte(120), asByte(120), asByte(0),
+                    asByte(180), asByte(180), asByte(180), asByte(0),
+                    asByte(240), asByte(240), asByte(240), asByte(0),
+                },
+            },
+        };
+
+        auto const cut = cutRgba8Template(sources, *rect);
+        REQUIRE(cut.has_value());
+        CHECK(cut->alphaDerivation == TemplateAlphaDerivation::ObservedSpread);
+
+        auto const alphaAt = [&cut](std::size_t pixel) -> uint8
+        {
+            return std::to_integer<uint8>(cut->image.pixels.at(pixel * 4U + 3U));
+        };
+        CHECK(alphaAt(0) == 170U);
+        CHECK(alphaAt(1) == 85U);
+        CHECK(alphaAt(2) == 0U);
+    }
+
+    TEST_CASE("one-source template cut is explicitly fully opaque")
+    {
+        auto const rect = PixelRect::create(0, 0, 2, 1);
+        REQUIRE(rect.has_value());
+        auto const sources = std::array{
+            RgbaImage{
+                .width  = 2,
+                .height = 1,
+                .pixels = {
+                    asByte(10), asByte(20), asByte(30), asByte(0),
+                    asByte(40), asByte(50), asByte(60), asByte(70),
+                },
+            },
+        };
+
+        auto const cut = cutRgba8Template(sources, *rect);
+        REQUIRE(cut.has_value());
+        CHECK(
+            cut->alphaDerivation
+            == TemplateAlphaDerivation::SingleSourceOpaque
+        );
+        CHECK(cut->image.pixels.at(3) == asByte(255));
+        CHECK(cut->image.pixels.at(7) == asByte(255));
+    }
+
+    TEST_CASE("template cut refuses a rectangle outside its source")
+    {
+        auto const rect = PixelRect::create(1, 1, 2, 2);
+        REQUIRE(rect.has_value());
+        auto const sources = std::array{
+            RgbaImage{
+                .width  = 2,
+                .height = 2,
+                .pixels = std::vector<std::byte>(std::size_t{2} * 2U * 4U),
+            },
+        };
+
+        auto const cut = cutRgba8Template(sources, *rect);
+        REQUIRE_FALSE(cut.has_value());
+        test_image::requireErrorKind(
+            cut.error(),
+            AutomationErrorKind::ActionRejected
         );
     }
 }

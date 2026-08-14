@@ -11,6 +11,17 @@
 namespace uf::image
 {
     [[nodiscard]]
+    constexpr auto rgb8ToGray8(uint8 red, uint8 green, uint8 blue) noexcept -> uint8
+    {
+        auto const weighted = (
+            uint32{77} * red
+            + uint32{150} * green
+            + uint32{29} * blue
+        );
+        return static_cast<uint8>(weighted >> 8U);
+    }
+
+    [[nodiscard]]
     auto rgba8ToBgra8(
         std::vector<std::byte> rgba
     ) -> Result<std::vector<std::byte>>;
