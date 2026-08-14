@@ -23,7 +23,12 @@ namespace uf::trace
         std::ofstream m_stream;
 
     public:
-        FileTraceSink(OpenTag, std::ofstream stream) noexcept;
+        // NOT noexcept: std::ofstream's move constructor is not noexcept -- it
+        // moves a basic_filebuf, which carries a locale and a buffer -- so
+        // promising noexcept here promised something the standard library does
+        // not, and a throw from that move would have terminated. createNew is
+        // the only caller and already returns a Result.
+        FileTraceSink(OpenTag, std::ofstream stream);
 
         [[nodiscard]]
         static auto createNew(

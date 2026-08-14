@@ -39,7 +39,7 @@ namespace uf::trace
         }
     }
 
-    FileTraceSink::FileTraceSink(OpenTag, std::ofstream stream) noexcept
+    FileTraceSink::FileTraceSink(OpenTag, std::ofstream stream)
         : m_stream{std::move(stream)}
     {
         UF_CHECK(m_stream.is_open());

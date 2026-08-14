@@ -945,8 +945,8 @@ namespace uf::operator_runtime
             "policy-variant"
         );
         auto pinSnapshot = [&availabilityStore, &policyManifest](
-                               std::string sessionId,
-                               std::string instanceId,
+                               std::string const& sessionId,
+                               std::string const& instanceId,
                                std::vector<std::string> capabilities
                            )
         {

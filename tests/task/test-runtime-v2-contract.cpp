@@ -908,6 +908,7 @@ identity = ["screen.anchor"]
 
         auto const posted = runtime.actions().lastKey();
         REQUIRE(posted.has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(posted->value() == "E");
     }
 
@@ -950,8 +951,10 @@ identity = ["screen.anchor"]
         REQUIRE(runtime.actions().lastDragStart().has_value());
         REQUIRE(runtime.actions().lastDragEnd().has_value());
         REQUIRE(runtime.actions().lastDragTravel().has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(runtime.actions().lastDragStart()->x() == doctest::Approx(1.0));
         CHECK_MESSAGE(
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             runtime.actions().lastDragEnd()->x() == doctest::Approx(2.0),
             "T-006 drag endpoint must equal its measured start plus declared offset"
         );

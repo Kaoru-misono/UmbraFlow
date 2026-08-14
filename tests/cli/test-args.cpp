@@ -275,10 +275,12 @@ namespace uf::cli
         CHECK(result->image == std::filesystem::path{"capture.png"});
         CHECK(result->ocrModels == std::filesystem::path{"models"});
         REQUIRE(result->rect.has_value());
+        // NOLINTBEGIN(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(result->rect->x() == uint32{440});
         CHECK(result->rect->y() == uint32{600});
         CHECK(result->rect->width() == uint32{300});
         CHECK(result->rect->height() == uint32{140});
+        // NOLINTEND(bugprone-unchecked-optional-access)
         CHECK(result->layout == ocr::TextLayout::SingleLine);
         CHECK(result->maximumLines == uint32{8});
     }

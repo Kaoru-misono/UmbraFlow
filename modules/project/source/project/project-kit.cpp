@@ -161,8 +161,8 @@ namespace uf::project
                 );
             }
 
-            error                = std::error_code{};
-            auto const canonical = std::filesystem::weakly_canonical(
+            error          = std::error_code{};
+            auto canonical = std::filesystem::weakly_canonical(
                 absolute,
                 error
             );
@@ -451,7 +451,7 @@ namespace uf::project
                 );
             }
 
-            auto const text = std::string{
+            auto text = std::string{
                 std::istreambuf_iterator<char>{stream},
                 std::istreambuf_iterator<char>{}
             };
@@ -1827,7 +1827,7 @@ namespace uf::project
             releaseDigest,
             sha256(std::as_bytes(std::span{manifestBytes}))
         );
-        auto const releaseDirectory = spec.releaseRoot / releaseDigest.hex();
+        auto releaseDirectory = spec.releaseRoot / releaseDigest.hex();
 
         auto error = std::error_code{};
         if (std::filesystem::is_directory(releaseDirectory, error))

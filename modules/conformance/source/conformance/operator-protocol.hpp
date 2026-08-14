@@ -120,7 +120,12 @@ namespace uf::operator_runtime::conformance
             exactOperatorProtocolSchemaBytes,
             exactPolicyArtifactBytes,
             deployment::readPlanProposal,
-            [uiAction](ValidatedDocument const& intent) -> Result<StepIntentClaims>
+            // Init-capture rather than [uiAction]: capturing the const& parameter
+            // by name gives the closure a CONST member, which its move
+            // constructor cannot move and must copy instead -- a copy that can
+            // throw, out of a move. Deducing the member type here drops the const.
+            [uiAction = uiAction](ValidatedDocument const& intent)
+                -> Result<StepIntentClaims>
             {
                 UF_TRY_VALUE(claims, deployment::readStepIntent(intent));
                 if (claims.kind != StepKind::UiAction)

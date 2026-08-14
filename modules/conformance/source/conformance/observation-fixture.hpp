@@ -561,13 +561,16 @@ namespace uf::operator_runtime::conformance
         // extent out of the causes requireResolvedSurface has to explain.
         auto const fingerprint = declaredFingerprint(*host, *generation);
         requireProbeGeometry(probeFrame, fingerprint);
+        // The runtime is allocated into its own owner before the aggregate is
+        // built, so no initializer both moves an owner out and allocates.
+        auto runtime = std::make_unique<ObservationRuntime>(
+            probeFrame,
+            fingerprint,
+            frameId
+        );
         return ObservationHost{
-            .host    = std::move(host),
-            .runtime = std::make_unique<ObservationRuntime>(
-                probeFrame,
-                fingerprint,
-                frameId
-            ),
+            .host       = std::move(host),
+            .runtime    = std::move(runtime),
             .generation = *generation,
         };
     }

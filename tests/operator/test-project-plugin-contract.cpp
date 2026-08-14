@@ -172,7 +172,9 @@ return {
             auto const rootHash = hashOf(exactJcs);
             auto ownerResult = ProjectRegistrationSchemaOwner::create(
                 schemaHash,
-                [exactJcs, claims = std::move(claims)](
+                // exactJcs is const; capturing it by name would give the closure
+                // a const member its move constructor must copy, not move.
+                [exactJcs = exactJcs, claims = std::move(claims)](
                     std::string_view candidate) -> Result<ProjectRegistrationClaims> {
                     if (candidate != exactJcs)
                     {
@@ -833,7 +835,7 @@ return {
             // A JSON string document one byte past the per-artifact ceiling.
             // Repeated bytes alone are not a document, so a ceiling removed
             // here would leave admission refusing on the parse instead.
-            auto oversized = "\"" + std::string(4U * 1024U * 1024U, 'x') + "\"";
+            auto oversized = "\"" + std::string(std::size_t{4U} * 1024U * 1024U, 'x') + "\"";
             auto registrar = ProjectPluginRegistrar{};
             auto fixture = registrationFixture("fixture.catalogue",
                                                k_cataloguePlugin,

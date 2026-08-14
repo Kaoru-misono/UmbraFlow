@@ -1231,6 +1231,7 @@ namespace uf::operator_runtime
         ));
         REQUIRE(first->observedInstances()[1].parentObservedInstanceId.has_value());
         CHECK(
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             first->observedInstances()[1].parentObservedInstanceId->value()
             == eventId
         );

@@ -17,7 +17,7 @@ namespace uf::task
         , m_outcome{outcome}
         , m_reason{std::move(reason)}
         , m_receiptId{receiptId}
-        , m_posted{std::move(posted)}
+        , m_posted{posted}
     {
         // The schema admits no fourth shape: delivered carries an input receipt
         // and no reason, and the other two carry a reason and no receipt.

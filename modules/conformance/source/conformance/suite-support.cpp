@@ -237,6 +237,7 @@ namespace uf::operator_runtime::conformance
         {
             auto const descriptor = deployed.catalog.carriedTool(tool);
             REQUIRE(descriptor.has_value());
+            // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
             for (auto const& bound : descriptor->effectBounds)
             {
                 types.emplace_back(bound.namespacedType);

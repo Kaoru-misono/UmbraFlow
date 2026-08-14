@@ -396,7 +396,10 @@ namespace uf::operator_runtime::test_support
         };
         auto owner = ProjectRegistrationSchemaOwner::create(
             schemaHash,
-            [exactJcs, claims](
+            // Init-captures rather than [exactJcs, claims]: both locals are
+            // const, and capturing a const entity by name gives the closure a
+            // const member its move constructor must copy rather than move.
+            [exactJcs = exactJcs, claims = claims](
                 std::string_view candidate
             ) -> Result<ProjectRegistrationClaims>
             {

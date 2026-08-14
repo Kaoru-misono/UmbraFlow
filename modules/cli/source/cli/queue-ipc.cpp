@@ -158,7 +158,7 @@ namespace uf::cli
         return lines;
     }
 
-    ResultWriter::ResultWriter(std::ofstream stream, std::string label) noexcept
+    ResultWriter::ResultWriter(std::ofstream stream, std::string label)
         : m_stream{std::move(stream)}
         , m_label{std::move(label)}
     {

@@ -190,7 +190,10 @@ namespace uf::task_platform
             DELETE | FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
         );
 
-        constexpr auto k_enumerationBufferBytes = std::size_t{64U * 1024U};
+        // The multiplication is done in std::size_t rather than in unsigned int
+        // and widened afterwards, so the buffer size is computed in the type it
+        // is used as.
+        constexpr auto k_enumerationBufferBytes = std::size_t{64U} * 1024U;
 
         struct OpenedNode final
         {
@@ -345,13 +348,35 @@ namespace uf::task_platform
                     {
                         return ioFailure("a directory enumeration record ran past its buffer");
                     }
-                    // SAFETY: the bound above keeps the whole fixed part of the
-                    // record inside the buffer, and the name length below is
-                    // the one the same record declares.
+                    auto const record = std::span{std::as_const(buffer)}.subspan(offset);
+
+                    // A Win32 variable-length record cannot be read out of the
+                    // byte buffer the API fills without this cast.
+                    //
+                    // SAFETY: `record` begins at a record boundary and the check
+                    // above proves its whole fixed part lies inside the buffer.
+                    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
                     auto const* const entry = reinterpret_cast<FILE_ID_BOTH_DIR_INFO const*>(
-                        buffer.data() + offset
+                        record.data()
                     );
+
                     auto const nameBytes = static_cast<std::size_t>(entry->FileNameLength);
+                    // The fixed-part check above does NOT cover the name, and
+                    // this one is not a duplicate of it: FileName is a
+                    // variable-length tail whose length the record declares for
+                    // itself, so a record declaring a longer name than the
+                    // remaining buffer holds would have been read past the end.
+                    if (offsetof(FILE_ID_BOTH_DIR_INFO, FileName) + nameBytes > record.size())
+                    {
+                        return ioFailure("a directory enumeration name ran past its buffer");
+                    }
+
+                    // SAFETY: the check above proves the declared name stays
+                    // inside `record`. FileName is declared WCHAR[1] and is the
+                    // Win32 variable-length tail idiom, so reading it as
+                    // nameBytes/2 characters is the API's documented contract
+                    // and cannot be spelled without decaying the array.
+                    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay)
                     auto name = std::wstring{entry->FileName, nameBytes / sizeof(wchar_t)};
                     if (name != L"." && name != L"..")
                     {
@@ -438,16 +463,17 @@ namespace uf::task_platform
             auto filled = std::size_t{};
             while (filled < *total)
             {
-                auto const remaining = checkedCast<DWORD>(*total - filled);
+                // The pointer handed to the OS and the count that bounds its
+                // write come from ONE span, so the two cannot describe
+                // different ends of the buffer.
+                auto const window    = std::span{bytes}.subspan(filled);
+                auto const remaining = checkedCast<DWORD>(window.size());
                 if (!remaining)
                 {
                     return ioFailure("a confined file is larger than one read");
                 }
                 auto read = DWORD{};
-                // SAFETY: bytes.data() + filled stays inside the vector because
-                // filled < *total == bytes.size(), and the requested count is
-                // exactly the remaining distance to the end.
-                if (::ReadFile(handle.get(), bytes.data() + filled, *remaining, &read, nullptr) == 0)
+                if (::ReadFile(handle.get(), window.data(), *remaining, &read, nullptr) == 0)
                 {
                     return ioFailure("cannot read a confined file");
                 }
@@ -701,7 +727,10 @@ namespace uf::task_platform
         std::filesystem::path const& root
     ) -> Result<ConfinedRoot>
     {
-        auto const native = root.native();
+        // A reference into `root`, which the caller owns for the whole call;
+        // path::native() returns a reference to the path's own storage, so
+        // copying it here bought nothing.
+        auto const& native = root.native();
         UF_TRY_VALUE(handle, openNoFollow(native, OpenKind::Directory));
         UF_TRY_VALUE(identity, identityOf(handle));
         auto implementation = std::make_unique<Impl>();

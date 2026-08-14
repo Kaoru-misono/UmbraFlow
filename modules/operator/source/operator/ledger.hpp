@@ -81,9 +81,14 @@ namespace uf::operator_runtime
         uint64                expectedInstalledGeneration{};
     };
 
+    // No field carries a default because the record has no default
+    // construction to give one meaning: ContentHash has no zero value, so the
+    // implicit default constructor is deleted and every pin must name both the
+    // generation and the root it pins. A default on the generation alone
+    // advertised a construction that does not exist.
     struct RuntimeArtifactPin final
     {
-        uint64      installedGeneration{};
+        uint64      installedGeneration;
         ContentHash artifactRootHash;
     };
 

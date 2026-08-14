@@ -131,7 +131,7 @@ namespace uf::operator_runtime
         static auto create(
             VerifiedProjectRegistration const& registration,
             std::string_view exactToolCatalogBytes,
-            ToolCatalogReader readCatalog,
+            ToolCatalogReader const& readCatalog,
             ToolArgumentValidator validateArguments
         ) -> Result<ProjectToolCatalogSchemaOwner>;
 

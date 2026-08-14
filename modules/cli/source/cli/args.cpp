@@ -1,6 +1,7 @@
 #include "args.hpp"
 
 #include <core/numeric/checked-cast.hpp>
+#include <core/safety/checked-access.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
@@ -344,7 +345,7 @@ namespace uf::cli
                     parsed,
                     parseUnsigned32(remaining.substr(0U, separator), flag)
                 );
-                fields[index] = parsed;
+                checkedAt(fields, index) = parsed;
                 if (!last)
                 {
                     remaining = remaining.substr(separator + 1U);

@@ -750,7 +750,7 @@ namespace uf::task
                 outcome,
                 std::move(reason),
                 ordinal,
-                std::move(delivered)
+                delivered
             };
         };
 

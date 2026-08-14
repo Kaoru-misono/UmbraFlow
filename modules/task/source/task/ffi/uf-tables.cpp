@@ -522,25 +522,29 @@ namespace uf::task
             lua_pushlstring(state, bytes.data(), bytes.size());
             auto const hash = result->hash.hex();
             lua_pushlstring(state, hash.data(), hash.size());
-            if (!result->mask.has_value())
+            // Bound once, so the emptiness test and every read below are the
+            // same optional rather than nine separate results of Result's
+            // operator->.
+            auto const& mask = result->mask;
+            if (!mask.has_value())
             {
                 lua_pushnil(state);
                 return 3;
             }
             lua_createtable(state, 0, 10);
-            addNumber(state, "key_red", result->mask->key.red);
-            addNumber(state, "key_green", result->mask->key.green);
-            addNumber(state, "key_blue", result->mask->key.blue);
-            addNumber(state, "tolerance", result->mask->key.tolerance);
-            lua_pushboolean(state, result->mask->key.removes ? 1 : 0);
+            addNumber(state, "key_red", mask->key.red);
+            addNumber(state, "key_green", mask->key.green);
+            addNumber(state, "key_blue", mask->key.blue);
+            addNumber(state, "tolerance", mask->key.tolerance);
+            lua_pushboolean(state, mask->key.removes ? 1 : 0);
             lua_setfield(state, -2, "key_removes");
-            addNumber(state, "rect_pixels", result->mask->rectPixels);
-            addNumber(state, "selected_pixels", result->mask->selectedPixels);
-            addNumber(state, "ramp_selected_pixels", result->mask->rampSelectedPixels);
+            addNumber(state, "rect_pixels", mask->rectPixels);
+            addNumber(state, "selected_pixels", mask->selectedPixels);
+            addNumber(state, "ramp_selected_pixels", mask->rampSelectedPixels);
             lua_pushlstring(
                 state,
-                result->mask->warning.data(),
-                result->mask->warning.size()
+                mask->warning.data(),
+                mask->warning.size()
             );
             lua_setfield(state, -2, "warning");
             freezeData(state, context);
@@ -2054,7 +2058,7 @@ namespace uf::task
                     .variant       = variant,
                     .action        = action,
                     .proofLocator  = proofLocator,
-                    .input         = std::move(input),
+                    .input         = input,
                 }
             );
             if (!minted)

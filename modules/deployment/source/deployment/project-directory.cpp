@@ -1102,7 +1102,7 @@ namespace uf::deployment
             static auto load(
                 std::filesystem::path const& directory,
                 std::span<ExpectedRegistration const> expected,
-                std::shared_ptr<ProjectDocumentInputLog> p_inputLog
+                std::shared_ptr<ProjectDocumentInputLog> const& p_inputLog
             ) -> Result<LoadedProject>;
         };
     }
@@ -1166,7 +1166,7 @@ namespace uf::deployment
     auto ProjectLoader::load(
         std::filesystem::path const& directory,
         std::span<ExpectedRegistration const> expected,
-        std::shared_ptr<ProjectDocumentInputLog> p_inputLog
+        std::shared_ptr<ProjectDocumentInputLog> const& p_inputLog
     ) -> Result<LoadedProject>
     {
         UF_TRY(requireUniqueCommitments(expected));

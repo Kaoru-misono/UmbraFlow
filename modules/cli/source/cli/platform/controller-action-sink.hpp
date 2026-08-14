@@ -44,7 +44,10 @@ namespace uf::cli::platform
             -> std::move_only_function<Result<DeliveryTarget>()>;
 
     public:
-        explicit ControllerActionSink(DeliveryTarget target) noexcept
+        // NOT noexcept: m_held holds a std::set and a std::map, whose default
+        // constructors are not noexcept in this toolchain's standard library,
+        // so the promise this signature made was one the members do not keep.
+        explicit ControllerActionSink(DeliveryTarget target)
             : m_target{target}
         {
         }

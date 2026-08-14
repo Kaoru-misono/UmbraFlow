@@ -88,7 +88,10 @@ namespace uf::cli
         std::ofstream m_stream;
         std::string   m_label;
 
-        ResultWriter(std::ofstream stream, std::string label) noexcept;
+        // NOT noexcept: std::ofstream's move constructor is not noexcept -- it
+        // moves a basic_filebuf, which carries a locale and a buffer -- so this
+        // promised something the standard library does not.
+        ResultWriter(std::ofstream stream, std::string label);
 
     public:
         // `label` names the front-end in an append failure ("explore").

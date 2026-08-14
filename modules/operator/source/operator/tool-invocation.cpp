@@ -90,7 +90,7 @@ namespace uf::operator_runtime
     auto ProjectToolCatalogSchemaOwner::create(
         VerifiedProjectRegistration const& registration,
         std::string_view exactToolCatalogBytes,
-        ToolCatalogReader readCatalog,
+        ToolCatalogReader const& readCatalog,
         ToolArgumentValidator validateArguments
     ) -> Result<ProjectToolCatalogSchemaOwner>
     {

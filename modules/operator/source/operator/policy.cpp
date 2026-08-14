@@ -78,9 +78,9 @@ namespace uf::operator_runtime
         // would be a defect in this reader rather than in the document.
         [[nodiscard]]
         auto member(
-            json::Value const& object,
+            json::Value const& object UF_LIFETIME_BOUND,
             std::string_view name
-        ) UF_LIFETIME_BOUND -> json::Value const&
+        ) -> json::Value const&
         {
             auto const* const p_member = object.find(name);
             UF_CHECK(p_member != nullptr);

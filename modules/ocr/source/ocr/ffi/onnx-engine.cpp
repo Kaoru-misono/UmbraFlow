@@ -12,6 +12,7 @@
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
 #include <core/numeric/checked-cast.hpp>
+#include <core/safety/checked-access.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
@@ -358,9 +359,12 @@ namespace uf::ocr
 
                     auto const offset =
                         static_cast<std::size_t>(row) * width + column;
-                    for (auto channel = std::size_t{0}; channel < 3U; ++channel)
+                    for (auto channel = std::size_t{0};
+                         channel < channels.size();
+                         ++channel)
                     {
-                        auto const normalized = channels[channel] / 127.5 - 1.0;
+                        auto const normalized =
+                            checkedAt(channels, channel) / 127.5 - 1.0;
                         input.tensor[channel * plane + offset] =
                             static_cast<float>(normalized);
                     }
@@ -527,11 +531,14 @@ namespace uf::ocr
 
                     auto const offset =
                         static_cast<std::size_t>(row) * extent.width + column;
-                    for (auto channel = std::size_t{0}; channel < 3U; ++channel)
+                    for (auto channel = std::size_t{0};
+                         channel < channels.size();
+                         ++channel)
                     {
                         auto const normalized =
-                            (channels[channel] / 255.0 - k_detectionChannelMean[channel])
-                            / k_detectionChannelDeviation[channel];
+                            (checkedAt(channels, channel) / 255.0
+                             - checkedAt(k_detectionChannelMean, channel))
+                            / checkedAt(k_detectionChannelDeviation, channel);
                         input.tensor[channel * plane + offset] =
                             static_cast<float>(normalized);
                     }
@@ -852,16 +859,21 @@ namespace uf::ocr
                     shape.size()
                 );
 
-                char const* inputNames[]  = {m_inputName.c_str()};
-                char const* outputNames[] = {m_outputName.c_str()};
+                // Ort::Session::Run takes each list as a pointer and a count.
+                // Holding all three in std::array means the count is the array's
+                // own size rather than a literal that can drift away from the
+                // list it describes.
+                auto const inputNames  = std::array{m_inputName.c_str()};
+                auto const outputNames = std::array{m_outputName.c_str()};
+                auto       inputs      = std::array{std::move(tensor)};
 
                 auto outputs = m_recognition.Run(
                     Ort::RunOptions{nullptr},
-                    inputNames,
-                    &tensor,
-                    1,
-                    outputNames,
-                    1
+                    inputNames.data(),
+                    inputs.data(),
+                    inputs.size(),
+                    outputNames.data(),
+                    outputNames.size()
                 );
                 if (outputs.empty() || !outputs.front().IsTensor())
                 {
@@ -925,8 +937,18 @@ namespace uf::ocr
             // region and recognising is one run PER line, so a region holding
             // more lines than the caller can pay for is refused having cost one
             // inference rather than one per line.
+            //
+            // It takes the Detection rather than reading m_detection, so an
+            // engine built without a detection model cannot reach this code at
+            // all: the caller must already hold one to call it. Reading the
+            // optional here instead would make "m_detection has a value" a
+            // precondition stated only in prose, which is what it was.
+            //
+            // The reference is non-const because Ort::Session::Run is non-const;
+            // nothing here modifies the Detection itself.
             [[nodiscard]]
             auto locateLines(
+                Detection& detection,
                 BgraImage const& image,
                 PixelRect const& rect
             ) -> Result<std::vector<PixelRect>>
@@ -951,16 +973,17 @@ namespace uf::ocr
                     shape.size()
                 );
 
-                char const* inputNames[]  = {m_detection->inputName.c_str()};
-                char const* outputNames[] = {m_detection->outputName.c_str()};
+                auto const inputNames  = std::array{detection.inputName.c_str()};
+                auto const outputNames = std::array{detection.outputName.c_str()};
+                auto       inputs      = std::array{std::move(tensor)};
 
-                auto outputs = m_detection->session.Run(
+                auto outputs = detection.session.Run(
                     Ort::RunOptions{nullptr},
-                    inputNames,
-                    &tensor,
-                    1,
-                    outputNames,
-                    1
+                    inputNames.data(),
+                    inputs.data(),
+                    inputs.size(),
+                    outputNames.data(),
+                    outputNames.size()
                 );
                 if (outputs.empty() || !outputs.front().IsTensor())
                 {
@@ -1049,7 +1072,7 @@ namespace uf::ocr
                     );
                 }
 
-                UF_TRY_VALUE(boxes, locateLines(image, rect));
+                UF_TRY_VALUE(boxes, locateLines(*m_detection, image, rect));
                 if (maximumLines.has_value() && boxes.size() > *maximumLines)
                 {
                     return fail(
@@ -1083,6 +1106,14 @@ namespace uf::ocr
             }
 
         public:
+            // NOT noexcept: every argument moves in without throwing, but the
+            // m_allocator member is default-constructed here, and
+            // Ort::AllocatorWithDefaultOptions() calls into the C API and
+            // throws Ort::Exception when it reports failure. Declaring this
+            // noexcept turned that into std::terminate. createOnnxEngine already
+            // constructs inside the try that turns Ort::Exception into an
+            // external() Result, so the throw now reaches a caller that answers
+            // it instead of killing the process.
             OnnxEngine(
                 Ort::Env environment,
                 Ort::SessionOptions sessionOptions,
@@ -1092,7 +1123,7 @@ namespace uf::ocr
                 std::string inputName,
                 std::string outputName,
                 std::string identity
-            ) noexcept
+            )
                 : m_environment{std::move(environment)}
                 , m_sessionOptions{std::move(sessionOptions)}
                 , m_recognition{std::move(recognition)}

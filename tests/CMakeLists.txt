@@ -800,6 +800,7 @@ if(TARGET ${PROJECT_NAME}_task)
 
 #include <core/safety/annotations.hpp>
 
+#include <exception>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -807,71 +808,103 @@ if(TARGET ${PROJECT_NAME}_task)
 #include <string>
 #include <string_view>
 
+namespace
+{
+    // Reporting must not itself become the reason the process dies: std::cerr's
+    // inserters are not noexcept, and a throw out of a catch handler in main
+    // leaves nowhere to report it. The exit code carries the outcome alone.
+    [[nodiscard]]
+    auto report(std::string_view message, int code) noexcept -> int
+    {
+        try
+        {
+            std::cerr << message << '\n';
+        }
+        catch (...)
+        {
+        }
+        return code;
+    }
+}
+
+namespace
+{
+    [[nodiscard]]
+    auto runContract(std::string_view contract) -> int
+    {
+        auto input = std::ifstream{std::string{contract}, std::ios::binary};
+        if (!input)
+        {
+            return report("cannot open Luau contract", 2);
+        }
+        auto const source = std::string{
+            std::istreambuf_iterator<char>{input},
+            std::istreambuf_iterator<char>{}
+        };
+        if (input.bad())
+        {
+            return report("cannot read Luau contract", 2);
+        }
+
+        auto engine = uf::script::Engine::create(
+            uf::script::EngineConfig{
+                .frameworkModules = uf::task::frameworkScriptModules(),
+                .frameworkProjectGlobals = {
+                    "evidence",
+                    "jcs",
+                    "model",
+                    "observe",
+                    "project",
+                    "resolution",
+                },
+            }
+        );
+        if (!engine)
+        {
+            return report(engine.error().message(), 1);
+        }
+
+        auto result = engine->runNumber(source, contract);
+        if (!result)
+        {
+            return report(result.error().message(), 1);
+        }
+        if (*result != 1.0)
+        {
+            return report("Luau contract did not return 1", 1);
+        }
+        return 0;
+    }
+}
+
 auto main(int argumentCount, char const* const* p_arguments) -> int
 {
-    if (argumentCount != 2)
+    try
     {
-        std::cerr << "usage: task-luau-test-runner <test.luau>\n";
-        return 2;
-    }
-
-    // SAFETY: a hosted entry point receives argumentCount argument pointers
-    // followed by a null one ([basic.start.main]/2). That count arrives beside
-    // the pointer rather than within it, so no expression can restate the
-    // bound; the refusal above fixes it at two, and this is the single place
-    // the C contract becomes a span.
-    UF_UNSAFE_BUFFER_BEGIN
-    auto const arguments = std::span<char const* const>{p_arguments, 2U};
-    UF_UNSAFE_BUFFER_END
-    auto const contract = std::string_view{arguments[1]};
-
-    auto input = std::ifstream{std::string{contract}, std::ios::binary};
-    if (!input)
-    {
-        std::cerr << "cannot open Luau contract: " << contract << '\n';
-        return 2;
-    }
-    auto const source = std::string{
-        std::istreambuf_iterator<char>{input},
-        std::istreambuf_iterator<char>{}
-    };
-    if (input.bad())
-    {
-        std::cerr << "cannot read Luau contract: " << contract << '\n';
-        return 2;
-    }
-
-    auto engine = uf::script::Engine::create(
-        uf::script::EngineConfig{
-            .frameworkModules = uf::task::frameworkScriptModules(),
-            .frameworkProjectGlobals = {
-                "evidence",
-                "jcs",
-                "model",
-                "observe",
-                "project",
-                "resolution",
-            },
+        if (argumentCount != 2)
+        {
+            return report("usage: task-luau-test-runner <test.luau>", 2);
         }
-    );
-    if (!engine)
-    {
-        std::cerr << engine.error().message() << '\n';
-        return 1;
-    }
 
-    auto result = engine->runNumber(source, contract);
-    if (!result)
-    {
-        std::cerr << result.error().message() << '\n';
-        return 1;
+        // SAFETY: a hosted entry point receives argumentCount argument pointers
+        // followed by a null one ([basic.start.main]/2). That count arrives
+        // beside the pointer rather than within it, so no expression can restate
+        // the bound; the refusal above fixes it at two, and this is the single
+        // place the C contract becomes a span.
+        UF_UNSAFE_BUFFER_BEGIN
+        auto const arguments = std::span<char const* const>{p_arguments, 2U};
+        UF_UNSAFE_BUFFER_END
+
+        return runContract(std::string_view{arguments[1]});
     }
-    if (*result != 1.0)
+    catch (std::exception const& error)
     {
-        std::cerr << "Luau contract did not return 1: " << contract << '\n';
-        return 1;
+        return report(error.what(), 1);
     }
-    return 0;
+    catch (...)
+    {
+        return report("unknown failure", 1);
+    }
 }
 ]=]
         NEWLINE_STYLE LF

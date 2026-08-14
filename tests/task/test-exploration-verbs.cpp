@@ -527,6 +527,7 @@ namespace uf::task
 
         REQUIRE(world.acts().size() == 1U);
         REQUIRE(world.acts().front().key.has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(world.acts().front().key->value() == "F7");
 
         auto const line = lineNamed(world, "annotation.key_delivered");
@@ -556,6 +557,7 @@ namespace uf::task
 
         REQUIRE(world.acts().size() == 1U);
         REQUIRE(world.acts().front().key.has_value());
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access): REQUIRE above proved engagement.
         CHECK(world.acts().front().key->value() == "ESC");
     }
 
