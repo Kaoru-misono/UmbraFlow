@@ -25,6 +25,7 @@
       "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
     },
     "target_argument": {
+      "$comment": "The canonical_args member naming the observed instance. Only plan and reconcile read it: the operator step envelope carries frozen_plan_hash, the observation, the state and step_index and nothing else, so a step has no arguments to read. A step's UI target is resolved instead from the fresh observation -- the one instance of an allowed_instance_kinds kind it holds, two being a refusal.",
       "type": "string",
       "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
     },

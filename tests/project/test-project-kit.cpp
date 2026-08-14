@@ -1572,13 +1572,16 @@ namespace uf::project
             "bounded workflow plan must carry its finite elapsed bound"
         );
 
+        // The step envelope exactly as the Operator assembles it. It carries no
+        // canonical_args and its schema closes the object, so a fixture that
+        // supplied one would exercise a call the boundary cannot make.
         auto stepInput = [&present](uint32 stepIndex) -> json::Value
         {
             auto text = std::string{
-                R"json({"canonical_args":{"observed_instance_id":")json"
+                R"json({"frozen_plan_hash":")json"
             };
-            text += k_observedInstanceId;
-            text += R"json("},"project_observation":)json";
+            text += std::string(64U, '0');
+            text += R"json(","project_observation":)json";
             text += present;
             text += R"json(,"project_state":{},"step_index":)json";
             text += std::to_string(stepIndex);
@@ -1633,10 +1636,8 @@ namespace uf::project
         auto const program = generatedWorkflowProgram();
         auto const missing = parsedJson(
             R"json({
-                "canonical_args": {
-                    "observed_instance_id":
-                        "oi1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                },
+                "frozen_plan_hash":
+                    "0000000000000000000000000000000000000000000000000000000000000000",
                 "project_observation": null,
                 "project_state": {},
                 "step_index": 2

@@ -638,6 +638,35 @@ local function find_target(observation, target)
     return nil
 end
 
+-- The step envelope the Operator assembles carries frozen_plan_hash, the
+-- observation, the state and step_index, and its schema closes the object --
+-- so a step has no canonical_args to read the target out of, and the id the
+-- plan named is not carried forward. A UI action must aim at something the
+-- world shows now, so the target is resolved from the fresh observation: the
+-- one instance of an allowed kind it holds. Two is a refusal rather than a
+-- choice, which is what require_unambiguous already asserts for the Surface.
+local function resolve_target(observation)
+    if type(observation.observed_instances) ~= "table" then
+        error("MissingStepObservation: observed_instances must be an array")
+    end
+    local resolved = nil
+    for _, instance in ipairs(observation.observed_instances) do
+        if allowed_instance_kinds[instance.kind] == true then
+            if resolved ~= nil then
+                error("WorkflowTargetAmbiguous: the fresh observation holds more than one instance of an allowed kind")
+            end
+            resolved = instance
+        end
+    end
+    if resolved == nil then
+        error("ObservedInstanceStale: no instance of an allowed kind is present in the fresh observation")
+    end
+    if type(resolved.observed_instance_id) ~= "string" or resolved.observed_instance_id == "" then
+        error("MissingStepObservation: an observed instance carries no identifier")
+    end
+    return resolved.observed_instance_id
+end
+
 local function finding_for(observation, target)
     local present = find_target(observation, target) ~= nil
     local matches = (finding_kind == "observed_instance_present" and present)
@@ -700,10 +729,7 @@ return {
                 observation_budget = step.observation_budget,
             }
         end
-        local target = target_of(input)
-        if find_target(observation, target) == nil then
-            error("ObservedInstanceStale: target is absent from the fresh observation")
-        end
+        local target = resolve_target(observation)
         return {
             action = {
                 action_id = step.ui_action,

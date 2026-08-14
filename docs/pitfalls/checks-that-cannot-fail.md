@@ -32,6 +32,7 @@ named path from running.
 | Two checked-in pins agree with each other | The two copies are synchronized | Compare with the real external bundle or upstream source |
 | A schema file exists but no call applies it | File syntax at most | Name the producer, consumer, and executable assertion joining them |
 | A comment or gate name claims a semantic property | Nothing executable | Add a detector, or label the claim explicitly as review-only |
+| A fixture hands the subject an input its real caller cannot assemble | That the subject handles a shape nothing sends | Build the input from the producer's own envelope, or drive the subject through the boundary that assembles it |
 
 Mutation is strongest for a local condition. Registration inspection is
 stronger for discovering tests that never run. Independent recomputation is
@@ -56,6 +57,20 @@ database opening cleanly, and the case's own read-back of that byte still
 passed, because both were looking at dead space. Every occurrence is rewritten
 now, and the refusal is asserted by the message that names schema identity so an
 integrity or application-id refusal cannot stand in for it.
+
+A subject exercised only below its own boundary is exercised against an input
+nobody sends. Every gate for the declarative tier compiled the generated adapter
+bare through `script::PureDataProgram::compile` and handed `next_step` a
+`canonical_args` member, so the tier looked whole. The step envelope
+`stepEnvelopeJcs` in `modules/operator/source/operator/ledger.cpp` builds, and
+`k_stepInputSchema` in `modules/deployment/source/deployment/project-deployment.cpp`
+closes, carries `frozen_plan_hash`, the observation, the state and `step_index`
+and nothing else — so the generated `next_step` could never dispatch a UI action
+at the real boundary, and no green run could say so. What found it was putting
+the generated adapter through `ProjectPluginRegistrar::registerPlugin`
+(`tests/project/test-authoring-path-parity.cpp`), not another fixture. A test
+that assembles the subject's input by hand is testing the fixture's idea of the
+caller.
 
 `tests/CMakeLists.txt` owns the concrete doctest/CTest registration rules. When
 changing them, inspect the discovered test list in addition to running the

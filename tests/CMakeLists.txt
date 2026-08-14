@@ -675,6 +675,31 @@ cpp_add_test(
         ${PROJECT_NAME}_image
 )
 
+# The two authoring paths meet only at the ProjectPlugin admission boundary, so
+# this gate names the generator, the boundary, and the module that owns the real
+# bidirectional document validation the boundary is handed. It is a target of
+# its own rather than a file inside test-project, because test-project links
+# neither the Operator nor deployment and a gate that only compiles the adapter
+# bare is the gap this closes.
+cpp_add_test(
+    NAME test-authoring-path-parity
+    SOURCES
+        project/test-authoring-path-parity.cpp
+    LIBS
+        ${PROJECT_NAME}_project
+        ${PROJECT_NAME}_deployment
+        ${PROJECT_NAME}_operator
+        ${PROJECT_NAME}_json
+        ${PROJECT_NAME}_domain
+        ${PROJECT_NAME}_image
+)
+if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
+    cpp_stage_runtime_libraries(
+        test-authoring-path-parity
+        ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES}
+    )
+endif()
+
 add_executable(generate-umbraflow-example
     support/umbraflow/generate-example.cpp
 )
