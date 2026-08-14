@@ -69,6 +69,34 @@ independent. Such a declaration is acceptable only when it says at the point of
 use that no executable gate enforces it. An unqualified imperative in a comment
 is otherwise read as a promise and reviewed as a missing check.
 
+### Demoting a hand-written plugin to the declarative tier
+
+Half of this rule is executable. Every deployment block of
+`umbraflow-project.json` that names a hand-written plugin must carry a non-empty
+`plugin_justification` naming the member or semantic of
+`umbraflow-declarative-workflow-tool/v1` that cannot express it.
+`validatePluginJustifications` in
+`modules/project/source/project/project-kit.cpp` refuses an absent or blank one
+from both `project build` and `project check`, and `k_projectSchema` in
+`modules/deployment/source/deployment/project-directory.cpp` refuses the same
+document at load through `required` and `"pattern": "\\S"`. Both check
+**presence only**.
+
+The other half — anything expressible at the declarative tier must be demoted to
+it — has no gate and will not be given one. Deciding it means deciding whether a
+five-function Luau module and some `umbraflow-declarative-workflow-tool/v1`
+declaration compute the same thing, which is program equivalence. Every
+syntactic approximation is one of the two failures this file exists to name: a
+Luau-to-declaration decompiler nobody will maintain, or a heuristic no authored
+plugin ever trips, which is a green that proves nothing.
+
+It is therefore a review obligation at plugin acceptance, written down here so
+the absence is explicit rather than inferred. At acceptance, read the stated
+justification against the schema and refuse the plugin **by review** when the
+behaviour it describes is one the declarative tier already expresses. A
+justification that is present and false leaves `project check` green, by design;
+it is a review finding and never a gate finding.
+
 ## Review checklist
 
 - Can the named production rule be neutralized without breaking fixture setup?

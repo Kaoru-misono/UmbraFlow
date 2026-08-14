@@ -254,6 +254,68 @@ namespace uf::project
             );
         }
 
+        inline constexpr auto k_deploymentManifestInput = std::string_view{
+            "umbraflow-project.json"
+        };
+        inline constexpr auto k_handWrittenPlugin = std::string_view{
+            "plugin/dream.luau"
+        };
+
+        // The deployment manifest as a project author writes it, with the one
+        // member under test spliced in exactly as given. The whole document is
+        // written rather than the three members the gate reads, so a fixture
+        // that stopped being a manifest could not go on satisfying the gate.
+        [[nodiscard]]
+        auto deploymentManifest(std::string_view justificationMember) -> std::string
+        {
+            return std::string{R"json({
+  "schema": "umbraflow-project/v1",
+  "runtime_artifact": "runtime/artifact",
+  "primary_deployment": "dream",
+  "deployments": [
+    {
+      "name": "dream",
+      "plugin_id": "chaos.dream",
+      "baseline_event_type": "project.baseline_created",
+      "plugin": "plugin/dream.luau",
+)json"}
+                + std::string{justificationMember}
+                + R"json(      "project_state_schema": "schema/state.json",
+      "project_observation_schema": "schema/observation.json",
+      "tool_precondition_schema": "schema/precondition.json",
+      "reconcile_schema": "schema/reconcile.json",
+      "tool_catalog": "schema/catalog.json",
+      "journal_event_schema_manifest": "schema/journal-manifest.json",
+      "reconcile_manifest": "schema/reconcile-manifest.json",
+      "journal_payload_schemas": ["schema/journal-0.json"],
+      "effect_payload_schemas": [],
+      "artifact_blobs": []
+    }
+  ]
+})json";
+        }
+
+        [[nodiscard]]
+        auto initializedDeploymentWorkspace(
+            TemporaryWorkspace const& workspace,
+            std::string_view justificationMember
+        ) -> Status
+        {
+            writeFile(
+                workspace.source() / k_deploymentManifestInput,
+                deploymentManifest(justificationMember)
+            );
+            return initProject(
+                ProjectInitSpec{
+                    .sourceDirectory = workspace.source(),
+                    .buildDirectory  = workspace.build(),
+                    .inputs          = {
+                        std::filesystem::path{k_deploymentManifestInput},
+                    },
+                }
+            );
+        }
+
         [[nodiscard]]
         auto requiredHash(std::string_view text) -> ContentHash
         {
@@ -983,6 +1045,121 @@ namespace uf::project
             ),
             "closure refusal must happen before build artifacts are written"
         );
+    }
+
+    // The direct-plugin tier's admission gate, in all three directions. The
+    // accepted subcase is not decoration: without it a gate that refused every
+    // deployment manifest would satisfy the two refusals and prove nothing.
+    //
+    // Presence only. No case here states that the text is a true reason, and
+    // none can; whether a plugin could have been a declaration instead is
+    // program equivalence and stays a review obligation at plugin acceptance
+    // (docs/pitfalls/checks-that-cannot-fail.md).
+    TEST_CASE("project refuses a hand-written plugin with no stated justification")
+    {
+        auto const justification = std::string_view{
+            R"json(      "plugin_justification": "umbraflow-declarative-workflow-tool/v1 has no member that decides what a Reduce returns.",
+)json"
+        };
+
+        SUBCASE("absent")
+        {
+            auto const workspace = TemporaryWorkspace{
+                "uf-project-justification-absent"
+            };
+            auto const initialized = initializedDeploymentWorkspace(
+                workspace,
+                ""
+            );
+            REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+            auto const spec = ProjectBuildSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.build(),
+                .toolCatalogs    = {},
+            };
+
+            // CHECK rather than REQUIRE so that neutralizing the gate reports
+            // both commands in one run instead of stopping at the first.
+            auto const built = buildProject(spec, {});
+            CHECK_FALSE_MESSAGE(
+                built.has_value(),
+                "project build must refuse a hand-written plugin that states "
+                "no justification"
+            );
+            auto const checked = checkProject(spec, {});
+            REQUIRE_FALSE_MESSAGE(
+                checked.has_value(),
+                "project check must refuse a hand-written plugin that states "
+                "no justification"
+            );
+            CHECK_MESSAGE(
+                messageOf(checked).find(k_handWrittenPlugin) != std::string::npos,
+                "the refusal must name the hand-written plugin"
+            );
+            CHECK_MESSAGE(
+                messageOf(checked).find("plugin_justification") != std::string::npos,
+                "the refusal must name the absent member"
+            );
+        }
+
+        SUBCASE("blank")
+        {
+            auto const workspace = TemporaryWorkspace{
+                "uf-project-justification-blank"
+            };
+            auto const initialized = initializedDeploymentWorkspace(
+                workspace,
+                R"json(      "plugin_justification": " \t\n ",
+)json"
+            );
+            REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+            auto const spec = ProjectBuildSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.build(),
+                .toolCatalogs    = {},
+            };
+
+            auto const built = buildProject(spec, {});
+            CHECK_FALSE_MESSAGE(
+                built.has_value(),
+                "project build must refuse a whitespace-only justification"
+            );
+            auto const checked = checkProject(spec, {});
+            REQUIRE_FALSE_MESSAGE(
+                checked.has_value(),
+                "project check must refuse a whitespace-only justification"
+            );
+            CHECK_MESSAGE(
+                messageOf(checked).find(k_handWrittenPlugin) != std::string::npos,
+                "the refusal must name the hand-written plugin"
+            );
+            CHECK_MESSAGE(
+                messageOf(checked).find("plugin_justification") != std::string::npos,
+                "the refusal must name the blank member"
+            );
+        }
+
+        SUBCASE("stated")
+        {
+            auto const workspace = TemporaryWorkspace{
+                "uf-project-justification-stated"
+            };
+            auto const initialized = initializedDeploymentWorkspace(
+                workspace,
+                justification
+            );
+            REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+            auto const spec = ProjectBuildSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.build(),
+                .toolCatalogs    = {},
+            };
+
+            auto const built = buildProject(spec, {});
+            REQUIRE_MESSAGE(built.has_value(), messageOf(built));
+            auto const checked = checkProject(spec, {});
+            REQUIRE_MESSAGE(checked.has_value(), messageOf(checked));
+        }
     }
 
     TEST_CASE("fault matrix tamper names the altered frozen release file")

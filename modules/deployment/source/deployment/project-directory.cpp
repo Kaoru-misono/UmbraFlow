@@ -80,6 +80,12 @@ namespace uf::deployment
     },
     "$defs": {
         "Path": {"type": "string", "minLength": 1},
+        "PluginJustification": {
+            "$comment": "Why this deployment writes a whole five-function Luau module instead of a declarative-tools declaration: it must name the umbraflow-declarative-workflow-tool/v1 member or semantic that cannot express the behaviour. PRESENCE ONLY. No reader here judges whether the text is true, and no reader can; the pattern requires one non-whitespace character and nothing more. A justification that names the wrong member is a review finding at plugin acceptance, not a refusal -- see docs/pitfalls/checks-that-cannot-fail.md.",
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+        },
         "DeploymentName": {
             "type": "string",
             "minLength": 1,
@@ -104,6 +110,7 @@ namespace uf::deployment
                 "name",
                 "plugin",
                 "plugin_id",
+                "plugin_justification",
                 "project_observation_schema",
                 "project_state_schema",
                 "reconcile_manifest",
@@ -117,6 +124,7 @@ namespace uf::deployment
                 "plugin_id": {"$ref": "#/$defs/NamespacedName"},
                 "baseline_event_type": {"$ref": "#/$defs/NamespacedName"},
                 "plugin": {"$ref": "#/$defs/Path"},
+                "plugin_justification": {"$ref": "#/$defs/PluginJustification"},
                 "project_state_schema": {"$ref": "#/$defs/Path"},
                 "project_observation_schema": {"$ref": "#/$defs/Path"},
                 "tool_precondition_schema": {"$ref": "#/$defs/Path"},

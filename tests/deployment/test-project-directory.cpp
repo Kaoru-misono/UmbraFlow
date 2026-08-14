@@ -196,6 +196,10 @@ namespace uf::deployment
                 block += R"json("plugin":"plugin/)json";
                 block += name;
                 block += R"json(.luau",)json";
+                block += R"json("plugin_justification":"A fixture plugin that )json"
+                    R"json(answers from constants: umbraflow-declarative-)json"
+                    R"json(workflow-tool/v1 has no member that decides what a )json"
+                    R"json(Reduce returns.",)json";
                 auto const document = [name](std::string_view leaf)
                 {
                     return "\"schema/" + std::string{name} + "/" + std::string{leaf}
@@ -728,6 +732,47 @@ namespace uf::deployment
         auto const backslash = fixture.load();
         REQUIRE_FALSE(backslash.has_value());
         CHECK(why(backslash).contains("'/'"));
+    }
+
+    // The direct-plugin tier is the exception, so a deployment block that names
+    // a hand-written plugin must also say which member or semantic of
+    // umbraflow-declarative-workflow-tool/v1 cannot express it. Both halves are
+    // asserted because they are enforced by two different clauses: `required`
+    // catches the absent member and `"pattern": "\\S"` catches a member present
+    // and blank, and neither stands in for the other.
+    //
+    // PRESENCE ONLY. Nothing here judges whether the stated reason is true.
+    TEST_CASE("a hand-written plugin without a stated justification is refused")
+    {
+        auto const fixture = Fixture{};
+        REQUIRE(fixture.load().has_value());
+
+        auto const stated = Fixture::projectManifest();
+        auto const at     = stated.find(R"json("plugin_justification":")json");
+        REQUIRE(at != std::string::npos);
+        auto const end = stated.find(R"json(",)json", at);
+        REQUIRE(end != std::string::npos);
+        auto const member = stated.substr(at, end + 2U - at);
+
+        fixture.rewrite(
+            "umbraflow-project.json",
+            substituted(stated, member, "")
+        );
+        auto const absent = fixture.load();
+        REQUIRE_FALSE(absent.has_value());
+        CHECK(why(absent).contains("plugin_justification"));
+
+        fixture.rewrite(
+            "umbraflow-project.json",
+            substituted(
+                stated,
+                member,
+                R"json("plugin_justification":" \t ",)json"
+            )
+        );
+        auto const blank = fixture.load();
+        REQUIRE_FALSE(blank.has_value());
+        CHECK(why(blank).contains("pattern"));
     }
 
     // R4. A named file must exist. This is the directory form of the exemplar

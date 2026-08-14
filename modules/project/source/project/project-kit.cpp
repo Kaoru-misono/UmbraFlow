@@ -51,6 +51,19 @@ namespace uf::project
         constexpr auto k_declarativeToolDirectory = std::string_view{
             "declarative-tools"
         };
+        // The one document a project directory holds at its root, spelled here
+        // because the offline kit cannot link the runtime loader that owns it:
+        // uf::deployment reaches uf::task, and the `project` executable links
+        // uf::project and uf::core alone. deployment's k_projectSchema stays the
+        // shape authority for this document; the read below is deliberately
+        // narrow and judges one member of one member.
+        constexpr auto k_projectManifestInput = std::string_view{
+            "umbraflow-project.json"
+        };
+        constexpr auto k_pluginMember = std::string_view{"plugin"};
+        constexpr auto k_pluginJustificationMember = std::string_view{
+            "plugin_justification"
+        };
         constexpr auto k_generatedDirectory = std::string_view{"generated"};
         constexpr auto k_generatedAdapterDirectory = std::string_view{
             "adapters"
@@ -510,6 +523,144 @@ namespace uf::project
                         path.string()
                     )
                 );
+            }
+            return ok();
+        }
+
+        // Whether this text is nothing but ECMAScript `\s`, which is the same
+        // emptiness the deployment manifest schema's `"pattern": "\\S"` states.
+        // Both sides must agree, so both are written against the same set.
+        [[nodiscard]]
+        auto isBlank(std::string_view text) -> bool
+        {
+            return std::ranges::all_of(
+                text,
+                [](char character)
+                {
+                    return character == ' '
+                        || character == '\t'
+                        || character == '\n'
+                        || character == '\r'
+                        || character == '\f'
+                        || character == '\v';
+                }
+            );
+        }
+
+        // The direct-plugin tier's admission gate.
+        //
+        // A hand-written plugin is declared in exactly one place in a project's
+        // source: a `deployments[]` block of umbraflow-project.json names a Luau
+        // module in `plugin`, and those exact bytes become
+        // ProjectPluginRegistrar::registerPlugin's exactPluginBytes. Beside that
+        // name the author must state which member or semantic of
+        // umbraflow-declarative-workflow-tool/v1 cannot express the behaviour,
+        // because the declarative tier is the default and the whole-module tier
+        // is the exception.
+        //
+        // THIS CHECKS PRESENCE, NOT TRUTH. It refuses a plugin whose
+        // justification is absent, or present and blank. It cannot tell whether
+        // the stated reason is correct, and does not try: judging that would
+        // require deciding whether a Luau module is equivalent to some
+        // declaration, which is program equivalence. A justification that names
+        // the wrong member is a review finding at plugin acceptance -- see
+        // docs/pitfalls/checks-that-cannot-fail.md.
+        [[nodiscard]]
+        auto validatePluginJustifications(
+            std::filesystem::path const& sourceDirectory,
+            std::vector<std::string> const& inputs
+        ) -> Status
+        {
+            for (auto const& input : inputs)
+            {
+                if (input != k_projectManifestInput)
+                {
+                    continue;
+                }
+                UF_TRY_VALUE(
+                    bytes,
+                    readText(
+                        sourceDirectory / std::filesystem::path{input},
+                        "deployment manifest"
+                    )
+                );
+                UF_TRY_VALUE_CONTEXT(
+                    document,
+                    json::parse(bytes),
+                    std::format(
+                        "reading declared project input \"{}\"",
+                        input
+                    )
+                );
+
+                auto const* deployments = document.find("deployments");
+                if (
+                    deployments == nullptr
+                    || deployments->kind() != json::ValueKind::Array
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "declared project input \"{}\" declares no "
+                            "deployments",
+                            input
+                        )
+                    );
+                }
+
+                auto index = std::size_t{0};
+                for (auto const& block : deployments->items())
+                {
+                    auto const* name   = block.find("name");
+                    auto const label   = (
+                        name != nullptr
+                        && name->kind() == json::ValueKind::String
+                            ? std::string{name->string()}
+                            : std::to_string(index)
+                    );
+                    ++index;
+
+                    auto const* plugin = block.find(k_pluginMember);
+                    if (
+                        plugin == nullptr
+                        || plugin->kind() != json::ValueKind::String
+                    )
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "deployment \"{}\" of declared project input "
+                                "\"{}\" names no plugin to justify",
+                                label,
+                                input
+                            )
+                        );
+                    }
+
+                    auto const* justification = block.find(
+                        k_pluginJustificationMember
+                    );
+                    if (
+                        justification == nullptr
+                        || justification->kind() != json::ValueKind::String
+                        || isBlank(justification->string())
+                    )
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "hand-written plugin \"{}\" in deployment "
+                                "\"{}\" declares no non-empty "
+                                "plugin_justification: name the "
+                                "umbraflow-declarative-workflow-tool/v1 member "
+                                "or semantic that cannot express it",
+                                plugin->string(),
+                                label
+                            )
+                        );
+                    }
+                }
             }
             return ok();
         }
@@ -1921,6 +2072,7 @@ namespace uf::project
         UF_TRY(validateDirectories(spec));
         UF_TRY_VALUE(inputs, declaredInputs(spec.buildDirectory));
         UF_TRY(validateDeclaredInputs(spec.sourceDirectory, inputs));
+        UF_TRY(validatePluginJustifications(spec.sourceDirectory, inputs));
         UF_TRY_VALUE(
             generated,
             generatedProjectBuild(spec, inputs, resolveTemplateSource)
@@ -1953,6 +2105,7 @@ namespace uf::project
         UF_TRY(validateDirectories(spec));
         UF_TRY_VALUE(inputs, declaredInputs(spec.buildDirectory));
         UF_TRY(validateDeclaredInputs(spec.sourceDirectory, inputs));
+        UF_TRY(validatePluginJustifications(spec.sourceDirectory, inputs));
         UF_TRY_VALUE(
             generated,
             generatedProjectBuild(spec, inputs, resolveTemplateSource)

@@ -211,6 +211,15 @@ other file, and the loader derives each deployment's registration from that
 deployment's block and the digests of the files it read, then builds all five
 authorities from them. One deployment is enough and no tool has to be mutating.
 
+**plugin_justification** — the deployment-block member beside `plugin`, stating
+which member or semantic of `umbraflow-declarative-workflow-tool/v1` cannot
+express this hand-written plugin. Required of every deployment: the declarative
+tier is the default and the whole five-function Luau module is the exception.
+Both `project check` and `loadProductionProject` refuse an absent or blank one,
+and neither judges whether the stated reason is true — that stays a review
+obligation at plugin acceptance
+([checks that cannot fail](docs/pitfalls/checks-that-cannot-fail.md)).
+
 **ConformanceProject** — a `LoadedProject` plus the second root document,
 `umbraflow-conformance.json`, constructed by
 `deployment::loadConformanceProject`. It carries the production load in

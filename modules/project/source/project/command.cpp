@@ -446,6 +446,9 @@ namespace uf::project
             "directory, checks the candidate, freezes a content-addressed\n"
             "read-only release, and runs only a verified immutable release.\n"
             "A declared declarative-tools/PLUGIN_ID/NAME.json input generates\n"
-            "generated/adapters/PLUGIN_ID/NAME.luau.\n";
+            "generated/adapters/PLUGIN_ID/NAME.luau. A declared\n"
+            "umbraflow-project.json input must state, per deployment, the\n"
+            "plugin_justification naming what the declarative tier cannot\n"
+            "express; build and check refuse an absent or blank one.\n";
     }
 }
