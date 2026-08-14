@@ -476,7 +476,7 @@ namespace uf::operator_runtime
         // does not write it. docs/TODO.md "Delete-on-open has a deadline" owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:d96860862dc25fb6efb21d09f59dcc99e3eed9508a5b6a6766937a15b3186eb9"
+            "sha256:869fb0a128df4a0026bb429449fae03d6b43244c9cef4e794dfdd648421bcc19"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -521,6 +521,28 @@ namespace uf::operator_runtime
             "revision INTEGER NOT NULL CHECK(revision > 0),"
             "policy_hash TEXT NOT NULL,"
             "available_tools TEXT NOT NULL"
+            ") STRICT"
+        };
+
+        constexpr auto k_releaseCapabilityApprovalsDdl = std::string_view{
+            "CREATE TABLE release_capability_approvals("
+            "artifact_root_hash TEXT NOT NULL,"
+            "capability_profile_hash TEXT NOT NULL,"
+            "controller_capabilities TEXT NOT NULL,"
+            "evidence_hash TEXT NOT NULL,"
+            "session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),"
+            "PRIMARY KEY(artifact_root_hash, capability_profile_hash)"
+            ") STRICT"
+        };
+
+        constexpr auto k_runtimeUpgradeFailuresDdl = std::string_view{
+            "CREATE TABLE runtime_upgrade_failures("
+            "sequence INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "attempted_generation INTEGER NOT NULL CHECK(attempted_generation > 0),"
+            "attempted_artifact_root_hash TEXT NOT NULL,"
+            "restored_generation INTEGER NOT NULL CHECK(restored_generation > 0),"
+            "restored_artifact_root_hash TEXT NOT NULL,"
+            "reason TEXT NOT NULL"
             ") STRICT"
         };
 
@@ -636,6 +658,13 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
+        auto addReleaseUpgradeEvidenceTables(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, k_releaseCapabilityApprovalsDdl));
+            return execute(database, k_runtimeUpgradeFailuresDdl);
+        }
+
+        [[nodiscard]]
         auto makeProjectBaselineOptional(sqlite3* database) -> Status
         {
             UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
@@ -732,6 +761,7 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, k_availabilityHeadsDdl));
             UF_TRY(rewriteSnapshotIdentityComment(database));
             UF_TRY(makeProjectBaselineOptional(database));
+            UF_TRY(addReleaseUpgradeEvidenceTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
 
             // No migration commits under an identity other than the exact
@@ -750,6 +780,7 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, k_schemaIdentityTransitionsDdl));
             UF_TRY(rewriteSnapshotIdentityComment(database));
             UF_TRY(makeProjectBaselineOptional(database));
+            UF_TRY(addReleaseUpgradeEvidenceTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -764,6 +795,7 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(rewriteSnapshotIdentityComment(database));
             UF_TRY(makeProjectBaselineOptional(database));
+            UF_TRY(addReleaseUpgradeEvidenceTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -777,12 +809,32 @@ namespace uf::operator_runtime
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(makeProjectBaselineOptional(database));
+            UF_TRY(addReleaseUpgradeEvidenceTables(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        [[nodiscard]]
+        auto migrateReleaseUpgradeEvidence(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(addReleaseUpgradeEvidenceTables(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
         }
 
         constexpr auto k_schemaMigrations = std::array{
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:d96860862dc25fb6efb21d09f59dcc99e3eed9508a5b6a6766937a15b3186eb9",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateReleaseUpgradeEvidence,
+            },
             SchemaMigration{
                 .sourceIdentity =
                     "sha256:584ba6c3f25069a91978c32bc3cf2d1d8a20d1fb1da0e4265b441f7a1d27cd67",
@@ -931,6 +983,290 @@ namespace uf::operator_runtime
                 );
             }
             return static_cast<uint64>(sqlite3_column_int64(query.get(), 0));
+        }
+
+        [[nodiscard]]
+        auto requireQuiescentSessionPin(sqlite3* database) -> Status
+        {
+            UF_TRY_VALUE(
+                dispatchQuery,
+                prepare(
+                    database,
+                    "SELECT operation_id FROM dispatches "
+                    "WHERE delivery_outcome IS NULL "
+                    "ORDER BY operation_id, dispatch_sequence LIMIT 1"
+                )
+            );
+            if (sqlite3_step(dispatchQuery.get()) == SQLITE_ROW)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    std::format(
+                        "Session pin refused while Operation {} has a "
+                        "dispatch in flight",
+                        columnText(dispatchQuery.get(), 0)
+                    )
+                );
+            }
+
+            UF_TRY_VALUE(
+                mutationQuery,
+                prepare(
+                    database,
+                    "SELECT operation.operation_id FROM operations operation "
+                    "WHERE operation.mutating=1 AND operation.state IN ("
+                    "'proposed', 'awaiting_approval', 'ready', "
+                    "'needs_revalidation', 'running', 'reconciling', 'ambiguous') "
+                    "AND NOT EXISTS(SELECT 1 FROM dispatches dispatch "
+                    "WHERE dispatch.operation_id=operation.operation_id) "
+                    "ORDER BY operation.operation_id LIMIT 1"
+                )
+            );
+            if (sqlite3_step(mutationQuery.get()) == SQLITE_ROW)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    std::format(
+                        "Session pin refused for unterminated mutating "
+                        "Operation {}",
+                        columnText(mutationQuery.get(), 0)
+                    )
+                );
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto isReleaseUpgradeSessionPin(
+            sqlite3* database,
+            ContentHash const& artifactRootHash,
+            ContentHash const& projectRegistrationHash,
+            std::string_view projectInstanceKey
+        ) -> Result<bool>
+        {
+            UF_TRY_VALUE(
+                query,
+                prepare(
+                    database,
+                    "SELECT 1 FROM sessions "
+                    "WHERE project_registration_hash=?1 AND project_instance_key=?2 "
+                    "AND runtime_artifact_root_hash<>?3 LIMIT 1"
+                )
+            );
+            UF_TRY(bindText(database, query.get(), 1, projectRegistrationHash.hex()));
+            UF_TRY(bindText(database, query.get(), 2, projectInstanceKey));
+            UF_TRY(bindText(database, query.get(), 3, artifactRootHash.hex()));
+            return sqlite3_step(query.get()) == SQLITE_ROW;
+        }
+
+        [[nodiscard]]
+        auto requireApprovedCapabilityExpansion(
+            sqlite3* database,
+            ContentHash const& artifactRootHash,
+            ContentHash const& projectRegistrationHash,
+            std::string_view projectInstanceKey,
+            std::vector<std::string> const& controllerCapabilities,
+            ContentHash const& capabilityProfileHash
+        ) -> Status
+        {
+            UF_TRY_VALUE(
+                priorQuery,
+                prepare(
+                    database,
+                    "SELECT controller_capabilities FROM sessions "
+                    "WHERE project_registration_hash=?1 AND project_instance_key=?2 "
+                    "AND runtime_artifact_root_hash<>?3 "
+                    "ORDER BY session_epoch DESC, session_id LIMIT 1"
+                )
+            );
+            UF_TRY(bindText(
+                database,
+                priorQuery.get(),
+                1,
+                projectRegistrationHash.hex()
+            ));
+            UF_TRY(bindText(database, priorQuery.get(), 2, projectInstanceKey));
+            UF_TRY(bindText(database, priorQuery.get(), 3, artifactRootHash.hex()));
+            if (sqlite3_step(priorQuery.get()) != SQLITE_ROW)
+            {
+                return ok();
+            }
+
+            UF_TRY_VALUE(
+                priorCapabilities,
+                readNameArray(columnText(priorQuery.get(), 0))
+            );
+            auto currentCapabilities = controllerCapabilities;
+            std::ranges::sort(currentCapabilities);
+            currentCapabilities.erase(
+                std::ranges::unique(currentCapabilities).begin(),
+                currentCapabilities.end()
+            );
+            auto const expanded = (
+                currentCapabilities.size() > priorCapabilities.size()
+                && std::ranges::includes(
+                    currentCapabilities,
+                    priorCapabilities
+                )
+            );
+            if (!expanded)
+            {
+                return ok();
+            }
+
+            UF_TRY_VALUE(
+                approvalQuery,
+                prepare(
+                    database,
+                    "SELECT 1 FROM release_capability_approvals "
+                    "WHERE artifact_root_hash=?1 AND capability_profile_hash=?2"
+                )
+            );
+            UF_TRY(bindText(
+                database,
+                approvalQuery.get(),
+                1,
+                artifactRootHash.hex()
+            ));
+            UF_TRY(bindText(
+                database,
+                approvalQuery.get(),
+                2,
+                capabilityProfileHash.hex()
+            ));
+            if (sqlite3_step(approvalQuery.get()) == SQLITE_ROW)
+            {
+                return ok();
+            }
+
+            auto const added = std::ranges::find_if(
+                currentCapabilities,
+                [&priorCapabilities](std::string const& capability)
+                {
+                    return !std::ranges::binary_search(
+                        priorCapabilities,
+                        capability
+                    );
+                }
+            );
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "Session pin refused capability expansion '{}' without "
+                    "recorded approval",
+                    *added
+                )
+            );
+        }
+
+        [[nodiscard]]
+        auto rollbackRuntimeArtifactUpgrade(
+            sqlite3* database,
+            RuntimeArtifactPin const& attempted,
+            RuntimeArtifactPin const& predecessor,
+            std::string_view reason
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY_VALUE(
+                restoredGeneration,
+                checkedSqlIncrement(
+                    attempted.installedGeneration,
+                    "rollback RuntimeArtifact generation"
+                )
+            );
+            UF_TRY_VALUE(
+                installationInsert,
+                prepare(
+                    database,
+                    "INSERT INTO runtime_installations("
+                    "installed_generation, artifact_root_hash) VALUES(?1, ?2)"
+                )
+            );
+            UF_TRY(bindInteger(
+                database,
+                installationInsert.get(),
+                1,
+                restoredGeneration
+            ));
+            UF_TRY(bindText(
+                database,
+                installationInsert.get(),
+                2,
+                predecessor.artifactRootHash.hex()
+            ));
+            UF_TRY(expectDone(database, installationInsert.get()));
+
+            UF_TRY_VALUE(
+                stateUpdate,
+                prepare(
+                    database,
+                    "UPDATE runtime_state SET installed_generation=?1, "
+                    "active_runtime_artifact_root_hash=?2 WHERE singleton=1 "
+                    "AND installed_generation=?3 "
+                    "AND active_runtime_artifact_root_hash=?4"
+                )
+            );
+            UF_TRY(bindInteger(database, stateUpdate.get(), 1, restoredGeneration));
+            UF_TRY(bindText(
+                database,
+                stateUpdate.get(),
+                2,
+                predecessor.artifactRootHash.hex()
+            ));
+            UF_TRY(bindInteger(
+                database,
+                stateUpdate.get(),
+                3,
+                attempted.installedGeneration
+            ));
+            UF_TRY(bindText(
+                database,
+                stateUpdate.get(),
+                4,
+                attempted.artifactRootHash.hex()
+            ));
+            UF_TRY(expectDone(database, stateUpdate.get()));
+            if (sqlite3_changes(database) != 1)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "RuntimeArtifact rollback lost its active-generation compare-and-swap"
+                );
+            }
+
+            UF_TRY_VALUE(
+                auditInsert,
+                prepare(
+                    database,
+                    "INSERT INTO runtime_upgrade_failures("
+                    "attempted_generation, attempted_artifact_root_hash, "
+                    "restored_generation, restored_artifact_root_hash, reason) "
+                    "VALUES(?1, ?2, ?3, ?4, ?5)"
+                )
+            );
+            UF_TRY(bindInteger(
+                database,
+                auditInsert.get(),
+                1,
+                attempted.installedGeneration
+            ));
+            UF_TRY(bindText(
+                database,
+                auditInsert.get(),
+                2,
+                attempted.artifactRootHash.hex()
+            ));
+            UF_TRY(bindInteger(database, auditInsert.get(), 3, restoredGeneration));
+            UF_TRY(bindText(
+                database,
+                auditInsert.get(),
+                4,
+                predecessor.artifactRootHash.hex()
+            ));
+            UF_TRY(bindText(database, auditInsert.get(), 5, reason));
+            UF_TRY(expectDone(database, auditInsert.get()));
+            return transaction.commit();
         }
 
         [[nodiscard]]
@@ -2062,6 +2398,8 @@ namespace uf::operator_runtime
             UF_TRY(execute(database, k_sessionPoliciesDdl));
             UF_TRY(execute(database, k_availabilityHeadsDdl));
             UF_TRY(execute(database, k_schemaIdentityTransitionsDdl));
+            UF_TRY(execute(database, k_releaseCapabilityApprovalsDdl));
+            UF_TRY(execute(database, k_runtimeUpgradeFailuresDdl));
             UF_TRY(verifyExactDatabaseSchema(database));
             return transaction.commit();
         }
@@ -3597,6 +3935,159 @@ namespace uf::operator_runtime
         };
     }
 
+    auto OperatorCoordinator::activeRuntimeArtifactPin()
+        -> Result<RuntimeArtifactPin>
+    {
+        UF_TRY_VALUE(
+            query,
+            prepare(
+                m_impl->database.get(),
+                "SELECT installed_generation, active_runtime_artifact_root_hash "
+                "FROM runtime_state WHERE singleton=1 "
+                "AND active_runtime_artifact_root_hash IS NOT NULL"
+            )
+        );
+        if (sqlite3_step(query.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "No RuntimeArtifact release is active"
+            );
+        }
+        auto const generation = static_cast<uint64>(
+            sqlite3_column_int64(query.get(), 0)
+        );
+        auto encodedRoot = std::string{"sha256:"};
+        encodedRoot += columnText(query.get(), 1);
+        UF_TRY_VALUE(rootHash, ContentHash::parse(encodedRoot));
+        return RuntimeArtifactPin{
+            .installedGeneration = generation,
+            .artifactRootHash    = rootHash,
+        };
+    }
+
+    auto OperatorCoordinator::approveReleaseCapabilities(
+        ReleaseCapabilityApproval const& approval
+    ) -> Status
+    {
+        for (auto const& capability : approval.controllerCapabilities)
+        {
+            UF_TRY(requireName(capability, "approved release capability"));
+        }
+        auto const capabilities = canonicalNameArray(
+            approval.controllerCapabilities
+        );
+        UF_TRY_VALUE(
+            capabilityProfileHash,
+            sha256(std::as_bytes(std::span{capabilities}))
+        );
+        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
+        UF_TRY_VALUE(
+            insert,
+            prepare(
+                m_impl->database.get(),
+                "INSERT OR IGNORE INTO release_capability_approvals("
+                "artifact_root_hash, capability_profile_hash, "
+                "controller_capabilities, evidence_hash, session_epoch) "
+                "VALUES(?1, ?2, ?3, ?4, ?5)"
+            )
+        );
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            insert.get(),
+            1,
+            approval.artifactRootHash.hex()
+        ));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            insert.get(),
+            2,
+            capabilityProfileHash.hex()
+        ));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 3, capabilities));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            insert.get(),
+            4,
+            approval.evidenceHash.hex()
+        ));
+        UF_TRY(bindInteger(
+            m_impl->database.get(),
+            insert.get(),
+            5,
+            m_impl->sessionEpoch
+        ));
+        UF_TRY(expectDone(m_impl->database.get(), insert.get()));
+
+        UF_TRY_VALUE(
+            query,
+            prepare(
+                m_impl->database.get(),
+                "SELECT controller_capabilities, evidence_hash "
+                "FROM release_capability_approvals "
+                "WHERE artifact_root_hash=?1 AND capability_profile_hash=?2"
+            )
+        );
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            query.get(),
+            1,
+            approval.artifactRootHash.hex()
+        ));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            query.get(),
+            2,
+            capabilityProfileHash.hex()
+        ));
+        if (
+            sqlite3_step(query.get()) != SQLITE_ROW
+            || columnText(query.get(), 0) != capabilities
+            || columnText(query.get(), 1) != approval.evidenceHash.hex()
+        )
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "Release capability profile already names different approval evidence"
+            );
+        }
+        return transaction.commit();
+    }
+
+    auto OperatorCoordinator::upgradeRuntimeArtifactAndPinSession(
+        RuntimeArtifactInstallRequest const& installation,
+        SessionPin const& pin,
+        SessionManifest const& manifest,
+        std::optional<AgentProfile> const& agentProfile
+    ) -> Status
+    {
+        UF_TRY_VALUE(predecessor, activeRuntimeArtifactPin());
+        auto installed = installRuntimeArtifact(installation);
+        if (!installed)
+        {
+            return std::unexpected{std::move(installed).error()};
+        }
+        auto const attempted = RuntimeArtifactPin{
+            .installedGeneration = installed->installedGeneration(),
+            .artifactRootHash    = installed->rootHash(),
+        };
+        auto pinned = pinSession(pin, manifest, agentProfile);
+        if (pinned)
+        {
+            return ok();
+        }
+
+        auto failure      = std::move(pinned).error();
+        auto const reason = std::string{failure.message()};
+        UF_TRY(rollbackRuntimeArtifactUpgrade(
+            m_impl->database.get(),
+            attempted,
+            predecessor,
+            reason
+        ));
+        return std::unexpected{std::move(failure)};
+    }
+
     auto OperatorCoordinator::reclaimUnreferencedRuntimeArtifacts()
         -> Result<ReclaimedRuntimeArtifacts>
     {
@@ -4296,6 +4787,27 @@ namespace uf::operator_runtime
         auto const installedGeneration = static_cast<uint64>(
             sqlite3_column_int64(runtimeArtifactQuery.get(), 0)
         );
+        UF_TRY_VALUE(
+            releaseUpgrade,
+            isReleaseUpgradeSessionPin(
+                m_impl->database.get(),
+                runtimeArtifactRootHash,
+                pin.projectRegistrationHash,
+                pin.projectInstanceKey
+            )
+        );
+        if (releaseUpgrade)
+        {
+            UF_TRY(requireQuiescentSessionPin(m_impl->database.get()));
+            UF_TRY(requireApprovedCapabilityExpansion(
+                m_impl->database.get(),
+                runtimeArtifactRootHash,
+                pin.projectRegistrationHash,
+                pin.projectInstanceKey,
+                pin.controllerCapabilities,
+                capabilityProfileHash
+            ));
+        }
 
         UF_TRY_VALUE(
             instanceQuery,

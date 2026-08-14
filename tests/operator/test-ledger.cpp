@@ -264,6 +264,14 @@ namespace uf::operator_runtime
             )sql");
         }
 
+        auto removeReleaseUpgradeEvidenceTables(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            database.execute("DROP TABLE runtime_upgrade_failures");
+            database.execute("DROP TABLE release_capability_approvals");
+        }
+
         using test_support::canonical;
         using test_support::hashOf;
         using test_support::journalEntry;
@@ -392,7 +400,11 @@ namespace uf::operator_runtime
         {
             auto const release = test_support::runtimeRelease(path / "session-handoff");
             auto storeResult = OperatorCoordinator::open(path / "production");
-            REQUIRE(storeResult.has_value());
+            REQUIRE_MESSAGE(
+                storeResult.has_value(),
+                "the fixture Operator must open: ",
+                storeResult.error().message()
+            );
             auto store = *std::move(storeResult);
             auto installed = store.installRuntimeArtifact(
                 RuntimeArtifactInstallRequest{
@@ -499,6 +511,27 @@ namespace uf::operator_runtime
                 test_support::k_fixtureUiAction,
                 test_support::umbraflowProbeFrame()
             );
+        }
+
+        [[nodiscard]]
+        auto additionalSessionPin(
+            PreparedStore const& prepared,
+            std::string sessionId
+        ) -> SessionPin
+        {
+            return SessionPin{
+                .sessionId                 = std::move(sessionId),
+                .authenticatedControllerId = "upgrade-controller",
+                .idempotencyNamespace      = "upgrade-controller",
+                .projectRegistrationHash   = prepared.project.registration.hash(),
+                .controllerCapabilities = {
+                    std::string{conformance::k_operateCapability},
+                },
+                .controlledTargetId = "target-1",
+                .projectInstanceKey = "instance-1",
+                .mode               = SessionMode::Read,
+                .kind               = ControllerKind::Script,
+            };
         }
 
         [[nodiscard]]
@@ -2100,6 +2133,70 @@ namespace uf::operator_runtime
         );
     }
 
+    TEST_CASE("release upgrade evidence migrates by exact identity with empty replay difference")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const databasePath = temporary.path()
+            / "production"
+            / "operator-runtime.sqlite";
+        {
+            auto prepared = prepareStore(temporary.path());
+            static_cast<void>(prepared);
+        }
+
+        auto sourceIdentity = std::string{};
+        auto replayBefore   = std::vector<std::vector<std::string>>{};
+        {
+            auto source = test_support::OperatorDatabaseProbe{databasePath};
+            removeReleaseUpgradeEvidenceTables(source);
+            sourceIdentity = exactSchemaIdentity(source);
+            replayBefore = source.readRows(
+                "SELECT sequence, event_id, namespaced_event_type, "
+                "opaque_project_payload, provenance FROM journal_events "
+                "ORDER BY sequence"
+            );
+        }
+        CHECK_MESSAGE(
+            sourceIdentity
+                == "sha256:d96860862dc25fb6efb21d09f59dcc99e3eed9508a5b6a6766937a15b3186eb9",
+            "the release migration fixture must reproduce its exact source identity"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(
+                temporary.path() / "production"
+            );
+            REQUIRE_MESSAGE(
+                migrated.has_value(),
+                "the registered release-evidence identity pair must migrate: ",
+                migrated.error().message()
+            );
+        }
+
+        auto target = test_support::OperatorDatabaseProbe{databasePath};
+        auto const targetIdentity = exactSchemaIdentity(target);
+        auto const expectedTransition = std::vector<std::vector<std::string>>{
+            {sourceIdentity, targetIdentity},
+        };
+        CHECK(
+            target.readRows(
+                "SELECT source_identity, target_identity "
+                "FROM schema_identity_transitions "
+                "WHERE source_identity='sha256:"
+                "d96860862dc25fb6efb21d09f59dcc99e3eed9508a5b6a6766937a15b3186eb9'"
+            ) == expectedTransition
+        );
+        auto const replayAfter = target.readRows(
+            "SELECT sequence, event_id, namespaced_event_type, "
+            "opaque_project_payload, provenance FROM journal_events "
+            "ORDER BY sequence"
+        );
+        CHECK_MESSAGE(
+            replayAfter == replayBefore,
+            "replaying the pre-upgrade Journal must produce an empty domain-history difference"
+        );
+    }
+
     TEST_CASE("the corrected snapshot claim migrates under its exact identity pair")
     {
         auto temporary          = TemporaryDirectory{};
@@ -2113,6 +2210,7 @@ namespace uf::operator_runtime
         auto sourceIdentity = std::string{};
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            removeReleaseUpgradeEvidenceTables(prior);
             restorePriorSnapshotIdentityComment(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
@@ -2226,6 +2324,7 @@ namespace uf::operator_runtime
                 "FROM prior_ledger_events"
             );
             priorSchema.execute("DROP TABLE prior_ledger_events");
+            removeReleaseUpgradeEvidenceTables(priorSchema);
             restorePriorSnapshotIdentityComment(priorSchema);
             sourceIdentity = exactSchemaIdentity(priorSchema);
         }
@@ -2365,6 +2464,323 @@ namespace uf::operator_runtime
         );
         CHECK(disagreeing.error().message().contains(manifestRegistration.hex()));
         CHECK(disagreeing.error().message().contains(pinRegistration.hex()));
+    }
+
+    TEST_CASE("session pin refuses an unterminated mutation and names its Operation")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto const operation = proposedOperation(
+            prepared,
+            "upgrade-mutation",
+            "command-1"
+        );
+        auto const pin = additionalSessionPin(
+            prepared,
+            "session-after-mutation"
+        );
+        auto const candidate = releaseWithModel(
+            temporary.path() / "mutation-quiescence-upgrade",
+            "mutation quiescence candidate runtime model\n"
+        );
+        REQUIRE(prepared.store.installRuntimeArtifact(
+            installRequest(candidate, prepared.installedGeneration)
+        ).has_value());
+        auto const manifest = sessionManifest(
+            prepared.project.registration,
+            candidate.artifactRootHash,
+            hashOf("agent"),
+            test_support::policyArtifactBytes()
+        );
+        auto const refused = prepared.store.pinSession(
+            pin,
+            manifest,
+            std::nullopt
+        );
+
+        REQUIRE_FALSE_MESSAGE(
+            refused.has_value(),
+            "an unterminated mutating Operation must refuse a new session pin"
+        );
+        CHECK_MESSAGE(
+            refused.error().message().contains("unterminated mutating Operation"),
+            "the refusal must come from the mutation quiescence guard"
+        );
+        CHECK_MESSAGE(
+            refused.error().message().contains(operation.operationId),
+            "the mutation refusal must name the Operation blocking the pin"
+        );
+
+        auto const terminated = prepared.store.transitionOperation(
+            operation.operationId,
+            operation.revision,
+            OperationSignal::Invalidated
+        );
+        REQUIRE(terminated.has_value());
+        auto const accepted = prepared.store.pinSession(
+            pin,
+            manifest,
+            std::nullopt
+        );
+        CHECK_MESSAGE(
+            accepted.has_value(),
+            "a pin must succeed after its mutation terminates: ",
+            accepted.error().message()
+        );
+    }
+
+    TEST_CASE("session pin refuses an in-flight dispatch until it is answered")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto const operation = createReadyOperation(
+            prepared,
+            "upgrade-dispatch",
+            "command-1"
+        );
+        auto host           = deliveringHost(prepared);
+        auto const dispatch = prepared.store.reserveDispatch(
+            operation.operationId,
+            operation.revision,
+            prepared.lease,
+            host->generation(),
+            AuthorityDecisionId{"upgrade-dispatch-authority"},
+            std::nullopt
+        );
+        REQUIRE(dispatch.has_value());
+
+        auto const candidate = releaseWithModel(
+            temporary.path() / "dispatch-quiescence-upgrade",
+            "dispatch quiescence candidate runtime model\n"
+        );
+        REQUIRE(prepared.store.installRuntimeArtifact(
+            installRequest(candidate, prepared.installedGeneration)
+        ).has_value());
+        auto const manifest = sessionManifest(
+            prepared.project.registration,
+            candidate.artifactRootHash,
+            hashOf("agent"),
+            test_support::policyArtifactBytes()
+        );
+        auto const pin = additionalSessionPin(
+            prepared,
+            "session-after-dispatch"
+        );
+        auto const refused = prepared.store.pinSession(
+            pin,
+            manifest,
+            std::nullopt
+        );
+        REQUIRE_FALSE_MESSAGE(
+            refused.has_value(),
+            "an unanswered dispatch must refuse a new session pin"
+        );
+        CHECK_MESSAGE(
+            refused.error().message().contains("dispatch in flight"),
+            "the refusal must come from the dispatch quiescence guard"
+        );
+        CHECK(refused.error().message().contains(operation.operationId));
+
+        auto const answered = prepared.store.recordDeliveryOutcome(
+            prepared.lease,
+            dispatch->operationRevision,
+            host->deliverReport(dispatch->authority)
+        );
+        REQUIRE(answered.has_value());
+        auto const accepted = prepared.store.pinSession(
+            pin,
+            manifest,
+            std::nullopt
+        );
+        CHECK_MESSAGE(
+            accepted.has_value(),
+            "the same pin must succeed after its dispatch is answered: ",
+            accepted.error().message()
+        );
+    }
+
+    TEST_CASE("a compatible release upgrade freezes once and pins only the new session")
+    {
+        auto temporary     = TemporaryDirectory{};
+        auto oldRoot       = std::optional<ContentHash>{};
+        auto candidateRoot = std::optional<ContentHash>{};
+        {
+            auto prepared = prepareStore(temporary.path());
+            auto const candidate = releaseWithModel(
+                temporary.path() / "compatible-upgrade",
+                "compatible candidate runtime model\n"
+            );
+            auto const manifest = sessionManifest(
+                prepared.project.registration,
+                candidate.artifactRootHash,
+                hashOf("agent"),
+                test_support::policyArtifactBytes()
+            );
+            auto const pin = additionalSessionPin(
+                prepared,
+                "session-compatible-upgrade"
+            );
+            oldRoot       = prepared.runtimeArtifactRootHash;
+            candidateRoot = candidate.artifactRootHash;
+
+            REQUIRE(prepared.store.upgradeRuntimeArtifactAndPinSession(
+                installRequest(candidate, prepared.installedGeneration),
+                pin,
+                manifest,
+                std::nullopt
+            ).has_value());
+            auto const active = prepared.store.activeRuntimeArtifactPin();
+            REQUIRE(active.has_value());
+            CHECK(active->installedGeneration == prepared.installedGeneration + 1U);
+            CHECK(active->artifactRootHash == candidate.artifactRootHash);
+        }
+
+        REQUIRE(oldRoot.has_value());
+        REQUIRE(candidateRoot.has_value());
+        auto database = test_support::OperatorDatabaseProbe{
+            temporary.path() / "production" / "operator-runtime.sqlite"
+        };
+        auto const expectedSessions = std::vector<std::vector<std::string>>{
+            {"session-1", oldRoot->hex()},
+            {"session-compatible-upgrade", candidateRoot->hex()},
+        };
+        CHECK_MESSAGE(
+            database.readRows(
+                "SELECT session_id, runtime_artifact_root_hash FROM sessions "
+                "WHERE session_id IN ('session-1', 'session-compatible-upgrade') "
+                "ORDER BY session_id"
+            ) == expectedSessions,
+            "the existing session must retain its old release while the new "
+            "session pins the candidate"
+        );
+    }
+
+    TEST_CASE("a pin failure rolls the active release back and records the failure")
+    {
+        auto temporary     = TemporaryDirectory{};
+        auto oldRoot       = std::optional<ContentHash>{};
+        auto candidateRoot = std::optional<ContentHash>{};
+        {
+            auto prepared = prepareStore(temporary.path());
+            auto const candidate = releaseWithModel(
+                temporary.path() / "rollback-upgrade",
+                "rollback candidate runtime model\n"
+            );
+            auto const pin = additionalSessionPin(
+                prepared,
+                "session-rollback-upgrade"
+            );
+            oldRoot       = prepared.runtimeArtifactRootHash;
+            candidateRoot = candidate.artifactRootHash;
+
+            auto const failed = prepared.store.upgradeRuntimeArtifactAndPinSession(
+                installRequest(candidate, prepared.installedGeneration),
+                pin,
+                prepared.manifest,
+                std::nullopt
+            );
+            REQUIRE_FALSE_MESSAGE(
+                failed.has_value(),
+                "the manifest mismatch must inject a failure after publication and before pin"
+            );
+            auto const active = prepared.store.activeRuntimeArtifactPin();
+            REQUIRE(active.has_value());
+            CHECK(active->installedGeneration == prepared.installedGeneration + 2U);
+            CHECK(active->artifactRootHash == prepared.runtimeArtifactRootHash);
+        }
+
+        REQUIRE(oldRoot.has_value());
+        REQUIRE(candidateRoot.has_value());
+        auto database = test_support::OperatorDatabaseProbe{
+            temporary.path() / "production" / "operator-runtime.sqlite"
+        };
+        CHECK(database.readRows(
+            "SELECT session_id FROM sessions "
+            "WHERE session_id='session-rollback-upgrade'"
+        ).empty());
+        auto const expectedFailure = std::vector<std::vector<std::string>>{
+            {"2", candidateRoot->hex(), "3", oldRoot->hex()},
+        };
+        CHECK_MESSAGE(
+            database.readRows(
+                "SELECT attempted_generation, attempted_artifact_root_hash, "
+                "restored_generation, restored_artifact_root_hash FROM runtime_upgrade_failures"
+            ) == expectedFailure,
+            "the audit chain must name the failed candidate and restored predecessor"
+        );
+    }
+
+    TEST_CASE("capability expansion cannot pin before its approval evidence is recorded")
+    {
+        auto temporary     = TemporaryDirectory{};
+        auto candidateRoot = std::optional<ContentHash>{};
+        auto const evidenceHash = hashOf("human capability expansion approval");
+        {
+            auto prepared = prepareStore(temporary.path());
+            auto const candidate = releaseWithModel(
+                temporary.path() / "capability-upgrade",
+                "capability candidate runtime model\n"
+            );
+            auto const manifest = sessionManifest(
+                prepared.project.registration,
+                candidate.artifactRootHash,
+                hashOf("agent"),
+                test_support::policyArtifactBytes()
+            );
+            auto pin = additionalSessionPin(
+                prepared,
+                "session-capability-upgrade"
+            );
+            pin.controllerCapabilities.emplace_back("release.expanded");
+            candidateRoot = candidate.artifactRootHash;
+
+            auto const refused = prepared.store.upgradeRuntimeArtifactAndPinSession(
+                installRequest(candidate, prepared.installedGeneration),
+                pin,
+                manifest,
+                std::nullopt
+            );
+            REQUIRE_FALSE_MESSAGE(
+                refused.has_value(),
+                "a capability expansion must be refused before approval"
+            );
+            CHECK_MESSAGE(
+                refused.error().message().contains("capability expansion"),
+                "the refusal must come from the capability-expansion approval guard"
+            );
+            CHECK(refused.error().message().contains("release.expanded"));
+
+            REQUIRE(prepared.store.approveReleaseCapabilities(
+                ReleaseCapabilityApproval{
+                    .artifactRootHash       = candidate.artifactRootHash,
+                    .controllerCapabilities = pin.controllerCapabilities,
+                    .evidenceHash           = evidenceHash,
+                }
+            ).has_value());
+            auto const rolledBack = prepared.store.activeRuntimeArtifactPin();
+            REQUIRE(rolledBack.has_value());
+            REQUIRE(prepared.store.upgradeRuntimeArtifactAndPinSession(
+                installRequest(candidate, rolledBack->installedGeneration),
+                pin,
+                manifest,
+                std::nullopt
+            ).has_value());
+        }
+
+        REQUIRE(candidateRoot.has_value());
+        auto database = test_support::OperatorDatabaseProbe{
+            temporary.path() / "production" / "operator-runtime.sqlite"
+        };
+        auto const expectedApproval = std::vector<std::vector<std::string>>{
+            {candidateRoot->hex(), evidenceHash.hex()},
+        };
+        CHECK_MESSAGE(
+            database.readRows(
+                "SELECT artifact_root_hash, evidence_hash "
+                "FROM release_capability_approvals"
+            ) == expectedApproval,
+            "the accepted release must retain the exact approval evidence"
+        );
     }
 
     // What the SessionManifest pin buys. A session row stores the manifest hash

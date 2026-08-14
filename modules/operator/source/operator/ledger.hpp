@@ -81,6 +81,19 @@ namespace uf::operator_runtime
         uint64                expectedInstalledGeneration{};
     };
 
+    struct RuntimeArtifactPin final
+    {
+        uint64      installedGeneration{};
+        ContentHash artifactRootHash;
+    };
+
+    struct ReleaseCapabilityApproval final
+    {
+        ContentHash              artifactRootHash;
+        std::vector<std::string> controllerCapabilities{};
+        ContentHash              evidenceHash;
+    };
+
     // What one reclamation pass removed from the production RuntimeArtifact
     // root: content-addressed object directories no installation still names,
     // and staging directories no in-flight publication still names.
@@ -593,6 +606,26 @@ namespace uf::operator_runtime
         auto installRuntimeArtifact(
             RuntimeArtifactInstallRequest const& request
         ) -> Result<task::InstalledRuntimeArtifact>;
+
+        [[nodiscard]]
+        auto activeRuntimeArtifactPin() -> Result<RuntimeArtifactPin>;
+
+        [[nodiscard]]
+        auto approveReleaseCapabilities(
+            ReleaseCapabilityApproval const& approval
+        ) -> Status;
+
+        // Publishes through installRuntimeArtifact, then pins through the one
+        // session door. A pin refusal activates the predecessor artifact again
+        // at a new monotonic generation and records the failed attempt; the
+        // pin's own transaction has already left no partial session tuple.
+        [[nodiscard]]
+        auto upgradeRuntimeArtifactAndPinSession(
+            RuntimeArtifactInstallRequest const& installation,
+            SessionPin const& pin,
+            SessionManifest const& manifest,
+            std::optional<AgentProfile> const& agentProfile
+        ) -> Status;
 
         [[nodiscard]]
         auto openInstalledRuntimeArtifact(
