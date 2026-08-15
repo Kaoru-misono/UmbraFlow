@@ -93,7 +93,7 @@ chain. Reconciliation alone may establish a business terminal disposition.
 `ProjectRegistrationManifest` has exactly these fields:
 
 ```text
-manifest_schema_hash
+project_registration_format
 plugin_id
 plugin_hash
 tool_catalog_hash
@@ -105,6 +105,12 @@ journal_event_schema_manifest_hash
 baseline_event_type
 project_artifact_roots[] { name, root_hash }
 ```
+
+`project_registration_format` is a generation, not the digest of the
+registration schema file. The digest it replaced compared a value with itself —
+the loader derived it once and handed the same local to the document and to the
+schema owner judging the document — while moving every registration root on any
+cosmetic edit to `schema/umbraflow-project-registration-v1.schema.json`.
 
 `plugin_id` and every field above participate in the root. Artifact-root names
 are non-empty, unique, and sorted by UTF-8 bytes. The manifest bytes are RFC

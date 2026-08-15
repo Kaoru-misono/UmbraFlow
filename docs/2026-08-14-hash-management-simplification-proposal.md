@@ -148,6 +148,27 @@ registration identity. Schema owners obtain the already verified bytes or
 resource handles from that release instead of asking callers to repeat each
 schema hash.
 
+> **Amended 2026-08-16:** the registration's own `manifest_schema_hash` is gone,
+> replaced by `project_registration_format`, a generation the verifier refuses
+> by naming both numbers. It failed condition 4 on the production path — the
+> loader derived the digest once and handed the same local to the document and
+> to the schema owner judging it, so the comparison could not fire — while a
+> cosmetic edit to `schema/umbraflow-project-registration-v1.schema.json` moved
+> every `project_registration_hash`, measured. `VerifiedProjectRegistration::
+> manifestSchemaHash()` went with it. The ledger column
+> `project_registrations.project_state_schema_hash` went too: both readers
+> compared it inside the same disjunction as a full canonical-bytes comparison
+> of the manifest that carries the same member. The other seven registration
+> leaves and the four remaining `SessionManifest` leaves are retained.
+>
+> `operator_protocol_schema_hash` is **retained** after review. It fails
+> condition 2, but nothing on disk in either repository is pinned to that
+> digest, so it is not paying the churn cost the two above were paying, and it
+> is the one value on the plan-authority seam whose two sides are supplied as
+> independent arguments — `tests/operator/test-tool-authority.cpp`, "a plan
+> authority refuses an operator protocol its session did not pin", reddens each
+> of its two refusals on its own.
+
 ### Runtime artifact
 
 Keep one automatically generated RuntimeArtifact identity and the internal

@@ -5,7 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "manifest_schema_hash",
+    "project_registration_format",
     "plugin_id",
     "plugin_hash",
     "tool_catalog_hash",
@@ -18,7 +18,10 @@
     "project_artifact_roots"
   ],
   "properties": {
-    "manifest_schema_hash": { "$ref": "#/$defs/hash" },
+    "project_registration_format": {
+      "$comment": "The generation of this registration contract a framework must understand, not the bytes of the file that states it. Editing this schema's prose is not a new generation and must not move the registration root of a project already published against it.",
+      "$ref": "#/$defs/format"
+    },
     "plugin_id": { "$ref": "#/$defs/namespaced_name" },
     "plugin_hash": { "$ref": "#/$defs/hash" },
     "tool_catalog_hash": { "$ref": "#/$defs/hash" },
@@ -34,6 +37,11 @@
     }
   },
   "$defs": {
+    "format": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
     "hash": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"

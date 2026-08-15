@@ -403,6 +403,71 @@ namespace uf::operator_runtime
         }
     }
 
+    // The session's operator_protocol_schema_hash is the one pinned value on
+    // this seam whose two sides can be supplied independently: the manifest is
+    // minted by one caller and the exact schema bytes and the PolicyArtifact
+    // reach the authority as separate arguments. Both refusals are shown here
+    // because the composition root that exists today derives all three from one
+    // local, and a check only that root can reach would read as one no caller
+    // can fail.
+    TEST_CASE("a plan authority refuses an operator protocol its session did not pin")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto runtimeModel = prepared.observation.host->runtimeModelBinding(
+            prepared.observation.generation
+        );
+        REQUIRE(runtimeModel.has_value());
+
+        SUBCASE("the exact schema bytes must hash to what the manifest pinned")
+        {
+            auto const refused = OperatorPlanAuthority::create(
+                prepared.project.registration,
+                prepared.manifest,
+                *runtimeModel,
+                "a-second-operator-protocol",
+                test_support::policyArtifactBytes(),
+                deployment::readPlanProposal,
+                deployment::readStepIntent
+            );
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                "Operator protocol schema bytes do not match the pinned session manifest"
+            ));
+        }
+
+        SUBCASE("the PolicyArtifact must answer for the same operator protocol")
+        {
+            // The manifest pins a second protocol and the exact bytes handed in
+            // are that one, so the check above is satisfied and the policy's own
+            // claim is the only thing left that can disagree.
+            auto const policyBytes = test_support::policyArtifactBytes();
+            auto const manifest    = SessionManifest::create(SessionManifestSpec{
+                .runtimeModelArtifactRootHash = runtimeModel->artifactRootHash(),
+                .operatorProtocolSchemaHash = test_support::hashOf("a-second-operator-protocol"),
+                .projectRegistrationHash    = prepared.project.registration.hash(),
+                .policyArtifactHash         = test_support::hashOf(policyBytes),
+                .agentProfileHash           = test_support::hashOf("agent"),
+            });
+            REQUIRE(manifest.has_value());
+
+            auto const refused = OperatorPlanAuthority::create(
+                prepared.project.registration,
+                *manifest,
+                *runtimeModel,
+                "a-second-operator-protocol",
+                policyBytes,
+                deployment::readPlanProposal,
+                deployment::readStepIntent
+            );
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                "PolicyArtifact answers for an operator protocol schema this "
+                "session manifest does not pin"
+            ));
+        }
+    }
+
     TEST_CASE("a plan is bounded by its own tool's descriptor")
     {
         auto temporary = TemporaryDirectory{};

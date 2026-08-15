@@ -265,6 +265,52 @@ namespace uf::operator_runtime
             )sql");
         }
 
+        // project_registrations as it stood before project_state_schema_hash
+        // was dropped. SQLite stores a CREATE statement verbatim apart from
+        // IF NOT EXISTS, so the indentation below is part of the historical
+        // identity and not formatting. Identity covers the DDL only, but the
+        // column's values are recovered from the canonical manifest that always
+        // carried them, so the restored row is the historical row entire.
+        auto restorePriorRegistrationStateSchemaHash(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            database.execute(
+                R"sql(
+                PRAGMA foreign_keys=OFF;
+                CREATE TABLE prior_project_registrations(
+                    registration_hash TEXT,
+                    plugin_id TEXT,
+                    plugin_hash TEXT,
+                    canonical_manifest TEXT
+                ) STRICT;
+                INSERT INTO prior_project_registrations
+                    SELECT registration_hash, plugin_id, plugin_hash,
+                        canonical_manifest FROM project_registrations;
+                DROP TABLE project_registrations;
+                )sql"
+                "CREATE TABLE project_registrations(\n"
+                "                        registration_hash TEXT PRIMARY KEY,\n"
+                "                        plugin_id TEXT NOT NULL,\n"
+                "                        plugin_hash TEXT NOT NULL,\n"
+                "                        project_state_schema_hash TEXT NOT NULL,\n"
+                "                        canonical_manifest TEXT NOT NULL\n"
+                "                    ) STRICT;"
+                R"sql(
+                INSERT INTO project_registrations SELECT registration_hash,
+                    plugin_id, plugin_hash,
+                    substr(
+                        canonical_manifest,
+                        instr(canonical_manifest, '"project_state_schema_hash":"') + 29,
+                        64
+                    ),
+                    canonical_manifest FROM prior_project_registrations;
+                DROP TABLE prior_project_registrations;
+                PRAGMA foreign_keys=ON;
+                )sql"
+            );
+        }
+
         auto removeReleaseUpgradeEvidenceTables(
             test_support::OperatorDatabaseProbe& database
         ) -> void
@@ -2176,6 +2222,7 @@ namespace uf::operator_runtime
         {
             auto source = test_support::OperatorDatabaseProbe{databasePath};
             removeReleaseUpgradeEvidenceTables(source);
+            restorePriorRegistrationStateSchemaHash(source);
             sourceIdentity = exactSchemaIdentity(source);
             replayBefore = source.readRows(
                 "SELECT sequence, event_id, namespaced_event_type, "
@@ -2224,6 +2271,69 @@ namespace uf::operator_runtime
         );
     }
 
+    // The pair for dropping project_registrations.project_state_schema_hash.
+    // The registration rows must survive it: the column was a copy of a member
+    // their canonical_manifest carries, and losing the row would lose the
+    // original rather than the copy.
+    TEST_CASE("dropping the registration state schema column migrates under its exact pair")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        {
+            auto prepared = prepareStore(temporary.path());
+            static_cast<void>(prepared);
+        }
+
+        auto sourceIdentity   = std::string{};
+        auto registrationRows = std::vector<std::vector<std::string>>{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            restorePriorRegistrationStateSchemaHash(prior);
+            sourceIdentity   = exactSchemaIdentity(prior);
+            registrationRows = prior.readRows(
+                "SELECT registration_hash, plugin_id, plugin_hash, "
+                "canonical_manifest FROM project_registrations "
+                "ORDER BY registration_hash"
+            );
+        }
+        REQUIRE_FALSE(registrationRows.empty());
+        CHECK_MESSAGE(
+            sourceIdentity
+                == "sha256:869fb0a128df4a0026bb429449fae03d6b43244c9cef4e794dfdd648421bcc19",
+            "the fixture must reproduce the exact identity this pair migrates from"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(
+                migrated.has_value(),
+                "the registered registration-column identity pair must migrate: ",
+                migrated.error().message()
+            );
+        }
+
+        auto target = test_support::OperatorDatabaseProbe{databasePath};
+        auto const targetIdentity = exactSchemaIdentity(target);
+        CHECK(sourceIdentity != targetIdentity);
+        CHECK(
+            target.readRows(
+                "SELECT registration_hash, plugin_id, plugin_hash, "
+                "canonical_manifest FROM project_registrations "
+                "ORDER BY registration_hash"
+            ) == registrationRows
+        );
+        CHECK(
+            target.readRows(
+                "SELECT source_identity, target_identity "
+                "FROM schema_identity_transitions"
+            )
+            == std::vector<std::vector<std::string>>{
+                {sourceIdentity, targetIdentity},
+            }
+        );
+    }
+
     TEST_CASE("the corrected snapshot claim migrates under its exact identity pair")
     {
         auto temporary          = TemporaryDirectory{};
@@ -2239,6 +2349,7 @@ namespace uf::operator_runtime
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
             removeReleaseUpgradeEvidenceTables(prior);
             restorePriorSnapshotIdentityComment(prior);
+            restorePriorRegistrationStateSchemaHash(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
 
@@ -2353,6 +2464,7 @@ namespace uf::operator_runtime
             priorSchema.execute("DROP TABLE prior_ledger_events");
             removeReleaseUpgradeEvidenceTables(priorSchema);
             restorePriorSnapshotIdentityComment(priorSchema);
+            restorePriorRegistrationStateSchemaHash(priorSchema);
             sourceIdentity = exactSchemaIdentity(priorSchema);
         }
         CHECK_MESSAGE(

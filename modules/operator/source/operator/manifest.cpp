@@ -105,16 +105,22 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto validateClaims(
-            ProjectRegistrationClaims const& claims,
-            ContentHash schemaHash
-        ) -> Status
+        auto validateClaims(ProjectRegistrationClaims const& claims) -> Status
         {
-            if (claims.manifestSchemaHash != schemaHash)
+            // Both sides are named, because the whole of the diagnosis is which
+            // generation the registration states and which one this binary was
+            // built to read.
+            if (claims.projectRegistrationFormat != k_projectRegistrationFormat)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "ProjectRegistration was validated against a different schema root"
+                    std::format(
+                        "ProjectRegistration format is not supported by this "
+                        "framework: the registration states {} and this "
+                        "framework reads {}",
+                        claims.projectRegistrationFormat,
+                        k_projectRegistrationFormat
+                    )
                 );
             }
             UF_TRY(validateDottedName(claims.pluginId, "plugin_id", true));
@@ -158,16 +164,13 @@ namespace uf::operator_runtime
     }
 
     ProjectRegistrationSchemaOwner::ProjectRegistrationSchemaOwner(
-        ContentHash schemaHash,
         ProjectRegistrationExactValidator validate
     )
-        : m_schemaHash{schemaHash}
-        , m_validate{std::move(validate)}
+        : m_validate{std::move(validate)}
     {
     }
 
     auto ProjectRegistrationSchemaOwner::create(
-        ContentHash schemaHash,
         ProjectRegistrationExactValidator validate
     ) -> Result<ProjectRegistrationSchemaOwner>
     {
@@ -178,7 +181,7 @@ namespace uf::operator_runtime
                 "ProjectRegistration schema owner requires an exact validator"
             );
         }
-        return ProjectRegistrationSchemaOwner{schemaHash, std::move(validate)};
+        return ProjectRegistrationSchemaOwner{std::move(validate)};
     }
 
     auto ProjectRegistrationSchemaOwner::validate(
@@ -229,11 +232,6 @@ namespace uf::operator_runtime
     auto VerifiedProjectRegistration::toolCatalogHash() const -> ContentHash
     {
         return m_claims.toolCatalogHash;
-    }
-
-    auto VerifiedProjectRegistration::manifestSchemaHash() const -> ContentHash
-    {
-        return m_claims.manifestSchemaHash;
     }
 
     auto VerifiedProjectRegistration::projectObservationSchemaHash() const
@@ -311,7 +309,7 @@ namespace uf::operator_runtime
             schemaOwner.validate(canonicalJcs),
             "validating exact ProjectRegistration JCS"
         );
-        UF_TRY(validateClaims(claims, schemaOwner.m_schemaHash));
+        UF_TRY(validateClaims(claims));
         return VerifiedProjectRegistration{
             std::move(claims),
             std::move(canonicalJcs),

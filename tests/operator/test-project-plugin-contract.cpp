@@ -109,12 +109,11 @@ return {
         [[nodiscard]]
         auto registrationClaims(std::string pluginId,
                                 ContentHash pluginHash,
-                                ContentHash schemaHash,
                                 std::vector<NamedArtifactRoot> artifactRoots = {})
             -> ProjectRegistrationClaims
         {
             return ProjectRegistrationClaims{
-                .manifestSchemaHash                 = schemaHash,
+                .projectRegistrationFormat          = k_projectRegistrationFormat,
                 .pluginId                           = std::move(pluginId),
                 .pluginHash                         = pluginHash,
                 .toolCatalogHash                    = hashOf("catalogue"),
@@ -134,8 +133,7 @@ return {
             auto result = std::string{"{\"baseline_event_type\":\"" + claims.baselineEventType +
                                       "\",\"journal_event_schema_manifest_hash\":\"" +
                                       claims.journalEventSchemaManifestHash.hex() +
-                                      "\",\"manifest_schema_hash\":\"" +
-                                      claims.manifestSchemaHash.hex() + "\",\"plugin_hash\":\"" +
+                                      "\",\"plugin_hash\":\"" +
                                       claims.pluginHash.hex() + "\",\"plugin_id\":\"" +
                                       claims.pluginId + "\",\"project_artifact_roots\":["};
             for (auto index = std::size_t{0}; index < claims.projectArtifactRoots.size(); ++index)
@@ -148,7 +146,9 @@ return {
             }
             result += "],\"project_observation_schema_hash\":\"" +
                       claims.projectObservationSchemaHash.hex() +
-                      "\",\"project_state_schema_hash\":\"" + claims.projectStateSchemaHash.hex() +
+                      "\",\"project_registration_format\":" +
+                      std::to_string(claims.projectRegistrationFormat) +
+                      ",\"project_state_schema_hash\":\"" + claims.projectStateSchemaHash.hex() +
                       "\",\"project_tool_precondition_schema_hash\":\"" +
                       claims.projectToolPreconditionSchemaHash.hex() +
                       "\",\"reconcile_payload_schema_manifest_hash\":\"" +
@@ -163,15 +163,13 @@ return {
                                  std::vector<NamedArtifactRoot> artifactRoots = {})
             -> RegistrationFixture
         {
-            auto const schemaHash = hashOf("registration-schema");
             auto const pluginHash = hashOf(pluginBytes);
             auto claims =
-                registrationClaims(std::move(pluginId), pluginHash, schemaHash,
+                registrationClaims(std::move(pluginId), pluginHash,
                                    std::move(artifactRoots));
             auto const exactJcs = registrationJcs(claims);
             auto const rootHash = hashOf(exactJcs);
             auto ownerResult = ProjectRegistrationSchemaOwner::create(
-                schemaHash,
                 // exactJcs is const; capturing it by name would give the closure
                 // a const member its move constructor must copy, not move.
                 [exactJcs = exactJcs, claims = std::move(claims)](

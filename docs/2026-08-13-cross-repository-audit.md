@@ -77,7 +77,7 @@ as cross-lane requests in the L4 report.
 | `B-2` post-dispatch approval has no legal exit | **Closed** by the recoverable transition resolution and failure/recovery authority. | none |
 | `B-3` session hash appears inside its own tuple | Current prose still appends `session_manifest_hash` to the tuple it says that hash covers. | `U3` |
 | `B-4` exact session tuple disagrees about fields | Still part of the same manifest-shape contradiction. | `U3` |
-| `B-5` registration `manifest_schema_hash` absent from bundle prose | Framework schema requires it while the bundle's tuple prose omits it. | `U3` |
+| `B-5` registration `manifest_schema_hash` absent from bundle prose | **Closed by deletion:** the field is gone. `schema/umbraflow-project-registration-v1.schema.json` now requires `project_registration_format`, a generation the verifier refuses by naming both numbers, so there is no schema digest for the bundle prose to omit. | none |
 | `B-6` `PHASED` occupies an ownership column | Still present at requirements-traceability line 70. | `CH-03` |
 | `B-7` ProjectSnapshot closed list grows later | Runtime implementation now has one canonical snapshot, but bundle prose must be aligned with the landed availability/event fields. | `U9` |
 | `B-8` Agent budgets/no-progress disagree | **Closed in implementation:** Agent/read is refused, the unused millisecond field is deleted, and one step counter remains. | `U9` owns bundle wording |

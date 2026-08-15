@@ -25,13 +25,10 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto claimsFor(
-            ContentHash schemaHash,
-            ContentHash pluginHash
-        ) -> ProjectRegistrationClaims
+        auto claimsFor(ContentHash pluginHash) -> ProjectRegistrationClaims
         {
             return ProjectRegistrationClaims{
-                .manifestSchemaHash                 = schemaHash,
+                .projectRegistrationFormat          = k_projectRegistrationFormat,
                 .pluginId                           = "fixture.alpha",
                 .pluginHash                         = pluginHash,
                 .toolCatalogHash                    = hashOf("catalogue"),
@@ -53,8 +50,6 @@ namespace uf::operator_runtime
                 "{\"baseline_event_type\":\"" + claims.baselineEventType
                 + "\",\"journal_event_schema_manifest_hash\":\""
                 + claims.journalEventSchemaManifestHash.hex()
-                + "\",\"manifest_schema_hash\":\""
-                + claims.manifestSchemaHash.hex()
                 + "\",\"plugin_hash\":\"" + claims.pluginHash.hex()
                 + "\",\"plugin_id\":\"" + claims.pluginId
                 + "\",\"project_artifact_roots\":["
@@ -68,7 +63,9 @@ namespace uf::operator_runtime
             }
             result += "],\"project_observation_schema_hash\":\""
                 + claims.projectObservationSchemaHash.hex()
-                + "\",\"project_state_schema_hash\":\""
+                + "\",\"project_registration_format\":"
+                + std::to_string(claims.projectRegistrationFormat)
+                + ",\"project_state_schema_hash\":\""
                 + claims.projectStateSchemaHash.hex()
                 + "\",\"project_tool_precondition_schema_hash\":\""
                 + claims.projectToolPreconditionSchemaHash.hex()
@@ -81,13 +78,11 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         auto exactOwner(
-            ContentHash schemaHash,
             std::string expectedJcs,
             ProjectRegistrationClaims claims
         ) -> ProjectRegistrationSchemaOwner
         {
             auto result = ProjectRegistrationSchemaOwner::create(
-                schemaHash,
                 [expectedJcs = std::move(expectedJcs), claims = std::move(claims)](
                     std::string_view candidate
                 ) -> Result<ProjectRegistrationClaims>
@@ -119,15 +114,10 @@ namespace uf::operator_runtime
 
     TEST_CASE("VerifiedProjectRegistration requires exact JCS schema and root")
     {
-        auto const schemaHash = hashOf("registration-schema");
         auto const pluginHash = hashOf("plugin-bytes");
-        auto const claims = claimsFor(schemaHash, pluginHash);
+        auto const claims = claimsFor(pluginHash);
         auto const exactJcs = registrationJcs(claims);
-        auto owner = exactOwner(
-            schemaHash,
-            exactJcs,
-            claims
-        );
+        auto owner = exactOwner(exactJcs, claims);
         auto const rootHash = hashOf(exactJcs);
 
         auto const verified = ProjectRegistration::verifyExact(
@@ -161,36 +151,37 @@ namespace uf::operator_runtime
         CHECK(rootMismatch.error().message().contains(rootHash.hex()));
     }
 
-    TEST_CASE("VerifiedProjectRegistration rejects claims from another schema owner")
+    // The refusal that replaced the registration's manifest_schema_hash. That
+    // digest could only be reddened by decoupling the deriving loader from the
+    // schema owner it handed the same local to; this one is reddened by the
+    // document itself, which is what a compatibility statement is for.
+    TEST_CASE("VerifiedProjectRegistration rejects a registration generation it does not read")
     {
-        auto const ownerSchema = hashOf("owner-schema");
-        auto const claimedSchema = hashOf("claimed-schema");
-        auto const claims = claimsFor(claimedSchema, hashOf("plugin"));
+        auto claims                      = claimsFor(hashOf("plugin"));
+        claims.projectRegistrationFormat = k_projectRegistrationFormat + 1U;
         auto const exactJcs = registrationJcs(claims);
-        auto owner = exactOwner(
-            ownerSchema,
-            exactJcs,
-            claims
-        );
-        CHECK_FALSE(
-            ProjectRegistration::verifyExact(
-                exactJcs,
-                hashOf(exactJcs),
-                owner
-            ).has_value()
-        );
+        auto owner = exactOwner(exactJcs, claims);
+        auto const refused =
+            ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner);
+        REQUIRE_FALSE(refused.has_value());
+        // Both generations, so a reader is never left hunting the second one.
+        CHECK(refused.error().message().contains(
+            std::to_string(claims.projectRegistrationFormat)
+        ));
+        CHECK(refused.error().message().contains(
+            std::to_string(k_projectRegistrationFormat)
+        ));
     }
 
     TEST_CASE("VerifiedProjectRegistration rejects unordered artifact roots")
     {
-        auto const schemaHash = hashOf("registration-schema");
-        auto claims = claimsFor(schemaHash, hashOf("plugin"));
+        auto claims = claimsFor(hashOf("plugin"));
         claims.projectArtifactRoots = {
             NamedArtifactRoot{.name = "zeta", .rootHash = hashOf("z")},
             NamedArtifactRoot{.name = "alpha", .rootHash = hashOf("a")},
         };
         auto const exactJcs = registrationJcs(claims);
-        auto owner = exactOwner(schemaHash, exactJcs, std::move(claims));
+        auto owner = exactOwner(exactJcs, std::move(claims));
         CHECK_FALSE(
             ProjectRegistration::verifyExact(
                 exactJcs,
@@ -202,14 +193,12 @@ namespace uf::operator_runtime
 
     TEST_CASE("VerifiedProjectRegistration enforces core routing names")
     {
-        auto const schemaHash = hashOf("registration-schema");
-
         SUBCASE("plugin id is namespaced")
         {
-            auto claims     = claimsFor(schemaHash, hashOf("plugin"));
+            auto claims     = claimsFor(hashOf("plugin"));
             claims.pluginId = "fixture";
             auto const exactJcs = registrationJcs(claims);
-            auto owner = exactOwner(schemaHash, exactJcs, std::move(claims));
+            auto owner = exactOwner(exactJcs, std::move(claims));
             CHECK_FALSE(
                 ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner)
                     .has_value()
@@ -218,10 +207,10 @@ namespace uf::operator_runtime
 
         SUBCASE("baseline event type is namespaced")
         {
-            auto claims              = claimsFor(schemaHash, hashOf("plugin"));
+            auto claims              = claimsFor(hashOf("plugin"));
             claims.baselineEventType = "Baseline";
             auto const exactJcs = registrationJcs(claims);
-            auto owner = exactOwner(schemaHash, exactJcs, std::move(claims));
+            auto owner = exactOwner(exactJcs, std::move(claims));
             CHECK_FALSE(
                 ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner)
                     .has_value()
@@ -230,12 +219,12 @@ namespace uf::operator_runtime
 
         SUBCASE("artifact roots are names, not paths")
         {
-            auto claims = claimsFor(schemaHash, hashOf("plugin"));
+            auto claims = claimsFor(hashOf("plugin"));
             claims.projectArtifactRoots = {
                 NamedArtifactRoot{.name = "../content", .rootHash = hashOf("content")},
             };
             auto const exactJcs = registrationJcs(claims);
-            auto owner = exactOwner(schemaHash, exactJcs, std::move(claims));
+            auto owner = exactOwner(exactJcs, std::move(claims));
             CHECK_FALSE(
                 ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner)
                     .has_value()

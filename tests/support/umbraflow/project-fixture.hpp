@@ -354,7 +354,6 @@ namespace uf::operator_runtime::test_support
             REQUIRE(deployed.has_value());
         }
 
-        auto const schemaHash             = hashOf("registration-schema");
         auto const pluginHash             = hashOf(pluginBytes);
         auto const toolCatalogHash        = hashOf(bundle.toolCatalog());
         auto const stateSchemaHash        = hashOf(k_projectStateSchema);
@@ -365,25 +364,26 @@ namespace uf::operator_runtime::test_support
         auto const exactJcs = std::format(
             "{{\"baseline_event_type\":\"fixture.baseline\","
             "\"journal_event_schema_manifest_hash\":\"{}\","
-            "\"manifest_schema_hash\":\"{}\",\"plugin_hash\":\"{}\","
+            "\"plugin_hash\":\"{}\","
             "\"plugin_id\":\"{}\",\"project_artifact_roots\":[],"
             "\"project_observation_schema_hash\":\"{}\","
+            "\"project_registration_format\":{},"
             "\"project_state_schema_hash\":\"{}\","
             "\"project_tool_precondition_schema_hash\":\"{}\","
             "\"reconcile_payload_schema_manifest_hash\":\"{}\","
             "\"tool_catalog_hash\":\"{}\"}}",
             journalSchemaHash.hex(),
-            schemaHash.hex(),
             pluginHash.hex(),
             pluginId,
             observationSchemaHash.hex(),
+            k_projectRegistrationFormat,
             stateSchemaHash.hex(),
             preconditionSchemaHash.hex(),
             reconcileSchemaHash.hex(),
             toolCatalogHash.hex()
         );
         auto const claims = ProjectRegistrationClaims{
-            .manifestSchemaHash                 = schemaHash,
+            .projectRegistrationFormat          = k_projectRegistrationFormat,
             .pluginId                           = pluginId,
             .pluginHash                         = pluginHash,
             .toolCatalogHash                    = toolCatalogHash,
@@ -395,7 +395,6 @@ namespace uf::operator_runtime::test_support
             .baselineEventType                  = "fixture.baseline",
         };
         auto owner = ProjectRegistrationSchemaOwner::create(
-            schemaHash,
             // Init-captures rather than [exactJcs, claims]: both locals are
             // const, and capturing a const entity by name gives the closure a
             // const member its move constructor must copy rather than move.

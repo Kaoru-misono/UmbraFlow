@@ -53,14 +53,6 @@ namespace uf::project
             "0000000000000000000000000000000000000000000000000000000000000000"
         };
 
-        // Nothing in this suite reads a registration schema document, so the
-        // owner is bound to the digest of a label. What the digest must be is
-        // only that both sides of ProjectRegistration::verifyExact name the
-        // same one.
-        constexpr auto k_registrationSchemaLabel = std::string_view{
-            "umbraflow-project-registration/v1"
-        };
-
         // The four project-owned schemas this deployment pins. They are written
         // out rather than borrowed from examples/ because the exemplar's
         // observation schema accepts only the empty object, and every document
@@ -669,16 +661,18 @@ return {
                         claims.journalEventSchemaManifestHash.hex()
                     ),
                 },
-                {
-                    "manifest_schema_hash",
-                    json::Value::ofString(claims.manifestSchemaHash.hex()),
-                },
                 {"plugin_hash", json::Value::ofString(claims.pluginHash.hex())},
                 {"plugin_id", json::Value::ofString(claims.pluginId)},
                 {"project_artifact_roots", json::Value::ofArray({})},
                 {
                     "project_observation_schema_hash",
                     json::Value::ofString(claims.projectObservationSchemaHash.hex()),
+                },
+                {
+                    "project_registration_format",
+                    json::Value::ofNumber(
+                        static_cast<double>(claims.projectRegistrationFormat)
+                    ),
                 },
                 {
                     "project_state_schema_hash",
@@ -718,7 +712,6 @@ return {
             -> Result<AdmissionInputs>
         {
             UF_TRY_VALUE(pluginHash, hashOf(pinnedPluginBytes));
-            UF_TRY_VALUE(manifestSchemaHash, hashOf(k_registrationSchemaLabel));
             UF_TRY_VALUE(stateSchemaHash, hashOf(k_projectStateSchema));
             UF_TRY_VALUE(observationSchemaHash, hashOf(k_projectObservationSchema));
             UF_TRY_VALUE(preconditionSchemaHash, hashOf(k_toolPreconditionSchema));
@@ -752,7 +745,8 @@ return {
             );
 
             auto claims = operator_runtime::ProjectRegistrationClaims{
-                .manifestSchemaHash                 = manifestSchemaHash,
+                .projectRegistrationFormat          =
+                    operator_runtime::k_projectRegistrationFormat,
                 .pluginId                           = std::string{k_pluginId},
                 .pluginHash                         = pluginHash,
                 .toolCatalogHash                    = toolCatalogHash,
@@ -769,7 +763,6 @@ return {
             UF_TRY_VALUE(
                 registrationOwner,
                 operator_runtime::ProjectRegistrationSchemaOwner::create(
-                    manifestSchemaHash,
                     [exactJcs, claims](std::string_view candidate)
                         -> Result<operator_runtime::ProjectRegistrationClaims>
                     {

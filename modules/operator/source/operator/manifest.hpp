@@ -2,6 +2,7 @@
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
 
@@ -12,6 +13,20 @@
 
 namespace uf::operator_runtime
 {
+    // The generation of the ProjectRegistration document contract this
+    // framework derives and reads. It is a compatibility statement: a
+    // registration declares the number and this binary decides whether it
+    // understands what that number describes.
+    //
+    // It is a generation rather than the digest of
+    // schema/umbraflow-project-registration-v1.schema.json, because the digest
+    // made every cosmetic edit to that file move every registration root -- and
+    // a registration root is a project's identity, pinned by consumers. The
+    // digest also compared a value with itself: the loader derived it once and
+    // handed the same local to both the document and the schema owner that
+    // judged the document.
+    inline constexpr auto k_projectRegistrationFormat = uint64{1U};
+
     struct NamedArtifactRoot final
     {
         std::string name{};
@@ -23,7 +38,7 @@ namespace uf::operator_runtime
     // cannot pass it to the registrar or mint a registration from it.
     struct ProjectRegistrationClaims final
     {
-        ContentHash                    manifestSchemaHash;
+        uint64                         projectRegistrationFormat{};
         std::string                    pluginId{};
         ContentHash                    pluginHash;
         ContentHash                    toolCatalogHash;
@@ -46,11 +61,9 @@ namespace uf::operator_runtime
 
     class ProjectRegistrationSchemaOwner final
     {
-        ContentHash                       m_schemaHash;
         ProjectRegistrationExactValidator m_validate;
 
-        ProjectRegistrationSchemaOwner(
-            ContentHash schemaHash,
+        explicit ProjectRegistrationSchemaOwner(
             ProjectRegistrationExactValidator validate
         );
 
@@ -63,7 +76,6 @@ namespace uf::operator_runtime
     public:
         [[nodiscard]]
         static auto create(
-            ContentHash schemaHash,
             ProjectRegistrationExactValidator validate
         ) -> Result<ProjectRegistrationSchemaOwner>;
     };
@@ -99,7 +111,6 @@ namespace uf::operator_runtime
         // Each schema-owning authority is bound to the exact bytes the
         // registration names here, so that an owner cannot answer for a schema
         // this registration never pinned.
-        [[nodiscard]] auto manifestSchemaHash() const -> ContentHash;
         [[nodiscard]] auto projectObservationSchemaHash() const -> ContentHash;
         [[nodiscard]] auto projectToolPreconditionSchemaHash() const -> ContentHash;
         [[nodiscard]] auto reconcilePayloadSchemaManifestHash() const -> ContentHash;

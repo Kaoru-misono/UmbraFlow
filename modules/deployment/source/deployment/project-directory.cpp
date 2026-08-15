@@ -8,6 +8,7 @@
 #include <core/safety/annotations.hpp>
 #include <core/safety/checked-access.hpp>
 #include <core/text/json-text.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
@@ -414,7 +415,6 @@ namespace uf::deployment
         {
             std::string pluginId{};
             std::string baselineEventType{};
-            ContentHash manifestSchemaHash;
             ContentHash pluginHash;
             ContentHash toolCatalogHash;
             ContentHash projectStateSchemaHash;
@@ -453,12 +453,17 @@ namespace uf::deployment
                  json::Value::ofString(derived.baselineEventType)},
                 {"journal_event_schema_manifest_hash",
                  hash(derived.journalEventSchemaManifestHash)},
-                {"manifest_schema_hash", hash(derived.manifestSchemaHash)},
                 {"plugin_hash", hash(derived.pluginHash)},
                 {"plugin_id", json::Value::ofString(derived.pluginId)},
                 {"project_artifact_roots", json::Value::ofArray(std::move(roots))},
                 {"project_observation_schema_hash",
                  hash(derived.projectObservationSchemaHash)},
+                {"project_registration_format",
+                 json::Value::ofNumber(
+                     static_cast<double>(
+                         operator_runtime::k_projectRegistrationFormat
+                     )
+                 )},
                 {"project_state_schema_hash", hash(derived.projectStateSchemaHash)},
                 {"project_tool_precondition_schema_hash",
                  hash(derived.projectToolPreconditionSchemaHash)},
@@ -473,6 +478,17 @@ namespace uf::deployment
             -> Result<ContentHash>
         {
             return ContentHash::parse("sha256:" + text(object, name));
+        }
+
+        // A contract generation, read after the schema judged the member as an
+        // integer within the exactly representable range, so the double this
+        // member() answers with holds the stated number and nothing else.
+        [[nodiscard]]
+        auto formatOf(json::Value const& object, std::string_view name) -> uint64
+        {
+            auto const& value = member(object, name);
+            UF_CHECK(value.isInteger());
+            return static_cast<uint64>(value.number());
         }
 
         // The framework's own reading of the document it just derived. It is a
@@ -497,10 +513,6 @@ namespace uf::deployment
                 UF_TRY_VALUE(
                     document,
                     readValidated(judge, "the derived ProjectRegistration", exactJcs)
-                );
-                UF_TRY_VALUE(
-                    manifestSchemaHash,
-                    parseHash(document, "manifest_schema_hash")
                 );
                 UF_TRY_VALUE(pluginHash, parseHash(document, "plugin_hash"));
                 UF_TRY_VALUE(catalogHash, parseHash(document, "tool_catalog_hash"));
@@ -537,7 +549,10 @@ namespace uf::deployment
                 }
 
                 return operator_runtime::ProjectRegistrationClaims{
-                    .manifestSchemaHash                 = manifestSchemaHash,
+                    .projectRegistrationFormat          = formatOf(
+                        document,
+                        "project_registration_format"
+                    ),
                     .pluginId                           = text(document, "plugin_id"),
                     .pluginHash                         = pluginHash,
                     .toolCatalogHash                    = catalogHash,
@@ -1114,13 +1129,8 @@ namespace uf::deployment
             readValidated(projectSchema, k_projectManifestFileName, projectBytes)
         );
 
-        UF_TRY_VALUE(
-            manifestSchemaHash,
-            hashOf(publishedRegistration.exactBytes)
-        );
         auto registrationOwner =
             operator_runtime::ProjectRegistrationSchemaOwner::create(
-                manifestSchemaHash,
                 registrationValidator(std::move(registrationSchema))
             );
         if (!registrationOwner.has_value())
@@ -1233,7 +1243,6 @@ namespace uf::deployment
             auto const derived = DerivedRegistration{
                 .pluginId                           = pluginId,
                 .baselineEventType                  = text(block, "baseline_event_type"),
-                .manifestSchemaHash                 = manifestSchemaHash,
                 .pluginHash                         = pluginHash,
                 .toolCatalogHash                    = catalogHash,
                 .projectStateSchemaHash             = stateHash,

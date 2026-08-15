@@ -476,7 +476,7 @@ namespace uf::operator_runtime
         // does not write it. docs/TODO.md "Delete-on-open has a deadline" owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:869fb0a128df4a0026bb429449fae03d6b43244c9cef4e794dfdd648421bcc19"
+            "sha256:035e04f2e066eb90c457a0af7440356274551be4abd6496b620879e9d4e3b133"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -543,6 +543,20 @@ namespace uf::operator_runtime
             "restored_generation INTEGER NOT NULL CHECK(restored_generation > 0),"
             "restored_artifact_root_hash TEXT NOT NULL,"
             "reason TEXT NOT NULL"
+            ") STRICT"
+        };
+
+        // A registration row is its canonical bytes plus the two values a join
+        // selects on. It deliberately carries no second copy of a member those
+        // bytes already hold: a copy beside a full canonical-bytes comparison
+        // refuses nothing the comparison does not, and one more column to keep
+        // in step is one more way for the row and the document to disagree.
+        constexpr auto k_projectRegistrationsDdl = std::string_view{
+            "CREATE TABLE project_registrations("
+            "registration_hash TEXT PRIMARY KEY,"
+            "plugin_id TEXT NOT NULL,"
+            "plugin_hash TEXT NOT NULL,"
+            "canonical_manifest TEXT NOT NULL"
             ") STRICT"
         };
 
@@ -664,6 +678,39 @@ namespace uf::operator_runtime
             return execute(database, k_runtimeUpgradeFailuresDdl);
         }
 
+        // project_state_schema_hash was a second copy of a member the same
+        // row's canonical_manifest already carries, and both readers compared
+        // it inside the same disjunction as a full canonical-bytes comparison.
+        // The rebuild drops the column and keeps every registration: the bytes
+        // the column copied are still there, still compared.
+        [[nodiscard]]
+        auto dropRegistrationStateSchemaHash(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
+            UF_TRY(execute(
+                database,
+                "CREATE TABLE prior_project_registrations("
+                "registration_hash TEXT PRIMARY KEY,"
+                "plugin_id TEXT NOT NULL,"
+                "plugin_hash TEXT NOT NULL,"
+                "canonical_manifest TEXT NOT NULL) STRICT"
+            ));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO prior_project_registrations SELECT registration_hash, "
+                "plugin_id, plugin_hash, canonical_manifest FROM project_registrations"
+            ));
+            UF_TRY(execute(database, "DROP TABLE project_registrations"));
+            UF_TRY(execute(database, k_projectRegistrationsDdl));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO project_registrations SELECT registration_hash, "
+                "plugin_id, plugin_hash, canonical_manifest "
+                "FROM prior_project_registrations"
+            ));
+            return execute(database, "DROP TABLE prior_project_registrations");
+        }
+
         [[nodiscard]]
         auto makeProjectBaselineOptional(sqlite3* database) -> Status
         {
@@ -762,6 +809,7 @@ namespace uf::operator_runtime
             UF_TRY(rewriteSnapshotIdentityComment(database));
             UF_TRY(makeProjectBaselineOptional(database));
             UF_TRY(addReleaseUpgradeEvidenceTables(database));
+            UF_TRY(dropRegistrationStateSchemaHash(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
 
             // No migration commits under an identity other than the exact
@@ -781,6 +829,7 @@ namespace uf::operator_runtime
             UF_TRY(rewriteSnapshotIdentityComment(database));
             UF_TRY(makeProjectBaselineOptional(database));
             UF_TRY(addReleaseUpgradeEvidenceTables(database));
+            UF_TRY(dropRegistrationStateSchemaHash(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -796,6 +845,7 @@ namespace uf::operator_runtime
             UF_TRY(rewriteSnapshotIdentityComment(database));
             UF_TRY(makeProjectBaselineOptional(database));
             UF_TRY(addReleaseUpgradeEvidenceTables(database));
+            UF_TRY(dropRegistrationStateSchemaHash(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -810,6 +860,7 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(makeProjectBaselineOptional(database));
             UF_TRY(addReleaseUpgradeEvidenceTables(database));
+            UF_TRY(dropRegistrationStateSchemaHash(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -823,12 +874,32 @@ namespace uf::operator_runtime
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(addReleaseUpgradeEvidenceTables(database));
+            UF_TRY(dropRegistrationStateSchemaHash(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        [[nodiscard]]
+        auto migrateRegistrationStateSchemaHash(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(dropRegistrationStateSchemaHash(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
         }
 
         constexpr auto k_schemaMigrations = std::array{
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:869fb0a128df4a0026bb429449fae03d6b43244c9cef4e794dfdd648421bcc19",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateRegistrationStateSchemaHash,
+            },
             SchemaMigration{
                 .sourceIdentity =
                     "sha256:d96860862dc25fb6efb21d09f59dcc99e3eed9508a5b6a6766937a15b3186eb9",
@@ -1862,14 +1933,6 @@ namespace uf::operator_runtime
                         UNIQUE(installed_generation, artifact_root_hash)
                     ) STRICT;
 
-                    CREATE TABLE IF NOT EXISTS project_registrations(
-                        registration_hash TEXT PRIMARY KEY,
-                        plugin_id TEXT NOT NULL,
-                        plugin_hash TEXT NOT NULL,
-                        project_state_schema_hash TEXT NOT NULL,
-                        canonical_manifest TEXT NOT NULL
-                    ) STRICT;
-
 )sql"
                 R"sql(
 
@@ -2373,10 +2436,8 @@ namespace uf::operator_runtime
                     ) STRICT;
 
                     -- This row IS JR:`ProjectState`, member for member, for the
-                    -- reason journal_events carries, and project_registrations
-                    -- spells project_state_schema_hash the same way.
-                    -- contract-state-s06 binds this column set to the schema's
-                    -- required list.
+                    -- reason journal_events carries. contract-state-s06 binds
+                    -- this column set to the schema's required list.
                     CREATE TABLE IF NOT EXISTS project_state(
                         plugin_id TEXT NOT NULL,
                         project_instance_key TEXT NOT NULL,
@@ -2393,6 +2454,7 @@ namespace uf::operator_runtime
 
                 )sql"
             ));
+            UF_TRY(execute(database, k_projectRegistrationsDdl));
             UF_TRY(execute(database, k_projectInstancesDdl));
             UF_TRY(execute(database, k_ledgerEventsDdl));
             UF_TRY(execute(database, k_sessionPoliciesDdl));
@@ -4358,27 +4420,21 @@ namespace uf::operator_runtime
             prepare(
                 m_impl->database.get(),
                 "INSERT OR IGNORE INTO project_registrations"
-                "(registration_hash, plugin_id, plugin_hash, project_state_schema_hash, "
-                "canonical_manifest) VALUES(?1, ?2, ?3, ?4, ?5)"
+                "(registration_hash, plugin_id, plugin_hash, canonical_manifest) "
+                "VALUES(?1, ?2, ?3, ?4)"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, registrationHash.hex()));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 2, pluginId));
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 3, registration.pluginHash().hex()));
-        UF_TRY(bindText(
-            m_impl->database.get(),
-            insert.get(),
-            4,
-            registration.projectStateSchemaHash().hex()
-        ));
-        UF_TRY(bindText(m_impl->database.get(), insert.get(), 5, canonicalManifest));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 4, canonicalManifest));
         UF_TRY(expectDone(m_impl->database.get(), insert.get()));
 
         UF_TRY_VALUE(
             query,
             prepare(
                 m_impl->database.get(),
-                "SELECT plugin_id, plugin_hash, project_state_schema_hash, canonical_manifest "
+                "SELECT plugin_id, plugin_hash, canonical_manifest "
                 "FROM project_registrations "
                 "WHERE registration_hash=?1"
             )
@@ -4391,8 +4447,7 @@ namespace uf::operator_runtime
         if (
             columnText(query.get(), 0) != pluginId
             || columnText(query.get(), 1) != registration.pluginHash().hex()
-            || columnText(query.get(), 2) != registration.projectStateSchemaHash().hex()
-            || columnText(query.get(), 3) != canonicalManifest
+            || columnText(query.get(), 2) != canonicalManifest
         )
         {
             return fail(
@@ -4486,7 +4541,7 @@ namespace uf::operator_runtime
             registrationQuery,
             prepare(
                 m_impl->database.get(),
-                "SELECT plugin_id, plugin_hash, project_state_schema_hash, canonical_manifest "
+                "SELECT plugin_id, plugin_hash, canonical_manifest "
                 "FROM project_registrations WHERE registration_hash=?1"
             )
         );
@@ -4500,9 +4555,7 @@ namespace uf::operator_runtime
             sqlite3_step(registrationQuery.get()) != SQLITE_ROW
             || columnText(registrationQuery.get(), 0) != registration.pluginId()
             || columnText(registrationQuery.get(), 1) != registration.pluginHash().hex()
-            || columnText(registrationQuery.get(), 2)
-                != registration.projectStateSchemaHash().hex()
-            || columnText(registrationQuery.get(), 3) != registration.canonicalJcs()
+            || columnText(registrationQuery.get(), 2) != registration.canonicalJcs()
         )
         {
             return fail(
