@@ -2,14 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://umbraflow.dev/schema/project/directory",
   "title": "umbraflow-project.json",
-  "$comment": "The one shape authority for umbraflow-project.json. The offline project kit and the runtime loader both compile these exact bytes out of the framework schema catalog, so no reader can accept a document another refuses; a second, narrower reader in either of them would be the weaker of two spellings and would decide. A deployment block IS its registration, stated as intent: it names files, and the loader derives every digest from the bytes it read. No member here is a hash and no project author types one. Every path member is typed as a bare non-empty string and given its spelling rule by requireManifestSpelling in modules/deployment/source/deployment/project-directory.cpp, because that rule is task_platform::ConfinedRoot's own (confined-file.hpp:52-55). Stating it a second time as a regular expression would be two spellings of one thing.",
+  "$comment": "The one shape authority for umbraflow-project.json. The offline project kit and the runtime loader both compile these exact bytes out of the framework schema catalog, so no reader can accept a document another refuses; a second, narrower reader in either of them would be the weaker of two spellings and would decide. A deployment block IS its registration, stated as intent: it names files, and the loader derives every digest from the bytes it read. No member the loader reads is a hash and no project author types one there. template_cuts is the single deliberate exception and states why in its own $comment: its sources are not files of this project, so a content address is the only name they have. Every path member is typed as a bare non-empty string and given its spelling rule by requireManifestSpelling in modules/deployment/source/deployment/project-directory.cpp, because that rule is task_platform::ConfinedRoot's own (confined-file.hpp:52-55). Stating it a second time as a regular expression would be two spellings of one thing.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "deployments",
     "primary_deployment",
     "runtime_artifact",
-    "schema"
+    "schema",
+    "template_cuts"
   ],
   "properties": {
     "$comment": {"type": "string"},
@@ -27,10 +28,56 @@
       "type": "array",
       "minItems": 1,
       "items": {"$ref": "#/$defs/Deployment"}
+    },
+    "template_cuts": {
+      "$comment": "The Locator templates `project build` cuts for this project, and the one place a project author writes a hash. A cut names its sources by sha256 and by nothing else, because a source is a capture of a running target rather than a file of this project: it is not in the source tree, it is not in the release, and a path member would name a screenshot on whichever machine happened to take it. That is the whole point of the capability -- no repository need reference a screenshot path -- so the alternative is not a nicer spelling, it is the defect. The member is stated even when it is empty, on the same terms as artifact_blobs, so that a project that cuts nothing says so rather than being read as one whose declaration went missing. Resolving a hash to bytes is deliberately not the kit's job and never becomes it: the corpus root arrives at `project build --frames-root PATH`, outside this document, which is why nothing here can name a directory. Declared at the root rather than inside a deployment because generated/templates/ is one flat namespace for the whole build -- generatedTemplates in modules/project/source/project/project-kit.cpp refuses a repeated template path across all of them -- and because no member of a cut names a deployment.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/TemplateCut"},
+      "uniqueItems": true
     }
   },
   "$defs": {
     "Path": {"type": "string", "minLength": 1},
+    "Sha256": {
+      "$comment": "A content address, lowercase hex with no prefix, spelled as every other published document under schema/ spells one. ContentHash::parse wants the canonical `sha256:` prefix and the reader adds it; carrying the prefix here would make the member disagree with every other digest a project or the framework writes down.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "PixelOffset": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+    "PixelExtent": {"type": "integer", "minimum": 1, "maximum": 4294967295},
+    "PixelRect": {
+      "$comment": "A region of a source image in that image's own pixels. The lower bound on width and height is PixelRect::create's own refusal of an empty rect, restated here so the document is refused where it is written rather than where it is used. There is no upper bound but the representable one: the real bound is the source's extent, which only the decoded image knows, and image::cutRgba8Template judges it there.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["height", "width", "x", "y"],
+      "properties": {
+        "$comment": {"type": "string"},
+        "x": {"$ref": "#/$defs/PixelOffset"},
+        "y": {"$ref": "#/$defs/PixelOffset"},
+        "width": {"$ref": "#/$defs/PixelExtent"},
+        "height": {"$ref": "#/$defs/PixelExtent"}
+      }
+    },
+    "TemplateCut": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rect", "source_sha256s", "template"],
+      "properties": {
+        "$comment": {"type": "string"},
+        "template": {
+          "$comment": "Where the cut lands under the build's generated/templates/ family. Relative and inside that family; normalizeTemplatePath states both refusals, because leaving the family is a property of the path once resolved rather than of its spelling.",
+          "$ref": "#/$defs/Path"
+        },
+        "source_sha256s": {
+          "$comment": "Every source the cut is taken from, in the order they compose. The first decides the colour plane and the whole list decides the alpha plane: a pixel is opaque only where every source agrees, so cutting one region from several captures is how a template stops carrying a background that moves. One source is legal and means a fully opaque template.",
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/Sha256"},
+          "uniqueItems": true
+        },
+        "rect": {"$ref": "#/$defs/PixelRect"}
+      }
+    },
     "PluginAuthoring": {
       "$comment": "Which of the two authoring paths wrote the Luau module `plugin` names. `generated` is the declarative tier: the project kit produced the module from an umbraflow-declarative-workflow-tool/v1 declaration. `hand-written` is the exception: the author wrote the whole five-function module. The author states it because only the author knows it -- nothing in the module's bytes carries it, and a path convention would be a rule the kit knows and the loader cannot apply, which is how the two readers drift apart.",
       "enum": ["generated", "hand-written"]

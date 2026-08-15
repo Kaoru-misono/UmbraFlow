@@ -770,6 +770,12 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DUF_PROJECT_EXECUTABLE=$<TARGET_FILE:project>
         -DUF_PROJECT_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/project-cli-fixture
+        # Two PNGs this repository already ships. The fixture copies each into
+        # a corpus under the name its own sha256 gives it, so no hash is
+        # written down anywhere and a template cut is declared exactly as a
+        # project declares one.
+        -DUF_PROJECT_TEST_FRAME=${PROJECT_SOURCE_DIR}/examples/umbraflow/runtime/probe-frame.png
+        -DUF_PROJECT_TEST_OTHER_FRAME=${PROJECT_SOURCE_DIR}/examples/umbraflow/runtime/artifact/assets/fixture-anchor.png
         -P ${CMAKE_CURRENT_SOURCE_DIR}/project/test-project-cli.cmake
 )
 set_tests_properties(test-project-cli PROPERTIES

@@ -3,6 +3,7 @@
   "schema": "umbraflow-project/v1",
   "runtime_artifact": "runtime/artifact",
   "primary_deployment": "expedition",
+  "template_cuts": [],
   "deployments": [
     {
       "name": "expedition",

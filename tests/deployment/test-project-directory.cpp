@@ -180,6 +180,7 @@ namespace uf::deployment
   "schema": "umbraflow-project/v1",
   "runtime_artifact": "runtime/artifact",
   "primary_deployment": "alpha",
+  "template_cuts": [],
   "deployments": [)json"}
                     + deploymentBlock("alpha") + "," + deploymentBlock("beta")
                     + "]}";
@@ -576,7 +577,8 @@ namespace uf::deployment
             "umbraflow-project.json",
             std::string{R"json({"schema":"umbraflow-project/v1",)json"}
                 + R"json("runtime_artifact":"runtime/artifact",)json"
-                + R"json("primary_deployment":"alpha","deployments":[)json"
+                + R"json("primary_deployment":"alpha","template_cuts":[],)json"
+                + R"json("deployments":[)json"
                 + Fixture::deploymentBlock("alpha") + "]}"
         );
         fixture.remove("umbraflow-conformance.json");

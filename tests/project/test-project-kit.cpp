@@ -182,19 +182,23 @@ namespace uf::project
         auto deploymentManifest(
             std::string_view plugin,
             std::string_view authoringMember,
-            std::string_view justificationMember
+            std::string_view justificationMember,
+            std::string_view templateCuts
         ) -> std::string
         {
             return std::string{R"json({
   "schema": "umbraflow-project/v1",
   "runtime_artifact": "runtime/artifact",
   "primary_deployment": "dream",
+  "template_cuts": )json"}
+                + std::string{templateCuts}
+                + R"json(,
   "deployments": [
     {
       "name": "dream",
       "plugin_id": "chaos.dream",
       "baseline_event_type": "project.baseline_created",
-      "plugin": ")json"}
+      "plugin": ")json"
                 + std::string{plugin}
                 + R"json(",
 )json"
@@ -226,7 +230,23 @@ namespace uf::project
             return deploymentManifest(
                 k_handWrittenPlugin,
                 k_handWrittenAuthoring,
-                k_statedJustification
+                k_statedJustification,
+                "[]"
+            );
+        }
+
+        // The same accepted manifest, declaring the given template_cuts array.
+        // A cut is declared here and nowhere else: there is no spec member a
+        // caller can fill in, so a test that wants one written it the way a
+        // project author writes it.
+        [[nodiscard]]
+        auto manifestDeclaringCuts(std::string_view cuts) -> std::string
+        {
+            return deploymentManifest(
+                k_handWrittenPlugin,
+                k_handWrittenAuthoring,
+                k_statedJustification,
+                cuts
             );
         }
 
@@ -257,13 +277,14 @@ namespace uf::project
         }
 
         [[nodiscard]]
-        auto initializedWorkspace(
-            TemporaryWorkspace const& workspace
+        auto initializedWorkspaceDeclaring(
+            TemporaryWorkspace const& workspace,
+            std::string_view templateCuts
         ) -> Status
         {
             writeFile(workspace.source() / "content" / "facts.txt", "facts\n");
             writeFile(workspace.source() / "decisions.txt", "decisions\n");
-            writeRootManifest(workspace, acceptedDeploymentManifest());
+            writeRootManifest(workspace, manifestDeclaringCuts(templateCuts));
             return initProject(
                 ProjectInitSpec{
                     .sourceDirectory = workspace.source(),
@@ -274,6 +295,14 @@ namespace uf::project
                     },
                 }
             );
+        }
+
+        [[nodiscard]]
+        auto initializedWorkspace(
+            TemporaryWorkspace const& workspace
+        ) -> Status
+        {
+            return initializedWorkspaceDeclaring(workspace, "[]");
         }
 
         inline constexpr auto k_workflowEntryPoints = std::array{
@@ -614,13 +643,14 @@ namespace uf::project
         );
     }
 
-    TEST_CASE("project build cuts a declared template from content hashes")
+    // A template cut is declared in umbraflow-project.json and nowhere else.
+    // There is no spec member a caller can fill in, so every case below writes
+    // the declaration the way a project author writes it, and the only thing
+    // the caller still supplies is the resolver -- which is the whole point:
+    // the kit is told what to cut by the project, and how to reach a source by
+    // the caller, and it never learns what a directory is from either.
+    TEST_CASE("a declared template cut")
     {
-        auto const workspace = TemporaryWorkspace{
-            "uf-project-template-cut"
-        };
-        auto const initialized = initializedWorkspace(workspace);
-        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
         auto const firstPixels = std::vector<std::byte>{
             std::byte{180}, std::byte{180}, std::byte{180}, std::byte{1},
             std::byte{20}, std::byte{20}, std::byte{20}, std::byte{2},
@@ -647,8 +677,11 @@ namespace uf::project
         auto const secondHash = sha256(*secondEncoded);
         REQUIRE(firstHash.has_value());
         REQUIRE(secondHash.has_value());
-        auto const rect = PixelRect::create(0, 0, 2, 1);
-        REQUIRE(rect.has_value());
+
+        auto const declaration =
+            R"json([{"template": "locator/mark.png", "source_sha256s": [")json"
+            + firstHash->hex() + R"json(", ")json" + secondHash->hex()
+            + R"json("], "rect": {"x": 0, "y": 0, "width": 2, "height": 1}}])json";
 
         auto const resolver = TemplateSourceResolver{
             [
@@ -672,37 +705,137 @@ namespace uf::project
                 );
             }
         };
-        auto const spec = ProjectBuildSpec{
-            .sourceDirectory = workspace.source(),
-            .buildDirectory  = workspace.build(),
-            .toolCatalogs    = {},
-            .templateCuts = {
-                ProjectTemplateCutSpec{
-                    .templatePath = "locator/mark.png",
-                    .sourceHashes = {*firstHash, *secondHash},
-                    .rect         = *rect,
-                },
-            },
-        };
 
-        auto const built = buildProject(spec, resolver);
-        REQUIRE_MESSAGE(built.has_value(), messageOf(built));
-        auto const snapshot = snapshotTree(workspace.build());
-        auto const artifact = std::string{
-            "generated/templates/locator/mark.png"
-        };
-        REQUIRE(snapshot.contains(artifact));
-        auto const& encodedTemplate = snapshot.at(artifact);
-        auto const decoded = image::decodePng(
-            std::as_bytes(std::span{encodedTemplate}),
-            artifact
-        );
-        REQUIRE(decoded.has_value());
-        CHECK(decoded->width == 2U);
-        CHECK(decoded->height == 1U);
-        CHECK(decoded->pixels.at(3) == std::byte{255});
-        CHECK(decoded->pixels.at(7) == std::byte{0});
-        CHECK(checkProject(spec, resolver).has_value());
+        // The positive control. Without it every case below is satisfied by a
+        // kit that refuses each declaration for its own reasons.
+        SUBCASE("is cut from the sources the document names")
+        {
+            auto const workspace = TemporaryWorkspace{
+                "uf-project-template-cut"
+            };
+            auto const initialized = initializedWorkspaceDeclaring(
+                workspace,
+                declaration
+            );
+            REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+            auto const spec = ProjectBuildSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.build(),
+                .toolCatalogs    = {},
+            };
+
+            auto const built = buildProject(spec, resolver);
+            REQUIRE_MESSAGE(built.has_value(), messageOf(built));
+            auto const snapshot = snapshotTree(workspace.build());
+            auto const artifact = std::string{
+                "generated/templates/locator/mark.png"
+            };
+            REQUIRE(snapshot.contains(artifact));
+            auto const& encodedTemplate = snapshot.at(artifact);
+            auto const decoded = image::decodePng(
+                std::as_bytes(std::span{encodedTemplate}),
+                artifact
+            );
+            REQUIRE(decoded.has_value());
+            CHECK(decoded->width == 2U);
+            CHECK(decoded->height == 1U);
+            CHECK(decoded->pixels.at(3) == std::byte{255});
+            CHECK(decoded->pixels.at(7) == std::byte{0});
+            CHECK(checkProject(spec, resolver).has_value());
+        }
+
+        // Not silently skipped: the build fails, the refusal names the hash
+        // nobody could answer for, and the artifact the declaration asked for
+        // is not in the build directory at all.
+        SUBCASE("whose source cannot be resolved is refused by name")
+        {
+            auto const workspace = TemporaryWorkspace{
+                "uf-project-template-unresolvable"
+            };
+            auto const initialized = initializedWorkspaceDeclaring(
+                workspace,
+                declaration
+            );
+            REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+            auto const spec = ProjectBuildSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.build(),
+                .toolCatalogs    = {},
+            };
+            auto const empty = TemplateSourceResolver{
+                [](ContentHash const&) -> Result<std::vector<std::byte>>
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "this machine holds no corpus"
+                    );
+                }
+            };
+
+            auto const built = buildProject(spec, empty);
+            REQUIRE_FALSE_MESSAGE(
+                built.has_value(),
+                "an unresolvable template source must fail the build"
+            );
+            CHECK_MESSAGE(
+                messageOf(built).find(firstHash->hex()) != std::string::npos,
+                "the refusal must name the source hash it could not resolve"
+            );
+            CHECK_MESSAGE(
+                !snapshotTree(workspace.build()).contains(
+                    "generated/templates/locator/mark.png"
+                ),
+                "a cut that could not be made must not leave an artifact"
+            );
+            CHECK_FALSE_MESSAGE(
+                checkProject(spec, empty).has_value(),
+                "project check must refuse exactly what project build refused"
+            );
+        }
+
+        // The resolver is not trusted to answer honestly. It is handed a hash
+        // and its answer is re-hashed, so a store whose file names lie is
+        // caught here rather than in whichever caller happened to look.
+        SUBCASE("whose resolved bytes hash to something else is refused")
+        {
+            auto const workspace = TemporaryWorkspace{
+                "uf-project-template-mismatch"
+            };
+            auto const initialized = initializedWorkspaceDeclaring(
+                workspace,
+                declaration
+            );
+            REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+            auto const spec = ProjectBuildSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.build(),
+                .toolCatalogs    = {},
+            };
+            // Answers every hash with the second source's bytes, so the first
+            // request gets bytes that are a valid PNG and the wrong one.
+            auto const liar = TemplateSourceResolver{
+                [bytes = *secondEncoded](
+                    ContentHash const&
+                ) -> Result<std::vector<std::byte>>
+                {
+                    return bytes;
+                }
+            };
+
+            auto const built = buildProject(spec, liar);
+            REQUIRE_FALSE_MESSAGE(
+                built.has_value(),
+                "bytes that do not hash to the declared source must be refused"
+            );
+            CHECK_MESSAGE(
+                messageOf(built).find(firstHash->hex()) != std::string::npos,
+                "the refusal must name the source that was asked for"
+            );
+            CHECK_MESSAGE(
+                messageOf(built).find(secondHash->hex()) != std::string::npos,
+                "the refusal must name the hash the bytes actually have"
+            );
+        }
     }
 
     TEST_CASE("project build regenerates five-function adapters solely from declared source")
@@ -1134,7 +1267,8 @@ namespace uf::project
                 deploymentManifest(
                     k_handWrittenPlugin,
                     k_handWrittenAuthoring,
-                    ""
+                    "",
+                    "[]"
                 )
             );
 
@@ -1173,7 +1307,8 @@ namespace uf::project
                     k_handWrittenPlugin,
                     k_handWrittenAuthoring,
                     R"json(      "plugin_justification": " \t\n ",
-)json"
+)json",
+                    "[]"
                 )
             );
 
@@ -1218,7 +1353,12 @@ namespace uf::project
             };
             auto const spec = specFor(
                 workspace,
-                deploymentManifest(k_generatedPlugin, k_generatedAuthoring, "")
+                deploymentManifest(
+                    k_generatedPlugin,
+                    k_generatedAuthoring,
+                    "",
+                    "[]"
+                )
             );
 
             // A deployment naming a generated adapter owes no justification:
@@ -1239,7 +1379,8 @@ namespace uf::project
                 deploymentManifest(
                     k_generatedPlugin,
                     k_generatedAuthoring,
-                    k_statedJustification
+                    k_statedJustification,
+                    "[]"
                 )
             );
 
@@ -1271,7 +1412,12 @@ namespace uf::project
         writeFile(workspace.source() / k_handWrittenPlugin, "return {}\n");
         writeRootManifest(
             workspace,
-            deploymentManifest(k_handWrittenPlugin, k_handWrittenAuthoring, "")
+            deploymentManifest(
+                k_handWrittenPlugin,
+                k_handWrittenAuthoring,
+                "",
+                "[]"
+            )
         );
 
         auto const initialized = initProject(

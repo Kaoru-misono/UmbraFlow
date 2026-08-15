@@ -5,7 +5,6 @@
 #include <core/error/result.hpp>
 
 #include <domain/content-hash.hpp>
-#include <domain/space.hpp>
 
 #include <cstddef>
 #include <filesystem>
@@ -32,13 +31,19 @@ namespace uf::project
         std::filesystem::path sourceInput{};
     };
 
-    struct ProjectTemplateCutSpec final
-    {
-        std::filesystem::path    templatePath{};
-        std::vector<ContentHash> sourceHashes{};
-        PixelRect                rect;
-    };
-
+    // The bytes behind one content hash, obtained however the caller obtains
+    // them. Naming a source by content is what lets a project declare a
+    // template cut without referencing a screenshot path, and that only holds
+    // while this stays the caller's job: the kit hands out a hash and takes
+    // bytes back, so it never learns what a directory, a store or a corpus is.
+    // The `project` command line is the caller in production and reads a
+    // directory named by --frames-root; a test is the caller in tests and reads
+    // its own memory. Neither shape reaches this module.
+    //
+    // The resolver does not have to verify what it returns. generatedTemplates
+    // re-hashes every answer and refuses one that does not hash to what it
+    // asked for, so a store whose file names lie is caught in one place instead
+    // of in each caller.
     using TemplateSourceResolver = std::function<
         Result<std::vector<std::byte>>(ContentHash const&)
     >;
@@ -61,7 +66,6 @@ namespace uf::project
         std::filesystem::path                buildDirectory{};
         std::vector<ToolCatalogDeclaration>  toolCatalogs{};
         std::vector<ProjectArtifactBlobSpec> artifactBlobs{};
-        std::vector<ProjectTemplateCutSpec>  templateCuts{};
         ProjectRegistrationBuildSpec         registration{};
     };
 

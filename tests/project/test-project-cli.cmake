@@ -33,6 +33,7 @@ file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
   "schema": "umbraflow-project/v1",
   "runtime_artifact": "runtime/artifact",
   "primary_deployment": "dream",
+  "template_cuts": [],
   "deployments": [
     {
       "name": "dream",
@@ -222,5 +223,269 @@ if(MISSING_NAME_INDEX EQUAL -1)
     message(FATAL_ERROR
         "missing-input diagnostic must name declared.txt; "
         "stderr=[${MISSING_ERROR}]"
+    )
+endif()
+
+# ----------------------------------------------------------------------------
+# Template cuts, end to end through the command line.
+#
+# The capability landed as a C++ API in 2b378df and the command line never
+# reached it: build, check and freeze each passed an empty resolver, so a
+# project could not declare a cut at all and the first consumer that wanted one
+# went on cropping images in its own Python. Everything below is that gap,
+# stated as cases.
+#
+# Nothing here writes a hash down. The corpus is a PNG this repository already
+# ships, copied under the name its own sha256 gives it, and the declaration
+# interpolates that same computed value -- so a fixture that stopped hashing
+# what it copied could not go on agreeing with itself.
+# ----------------------------------------------------------------------------
+function(run_project OUT_RESULT OUT_DIAGNOSTIC)
+    execute_process(
+        COMMAND "${UF_PROJECT_EXECUTABLE}" ${ARGN}
+        RESULT_VARIABLE COMMAND_RESULT
+        OUTPUT_VARIABLE COMMAND_OUTPUT
+        ERROR_VARIABLE COMMAND_ERROR
+    )
+    set(${OUT_RESULT} "${COMMAND_RESULT}" PARENT_SCOPE)
+    set(${OUT_DIAGNOSTIC} "${COMMAND_OUTPUT}${COMMAND_ERROR}" PARENT_SCOPE)
+endfunction()
+
+function(require_contains LABEL HAYSTACK NEEDLE)
+    string(FIND "${HAYSTACK}" "${NEEDLE}" FOUND_AT)
+    if(FOUND_AT EQUAL -1)
+        message(FATAL_ERROR
+            "${LABEL} must name [${NEEDLE}]; diagnostic=[${HAYSTACK}]"
+        )
+    endif()
+endfunction()
+
+set(CUT_ROOT "${UF_PROJECT_TEST_ROOT}/template-cut")
+set(CUT_SOURCE "${CUT_ROOT}/source")
+set(CUT_BUILD "${CUT_ROOT}/build")
+set(CUT_NO_CORPUS_BUILD "${CUT_ROOT}/build-no-corpus")
+set(CUT_WRONG_BYTES_BUILD "${CUT_ROOT}/build-wrong-bytes")
+set(CUT_RELEASE "${CUT_ROOT}/release")
+set(CUT_CORPUS "${CUT_ROOT}/corpus")
+set(CUT_LYING_CORPUS "${CUT_ROOT}/lying-corpus")
+set(CUT_TEMPLATE_NAME "generated/templates/locator/mark.png")
+
+if(NOT EXISTS "${UF_PROJECT_TEST_FRAME}")
+    message(FATAL_ERROR
+        "the template-cut fixture source is missing: ${UF_PROJECT_TEST_FRAME}"
+    )
+endif()
+if(NOT EXISTS "${UF_PROJECT_TEST_OTHER_FRAME}")
+    message(FATAL_ERROR
+        "the mismatched-bytes fixture source is missing: "
+        "${UF_PROJECT_TEST_OTHER_FRAME}"
+    )
+endif()
+
+file(MAKE_DIRECTORY "${CUT_SOURCE}" "${CUT_CORPUS}" "${CUT_LYING_CORPUS}")
+file(WRITE "${CUT_SOURCE}/declared.txt" "declared input\n")
+file(SHA256 "${UF_PROJECT_TEST_FRAME}" CUT_SOURCE_HASH)
+file(SHA256 "${UF_PROJECT_TEST_OTHER_FRAME}" CUT_OTHER_HASH)
+file(COPY_FILE
+    "${UF_PROJECT_TEST_FRAME}"
+    "${CUT_CORPUS}/${CUT_SOURCE_HASH}.png"
+)
+# A corpus whose file names lie: the name the declaration asks for, over
+# another image's bytes. The kit re-hashes what a resolver answers, and this is
+# what proves the command line reaches that check instead of going around it.
+file(COPY_FILE
+    "${UF_PROJECT_TEST_OTHER_FRAME}"
+    "${CUT_LYING_CORPUS}/${CUT_SOURCE_HASH}.png"
+)
+
+file(WRITE "${CUT_SOURCE}/umbraflow-project.json" "{
+  \"schema\": \"umbraflow-project/v1\",
+  \"runtime_artifact\": \"runtime/artifact\",
+  \"primary_deployment\": \"dream\",
+  \"template_cuts\": [
+    {
+      \"template\": \"locator/mark.png\",
+      \"source_sha256s\": [\"${CUT_SOURCE_HASH}\"],
+      \"rect\": {\"x\": 0, \"y\": 0, \"width\": 2, \"height\": 1}
+    }
+  ],
+  \"deployments\": [
+    {
+      \"name\": \"dream\",
+      \"plugin_id\": \"chaos.dream\",
+      \"baseline_event_type\": \"project.baseline_created\",
+      \"plugin\": \"plugin/dream.luau\",
+      \"plugin_authoring\": \"hand-written\",
+      \"plugin_justification\": \"A fixture plugin that answers from constants: umbraflow-declarative-workflow-tool/v1 has no member that decides what a Reduce returns.\",
+      \"project_state_schema\": \"schema/state.json\",
+      \"project_observation_schema\": \"schema/observation.json\",
+      \"tool_precondition_schema\": \"schema/precondition.json\",
+      \"reconcile_schema\": \"schema/reconcile.json\",
+      \"tool_catalog\": \"schema/catalog.json\",
+      \"journal_event_schema_manifest\": \"schema/journal-manifest.json\",
+      \"reconcile_manifest\": \"schema/reconcile-manifest.json\",
+      \"journal_payload_schemas\": [\"schema/journal-0.json\"],
+      \"effect_payload_schemas\": [],
+      \"artifact_blobs\": []
+    }
+  ]
+}
+")
+
+foreach(CUT_BUILD_DIRECTORY
+    "${CUT_BUILD}"
+    "${CUT_NO_CORPUS_BUILD}"
+    "${CUT_WRONG_BYTES_BUILD}"
+)
+    run_project(CUT_INIT_RESULT CUT_INIT_DIAGNOSTIC init
+        --source "${CUT_SOURCE}"
+        --build "${CUT_BUILD_DIRECTORY}"
+        --input declared.txt
+    )
+    if(NOT CUT_INIT_RESULT EQUAL 0)
+        message(FATAL_ERROR
+            "project init must exit 0 for ${CUT_BUILD_DIRECTORY}; "
+            "exit=${CUT_INIT_RESULT}; diagnostic=[${CUT_INIT_DIAGNOSTIC}]"
+        )
+    endif()
+endforeach()
+
+# F1, the positive control. Without it every refusal below is satisfied by a
+# command that refuses every cut there is.
+run_project(CUT_BUILD_RESULT CUT_BUILD_DIAGNOSTIC build
+    --source "${CUT_SOURCE}"
+    --build "${CUT_BUILD}"
+    --frames-root "${CUT_CORPUS}"
+)
+if(NOT CUT_BUILD_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project build must cut a declared template when its source resolves; "
+        "exit=${CUT_BUILD_RESULT}; diagnostic=[${CUT_BUILD_DIAGNOSTIC}]"
+    )
+endif()
+if(NOT EXISTS "${CUT_BUILD}/${CUT_TEMPLATE_NAME}")
+    message(FATAL_ERROR
+        "project build must produce ${CUT_TEMPLATE_NAME} from the declaration"
+    )
+endif()
+
+# F2. A source no corpus can answer for is refused by name, and the refusal
+# says how to supply one. The build directory is a fresh one, so the absent
+# artifact below is evidence that nothing was produced rather than evidence
+# that something earlier produced it.
+run_project(CUT_UNRESOLVED_RESULT CUT_UNRESOLVED_DIAGNOSTIC build
+    --source "${CUT_SOURCE}"
+    --build "${CUT_NO_CORPUS_BUILD}"
+)
+if(CUT_UNRESOLVED_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project build must refuse a declared cut it cannot resolve rather "
+        "than skipping it; diagnostic=[${CUT_UNRESOLVED_DIAGNOSTIC}]"
+    )
+endif()
+require_contains("the unresolved-source refusal"
+    "${CUT_UNRESOLVED_DIAGNOSTIC}" "${CUT_SOURCE_HASH}")
+require_contains("the unresolved-source refusal"
+    "${CUT_UNRESOLVED_DIAGNOSTIC}" "--frames-root")
+if(EXISTS "${CUT_NO_CORPUS_BUILD}/${CUT_TEMPLATE_NAME}")
+    message(FATAL_ERROR
+        "a cut that could not be resolved must leave no template behind"
+    )
+endif()
+
+# F3. Bytes that do not hash to what was asked for are refused, and the refusal
+# names both hashes. The command line supplies bytes and never verifies them,
+# so this only passes if it reaches the kit's check.
+run_project(CUT_MISMATCH_RESULT CUT_MISMATCH_DIAGNOSTIC build
+    --source "${CUT_SOURCE}"
+    --build "${CUT_WRONG_BYTES_BUILD}"
+    --frames-root "${CUT_LYING_CORPUS}"
+)
+if(CUT_MISMATCH_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project build must refuse resolved bytes whose hash is not the one "
+        "declared; diagnostic=[${CUT_MISMATCH_DIAGNOSTIC}]"
+    )
+endif()
+require_contains("the mismatched-source refusal"
+    "${CUT_MISMATCH_DIAGNOSTIC}" "${CUT_SOURCE_HASH}")
+require_contains("the mismatched-source refusal"
+    "${CUT_MISMATCH_DIAGNOSTIC}" "${CUT_OTHER_HASH}")
+if(EXISTS "${CUT_WRONG_BYTES_BUILD}/${CUT_TEMPLATE_NAME}")
+    message(FATAL_ERROR
+        "a cut whose source bytes were wrong must leave no template behind"
+    )
+endif()
+
+# F4. check and freeze answer exactly as build does. The build directory below
+# already holds the template from F1, so a check that judged the tree instead
+# of the declaration would pass here -- which is the whole point of asking.
+run_project(CUT_CHECK_RESULT CUT_CHECK_DIAGNOSTIC check
+    --source "${CUT_SOURCE}"
+    --build "${CUT_BUILD}"
+)
+if(CUT_CHECK_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project check must refuse a declared cut it cannot resolve, even "
+        "with the template already built; "
+        "diagnostic=[${CUT_CHECK_DIAGNOSTIC}]"
+    )
+endif()
+require_contains("the check refusal"
+    "${CUT_CHECK_DIAGNOSTIC}" "${CUT_SOURCE_HASH}")
+require_contains("the check refusal"
+    "${CUT_CHECK_DIAGNOSTIC}" "--frames-root")
+
+run_project(CUT_FREEZE_REFUSAL_RESULT CUT_FREEZE_REFUSAL_DIAGNOSTIC freeze
+    --source "${CUT_SOURCE}"
+    --build "${CUT_BUILD}"
+    --release "${CUT_RELEASE}"
+)
+if(CUT_FREEZE_REFUSAL_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project freeze must refuse a declared cut it cannot resolve; "
+        "diagnostic=[${CUT_FREEZE_REFUSAL_DIAGNOSTIC}]"
+    )
+endif()
+require_contains("the freeze refusal"
+    "${CUT_FREEZE_REFUSAL_DIAGNOSTIC}" "${CUT_SOURCE_HASH}")
+if(EXISTS "${CUT_RELEASE}")
+    message(FATAL_ERROR
+        "a freeze that refused a declared cut must publish no release"
+    )
+endif()
+
+run_project(CUT_CHECKED_RESULT CUT_CHECKED_DIAGNOSTIC check
+    --source "${CUT_SOURCE}"
+    --build "${CUT_BUILD}"
+    --frames-root "${CUT_CORPUS}"
+)
+if(NOT CUT_CHECKED_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project check must accept the build it just produced when the same "
+        "corpus is given; exit=${CUT_CHECKED_RESULT}; "
+        "diagnostic=[${CUT_CHECKED_DIAGNOSTIC}]"
+    )
+endif()
+
+run_project(CUT_FROZEN_RESULT CUT_FROZEN_DIAGNOSTIC freeze
+    --source "${CUT_SOURCE}"
+    --build "${CUT_BUILD}"
+    --release "${CUT_RELEASE}"
+    --frames-root "${CUT_CORPUS}"
+)
+if(NOT CUT_FROZEN_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project freeze must publish a release whose declared cut resolves; "
+        "exit=${CUT_FROZEN_RESULT}; diagnostic=[${CUT_FROZEN_DIAGNOSTIC}]"
+    )
+endif()
+file(GLOB_RECURSE FROZEN_TEMPLATES
+    RELATIVE "${CUT_RELEASE}"
+    "${CUT_RELEASE}/*/${CUT_TEMPLATE_NAME}"
+)
+if(FROZEN_TEMPLATES STREQUAL "")
+    message(FATAL_ERROR
+        "the frozen release must carry the template the declaration cut"
     )
 endif()

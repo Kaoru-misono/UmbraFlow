@@ -3,10 +3,14 @@
 #include "declarative-workflow-tool.hpp"
 #include "tool-catalog.hpp"
 
+#include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
+#include <core/numeric/checked-cast.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
+#include <domain/space.hpp>
 
 #include <image/png.hpp>
 #include <image/template-cut.hpp>
@@ -92,6 +96,19 @@ namespace uf::project
         };
         constexpr auto k_artifactRegistrationName = std::string_view{
             "artifact-roots-v1.json"
+        };
+
+        // One `template_cuts` entry of umbraflow-project.json, after the
+        // published schema has judged it and this file has turned its three
+        // members into the values the rest of the kit works in. It is not in
+        // the module's header because no caller assembles one: the document is
+        // the only place a cut is declared, and a second way to supply one
+        // would be a second spelling of the project's template cuts.
+        struct ProjectTemplateCutSpec final
+        {
+            std::filesystem::path    templatePath{};
+            std::vector<ContentHash> sourceHashes{};
+            PixelRect                rect;
         };
 
         struct GeneratedArtifact final
@@ -528,8 +545,87 @@ namespace uf::project
             return ok();
         }
 
+        // One member of an object the published schema has already judged.
+        //
+        // Total by construction rather than by luck: every member read through
+        // it is `required` in schema/umbraflow-project-v1.schema.json and of
+        // the type stated there, so validate() has already refused every
+        // document in which the lookup could fail. The check is here so that a
+        // member removed from the schema without being removed here stops the
+        // process at the contract instead of reading a neutral value and
+        // building a different artifact. The loader spells the same helper the
+        // same way (project-directory.cpp:236-249).
+        [[nodiscard]]
+        auto member(json::Value const& object, std::string_view name)
+            -> json::Value const&
+        {
+            auto const* const p_member = object.find(name);
+            UF_CHECK(p_member != nullptr);
+            return *p_member;
+        }
+
+        // One PixelRect member of a validated rect object. The schema states
+        // the bound this cast could fail at -- 0..2^32-1 for an offset, 1 up
+        // for an extent -- so a document that reaches here has an exact
+        // integer in range, and the refusal is the contract's rather than a
+        // reachable branch.
+        [[nodiscard]]
+        auto pixelEdge(json::Value const& rect, std::string_view name) -> uint32
+        {
+            auto const edge = checkedIntegralCast<uint32>(
+                member(rect, name).number()
+            );
+            UF_CHECK(edge.has_value());
+            return *edge;
+        }
+
+        [[nodiscard]]
+        auto declaredTemplateCuts(
+            json::Value const& document
+        ) -> Result<std::vector<ProjectTemplateCutSpec>>
+        {
+            auto cuts = std::vector<ProjectTemplateCutSpec>{};
+            auto const& declared = member(document, "template_cuts");
+            cuts.reserve(declared.items().size());
+            for (auto const& cut : declared.items())
+            {
+                auto hashes = std::vector<ContentHash>{};
+                auto const& encoded = member(cut, "source_sha256s");
+                hashes.reserve(encoded.items().size());
+                for (auto const& source : encoded.items())
+                {
+                    UF_TRY_VALUE(
+                        hash,
+                        ContentHash::parse(
+                            "sha256:" + std::string{source.string()}
+                        )
+                    );
+                    hashes.emplace_back(hash);
+                }
+
+                auto const& rect = member(cut, "rect");
+                UF_TRY_VALUE(
+                    region,
+                    PixelRect::create(
+                        pixelEdge(rect, "x"),
+                        pixelEdge(rect, "y"),
+                        pixelEdge(rect, "width"),
+                        pixelEdge(rect, "height")
+                    )
+                );
+                cuts.emplace_back(ProjectTemplateCutSpec{
+                    .templatePath = std::filesystem::path{
+                        member(cut, "template").string()
+                    },
+                    .sourceHashes = std::move(hashes),
+                    .rect         = region,
+                });
+            }
+            return cuts;
+        }
+
         // The project's root document, judged by the one published statement of
-        // its shape.
+        // its shape, and then read for the one thing the offline kit acts on.
         //
         // It is read from the source tree unconditionally. The declared-input
         // list is the author's, so a gate that ran only when the author had
@@ -537,7 +633,14 @@ namespace uf::project
         // not listing it, while the tree still held the document the runtime
         // loader would later read.
         //
-        // Nothing here reads a member. schema/umbraflow-project-v1.schema.json
+        // Reading `template_cuts` out of the value validate() just accepted is
+        // not a second reading of this document: it is the same parse, and the
+        // shape it is allowed to have was decided by the published schema and
+        // nowhere else. What would be a second reading -- and is the defect
+        // this file already carries the scar of -- is any caller opening this
+        // file to pull members out before the schema has judged them.
+        //
+        // schema/umbraflow-project-v1.schema.json
         // states every rule, including the direct-plugin tier's admission gate:
         // a deployment whose plugin_authoring is "hand-written" must carry a
         // plugin_justification naming the member or semantic of
@@ -554,9 +657,9 @@ namespace uf::project
         // member is a review finding at plugin acceptance -- see
         // docs/pitfalls/checks-that-cannot-fail.md.
         [[nodiscard]]
-        auto validateProjectManifest(
+        auto readProjectManifest(
             std::filesystem::path const& sourceDirectory
-        ) -> Status
+        ) -> Result<std::vector<ProjectTemplateCutSpec>>
         {
             auto const manifestPath = (
                 sourceDirectory / std::filesystem::path{k_projectManifestName}
@@ -644,7 +747,7 @@ namespace uf::project
                     )
                 );
             }
-            return ok();
+            return declaredTemplateCuts(document);
         }
 
         [[nodiscard]]
@@ -840,14 +943,28 @@ namespace uf::project
                 sources.reserve(declaration.sourceHashes.size());
                 for (auto const& sourceHash : declaration.sourceHashes)
                 {
-                    UF_TRY_VALUE_CONTEXT(
-                        encoded,
-                        resolveTemplateSource(sourceHash),
-                        std::format(
-                            "resolving template source {}",
-                            sourceHash.hex()
-                        )
-                    );
+                    // The hash is in the message rather than in the error's
+                    // context because the `project` command line prints
+                    // message() and nothing else, and "the refusal names the
+                    // source it could not resolve" has to be this function's
+                    // property rather than each caller's. The resolver's own
+                    // reason is quoted whole, so a caller that can say how to
+                    // supply the missing bytes still gets to say it.
+                    auto resolved = resolveTemplateSource(sourceHash);
+                    if (!resolved)
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "generated template \"{}\" cannot resolve "
+                                "source {}: {}",
+                                templatePath.generic_string(),
+                                sourceHash.hex(),
+                                resolved.error().message()
+                            )
+                        );
+                    }
+                    auto const encoded = *std::move(resolved);
                     UF_TRY_VALUE(actualHash, sha256(encoded));
                     if (actualHash != sourceHash)
                     {
@@ -1074,6 +1191,7 @@ namespace uf::project
         auto generatedProjectBuild(
             ProjectBuildSpec const& spec,
             std::vector<std::string> const& inputs,
+            std::vector<ProjectTemplateCutSpec> const& templateCuts,
             TemplateSourceResolver const& resolveTemplateSource
         ) -> Result<GeneratedProjectBuild>
         {
@@ -1084,7 +1202,7 @@ namespace uf::project
             UF_TRY_VALUE(catalogs, generatedToolCatalogs(spec.toolCatalogs));
             UF_TRY_VALUE(
                 templates,
-                generatedTemplates(spec.templateCuts, resolveTemplateSource)
+                generatedTemplates(templateCuts, resolveTemplateSource)
             );
             UF_TRY_VALUE(
                 closureFamilies,
@@ -2054,10 +2172,15 @@ namespace uf::project
         UF_TRY(validateDirectories(spec));
         UF_TRY_VALUE(inputs, declaredInputs(spec.buildDirectory));
         UF_TRY(validateDeclaredInputs(spec.sourceDirectory, inputs));
-        UF_TRY(validateProjectManifest(spec.sourceDirectory));
+        UF_TRY_VALUE(templateCuts, readProjectManifest(spec.sourceDirectory));
         UF_TRY_VALUE(
             generated,
-            generatedProjectBuild(spec, inputs, resolveTemplateSource)
+            generatedProjectBuild(
+                spec,
+                inputs,
+                templateCuts,
+                resolveTemplateSource
+            )
         );
         UF_TRY(ensureBuildDirectory(spec.buildDirectory));
         UF_TRY(writeGeneratedProjectBuild(spec.buildDirectory, generated));
@@ -2087,10 +2210,15 @@ namespace uf::project
         UF_TRY(validateDirectories(spec));
         UF_TRY_VALUE(inputs, declaredInputs(spec.buildDirectory));
         UF_TRY(validateDeclaredInputs(spec.sourceDirectory, inputs));
-        UF_TRY(validateProjectManifest(spec.sourceDirectory));
+        UF_TRY_VALUE(templateCuts, readProjectManifest(spec.sourceDirectory));
         UF_TRY_VALUE(
             generated,
-            generatedProjectBuild(spec, inputs, resolveTemplateSource)
+            generatedProjectBuild(
+                spec,
+                inputs,
+                templateCuts,
+                resolveTemplateSource
+            )
         );
         UF_TRY(validateGeneratedProjectBuild(spec.buildDirectory, generated));
 

@@ -110,7 +110,7 @@ non-empty `plugin_justification` naming the member or semantic of
 whose `plugin_authoring` is `generated` must carry none.
 `schema/umbraflow-project-v1.schema.json` states both directions once, and both
 readers of the document compile those published bytes: `project build` and
-`project check` through `validateProjectManifest` in
+`project check` through `readProjectManifest` in
 `modules/project/source/project/project-kit.cpp`, and the runtime load through
 `ProjectLoader::load` in
 `modules/deployment/source/deployment/project-directory.cpp`. The gate checks

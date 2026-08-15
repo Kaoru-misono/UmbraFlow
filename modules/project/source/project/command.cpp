@@ -6,6 +6,7 @@
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
+#include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 
 #include <algorithm>
@@ -13,7 +14,10 @@
 #include <cstddef>
 #include <filesystem>
 #include <format>
+#include <fstream>
+#include <ios>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -31,6 +35,7 @@ namespace uf::project
             Build,
             Input,
             Release,
+            FramesRoot,
         };
 
         struct ProjectFlagDefinition final
@@ -44,6 +49,7 @@ namespace uf::project
             std::optional<std::filesystem::path> source{};
             std::optional<std::filesystem::path> build{};
             std::optional<std::filesystem::path> release{};
+            std::optional<std::filesystem::path> framesRoot{};
             std::vector<std::filesystem::path>   inputs{};
         };
 
@@ -52,6 +58,7 @@ namespace uf::project
             ProjectFlagDefinition{"--build", ProjectFlag::Build},
             ProjectFlagDefinition{"--input", ProjectFlag::Input},
             ProjectFlagDefinition{"--release", ProjectFlag::Release},
+            ProjectFlagDefinition{"--frames-root", ProjectFlag::FramesRoot},
         };
 
         [[nodiscard]]
@@ -124,9 +131,105 @@ namespace uf::project
                     }
                     parsed.release = std::filesystem::path{value};
                     break;
+                case ProjectFlag::FramesRoot:
+                    if (parsed.framesRoot)
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            "project argument \"--frames-root\" appears more "
+                            "than once"
+                        );
+                    }
+                    parsed.framesRoot = std::filesystem::path{value};
+                    break;
                 }
             }
             return parsed;
+        }
+
+        // The corpus one template source is resolved in, and the only place
+        // this program learns what a directory is on the kit's behalf.
+        //
+        // The store is named by content: the bytes of hash H live in H.png, so
+        // a hash opens a file with no index between them and no path written
+        // into the project. That is what makes "no screenshot references"
+        // structural: there is nothing a project could write down that would
+        // pin a source to one machine's filesystem.
+        //
+        // WHY A FLAG AND NOT AN ENVIRONMENT VARIABLE. Nothing in this
+        // repository reads the environment -- the Luau sandbox goes as far as
+        // removing os.getenv (tests/script/test-veto-suite.cpp) -- and a build
+        // whose output depends on ambient state produces two different
+        // artifacts from one command line with nothing recording which. The
+        // corpus root is on the command line, so the invocation that produced
+        // a release is the whole account of what produced it.
+        //
+        // Nothing here verifies the bytes. generatedTemplates re-hashes every
+        // answer and refuses one that does not hash to what it asked for, so a
+        // store whose file names lie is caught in one place; verifying here as
+        // well would be a second spelling of that rule, and the kit's would
+        // stop being the one that fires.
+        [[nodiscard]]
+        auto templateSourceResolver(
+            std::optional<std::filesystem::path> framesRoot
+        ) -> TemplateSourceResolver
+        {
+            // By value, and no reference to anything the caller owns: the
+            // resolver outlives this frame and is called from inside the kit.
+            return [root = std::move(framesRoot)](
+                       ContentHash const& requested
+                   ) -> Result<std::vector<std::byte>>
+            {
+                auto const name = requested.hex() + ".png";
+                // A machine with no corpus still gets a resolver rather than
+                // none. An empty std::function makes the kit refuse the
+                // declaration without naming a hash, and a resolver that
+                // answered "skip this one" would build a different artifact
+                // out of the same source, which is worse than any refusal.
+                if (!root)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "no template source corpus was given: pass "
+                            "--frames-root PATH naming a directory that holds "
+                            "\"{}\"",
+                            name
+                        )
+                    );
+                }
+
+                auto const path = *root / name;
+                auto stream     = std::ifstream{path, std::ios::binary};
+                if (!stream.is_open())
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "template source corpus \"{}\" holds no \"{}\"",
+                            root->string(),
+                            name
+                        )
+                    );
+                }
+
+                auto const text = std::string{
+                    std::istreambuf_iterator<char>{stream},
+                    std::istreambuf_iterator<char>{}
+                };
+                if (stream.bad())
+                {
+                    return fail(
+                        AutomationErrorKind::IoFailure,
+                        std::format(
+                            "cannot read template source \"{}\"",
+                            path.string()
+                        )
+                    );
+                }
+                auto const bytes = std::as_bytes(std::span{text});
+                return std::vector<std::byte>{bytes.begin(), bytes.end()};
+            };
         }
 
         [[nodiscard]]
@@ -149,11 +252,11 @@ namespace uf::project
                     "project init requires at least one --input RELATIVE_PATH"
                 );
             }
-            if (parsed.release)
+            if (parsed.release || parsed.framesRoot)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "project init does not accept --release"
+                    "project init accepts only --source, --build and --input"
                 );
             }
             return ProjectInitSpec{
@@ -163,11 +266,28 @@ namespace uf::project
             };
         }
 
+        // What one invocation of build, check or freeze decided: the spec the
+        // kit is given, and the corpus root it is deliberately not given. The
+        // root stays outside ProjectBuildSpec because the kit must never learn
+        // what a directory is -- it reaches the kit only as the resolver's
+        // captured state.
+        struct ParsedProjectBuild final
+        {
+            ProjectBuildSpec                     spec{};
+            std::optional<std::filesystem::path> framesRoot{};
+        };
+
+        struct ParsedProjectFreeze final
+        {
+            ProjectFreezeSpec                    spec{};
+            std::optional<std::filesystem::path> framesRoot{};
+        };
+
         [[nodiscard]]
         auto parseProjectBuildSpec(
             std::span<std::string const> raw,
             std::string_view action
-        ) -> Result<ProjectBuildSpec>
+        ) -> Result<ParsedProjectBuild>
         {
             UF_TRY_VALUE(parsed, parseProjectFlags(raw));
             if (!parsed.source || !parsed.build)
@@ -185,22 +305,26 @@ namespace uf::project
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     std::format(
-                        "project {} accepts only --source and --build",
+                        "project {} accepts only --source, --build and "
+                        "--frames-root",
                         action
                     )
                 );
             }
-            return ProjectBuildSpec{
-                .sourceDirectory = std::move(*parsed.source),
-                .buildDirectory  = std::move(*parsed.build),
-                .toolCatalogs    = {},
+            return ParsedProjectBuild{
+                .spec = ProjectBuildSpec{
+                    .sourceDirectory = std::move(*parsed.source),
+                    .buildDirectory  = std::move(*parsed.build),
+                    .toolCatalogs    = {},
+                },
+                .framesRoot = std::move(parsed.framesRoot),
             };
         }
 
         [[nodiscard]]
         auto parseProjectFreeze(
             std::span<std::string const> raw
-        ) -> Result<ProjectFreezeSpec>
+        ) -> Result<ParsedProjectFreeze>
         {
             UF_TRY_VALUE(parsed, parseProjectFlags(raw));
             if (!parsed.source || !parsed.build || !parsed.release)
@@ -218,13 +342,16 @@ namespace uf::project
                     "project freeze does not accept --input"
                 );
             }
-            return ProjectFreezeSpec{
-                .candidate = ProjectBuildSpec{
-                    .sourceDirectory = std::move(*parsed.source),
-                    .buildDirectory  = std::move(*parsed.build),
-                    .toolCatalogs    = {},
+            return ParsedProjectFreeze{
+                .spec = ProjectFreezeSpec{
+                    .candidate = ProjectBuildSpec{
+                        .sourceDirectory = std::move(*parsed.source),
+                        .buildDirectory  = std::move(*parsed.build),
+                        .toolCatalogs    = {},
+                    },
+                    .releaseRoot = std::move(*parsed.release),
                 },
-                .releaseRoot = std::move(*parsed.release),
+                .framesRoot = std::move(parsed.framesRoot),
             };
         }
 
@@ -238,6 +365,7 @@ namespace uf::project
                 !parsed.release
                 || parsed.source
                 || parsed.build
+                || parsed.framesRoot
                 || !parsed.inputs.empty()
             )
             {
@@ -288,22 +416,25 @@ namespace uf::project
             std::span<std::string const> raw
         ) -> ProjectExitCode
         {
-            auto const spec = parseProjectBuildSpec(raw, "build");
-            if (!spec)
+            auto const parsed = parseProjectBuildSpec(raw, "build");
+            if (!parsed)
             {
-                std::cerr << spec.error().message() << '\n';
+                std::cerr << parsed.error().message() << '\n';
                 std::cerr << projectUsageText();
                 return ProjectExitCode::Failure;
             }
 
-            auto const built = buildProject(*spec, {});
+            auto const built = buildProject(
+                parsed->spec,
+                templateSourceResolver(parsed->framesRoot)
+            );
             if (!built)
             {
                 return reportProjectError(built.error());
             }
             std::cout << std::format(
                 "project build: build=\"{}\"\n",
-                spec->buildDirectory.string()
+                parsed->spec.buildDirectory.string()
             );
             return ProjectExitCode::Success;
         }
@@ -313,23 +444,26 @@ namespace uf::project
             std::span<std::string const> raw
         ) -> ProjectExitCode
         {
-            auto const spec = parseProjectBuildSpec(raw, "check");
-            if (!spec)
+            auto const parsed = parseProjectBuildSpec(raw, "check");
+            if (!parsed)
             {
-                std::cerr << spec.error().message() << '\n';
+                std::cerr << parsed.error().message() << '\n';
                 std::cerr << projectUsageText();
                 return ProjectExitCode::Failure;
             }
 
-            auto const checked = checkProject(*spec, {});
+            auto const checked = checkProject(
+                parsed->spec,
+                templateSourceResolver(parsed->framesRoot)
+            );
             if (!checked)
             {
                 return reportProjectError(checked.error());
             }
             std::cout << std::format(
                 "project check: source=\"{}\" build=\"{}\"\n",
-                spec->sourceDirectory.string(),
-                spec->buildDirectory.string()
+                parsed->spec.sourceDirectory.string(),
+                parsed->spec.buildDirectory.string()
             );
             return ProjectExitCode::Success;
         }
@@ -339,15 +473,18 @@ namespace uf::project
             std::span<std::string const> raw
         ) -> ProjectExitCode
         {
-            auto const spec = parseProjectFreeze(raw);
-            if (!spec)
+            auto const parsed = parseProjectFreeze(raw);
+            if (!parsed)
             {
-                std::cerr << spec.error().message() << '\n';
+                std::cerr << parsed.error().message() << '\n';
                 std::cerr << projectUsageText();
                 return ProjectExitCode::Failure;
             }
 
-            auto const release = freezeProject(*spec, {});
+            auto const release = freezeProject(
+                parsed->spec,
+                templateSourceResolver(parsed->framesRoot)
+            );
             if (!release)
             {
                 return reportProjectError(release.error());
@@ -437,9 +574,12 @@ namespace uf::project
             "Usage:\n"
             "  project init --source PATH --build PATH --input RELATIVE_PATH "
             "[--input RELATIVE_PATH ...]\n"
-            "  project build --source PATH --build PATH\n"
-            "  project check --source PATH --build PATH\n"
-            "  project freeze --source PATH --build PATH --release PATH\n"
+            "  project build --source PATH --build PATH "
+            "[--frames-root PATH]\n"
+            "  project check --source PATH --build PATH "
+            "[--frames-root PATH]\n"
+            "  project freeze --source PATH --build PATH --release PATH "
+            "[--frames-root PATH]\n"
             "  project run --release RELEASE_DIRECTORY\n"
             "\n"
             "Initializes the declared source inputs, builds only into the build\n"
@@ -451,6 +591,15 @@ namespace uf::project
             "and check judge it against the published project schema, which\n"
             "requires a plugin_justification of every deployment whose\n"
             "plugin_authoring is hand-written and refuses one from every\n"
-            "deployment whose plugin_authoring is generated.\n";
+            "deployment whose plugin_authoring is generated.\n"
+            "\n"
+            "Its template_cuts declare the Locator templates the build cuts\n"
+            "into generated/templates/, naming each source image by sha256 and\n"
+            "never by path, so no project references a screenshot. --frames-root\n"
+            "names the directory those sources are read from, where the bytes of\n"
+            "hash H are the file H.png; it is outside the project because a\n"
+            "corpus of captures is a property of the machine. A declared cut\n"
+            "whose source is not there is refused by name -- build, check and\n"
+            "freeze alike -- and never quietly skipped.\n";
     }
 }

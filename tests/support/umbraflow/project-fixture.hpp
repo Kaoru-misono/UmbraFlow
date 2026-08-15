@@ -124,12 +124,12 @@ namespace uf::operator_runtime::conformance
             .bytes = {modelBytes.begin(), modelBytes.end()},
         };
         auto const manifest = std::format(
-            R"({{"assets":[{}],"manifest_schema_hash":"{}",)"
-            R"("page_model":{},"runtime_model_schema_hash":"{}"}})",
+            R"({{"assets":[{}],"page_model":{},)"
+            R"("runtime_artifact_format":{},"runtime_model_format":{}}})",
             assetJson,
-            task::k_runtimeArtifactSchemaHash,
             artifactManifestRow(modelFile),
-            task::k_runtimeModelSchemaHash
+            task::k_runtimeArtifactFormat,
+            task::k_runtimeModelFormat
         );
         writeArtifactFile(root / task::k_runtimeArtifactManifestFileName, manifest);
         return observationHash(manifest);
@@ -150,15 +150,15 @@ namespace uf::operator_runtime::conformance
             artifact.assets
         );
         auto const releaseManifest = std::format(
-            R"({{"annotation_workspace_schema_hash":"{}",)"
+            R"({{"annotation_workspace_format":{},)"
             R"("candidate_id":"candidate-1","candidate_revision":1,)"
             R"("generation":1,"predecessor_publication_id":null,)"
             R"("replay_gate_hash":"{}","runtime_artifact_root_hash":"{}",)"
-            R"("workspace_sqlite_schema_hash":"{}"}})",
-            detail::k_annotationWorkspaceSchemaHash,
+            R"("workspace_sqlite_revision":{}}})",
+            detail::k_annotationWorkspaceFormat,
             observationHash("replay-gate").hex(),
             artifactRootHash.hex(),
-            detail::k_workspaceSqliteSchemaHash
+            detail::k_workspaceSqliteRevision
         );
         writeArtifactFile(handoff / "release.manifest.json", releaseManifest);
         return ObservationRelease{

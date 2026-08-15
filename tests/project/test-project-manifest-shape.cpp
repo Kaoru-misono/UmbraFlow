@@ -159,6 +159,7 @@ namespace uf::project
             auto document = std::string{R"json({"schema":"umbraflow-project/v1",)json"};
             document += R"json("runtime_artifact":"runtime/artifact",)json";
             document += R"json("primary_deployment":"dream",)json";
+            document += R"json("template_cuts":[],)json";
             document += R"json("deployments":)json";
             document += deployments;
             document += "}";
@@ -220,6 +221,8 @@ namespace uf::project
                 .buildDirectory  = build,
                 .toolCatalogs    = {},
             };
+            // No resolver: every document below declares no template cut, so a
+            // reachable resolver would answer nothing and prove nothing.
             auto built = messageOf(buildProject(spec, {}));
             if (!built.empty())
             {
