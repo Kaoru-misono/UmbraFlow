@@ -55,6 +55,13 @@ superseded and measurement-only plans live under
 The two JSON files beside the migration report are its machine-readable
 baseline and disposition data, not separate plans.
 
+## Archived on 2026-08-15
+
+- [Framework hash cleanup](../archive/plans/2026-08-14-framework-hash-cleanup.md)
+  — all five stages implemented; the surviving consumer-side repair is owned by
+  `CH-01a` in the consumer execution authority, and the specification bundle
+  pin it excluded stays owned by the hash management proposal.
+
 ## Archived on 2026-08-14
 
 - [Script-owned page model](../archive/plans/2026-07-31-script-owned-page-model.md)

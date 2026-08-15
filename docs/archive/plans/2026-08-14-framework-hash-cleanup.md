@@ -1,5 +1,17 @@
 # Framework hash cleanup — measurement and staging, 2026-08-14
 
+> **Archived 2026-08-15. Nothing it owes remains only here.** All five stages
+> H1–H5 are implemented in the framework repository; §4's execution note lists
+> what no longer exists. The one thing that survived this document is the
+> consumer-side repair described in [§8](#8-named-consumer-side-consequences),
+> and it is now owned by `CH-01a` in the consumer repository's
+> `docs/architecture/parallel-implementation-plan.md` — the six sites and the
+> member-ordering trap are stated there. The specification bundle pin, excluded
+> throughout, stays owned by
+> [the hash management proposal](../../2026-08-14-hash-management-simplification-proposal.md),
+> which is not archived. The measurements and classifications below are read as
+> the record of what was found in August 2026, not as the current tree.
+
 > **Status: rationale, measurement and staging. Not an unfinished-work list.**
 >
 > The consumer repository's `docs/architecture/parallel-implementation-plan.md`
@@ -276,14 +288,22 @@ it and refuses a concrete mismatch.
 
 ## 4. Stages
 
-> **Execution status, 2026-08-15.** **H5 and H1 are implemented in this
-> repository**; H4 was implemented separately. Every measurement in [§2](#2-measured-inventory)
-> and every classification in [§3](#3-classification-against-the-admission-rule)
-> was taken before those stages landed and is read as the record of what was
-> found, not as the current tree: `k_traceSchemaHash`, `TypedTracePayload::schemaHash`,
-> the trace envelope's `payload.schema_hash`, `SessionManifest.journal_envelope_schema_hash`
-> and `$defs.RuntimeModelBindingRef` no longer exist, and `SCHEMA_AUTHORITIES`
-> now holds four entries rather than five. H2 and H3 are not started.
+> **Execution status, 2026-08-15. Every stage H1–H5 is implemented in this
+> repository.** Every measurement in [§2](#2-measured-inventory) and every
+> classification in [§3](#3-classification-against-the-admission-rule) was taken
+> before those stages landed and is read as the record of what was found, not as
+> the current tree. None of the following exists any more: `k_traceSchemaHash`,
+> `TypedTracePayload::schemaHash`, the trace envelope's `payload.schema_hash`,
+> `SessionManifest.journal_envelope_schema_hash`, `$defs.RuntimeModelBindingRef`,
+> `k_annotationWorkspaceSchemaHash`, `k_workspaceSqliteSchemaHash`, the Python
+> `SCHEMA_ROOT_HASH`, `k_runtimeArtifactSchemaHash`, `k_runtimeModelSchemaHash`,
+> `model.schema_hash`, `SCHEMA_AUTHORITIES` or `schema_authority_errors`.
+>
+> **No schema digest is pinned outside its schema file any more.** Editing a
+> document under `schema/` moves no constant and reddens no gate, which was the
+> acceptance criterion of the whole exercise. What remains in scope is the
+> consumer's half of H3 ([§8](#8-named-consumer-side-consequences)) and the
+> deferred specification bundle pin ([§1](#1-scope)).
 
 Each stage is independently deliverable, leaves the tree green on its own, and
 is ordered so that no stage depends on a later one. Each guard is stated with
@@ -365,6 +385,33 @@ positional, that the revision numbering is a single monotonic integer chosen by
 migrated. **No consumer-side work**: `annotation_workspace_schema_hash` and
 `workspace_sqlite_schema_hash` appear nowhere in uf-chaos.
 
+> **Recorded 2026-08-15, while implementing this stage.** Three decisions the
+> Changes list above left open, so the next reader does not re-derive them.
+>
+> 1. **Both numbers already existed; neither was invented.**
+>    `workspace_sqlite_revision` **is** `store.py`'s `SCHEMA_VERSION`, the
+>    SQLite `user_version` the package already writes and already refuses a
+>    database for (`store.py`'s `PRAGMA user_version` check). Minting a second
+>    monotonic integer beside it would have been two spellings of one fact.
+>    `annotation_workspace_format` is a new `ANNOTATION_WORKSPACE_FORMAT = 2`,
+>    the `v2` the contract already names in its own `$id`.
+> 2. **`SCHEMA_ROOT_HASH` is deleted outright, not left as a diagnostic.** The
+>    Changes list named `store.py:485` — its definition — without saying what
+>    became of it, and it had two emission sites the list did not mention:
+>    `serve.py`'s `schema_manifest()` (`sqlite_schema_root_hash`) and
+>    `trusted.py`'s init report (`schema_root_hash`). Once the release manifest
+>    stops carrying it, nothing refuses a mismatch anywhere, which is exactly
+>    the "carrier nothing reads" [Stage H5](#stage-h5--delete-the-two-hash-carriers-nothing-reads)
+>    removed. Both emissions already sat beside `user_version`/`SCHEMA_VERSION`,
+>    so no reader lost a fact. `ANNOTATION_CONTRACT_HASH` went with it.
+> 3. **The guard's Python half is not Python compared against Python.** The
+>    deleted `test_backend.py` assertion said so of itself. Its replacement
+>    compares the published `workspace_sqlite_revision` against the
+>    `PRAGMA user_version` the exported database actually carries, and
+>    `annotation_workspace_format` against the generation parsed out of the
+>    contract's `$id` — so a contract bumped to `v3` without bumping
+>    `ANNOTATION_WORKSPACE_FORMAT` is red.
+
 ### Stage H3 — replace the runtime-artifact pair with format versions
 
 **Scope note.** This stage touches the **RuntimeArtifact** `manifest_schema_hash`
@@ -424,6 +471,43 @@ the case that is red today.
 readers stay positional, formats are single integers, and the two example
 artifacts are regenerated by the existing publisher rather than edited. The
 consumer half is not planned here; see [§8](#8-named-consumer-side-consequences).
+
+> **Corrected and recorded 2026-08-15, while implementing this stage.** Four
+> things the stage as written got wrong or left open.
+>
+> 1. **The guard's second case cannot be reached by publishing anything, and
+>    the stage did not say so.** "A Luau `model.format` that disagrees with the
+>    artifact is refused at `finalizeRuntimeModel`" reads as though a fixture
+>    artifact could produce it. It cannot: `loadRuntimeArtifact` has already
+>    held the artifact against `k_runtimeModelFormat` before finalize runs, so
+>    an artifact that would disagree with the parser is refused one step
+>    earlier. The refusal fires only for a binary built out of two halves —
+>    `model.luau` reading one generation and `runtime-model-file.hpp` expecting
+>    another. A case that cannot be written is a check that cannot fail, so the
+>    seam is opened deliberately through
+>    `TaskHostTestAccess::finalizeWithParserFormat`
+>    (`modules/conformance/source/conformance/host-delivery-fixture.hpp`), and
+>    the stage's own mutation was run as well: setting `model.format = 3` reddens
+>    `contract-runtime-u01` on the finalize refusal, not on the parse.
+> 2. **The two example artifacts have no publisher to regenerate them.**
+>    `examples/umbraflow/runtime/artifact/runtime-artifact.manifest.json` and its
+>    arcana sibling are checked-in JCS bytes that no script in this repository
+>    produces — `tools/annotate/publication.py` writes into a workspace handoff,
+>    never into `examples/`. They were rewritten by a one-off JCS re-encode in
+>    the same change. Nothing records their root hashes, so both moved freely
+>    (`d62dd622…`→`deeb8cf1…`, `8fe61aeb…`→`8a3c6107…`).
+> 3. **The JCS member order changes, and the positional reader with it.**
+>    `manifest_schema_hash` sorted before `page_model` and
+>    `runtime_model_schema_hash` after it; both replacements sort after it, so
+>    the reader is now `assets`, `page_model`, `runtime_artifact_format`,
+>    `runtime_model_format`.
+> 4. **Three neighbours came with the rename.** `ManifestReader::size` became
+>    `unsignedInteger` because it now also reads a generation;
+>    `TrustedRuntimeFinalize::parserSchemaHash` became `parserFormat`; and
+>    `RuntimeModelBinding::runtimeModelSchemaHash()` was **deleted** rather than
+>    renamed — it had zero call sites in `modules/`, `tests/` and `entry/`, so
+>    renaming it would have been minting a new unread accessor inside the change
+>    that exists to remove unread carriers.
 
 ### Stage H4 — stop typing generated catalog digests in tests
 
@@ -642,14 +726,32 @@ Stated and stopped at. This document does not plan the consumer's half.
    `runtime/artifact/runtime-artifact.manifest.json` and
    `conformance/runtime/artifact/runtime-artifact.manifest.json` carry the
    emitted values.
-2. **Those copies are already stale, and nothing catches it.** Both consumer
-   scripts hold `RUNTIME_MODEL_SCHEMA_HASH = "72433231df31cdc18e8e88d21017a24e58c53b96e5b66c9d6b6bb96cf1647480"`,
-   while `runtime-model-file.hpp:33` and the two framework example manifests hold
-   `d47030ed22c65a224654f2fe7c7a594053f1bbc01b0b0663392ccde389d736fb`. Every
-   artifact those two generators produce is refused today at
-   `runtime-model-file.cpp:781-788`. This is the failure the proposal predicts,
-   already realised, in a third copy that no gate on either side covers, and it
-   is the strongest single argument for H3.
+
+   > **Measured 2026-08-15, after implementing H3.** Five sites, and nothing
+   > else in uf-chaos reads the RuntimeArtifact manifest format — no Luau, no
+   > TOML, and nothing under `conformance/interface-lock/**`. Each must become:
+   >
+   > | Site | Today | Must become |
+   > |---|---|---|
+   > | `runtime/tools/build-artifact.py:47` | `MANIFEST_SCHEMA_HASH = "af9d5dd9…"` | `RUNTIME_ARTIFACT_FORMAT = 1` |
+   > | `runtime/tools/build-artifact.py:48` | `RUNTIME_MODEL_SCHEMA_HASH = "72433231…"` | `RUNTIME_MODEL_FORMAT = 2` |
+   > | `runtime/tools/build-artifact.py:253-255` | emits `"manifest_schema_hash"` before `page_model` and `"runtime_model_schema_hash"` after it | emits `"runtime_artifact_format"` and `"runtime_model_format"`, **both after** `page_model` — the JCS order changes, and a generator that only renames the members writes non-canonical bytes the Host refuses at the reader |
+   > | `conformance/tools/build-fixture-artifact.py:40-41, 185-187` | the identical two constants and the identical emission | the identical two changes |
+   > | `runtime/artifact/runtime-artifact.manifest.json` and `conformance/runtime/artifact/runtime-artifact.manifest.json` | committed bytes carrying both digests | regenerated by the two scripts above; both files' root hashes move, so anything pinning them moves with them |
+   > | `runtime/README.md:112` | prose pinning `72433231…` as "框架当前 RuntimeModel schema" | prose naming RuntimeModel format `2` |
+
+2. **Those copies were already stale before H3, and nothing caught it.** Both
+   consumer scripts hold `RUNTIME_MODEL_SCHEMA_HASH = "72433231df31cdc18e8e88d21017a24e58c53b96e5b66c9d6b6bb96cf1647480"`,
+   while `runtime-model-file.hpp` held
+   `d47030ed22c65a224654f2fe7c7a594053f1bbc01b0b0663392ccde389d736fb` — verified
+   at HEAD `9726ef6`. Every artifact those two generators produced was already
+   refused, in a third copy that no gate on either side covered. `MANIFEST_SCHEMA_HASH`
+   was still correct, which is what made the breakage silent: one of two
+   transcriptions drifted. This is the failure the proposal predicts, already
+   realised, and it was the strongest single argument for H3. **After H3 the
+   consumer is broken in a different way — the field names no longer exist — but
+   the repair is a one-time edit that cannot go stale again**, which is the whole
+   point of the stage.
 3. **Stage H1 has no consumer consequence.** uf-chaos contains no occurrence of
    `umbraflow-trace`; it does not consume the trace stream.
 4. **Stages H2 and H5 have no consumer consequence.**
