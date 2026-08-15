@@ -35,11 +35,14 @@ records:
 
 ## 3. Architecture proposals
 
-- [HostPlugin architecture proposal](2026-08-14-host-plugin-architecture-proposal.md)
-  — compares correctness-only, narrow-pilot and repository-migration options
-  for a DSH-inspired but deliberately small static typed-install model. It has
-  no generic Context, runtime service graph or composition hash, and strictly
-  separates trusted framework HostPlugins from external ProjectPlugins.
+- [HostPlugin architecture proposal](archive/reviews/2026-08-14-host-plugin-architecture-proposal.md)
+  — **ruled on and archived 2026-08-15.** Option A was approved, widened by a
+  second identity defect, and is implemented; option B was refused because the
+  evidence it was sold to purchase can be read today; option C was not
+  considered. `ARCHITECTURE.md`'s deliberate-absence sentence stands unchanged.
+  The one obligation that outlived it — hoist `modules/cli/source/cli/platform/`
+  into a shared module when a second real assembly root exists — is owned by
+  [the product roadmap](plans/2026-07-21-product-form-and-roadmap.md).
 - [Hash management simplification proposal](2026-08-14-hash-management-simplification-proposal.md)
   — proposes zero developer-authored digests, removal of bundle/schema pins
   used as compatibility versions, and retention only of automatically produced

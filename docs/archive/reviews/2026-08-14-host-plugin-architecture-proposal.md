@@ -1,5 +1,15 @@
 # HostPlugin architecture proposal — 2026-08-14
 
+> **Archived 2026-08-15. Nothing it owes remains only here.** Option A is
+> implemented (`9726ef6`); option B is refused and option C was not considered,
+> so neither opens work. The single obligation that outlived this document —
+> hoist `modules/cli/source/cli/platform/` into a shared module once a second
+> real assembly root exists, and only then ask whether an install shell is
+> warranted — is recorded in
+> [the product roadmap](../../plans/2026-07-21-product-form-and-roadmap.md) §4.
+> `ARCHITECTURE.md`'s deliberate-absence sentence was not amended and stands as
+> written.
+
 > **Implemented 2026-08-15 — option A only.** Both defects are closed and the
 > four Option A acceptance items are met. `cli::observeProject` now runs the
 > observation through an inner function and closes the lifecycle on one
@@ -100,7 +110,7 @@
 >
 > **Original status block, retained.** This document records a candidate
 > architecture against repository commit `dc109bd`. It neither changes the
-> current contract in [ARCHITECTURE.md](ARCHITECTURE.md) nor opens a second
+> current contract in [ARCHITECTURE.md](../../ARCHITECTURE.md) nor opens a second
 > unfinished-work list. If an option is approved, its work must first enter the
 > consumer repository's canonical execution plan.
 >
@@ -341,7 +351,7 @@ authority. The pilot applies profiles only at process/session start.
 
 Profiles contain no implementation digest, catalog digest or composition
 hash. See the separate
-[hash management simplification proposal](2026-08-14-hash-management-simplification-proposal.md).
+[hash management simplification proposal](../../2026-08-14-hash-management-simplification-proposal.md).
 
 ## Authority and generation realms
 
@@ -583,7 +593,7 @@ C++ implementation:
    execution plan;
 3. add canonical `HostPlugin`/`ProjectPlugin` terminology to `CONTEXT.md`;
 4. link the accepted hash ruling to the
-   [hash simplification proposal](2026-08-14-hash-management-simplification-proposal.md);
+   [hash simplification proposal](../../2026-08-14-hash-management-simplification-proposal.md);
 5. retain this document as rationale, not a second work list.
 
 Until those amendments land, current explicit composition and current hash
