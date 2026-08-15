@@ -315,12 +315,12 @@ identity = ["panel.anchor"]
             .bytes = bytes(model),
         };
         auto const manifest = std::format(
-            "{{\"assets\":[{}],\"manifest_schema_hash\":\"{}\","
-            "\"page_model\":{},\"runtime_model_schema_hash\":\"{}\"}}",
+            "{{\"assets\":[{}],\"page_model\":{},"
+            "\"runtime_artifact_format\":{},\"runtime_model_format\":{}}}",
             assetJson,
-            k_runtimeArtifactSchemaHash,
             manifestFile(modelFile),
-            k_runtimeModelSchemaHash
+            k_runtimeArtifactFormat,
+            k_runtimeModelFormat
         );
         write(root / k_runtimeArtifactManifestFileName, manifest);
         return hash(manifest);

@@ -171,6 +171,8 @@ project/operation attestation and the publication, and advances
 Startup recovery deletes stale staging/unreferenced objects and recreates any
 committed handoff interrupted after the database commit.
 
-The RuntimeArtifact manifest has only the v1 fields
-`manifest_schema_hash`, `runtime_model_schema_hash`, `page_model`, and
-`assets`, encoded as exact RFC 8785 JCS bytes.
+The RuntimeArtifact manifest has only the v1 fields `assets`, `page_model`,
+`runtime_artifact_format`, and `runtime_model_format`, encoded as exact RFC
+8785 JCS bytes. The two format members are contract generations the Host reads,
+not digests of the two schema files: editing either file's prose leaves every
+published artifact acceptable.

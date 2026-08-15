@@ -3,6 +3,7 @@
 #include "args.hpp"
 
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
 #include <cstddef>
 #include <filesystem>
@@ -50,12 +51,12 @@ namespace uf::cli
         // is reported so a later run can be held to the same artifact.
         std::string rootHash{};
 
-        // The two digests the verifier held against this binary's own pins,
-        // task::k_runtimeArtifactSchemaHash and k_runtimeModelSchemaHash. A
+        // The two generations the verifier held against this binary's own
+        // numbers, task::k_runtimeArtifactFormat and k_runtimeModelFormat. A
         // verified artifact carries exactly those, so they are reported rather
         // than compared a second time here.
-        std::string manifestSchemaHash{};
-        std::string runtimeModelSchemaHash{};
+        uint64 runtimeArtifactFormat{};
+        uint64 runtimeModelFormat{};
 
         // The frozen closure: the model at its fixed name, and every asset the
         // manifest declared, each at the size and digest it declared.

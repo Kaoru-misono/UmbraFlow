@@ -171,15 +171,15 @@ namespace uf::operator_runtime::conformance
             / std::filesystem::path{task::k_runtimeArtifactManifestFileName}
         ));
         auto const releaseManifest = std::format(
-            R"({{"annotation_workspace_schema_hash":"{}",)"
+            R"({{"annotation_workspace_format":{},)"
             R"("candidate_id":"candidate-1","candidate_revision":1,)"
             R"("generation":1,"predecessor_publication_id":null,)"
             R"("replay_gate_hash":"{}","runtime_artifact_root_hash":"{}",)"
-            R"("workspace_sqlite_schema_hash":"{}"}})",
-            detail::k_annotationWorkspaceSchemaHash,
+            R"("workspace_sqlite_revision":{}}})",
+            detail::k_annotationWorkspaceFormat,
             observationHash("replay-gate").hex(),
             artifactRootHash.hex(),
-            detail::k_workspaceSqliteSchemaHash
+            detail::k_workspaceSqliteRevision
         );
         writeArtifactFile(handoff / "release.manifest.json", releaseManifest);
         return ObservationRelease{

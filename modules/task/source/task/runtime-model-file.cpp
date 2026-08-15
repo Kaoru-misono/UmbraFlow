@@ -38,23 +38,15 @@ namespace uf::task
         struct ParsedManifest final
         {
             std::vector<ManifestFile> assets{};
-            ContentHash               manifestSchemaHash;
             ManifestFile              pageModel;
-            ContentHash               runtimeModelSchemaHash;
+            uint64                    runtimeArtifactFormat{};
+            uint64                    runtimeModelFormat{};
         };
 
         [[nodiscard]]
         auto refuse(std::string message) -> std::unexpected<Error>
         {
             return fail(AutomationErrorKind::InvalidResource, std::move(message));
-        }
-
-        [[nodiscard]]
-        auto schemaHash(std::string_view hex) -> Result<ContentHash>
-        {
-            auto encoded = std::string{"sha256:"};
-            encoded += hex;
-            return ContentHash::parse(encoded);
         }
 
         [[nodiscard]]
@@ -287,11 +279,11 @@ namespace uf::task
                 return ContentHash::parse(encoded);
             }
 
-            [[nodiscard]] auto size() -> Result<uint64>
+            [[nodiscard]] auto unsignedInteger() -> Result<uint64>
             {
                 if (m_offset >= m_source.size())
                 {
-                    return failure("an unsigned byte size");
+                    return failure("a canonical unsigned integer");
                 }
                 auto const first = m_offset;
                 while (
@@ -305,7 +297,7 @@ namespace uf::task
                 auto const digits = m_source.substr(first, m_offset - first);
                 if (digits.empty() || (digits.size() > 1U && digits.front() == '0'))
                 {
-                    return failure("a canonical unsigned byte size");
+                    return failure("a canonical unsigned integer");
                 }
                 auto value              = uint64{};
                 auto const* const begin = std::to_address(digits.begin());
@@ -313,7 +305,7 @@ namespace uf::task
                 auto const parsed       = std::from_chars(begin, end, value);
                 if (parsed.ec != std::errc{} || parsed.ptr != end)
                 {
-                    return failure("an unsigned byte size within range");
+                    return failure("an unsigned integer within range");
                 }
                 return value;
             }
@@ -327,7 +319,7 @@ namespace uf::task
             UF_TRY(reader.consume(",\"sha256\":"));
             UF_TRY_VALUE(hash, reader.hash());
             UF_TRY(reader.consume(",\"size\":"));
-            UF_TRY_VALUE(size, reader.size());
+            UF_TRY_VALUE(size, reader.unsignedInteger());
             UF_TRY(reader.consume("}"));
             return ManifestFile{
                 .path = std::move(path),
@@ -353,12 +345,14 @@ namespace uf::task
                 assets.emplace_back(std::move(asset));
             }
 
-            UF_TRY(reader.consume("],\"manifest_schema_hash\":"));
-            UF_TRY_VALUE(manifestSchemaHash, reader.hash());
-            UF_TRY(reader.consume(",\"page_model\":"));
+            // The member order is JCS, which sorts the two format members after
+            // page_model where the two digests they replaced sorted around it.
+            UF_TRY(reader.consume("],\"page_model\":"));
             UF_TRY_VALUE(pageModel, parseFile(reader));
-            UF_TRY(reader.consume(",\"runtime_model_schema_hash\":"));
-            UF_TRY_VALUE(runtimeModelSchemaHash, reader.hash());
+            UF_TRY(reader.consume(",\"runtime_artifact_format\":"));
+            UF_TRY_VALUE(runtimeArtifactFormat, reader.unsignedInteger());
+            UF_TRY(reader.consume(",\"runtime_model_format\":"));
+            UF_TRY_VALUE(runtimeModelFormat, reader.unsignedInteger());
             UF_TRY(reader.consume("}"));
             if (!reader.atEnd())
             {
@@ -368,10 +362,10 @@ namespace uf::task
                 );
             }
             return ParsedManifest{
-                .assets                 = std::move(assets),
-                .manifestSchemaHash     = manifestSchemaHash,
-                .pageModel              = std::move(pageModel),
-                .runtimeModelSchemaHash = runtimeModelSchemaHash,
+                .assets                = std::move(assets),
+                .pageModel             = std::move(pageModel),
+                .runtimeArtifactFormat = runtimeArtifactFormat,
+                .runtimeModelFormat    = runtimeModelFormat,
             };
         }
 
@@ -586,15 +580,15 @@ namespace uf::task
     RuntimeArtifactHandle::RuntimeArtifactHandle(
         std::filesystem::path root,
         ContentHash rootHash,
-        ContentHash manifestSchemaHash,
-        ContentHash runtimeModelSchemaHash,
+        uint64 runtimeArtifactFormat,
+        uint64 runtimeModelFormat,
         std::vector<std::byte> manifestBytes,
         std::vector<File> files
     ) noexcept
         : m_root{std::move(root)}
         , m_rootHash{rootHash}
-        , m_manifestSchemaHash{manifestSchemaHash}
-        , m_runtimeModelSchemaHash{runtimeModelSchemaHash}
+        , m_runtimeArtifactFormat{runtimeArtifactFormat}
+        , m_runtimeModelFormat{runtimeModelFormat}
         , m_manifestBytes{std::move(manifestBytes)}
         , m_files{std::move(files)}
     {
@@ -610,16 +604,14 @@ namespace uf::task
         return m_rootHash;
     }
 
-    auto RuntimeArtifactHandle::manifestSchemaHash() const noexcept
-        -> ContentHash const&
+    auto RuntimeArtifactHandle::runtimeArtifactFormat() const noexcept -> uint64
     {
-        return m_manifestSchemaHash;
+        return m_runtimeArtifactFormat;
     }
 
-    auto RuntimeArtifactHandle::runtimeModelSchemaHash() const noexcept
-        -> ContentHash const&
+    auto RuntimeArtifactHandle::runtimeModelFormat() const noexcept -> uint64
     {
-        return m_runtimeModelSchemaHash;
+        return m_runtimeModelFormat;
     }
 
     auto RuntimeArtifactHandle::modelHash() const noexcept -> ContentHash const&
@@ -721,12 +713,6 @@ namespace uf::task
         return m_artifact->rootHash();
     }
 
-    auto RuntimeModelBinding::runtimeModelSchemaHash() const noexcept
-        -> ContentHash const&
-    {
-        return m_artifact->runtimeModelSchemaHash();
-    }
-
     auto RuntimeModelBinding::semanticHash() const noexcept -> ContentHash const&
     {
         return m_semanticHash;
@@ -763,28 +749,26 @@ namespace uf::task
         }
 
         UF_TRY_VALUE(manifest, parseManifest(asString(manifestBytes)));
-        UF_TRY_VALUE(expectedManifestSchema, schemaHash(k_runtimeArtifactSchemaHash));
-        UF_TRY_VALUE(expectedRuntimeSchema, schemaHash(k_runtimeModelSchemaHash));
         // Both sides are named, because the whole of the diagnosis is which
-        // digest the artifact states and which one this binary was built to
-        // accept. A refusal that stated only the first leaves the reader
-        // hunting for the second in a header.
-        if (manifest.manifestSchemaHash != expectedManifestSchema)
+        // generation the artifact states and which one this binary was built to
+        // read. A refusal that stated only the first leaves the reader hunting
+        // for the second in a header.
+        if (manifest.runtimeArtifactFormat != k_runtimeArtifactFormat)
         {
             return refuse(std::format(
-                "runtime artifact manifest schema is not supported by this Host: "
-                "the manifest states {} and this Host accepts {}",
-                manifest.manifestSchemaHash.hex(),
-                expectedManifestSchema.hex()
+                "runtime artifact manifest format is not supported by this Host: "
+                "the manifest states {} and this Host reads {}",
+                manifest.runtimeArtifactFormat,
+                k_runtimeArtifactFormat
             ));
         }
-        if (manifest.runtimeModelSchemaHash != expectedRuntimeSchema)
+        if (manifest.runtimeModelFormat != k_runtimeModelFormat)
         {
             return refuse(std::format(
-                "runtime model schema is not supported by this trusted parser: "
-                "the manifest states {} and this parser accepts {}",
-                manifest.runtimeModelSchemaHash.hex(),
-                expectedRuntimeSchema.hex()
+                "runtime model format is not supported by this trusted parser: "
+                "the manifest states {} and this parser reads {}",
+                manifest.runtimeModelFormat,
+                k_runtimeModelFormat
             ));
         }
         if (manifest.pageModel.path != k_runtimeModelFileName)
@@ -861,8 +845,8 @@ namespace uf::task
         return RuntimeArtifactHandle{
             std::move(root),
             rootHash,
-            manifest.manifestSchemaHash,
-            manifest.runtimeModelSchemaHash,
+            manifest.runtimeArtifactFormat,
+            manifest.runtimeModelFormat,
             std::move(manifestBytes),
             std::move(files),
         };

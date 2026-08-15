@@ -21,7 +21,6 @@ from .safe_paths import UnsafePath, paths_overlap, read_plain_file
 from .store import (
     APPLICATION_ID,
     DATABASE_NAME,
-    SCHEMA_ROOT_HASH,
     SCHEMA_VERSION,
     AnnotationStore,
     BlobUpload,
@@ -95,7 +94,6 @@ class AgentBackend:
             "capabilities": list(CAPABILITIES),
             "database": DATABASE_NAME,
             "sqlite_application_id": APPLICATION_ID,
-            "sqlite_schema_root_hash": SCHEMA_ROOT_HASH,
             "sqlite_user_version": SCHEMA_VERSION,
             "runtime_schema_sha256": hashlib.sha256(runtime_schema.read_bytes()).hexdigest(),
         }

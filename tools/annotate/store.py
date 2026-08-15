@@ -39,7 +39,19 @@ from .safe_paths import (
 
 DATABASE_NAME = "annotation-workspace.sqlite"
 APPLICATION_ID = 0x55464157  # "UFAW"
+# The workspace database generation. It is the SQLite user_version this package
+# writes and refuses, and the workspace_sqlite_revision every release manifest
+# declares, because those are one fact: a deployment principal asking whether it
+# understands the database that produced a release is asking for this number.
+# Bump it in the same change that alters _SCHEMA_OBJECTS in a way an older
+# reader could misread; a comment or a rename inside the DDL is not that.
 SCHEMA_VERSION = 2
+# The generation of the annotation workspace contract -- the v2 in
+# schema/umbraflow-annotation-workspace-v2.schema.json -- that a release
+# manifest declares so a Host can say whether it reads that shape. The file's
+# bytes are deliberately not the answer: editing prose in the schema would
+# otherwise refuse every release already published against it.
+ANNOTATION_WORKSPACE_FORMAT = 2
 CAPABILITY_VERSION = 1
 REPLAY_POLICY_VERSION = 1
 
@@ -62,7 +74,6 @@ _MAX_EVENT_ID_LENGTH = 128
 # retention window, so a bundle may not claim to hold them indefinitely.
 _MAX_FRAME_RETENTION_SECONDS = 30 * 24 * 60 * 60
 _ANNOTATION_SCHEMA = "umbraflow-annotation-workspace-v2.schema.json"
-_ANNOTATION_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schema" / _ANNOTATION_SCHEMA
 _SEAL = object()
 
 
@@ -481,19 +492,6 @@ _SCHEMA_OBJECTS += (
             BEGIN SELECT RAISE(ABORT, 'published head cannot be deleted'); END""",
     ),
 )
-
-SCHEMA_ROOT_HASH = _sha256(
-    jcs_bytes(
-        {
-            "application_id": APPLICATION_ID,
-            "objects": [
-                {"name": name, "sql": _normalize_sql(sql)} for name, sql in _SCHEMA_OBJECTS
-            ],
-            "user_version": SCHEMA_VERSION,
-        }
-    )
-)
-ANNOTATION_CONTRACT_HASH = _sha256(_ANNOTATION_SCHEMA_PATH.read_bytes())
 
 
 def _require_document_budget(connection: sqlite3.Connection, encoded: str) -> None:
@@ -2226,30 +2224,31 @@ class AnnotationStore:
         runtime_artifact_root_hash: str,
     ) -> bytes:
         fields = {
-            "annotation_workspace_schema_hash",
+            "annotation_workspace_format",
             "candidate_id",
             "candidate_revision",
             "generation",
             "predecessor_publication_id",
             "replay_gate_hash",
             "runtime_artifact_root_hash",
-            "workspace_sqlite_schema_hash",
+            "workspace_sqlite_revision",
         }
         if set(release_manifest) != fields:
             raise StoreError("release manifest has the wrong exact v2 shape")
-        for field in (
-            "annotation_workspace_schema_hash",
-            "replay_gate_hash",
-            "runtime_artifact_root_hash",
-            "workspace_sqlite_schema_hash",
-        ):
+        for field in ("replay_gate_hash", "runtime_artifact_root_hash"):
             _hash(release_manifest[field], f"release {field}")
         _positive_integer(release_manifest["generation"], "release generation")
+        _positive_integer(
+            release_manifest["annotation_workspace_format"], "release annotation workspace format"
+        )
+        _positive_integer(
+            release_manifest["workspace_sqlite_revision"], "release workspace SQLite revision"
+        )
         if release_manifest["predecessor_publication_id"] is not None:
             _hash(release_manifest["predecessor_publication_id"], "release predecessor")
         if (
-            release_manifest["annotation_workspace_schema_hash"] != ANNOTATION_CONTRACT_HASH
-            or release_manifest["workspace_sqlite_schema_hash"] != SCHEMA_ROOT_HASH
+            release_manifest["annotation_workspace_format"] != ANNOTATION_WORKSPACE_FORMAT
+            or release_manifest["workspace_sqlite_revision"] != SCHEMA_VERSION
             or release_manifest["candidate_id"] != candidate_id
             or release_manifest["candidate_revision"] != candidate_revision
             or release_manifest["predecessor_publication_id"] != expected_predecessor

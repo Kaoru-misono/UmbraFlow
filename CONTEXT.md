@@ -253,6 +253,35 @@ second was a weaker partial copy of the first that accepted an empty
 `deployments` array, an empty `plugin` path, a numeric deployment `name` and any
 unknown member).
 
+**Template cuts** — a project declares the Locator templates its build cuts in
+`template_cuts` at the root of `umbraflow-project.json`, stated even when
+empty. Each names a `template` path under `generated/templates/`, its
+`source_sha256s`, and the `rect` to cut. A source is named by content and never
+by path, because it is a capture of a running target rather than a file of the
+project — that is what lets a repository hold Locator templates without
+referencing a screenshot anywhere. `readProjectManifest` in
+`modules/project/source/project/project-kit.cpp` reads the member out of the
+document the published schema has just accepted, which is the same parse and
+therefore not a second reading of it.
+
+Resolving a hash to bytes stays the caller's job and never becomes the kit's:
+`TemplateSourceResolver` takes a `ContentHash` and returns bytes, so
+`uf::project` never learns what a directory is. `project build`, `project check`
+and `project freeze` are that caller and take `--frames-root PATH`, a
+hash-named store where the bytes of `H` are the file `H.png`. It is a flag and
+not an environment variable because nothing in this repository reads the
+environment and a build whose output depends on ambient state has no record of
+what produced it. A machine with no corpus still gets a resolver: a declared cut
+that cannot be resolved is refused by name — `generatedTemplates` puts the hash
+in the message rather than the error's context, because the `project` command
+line prints `message()` and nothing else — and is never silently skipped.
+Resolved bytes are re-hashed and refused on mismatch in that one place, so a
+resolver is not trusted to verify itself.
+_Avoid_: `ProjectTemplateCutSpec` as a member of `ProjectBuildSpec` (retired
+2026-08-15; a caller-assembled cut was a second spelling of a declaration the
+document already owned, and the command line, which assembled none, could not
+reach the capability at all).
+
 **ConformanceProject** — a `LoadedProject` plus the second root document,
 `umbraflow-conformance.json`, constructed by
 `deployment::loadConformanceProject`. It carries the production load in
@@ -308,10 +337,38 @@ in-band id. The `$id`s are not uniform, so read the file rather than guessing:
 `umbraflow-runtime-v2.schema.json` spell the full file name under
 `https://umbraflow.dev/schema/`.
 
-Four schema hashes are pinned in C++ and checked against the files by
-`tests/test-runtime-surface.py`: `k_traceSchemaHash`,
-`k_runtimeArtifactSchemaHash`, `k_runtimeModelSchemaHash` and
-`k_annotationWorkspaceSchemaHash`.
+**No schema digest is pinned outside its schema file.** Editing any document
+under `schema/` moves no constant, refuses no recorded manifest and reddens no
+gate; `tests/test-runtime-surface.py` therefore carries no rule keeping such a
+copy synchronized. What crosses a boundary instead is a **contract
+generation** — a small integer a producer declares and an acceptor compares:
+
+| Manifest | Members | Acceptor |
+|---|---|---|
+| release manifest | `annotation_workspace_format`, `workspace_sqlite_revision` | `k_annotationWorkspaceFormat`, `k_workspaceSqliteRevision` in `modules/operator/source/operator/runtime-installation.hpp` |
+| RuntimeArtifact manifest | `runtime_artifact_format`, `runtime_model_format` | `k_runtimeArtifactFormat`, `k_runtimeModelFormat` in `modules/task/source/task/runtime-model-file.hpp` |
+
+`modules/task/runtime/model.luau` states `model.format`, the RuntimeModel
+generation its trusted parser reads. `TaskHost::finalizeRuntimeModel` refuses an
+artifact whose parser answers with a different number, so a `model.format` out
+of step with `k_runtimeModelFormat` reddens every activation rather than
+refusing artifacts in production.
+
+The file digests that verify a RuntimeArtifact's closure — `page_model.sha256`,
+`assets[].sha256` and the artifact root hash — are untouched by any of this and
+still refuse a single mutated byte.
+
+_Avoid_: `annotation_workspace_schema_hash`, `workspace_sqlite_schema_hash`,
+`manifest_schema_hash` on a **RuntimeArtifact** manifest,
+`runtime_model_schema_hash`, `model.schema_hash`,
+`k_annotationWorkspaceSchemaHash`, `k_workspaceSqliteSchemaHash`,
+`k_runtimeArtifactSchemaHash`, `k_runtimeModelSchemaHash` and the Python
+`SCHEMA_ROOT_HASH` (the spellings until 2026-08-15; each made a cosmetic edit to
+a schema file, or a comment inside the authoring workspace DDL, refuse every
+artifact already published against it). ProjectRegistration's own
+`manifest_schema_hash` is a different field and stays: it is derived from the
+build-generated catalog and refused at
+`modules/operator/source/operator/manifest.cpp`.
 
 ## Scripting
 

@@ -461,11 +461,22 @@ namespace uf::task
                 "trusted Runtime finalize requires a RuntimeArtifact generation"
             );
         }
-        if (trusted.parserSchemaHash != artifact->runtimeModelSchemaHash())
+        // The one place the trusted parser's own generation meets the artifact's.
+        // loadRuntimeArtifact has already held the artifact against
+        // k_runtimeModelFormat, so this fires exactly when model.luau and
+        // runtime-model-file.hpp disagree -- a build where the parser reads a
+        // different RuntimeModel generation than the Host was told to expect.
+        // Both numbers are named because neither is visible from the other file.
+        if (trusted.parserFormat != artifact->runtimeModelFormat())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
-                "trusted Runtime parser schema does not match the artifact"
+                std::format(
+                    "trusted Runtime parser reads RuntimeModel format {} and the "
+                    "artifact states format {}",
+                    trusted.parserFormat,
+                    artifact->runtimeModelFormat()
+                )
             );
         }
 

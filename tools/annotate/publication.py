@@ -27,7 +27,8 @@ from .safe_paths import (
     write_new_file,
 )
 from .store import (
-    SCHEMA_ROOT_HASH,
+    ANNOTATION_WORKSPACE_FORMAT,
+    SCHEMA_VERSION,
     AnnotationStore,
     Conflict,
     PublicationCapability,
@@ -38,9 +39,14 @@ from .store import (
 
 
 _SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "schema"
-_ARTIFACT_SCHEMA = _SCHEMA_ROOT / "umbraflow-runtime-artifact-v1.schema.json"
-_RUNTIME_MODEL_SCHEMA = _SCHEMA_ROOT / "umbraflow-runtime-v2.schema.json"
-_ANNOTATION_SCHEMA = _SCHEMA_ROOT / "umbraflow-annotation-workspace-v2.schema.json"
+# The two generations a RuntimeArtifact manifest declares: the v1 in
+# umbraflow-runtime-artifact-v1.schema.json and the v2 in
+# umbraflow-runtime-v2.schema.json. The Host reads the same two numbers as
+# k_runtimeArtifactFormat and k_runtimeModelFormat. They are generations rather
+# than digests of those two files so that editing either file's prose does not
+# refuse every artifact already published against it.
+RUNTIME_ARTIFACT_FORMAT = 1
+RUNTIME_MODEL_FORMAT = 2
 _MANIFEST_NAME = "runtime-artifact.manifest.json"
 _MODEL_NAME = "runtime-model.toml"
 _RELEASE_MANIFEST_NAME = "release.manifest.json"
@@ -201,10 +207,10 @@ class Publisher:
         manifest = cls._manifest_from_exact(manifest_bytes)
         if _sha256(manifest_bytes) != artifact_root:
             raise Conflict("RuntimeArtifact root does not match exact manifest bytes")
-        if manifest["manifest_schema_hash"] != _sha256(_read(_ARTIFACT_SCHEMA)):
-            raise Conflict("RuntimeArtifact manifest schema hash is not the checked-in contract")
-        if manifest["runtime_model_schema_hash"] != _sha256(_read(_RUNTIME_MODEL_SCHEMA)):
-            raise Conflict("RuntimeArtifact RuntimeModel schema hash is not the checked-in contract")
+        if manifest["runtime_artifact_format"] != RUNTIME_ARTIFACT_FORMAT:
+            raise Conflict("RuntimeArtifact manifest format is not the one this publisher writes")
+        if manifest["runtime_model_format"] != RUNTIME_MODEL_FORMAT:
+            raise Conflict("RuntimeArtifact RuntimeModel format is not the one this publisher writes")
         expected = {_MANIFEST_NAME, manifest["page_model"]["path"]}
         expected.update(item["path"] for item in manifest["assets"])
         try:
@@ -255,9 +261,9 @@ class Publisher:
                 entries.append({"path": relative, "sha256": digest, "size": len(content)})
             manifest = {
                 "assets": entries,
-                "manifest_schema_hash": _sha256(_read(_ARTIFACT_SCHEMA)),
                 "page_model": model_entry,
-                "runtime_model_schema_hash": _sha256(_read(_RUNTIME_MODEL_SCHEMA)),
+                "runtime_artifact_format": RUNTIME_ARTIFACT_FORMAT,
+                "runtime_model_format": RUNTIME_MODEL_FORMAT,
             }
             try:
                 require_valid(
@@ -489,14 +495,14 @@ class Publisher:
             if head["publication_id"] != expected_predecessor_publication_id:
                 raise Conflict("published head predecessor compare-and-swap failed")
             release_manifest = {
-                "annotation_workspace_schema_hash": _sha256(_read(_ANNOTATION_SCHEMA)),
+                "annotation_workspace_format": ANNOTATION_WORKSPACE_FORMAT,
                 "candidate_id": candidate_id,
                 "candidate_revision": candidate_revision,
                 "generation": head["generation"] + 1,
                 "predecessor_publication_id": expected_predecessor_publication_id,
                 "replay_gate_hash": gate_hash,
                 "runtime_artifact_root_hash": artifact_root,
-                "workspace_sqlite_schema_hash": SCHEMA_ROOT_HASH,
+                "workspace_sqlite_revision": SCHEMA_VERSION,
             }
             publication = self.store.commit_publication(
                 publication_capability=self.publication_capability,

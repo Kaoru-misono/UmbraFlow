@@ -140,13 +140,13 @@ namespace uf::cli
         CHECK(opened->primaryDeployment == "alpha");
         REQUIRE(opened->deployments.size() == 2U);
 
-        // The artifact half. The two schema digests are equal to the pins by
-        // construction once the verification succeeded, so what these catch is
-        // a report that carries the wrong field -- the two are the same length
-        // and adjacent, and swapping them is invisible without this.
+        // The artifact half. The two generations are equal to the numbers this
+        // binary reads by construction once the verification succeeded, so what
+        // these catch is a report that carries the wrong field -- the two are
+        // adjacent, and swapping them is invisible without this.
         CHECK(opened->artifact.rootHash.size() == 64U);
-        CHECK(opened->artifact.manifestSchemaHash == task::k_runtimeArtifactSchemaHash);
-        CHECK(opened->artifact.runtimeModelSchemaHash == task::k_runtimeModelSchemaHash);
+        CHECK(opened->artifact.runtimeArtifactFormat == task::k_runtimeArtifactFormat);
+        CHECK(opened->artifact.runtimeModelFormat == task::k_runtimeModelFormat);
         CHECK(opened->artifact.modelBytes > std::size_t{0});
         CHECK(opened->artifact.assets == 2U);
 
@@ -237,8 +237,8 @@ namespace uf::cli
     }
 
     // The defect this verb carried until 2026-08-12, measured on a project
-    // whose runtime-artifact.manifest.json stated a manifest_schema_hash this
-    // binary does not accept: `open` printed a completely clean load, every
+    // whose runtime-artifact.manifest.json stated a runtime_artifact_format
+    // this binary does not read: `open` printed a completely clean load, every
     // deployment registered, while the conformance suite failed twelve of its
     // sixteen cases against the same directory. The production load reads that
     // artifact's model file for emptiness and nothing else, so nothing on the
@@ -260,17 +260,25 @@ namespace uf::cli
 
         constexpr auto k_manifest =
             std::string_view{"runtime/artifact/runtime-artifact.manifest.json"};
-        constexpr auto k_member = std::string_view{"\"manifest_schema_hash\":\""};
+        auto const declaredFormat = std::format(
+            "\"runtime_artifact_format\":{}",
+            task::k_runtimeArtifactFormat
+        );
 
         auto const manifest = copy.read(k_manifest);
-        auto const declared = manifest.find(k_member);
+        auto const declared = manifest.find(declaredFormat);
         REQUIRE(declared != std::string::npos);
 
-        // A different 64-hex digest keeps the manifest exact canonical JSON, so
-        // the only thing wrong with the directory is the digest itself.
-        auto const substitute = std::string(64U, 'a');
-        auto stale            = manifest;
-        stale.replace(declared + k_member.size(), substitute.size(), substitute);
+        // Another canonical positive integer keeps the manifest exact canonical
+        // JSON, so the only thing wrong with the directory is the generation it
+        // declares.
+        constexpr auto k_substitute = uint64{99U};
+        auto stale                  = manifest;
+        stale.replace(
+            declared,
+            declaredFormat.size(),
+            std::format("\"runtime_artifact_format\":{}", k_substitute)
+        );
         REQUIRE(stale != manifest);
         copy.rewrite(k_manifest, stale);
 
@@ -278,9 +286,11 @@ namespace uf::cli
         auto const staleRefusal = why(staleOpen);
         INFO(staleRefusal);
         REQUIRE_FALSE(staleOpen.has_value());
-        CHECK(staleRefusal.contains("manifest schema is not supported by this Host"));
-        CHECK(staleRefusal.contains(substitute));
-        CHECK(staleRefusal.contains(std::string{task::k_runtimeArtifactSchemaHash}));
+        CHECK(staleRefusal.contains("manifest format is not supported by this Host"));
+        CHECK(staleRefusal.contains(std::format("the manifest states {}", k_substitute)));
+        CHECK(staleRefusal.contains(
+            std::format("this Host reads {}", task::k_runtimeArtifactFormat)
+        ));
         CHECK(staleRefusal.contains("is not one this binary can start"));
 
         copy.rewrite(k_manifest, manifest);
@@ -345,11 +355,11 @@ namespace uf::cli
               .runtimeArtifactRoot = "D:/projects/demo/runtime/artifact",
               .artifact =
                 OpenedArtifact{
-                    .rootHash               = rootHash,
-                    .manifestSchemaHash     = std::string(64U, 'd'),
-                    .runtimeModelSchemaHash = std::string(64U, 'e'),
-                    .modelBytes             = 1268U,
-                    .assets                 = 2U,
+                    .rootHash              = rootHash,
+                    .runtimeArtifactFormat = 7U,
+                    .runtimeModelFormat    = 8U,
+                    .modelBytes            = 1268U,
+                    .assets                = 2U,
                 },
 
               .primaryDeployment = "alpha",
@@ -378,11 +388,13 @@ namespace uf::cli
 
         // The artifact block. A reader has to be able to tell a verified
         // artifact from an unread one, which is the whole reason this verb
-        // prints the digests rather than only its verdict.
+        // prints what it accepted rather than only its verdict. The two
+        // generations are printed on their own lines, so each is asserted with
+        // its label: the numbers alone would be found anywhere in the block.
         CHECK(text.contains("D:/projects/demo/runtime/artifact"));
         CHECK(text.contains(rootHash));
-        CHECK(text.contains(std::string(64U, 'd')));
-        CHECK(text.contains(std::string(64U, 'e')));
+        CHECK(text.contains("manifest format 7"));
+        CHECK(text.contains("model format    8"));
         CHECK(text.contains("accepted by this binary"));
         CHECK(text.contains("1268 bytes"));
 

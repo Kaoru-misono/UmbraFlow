@@ -312,7 +312,7 @@ function project.load_project(): any
     local runtimeModel = project.parse(requireNative("runtime_model_bytes")())
     local semanticHash = requireNative("runtime_semantic_hash")(model.canonical_bytes(runtimeModel))
     local binding = requireNative("runtime_model_finalize")(
-        model.schema_hash,
+        model.format,
         semanticHash,
         runtimeModel.asset_paths,
         runtimeModel.declared_surface_ids,

@@ -83,11 +83,11 @@ namespace uf::cli
             UF_TRY_VALUE(verified, task::loadRuntimeArtifact(artifactRoot, rootHash));
 
             return OpenedArtifact{
-                .rootHash               = verified.rootHash().hex(),
-                .manifestSchemaHash     = verified.manifestSchemaHash().hex(),
-                .runtimeModelSchemaHash = verified.runtimeModelSchemaHash().hex(),
-                .modelBytes             = verified.modelBytes().size(),
-                .assets                 = verified.assetPaths().size(),
+                .rootHash              = verified.rootHash().hex(),
+                .runtimeArtifactFormat = verified.runtimeArtifactFormat(),
+                .runtimeModelFormat    = verified.runtimeModelFormat(),
+                .modelBytes            = verified.modelBytes().size(),
+                .assets                = verified.assetPaths().size(),
             };
         }
 
@@ -140,10 +140,10 @@ namespace uf::cli
             opened.primaryDeployment
         );
 
-        // The whole point of printing the two schema digests is that a reader
-        // sees which artifact this binary accepted and on what grounds, so each
-        // says it was accepted rather than leaving that to be inferred from the
-        // absence of a refusal.
+        // The whole point of printing the two contract generations is that a
+        // reader sees which artifact this binary accepted and on what grounds,
+        // so each says it was accepted rather than leaving that to be inferred
+        // from the absence of a refusal.
         text += std::format(
             "\nruntime artifact {}\n"
             "  {:<16}{}\n"
@@ -154,10 +154,10 @@ namespace uf::cli
             opened.runtimeArtifactRoot.string(),
             "root hash",
             opened.artifact.rootHash,
-            "manifest schema",
-            opened.artifact.manifestSchemaHash,
-            "runtime model",
-            opened.artifact.runtimeModelSchemaHash,
+            "manifest format",
+            opened.artifact.runtimeArtifactFormat,
+            "model format",
+            opened.artifact.runtimeModelFormat,
             "model",
             opened.artifact.modelBytes,
             "assets",

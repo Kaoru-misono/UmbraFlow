@@ -449,17 +449,22 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "annotation_workspace_schema_hash",
+        "annotation_workspace_format",
         "candidate_id",
         "candidate_revision",
         "generation",
         "predecessor_publication_id",
         "replay_gate_hash",
         "runtime_artifact_root_hash",
-        "workspace_sqlite_schema_hash"
+        "workspace_sqlite_revision"
       ],
       "properties": {
-        "annotation_workspace_schema_hash": { "$ref": "#/$defs/Sha256" },
+        "annotation_workspace_format": {
+          "$comment": "The generation of this contract a Host must understand to read the release, not the bytes of the file that states it. A cosmetic edit here is not a new generation and must not refuse a published release.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
         "candidate_id": { "type": "string", "minLength": 1 },
         "candidate_revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
         "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
@@ -471,7 +476,12 @@
         },
         "replay_gate_hash": { "$ref": "#/$defs/Sha256" },
         "runtime_artifact_root_hash": { "$ref": "#/$defs/Sha256" },
-        "workspace_sqlite_schema_hash": { "$ref": "#/$defs/Sha256" }
+        "workspace_sqlite_revision": {
+          "$comment": "The workspace database generation that produced the release -- the SQLite user_version tools/annotate/store.py writes and refuses. Editing the DDL's text without changing its generation is not a new revision.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
       }
     },
     "Publication": {

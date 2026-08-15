@@ -13,7 +13,6 @@ from .publication import Publisher
 from .safe_paths import UnsafePath, paths_overlap, read_plain_file, require_plain_file
 from .store import (
     APPLICATION_ID,
-    SCHEMA_ROOT_HASH,
     SCHEMA_VERSION,
     AnnotationStore,
     AuthoringCapabilityRoot,
@@ -77,7 +76,6 @@ def _initialize(arguments: argparse.Namespace) -> dict[str, Any]:
                     return {
                         "application_id": APPLICATION_ID,
                         "database": str(store.database),
-                        "schema_root_hash": SCHEMA_ROOT_HASH,
                         "user_version": SCHEMA_VERSION,
                         "workspace_id": root.workspace_id,
                     }

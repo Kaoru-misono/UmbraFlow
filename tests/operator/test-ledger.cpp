@@ -692,14 +692,14 @@ namespace uf::operator_runtime
         // test_support::runtimeRelease always writes the same page model, so
         // every release it builds has the same content hash and shares one
         // production directory. Reclamation needs two that do not.
-        // Builds a handoff whose release manifest names the two schema hashes
-        // given, so a case can move exactly one of them off the value this
-        // deployment principal accepts.
+        // Builds a handoff whose release manifest declares the two generations
+        // given, so a case can move exactly one of them off the number this
+        // deployment principal reads.
         [[nodiscard]]
-        auto releaseWithSchemaHashes(
+        auto releaseWithFormats(
             std::filesystem::path const& root,
-            std::string_view annotationWorkspaceSchemaHash,
-            std::string_view workspaceSqliteSchemaHash
+            uint64 annotationWorkspaceFormat,
+            uint64 workspaceSqliteRevision
         ) -> conformance::ObservationRelease
         {
             auto const handoff  = root / "release";
@@ -707,13 +707,14 @@ namespace uf::operator_runtime
             auto const model    = std::string_view{"a page model\r\n"};
             test_support::writeFile(artifact / task::k_runtimeModelFileName, model);
             auto const manifest = std::format(
-                "{{\"assets\":[],\"manifest_schema_hash\":\"{}\","
+                "{{\"assets\":[],"
                 "\"page_model\":{{\"path\":\"runtime-model.toml\",\"sha256\":\"{}\","
-                "\"size\":{}}},\"runtime_model_schema_hash\":\"{}\"}}",
-                task::k_runtimeArtifactSchemaHash,
+                "\"size\":{}}},\"runtime_artifact_format\":{},"
+                "\"runtime_model_format\":{}}}",
                 hashOf(model).hex(),
                 model.size(),
-                task::k_runtimeModelSchemaHash
+                task::k_runtimeArtifactFormat,
+                task::k_runtimeModelFormat
             );
             test_support::writeFile(
                 artifact / task::k_runtimeArtifactManifestFileName,
@@ -721,15 +722,15 @@ namespace uf::operator_runtime
             );
             auto const artifactRootHash = hashOf(manifest);
             auto const releaseManifest = std::format(
-                "{{\"annotation_workspace_schema_hash\":\"{}\","
+                "{{\"annotation_workspace_format\":{},"
                 "\"candidate_id\":\"candidate-1\",\"candidate_revision\":1,"
                 "\"generation\":1,\"predecessor_publication_id\":null,"
                 "\"replay_gate_hash\":\"{}\",\"runtime_artifact_root_hash\":\"{}\","
-                "\"workspace_sqlite_schema_hash\":\"{}\"}}",
-                annotationWorkspaceSchemaHash,
+                "\"workspace_sqlite_revision\":{}}}",
+                annotationWorkspaceFormat,
                 hashOf("replay-gate").hex(),
                 artifactRootHash.hex(),
-                workspaceSqliteSchemaHash
+                workspaceSqliteRevision
             );
             test_support::writeFile(handoff / "release.manifest.json", releaseManifest);
             return conformance::ObservationRelease{
@@ -749,13 +750,14 @@ namespace uf::operator_runtime
             auto const artifact = handoff / "runtime-artifact";
             test_support::writeFile(artifact / task::k_runtimeModelFileName, model);
             auto const manifest = std::format(
-                "{{\"assets\":[],\"manifest_schema_hash\":\"{}\","
+                "{{\"assets\":[],"
                 "\"page_model\":{{\"path\":\"runtime-model.toml\",\"sha256\":\"{}\","
-                "\"size\":{}}},\"runtime_model_schema_hash\":\"{}\"}}",
-                task::k_runtimeArtifactSchemaHash,
+                "\"size\":{}}},\"runtime_artifact_format\":{},"
+                "\"runtime_model_format\":{}}}",
                 hashOf(model).hex(),
                 model.size(),
-                task::k_runtimeModelSchemaHash
+                task::k_runtimeArtifactFormat,
+                task::k_runtimeModelFormat
             );
             test_support::writeFile(
                 artifact / task::k_runtimeArtifactManifestFileName,
@@ -763,15 +765,15 @@ namespace uf::operator_runtime
             );
             auto const artifactRootHash = hashOf(manifest);
             auto const releaseManifest = std::format(
-                "{{\"annotation_workspace_schema_hash\":\"{}\","
+                "{{\"annotation_workspace_format\":{},"
                 "\"candidate_id\":\"candidate-1\",\"candidate_revision\":1,"
                 "\"generation\":1,\"predecessor_publication_id\":null,"
                 "\"replay_gate_hash\":\"{}\",\"runtime_artifact_root_hash\":\"{}\","
-                "\"workspace_sqlite_schema_hash\":\"{}\"}}",
-                detail::k_annotationWorkspaceSchemaHash,
+                "\"workspace_sqlite_revision\":{}}}",
+                detail::k_annotationWorkspaceFormat,
                 hashOf("replay-gate").hex(),
                 artifactRootHash.hex(),
-                detail::k_workspaceSqliteSchemaHash
+                detail::k_workspaceSqliteRevision
             );
             test_support::writeFile(handoff / "release.manifest.json", releaseManifest);
             return conformance::ObservationRelease{
@@ -2949,51 +2951,70 @@ namespace uf::operator_runtime
         ).has_value());
     }
 
-    TEST_CASE("installation refuses a release manifest naming another schema")
+    TEST_CASE("installation refuses a release manifest from a generation it cannot read")
     {
-        // Both hashes are the deployment principal's half of a cross-boundary
-        // agreement: the authoring side publishes them and this side decides
-        // whether it can read what they describe. A pin only checked on the
-        // publishing side compares that side against itself.
+        // Both numbers are the deployment principal's half of a cross-boundary
+        // agreement: the authoring side declares which generation of the
+        // annotation contract and of the workspace database produced the
+        // release, and this side decides whether it reads them. The refusal
+        // has to name both, because a publisher told only "unsupported" cannot
+        // tell which generation to move to -- and because a message naming
+        // neither would let a comparison against the wrong constant pass.
         auto temporary = TemporaryDirectory{};
         auto const production = temporary.path() / "production";
         auto coordinator = OperatorCoordinator::open(production);
         REQUIRE(coordinator.has_value());
 
-        auto const foreign = hashOf("some other schema").hex();
-
-        SUBCASE("the workspace SQLite schema hash must be the one this build reads")
+        SUBCASE("the workspace SQLite revision must be the one this build reads")
         {
-            auto const release = releaseWithSchemaHashes(
+            auto const supplied = detail::k_workspaceSqliteRevision + 1U;
+            auto const release  = releaseWithFormats(
                 temporary.path() / "wrong-sqlite",
-                detail::k_annotationWorkspaceSchemaHash,
-                foreign
+                detail::k_annotationWorkspaceFormat,
+                supplied
             );
-            CHECK_FALSE(
-                coordinator->installRuntimeArtifact(installRequest(release, 0U))
-                    .has_value()
-            );
+            auto const refused =
+                coordinator->installRuntimeArtifact(installRequest(release, 0U));
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                std::format("states workspace SQLite revision {}", supplied)
+            ));
+            CHECK(refused.error().message().contains(
+                std::format(
+                    "this Host reads revision {}",
+                    detail::k_workspaceSqliteRevision
+                )
+            ));
         }
 
-        SUBCASE("the annotation workspace schema hash must be too")
+        SUBCASE("the annotation workspace format must be too")
         {
-            auto const release = releaseWithSchemaHashes(
+            auto const supplied = detail::k_annotationWorkspaceFormat + 1U;
+            auto const release  = releaseWithFormats(
                 temporary.path() / "wrong-annotation",
-                foreign,
-                detail::k_workspaceSqliteSchemaHash
+                supplied,
+                detail::k_workspaceSqliteRevision
             );
-            CHECK_FALSE(
-                coordinator->installRuntimeArtifact(installRequest(release, 0U))
-                    .has_value()
-            );
+            auto const refused =
+                coordinator->installRuntimeArtifact(installRequest(release, 0U));
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                std::format("states annotation workspace format {}", supplied)
+            ));
+            CHECK(refused.error().message().contains(
+                std::format(
+                    "this Host reads format {}",
+                    detail::k_annotationWorkspaceFormat
+                )
+            ));
         }
 
-        SUBCASE("both at the pinned values install")
+        SUBCASE("both at the generations this build reads install")
         {
-            auto const release = releaseWithSchemaHashes(
+            auto const release = releaseWithFormats(
                 temporary.path() / "correct",
-                detail::k_annotationWorkspaceSchemaHash,
-                detail::k_workspaceSqliteSchemaHash
+                detail::k_annotationWorkspaceFormat,
+                detail::k_workspaceSqliteRevision
             );
             CHECK(
                 coordinator->installRuntimeArtifact(installRequest(release, 0U))

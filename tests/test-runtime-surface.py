@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -215,45 +214,22 @@ REQUIRED_TEST_TARGETS = frozenset(
 )
 REQUIRED_CHECK_TARGETS = frozenset({"check-repository-surface"})
 
-# Every place a schema digest is pinned outside the schema file itself, in the
-# spelling its own language uses.
-#
-# The Luau pin is here because it is the one nothing else could notice. A C++
-# pin that drifts is compared inside the load path against a hash the same
-# binary computed, so a mismatch is at least loud somewhere; a stale
-# model.schema_hash is handed to the Host by the trusted parser and refuses
-# every artifact at activation, in a lane no local gate exercises. Before this
-# entry existed the gate printed PASS with that pin stale.
-SCHEMA_AUTHORITIES = (
-    (
-        "modules/task/runtime/model.luau",
-        "model.schema_hash",
-        "schema/umbraflow-runtime-v2.schema.json",
-    ),
-    (
-        "modules/task/source/task/runtime-model-file.hpp",
-        "k_runtimeArtifactSchemaHash",
-        "schema/umbraflow-runtime-artifact-v1.schema.json",
-    ),
-    (
-        "modules/task/source/task/runtime-model-file.hpp",
-        "k_runtimeModelSchemaHash",
-        "schema/umbraflow-runtime-v2.schema.json",
-    ),
-    (
-        "modules/operator/source/operator/runtime-installation.hpp",
-        "k_annotationWorkspaceSchemaHash",
-        "schema/umbraflow-annotation-workspace-v2.schema.json",
-    ),
-)
+# No rule keeps a schema digest synchronized here any more, because no schema
+# digest is pinned outside its schema file. The last three -- model.schema_hash
+# in the trusted Luau parser and the two C++ pins beside it -- became
+# model.format, k_runtimeArtifactFormat and k_runtimeModelFormat, which are
+# contract generations rather than file bytes and so do not move when a schema
+# file is edited. The Luau entry was here because a stale pin refused every
+# artifact at activation in a lane no local gate exercised; that lane is now
+# covered by the gate itself, since a model.format that disagrees with
+# k_runtimeModelFormat reddens finalizeRuntimeModel in every activation case.
 
 # One shape, written twice, because the boundary between the two writings may
 # not be crossed by a file read.
 #
 # schema/umbraflow-runtime-v2.schema.json is the source: `state_readings` is
-# what the trusted Luau resolver serializes, and those bytes are what
-# k_runtimeModelSchemaHash and model.schema_hash pin. The Operator cannot read
-# that file. k_commonSchema is a compiled constant precisely so a Host
+# what the trusted Luau resolver serializes. The Operator cannot read that
+# file. k_commonSchema is a compiled constant precisely so a Host
 # validating a plugin's derive input depends on no file a project could swap,
 # so modules/deployment restates the same shape in the Operator's own $defs
 # vocabulary, where a Reader id is `Identifier` rather than `identifier` and
@@ -1173,37 +1149,6 @@ def test_registration_errors(root: Path) -> list[str]:
     return errors
 
 
-def schema_authority_errors(root: Path) -> list[str]:
-    errors: list[str] = []
-    for source_name, constant_name, schema_name in SCHEMA_AUTHORITIES:
-        source_path = root / source_name
-        schema_path = root / schema_name
-        if not source_path.is_file() or not schema_path.is_file():
-            continue
-        # One rule, two spellings, because the pin is written in two languages.
-        # A Luau assignment has no std::string_view around it, and reading it
-        # with the C++ pattern is how a pin can be present, wrong, and reported
-        # as absent -- or, before this branch existed, not read at all.
-        pattern = (
-            re.compile(rf'{re.escape(constant_name)}\s*=\s*"([0-9a-f]{{64}})"')
-            if source_path.suffix == ".luau"
-            else re.compile(
-                rf'{re.escape(constant_name)}\s*=\s*std::string_view\s*'
-                rf'\{{\s*"([0-9a-f]{{64}})"\s*\}}'
-            )
-        )
-        match = pattern.search(read_text(source_path))
-        if match is None:
-            errors.append(f"{constant_name} has no single exact schema hash authority")
-            continue
-        actual = hashlib.sha256(schema_path.read_bytes()).hexdigest()
-        if match.group(1) != actual:
-            errors.append(
-                f"{constant_name} does not match exact {schema_name} bytes"
-            )
-    return errors
-
-
 def project_readings(
     node: Any,
     definitions: dict[str, Any],
@@ -1404,7 +1349,6 @@ def main() -> int:
             *readings_contract_errors(root),
             *receipt_validation_errors(root),
             *definition_consumer_errors(root),
-            *schema_authority_errors(root),
             *test_registration_errors(root),
         }
     )

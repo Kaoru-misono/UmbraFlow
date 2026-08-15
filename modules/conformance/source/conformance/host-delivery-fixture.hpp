@@ -15,9 +15,11 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <format>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -115,6 +117,42 @@ namespace uf::task
             );
             return host.activateRuntimeArtifact(
                 InstalledRuntimeArtifact{std::move(artifact), 1U}
+            );
+        }
+
+        // The trusted parser's own seam, reachable deliberately. In a shipped
+        // binary the only caller is the private native surface, which hands the
+        // Host modules/task/runtime/model.luau's model.format -- so the refusal
+        // for a parser reading another RuntimeModel generation cannot be
+        // reached by publishing anything, only by building the two halves out
+        // of step. A case that cannot be written is a check that cannot fail,
+        // so the seam is opened here rather than left unexercised.
+        //
+        // Only the format is the caller's: everything after it is filler,
+        // because the generation comparison is the first thing finalize does
+        // and a disagreeing parser never reaches the asset closure behind it.
+        [[nodiscard]]
+        static auto finalizeWithParserFormat(
+            TaskHost& host,
+            GenerationId generation,
+            uint64 parserFormat
+        ) -> Status
+        {
+            auto const semantic = sha256(
+                std::as_bytes(std::span{std::string_view{"unreached"}})
+            );
+            REQUIRE(semantic.has_value());
+            auto const geometry = ProjectFingerprint::create(1, 1, 96, 96);
+            REQUIRE(geometry.has_value());
+            return host.finalizeRuntimeModel(
+                generation,
+                TaskHost::TrustedRuntimeFinalize{
+                    .parserFormat    = parserFormat,
+                    .semanticHash    = *semantic,
+                    .assetReferences = {},
+                    .declaredUi      = {},
+                    .fingerprint     = *geometry,
+                }
             );
         }
 

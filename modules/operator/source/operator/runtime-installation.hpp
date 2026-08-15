@@ -3,6 +3,7 @@
 #include <task/runtime-model-file.hpp>
 
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
 
@@ -12,25 +13,21 @@
 
 namespace uf::operator_runtime::detail
 {
-    // The exact bytes of schema/umbraflow-annotation-workspace-v2.schema.json,
-    // which every release manifest must name. It sits in the header so the
-    // deployment check and the test fixtures share one spelling;
-    // tests/test-runtime-surface.py pins it to the checked-in file so the two
-    // cannot drift apart again.
-    inline constexpr auto k_annotationWorkspaceSchemaHash = std::string_view{
-        "a6fc31b5e0ee49f5368d66fae3f2abf38e0e58f57d799e3d2cd8da583f508a29"
-    };
-
-    // tools/annotate/store.py's SCHEMA_ROOT_HASH: sha256 over the JCS document
-    // naming the workspace application id, its user_version, and every schema
-    // object's normalized SQL. Unlike the hash above it covers no checked-in
-    // file, so nothing can recompute it here -- it is a value the authoring
-    // side publishes and the deployment principal accepts or refuses. Accepting
-    // any well-formed hash instead would leave the Python gate comparing Python
-    // against itself, which proves nothing about this side.
-    inline constexpr auto k_workspaceSqliteSchemaHash = std::string_view{
-        "72fa0c39964397921007665e2f4f3f7936bd46f476a3adf589d32bd59ce9d873"
-    };
+    // The generation of schema/umbraflow-annotation-workspace-v2.schema.json
+    // this deployment principal reads, and the generation of the authoring
+    // workspace database it accepts a release from. Both are the acceptor's
+    // half of a compatibility statement, so a release names a number and this
+    // side decides whether it understands what that number describes.
+    //
+    // They are generations rather than digests deliberately. The digests that
+    // stood here made a cosmetic edit to the schema file, or a comment inside
+    // the workspace DDL, refuse every release already published -- a cost paid
+    // on every edit for a property no reader needed. tools/annotate/store.py
+    // owns both numbers as ANNOTATION_WORKSPACE_FORMAT and SCHEMA_VERSION and
+    // stamps them in tools/annotate/publication.py; bumping either is a
+    // deliberate two-repository decision, not a side effect of editing bytes.
+    inline constexpr auto k_annotationWorkspaceFormat = uint64{2U};
+    inline constexpr auto k_workspaceSqliteRevision   = uint64{2U};
 
     // The one child of the production root that is not a content hash. It is
     // named here because the installer stages into it and reclamation sweeps

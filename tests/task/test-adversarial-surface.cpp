@@ -70,13 +70,14 @@ namespace uf::task
         [[nodiscard]] auto manifest(std::string_view model) -> std::string
         {
             return std::format(
-                "{{\"assets\":[],\"manifest_schema_hash\":\"{}\","
+                "{{\"assets\":[],"
                 "\"page_model\":{{\"path\":\"runtime-model.toml\",\"sha256\":\"{}\","
-                "\"size\":{}}},\"runtime_model_schema_hash\":\"{}\"}}",
-                k_runtimeArtifactSchemaHash,
+                "\"size\":{}}},\"runtime_artifact_format\":{},"
+                "\"runtime_model_format\":{}}}",
                 digest(model).hex(),
                 model.size(),
-                k_runtimeModelSchemaHash
+                k_runtimeArtifactFormat,
+                k_runtimeModelFormat
             );
         }
     }

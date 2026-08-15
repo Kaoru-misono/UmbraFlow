@@ -27,6 +27,7 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <format>
 #include <memory>
 #include <optional>
 #include <string>
@@ -604,6 +605,45 @@ identity = ["screen.anchor"]
                 invalidRoot
             ).has_value()
         );
+    }
+
+    // The seam between the trusted parser's own RuntimeModel generation and the
+    // one the artifact states. loadRuntimeArtifact has already held the artifact
+    // against k_runtimeModelFormat by the time finalize runs, so this refusal
+    // fires only when modules/task/runtime/model.luau reads a different
+    // generation than modules/task/source/task/runtime-model-file.hpp expects --
+    // a build made of two halves, which nothing published can produce and which
+    // therefore has to be reached deliberately.
+    //
+    // It is worth reaching: it is the whole of what replaced the surface gate's
+    // model.schema_hash rule. That rule compared a Luau literal to a file; this
+    // reddens every activation in the suite when the two halves disagree.
+    TEST_CASE("a parser reading another RuntimeModel generation cannot finalize")
+    {
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const generation = loadedRuntime(host, directory);
+
+        constexpr auto k_foreign = uint64{99U};
+        auto const refused = TaskHostTestAccess::finalizeWithParserFormat(
+            host,
+            generation,
+            k_foreign
+        );
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(refused.error().message().contains(
+            std::format("parser reads RuntimeModel format {}", k_foreign)
+        ));
+        CHECK(refused.error().message().contains(
+            std::format("artifact states format {}", k_runtimeModelFormat)
+        ));
+
+        // The positive control: the generation this activation already
+        // finalized is still bound, so the refusal above is about the number
+        // and not about a Host that refuses every second finalize.
+        auto const status = host.queryTask(generation);
+        REQUIRE(status.has_value());
+        CHECK(status->runtimeModelBound);
     }
 
     TEST_CASE("contract-runtime-u02")

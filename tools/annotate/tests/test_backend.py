@@ -43,7 +43,11 @@ from tools.annotate.evidence import (
 from tools.annotate.contracts import validate as validate_contract
 from tools.annotate.jcs import CanonicalJsonError, jcs_bytes, load_exact_jcs
 from tools.annotate.model_file import compile_runtime_toml
-from tools.annotate.publication import Publisher
+from tools.annotate.publication import (
+    RUNTIME_ARTIFACT_FORMAT,
+    RUNTIME_MODEL_FORMAT,
+    Publisher,
+)
 from tools.annotate.safe_paths import is_reparse, make_plain_directories, walk_plain_files
 from tools.annotate.serve import (
     CAPABILITIES,
@@ -54,7 +58,6 @@ from tools.annotate.serve import (
 )
 from tools.annotate.store import (
     APPLICATION_ID,
-    SCHEMA_ROOT_HASH,
     SCHEMA_VERSION,
     AnnotationStore,
     AuthoringCapabilityRoot,
@@ -628,8 +631,8 @@ class SchemaAndJcsTests(unittest.TestCase):
     def test_runtime_artifact_schema_accepts_zero_assets_and_enforces_all_ceilings(self) -> None:
         sha = "a" * 64
         valid = {
-            "manifest_schema_hash": sha,
-            "runtime_model_schema_hash": sha,
+            "runtime_artifact_format": RUNTIME_ARTIFACT_FORMAT,
+            "runtime_model_format": RUNTIME_MODEL_FORMAT,
             "page_model": {"path": "runtime-model.toml", "size": 1, "sha256": sha},
             "assets": [],
         }
@@ -638,6 +641,8 @@ class SchemaAndJcsTests(unittest.TestCase):
             {**valid, "page_model": {**valid["page_model"], "size": 0}},
             {**valid, "page_model": {**valid["page_model"], "size": 4_194_305}},
             {**valid, "extra": True},
+            {**valid, "runtime_artifact_format": 0},
+            {**valid, "runtime_model_format": str(RUNTIME_MODEL_FORMAT)},
             {
                 **valid,
                 "assets": [
@@ -855,20 +860,6 @@ class ExactDatabaseTests(WorkspaceTestCase):
             self.assertIn("replay_bundles_immutable_delete", triggers)
             self.assertIn("project_operation_replay_intents_immutable_update", triggers)
             self.assertIn("project_operation_attestations_immutable_delete", triggers)
-        # A checked-in literal, not a shape. The regex that stood here was true
-        # of any SHA-256, so deleting a CHECK constraint from any CREATE TABLE
-        # changed this value silently and every test stayed green. Changing it
-        # now has to be a deliberate edit on this line, in the same change that
-        # alters the DDL. This is still Python compared against Python: the
-        # release manifest stamps this value at publication.py:499 and
-        # store.py:2252 compares it against the same constant, while the C++
-        # reader at modules/operator/source/operator/runtime-installation.cpp
-        # only consumes the field NAME. Nothing outside this package verifies
-        # the value it receives.
-        self.assertEqual(
-            SCHEMA_ROOT_HASH,
-            "72fa0c39964397921007665e2f4f3f7936bd46f476a3adf589d32bd59ce9d873",
-        )
 
     def test_schema_and_application_drift_are_rejected_without_migration(self) -> None:
         self.workspace.close()
@@ -1359,6 +1350,36 @@ class PublicationBoundaryTests(WorkspaceTestCase):
             )
         )
         self.assertTrue(Draft202012Validator(aw, registry=_schema_registry()).is_valid(publication))
+
+    def test_release_manifest_declares_the_two_generations_it_was_produced_by(self) -> None:
+        # Both numbers are compared against something outside this module, not
+        # against the constants that wrote them: the revision against the
+        # user_version the exported workspace database actually carries, and
+        # the format against the generation the annotation contract names in
+        # its own $id. A publisher that stamped either number by hand, or a
+        # contract bumped to v3 without bumping ANNOTATION_WORKSPACE_FORMAT,
+        # is what these two see.
+        self.workspace.accept()
+        ids, project_id = self.workspace.gates()
+        publication = self.workspace.publisher().publish("candidate-1", 1, None, ids, project_id)
+        release = publication["release_manifest"]
+        with contextlib.closing(sqlite3.connect(self.workspace.store.database)) as connection:
+            self.assertEqual(
+                release["workspace_sqlite_revision"],
+                connection.execute("PRAGMA user_version").fetchone()[0],
+            )
+        contract = json.loads(
+            Path("schema/umbraflow-annotation-workspace-v2.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        declared = re.search(r"-v(\d+)\.schema\.json$", contract["$id"])
+        self.assertIsNotNone(declared)
+        self.assertEqual(release["annotation_workspace_format"], int(declared.group(1)))
+        # A generation is not a digest: editing the contract's prose must not
+        # move the number a published release is measured against.
+        self.assertNotIn("annotation_workspace_schema_hash", release)
+        self.assertNotIn("workspace_sqlite_schema_hash", release)
 
     def test_zero_asset_runtime_artifact_is_supported_end_to_end(self) -> None:
         self.workspace.add_candidate(candidate_id="text-only", with_asset=False)

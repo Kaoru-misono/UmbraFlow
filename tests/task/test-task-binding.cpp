@@ -79,25 +79,43 @@ namespace uf::task
         }
 
         [[nodiscard]]
-        auto publish(
+        auto publishWithFormats(
             std::filesystem::path const& root,
             std::string_view model,
-            std::string_view asset
+            std::string_view asset,
+            uint64 runtimeArtifactFormat,
+            uint64 runtimeModelFormat
         ) -> ContentHash
         {
             constexpr auto assetPath = std::string_view{"assets/button.bin"};
             write(root / k_runtimeModelFileName, model);
             write(root / "assets" / "button.bin", asset);
             auto const manifest = std::format(
-                "{{\"assets\":[{}],\"manifest_schema_hash\":\"{}\","
-                "\"page_model\":{},\"runtime_model_schema_hash\":\"{}\"}}",
+                "{{\"assets\":[{}],\"page_model\":{},"
+                "\"runtime_artifact_format\":{},\"runtime_model_format\":{}}}",
                 file(assetPath, asset),
-                k_runtimeArtifactSchemaHash,
                 file(k_runtimeModelFileName, model),
-                k_runtimeModelSchemaHash
+                runtimeArtifactFormat,
+                runtimeModelFormat
             );
             write(root / k_runtimeArtifactManifestFileName, manifest);
             return hash(manifest);
+        }
+
+        [[nodiscard]]
+        auto publish(
+            std::filesystem::path const& root,
+            std::string_view model,
+            std::string_view asset
+        ) -> ContentHash
+        {
+            return publishWithFormats(
+                root,
+                model,
+                asset,
+                k_runtimeArtifactFormat,
+                k_runtimeModelFormat
+            );
         }
     }
 
@@ -120,5 +138,72 @@ namespace uf::task
             text.push_back(static_cast<char>(std::to_integer<unsigned char>(value)));
         }
         CHECK(text == "not TOML\r\n");
+    }
+
+    // What the two format members buy and what they must not cost.
+    //
+    // They buy a refusal that names both generations, because neither is
+    // visible from the other side: the artifact states one and this binary was
+    // built with the other, and a publisher told only "unsupported" cannot tell
+    // which generation to move to. What they must not cost is the file
+    // closure -- the digests that were always the point of the manifest are
+    // untouched by the stage that replaced the two schema pins, and the last
+    // case is what says so.
+    TEST_CASE("RuntimeArtifact refuses a generation this binary does not read")
+    {
+        auto const directory = TemporaryDir{};
+        constexpr auto k_supplied = uint64{99U};
+
+        SUBCASE("an unsupported runtime_model_format names both generations")
+        {
+            auto const rootHash = publishWithFormats(
+                directory.path(),
+                "not TOML\r\n",
+                "asset-v1",
+                k_runtimeArtifactFormat,
+                k_supplied
+            );
+            auto const refused = loadRuntimeArtifact(directory.path(), rootHash);
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                std::format("the manifest states {}", k_supplied)
+            ));
+            CHECK(refused.error().message().contains(
+                std::format("this parser reads {}", k_runtimeModelFormat)
+            ));
+        }
+
+        SUBCASE("an unsupported runtime_artifact_format names both generations")
+        {
+            auto const rootHash = publishWithFormats(
+                directory.path(),
+                "not TOML\r\n",
+                "asset-v1",
+                k_supplied,
+                k_runtimeModelFormat
+            );
+            auto const refused = loadRuntimeArtifact(directory.path(), rootHash);
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                std::format("the manifest states {}", k_supplied)
+            ));
+            CHECK(refused.error().message().contains(
+                std::format("this Host reads {}", k_runtimeArtifactFormat)
+            ));
+        }
+
+        SUBCASE("one mutated asset byte is still the closure refusal")
+        {
+            auto const rootHash = publish(directory.path(), "not TOML\r\n", "asset-v1");
+            REQUIRE(loadRuntimeArtifact(directory.path(), rootHash).has_value());
+
+            // Same length, so the declared size still holds and the only thing
+            // left to notice the change is the declared digest.
+            write(directory.path() / "assets" / "button.bin", "asset-v2");
+            auto const refused = loadRuntimeArtifact(directory.path(), rootHash);
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains("assets/button.bin"));
+            CHECK(refused.error().message().contains("failed SHA-256 verification"));
+        }
     }
 }

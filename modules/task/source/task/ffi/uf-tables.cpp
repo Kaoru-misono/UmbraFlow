@@ -1521,14 +1521,12 @@ namespace uf::task
         {
             auto& self = bound(state);
             self.requireArity(state, 9, "runtime_model_finalize");
+            auto const parserFormat = unsignedInteger(
+                state,
+                1,
+                "RuntimeModel format"
+            );
             auto encoded = std::string{"sha256:"};
-            encoded += stringAt(state, 1, "runtime model schema hash");
-            auto schemaHash = ContentHash::parse(encoded);
-            if (!schemaHash)
-            {
-                raiseFromError(state, nullptr, schemaHash.error());
-            }
-            encoded = "sha256:";
             encoded += stringAt(state, 2, "canonical RuntimeModel semantic hash");
             auto semantic = ContentHash::parse(encoded);
             if (!semantic)
@@ -1596,11 +1594,11 @@ namespace uf::task
             auto finalized = self.m_pHost->finalizeRuntimeModel(
                 self.m_generation,
                 TrustedRuntimeFinalize{
-                    .parserSchemaHash = *schemaHash,
-                    .semanticHash     = *semantic,
-                    .assetReferences  = std::move(assets),
-                    .declaredUi       = std::move(declaredUi),
-                    .fingerprint      = *geometry,
+                    .parserFormat    = parserFormat,
+                    .semanticHash    = *semantic,
+                    .assetReferences = std::move(assets),
+                    .declaredUi      = std::move(declaredUi),
+                    .fingerprint     = *geometry,
                 }
             );
             if (!finalized)

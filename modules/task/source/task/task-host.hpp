@@ -162,12 +162,13 @@ namespace uf::task
             ~Receipt() = default;
         };
 
-        // Constructible only inside Host. The trusted Runtime parser supplies its
-        // fixed schema identity and complete asset closure through the private
-        // native surface; no public table is accepted as proof of parser execution.
+        // Constructible only inside Host. The trusted Runtime parser supplies the
+        // RuntimeModel generation it reads and its complete asset closure through
+        // the private native surface; no public table is accepted as proof of
+        // parser execution.
         struct TrustedRuntimeFinalize final
         {
-            ContentHash              parserSchemaHash;
+            uint64                   parserFormat{};
             ContentHash              semanticHash;
             std::vector<std::string> assetReferences{};
             DeclaredRuntimeUi        declaredUi{};

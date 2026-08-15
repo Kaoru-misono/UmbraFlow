@@ -27,12 +27,21 @@ namespace uf::task
         std::string_view{"runtime-artifact.manifest.json"};
     inline constexpr auto k_runtimeModelFileName = std::string_view{"runtime-model.toml"};
     inline constexpr auto k_runtimeAssetDirectoryName = std::string_view{"assets"};
-    inline constexpr auto k_runtimeArtifactSchemaHash = std::string_view{
-        "af9d5dd9b1499359b165dd72694bb13a479dd5c5543b139ff7d22419d1855350"
-    };
-    inline constexpr auto k_runtimeModelSchemaHash = std::string_view{
-        "d47030ed22c65a224654f2fe7c7a594053f1bbc01b0b0663392ccde389d736fb"
-    };
+    // The generation of the RuntimeArtifact manifest contract this Host reads,
+    // and the generation of the RuntimeModel contract its trusted parser reads.
+    // Both are compatibility statements: an artifact declares the two numbers
+    // and this binary decides whether it understands what they describe.
+    //
+    // They are generations rather than digests of the two schema files, because
+    // a digest made every cosmetic edit to either file refuse every artifact
+    // already published -- a cost paid on every edit for a property no reader
+    // needed, and one the consumer repository was already paying with a stale
+    // transcription that refused its own artifacts. modules/task/runtime/model.luau
+    // states k_runtimeModelFormat again as model.format, and finalizeRuntimeModel
+    // refuses an artifact whose parser answers with a different number, so a
+    // drift between the two cannot activate.
+    inline constexpr auto k_runtimeArtifactFormat = uint64{1U};
+    inline constexpr auto k_runtimeModelFormat    = uint64{2U};
 
     // Each ceiling multiplies in std::size_t rather than widening a 32-bit
     // product: an unsigned product wraps silently, so a larger factor here would
@@ -66,16 +75,16 @@ namespace uf::task
     private:
         std::filesystem::path  m_root;
         ContentHash            m_rootHash;
-        ContentHash            m_manifestSchemaHash;
-        ContentHash            m_runtimeModelSchemaHash;
+        uint64                 m_runtimeArtifactFormat;
+        uint64                 m_runtimeModelFormat;
         std::vector<std::byte> m_manifestBytes;
         std::vector<File>      m_files;
 
         RuntimeArtifactHandle(
             std::filesystem::path root,
             ContentHash rootHash,
-            ContentHash manifestSchemaHash,
-            ContentHash runtimeModelSchemaHash,
+            uint64 runtimeArtifactFormat,
+            uint64 runtimeModelFormat,
             std::vector<std::byte> manifestBytes,
             std::vector<File> files
         ) noexcept;
@@ -101,12 +110,10 @@ namespace uf::task
         auto rootHash() const noexcept UF_LIFETIME_BOUND -> ContentHash const&;
 
         [[nodiscard]]
-        auto manifestSchemaHash() const noexcept UF_LIFETIME_BOUND
-            -> ContentHash const&;
+        auto runtimeArtifactFormat() const noexcept -> uint64;
 
         [[nodiscard]]
-        auto runtimeModelSchemaHash() const noexcept UF_LIFETIME_BOUND
-            -> ContentHash const&;
+        auto runtimeModelFormat() const noexcept -> uint64;
 
         [[nodiscard]]
         auto modelHash() const noexcept UF_LIFETIME_BOUND -> ContentHash const&;
@@ -206,10 +213,6 @@ namespace uf::task
 
         [[nodiscard]]
         auto artifactRootHash() const noexcept UF_LIFETIME_BOUND
-            -> ContentHash const&;
-
-        [[nodiscard]]
-        auto runtimeModelSchemaHash() const noexcept UF_LIFETIME_BOUND
             -> ContentHash const&;
 
         [[nodiscard]]

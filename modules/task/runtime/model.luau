@@ -7,7 +7,12 @@
 
 local model = {}
 model.schema = "umbraflow-runtime/v2"
-model.schema_hash = "d47030ed22c65a224654f2fe7c7a594053f1bbc01b0b0663392ccde389d736fb"
+-- The RuntimeModel generation this parser reads, handed to the Host at
+-- finalize. It is the v2 in model.schema, and the Host refuses an artifact
+-- that states a different one -- so this and k_runtimeModelFormat in
+-- modules/task/source/task/runtime-model-file.hpp move together or no
+-- artifact activates.
+model.format = 2
 
 local runtimeModels: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 local semanticBytes: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any

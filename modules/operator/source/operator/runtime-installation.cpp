@@ -244,14 +244,16 @@ namespace uf::operator_runtime::detail
         auto parseReleaseManifest(std::string_view source) -> Result<ReleaseManifest>
         {
             auto reader = ReleaseReader{source};
-            UF_TRY(reader.consume("{\"annotation_workspace_schema_hash\":"));
-            UF_TRY_VALUE(annotationSchemaHash, reader.hash());
-            auto encodedSchemaHash = std::string{"sha256:"};
-            encodedSchemaHash += k_annotationWorkspaceSchemaHash;
-            UF_TRY_VALUE(expectedAnnotationSchemaHash, ContentHash::parse(encodedSchemaHash));
-            if (annotationSchemaHash != expectedAnnotationSchemaHash)
+            UF_TRY(reader.consume("{\"annotation_workspace_format\":"));
+            UF_TRY_VALUE(annotationFormat, reader.unsignedInteger());
+            if (annotationFormat != k_annotationWorkspaceFormat)
             {
-                return refuse("release manifest uses an unsupported annotation schema");
+                return refuse(std::format(
+                    "release manifest states annotation workspace format {} "
+                    "and this Host reads format {}",
+                    annotationFormat,
+                    k_annotationWorkspaceFormat
+                ));
             }
             UF_TRY(reader.consume(",\"candidate_id\":"));
             UF_TRY(reader.nonEmptyString());
@@ -274,17 +276,16 @@ namespace uf::operator_runtime::detail
             UF_TRY(reader.hash());
             UF_TRY(reader.consume(",\"runtime_artifact_root_hash\":"));
             UF_TRY_VALUE(artifactRootHash, reader.hash());
-            UF_TRY(reader.consume(",\"workspace_sqlite_schema_hash\":"));
-            UF_TRY_VALUE(workspaceSchemaHash, reader.hash());
-            auto encodedWorkspaceHash = std::string{"sha256:"};
-            encodedWorkspaceHash += k_workspaceSqliteSchemaHash;
-            UF_TRY_VALUE(
-                expectedWorkspaceSchemaHash,
-                ContentHash::parse(encodedWorkspaceHash)
-            );
-            if (workspaceSchemaHash != expectedWorkspaceSchemaHash)
+            UF_TRY(reader.consume(",\"workspace_sqlite_revision\":"));
+            UF_TRY_VALUE(workspaceRevision, reader.unsignedInteger());
+            if (workspaceRevision != k_workspaceSqliteRevision)
             {
-                return refuse("release manifest uses an unsupported workspace schema");
+                return refuse(std::format(
+                    "release manifest states workspace SQLite revision {} "
+                    "and this Host reads revision {}",
+                    workspaceRevision,
+                    k_workspaceSqliteRevision
+                ));
             }
             UF_TRY(reader.consume("}"));
             if (!reader.atEnd())

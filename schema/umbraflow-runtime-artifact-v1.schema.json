@@ -6,14 +6,20 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "manifest_schema_hash",
-    "runtime_model_schema_hash",
+    "runtime_artifact_format",
+    "runtime_model_format",
     "page_model",
     "assets"
   ],
   "properties": {
-    "manifest_schema_hash": { "$ref": "#/$defs/sha256" },
-    "runtime_model_schema_hash": { "$ref": "#/$defs/sha256" },
+    "runtime_artifact_format": {
+      "$comment": "The generation of this manifest contract a Host must understand, not the bytes of the file that states it. Editing this schema's prose is not a new generation and must not refuse an artifact already published against it.",
+      "$ref": "#/$defs/format"
+    },
+    "runtime_model_format": {
+      "$comment": "The generation of umbraflow-runtime-v2.schema.json the trusted parser must understand to read runtime-model.toml. modules/task/runtime/model.luau states the same number as model.format, and the Host refuses an artifact whose parser answers with a different one.",
+      "$ref": "#/$defs/format"
+    },
     "page_model": { "$ref": "#/$defs/page_model_file" },
     "assets": {
       "type": "array",
@@ -23,6 +29,11 @@
     }
   },
   "$defs": {
+    "format": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
     "sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
