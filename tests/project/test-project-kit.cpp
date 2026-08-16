@@ -1979,6 +1979,10 @@ namespace uf::project
 
     TEST_CASE("workflow declaration is closed and uniquely names every state")
     {
+        // The lock's rule, measured: an additionalProperties: false site that
+        // catches an undeclared member is ClosedSchema at every depth, a
+        // required member missing is a shape violation, and both verdicts come
+        // from the published schema, which is the single validation mechanism.
         auto const undeclared = generateDeclarativeWorkflowAdapter(
             "chaos.project",
             replacedOnce(
@@ -1989,6 +1993,66 @@ namespace uf::project
         );
         REQUIRE_FALSE(undeclared.has_value());
         CHECK(undeclared.error().message().starts_with("ClosedSchema"));
+        CHECK(
+            undeclared.error().message().find("script") != std::string_view::npos
+        );
+
+        auto const requiredMissing = generateDeclarativeWorkflowAdapter(
+            "chaos.project",
+            replacedOnce(
+                validWorkflowDeclaration(),
+                "  \"ui_finding\": {\"kind\": \"observed_instance_absent\"},\n",
+                ""
+            )
+        );
+        REQUIRE_FALSE(requiredMissing.has_value());
+        CHECK(
+            requiredMissing.error().message().starts_with("MalformedWorkflowTool")
+        );
+
+        auto const freshExtra = generateDeclarativeWorkflowAdapter(
+            "chaos.project",
+            replacedOnce(
+                validWorkflowDeclaration(),
+                "\"require_unambiguous\": true",
+                "\"require_unambiguous\": true,\n    \"fresh_extra\": 1"
+            )
+        );
+        REQUIRE_FALSE(freshExtra.has_value());
+        CHECK(freshExtra.error().message().starts_with("ClosedSchema"));
+
+        auto const findingExtra = generateDeclarativeWorkflowAdapter(
+            "chaos.project",
+            replacedOnce(
+                validWorkflowDeclaration(),
+                "\"ui_finding\": {\"kind\": \"observed_instance_absent\"}",
+                "\"ui_finding\": {\"kind\": \"observed_instance_absent\", \"ui_extra\": 1}"
+            )
+        );
+        REQUIRE_FALSE(findingExtra.has_value());
+        CHECK(findingExtra.error().message().starts_with("ClosedSchema"));
+
+        auto const waitExtra = generateDeclarativeWorkflowAdapter(
+            "chaos.project",
+            replacedOnce(
+                validWorkflowDeclaration(),
+                "\"timeout_ms\": 1000",
+                "\"timeout_ms\": 1000,\n      \"wait_extra\": 1"
+            )
+        );
+        REQUIRE_FALSE(waitExtra.has_value());
+        CHECK(waitExtra.error().message().starts_with("ClosedSchema"));
+
+        auto const actionExtra = generateDeclarativeWorkflowAdapter(
+            "chaos.project",
+            replacedOnce(
+                validWorkflowDeclaration(),
+                "\"timeout_ms\": 2000",
+                "\"timeout_ms\": 2000,\n      \"action_extra\": 1"
+            )
+        );
+        REQUIRE_FALSE(actionExtra.has_value());
+        CHECK(actionExtra.error().message().starts_with("ClosedSchema"));
 
         auto const duplicate = generateDeclarativeWorkflowAdapter(
             "chaos.project",
@@ -2002,6 +2066,70 @@ namespace uf::project
         CHECK(
             duplicate.error().message().find("state_key values must be unique")
             != std::string_view::npos
+        );
+    }
+
+    // The schedule's keys leave the generator as next_step step_key values,
+    // which operator-v1 constrains as its Identifier: a leading digit, and
+    // '.', '_', '-' and ':' inside, all admitted there, and 128 characters
+    // at most. The declaration must admit exactly what the emitted adapter
+    // may carry, so the published schema speaks the operator's grammar and
+    // the generator hands the schema the whole question.
+    TEST_CASE("workflow state_key follows the operator Identifier grammar")
+    {
+        auto const digitLed = replacedOnce(
+            replacedOnce(
+                validWorkflowDeclaration(),
+                "\"state_key\": \"await-overlay\"",
+                "\"state_key\": \"9await:overlay\""
+            ),
+            "\"await-overlay\", \"dismiss-overlay\"",
+            "\"9await:overlay\", \"dismiss-overlay\""
+        );
+        auto const accepted = generateDeclarativeWorkflowAdapter(
+            "chaos.project",
+            digitLed
+        );
+        REQUIRE_MESSAGE(
+            accepted.has_value(),
+            "a state key with a leading digit and a colon must be accepted"
+        );
+
+        auto const longestKey = std::string(128, 'a');
+        auto const boundary = replacedOnce(
+            replacedOnce(
+                validWorkflowDeclaration(),
+                "\"state_key\": \"await-overlay\"",
+                "\"state_key\": \"" + longestKey + "\""
+            ),
+            "\"await-overlay\", \"dismiss-overlay\"",
+            "\"" + longestKey + "\", \"dismiss-overlay\""
+        );
+        REQUIRE_MESSAGE(
+            generateDeclarativeWorkflowAdapter("chaos.project", boundary)
+                .has_value(),
+            "a 128-character state key, the Identifier cap, must be accepted"
+        );
+
+        auto const overlong = generateDeclarativeWorkflowAdapter(
+            "chaos.project",
+            replacedOnce(
+                validWorkflowDeclaration(),
+                "\"state_key\": \"await-overlay\"",
+                "\"state_key\": \"" + std::string(129, 'a') + "\""
+            )
+        );
+        REQUIRE_FALSE_MESSAGE(
+            overlong.has_value(),
+            "a 129-character state key must be refused, not generated"
+        );
+        CHECK_MESSAGE(
+            overlong.error().message().starts_with("MalformedWorkflowTool"),
+            "an overlong key is a shape violation, not a closed-object one"
+        );
+        CHECK_MESSAGE(
+            overlong.error().message().find("refused") != std::string_view::npos,
+            "the refusal must come from the published schema"
         );
     }
 }

@@ -82,8 +82,10 @@
             "required": ["state_key", "kind", "observation_budget", "timeout_ms"],
             "properties": {
               "state_key": {
+                "$comment": "The adapter's next_step output carries the key as the step_key member, which operator-v1 constrains as its Identifier: a leading digit, and '.', '_', '-' and ':' inside, all admitted, and 128 characters at most.",
                 "type": "string",
-                "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "maxLength": 128
               },
               "kind": { "const": "wait" },
               "observation_budget": {
@@ -105,7 +107,8 @@
             "properties": {
               "state_key": {
                 "type": "string",
-                "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "maxLength": 128
               },
               "kind": { "const": "ui_action" },
               "ui_action": {
@@ -123,12 +126,13 @@
       }
     },
     "steps": {
-      "$comment": "The schedule: each entry names a declared state_key. Its length is the step count the bounds are checked against.",
+      "$comment": "The schedule: each entry names a declared state_key, so it obeys the same Identifier grammar the keys themselves do. Its length is the step count the bounds are checked against.",
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "string",
-        "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+        "maxLength": 128
       }
     },
     "bounds": {

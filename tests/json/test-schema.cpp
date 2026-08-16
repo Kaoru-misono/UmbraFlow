@@ -61,8 +61,13 @@ namespace uf::json
             auto const value = parse(instance);
             REQUIRE(value.has_value());
             auto const outcome = schema.validate(*value);
-            return !outcome.has_value()
-                && errorKind(outcome.error()) == ErrorKind::DocumentRejected;
+            if (outcome.has_value())
+            {
+                return false;
+            }
+            auto const kind = errorKind(outcome.error());
+            return kind == ErrorKind::DocumentRejected
+                || kind == ErrorKind::DocumentClosureRejected;
         }
 
         struct KeywordCase final
@@ -322,6 +327,128 @@ namespace uf::json
 
         auto const open = compiled(R"({"properties":{"a":true}})");
         CHECK(accepts(open, R"({"a":1})"));
+    }
+
+    // The closed-object refusal is its own kind so a caller can tell a closure
+    // violation from a shape violation without parsing the message. The states
+    // oneOf of the workflow schema is the shape this pins: two closed branches,
+    // each declaring the member the other branch needs. The wait branch
+    // closure-refuses a ui_action state and must still lose to the branch that
+    // matches; and when every branch has failed, the kind says which rule the
+    // instance actually broke.
+    TEST_CASE("json::Schema reports closure refusals apart from shape refusals")
+    {
+        auto const closed = compiled(
+            R"({"properties":{"a":{"type":"string"}},"additionalProperties":false})"
+        );
+        auto const closureOutcome = closed.validate(*parse(R"({"b":1})"));
+        REQUIRE_FALSE(closureOutcome.has_value());
+        CHECK(
+            errorKind(closureOutcome.error())
+            == ErrorKind::DocumentClosureRejected
+        );
+        CHECK(
+            closureOutcome.error().message().find("additionalProperties")
+                != std::string::npos
+        );
+
+        // A non-closure rejection against the same schema keeps the ordinary
+        // kind.
+        auto const typeOutcome = closed.validate(*parse(R"({"a":1})"));
+        REQUIRE_FALSE(typeOutcome.has_value());
+        CHECK(errorKind(typeOutcome.error()) == ErrorKind::DocumentRejected);
+
+        auto const states = compiled(
+            R"({"oneOf":[{)"
+            R"("additionalProperties":false,)"
+            R"("required":["kind","wait_member"],)"
+            R"("properties":{"kind":{"const":"wait"},"wait_member":)"
+            R"({"type":"integer"}}},)"
+            R"({"additionalProperties":false,)"
+            R"("required":["kind","action_member"],)"
+            R"("properties":{"kind":{"const":"ui_action"},"action_member":)"
+            R"({"type":"string"}}}]})"
+        );
+        auto const uiAction = states.validate(
+            *parse(R"({"kind":"ui_action","action_member":"go"})")
+        );
+        REQUIRE_MESSAGE(
+            uiAction.has_value(),
+            "the branch that matches must win over a sibling branch that "
+            "refused the instance by closure"
+        );
+
+        // A state carrying a member neither branch declares fails by closure.
+        auto const extra = states.validate(
+            *parse(R"({"kind":"ui_action","action_member":"go","extra":1})")
+        );
+        REQUIRE_FALSE(extra.has_value());
+        CHECK(errorKind(extra.error()) == ErrorKind::DocumentClosureRejected);
+
+        // A state missing the member its own branch requires fails by shape:
+        // with no extra member there is no closure violation, so the refusal
+        // keeps the ordinary kind.
+        auto const missing = states.validate(*parse(R"({"kind":"wait"})"));
+        REQUIRE_FALSE(missing.has_value());
+        CHECK(errorKind(missing.error()) == ErrorKind::DocumentRejected);
+    }
+
+    // The closure kind is promoted only when every failing branch refused by
+    // closure. A sibling branch that failed by shape keeps the refusal
+    // ordinary: the instance broke a rule no closure site gets to excuse,
+    // which is the difference the workflow schema's states oneOf depends on
+    // -- a wait state carrying an out-of-range member is malformed, not
+    // closed.
+    TEST_CASE("json::Schema promotes closure refusals only when every branch refused by closure")
+    {
+        auto const states = compiled(
+            R"({"oneOf":[{)"
+            R"("additionalProperties":false,)"
+            R"("required":["kind","budget"],)"
+            R"("properties":{"kind":{"const":"wait"},)"
+            R"("budget":{"type":"integer","minimum":1}}},)"
+            R"({"additionalProperties":false,)"
+            R"("required":["kind"],)"
+            R"("properties":{"kind":{"const":"ui_action"}}}]})"
+        );
+
+        // The applicable wait branch fails minimum (shape) while the sibling
+        // closure-refuses the same member: the instance's real violation is
+        // the range, so the refusal keeps the ordinary kind.
+        auto const outOfRange = states.validate(
+            *parse(R"({"kind":"wait","budget":0})")
+        );
+        REQUIRE_FALSE(outOfRange.has_value());
+        CHECK(errorKind(outOfRange.error()) == ErrorKind::DocumentRejected);
+
+        // With only undeclared members to fail on, every branch refused by
+        // closure and the kind says which rule the instance broke.
+        auto const extra = states.validate(
+            *parse(R"({"kind":"wait","budget":1,"extra":1})")
+        );
+        REQUIRE_FALSE(extra.has_value());
+        CHECK(errorKind(extra.error()) == ErrorKind::DocumentClosureRejected);
+
+        auto const alternatives = compiled(
+            R"({"anyOf":[{)"
+            R"("additionalProperties":false,)"
+            R"("required":["kind","budget"],)"
+            R"("properties":{"kind":{"const":"wait"},)"
+            R"("budget":{"type":"integer","minimum":1}}},)"
+            R"({"additionalProperties":false,)"
+            R"("required":["kind"],)"
+            R"("properties":{"kind":{"const":"ui_action"}}}]})"
+        );
+        auto const mixed = alternatives.validate(
+            *parse(R"({"kind":"wait","budget":0})")
+        );
+        REQUIRE_FALSE(mixed.has_value());
+        CHECK(errorKind(mixed.error()) == ErrorKind::DocumentRejected);
+        auto const closedOnly = alternatives.validate(
+            *parse(R"({"kind":"wait","budget":1,"extra":1})")
+        );
+        REQUIRE_FALSE(closedOnly.has_value());
+        CHECK(errorKind(closedOnly.error()) == ErrorKind::DocumentClosureRejected);
     }
 
     // oneOf demands exactly one branch, which is the only combinator whose

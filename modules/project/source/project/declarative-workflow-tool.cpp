@@ -1,14 +1,18 @@
 #include "declarative-workflow-tool.hpp"
 
-#include <json/value.hpp>
-
+#include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
 
+#include <json/error.hpp>
+#include <json/schema.hpp>
+#include <json/value.hpp>
+
+#include <schema/framework-schema-catalog.hpp>
+
 #include <algorithm>
-#include <array>
 #include <format>
 #include <map>
 #include <ranges>
@@ -22,48 +26,6 @@ namespace uf::project
 {
     namespace
     {
-        constexpr auto k_schemaId = std::string_view{
-            "umbraflow-declarative-workflow-tool/v1"
-        };
-        constexpr auto k_rootMembers = std::array{
-            std::string_view{"schema"},
-            std::string_view{"tool_name"},
-            std::string_view{"target_argument"},
-            std::string_view{"allowed_instance_kinds"},
-            std::string_view{"fresh_observation"},
-            std::string_view{"ui_finding"},
-            std::string_view{"states"},
-            std::string_view{"steps"},
-            std::string_view{"bounds"},
-        };
-        constexpr auto k_freshObservationMembers = std::array{
-            std::string_view{"required_surface"},
-            std::string_view{"require_unambiguous"},
-        };
-        constexpr auto k_uiFindingMembers = std::array{
-            std::string_view{"kind"},
-        };
-        constexpr auto k_boundsMembers = std::array{
-            std::string_view{"maximum_states"},
-            std::string_view{"maximum_steps"},
-            std::string_view{"maximum_dispatches"},
-            std::string_view{"maximum_observations"},
-            std::string_view{"maximum_waits"},
-            std::string_view{"maximum_elapsed_ms"},
-        };
-        constexpr auto k_waitStateMembers = std::array{
-            std::string_view{"state_key"},
-            std::string_view{"kind"},
-            std::string_view{"observation_budget"},
-            std::string_view{"timeout_ms"},
-        };
-        constexpr auto k_actionStateMembers = std::array{
-            std::string_view{"state_key"},
-            std::string_view{"kind"},
-            std::string_view{"ui_action"},
-            std::string_view{"timeout_ms"},
-        };
-
         enum class StateKind : uint8
         {
             Wait,
@@ -170,185 +132,141 @@ namespace uf::project
             return sawSeparator && !atSegmentStart;
         }
 
+        // A member the published schema has already declared present, so its
+        // absence would be a defect in this reader rather than in the document.
         [[nodiscard]]
-        auto isIdentifier(std::string_view value) noexcept -> bool
-        {
-            return (
-                !value.empty()
-                && value.size() <= 128U
-                && (isAsciiLetter(value.front()) || isAsciiDigit(value.front()))
-                && std::ranges::all_of(
-                    value.substr(1U),
-                    [](char character)
-                    {
-                        return (
-                            isAsciiLetter(character)
-                            || isAsciiDigit(character)
-                            || character == '.'
-                            || character == '_'
-                            || character == ':'
-                            || character == '-'
-                        );
-                    }
-                )
-            );
-        }
-
-        [[nodiscard]]
-        auto isArgumentName(std::string_view value) noexcept -> bool
-        {
-            return (
-                !value.empty()
-                && value.size() <= 64U
-                && (isAsciiLetter(value.front()) || value.front() == '_')
-                && std::ranges::all_of(
-                    value.substr(1U),
-                    [](char character)
-                    {
-                        return (
-                            isAsciiLetter(character)
-                            || isAsciiDigit(character)
-                            || character == '_'
-                        );
-                    }
-                )
-            );
-        }
-
-        template <std::size_t Size>
-        [[nodiscard]]
-        auto hasExactMembers(
-            json::Value const& value,
-            std::array<std::string_view, Size> const& expected
-        ) -> bool
-        {
-            if (value.kind() != json::ValueKind::Object || value.members().size() != Size)
-            {
-                return false;
-            }
-            return std::ranges::all_of(
-                expected,
-                [&value](std::string_view name)
-                {
-                    return value.find(name) != nullptr;
-                }
-            );
-        }
-
-        [[nodiscard]]
-        auto stringMember(
+        auto member(
             json::Value const& object,
             std::string_view name
-        ) -> Result<std::string_view>
+        ) -> json::Value const&
         {
-            auto const* value = object.find(name);
-            if (value == nullptr || value->kind() != json::ValueKind::String)
+            auto const* const p_value = object.find(name);
+            UF_CHECK(p_value != nullptr);
+            return *p_value;
+        }
+
+        constexpr auto k_workflowSchemaPath = std::string_view{
+            "schema/umbraflow-declarative-workflow-tool-v1.schema.json"
+        };
+
+        // The published schema is the single authority over the declaration's
+        // shape: closure, membership, types, patterns and value bounds all come
+        // from it. Its refusal kinds map onto the lock's codes -- a closed
+        // object carrying an undeclared member is ClosedSchema, every other
+        // schema rejection is MalformedWorkflowTool. A schema problem (the
+        // compiled catalog missing the document, a keyword this evaluator does
+        // not implement) is a deployment defect no declaration can fix and is
+        // reported without a code.
+        [[nodiscard]]
+        auto adoptSchema(Status outcome) -> Status
+        {
+            if (outcome.has_value())
             {
-                return refuse("MalformedWorkflowTool", "required string member is malformed");
+                return ok();
             }
-            return value->string();
+            auto const kind = json::errorKind(outcome.error());
+            if (kind == json::ErrorKind::DocumentClosureRejected)
+            {
+                return refuse("ClosedSchema", outcome.error().message());
+            }
+            if (kind == json::ErrorKind::DocumentRejected)
+            {
+                return refuse("MalformedWorkflowTool", outcome.error().message());
+            }
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::string{outcome.error().message()}
+            );
         }
 
         [[nodiscard]]
-        auto integerMember(
-            json::Value const& object,
-            std::string_view name,
-            uint64 maximum
-        ) -> Result<uint64>
+        auto validateDeclaration(json::Value const& root) -> Status
         {
-            auto const* value = object.find(name);
-            if (
-                value == nullptr
-                || value->kind() != json::ValueKind::Number
-                || !value->isInteger()
-                || value->number() < 0.0
-                || value->number() > static_cast<double>(maximum)
-            )
+            auto const published = framework_schema::findFrameworkSchema(
+                k_workflowSchemaPath
+            );
+            if (!published.has_value())
             {
-                return refuse("MalformedWorkflowTool", "required integer member is malformed");
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "generated framework schema catalog is missing "
+                        + std::string{k_workflowSchemaPath}
+                );
             }
-            return static_cast<uint64>(value->number());
+            auto compiled = json::Schema::compile(json::Schema::Document{
+                .label      = published->relativePath,
+                .exactBytes = published->exactBytes,
+            });
+            if (!compiled.has_value())
+            {
+                // A schema the catalog holds that does not compile is the
+                // same class of defect as one this evaluator refuses: a
+                // deployment problem no declaration can fix, mapped like the
+                // validate outcome below and reported without a lock code.
+                return adoptSchema(std::unexpected<Error>{
+                    std::move(compiled.error())
+                });
+            }
+            return adoptSchema(compiled->validate(root));
         }
 
+        // Readers, not validators: the published schema has already accepted
+        // the whole document, so every member is present with the type and
+        // range the schema declares. The kind dispatch below re-chooses the
+        // oneOf branch the schema chose, and the check documents that the
+        // dispatch is total rather than silently treating an unknown kind as a
+        // ui_action state.
         [[nodiscard]]
-        auto parseBounds(json::Value const& value) -> Result<WorkflowBounds>
+        auto parseBounds(json::Value const& value) -> WorkflowBounds
         {
-            if (!hasExactMembers(value, k_boundsMembers))
-            {
-                return refuse("ClosedSchema", "workflow bounds do not have their exact members");
-            }
-            UF_TRY_VALUE(states, integerMember(value, "maximum_states", 64U));
-            UF_TRY_VALUE(steps, integerMember(value, "maximum_steps", 256U));
-            UF_TRY_VALUE(dispatches, integerMember(value, "maximum_dispatches", 256U));
-            UF_TRY_VALUE(observations, integerMember(value, "maximum_observations", 256U));
-            UF_TRY_VALUE(waits, integerMember(value, "maximum_waits", 256U));
-            UF_TRY_VALUE(elapsed, integerMember(value, "maximum_elapsed_ms", 15'360'000U));
-            if (states == 0U || steps == 0U || observations == 0U || elapsed == 0U)
-            {
-                return refuse("MalformedWorkflowTool", "positive workflow bounds cannot be zero");
-            }
             return WorkflowBounds{
-                .maximumStates        = static_cast<uint32>(states),
-                .maximumSteps         = static_cast<uint32>(steps),
-                .maximumDispatches    = static_cast<uint32>(dispatches),
-                .maximumObservations  = static_cast<uint32>(observations),
-                .maximumWaits         = static_cast<uint32>(waits),
-                .maximumElapsedMillis = elapsed,
+                .maximumStates = static_cast<uint32>(
+                    member(value, "maximum_states").number()
+                ),
+                .maximumSteps = static_cast<uint32>(
+                    member(value, "maximum_steps").number()
+                ),
+                .maximumDispatches = static_cast<uint32>(
+                    member(value, "maximum_dispatches").number()
+                ),
+                .maximumObservations = static_cast<uint32>(
+                    member(value, "maximum_observations").number()
+                ),
+                .maximumWaits = static_cast<uint32>(
+                    member(value, "maximum_waits").number()
+                ),
+                .maximumElapsedMillis = static_cast<uint64>(
+                    member(value, "maximum_elapsed_ms").number()
+                ),
             };
         }
 
         [[nodiscard]]
-        auto parseState(json::Value const& value) -> Result<WorkflowState>
+        auto parseState(json::Value const& value) -> WorkflowState
         {
-            if (value.kind() != json::ValueKind::Object)
-            {
-                return refuse("MalformedWorkflowTool", "workflow state must be an object");
-            }
-            UF_TRY_VALUE(kind, stringMember(value, "kind"));
-            UF_TRY_VALUE(stateKey, stringMember(value, "state_key"));
-            if (!isIdentifier(stateKey))
-            {
-                return refuse("MalformedWorkflowTool", "state_key is not an Identifier");
-            }
+            auto const kind = member(value, "kind").string();
             if (kind == "wait")
             {
-                if (!hasExactMembers(value, k_waitStateMembers))
-                {
-                    return refuse("ClosedSchema", "wait state does not have its exact members");
-                }
-                UF_TRY_VALUE(budget, integerMember(value, "observation_budget", 256U));
-                UF_TRY_VALUE(timeout, integerMember(value, "timeout_ms", 60'000U));
-                if (budget == 0U || timeout == 0U)
-                {
-                    return refuse("MalformedWorkflowTool", "wait state bounds cannot be zero");
-                }
                 return WorkflowState{
-                    .stateKey          = std::string{stateKey},
-                    .kind              = StateKind::Wait,
-                    .observationBudget = static_cast<uint32>(budget),
-                    .timeoutMillis     = timeout,
+                    .stateKey = std::string{member(value, "state_key").string()},
+                    .kind     = StateKind::Wait,
+                    .observationBudget = static_cast<uint32>(
+                        member(value, "observation_budget").number()
+                    ),
+                    .timeoutMillis = static_cast<uint64>(
+                        member(value, "timeout_ms").number()
+                    ),
                 };
             }
-            if (kind == "ui_action")
-            {
-                if (!hasExactMembers(value, k_actionStateMembers))
-                {
-                    return refuse("ClosedSchema", "UI-action state does not have its exact members");
-                }
-                UF_TRY_VALUE(uiAction, stringMember(value, "ui_action"));
-                UF_TRY_VALUE(timeout, integerMember(value, "timeout_ms", 60'000U));
-                if (!isNamespacedIdentifier(uiAction) || timeout == 0U)
-                {
-                    return refuse("MalformedWorkflowTool", "UI-action state is malformed");
-                }
-                return WorkflowState{
-                    .stateKey      = std::string{stateKey},
-                    .kind          = StateKind::UiAction,
-                    .uiAction      = std::string{uiAction},
-                    .timeoutMillis = timeout,
-                };
-            }
-            return refuse("MalformedWorkflowTool", "workflow state kind is unknown");
+            UF_CHECK(kind == "ui_action");
+            return WorkflowState{
+                .stateKey = std::string{member(value, "state_key").string()},
+                .kind     = StateKind::UiAction,
+                .uiAction = std::string{member(value, "ui_action").string()},
+                .timeoutMillis = static_cast<uint64>(
+                    member(value, "timeout_ms").number()
+                ),
+            };
         }
 
         [[nodiscard]]
@@ -360,106 +278,54 @@ namespace uf::project
                 return refuse("MalformedWorkflowTool", "declaration is not JSON");
             }
             auto const& root = *parsed;
-            if (!hasExactMembers(root, k_rootMembers))
-            {
-                return refuse("ClosedSchema", "workflow declaration does not have its exact members");
-            }
-            UF_TRY_VALUE(schema, stringMember(root, "schema"));
-            UF_TRY_VALUE(toolName, stringMember(root, "tool_name"));
-            UF_TRY_VALUE(targetArgument, stringMember(root, "target_argument"));
-            if (
-                schema != k_schemaId
-                || !isNamespacedIdentifier(toolName)
-                || !isArgumentName(targetArgument)
-            )
-            {
-                return refuse("MalformedWorkflowTool", "declaration identity is malformed");
-            }
+            UF_TRY(validateDeclaration(root));
 
-            auto const* fresh = root.find("fresh_observation");
-            auto const* finding = root.find("ui_finding");
-            auto const* kinds = root.find("allowed_instance_kinds");
-            auto const* states = root.find("states");
-            auto const* steps = root.find("steps");
-            auto const* bounds = root.find("bounds");
-            if (
-                fresh == nullptr
-                || finding == nullptr
-                || kinds == nullptr
-                || states == nullptr
-                || steps == nullptr
-                || bounds == nullptr
-                || !hasExactMembers(*fresh, k_freshObservationMembers)
-                || !hasExactMembers(*finding, k_uiFindingMembers)
-                || kinds->kind() != json::ValueKind::Array
-                || states->kind() != json::ValueKind::Array
-                || steps->kind() != json::ValueKind::Array
-            )
-            {
-                return refuse("MalformedWorkflowTool", "declaration shape is malformed");
-            }
-            UF_TRY_VALUE(requiredSurface, stringMember(*fresh, "required_surface"));
-            UF_TRY_VALUE(findingKind, stringMember(*finding, "kind"));
-            auto const* unambiguous = fresh->find("require_unambiguous");
-            if (
-                !isNamespacedIdentifier(requiredSurface)
-                || unambiguous == nullptr
-                || unambiguous->kind() != json::ValueKind::Boolean
-                || !unambiguous->boolean()
-                || (
-                    findingKind != "observed_instance_absent"
-                    && findingKind != "observed_instance_present"
-                )
-            )
-            {
-                return refuse("MalformedWorkflowTool", "observation policy is malformed");
-            }
+            // The published schema just accepted the document, so every member
+            // read below is present with the type and range the schema
+            // declares. Only relationships no JSON Schema can state remain
+            // checked by hand: state_key uniqueness across the states array,
+            // and the schedule naming declared states.
+            auto const& fresh   = member(root, "fresh_observation");
+            auto const& finding = member(root, "ui_finding");
+            auto const& kinds   = member(root, "allowed_instance_kinds");
+            auto const& states  = member(root, "states");
+            auto const& steps   = member(root, "steps");
+            auto const& bounds  = member(root, "bounds");
+
+            auto const toolName       = member(root, "tool_name").string();
+            auto const targetArgument = member(root, "target_argument").string();
+            auto const requiredSurface = member(fresh, "required_surface").string();
+            auto const findingKind     = member(finding, "kind").string();
 
             auto allowedKinds = std::vector<std::string>{};
-            for (auto const& kind : kinds->items())
+            for (auto const& kind : kinds.items())
             {
-                if (
-                    kind.kind() != json::ValueKind::String
-                    || !isNamespacedIdentifier(kind.string())
-                )
-                {
-                    return refuse("MalformedWorkflowTool", "instance kind is malformed");
-                }
                 allowedKinds.emplace_back(kind.string());
             }
+            // The schema's uniqueItems makes the set unique; sorting makes the
+            // rendered adapter deterministic.
             std::ranges::sort(allowedKinds);
-            if (
-                allowedKinds.empty()
-                || std::ranges::adjacent_find(allowedKinds) != allowedKinds.end()
-            )
-            {
-                return refuse("MalformedWorkflowTool", "instance kinds must be non-empty and unique");
-            }
 
             auto stateByKey = std::map<std::string, WorkflowState>{};
-            for (auto const& stateValue : states->items())
+            for (auto const& stateValue : states.items())
             {
-                UF_TRY_VALUE(state, parseState(stateValue));
+                auto state = parseState(stateValue);
                 if (!stateByKey.emplace(state.stateKey, std::move(state)).second)
                 {
                     return refuse("MalformedWorkflowTool", "state_key values must be unique");
                 }
             }
-            if (stateByKey.empty() || steps->items().empty())
-            {
-                return refuse("MalformedWorkflowTool", "states and steps must be non-empty");
-            }
 
             auto scheduled = std::vector<WorkflowState>{};
-            for (auto const& step : steps->items())
+            for (auto const& step : steps.items())
             {
-                if (step.kind() != json::ValueKind::String || !stateByKey.contains(std::string{step.string()}))
+                if (!stateByKey.contains(std::string{step.string()}))
                 {
                     return refuse("MalformedWorkflowTool", "step names no declared state");
                 }
                 scheduled.emplace_back(stateByKey.at(std::string{step.string()}));
             }
-            UF_TRY_VALUE(parsedBounds, parseBounds(*bounds));
+            auto const parsedBounds = parseBounds(bounds);
 
             auto const dispatches = std::ranges::count(
                 scheduled,

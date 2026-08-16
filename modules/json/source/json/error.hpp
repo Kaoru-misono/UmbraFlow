@@ -10,7 +10,7 @@
 
 namespace uf::json
 {
-    // Four kinds because a caller reacts differently to each. uf-chaos's
+    // Five kinds because a caller reacts differently to each. uf-chaos's
     // evaluator reported all four as one AutomationErrorKind::InvalidResource,
     // which cannot distinguish "the schema you pinned is not one this evaluator
     // implements" from "the document you handed me is invalid" -- the first is
@@ -27,6 +27,13 @@ namespace uf::json
         // resolves to nothing, or an assertion this evaluator's number model
         // cannot represent. Never a statement about any instance.
         SchemaUnsupported,
+        // An instance failed a schema this evaluator did apply, specifically by
+        // carrying a member an additionalProperties: false site does not
+        // declare. Kept apart from DocumentRejected because that keyword is the
+        // closed-object rule: a caller that must tell "the document violates a
+        // closure" from "the document violates a shape constraint" can say so
+        // without parsing the message.
+        DocumentClosureRejected,
         // An instance failed a schema this evaluator did apply.
         DocumentRejected,
     };
@@ -47,5 +54,6 @@ UF_REFLECT_ENUM(
     uf::json::ErrorKind::Syntax,
     uf::json::ErrorKind::NotCanonical,
     uf::json::ErrorKind::SchemaUnsupported,
+    uf::json::ErrorKind::DocumentClosureRejected,
     uf::json::ErrorKind::DocumentRejected
 );

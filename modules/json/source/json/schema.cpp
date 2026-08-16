@@ -1040,15 +1040,20 @@ namespace uf::json
             ) const -> Status;
 
         private:
+            // DocumentRejected unless a keyword demands its own kind: the
+            // additionalProperties: false refusal is a closure violation, and
+            // combinators that decide how many branches matched carry that
+            // kind through when the only failures were closures.
             [[nodiscard]]
             auto refuseAt(
                 std::string const& path,
                 std::string_view keyword,
-                std::string_view detail
+                std::string_view detail,
+                ErrorKind kind = ErrorKind::DocumentRejected
             ) const -> std::unexpected<Error>
             {
                 return fail(
-                    ErrorKind::DocumentRejected,
+                    kind,
                     std::format(
                         "{} refused {}: {} {}",
                         m_label,
@@ -1070,11 +1075,20 @@ namespace uf::json
             // depth limit is the only one that can still arise here, because
             // compile resolved every $ref and compiled every pattern -- is not
             // a non-match and must propagate, or a $ref cycle would silently
-            // turn into "this branch did not apply".
+            // turn into "this branch did not apply". A closure refusal is a
+            // non-match like any other rejection: inside a states oneOf, the
+            // wait branch of a ui_action state refuses the ui_action member as
+            // undeclared, and that branch must still lose to the branch that
+            // does match.
             [[nodiscard]] static auto isNonMatch(Status const& outcome) -> bool
             {
-                return !outcome.has_value()
-                    && errorKind(outcome.error()) == ErrorKind::DocumentRejected;
+                if (outcome.has_value())
+                {
+                    return false;
+                }
+                auto const kind = errorKind(outcome.error());
+                return kind == ErrorKind::DocumentRejected
+                    || kind == ErrorKind::DocumentClosureRejected;
             }
 
             [[nodiscard]]
@@ -1195,7 +1209,8 @@ namespace uf::json
                         std::format(
                             "carries '{}', which this closed object does not declare",
                             member.first
-                        )
+                        ),
+                        ErrorKind::DocumentClosureRejected
                     );
                 }
                 UF_TRY(evaluate(
@@ -1498,6 +1513,17 @@ namespace uf::json
                 return ok();
 
             case Keyword::AnyOf:
+            {
+                // A branch that failed only by closure is still a non-match,
+                // but it is the only evidence of what made every branch fail.
+                // When nothing matched and every branch's refusal was a
+                // closure one, the outcome carries that kind so a caller that
+                // distinguishes closure violations does not lose the one the
+                // instance actually committed. A shape refusal from any
+                // branch keeps the refusal ordinary: the instance broke a
+                // rule no closure site gets to excuse, which is what a
+                // closure kind would mislabel.
+                auto onlyClosureRefusals = true;
                 for (auto const& branch : value.items())
                 {
                     auto outcome = evaluate(resource, branch, instance, path, depth + 1U);
@@ -1509,12 +1535,27 @@ namespace uf::json
                     {
                         return std::unexpected{std::move(outcome).error()};
                     }
+                    if (errorKind(outcome.error()) != ErrorKind::DocumentClosureRejected)
+                    {
+                        onlyClosureRefusals = false;
+                    }
+                }
+                if (onlyClosureRefusals)
+                {
+                    return refuseAt(
+                        path,
+                        "anyOf",
+                        "satisfies no branch; every branch refused the closed-object rule",
+                        ErrorKind::DocumentClosureRejected
+                    );
                 }
                 return refuseAt(path, "anyOf", "satisfies no branch");
+            }
 
             case Keyword::OneOf:
             {
-                auto matches = std::size_t{0};
+                auto matches             = std::size_t{0};
+                auto onlyClosureRefusals = true;
                 for (auto const& branch : value.items())
                 {
                     auto outcome = evaluate(resource, branch, instance, path, depth + 1U);
@@ -1527,6 +1568,26 @@ namespace uf::json
                     {
                         return std::unexpected{std::move(outcome).error()};
                     }
+                    if (errorKind(outcome.error()) != ErrorKind::DocumentClosureRejected)
+                    {
+                        onlyClosureRefusals = false;
+                    }
+                }
+                // A refusal with matches == 0 and nothing but closure refusals
+                // behind it is a closure violation wearing a combinator's
+                // message: every branch refused the instance on an
+                // additionalProperties site, so the closure kind says which
+                // rule the instance actually broke. Any shape refusal among
+                // the branches, or two or more matches, keeps the rejection
+                // ordinary.
+                if (matches == 0U && onlyClosureRefusals)
+                {
+                    return refuseAt(
+                        path,
+                        "oneOf",
+                        "satisfies no branch; every branch refused the closed-object rule",
+                        ErrorKind::DocumentClosureRejected
+                    );
                 }
                 if (matches != 1U)
                 {
