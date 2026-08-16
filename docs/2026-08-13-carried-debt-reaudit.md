@@ -85,7 +85,7 @@ instructions.
 | `C-R-2` | **Closed** by policy-owned approval requirements. |
 | `C-R-3` | Open only under `U2f` (schema/DDL `controller_kind` alignment). |
 | `C-R-4` | **Closed historical evidence** supporting the U2a exact-byte ruling. |
-| `C-R-5` | `U12e`; retain the schema-authority exclusion rationale. |
+| `C-R-5` | **Closed by deletion 2026-08-16** (`a49ba85`). The exclusion had no subject left: `SCHEMA_AUTHORITIES` and its checker were removed once no schema digest was pinned outside its schema file, and `tests/test-runtime-surface.py` says so where the table used to be. Nothing to retain. |
 | `C-R-6` | `U12e`; retain the atomic pre-plugin budget-debit rule. |
 | `C-R-7` | **Closed historical evidence** after U2a; scalar join columns and exact-byte identity remain deliberate. |
 | `C-R3-1` | `U12e`; review-only contract/schema test-name classification. |
