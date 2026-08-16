@@ -364,6 +364,7 @@ namespace uf::operator_runtime::test_support
         auto const exactJcs = std::format(
             "{{\"baseline_event_type\":\"fixture.baseline\","
             "\"journal_event_schema_manifest_hash\":\"{}\","
+            "\"observed_instance_identity_schema_hashes\":[\"{}\"],"
             "\"plugin_hash\":\"{}\","
             "\"plugin_id\":\"{}\",\"project_artifact_roots\":[],"
             "\"project_observation_schema_hash\":\"{}\","
@@ -373,6 +374,7 @@ namespace uf::operator_runtime::test_support
             "\"reconcile_payload_schema_manifest_hash\":\"{}\","
             "\"tool_catalog_hash\":\"{}\"}}",
             journalSchemaHash.hex(),
+            hashOf(k_observedIdentitySchema).hex(),
             pluginHash.hex(),
             pluginId,
             observationSchemaHash.hex(),
@@ -383,16 +385,17 @@ namespace uf::operator_runtime::test_support
             toolCatalogHash.hex()
         );
         auto const claims = ProjectRegistrationClaims{
-            .projectRegistrationFormat          = k_projectRegistrationFormat,
-            .pluginId                           = pluginId,
-            .pluginHash                         = pluginHash,
-            .toolCatalogHash                    = toolCatalogHash,
-            .projectStateSchemaHash             = stateSchemaHash,
-            .projectObservationSchemaHash       = observationSchemaHash,
-            .projectToolPreconditionSchemaHash  = preconditionSchemaHash,
-            .reconcilePayloadSchemaManifestHash = reconcileSchemaHash,
-            .journalEventSchemaManifestHash     = journalSchemaHash,
-            .baselineEventType                  = "fixture.baseline",
+            .projectRegistrationFormat            = k_projectRegistrationFormat,
+            .pluginId                             = pluginId,
+            .pluginHash                           = pluginHash,
+            .toolCatalogHash                      = toolCatalogHash,
+            .projectStateSchemaHash               = stateSchemaHash,
+            .projectObservationSchemaHash         = observationSchemaHash,
+            .projectToolPreconditionSchemaHash    = preconditionSchemaHash,
+            .reconcilePayloadSchemaManifestHash   = reconcileSchemaHash,
+            .journalEventSchemaManifestHash       = journalSchemaHash,
+            .baselineEventType                    = "fixture.baseline",
+            .observedInstanceIdentitySchemaHashes = {hashOf(k_observedIdentitySchema)},
         };
         auto owner = ProjectRegistrationSchemaOwner::create(
             // Init-captures rather than [exactJcs, claims]: both locals are

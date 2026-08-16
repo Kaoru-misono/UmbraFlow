@@ -7,9 +7,12 @@
 
 #include <domain/error.hpp>
 
+#include <algorithm>
 #include <array>
+#include <format>
 #include <map>
 #include <source_location>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -106,6 +109,26 @@ namespace uf::operator_runtime
                 }
             }
             return true;
+        }
+
+        // One hash set, as the bracketed hex the refusals that compare two
+        // sets print. Both sides of the comparison are named, because the
+        // whole of the diagnosis is which hash the supplied set carries that
+        // the registration never pinned, and which pinned hash no validator
+        // was supplied for.
+        [[nodiscard]]
+        auto joinedHex(std::span<ContentHash const> hashes) -> std::string
+        {
+            auto text = std::string{};
+            for (auto const& hash : hashes)
+            {
+                if (!text.empty())
+                {
+                    text += ", ";
+                }
+                text += hash.hex();
+            }
+            return text;
         }
 
     } // namespace
@@ -306,6 +329,7 @@ namespace uf::operator_runtime
         std::vector<ObservedInstanceIdentitySchema> schemas
     ) -> Result<ObservedInstanceIdentitySchemas>
     {
+        auto supplied   = std::vector<ContentHash>{};
         auto validators = std::map<
             std::string,
             SemanticIdentityBasisValidator,
@@ -330,7 +354,47 @@ namespace uf::operator_runtime
                     "Observed instance identity schema IDs must be unique"
                 );
             }
+            supplied.emplace_back(schema.schemaHash);
         }
+        // The supplied side obeys the registration's own rule rather than
+        // absorbing it: a set that is not unique and sorted is refused, never
+        // normalized. Collapsing two bindings that claim one hash would leave
+        // a validator usable that no pinned document establishes, and
+        // resorting would blur which set the authority was built from -- the
+        // loader derives the canonical order and hands it over as such.
+        for (auto index = std::size_t{0}; index < supplied.size(); ++index)
+        {
+            if (index != 0U && !(supplied[index - 1U] < supplied[index]))
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "Observed instance identity schema hashes must be unique "
+                    "and sorted"
+                );
+            }
+        }
+
+        // The registration owns the closed identity-schema set, so the set
+        // this authority was built from must be exactly that set: a validator
+        // whose bytes the registration never pinned could otherwise be added
+        // here without moving project_registration_hash, and a pinned document
+        // no validator was supplied for would make the authority answer for a
+        // schema it cannot apply. Both sides are named because the difference
+        // is the whole of the diagnosis.
+        auto const& registered = registration.observedInstanceIdentitySchemaHashes();
+        if (supplied != registered)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "Observed instance identity schemas hash to [{}], and the "
+                    "registration pins [{}]",
+                    joinedHex(supplied),
+                    joinedHex(registered)
+                )
+            );
+        }
+
         // Built in place rather than as a designated-initialised temporary that
         // is then moved. State holds a std::map, whose move constructor this
         // standard library does not declare noexcept, so moving one here was the

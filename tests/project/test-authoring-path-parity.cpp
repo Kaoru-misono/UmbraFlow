@@ -650,6 +650,12 @@ return {
             operator_runtime::ProjectRegistrationClaims const& claims
         ) -> std::string
         {
+            auto identityHashes = std::vector<json::Value>{};
+            identityHashes.reserve(claims.observedInstanceIdentitySchemaHashes.size());
+            for (auto const& hash : claims.observedInstanceIdentitySchemaHashes)
+            {
+                identityHashes.emplace_back(json::Value::ofString(hash.hex()));
+            }
             return json::canonicalBytes(json::Value::ofObject({
                 {
                     "baseline_event_type",
@@ -660,6 +666,10 @@ return {
                     json::Value::ofString(
                         claims.journalEventSchemaManifestHash.hex()
                     ),
+                },
+                {
+                    "observed_instance_identity_schema_hashes",
+                    json::Value::ofArray(std::move(identityHashes)),
                 },
                 {"plugin_hash", json::Value::ofString(claims.pluginHash.hex())},
                 {"plugin_id", json::Value::ofString(claims.pluginId)},
@@ -730,22 +740,23 @@ return {
                 projectDeployment,
                 deployment::ProjectDeployment::create(
                     deployment::ProjectDeploymentSources{
-                        .pluginId              = k_pluginId,
-                        .projectState          = k_projectStateSchema,
-                        .projectObservation    = k_projectObservationSchema,
-                        .toolPrecondition      = k_toolPreconditionSchema,
-                        .reconcile             = k_reconcileSchema,
-                        .toolCatalog           = toolCatalog,
-                        .journalEventManifest  = journalManifest,
-                        .reconcileManifest     = reconcileManifest,
-                        .journalPayloadSchemas = journalPayloadSchemas,
-                        .effectPayloadSchemas  = {},
+                        .pluginId                        = k_pluginId,
+                        .projectState                    = k_projectStateSchema,
+                        .projectObservation              = k_projectObservationSchema,
+                        .toolPrecondition                = k_toolPreconditionSchema,
+                        .reconcile                       = k_reconcileSchema,
+                        .toolCatalog                     = toolCatalog,
+                        .journalEventManifest            = journalManifest,
+                        .reconcileManifest               = reconcileManifest,
+                        .journalPayloadSchemas           = journalPayloadSchemas,
+                        .effectPayloadSchemas            = {},
+                        .observedInstanceIdentitySchemas = {},
                     }
                 )
             );
 
             auto claims = operator_runtime::ProjectRegistrationClaims{
-                .projectRegistrationFormat          =
+                .projectRegistrationFormat             =
                     operator_runtime::k_projectRegistrationFormat,
                 .pluginId                           = std::string{k_pluginId},
                 .pluginHash                         = pluginHash,

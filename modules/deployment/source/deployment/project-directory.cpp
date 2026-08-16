@@ -413,15 +413,16 @@ namespace uf::deployment
         // bytes this loader read.
         struct DerivedRegistration final
         {
-            std::string pluginId{};
-            std::string baselineEventType{};
-            ContentHash pluginHash;
-            ContentHash toolCatalogHash;
-            ContentHash projectStateSchemaHash;
-            ContentHash projectObservationSchemaHash;
-            ContentHash projectToolPreconditionSchemaHash;
-            ContentHash reconcilePayloadSchemaManifestHash;
-            ContentHash journalEventSchemaManifestHash;
+            std::string              pluginId{};
+            std::string              baselineEventType{};
+            ContentHash              pluginHash;
+            ContentHash              toolCatalogHash;
+            ContentHash              projectStateSchemaHash;
+            ContentHash              projectObservationSchemaHash;
+            ContentHash              projectToolPreconditionSchemaHash;
+            ContentHash              reconcilePayloadSchemaManifestHash;
+            ContentHash              journalEventSchemaManifestHash;
+            std::vector<ContentHash> observedInstanceIdentitySchemaHashes{};
         };
 
         // The registration document, as exact RFC 8785 JCS. It is assembled as
@@ -448,11 +449,19 @@ namespace uf::deployment
                 }));
             }
 
+            auto identityHashes = std::vector<json::Value>{};
+            for (auto const& identityHash : derived.observedInstanceIdentitySchemaHashes)
+            {
+                identityHashes.emplace_back(hash(identityHash));
+            }
+
             return json::canonicalBytes(json::Value::ofObject({
                 {"baseline_event_type",
                  json::Value::ofString(derived.baselineEventType)},
                 {"journal_event_schema_manifest_hash",
                  hash(derived.journalEventSchemaManifestHash)},
+                {"observed_instance_identity_schema_hashes",
+                 json::Value::ofArray(std::move(identityHashes))},
                 {"plugin_hash", hash(derived.pluginHash)},
                 {"plugin_id", json::Value::ofString(derived.pluginId)},
                 {"project_artifact_roots", json::Value::ofArray(std::move(roots))},
@@ -548,21 +557,35 @@ namespace uf::deployment
                     });
                 }
 
+                auto identityHashes = std::vector<ContentHash>{};
+                for (auto const& identityHash :
+                     member(document, "observed_instance_identity_schema_hashes").items())
+                {
+                    UF_TRY_VALUE(
+                        hash,
+                        ContentHash::parse(
+                            std::string{"sha256:"} + std::string{identityHash.string()}
+                        )
+                    );
+                    identityHashes.emplace_back(hash);
+                }
+
                 return operator_runtime::ProjectRegistrationClaims{
-                    .projectRegistrationFormat          = formatOf(
+                    .projectRegistrationFormat             = formatOf(
                         document,
                         "project_registration_format"
                     ),
-                    .pluginId                           = text(document, "plugin_id"),
-                    .pluginHash                         = pluginHash,
-                    .toolCatalogHash                    = catalogHash,
-                    .projectStateSchemaHash             = stateHash,
-                    .projectObservationSchemaHash       = observationHash,
-                    .projectToolPreconditionSchemaHash  = preconditionHash,
-                    .reconcilePayloadSchemaManifestHash = reconcileHash,
-                    .journalEventSchemaManifestHash     = journalHash,
-                    .baselineEventType                  = text(document, "baseline_event_type"),
-                    .projectArtifactRoots               = std::move(roots),
+                    .pluginId                             = text(document, "plugin_id"),
+                    .pluginHash                           = pluginHash,
+                    .toolCatalogHash                      = catalogHash,
+                    .projectStateSchemaHash               = stateHash,
+                    .projectObservationSchemaHash         = observationHash,
+                    .projectToolPreconditionSchemaHash    = preconditionHash,
+                    .reconcilePayloadSchemaManifestHash   = reconcileHash,
+                    .journalEventSchemaManifestHash       = journalHash,
+                    .baselineEventType                    = text(document, "baseline_event_type"),
+                    .projectArtifactRoots                 = std::move(roots),
+                    .observedInstanceIdentitySchemaHashes = std::move(identityHashes),
                 };
             };
         }
@@ -613,6 +636,7 @@ namespace uf::deployment
 
             std::vector<std::string> journalPayloadSchemas{};
             std::vector<std::string> effectPayloadSchemas{};
+            std::vector<std::string> observedInstanceIdentitySchemas{};
         };
 
         [[nodiscard]]
@@ -690,18 +714,28 @@ namespace uf::deployment
                     "a deployment's effect_payload_schemas entry"
                 )
             );
+            UF_TRY_VALUE(
+                identitySchemas,
+                readList(
+                    root,
+                    block,
+                    "observed_instance_identity_schemas",
+                    "a deployment's observed_instance_identity_schemas entry"
+                )
+            );
 
             return DeploymentFiles{
-                .pluginBytes           = std::move(plugin),
-                .projectState          = std::move(state),
-                .projectObservation    = std::move(observation),
-                .toolPrecondition      = std::move(precondition),
-                .reconcile             = std::move(reconcile),
-                .toolCatalog           = std::move(catalog),
-                .journalEventManifest  = std::move(journal),
-                .reconcileManifest     = std::move(reconcileManifest),
-                .journalPayloadSchemas = std::move(journalPayloads),
-                .effectPayloadSchemas  = std::move(effectPayloads),
+                .pluginBytes                     = std::move(plugin),
+                .projectState                    = std::move(state),
+                .projectObservation              = std::move(observation),
+                .toolPrecondition                = std::move(precondition),
+                .reconcile                       = std::move(reconcile),
+                .toolCatalog                     = std::move(catalog),
+                .journalEventManifest            = std::move(journal),
+                .reconcileManifest               = std::move(reconcileManifest),
+                .journalPayloadSchemas           = std::move(journalPayloads),
+                .effectPayloadSchemas            = std::move(effectPayloads),
+                .observedInstanceIdentitySchemas = std::move(identitySchemas),
             };
         }
 
@@ -1204,19 +1238,21 @@ namespace uf::deployment
             UF_TRY_VALUE(blobs, readArtifactBlobs(root, block));
             UF_TRY_VALUE(artifactRoots, artifactRootsOf(blobs));
 
-            auto const journalViews = views(files.journalPayloadSchemas);
-            auto const effectViews  = views(files.effectPayloadSchemas);
-            auto const sources      = ProjectDeploymentSources{
-                     .pluginId              = pluginId,
-                     .projectState          = files.projectState,
-                     .projectObservation    = files.projectObservation,
-                     .toolPrecondition      = files.toolPrecondition,
-                     .reconcile             = files.reconcile,
-                     .toolCatalog           = files.toolCatalog,
-                     .journalEventManifest  = files.journalEventManifest,
-                     .reconcileManifest     = files.reconcileManifest,
-                     .journalPayloadSchemas = journalViews,
-                     .effectPayloadSchemas  = effectViews,
+            auto const journalViews    = views(files.journalPayloadSchemas);
+            auto const effectViews     = views(files.effectPayloadSchemas);
+            auto const identityViews   = views(files.observedInstanceIdentitySchemas);
+            auto const sources         = ProjectDeploymentSources{
+                     .pluginId                        = pluginId,
+                     .projectState                    = files.projectState,
+                     .projectObservation              = files.projectObservation,
+                     .toolPrecondition                = files.toolPrecondition,
+                     .reconcile                       = files.reconcile,
+                     .toolCatalog                     = files.toolCatalog,
+                     .journalEventManifest            = files.journalEventManifest,
+                     .reconcileManifest               = files.reconcileManifest,
+                     .journalPayloadSchemas           = journalViews,
+                     .effectPayloadSchemas            = effectViews,
+                     .observedInstanceIdentitySchemas = identityViews,
             };
             // R5, R6 and R7 are all inside this call. It compiles every schema
             // under the evaluator's closed keyword set, holds the journal
@@ -1240,16 +1276,36 @@ namespace uf::deployment
             UF_TRY_VALUE(preconditionHash, hashOf(files.toolPrecondition));
             UF_TRY_VALUE(reconcileHash, hashOf(files.reconcileManifest));
             UF_TRY_VALUE(journalHash, hashOf(files.journalEventManifest));
+
+            // The identity schema hashes, derived from the bytes this loader
+            // read and sorted and deduplicated by that derivation. The
+            // registration schema cannot state sortedness, so the framework's
+            // own reading of the derived document refuses any other order;
+            // what a project author writes is never consulted, on the same
+            // terms as every other digest here.
+            auto identityHashes = std::vector<ContentHash>{};
+            identityHashes.reserve(files.observedInstanceIdentitySchemas.size());
+            for (auto const& identityBytes : files.observedInstanceIdentitySchemas)
+            {
+                UF_TRY_VALUE(identityHash, hashOf(identityBytes));
+                identityHashes.emplace_back(identityHash);
+            }
+            std::ranges::sort(identityHashes);
+            auto const [identityUniqueBegin, identityUniqueEnd] =
+                std::ranges::unique(identityHashes);
+            identityHashes.erase(identityUniqueBegin, identityUniqueEnd);
+
             auto const derived = DerivedRegistration{
-                .pluginId                           = pluginId,
-                .baselineEventType                  = text(block, "baseline_event_type"),
-                .pluginHash                         = pluginHash,
-                .toolCatalogHash                    = catalogHash,
-                .projectStateSchemaHash             = stateHash,
-                .projectObservationSchemaHash       = observationHash,
-                .projectToolPreconditionSchemaHash  = preconditionHash,
-                .reconcilePayloadSchemaManifestHash = reconcileHash,
-                .journalEventSchemaManifestHash     = journalHash,
+                .pluginId                             = pluginId,
+                .baselineEventType                    = text(block, "baseline_event_type"),
+                .pluginHash                           = pluginHash,
+                .toolCatalogHash                      = catalogHash,
+                .projectStateSchemaHash               = stateHash,
+                .projectObservationSchemaHash         = observationHash,
+                .projectToolPreconditionSchemaHash    = preconditionHash,
+                .reconcilePayloadSchemaManifestHash   = reconcileHash,
+                .journalEventSchemaManifestHash       = journalHash,
+                .observedInstanceIdentitySchemaHashes = std::move(identityHashes),
             };
 
             auto const canonicalJcs = registrationJcs(derived, artifactRoots);
@@ -1349,17 +1405,38 @@ namespace uf::deployment
             {
                 return std::unexpected{reconcileOwner.error().clone()};
             }
+            // The authority obeys the registration's own rule and refuses a
+            // supplied set that is not the canonical sorted order, so the
+            // bindings are sorted here, the same derivation that wrote the
+            // registration -- the deployment block's declaration order is
+            // never consulted, on the same terms as every other digest.
+            auto identitySchemas = deployed->observedIdentitySchemas();
+            std::ranges::sort(
+                identitySchemas,
+                {},
+                &operator_runtime::ObservedInstanceIdentitySchema::schemaHash
+            );
+            auto identitySet =
+                operator_runtime::ObservedInstanceIdentitySchemas::create(
+                    *registration,
+                    std::move(identitySchemas)
+                );
+            if (!identitySet.has_value())
+            {
+                return std::unexpected{identitySet.error().clone()};
+            }
 
             loaded.deployments.emplace_back(LoadedDeployment{
-                .name                   = name,
-                .registration           = *std::move(registration),
-                .schemaOwner            = *std::move(projectSchemaOwner),
-                .journalSchemaOwner     = *std::move(journalOwner),
-                .toolCatalogSchemaOwner = *std::move(catalogOwner),
-                .reconcileSchemaOwner   = *std::move(reconcileOwner),
-                .catalog                = *std::move(deployed),
-                .pluginBytes            = std::move(files.pluginBytes),
-                .artifactBlobs          = std::move(blobs),
+                .name                            = name,
+                .registration                    = *std::move(registration),
+                .schemaOwner                     = *std::move(projectSchemaOwner),
+                .journalSchemaOwner              = *std::move(journalOwner),
+                .toolCatalogSchemaOwner          = *std::move(catalogOwner),
+                .reconcileSchemaOwner            = *std::move(reconcileOwner),
+                .observedInstanceIdentitySchemas = *std::move(identitySet),
+                .catalog                         = *std::move(deployed),
+                .pluginBytes                     = std::move(files.pluginBytes),
+                .artifactBlobs                   = std::move(blobs),
             });
         }
 

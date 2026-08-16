@@ -133,9 +133,18 @@ return {
             auto result = std::string{"{\"baseline_event_type\":\"" + claims.baselineEventType +
                                       "\",\"journal_event_schema_manifest_hash\":\"" +
                                       claims.journalEventSchemaManifestHash.hex() +
-                                      "\",\"plugin_hash\":\"" +
-                                      claims.pluginHash.hex() + "\",\"plugin_id\":\"" +
-                                      claims.pluginId + "\",\"project_artifact_roots\":["};
+                                      "\",\"observed_instance_identity_schema_hashes\":["};
+            for (auto index = std::size_t{0};
+                 index < claims.observedInstanceIdentitySchemaHashes.size();
+                 ++index)
+            {
+                if (index != 0U)
+                    result.push_back(',');
+                result += "\"" + claims.observedInstanceIdentitySchemaHashes[index].hex() + "\"";
+            }
+            result += "],\"plugin_hash\":\"" +
+                      claims.pluginHash.hex() + "\",\"plugin_id\":\"" +
+                      claims.pluginId + "\",\"project_artifact_roots\":[";
             for (auto index = std::size_t{0}; index < claims.projectArtifactRoots.size(); ++index)
             {
                 if (index != 0U)

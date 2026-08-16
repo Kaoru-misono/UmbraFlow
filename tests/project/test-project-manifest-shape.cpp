@@ -149,6 +149,7 @@ namespace uf::project
             block += R"json("reconcile_manifest":"schema/reconcile-manifest.json",)json";
             block += R"json("journal_payload_schemas":["schema/journal-0.json"],)json";
             block += R"json("effect_payload_schemas":[],)json";
+            block += R"json("observed_instance_identity_schemas":[],)json";
             block += R"json("artifact_blobs":[]})json";
             return block;
         }
@@ -271,6 +272,7 @@ namespace uf::project
                 R"json("reconcile_manifest":"schema/reconcile-manifest.json",)json"
                 R"json("journal_payload_schemas":["schema/journal-0.json"],)json"
                 R"json("effect_payload_schemas":[],)json"
+                R"json("observed_instance_identity_schemas":[],)json"
                 R"json("artifact_blobs":[]}])json";
 
             auto unknownMember = acceptedManifest();

@@ -159,6 +159,30 @@ namespace uf::operator_runtime
                     );
                 }
             }
+
+            // The identity schema hashes are lowercase hex, so ContentHash's
+            // byte comparison is the string order the registration schema
+            // promises. A claim set stating any other order is a document the
+            // loader never derived, because the loader sorts before it writes.
+            for (
+                auto index = std::size_t{0};
+                index < claims.observedInstanceIdentitySchemaHashes.size();
+                ++index
+            )
+            {
+                if (
+                    index != 0U
+                    && !(claims.observedInstanceIdentitySchemaHashes[index - 1U]
+                         < claims.observedInstanceIdentitySchemaHashes[index])
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "ProjectRegistration observed instance identity schema "
+                        "hashes must be unique and sorted"
+                    );
+                }
+            }
             return ok();
         }
     }
@@ -267,6 +291,12 @@ namespace uf::operator_runtime
         -> std::vector<NamedArtifactRoot> const&
     {
         return m_claims.projectArtifactRoots;
+    }
+
+    auto VerifiedProjectRegistration::observedInstanceIdentitySchemaHashes()
+        const noexcept -> std::vector<ContentHash> const&
+    {
+        return m_claims.observedInstanceIdentitySchemaHashes;
     }
 
     auto ProjectRegistration::verifyExact(

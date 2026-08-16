@@ -200,6 +200,24 @@ namespace uf::operator_runtime::test_support
     }
 })json"};
 
+    // The one observed-instance identity schema this fixture deployment
+    // supplies. The ledger's hand-written basis validators demand exactly the
+    // two members below and refuse anything else, so this document states the
+    // same constraint as a schema and the authority compiled from it accepts
+    // exactly the bases those callbacks accepted.
+    inline constexpr auto k_observedIdentitySchema = std::string_view{R"json({
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://fixture.example/identity/overlay/v1",
+    "title": "umbraflow fixture observed instance identity basis",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["native_id", "surface_epoch"],
+    "properties": {
+        "native_id": {"type": "string", "minLength": 1},
+        "surface_epoch": {"type": "integer", "minimum": 0}
+    }
+})json"};
+
     struct JournalPayloadSource final
     {
         std::string_view eventType{};
@@ -221,6 +239,8 @@ namespace uf::operator_runtime::test_support
     };
 
     inline constexpr auto k_effectPayloadSchemas = std::array{k_effectPayloadSchema};
+
+    inline constexpr auto k_observedIdentitySchemas = std::array{k_observedIdentitySchema};
 
     // One tool of this project's catalog, in the catalog document's own
     // vocabulary. The names are not namespaced, which
@@ -647,16 +667,17 @@ namespace uf::operator_runtime::test_support
             -> deployment::ProjectDeploymentSources
         {
             return deployment::ProjectDeploymentSources{
-                .pluginId              = m_pluginId,
-                .projectState          = k_projectStateSchema,
-                .projectObservation    = k_projectObservationSchema,
-                .toolPrecondition      = k_toolPreconditionSchema,
-                .reconcile             = k_reconcileSchema,
-                .toolCatalog           = m_toolCatalog,
-                .journalEventManifest  = m_journalEventManifest,
-                .reconcileManifest     = m_reconcileManifest,
-                .journalPayloadSchemas = k_journalPayloadSchemas,
-                .effectPayloadSchemas  = k_effectPayloadSchemas,
+                .pluginId                        = m_pluginId,
+                .projectState                    = k_projectStateSchema,
+                .projectObservation              = k_projectObservationSchema,
+                .toolPrecondition                = k_toolPreconditionSchema,
+                .reconcile                       = k_reconcileSchema,
+                .toolCatalog                     = m_toolCatalog,
+                .journalEventManifest            = m_journalEventManifest,
+                .reconcileManifest               = m_reconcileManifest,
+                .journalPayloadSchemas           = k_journalPayloadSchemas,
+                .effectPayloadSchemas            = k_effectPayloadSchemas,
+                .observedInstanceIdentitySchemas = k_observedIdentitySchemas,
             };
         }
     };

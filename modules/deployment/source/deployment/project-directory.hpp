@@ -4,6 +4,7 @@
 
 #include <operator/journal-entry.hpp>
 #include <operator/manifest.hpp>
+#include <operator/project-observation.hpp>
 #include <operator/project-plugin.hpp>
 #include <operator/reconcile-outcome.hpp>
 #include <operator/tool-invocation.hpp>
@@ -93,7 +94,7 @@ namespace uf::deployment
     };
 
     // One deployment, loaded: the registration this loader derived from the
-    // deployment's block and the digests of the files it read, and the five
+    // deployment's block and the digests of the files it read, and the six
     // authorities built from it.
     //
     // There is no authored registration document anywhere in a project
@@ -104,13 +105,14 @@ namespace uf::deployment
     {
         std::string name{};
 
-        operator_runtime::VerifiedProjectRegistration   registration;
-        operator_runtime::ProjectSchemaOwner            schemaOwner;
-        operator_runtime::ProjectJournalSchemaOwner     journalSchemaOwner;
-        operator_runtime::ProjectToolCatalogSchemaOwner toolCatalogSchemaOwner;
-        operator_runtime::ProjectReconcileSchemaOwner   reconcileSchemaOwner;
+        operator_runtime::VerifiedProjectRegistration     registration;
+        operator_runtime::ProjectSchemaOwner              schemaOwner;
+        operator_runtime::ProjectJournalSchemaOwner       journalSchemaOwner;
+        operator_runtime::ProjectToolCatalogSchemaOwner   toolCatalogSchemaOwner;
+        operator_runtime::ProjectReconcileSchemaOwner     reconcileSchemaOwner;
+        operator_runtime::ObservedInstanceIdentitySchemas observedInstanceIdentitySchemas;
 
-        // The compiled schemas and read manifests the five authorities above
+        // The compiled schemas and read manifests the six authorities above
         // were built from, kept rather than dropped. Every authority judges a
         // call and therefore needs its arguments; a document that names tools
         // without calling them -- a conformance vocabulary -- has none to
@@ -212,7 +214,7 @@ namespace uf::deployment
 
     // Reads a project directory the way the product reads it:
     // umbraflow-project.json, the RuntimeArtifact it names, and every
-    // deployment's five authorities. One deployment is enough, no conformance
+    // deployment's six authorities. One deployment is enough, no conformance
     // document is opened, and no tool is required to be mutating -- a project
     // that honestly implements nothing mutating is a project this starts.
     //

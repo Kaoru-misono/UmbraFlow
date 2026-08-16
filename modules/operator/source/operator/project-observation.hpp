@@ -197,6 +197,7 @@ namespace uf::operator_runtime
     struct ObservedInstanceIdentitySchema final
     {
         std::string                    schemaId{};
+        ContentHash                    schemaHash;
         SemanticIdentityBasisValidator validate{};
     };
 

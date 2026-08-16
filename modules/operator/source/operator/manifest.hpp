@@ -25,7 +25,7 @@ namespace uf::operator_runtime
     // digest also compared a value with itself: the loader derived it once and
     // handed the same local to both the document and the schema owner that
     // judged the document.
-    inline constexpr auto k_projectRegistrationFormat = uint64{1U};
+    inline constexpr auto k_projectRegistrationFormat = uint64{2U};
 
     struct NamedArtifactRoot final
     {
@@ -49,6 +49,12 @@ namespace uf::operator_runtime
         ContentHash                    journalEventSchemaManifestHash;
         std::string                    baselineEventType{};
         std::vector<NamedArtifactRoot> projectArtifactRoots{};
+
+        // The closed set of observed-instance identity schema documents this
+        // registration owns, as the sha256 of each exact document, sorted and
+        // unique. The deployment that supplied the documents derives it; the
+        // claims check refuses any other order.
+        std::vector<ContentHash> observedInstanceIdentitySchemaHashes{};
     };
 
     // The implementation must parse the complete registration, validate it
@@ -121,6 +127,10 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto projectArtifactRoots() const noexcept UF_LIFETIME_BOUND
             -> std::vector<NamedArtifactRoot> const&;
+
+        [[nodiscard]]
+        auto observedInstanceIdentitySchemaHashes() const noexcept
+            UF_LIFETIME_BOUND -> std::vector<ContentHash> const&;
     };
 
     // The sole mint for VerifiedProjectRegistration. There is deliberately no

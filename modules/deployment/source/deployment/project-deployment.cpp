@@ -998,6 +998,28 @@ namespace uf::deployment
             return ok();
         }
 
+        // The four project schemas declare a fixed identity, but an observed
+        // identity schema declares its own: the compiled authority answers by
+        // whatever absolute $id the document carries, which is why the
+        // registration restates no ID at all. compile() below enforces that
+        // the value is an absolute URI; presence is this check's.
+        [[nodiscard]]
+        auto identityIdOf(std::string_view label, std::string_view exactBytes)
+            -> Result<std::string>
+        {
+            UF_TRY_VALUE(document, parseDocument(exactBytes));
+            auto const* const p_id = document.find("$id");
+            if (p_id == nullptr || p_id->kind() != json::ValueKind::String
+                || p_id->string().empty())
+            {
+                return refuse(std::format(
+                    "{} must declare its own absolute \"$id\"",
+                    label
+                ));
+            }
+            return std::string{p_id->string()};
+        }
+
         [[nodiscard]]
         auto hashOf(std::string_view bytes) -> Result<ContentHash>
         {
@@ -1263,11 +1285,29 @@ namespace uf::deployment
         std::vector<PayloadSchema>    effectPayloadSchemas{};
         std::vector<DispositionEntry> dispositions{};
 
+        // One observed identity schema this deployment compiled, in the order
+        // the deployment block named the documents. The registration pins the
+        // same bytes by sha256, and ObservedInstanceIdentitySchemas::create
+        // refuses any validator set that is not exactly that pinned set.
+        struct IdentitySchema final
+        {
+            std::string  schemaId{};
+            ContentHash  schemaHash;
+            json::Schema schema;
+        };
+        std::vector<IdentitySchema> identitySchemas{};
+
         std::string requestDefinition{};
         std::string verdictDefinition{};
         std::string verdictMember{};
 
         [[nodiscard]] auto findTool(std::string_view name) const -> ToolEntry const*;
+
+        [[nodiscard]]
+        auto validateIdentityBasis(
+            std::size_t index,
+            json::Value const& basis
+        ) const -> Status;
 
         [[nodiscard]]
         auto validateToolArguments(
@@ -1302,6 +1342,21 @@ namespace uf::deployment
     {
         auto const found = std::ranges::find(tools, name, &ToolEntry::name);
         return found == tools.end() ? nullptr : &*found;
+    }
+
+    auto ProjectDeployment::State::validateIdentityBasis(
+        std::size_t index,
+        json::Value const& basis
+    ) const -> Status
+    {
+        auto const& schema = identitySchemas[index].schema;
+        return adopt(
+            schema.validate(basis),
+            std::format(
+                "observed identity basis under {}",
+                identitySchemas[index].schemaId
+            )
+        );
     }
 
     // The arguments of one call, against the definition this project's Tool
@@ -1786,6 +1841,7 @@ namespace uf::deployment
             .journalPayloads       = {},
             .effectPayloadSchemas  = {},
             .dispositions          = {},
+            .identitySchemas       = {},
             .requestDefinition     = {},
             .verdictDefinition     = {},
             .verdictMember         = {},
@@ -1824,6 +1880,74 @@ namespace uf::deployment
             state->effectPayloadSchemas.emplace_back(PayloadSchema{
                 .hash   = hash,
                 .schema = std::move(schema),
+            });
+        }
+
+        // The observed identity schemas, compiled under the same closed
+        // keyword set as every other schema this deployment applies. Each is
+        // compiled with the whole identity set around it and with nothing
+        // else: one identity document may reference another by its $id, two
+        // documents declaring the same $id are refused here rather than
+        // surfacing as an authority with one key answered twice, and a $ref
+        // that reaches past the registered set cannot compile. The framework
+        // catalog is outside the resolution domain for exactly this reason:
+        // a catalog schema's bytes are not pinned by the registration, so
+        // editing one must not be able to change what the identity set
+        // answers while every identity byte and project_registration_hash
+        // stay unchanged.
+        // The labels are owned strings the documents' views name: a view into
+        // a formatted temporary would dangle before the compiles below read
+        // it, and the label is what a refusal prints for the document.
+        auto identityLabels = std::vector<std::string>{};
+        identityLabels.reserve(sources.observedInstanceIdentitySchemas.size());
+        for (auto const bytes : sources.observedInstanceIdentitySchemas)
+        {
+            UF_TRY_VALUE(hash, hashOf(bytes));
+            identityLabels.emplace_back(
+                std::format("observed identity {}", hash.hex())
+            );
+        }
+
+        auto identityDocuments = std::vector<json::Schema::Document>{};
+        identityDocuments.reserve(identityLabels.size());
+        for (auto index = std::size_t{0}; index < identityLabels.size(); ++index)
+        {
+            identityDocuments.emplace_back(json::Schema::Document{
+                .label      = identityLabels[index],
+                .exactBytes = sources.observedInstanceIdentitySchemas[index],
+            });
+        }
+        for (auto index = std::size_t{0}; index < identityDocuments.size(); ++index)
+        {
+            UF_TRY_VALUE(
+                schemaId,
+                identityIdOf(
+                    identityDocuments[index].label,
+                    identityDocuments[index].exactBytes
+                )
+            );
+            auto around = std::vector<json::Schema::Document>{};
+            around.reserve(identityDocuments.size() - 1U);
+            for (auto other = std::size_t{0}; other < identityDocuments.size(); ++other)
+            {
+                if (other != index)
+                {
+                    around.emplace_back(identityDocuments[other]);
+                }
+            }
+            UF_TRY_VALUE(
+                schema,
+                compile(
+                    identityDocuments[index].label,
+                    identityDocuments[index].exactBytes,
+                    around
+                )
+            );
+            UF_TRY_VALUE(hash, hashOf(identityDocuments[index].exactBytes));
+            state->identitySchemas.emplace_back(State::IdentitySchema{
+                .schemaId   = std::move(schemaId),
+                .schemaHash = hash,
+                .schema     = std::move(schema),
             });
         }
 
@@ -2288,5 +2412,24 @@ namespace uf::deployment
             }
             return found->disposition;
         };
+    }
+
+    auto ProjectDeployment::observedIdentitySchemas() const
+        -> std::vector<operator_runtime::ObservedInstanceIdentitySchema>
+    {
+        auto bindings = std::vector<operator_runtime::ObservedInstanceIdentitySchema>{};
+        bindings.reserve(m_state->identitySchemas.size());
+        for (auto index = std::size_t{0}; index < m_state->identitySchemas.size(); ++index)
+        {
+            bindings.emplace_back(operator_runtime::ObservedInstanceIdentitySchema{
+                .schemaId   = m_state->identitySchemas[index].schemaId,
+                .schemaHash = m_state->identitySchemas[index].schemaHash,
+                .validate   = [p_state = m_state, index](json::Value const& basis) -> Status
+                {
+                    return p_state->validateIdentityBasis(index, basis);
+                },
+            });
+        }
+        return bindings;
     }
 }

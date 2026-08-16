@@ -14,6 +14,7 @@
     "project_tool_precondition_schema_hash",
     "reconcile_payload_schema_manifest_hash",
     "journal_event_schema_manifest_hash",
+    "observed_instance_identity_schema_hashes",
     "baseline_event_type",
     "project_artifact_roots"
   ],
@@ -30,6 +31,12 @@
     "project_tool_precondition_schema_hash": { "$ref": "#/$defs/hash" },
     "reconcile_payload_schema_manifest_hash": { "$ref": "#/$defs/hash" },
     "journal_event_schema_manifest_hash": { "$ref": "#/$defs/hash" },
+    "observed_instance_identity_schema_hashes": {
+      "$comment": "The closed set of observed-instance identity schema documents this registration owns, as the sha256 of each exact document. The deployment names the documents and the loader derives every digest from the bytes it read, sorted and unique by that derivation -- JSON Schema cannot state sortedness, so the framework's own reading of the derived document refuses any other order. The documents' absolute $ids are not restated here: the compiled authority reads each from the bytes this member pins, which is why a validator for bytes outside this set cannot be added without moving project_registration_hash.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/hash" },
+      "uniqueItems": true
+    },
     "baseline_event_type": { "$ref": "#/$defs/namespaced_name" },
     "project_artifact_roots": {
       "type": "array",

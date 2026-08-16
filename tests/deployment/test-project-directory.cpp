@@ -32,6 +32,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <filesystem>
@@ -229,6 +230,8 @@ namespace uf::deployment
                 }
                 block += R"json(],"effect_payload_schemas":[)json"
                     + document("effect-0.json") + R"json(],)json";
+                block += R"json("observed_instance_identity_schemas":[)json"
+                    + document("identity-0.json") + R"json(],)json";
                 block += R"json("artifact_blobs":[{"name":"page-model","path":"blob/)json";
                 block += name;
                 block += R"json(.blob"}]})json";
@@ -298,6 +301,7 @@ namespace uf::deployment
                     );
                 }
                 write(at("effect-0.json"), umbraflow::k_effectPayloadSchema);
+                write(at("identity-0.json"), umbraflow::k_observedIdentitySchema);
                 write(
                     m_root / "plugin" / (std::string{name} + ".luau"),
                     "return {plugin_id = \"fixture." + std::string{name} + "\"}\n"
@@ -457,7 +461,7 @@ namespace uf::deployment
     // Everything below breaks one thing in this directory, so this case is what
     // says the directory is otherwise whole. It also states what a load
     // produces, because no other case reads the result.
-    TEST_CASE("a project directory becomes five authorities per deployment")
+    TEST_CASE("a project directory becomes six authorities per deployment")
     {
         auto const  fixture = Fixture{};
         auto const  loaded  = fixture.load();
@@ -501,8 +505,231 @@ namespace uf::deployment
                         )
                         .has_value());
 
+        // The sixth authority: the loader derived the identity hashes from the
+        // file it read, pinned them in the registration, and built the
+        // authority from the very bindings the deployment compiled -- so the
+        // authority answers for exactly the registration it was bound to.
+        REQUIRE(
+            p_alpha->registration.observedInstanceIdentitySchemaHashes().size()
+            == 1U
+        );
+        CHECK(
+            p_alpha->registration.observedInstanceIdentitySchemaHashes()[0]
+            == umbraflow::schemaHash(umbraflow::k_observedIdentitySchema)
+        );
+        CHECK(
+            p_alpha->observedInstanceIdentitySchemas.projectRegistrationHash()
+            == p_alpha->registration.hash()
+        );
+
         // Production loads retain only the authorities and pinned project data;
         // conformance-only input evidence has no member here to accumulate in.
+    }
+
+    // The deployment block names the identity schemas by path and the loader
+    // opens every path it was given, so a missing document is a refusal naming
+    // the path -- never a load whose registration silently pins fewer schemas
+    // than the deployment supplies.
+    TEST_CASE("a deployment is refused when a named identity schema is missing")
+    {
+        auto const fixture = Fixture{};
+        REQUIRE(fixture.load().has_value());
+
+        fixture.remove("schema/alpha/identity-0.json");
+        auto const refused = fixture.load();
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(why(refused).contains("identity-0.json"));
+        CHECK(why(refused).contains("does not hold"));
+    }
+
+    // The project schema states uniqueItems on the member, so the same path
+    // twice is refused as a duplicate declaration rather than read as two
+    // identical documents -- the document is not the pair of paths.
+    TEST_CASE("a deployment is refused when an identity schema path repeats")
+    {
+        auto const fixture = Fixture{};
+        REQUIRE(fixture.load().has_value());
+
+        auto block = Fixture::deploymentBlock("alpha");
+        block = substituted(
+            block,
+            R"json("observed_instance_identity_schemas":["schema/alpha/identity-0.json"],)json",
+            R"json("observed_instance_identity_schemas":["schema/alpha/identity-0.json",)json"
+                R"json("schema/alpha/identity-0.json"],)json"
+        );
+        fixture.rewrite(
+            "umbraflow-project.json",
+            std::string{R"json({"schema":"umbraflow-project/v1",)json"}
+                + R"json("runtime_artifact":"runtime/artifact",)json"
+                + R"json("primary_deployment":"alpha","template_cuts":[],)json"
+                + R"json("deployments":[)json" + block + "]}"
+        );
+        auto const refused = fixture.load();
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(why(refused).contains("repeats an item"));
+    }
+
+    // The member is required even when the set is empty, so a deployment
+    // that omits it is refused rather than read as a silent default of zero
+    // identity schemas -- the loader must have been told the shape of the
+    // identity set by a document it read.
+    TEST_CASE("a deployment is refused when the identity schema member is absent")
+    {
+        auto const fixture = Fixture{};
+        REQUIRE(fixture.load().has_value());
+
+        fixture.rewrite(
+            "umbraflow-project.json",
+            substituted(
+                Fixture::projectManifest(),
+                R"json("observed_instance_identity_schemas":["schema/alpha/identity-0.json"],)json",
+                ""
+            )
+        );
+        auto const refused = fixture.load();
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(why(refused).contains("observed_instance_identity_schemas"));
+    }
+
+    // The loader derives the identity hashes from the bytes it read and sorts
+    // the derivation, so the declaration order in the block is never consulted
+    // and the derived registration is sorted whatever the author wrote. This
+    // declares the two documents in hash-descending order and requires the
+    // load to succeed, which it can only do if the loader sorted before it
+    // wrote the registration -- validateClaims refuses any other order.
+    TEST_CASE("the loader sorts identity schema hashes before deriving the registration")
+    {
+        auto const secondSchema = std::string_view{R"json({
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://fixture.example/identity/overlay/v2",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["native_id"],
+    "properties": {
+        "native_id": {"type": "string", "minLength": 1}
+    }
+})json"};
+
+        auto const firstHash  = umbraflow::schemaHash(umbraflow::k_observedIdentitySchema);
+        auto const secondHash = umbraflow::schemaHash(secondSchema);
+        REQUIRE(firstHash != secondHash);
+
+        auto const fixture = Fixture{};
+        fixture.rewrite("schema/alpha/identity-1.json", secondSchema);
+        auto block = Fixture::deploymentBlock("alpha");
+        // Hash-descending declaration: whichever document hashes lower is
+        // declared second, so a loader that kept the declaration order would
+        // derive an unsorted registration and the load would refuse below.
+        block = substituted(
+            block,
+            R"json("observed_instance_identity_schemas":["schema/alpha/identity-0.json"],)json",
+            secondHash < firstHash
+                ? R"json("observed_instance_identity_schemas":["schema/alpha/identity-1.json",)json"
+                      R"json("schema/alpha/identity-0.json"],)json"
+                : R"json("observed_instance_identity_schemas":["schema/alpha/identity-0.json",)json"
+                      R"json("schema/alpha/identity-1.json"],)json"
+        );
+        fixture.rewrite(
+            "umbraflow-project.json",
+            std::string{R"json({"schema":"umbraflow-project/v1",)json"}
+                + R"json("runtime_artifact":"runtime/artifact",)json"
+                + R"json("primary_deployment":"alpha","template_cuts":[],)json"
+                + R"json("deployments":[)json" + block + "]}"
+        );
+
+        auto const loaded = fixture.load();
+        INFO(why(loaded));
+        REQUIRE(loaded.has_value());
+        auto const* const p_alpha = loaded->findDeployment("alpha");
+        REQUIRE(p_alpha != nullptr);
+        auto const& hashes = p_alpha->registration.observedInstanceIdentitySchemaHashes();
+        REQUIRE(hashes.size() == 2U);
+        CHECK(hashes[0] < hashes[1]);
+        CHECK(hashes[0] == std::min(firstHash, secondHash));
+        CHECK(hashes[1] == std::max(firstHash, secondHash));
+        CHECK(
+            p_alpha->observedInstanceIdentitySchemas.projectRegistrationHash()
+            == p_alpha->registration.hash()
+        );
+    }
+
+    // An identity document's resolution domain is the registered identity set
+    // and nothing else. The first target below is a published framework
+    // schema, the identity a project schema legitimately references under the
+    // catalog -- before the domain closed, this fixture loaded; now the same
+    // bytes refuse, which is the falsification of the pin: a framework
+    // schema's bytes are outside the domain, so editing one cannot change
+    // what the identity set answers while every identity byte and
+    // project_registration_hash stay unchanged. The second target is a
+    // document nothing in the set holds, pinning the closure on the other
+    // side. Both refusals name the schema and the target.
+    TEST_CASE("an identity schema that reaches outside the registered set is refused")
+    {
+        for (auto const target : std::array{
+                 std::string_view{"https://umbraflow.dev/schema/fact/v1"},
+                 std::string_view{"https://elsewhere.example/not-registered"},
+             })
+        {
+            auto const fixture = Fixture{};
+            REQUIRE(fixture.load().has_value());
+
+            auto identity = std::string{R"json({
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://fixture.example/identity/overlay/v1",
+    "type": "object",
+    "properties": {
+        "fact": {"$ref": ")json"};
+            identity += target;
+            identity += R"json("}
+    }
+})json";
+            fixture.rewrite("schema/alpha/identity-0.json", identity);
+            auto const refused = fixture.load();
+            INFO(why(refused));
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(why(refused).contains("observed identity"));
+            CHECK(why(refused).contains(target));
+        }
+    }
+
+    // The domain is closed, not empty: a registered identity document may
+    // reference another by its $id, and that is the only reference that
+    // resolves. This is the positive control for the refusal above -- a fix
+    // that sealed the whole domain would fail here, and one that left the
+    // catalog open would pass above.
+    TEST_CASE("an identity schema may reference another registered identity schema")
+    {
+        auto const fixture = Fixture{};
+        REQUIRE(fixture.load().has_value());
+
+        fixture.rewrite(
+            "schema/alpha/identity-1.json",
+            R"json({
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://fixture.example/identity/overlay/v2",
+    "type": "object",
+    "properties": {
+        "overlay": {"$ref": "https://fixture.example/identity/overlay/v1"}
+    }
+})json"
+        );
+        auto block = Fixture::deploymentBlock("alpha");
+        block = substituted(
+            block,
+            R"json("observed_instance_identity_schemas":["schema/alpha/identity-0.json"],)json",
+            R"json("observed_instance_identity_schemas":["schema/alpha/identity-0.json",)json"
+                R"json("schema/alpha/identity-1.json"],)json"
+        );
+        fixture.rewrite(
+            "umbraflow-project.json",
+            std::string{R"json({"schema":"umbraflow-project/v1",)json"}
+                + R"json("runtime_artifact":"runtime/artifact",)json"
+                + R"json("primary_deployment":"alpha","template_cuts":[],)json"
+                + R"json("deployments":[)json" + block + "]}"
+        );
+        auto const loaded = fixture.load();
+        INFO(why(loaded));
+        REQUIRE(loaded.has_value());
     }
 
     // The conformance load is the production load plus a layer, so this states

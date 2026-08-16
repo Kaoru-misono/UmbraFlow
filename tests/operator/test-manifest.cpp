@@ -50,10 +50,20 @@ namespace uf::operator_runtime
                 "{\"baseline_event_type\":\"" + claims.baselineEventType
                 + "\",\"journal_event_schema_manifest_hash\":\""
                 + claims.journalEventSchemaManifestHash.hex()
-                + "\",\"plugin_hash\":\"" + claims.pluginHash.hex()
-                + "\",\"plugin_id\":\"" + claims.pluginId
-                + "\",\"project_artifact_roots\":["
+                + "\",\"observed_instance_identity_schema_hashes\":["
             };
+            for (
+                auto index = std::size_t{0};
+                index < claims.observedInstanceIdentitySchemaHashes.size();
+                ++index
+            )
+            {
+                if (index != 0U) result.push_back(',');
+                result += "\"" + claims.observedInstanceIdentitySchemaHashes[index].hex() + "\"";
+            }
+            result += "],\"plugin_hash\":\"" + claims.pluginHash.hex()
+                + "\",\"plugin_id\":\"" + claims.pluginId
+                + "\",\"project_artifact_roots\":[";
             for (auto index = std::size_t{0}; index < claims.projectArtifactRoots.size(); ++index)
             {
                 if (index != 0U) result.push_back(',');
@@ -173,6 +183,27 @@ namespace uf::operator_runtime
         ));
     }
 
+    // The forward case above proves nothing about the migration itself: a
+    // consumer that accepted any format <= 2 would keep it green. This case
+    // names the generation this framework stopped reading, so the 1 -> 2
+    // break is red before any future format-3 document is.
+    TEST_CASE("VerifiedProjectRegistration refuses the previous generation's format")
+    {
+        auto claims                      = claimsFor(hashOf("plugin"));
+        claims.projectRegistrationFormat = 1U;
+        auto const exactJcs = registrationJcs(claims);
+        auto owner = exactOwner(exactJcs, claims);
+        auto const refused =
+            ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner);
+        REQUIRE_FALSE(refused.has_value());
+        // The message names the stated format and the format this framework
+        // reads, so a refusal of the wrong generation cannot be green.
+        CHECK(refused.error().message().contains("1"));
+        CHECK(refused.error().message().contains(
+            std::to_string(k_projectRegistrationFormat)
+        ));
+    }
+
     TEST_CASE("VerifiedProjectRegistration rejects unordered artifact roots")
     {
         auto claims = claimsFor(hashOf("plugin"));
@@ -189,6 +220,50 @@ namespace uf::operator_runtime
                 owner
             ).has_value()
         );
+    }
+
+    // The loader writes the identity hashes sorted, so a claim set in any other
+    // order is a document the loader never derived. The check is the framework's
+    // own reading of the derived document, on the same terms as the artifact
+    // roots above: the registration schema cannot state sortedness, so this
+    // side refuses it.
+    TEST_CASE("VerifiedProjectRegistration rejects unordered or duplicate identity schema hashes")
+    {
+        auto first  = hashOf("identity-alpha");
+        auto second = hashOf("identity-beta");
+        if (second < first)
+        {
+            std::swap(first, second);
+        }
+        REQUIRE(first < second);
+
+        SUBCASE("unordered")
+        {
+            auto claims                                 = claimsFor(hashOf("plugin"));
+            claims.observedInstanceIdentitySchemaHashes = {second, first};
+            auto const exactJcs = registrationJcs(claims);
+            auto owner = exactOwner(exactJcs, std::move(claims));
+            auto const refused =
+                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner);
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                "observed instance identity schema hashes must be unique and sorted"
+            ));
+        }
+
+        SUBCASE("duplicate")
+        {
+            auto claims                                 = claimsFor(hashOf("plugin"));
+            claims.observedInstanceIdentitySchemaHashes = {first, first};
+            auto const exactJcs = registrationJcs(claims);
+            auto owner = exactOwner(exactJcs, std::move(claims));
+            auto const refused =
+                ProjectRegistration::verifyExact(exactJcs, hashOf(exactJcs), owner);
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(refused.error().message().contains(
+                "observed instance identity schema hashes must be unique and sorted"
+            ));
+        }
     }
 
     TEST_CASE("VerifiedProjectRegistration enforces core routing names")

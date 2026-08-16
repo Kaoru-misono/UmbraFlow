@@ -936,8 +936,11 @@ namespace uf::operator_runtime
                 registration,
                 {
                     ObservedInstanceIdentitySchema{
-                        .schemaId = "https://fixture.example/identity/overlay/v1",
-                        .validate = [](json::Value const& basis) -> Status
+                        .schemaId   = "https://fixture.example/identity/overlay/v1",
+                        .schemaHash = test_support::schemaHash(
+                            test_support::k_observedIdentitySchema
+                        ),
+                        .validate   = [](json::Value const& basis) -> Status
                         {
                             auto const nativeId = basis.find("native_id");
                             auto const epoch    = basis.find("surface_epoch");
@@ -2014,6 +2017,97 @@ namespace uf::operator_runtime
         CHECK_MESSAGE(
             firstObservedInstanceId != secondObservedInstanceId,
             "different exact registrations must mint isolated IDs"
+        );
+    }
+
+    TEST_CASE("observed instance identity schemas refuse a set the registration never pinned")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = test_support::prepareStore(temporary.path());
+        auto const& registration = prepared.project.registration;
+
+        // A validator whose bytes the registration never pinned -- the schema
+        // hash of some other document -- must be refused when the authority is
+        // built, not when an observation is judged. Both hash sets are named,
+        // because which supplied validator is unpinned and which pinned
+        // document has no validator are the whole of the diagnosis.
+        auto wrong = ObservedInstanceIdentitySchemas::create(
+            registration,
+            {
+                ObservedInstanceIdentitySchema{
+                    .schemaId   = "https://fixture.example/identity/overlay/v1",
+                    .schemaHash = test_support::schemaHash(
+                        test_support::k_projectObservationSchema
+                    ),
+                    .validate   = [](json::Value const&) -> Status
+                    {
+                        return ok();
+                    },
+                },
+            }
+        );
+        REQUIRE_FALSE(wrong.has_value());
+        auto const wrongMessage = std::string{wrong.error().message()};
+        CHECK(
+            wrongMessage.find(
+                test_support::schemaHashHex(test_support::k_projectObservationSchema)
+            )
+            != std::string::npos
+        );
+        CHECK(
+            wrongMessage.find(
+                test_support::schemaHashHex(test_support::k_observedIdentitySchema)
+            )
+            != std::string::npos
+        );
+
+        // The other direction: a pinned document with no validator supplied is
+        // a registration the authority would answer for without being able to
+        // apply, and is equally refused.
+        auto missing = ObservedInstanceIdentitySchemas::create(
+            registration,
+            {}
+        );
+        REQUIRE_FALSE(missing.has_value());
+        CHECK(
+            std::string{missing.error().message()}.find(
+                test_support::schemaHashHex(test_support::k_observedIdentitySchema)
+            ) != std::string::npos
+        );
+
+        // The evasion that rule closes: two bindings with distinct IDs that
+        // claim the same pinned hash. A creator that collapsed the supplied
+        // set before comparing would pass this registration while leaving a
+        // second validator usable that no pinned document establishes.
+        auto duplicate = ObservedInstanceIdentitySchemas::create(
+            registration,
+            {
+                ObservedInstanceIdentitySchema{
+                    .schemaId   = "https://fixture.example/identity/overlay/v1",
+                    .schemaHash = test_support::schemaHash(
+                        test_support::k_observedIdentitySchema
+                    ),
+                    .validate   = [](json::Value const&) -> Status
+                    {
+                        return ok();
+                    },
+                },
+                ObservedInstanceIdentitySchema{
+                    .schemaId   = "https://fixture.example/identity/overlay/v2",
+                    .schemaHash = test_support::schemaHash(
+                        test_support::k_observedIdentitySchema
+                    ),
+                    .validate   = [](json::Value const&) -> Status
+                    {
+                        return ok();
+                    },
+                },
+            }
+        );
+        REQUIRE_FALSE(duplicate.has_value());
+        CHECK(
+            std::string{duplicate.error().message()}.find("unique and sorted")
+            != std::string::npos
         );
     }
 

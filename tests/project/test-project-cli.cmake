@@ -50,6 +50,7 @@ file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
       "reconcile_manifest": "schema/reconcile-manifest.json",
       "journal_payload_schemas": ["schema/journal-0.json"],
       "effect_payload_schemas": [],
+      "observed_instance_identity_schemas": [],
       "artifact_blobs": []
     }
   ]
@@ -326,6 +327,7 @@ file(WRITE "${CUT_SOURCE}/umbraflow-project.json" "{
       \"reconcile_manifest\": \"schema/reconcile-manifest.json\",
       \"journal_payload_schemas\": [\"schema/journal-0.json\"],
       \"effect_payload_schemas\": [],
+      \"observed_instance_identity_schemas\": [],
       \"artifact_blobs\": []
     }
   ]

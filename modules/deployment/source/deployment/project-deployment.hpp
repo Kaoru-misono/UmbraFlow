@@ -2,6 +2,7 @@
 
 #include <operator/effective-plan.hpp>
 #include <operator/journal-entry.hpp>
+#include <operator/project-observation.hpp>
 #include <operator/project-plugin.hpp>
 #include <operator/reconcile-outcome.hpp>
 #include <operator/tool-invocation.hpp>
@@ -12,6 +13,7 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <vector>
 
 namespace uf::deployment
 {
@@ -114,6 +116,17 @@ namespace uf::deployment
         // therefore project_registration_hash, rather than moving no hash at
         // all and surfacing as a Plan refused much later.
         std::span<std::string_view const> effectPayloadSchemas{};
+
+        // One complete JSON Schema per observed-instance identity basis this
+        // deployment can judge. Each document declares its own absolute $id,
+        // which the compiled authority reads from the bytes rather than
+        // restating. The registration's observed_instance_identity_schema_hashes
+        // pins each of them by sha256, so editing one moves
+        // project_registration_hash rather than surfacing as an observation
+        // refused much later -- a schema no hash names is bytes inside no
+        // digest, and a validator for bytes the registration never pinned
+        // cannot be added.
+        std::span<std::string_view const> observedInstanceIdentitySchemas{};
     };
 
     // One document whose format is the framework's rather than the project's --
@@ -197,5 +210,13 @@ namespace uf::deployment
         [[nodiscard]]
         auto reconcileDispositionReader() const
             -> operator_runtime::ReconcileDispositionReader;
+
+        // The identity schemas this deployment compiled, as the bindings the
+        // ObservedInstanceIdentitySchemas authority is built from. Each
+        // validator keeps this state alive, so an authority built from the
+        // result outlives the ProjectDeployment it was taken from.
+        [[nodiscard]]
+        auto observedIdentitySchemas() const
+            -> std::vector<operator_runtime::ObservedInstanceIdentitySchema>;
     };
 }

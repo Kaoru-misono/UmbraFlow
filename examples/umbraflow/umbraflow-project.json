@@ -28,7 +28,8 @@
       "effect_payload_schemas": [
         "schema/effect/fixture.write-v1.schema.json"
       ],
-      "$comment": "This deployment registers no artifact root: its plugin is handed no blob, so the member is written empty rather than left out.",
+      "$comment": "This deployment registers no artifact root and observes no instances: both members are written empty rather than left out, because an absent member would be read as a declaration gone missing.",
+      "observed_instance_identity_schemas": [],
       "artifact_blobs": []
     },
     {
@@ -54,7 +55,8 @@
       "effect_payload_schemas": [
         "schema/effect/fixture.write-v1.schema.json"
       ],
-      "$comment": "This deployment registers no artifact root: its plugin is handed no blob, so the member is written empty rather than left out.",
+      "$comment": "This deployment registers no artifact root and observes no instances: both members are written empty rather than left out, because an absent member would be read as a declaration gone missing.",
+      "observed_instance_identity_schemas": [],
       "artifact_blobs": []
     }
   ]

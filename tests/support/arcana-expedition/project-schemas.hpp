@@ -389,16 +389,17 @@ namespace uf::operator_runtime::conformance::expedition
             -> deployment::ProjectDeploymentSources
         {
             return deployment::ProjectDeploymentSources{
-                .pluginId              = m_pluginId,
-                .projectState          = k_projectStateSchema,
-                .projectObservation    = k_projectObservationSchema,
-                .toolPrecondition      = k_toolPreconditionSchema,
-                .reconcile             = k_reconcileSchema,
-                .toolCatalog           = m_toolCatalog,
-                .journalEventManifest  = m_journalEventManifest,
-                .reconcileManifest     = m_reconcileManifest,
-                .journalPayloadSchemas = k_journalPayloadSchemas,
-                .effectPayloadSchemas  = k_effectPayloadSchemas,
+                .pluginId                        = m_pluginId,
+                .projectState                    = k_projectStateSchema,
+                .projectObservation              = k_projectObservationSchema,
+                .toolPrecondition                = k_toolPreconditionSchema,
+                .reconcile                       = k_reconcileSchema,
+                .toolCatalog                     = m_toolCatalog,
+                .journalEventManifest            = m_journalEventManifest,
+                .reconcileManifest               = m_reconcileManifest,
+                .journalPayloadSchemas           = k_journalPayloadSchemas,
+                .effectPayloadSchemas            = k_effectPayloadSchemas,
+                .observedInstanceIdentitySchemas = {},
             };
         }
     };
