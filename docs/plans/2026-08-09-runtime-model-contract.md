@@ -81,6 +81,33 @@ collapses to `locator_present`, and `text_equals` survives only where it
 filters rather than decides: a Collection's `predicate`, which selects among
 members already found and never establishes that any of them is there.
 
+> **Corrected 2026-08-17: "it has no caller" is false, and the collapse this
+> paragraph prescribes cannot be done as written.** Attempting it found the
+> caller immediately. `ocrIdentityRuntimeModel()` in
+> `tests/task/test-runtime-v2-contract.cpp` declares a Binding `title.identity`
+> whose detector is `text_equals` over `title.reader`, and that Binding is the
+> whole of surface `screen`'s `identity` list — a text predicate deciding a
+> Surface identity, which is exactly the shape the rule above forbids.
+>
+> It is there on purpose. That fixture serves `T-004`'s T05 case,
+> "T-004 T05 real OCR failures must leave Surface identity unresolved", whose
+> three sub-cases — a silent Reader, readable garbage, and a score below the
+> Reader's floor — all prove their point *through* that detector: the OCR fails,
+> the detector is unsatisfied, and the identity does not resolve. The fixture's
+> own comment states the intent: a real Reader sits in the Surface identity path
+> so its result is consumed as detector evidence rather than inserted as a
+> fixture literal.
+>
+> So two landed rulings disagree. `T-009` says text may never decide identity;
+> `T-004` T05 demonstrates its property by having text decide identity and then
+> fail. Collapsing the union deletes T05's mechanism, and T05 is a closed row.
+> **The disposition is a ruling, not an edit**, and it belongs to whoever owns
+> the conflict: either T05 is rebuilt to prove the unknown paths without a text
+> detector, or the rule admits a stated exception, which this repository's
+> no-second-spelling rule makes expensive. Tracked as `T-010` in the consumer
+> execution authority. Nothing in the tree was changed on 2026-08-17; the
+> attempt was reverted when the premise failed.
+
 ### Binding
 
 A `Binding` connects one UiTarget to one Surface and owns its actionable
