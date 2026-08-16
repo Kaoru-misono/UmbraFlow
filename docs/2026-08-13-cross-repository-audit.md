@@ -99,8 +99,8 @@ as cross-lane requests in the L4 report.
 
 | Divergence | Evidence measured 2026-08-13 | Unique owner |
 |---|---|---|
-| Operator schema says `ui_observation`; deployment/code and bundle say `ui_snapshot` | `schema/umbraflow-operator-v1.schema.json:399,411` versus `modules/deployment/source/deployment/project-deployment.cpp:216,237` and bundle main design line 415. | `U11c` |
-| Framework has a local `EffectEnvelope` helper while the published record is `ExpectedEffect` | `modules/operator/source/operator/effective-plan.cpp:144-192`; schema definition at `schema/umbraflow-operator-v1.schema.json:457`. | `U11c` |
+| Operator schema says `ui_observation`; deployment/code and bundle say `ui_snapshot` | `schema/umbraflow-operator-v1.schema.json:399,411` versus `modules/deployment/source/deployment/project-deployment.cpp:216,237` and bundle main design line 415. | ~~`U11c`~~ — **closed 2026-08-14 by `684008f`**: the schema member is `ui_snapshot`. |
+| Framework has a local `EffectEnvelope` helper while the published record is `ExpectedEffect` | `modules/operator/source/operator/effective-plan.cpp:144-192`; schema definition at `schema/umbraflow-operator-v1.schema.json:457`. | ~~`U11c`~~ — **closed 2026-08-17**; see below. The two were never one record. |
 | DDL carries `controller_kind`, published Operator schema does not | `ledger.cpp:1524-1525`; no corresponding schema hit. | `U2f` |
 | Runtime-model prose contract itself still teaches pre-v2 records | The excluded file is `docs/plans/2026-08-09-runtime-model-contract.md`. | `D-002` |
 | Full bundle check does not compare the hardening authority's printed pin with its Python pin | Mutating the authority root to a different digest still returned exit 0 and `SPEC BUNDLE: VERIFIED`; the checker reads that document only to locate the checkout. | ~~`U12d`~~ — **closed 2026-08-16 by deletion**: both the checker and the transcribed pin are gone, so there is nothing left to disagree. This finding was one of the three measurements that decided the removal. |
@@ -108,3 +108,70 @@ as cross-lane requests in the L4 report.
 The audit therefore supersedes the v1.9 conclusion: one co-versioned bundle is
 the correct mechanism, no compatibility bundle is justified, and every current
 divergence has one named owner in the single consumer execution authority.
+
+## `U11c` closed 2026-08-17
+
+**The effect record: three names, not two.** The row above reads as one record
+with two spellings. It is not. The bundle's main design (`:765`) defines
+`EffectEnvelope` with exactly the six members the framework's operator `$def`
+carries, and reserves `ExpectedEffect` for the opposite pole of the pair `D-08`
+forbids merging — the project-layer prediction that `ObservedOutcome` is
+measured against (project-layer `§9`). So `ExpectedEffect` was never this
+framework's record to spell: it named a consumer record while describing the
+plan's declared effect. `684008f` moved the published `$def` to
+`EffectEnvelope`; what it did not move was the eleven sources that still cited
+`OP:ExpectedEffect`, nor the three unprefixed uses beside them — the `$defs` key
+and `$ref` of the plan-proposal schema the deployment compiles, and the refusal
+it prints. All fourteen now say `EffectEnvelope`.
+
+The local helper is a third thing. `deriveEffectEnvelope` returned the
+whole ordered effect set with the digest over it, not one effect, so after
+`684008f` it wore the published record's name for a different record. It is now
+`EffectiveEffects`/`deriveEffectiveEffects`, after the `effective_effects`
+member it produces. Purely internal: the struct never left an anonymous
+namespace.
+
+**Offline/online Agent.** The framework's own runtime vocabulary was already the
+bundle's: `online Agent` throughout `modules/operator/`, matching the bundle's
+在线 Operator Agent. Two claims were wrong and are deleted:
+
+- `controller.hpp` called the other role the "offline exploration Agent". The
+  bundle's role is the 离线 Annotation Agent (main design `:367`), and
+  "Annotation Agent" is this repository's own name for it too; "exploration" is
+  the session and surface, not the role. It now reads offline Annotation Agent.
+- `agent-profile.hpp` attributed `AgentBudget` to the bundle — "the frozen
+  bundle's `AgentBudget`", "adding one is a bundle-root change". The bundle
+  defines no `AgentBudget` record at all; it states the budget axes in prose
+  (main design `:576-577`, `A-02`). `AgentBudget` and its member names are this
+  framework's invention, published in its own operator schema, so the comment
+  now names that schema. The second half of the claim was doubly stale: the
+  bundle root was deleted on 2026-08-16.
+
+  This does not restate `B-8`. The bundle does list no-progress among the Agent
+  budget axes and the framework keeps it as an Operator-owned ceiling instead;
+  that divergence is real, deliberate, and `U9` owns the bundle wording. What
+  was deleted is only the false claim about where `AgentBudget` came from.
+
+**The sweep.** Every `PREFIX:Name` citation in current authorities — `modules/`,
+`entry/`, `tests/`, `tools/`, `schema/`, `docs/` outside `docs/archive/`,
+`scripts/`, `cmake/`, `conformance/` — was resolved against the schema document
+its prefix names (`OP`, `PR`, `RA`, `RM`, `AW`, `JR`, `PL`, `TR`). Four names
+did not resolve. `OP:ExpectedEffect`, 11 sites, is the finding above and every
+one is fixed. `OP:RuntimeModelBindingRef`, 1 site, sits inside the 2026-08-15
+amendment that records its deletion, so it is the correction and not the claim.
+`RA:RuntimeArtifactManifest`, 3 sites, is that document's own title rather than
+a `$def`. `RM:Geometry`, 1 site, is a concept word, and the runtime-model prose
+contract is `D-002`'s. Every other citation named a real `$def`, property or
+document title. Re-running the sweep after the fix leaves only the prose in this
+section and in the migration report's amendment, which quote the wrong names in
+order to retire them. Separately, `bundle` was read at every occurrence in
+`modules/` and `entry/`: one spec-bundle claim, `agent-profile.hpp`, above;
+every other is the Luau framework bundle or a test `DeploymentBundle`.
+
+**Residual, not closed here.** `effect_envelope_hash` still spells "effect
+envelope" for the whole ordered set while `OP:EffectEnvelope` is one effect.
+It is framework-invented, claims no bundle origin and is therefore outside this
+package, but it is one spelling of two things. Renaming it to
+`effective_effects_hash` moves the published schema and the `operation_plans`
+and `approvals` columns in the same change, and the consumer plan reserves the
+DDL to `U2`. Owner: `U2`.

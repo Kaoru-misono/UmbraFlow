@@ -373,7 +373,7 @@ namespace uf::deployment
         "canonical_args": {
             "$comment": "Judged against the argument definition this project's Tool Catalog names for tool_name."
         },
-        "effects": {"type": "array", "items": {"$ref": "#/$defs/ExpectedEffect"}},
+        "effects": {"type": "array", "items": {"$ref": "#/$defs/EffectEnvelope"}},
         "tool_name": {
             "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
         },
@@ -383,7 +383,7 @@ namespace uf::deployment
         "workflow_limits": {"$ref": "#/$defs/WorkflowLimits"}
     },
     "$defs": {
-        "ExpectedEffect": {
+        "EffectEnvelope": {
             "type": "object",
             "additionalProperties": false,
             "required": [
@@ -541,7 +541,7 @@ namespace uf::deployment
     "properties": {
         "$comment": {"type": "string"},
         "effect_payload_sha256s": {
-            "$comment": "The sha256 of each OP:ExpectedEffect payload schema this deployment supplies, and the only path by which those bytes reach tool_catalog_hash and so project_registration_hash. The array may be empty: a project that proposes no effect has nothing to pin.",
+            "$comment": "The sha256 of each OP:EffectEnvelope payload schema this deployment supplies, and the only path by which those bytes reach tool_catalog_hash and so project_registration_hash. The array may be empty: a project that proposes no effect has nothing to pin.",
             "type": "array",
             "items": {
                 "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Hash"
@@ -580,7 +580,7 @@ namespace uf::deployment
                         "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Identifier"
                     },
                     "effect_bounds": {
-                        "$comment": "The complete set of OP:ExpectedEffect this tool may propose. An empty set is a tool that may propose none, which is the honest declaration for a read_only tool.",
+                        "$comment": "The complete set of OP:EffectEnvelope this tool may propose. An empty set is a tool that may propose none, which is the honest declaration for a read_only tool.",
                         "type": "array",
                         "uniqueItems": true,
                         "items": {
@@ -1195,7 +1195,7 @@ namespace uf::deployment
 
         // One payload schema and the identity it answers under: the sha256 of
         // its own exact bytes, which is what a journal manifest entry and an
-        // OP:`ExpectedEffect` each name.
+        // OP:`EffectEnvelope` each name.
         struct PayloadSchema final
         {
             ContentHash  hash;
@@ -1370,7 +1370,7 @@ namespace uf::deployment
             if (found == effectPayloadSchemas.end())
             {
                 return refuse(std::format(
-                    "an ExpectedEffect names payload schema {}, which this "
+                    "an EffectEnvelope names payload schema {}, which this "
                     "deployment does not carry",
                     declared
                 ));

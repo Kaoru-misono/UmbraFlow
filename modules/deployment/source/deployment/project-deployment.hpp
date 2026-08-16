@@ -102,7 +102,7 @@ namespace uf::deployment
         // records beside every entry the schema accepted.
         std::span<std::string_view const> journalPayloadSchemas{};
 
-        // One complete JSON Schema per OP:`ExpectedEffect` payload the project
+        // One complete JSON Schema per OP:`EffectEnvelope` payload the project
         // can propose, matched to an effect by the payload_schema_hash the
         // effect itself carries, and an effect naming a hash no schema in this
         // set has is refused.

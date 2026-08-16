@@ -161,7 +161,7 @@ namespace uf::operator_runtime
             return ok();
         }
 
-        // OP:`ExpectedEffect` as an array, in JCS member order. JCS orders
+        // OP:`EffectEnvelope` as an array, in JCS member order. JCS orders
         // members by UTF-16 code unit, which is why opaque_project_payload
         // precedes payload_schema_hash and scope_key precedes scope_kind.
         [[nodiscard]]
@@ -194,7 +194,11 @@ namespace uf::operator_runtime
             return output;
         }
 
-        struct EffectEnvelope final
+        // The plan's effective_effects and the hash the frozen plan publishes
+        // over them as effect_envelope_hash. It is deliberately not called an
+        // EffectEnvelope: that name belongs to OP:`EffectEnvelope`, which is
+        // ONE effect, and this is the whole ordered set with its digest.
+        struct EffectiveEffects final
         {
             std::vector<ProposedEffect> effects{};
             ContentHash                 hash;
@@ -202,13 +206,13 @@ namespace uf::operator_runtime
 
         // The declared effects in one determined order, and the hash over that
         // order. JCS does not sort arrays, so without this the same effect set
-        // proposed in two orders would produce two envelopes and two approvals
+        // proposed in two orders would produce two digests and two approvals
         // for one decision. The rule mirrors the artifact-root rule the frozen
         // authority already fixes: non-empty, unique, sorted by UTF-8 bytes.
         [[nodiscard]]
-        auto deriveEffectEnvelope(
+        auto deriveEffectiveEffects(
             std::vector<ProposedEffect> effects
-        ) -> Result<EffectEnvelope>
+        ) -> Result<EffectiveEffects>
         {
             auto ordered = std::move(effects);
             for (auto const& effect : ordered)
@@ -242,7 +246,7 @@ namespace uf::operator_runtime
             }
             auto const material = effectsJcs(ordered);
             UF_TRY_VALUE(hash, sha256(std::as_bytes(std::span{material})));
-            return EffectEnvelope{.effects = std::move(ordered), .hash = hash};
+            return EffectiveEffects{.effects = std::move(ordered), .hash = hash};
         }
 
         [[nodiscard]]
@@ -1011,8 +1015,8 @@ namespace uf::operator_runtime
         std::ranges::sort(allowed);
         allowed.erase(std::ranges::unique(allowed).begin(), allowed.end());
 
-        UF_TRY_VALUE(envelope, deriveEffectEnvelope(std::move(claims.effects)));
-        if (envelope.effects.empty())
+        UF_TRY_VALUE(effective, deriveEffectiveEffects(std::move(claims.effects)));
+        if (effective.effects.empty())
         {
             // A mutating plan with no effect would reach the policy with
             // nothing to judge, and every rule in an artifact speaks about an
@@ -1023,7 +1027,7 @@ namespace uf::operator_runtime
                 "PlanProposal for a mutating tool declares no effect at all"
             );
         }
-        for (auto const& effect : envelope.effects)
+        for (auto const& effect : effective.effects)
         {
             UF_TRY(effectWithinBounds(inputs.descriptor, effect));
         }
@@ -1075,13 +1079,13 @@ namespace uf::operator_runtime
         UF_TRY_VALUE(
             verdict,
             m_policy.evaluate(PolicyRequest{
-                .effects                = envelope.effects,
+                .effects                = effective.effects,
                 .controllerCapabilities = inputs.controllerCapabilities,
                 .toolName               = inputs.toolName,
             })
         );
 
-        auto const risk = highestRisk(envelope.effects);
+        auto const risk = highestRisk(effective.effects);
         auto const body = PlanBody{
             .toolName                = inputs.toolName,
             .toolVersion             = inputs.descriptor.toolVersion,
@@ -1089,7 +1093,7 @@ namespace uf::operator_runtime
             .commandFingerprint      = inputs.commandFingerprint,
             .projectRegistrationHash = m_projectRegistrationHash,
             .decisionBasisHash       = inputs.decisionBasisHash,
-            .effects                 = envelope.effects,
+            .effects                 = effective.effects,
             .allowedUiActions        = allowed,
             .requiredApprovals       = verdict.requiredApprovals,
             .limits                  = limits,
@@ -1102,13 +1106,13 @@ namespace uf::operator_runtime
             m_operatorProtocolSchemaHash,
             inputs.commandFingerprint,
             inputs.decisionBasisHash,
-            envelope.hash,
+            effective.hash,
             planHash,
             inputs.operationId,
             inputs.toolName,
             inputs.descriptor.toolVersion,
             planJcs(body, &planHash),
-            std::move(envelope.effects),
+            std::move(effective.effects),
             std::move(allowed),
             std::move(verdict.requiredApprovals),
             limits,

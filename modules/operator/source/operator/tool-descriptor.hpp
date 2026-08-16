@@ -128,7 +128,7 @@ namespace uf::operator_runtime
 
     // One entry of a descriptor's effect_bounds: the whole of what a tool is
     // allowed to declare about one effect it may propose. A proposed
-    // OP:`ExpectedEffect` is matched against it by namespaced_type and
+    // OP:`EffectEnvelope` is matched against it by namespaced_type and
     // scope_kind, and is refused unless its risk is at or below maximumRisk and
     // its payload_schema_hash is exactly this one -- which is what stops a plan
     // widening a tool's blast radius without moving tool_catalog_hash.
@@ -143,7 +143,7 @@ namespace uf::operator_runtime
         Risk        maximumRisk{Risk::ReadOnly};
     };
 
-    // One OP:`ExpectedEffect` in the terms the Operator acts on. The project
+    // One OP:`EffectEnvelope` in the terms the Operator acts on. The project
     // payload stays opaque: it is carried so that the minted plan is the exact
     // document the checked-in schema defines, and it is never interpreted.
     //

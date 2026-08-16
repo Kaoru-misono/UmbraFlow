@@ -162,7 +162,7 @@ namespace uf::operator_runtime::conformance::expedition
     }
 })json"};
 
-    // The payload of every OP:`ExpectedEffect` this project proposes: the turn
+    // The payload of every OP:`EffectEnvelope` this project proposes: the turn
     // the march would be taken on. Its sha256 is the payload_schema_hash the
     // plugin writes into each effect.
     inline constexpr auto k_effectPayloadSchema = std::string_view{R"json({

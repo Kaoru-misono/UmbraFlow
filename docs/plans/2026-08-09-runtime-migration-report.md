@@ -174,7 +174,7 @@ fixtures cannot satisfy them.
 | D-05 | Consumer build + upstream root verifier | PR:`project_artifact_roots` | EXTERNAL `attest-consumer-d05` |
 | D-06 | Consumer plugin | CP via PR:`project_artifact_roots` | EXTERNAL `attest-consumer-d06` |
 | D-07 | Consumer plugin | CP via PR:`project_artifact_roots` | EXTERNAL `attest-consumer-d07` |
-| D-08 | Consumer plugin | OP:`ExpectedEffect/ObservedOutcome` + CP | EXTERNAL `attest-consumer-d08` |
+| D-08 | Consumer plugin | OP:`EffectEnvelope/ObservedOutcome` + CP | EXTERNAL `attest-consumer-d08` |
 | D-09 | Consumer plugin | CP via PR:`project_artifact_roots` | EXTERNAL `attest-consumer-d09` |
 | U-01 | Host + trusted Runtime | RA + RM | CTEST `contract-runtime-u01` |
 | U-02 | Host binding | RA:`RuntimeArtifactManifest` | CTEST `contract-runtime-u02` |
@@ -216,9 +216,16 @@ fixtures cannot satisfy them.
 > Amended 2026-08-15: `U-02` named `OP:RuntimeModelBindingRef` alongside
 > `RA:RuntimeArtifactManifest`. That `$defs` entry was reached by no `$ref` and
 > named by no source — `contract-runtime-u02` never read it — and Stage H5 of
-> [the framework hash cleanup](2026-08-14-framework-hash-cleanup.md) deleted it.
-> The Host binding shape the row is about is `RA:RuntimeArtifactManifest`, which
-> is what the CTest checks.
+> [the framework hash cleanup](../archive/plans/2026-08-14-framework-hash-cleanup.md)
+> deleted it. The Host binding shape the row is about is
+> `RA:RuntimeArtifactManifest`, which is what the CTest checks.
+
+> Amended 2026-08-17 (`U11c`): `D-08` named `OP:ExpectedEffect`. The Operator
+> protocol defines no such record — the effect a plan declares is
+> `OP:EffectEnvelope`, which is the name the consumer specification uses for it
+> and which `684008f` restored. `ExpectedEffect` is the consumer's own
+> project-layer record, the pole `D-08` forbids merging with `ObservedOutcome`,
+> so it reaches this row through `CP` and not through `OP`.
 
 Where the named requirement gates were declared as of 2026-08-11:
 

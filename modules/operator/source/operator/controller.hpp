@@ -14,10 +14,10 @@ namespace uf::operator_runtime
 {
     class OperatorCoordinator;
 
-    // The three operators the system has. It is closed: the offline
-    // exploration Agent is not a fourth value, because it holds no production
-    // session, lease or ledger row at all, and a controller that holds none of
-    // those has nothing on this path to vary.
+    // The three operators the system has. It is closed: the offline Annotation
+    // Agent is not a fourth value, because it holds no production session,
+    // lease or ledger row at all, and a controller that holds none of those has
+    // nothing on this path to vary.
     enum class ControllerKind : uint8
     {
         Script,

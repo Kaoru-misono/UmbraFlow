@@ -185,7 +185,7 @@ namespace uf::operator_runtime::test_support
     }
 })json"};
 
-    // The payload of every OP:`ExpectedEffect` this project's plugin proposes.
+    // The payload of every OP:`EffectEnvelope` this project's plugin proposes.
     // Its sha256 is the payload_schema_hash those effects carry, so the plugin
     // source is built with that hex rather than with a made-up one.
     inline constexpr auto k_effectPayloadSchema = std::string_view{R"json({

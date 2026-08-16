@@ -56,7 +56,7 @@ instructions.
 | `C-W3-4` | `U12d`; historical false-green surface-rule instance. |
 | `C-W3-5` | **Closed** by bounded snapshot/observation retention that preserves live joins. |
 | `C-W3-6` | **Closed** by policy/tool-set availability identity. |
-| `C-W3-7` | Open only under `U11c` (schema/terminology alignment). |
+| `C-W3-7` | **Closed** by `684008f`: the Operator protocol schema member is `ui_snapshot`, the authority's spelling, and `ui_observation` is gone. |
 | `C-W3-8` | **Closed**; both `event_cursor` and `available_tools` landed. |
 | `C-W3-9` | **Closed**; the available-tool set now moves availability identity. |
 | `C-W3-10` | **Closed** with the same availability implementation. |

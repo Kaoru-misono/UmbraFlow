@@ -15,8 +15,8 @@
 namespace uf::operator_runtime
 {
     // What one online Agent binding may spend before the Operator stops
-    // answering it. The member names are the frozen AgentBudget definition's,
-    // because the schema is the fixed side and a second spelling of one
+    // answering it. The member names are OP:`AgentBudget`'s, because the
+    // Operator protocol schema is the fixed side and a second spelling of one
     // ceiling is how two of them come to disagree.
     //
     // There is deliberately no no-progress millisecond member. The whole
@@ -57,12 +57,10 @@ namespace uf::operator_runtime
     // How many consecutive steps that changed neither the state fingerprint nor
     // the command fingerprint the Operator tolerates before it refuses.
     //
-    // It is Operator-owned rather than an AgentBudget member for two reasons
-    // that agree. The frozen bundle's AgentBudget has no such field, and adding
-    // one is a bundle-root change. And a budget the agent's own profile
-    // declares is not a budget for the one failure this axis exists to stop: an
-    // Agent looping on an unchanging world would simply be deployed with a
-    // larger ceiling.
+    // It is Operator-owned rather than an OP:`AgentBudget` member because a
+    // budget the agent's own profile declares is not a budget for the one
+    // failure this axis exists to stop: an Agent looping on an unchanging world
+    // would simply be deployed with a larger ceiling.
     inline constexpr auto k_agentNoProgressCeiling = uint64{3};
 
     // Trusted deployment callback. It parses the exact AgentProfile bytes the
