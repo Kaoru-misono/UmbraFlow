@@ -36,7 +36,7 @@ implementation plan remains the only owner of unfinished work.
 
 | Capability | Measured implementation | Property-specific guard |
 |---|---|---|
-| Operator-owned observed-instance authority | **Exists.** `ObservedInstanceProposal` in `modules/operator/source/operator/project-observation.hpp` cannot carry a final id. `OperatorCoordinator::recordProjectObservation` and `mintObservedInstanceBinding` in `modules/operator/source/operator/ledger.cpp` mint and persist the binding; `resolveObservedInstance` checks exact world scope and fresh membership. | `tests/operator/test-ledger.cpp`: `the proposal cannot state an observed instance ID or authority binding`, `fresh observed instance membership is accepted`, `absent fresh member emits ObservedInstanceStale`, and `observed instance authority isolates exact registrations`. |
+| Operator-owned observed-instance authority | **Exists, and is unreached from production — corrected 2026-08-17.** `ObservedInstanceProposal` in `modules/operator/source/operator/project-observation.hpp` cannot carry a final id. `mintObservedInstanceBinding` in `ledger.cpp` mints and persists the binding, and `resolveObservedInstance` checks exact world scope and fresh membership. **`OperatorCoordinator::recordProjectObservation`, named here as the entry point, does not exist**: the symbol appears in this document and nowhere in the tree. The real entry is `publishProjectObservation` (`ledger.cpp:6406`), it holds the only call to the mint (`:6462`), and every caller of it is in `tests/operator/test-ledger.cpp` — none under `modules/`. Production's observe path validates the derive return and inserts it into `project_observations` directly (`ledger.cpp:6046` onward), minting nothing. So the guards in the right-hand column protect a path production does not take. | `tests/operator/test-ledger.cpp`: `the proposal cannot state an observed instance ID or authority binding`, `fresh observed instance membership is accepted`, `absent fresh member emits ObservedInstanceStale`, and `observed instance authority isolates exact registrations`. |
 | Exact DDL identity and registered migrations | **Exists.** `k_operatorDatabaseSchemaIdentity`, `databaseSchemaIdentity`, `k_schemaMigrations` and `migrateDatabaseSchema` in `modules/operator/source/operator/ledger.cpp` hash stored DDL text, select only exact source/target pairs, apply inside a transaction, and verify the target before commit. `PRAGMA user_version` is deliberately outside identity. | `tests/operator/test-ledger.cpp`: `PRAGMA user_version is no part of Operator schema identity`, `an unregistered exact identity pair is refused byte-identical`, and `a registered exact identity pair upgrades a populated audit chain`. |
 | Policy evaluation | **Exists.** `VerifiedPolicyArtifact::evaluate` in `modules/operator/source/operator/policy.cpp` evaluates ordered selectors, controller capabilities, risk, explicit decisions, approval requirements, default deny and unknown-effect deny. `OperatorPlanAuthority::freeze` calls it in `modules/operator/source/operator/effective-plan.cpp`. | `tests/operator/test-tool-authority.cpp`: `required_approvals is the ruled approver set, not a risk flag`, `policy denies what no rule allows`, and `a rule speaks only to a controller holding its capabilities`. |
 | Tool offering and accept-side re-evaluation | **Exists.** `ProjectToolCatalogSchemaOwner::offeredTools` in `modules/operator/source/operator/tool-invocation.cpp` filters by controller surface and required capabilities. `OperatorCoordinator::availableTools` and command submission in `modules/operator/source/operator/ledger.cpp` expose the offer and independently re-evaluate acceptance. | `tests/operator/test-product-contract.cpp`, `contract-product-p03`, explicitly checks Agent and Human offered sets before submission, including absence of `raw-coordinate-click` for the Agent and presence for the Human. |
@@ -50,7 +50,16 @@ implementation plan remains the only owner of unfinished work.
 ## Findings
 
 The requested runtime, matcher, Operator and release capabilities all have
-property-specific guards in this tree. The authoring stack does not contain
+property-specific guards in this tree.
+
+> Qualified 2026-08-17. "Has a guard" is not "is reached". The
+> observed-instance row above turned out to guard a path production does not
+> take, and this document named an entry point that does not exist — which is
+> the failure mode a survey written from measurement is supposed to prevent,
+> found by tracing callers rather than by opening the named symbols. Every row
+> here answers "does an implementation and a falsifiable guard exist", and none
+> of them answers "does production reach it". A later pass should add that
+> second question rather than trusting this one to have covered it. The authoring stack does not contain
 three independent SPI generators: it contains direct five-function plugins and
 one bounded-workflow generator, with single-step behavior absorbed as a tested
 degenerate schedule. The standalone single-step schema is gone, so only one
