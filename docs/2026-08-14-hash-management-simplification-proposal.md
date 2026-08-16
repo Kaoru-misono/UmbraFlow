@@ -89,6 +89,29 @@ Replace it with:
 The release record is evidence after a test run. It is not a checked-in digest
 that blocks the next edit.
 
+> **Approved and executed 2026-08-16.** `scripts/check_spec_bundle.py`, its
+> CTest registration and all five root transcriptions are deleted; the consumer
+> deleted `docs/architecture/spec-bundle.manifest.json`. Two facts found while
+> executing it were not in this proposal and both strengthen it:
+>
+> - **The gate carried the `CI` label**, so it ran inside `ctest -L CI` and
+>   inside `GATE: PASS`. This proposal and the consumer plan both said it stayed
+>   out of `ci-local`; the archived hash-cleanup plan had already flagged that
+>   contradiction. It also located the bundle by regex-matching an absolute path
+>   out of a Markdown sentence, so the gate of a repository advertised as a
+>   reusable foundation could not pass on a machine without
+>   `E:/umbraflow-projects/uf-chaos`.
+> - **The transcribed root never fired.** The authority document's copy was read
+>   only to locate the checkout; the compared value was the script constant.
+>   Mutating the document's digest left the gate green — the divergence `U12d`
+>   owned, which the removal closes rather than repairs.
+>
+> Retained by the same rule that removed this one: the consumer's
+> `conformance/interface-lock/<version>/manifest.json`. It pins bytes a
+> validator consumes, is generated rather than transcribed, and its refusal runs
+> in the consumer's own suite. Conditions 1, 2 and 4 hold for it and did not
+> hold here.
+
 ### Hand-written framework schema digests
 
 The following are current manual copies of schema or database identity:
@@ -251,7 +274,7 @@ and reject C as a repository-wide objective.
 
 Estimate: 1–2 person-days.
 
-### Stage 1 — remove the external bundle root
+### Stage 1 — remove the external bundle root — **executed 2026-08-16**
 
 - remove the root constant and exact-byte normal development gate;
 - replace it with selected-version plus semantic/conformance verification;
@@ -259,6 +282,21 @@ Estimate: 1–2 person-days.
 - remove duplicate root prose from live documents.
 
 Estimate: 3–6 person-days across both repositories.
+
+> Done. The first and fourth bullets landed as stated. The second is partly
+> pre-existing rather than new work: the conformance verification it asks for is
+> the consumer's interface-lock suite, which already ran. The third is **not**
+> done and is the one thing this stage still owes — no release report exists
+> yet to record a tested consumer revision into, so the obligation moves to
+> whoever produces the first one.
+>
+> One question this stage does not answer, and it should be answered by whoever
+> next revises the interface lock: the lock's prose carries conventions that are
+> not in any schema — field spellings, hash inputs, directory boundaries, the
+> change protocol. Which of those must be held mechanically, and which are left
+> to review, was never ruled. While the bundle pin existed it looked answered,
+> because the whole document was pinned; removing the pin makes the question
+> visible rather than creating it.
 
 ### Stage 2 — replace fixed schema pins
 

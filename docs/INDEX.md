@@ -76,10 +76,14 @@ The real dual-game attestation remains external and cannot be moved by fixtures.
   2026-08-13.
 - A consumer writes a project directory and runs
   `umbra-flow-conformance --project <directory>`; it compiles no Umbraflow C++.
-- The committed consumer bundle is v1.18 and pins five documents plus the
-  bundle root. The implementation plan is deliberately outside the bundle.
-  On 2026-08-13 the full check reported `SPEC BUNDLE: VERIFIED` at root
-  `ac8c3fa652fb1601645d0c0bc04359bc75c9d08dc2883aa31ddeb94912f38ec4`.
+- The committed consumer bundle is at contract version v1.18 and holds five
+  documents. The implementation plan is deliberately outside it.
+  **The exact-byte root pin was removed on 2026-08-16**; the version is
+  semantic, and the bytes that code consumes are pinned by the consumer's own
+  `conformance/interface-lock/<version>/manifest.json` and checked by its
+  `tests/contracts/test_interface_lock.py`. The ruling and the three
+  measurements behind it are in the
+  [rewrite authority](plans/2026-08-09-runtime-hardening-rewrite.md).
 
 ## Before investigating a failure
 

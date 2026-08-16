@@ -321,10 +321,19 @@ can run. Nothing here is owed.
 ## G0 — contract and inherited baseline
 
 - [x] Pin and verify the committed five-document consumer bundle. Revalidated
-      2026-08-13 at v1.18, root
-      `ac8c3fa652fb1601645d0c0bc04359bc75c9d08dc2883aa31ddeb94912f38ec4`;
-      the implementation plan remains deliberately outside the bundle. Earlier
-      pin history is retained in the archived cross-repository audit.
+      2026-08-13 at v1.18; the implementation plan remains deliberately outside
+      the bundle. Earlier pin history is retained in the archived
+      cross-repository audit.
+
+      **Superseded 2026-08-16: the exact-byte root pin is removed and this box
+      no longer describes a live mechanism.** It stays ticked because the work
+      it names was done; what replaced it is a semantic contract version plus
+      the consumer's own interface-lock manifest over the bytes code actually
+      consumes. The row's own gate, `check-spec-bundle`, carried the `CI` label
+      and located the bundle by parsing an absolute path out of a sentence, so
+      this repository's `GATE: PASS` depended on a second repository existing at
+      one path on one machine. Ruling in the
+      [rewrite authority](plans/2026-08-09-runtime-hardening-rewrite.md).
 - [x] Record base commit, rejected stash and the 101-entry dirty baseline
       manifest.
 - [x] Assign exactly one disposition to all 101 inherited dirty paths

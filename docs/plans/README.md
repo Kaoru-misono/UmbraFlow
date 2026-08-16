@@ -18,8 +18,8 @@ superseded and measurement-only plans live under
 ## Current authority
 
 - [Runtime v2 and game-operator breaking rewrite](2026-08-09-runtime-hardening-rewrite.md)
-  — frozen implementation authority and the upstream copy of the consumer
-  bundle pin.
+  — frozen implementation authority, and the ruling that removed the consumer
+  bundle's exact-byte pin on 2026-08-16.
 - [Runtime model contract](2026-08-09-runtime-model-contract.md) — field-level
   prose beside the normative
   [`umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json).
@@ -59,8 +59,11 @@ baseline and disposition data, not separate plans.
 
 - [Framework hash cleanup](../archive/plans/2026-08-14-framework-hash-cleanup.md)
   — all five stages implemented; the surviving consumer-side repair is owned by
-  `CH-01a` in the consumer execution authority, and the specification bundle
-  pin it excluded stays owned by the hash management proposal.
+  `CH-01a` in the consumer execution authority. The specification bundle pin it
+  excluded was owned by the hash management proposal and **removed on
+  2026-08-16** as that proposal's Stage 1; this plan's observation that
+  `check-spec-bundle` really did carry the `CI` label is one of the three
+  measurements that decided it.
 
 ## Archived on 2026-08-14
 

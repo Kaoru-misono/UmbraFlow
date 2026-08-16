@@ -1166,15 +1166,14 @@ add_test(
     NAME test-check-safety
     COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/test-check-safety.py
 )
-add_test(
-    NAME check-spec-bundle
-    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/check_spec_bundle.py
-)
+# No gate registered here may read another repository. check-spec-bundle did
+# until 2026-08-16 and carried the CI label, so this repository's gate could not
+# pass on a machine without that checkout. Ruling:
+# docs/plans/2026-08-09-runtime-hardening-rewrite.md.
 set_tests_properties(
     check-repository-surface
     check-modules
     check-safety
-    check-spec-bundle
     test-check-safety
     PROPERTIES
     TIMEOUT 30

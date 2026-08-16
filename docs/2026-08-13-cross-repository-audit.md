@@ -2,6 +2,14 @@
 
 Status: current report; supersedes the v1.9 audit dated 2026-08-11
 Date: 2026-08-13
+
+> Amended 2026-08-16: **the bundle pin this report verified no longer exists.**
+> `scripts/check_spec_bundle.py` and the root are removed; the bundle is now
+> identified by a semantic contract version, and byte pinning is kept only where
+> a validator consumes the bytes. The measurements below are left as written —
+> they are the record of 2026-08-13, and the reason the pin was removed is that
+> those measurements held, not that they were wrong. The findings table's owners
+> are unchanged except where noted inline.
 Framework branch: `design/annotation-system-v2`
 Consumer checkout: `E:/umbraflow-projects/uf-chaos/`
 Execution authority: consumer `docs/architecture/parallel-implementation-plan.md`
@@ -95,7 +103,7 @@ as cross-lane requests in the L4 report.
 | Framework has a local `EffectEnvelope` helper while the published record is `ExpectedEffect` | `modules/operator/source/operator/effective-plan.cpp:144-192`; schema definition at `schema/umbraflow-operator-v1.schema.json:457`. | `U11c` |
 | DDL carries `controller_kind`, published Operator schema does not | `ledger.cpp:1524-1525`; no corresponding schema hit. | `U2f` |
 | Runtime-model prose contract itself still teaches pre-v2 records | The excluded file is `docs/plans/2026-08-09-runtime-model-contract.md`. | `D-002` |
-| Full bundle check does not compare the hardening authority's printed pin with its Python pin | Mutating the authority root to a different digest still returned exit 0 and `SPEC BUNDLE: VERIFIED`; the checker reads that document only to locate the checkout. | `U12d` |
+| Full bundle check does not compare the hardening authority's printed pin with its Python pin | Mutating the authority root to a different digest still returned exit 0 and `SPEC BUNDLE: VERIFIED`; the checker reads that document only to locate the checkout. | ~~`U12d`~~ — **closed 2026-08-16 by deletion**: both the checker and the transcribed pin are gone, so there is nothing left to disagree. This finding was one of the three measurements that decided the removal. |
 
 The audit therefore supersedes the v1.9 conclusion: one co-versioned bundle is
 the correct mechanism, no compatibility bundle is justified, and every current

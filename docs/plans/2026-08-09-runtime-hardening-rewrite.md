@@ -7,16 +7,57 @@ Scope: `umbraflow-cpp` only; consumer projects are read-only
 
 ## Frozen product authority
 
-The normative product input is the read-only v1.18 bundle at
-`E:/umbraflow-projects/uf-chaos/docs/architecture/`.
+The normative product input is the consumer's specification bundle at **contract
+version v1.18**. That is a semantic version, not a digest: two repositories agree
+when they implement the same contract version, and a digest can only report that
+two byte strings differ.
 
-- bundle manifest: `spec-bundle.manifest.json`
-- bundle root SHA-256: `ac8c3fa652fb1601645d0c0bc04359bc75c9d08dc2883aa31ddeb94912f38ec4`
-- main design: `d4873fcce7f77e753ba13b867d46ac02a2f28a0eae852047b61fbc28d4003dda`
-- project-layer design: `2b12586487e124fe1432f6036afbe6fc22f59dfdf721e093bb492a0edc81fb91`
-- requirements: `849dc630b250900cf0bbba926af24f769a017fb922604781048e6b17260d9f54`
-- failure/recovery audit: `cd152579d3c0c1b4fb5fcad8908fc16e2deb47cb6242c85fe9e388dbe01a0bf9`
-- interface contract lock: `bce7f619d9f56b9ffd638be0ae453f365fb10e5952c1cc4d492a87d1b9007e3e`
+- The consumer repository is `github.com/Kaoru-misono/uf-chaos`; the bundle
+  documents live under its `docs/architecture/`.
+- Five documents are in it: the main design, the project-layer design, the
+  requirements matrix, the failure/recovery audit and the interface contract
+  lock. `parallel-implementation-plan.md` is deliberately outside — it is an
+  execution schedule, and pinning a status column is pinning progress.
+- **What is checked mechanically is the part code consumes**, not the prose:
+  `conformance/interface-lock/v1.18/` in that repository carries its own
+  manifest pinning every schema and vector by byte size and SHA-256, and the
+  consumer's `tests/contracts/test_interface_lock.py` verifies it — including a
+  refusal of CRLF. Those bytes are read by a validator; the five documents are
+  read by people.
+
+> **Ruled 2026-08-16: the exact-byte bundle root pin is removed**, executing
+> Stage 1 of the hash management proposal. Three measurements decided it, and
+> each is checkable rather than a matter of taste.
+>
+> **It was a CI-labelled test that depended on another repository's absolute
+> path.** `check-spec-bundle` carried `LABELS "CI"` in `tests/CMakeLists.txt`,
+> so it ran inside `ctest -L CI` and therefore inside `GATE: PASS` — the sentence
+> claiming it stayed out of `ci-local` was wrong, and the archived hash-cleanup
+> plan had already caught that. It found the bundle by regex-matching an absolute
+> path out of the prose above. On any machine without `E:/umbraflow-projects/uf-chaos`,
+> this repository's own gate could not pass. A reusable project foundation cannot
+> have that.
+>
+> **Half of it never fired.** The digest printed here was only ever used to
+> locate the checkout; the value actually compared was the constant inside the
+> script. Mutating this document's root to a different digest left the gate green
+> and printing `VERIFIED`. That was recorded as a live divergence owned by
+> `U12d`, and it disappears with the pin rather than needing a repair.
+>
+> **What it guarded is guarded better elsewhere.** The interface lock's normative
+> content — schemas and vectors — is byte-pinned by the consumer's own
+> interface-lock manifest, in the consumer's own automated suite. Pinning the
+> Markdown on top of that was a second spelling of one thing. The other four
+> documents are design prose, and nine known textual divergences sit inside them:
+> every one was blocked from repair by the pin, and repairing prose was never
+> what byte equality was for.
+>
+> The residual risk is stated rather than hidden: outside what the interface-lock
+> vectors cover, there is no longer a mechanical check that both repositories
+> read the same contract version. Closing that is a review obligation on the
+> version number above, and the coverage question — which of the lock's prose
+> conventions must be mechanically held and which are left to review — is owed
+> by whoever next revises the lock.
 
 > Amended 2026-08-12 (v1.18). Three things moved together.
 >
@@ -43,8 +84,9 @@ The normative product input is the read-only v1.18 bundle at
 > refuse the same document with different normative codes. See the interface
 > lock's own change record.
 
-If any byte differs, implementation stops. Umbraflow does not modify that
-consumer repository. This file is the upstream execution profile and records
+If the contract version disagrees, implementation stops; if an interface-lock
+vector's bytes disagree, the consumer's own gate stops it. Umbraflow does not
+modify that consumer repository. This file is the upstream execution profile and records
 four executable specification resolutions derived from explicit v1.9 clauses; it
 does not add product behavior or import consumer-specific schemas into core.
 

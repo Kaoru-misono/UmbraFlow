@@ -4,10 +4,14 @@ Status: G0 execution map
 Date: 2026-08-09
 Scope: `umbraflow-cpp` only; no consumer-project writes
 
-This report binds the v1.18 spec root
-`ac8c3fa652fb1601645d0c0bc04359bc75c9d08dc2883aa31ddeb94912f38ec4`
-to the inherited upstream baseline rooted at
+This report binds spec contract version v1.18 to the inherited upstream baseline
+rooted at
 `55444b02a8ace9fe7493e5175618ef0a67d87402087874b7972187ac71ed8ac7`.
+
+> Amended 2026-08-16: the spec root digest that stood in the first clause is
+> gone with the bundle pin; the baseline root above stays, because it identifies
+> a manifest this repository generates and re-verifies, which is a different job
+> from using a document digest as a compatibility version.
 
 > Amended 2026-08-12: written against v1.9, root `c4760bb5…bfb6a966`, and
 > re-bound here because G0 in the requirements matrix passes only on a migration
@@ -330,7 +334,8 @@ until a named gate proves it.
 
 Implementation stops if:
 
-1. the consumer bundle root changes;
+1. the consumer bundle's contract version changes, or an interface-lock vector
+   changes without a version moving with it;
 2. a schema path or test ID changes without updating this report first;
 3. any consumer-specific symbol enters generic C++/Luau/SQLite schemas;
 4. any old reader, alias, fallback, direct action entry point, or screenshot

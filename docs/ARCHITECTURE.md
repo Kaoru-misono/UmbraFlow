@@ -14,10 +14,17 @@ Read in this order:
 2. [migration report](plans/2026-08-09-runtime-migration-report.md);
 3. checked-in schemas named by that report.
 
-The read-only consumer bundle is v1.18; its root is
-`ac8c3fa652fb1601645d0c0bc04359bc75c9d08dc2883aa31ddeb94912f38ec4`.
+The read-only consumer bundle is at contract version v1.18. That version is
+semantic; this file states no digest for it.
 No game entity, tool name, state field, Journal event, or content schema belongs
 in this repository's generic core.
+
+> Amended 2026-08-16: the exact-byte root pin is removed, and the amendment
+> below is kept as the record of what tracking one cost. This file transcribed
+> the root five times in five days and was wrong on four of them — which is the
+> argument against transcribing it at all, made by this file's own history.
+> The ruling is in the
+> [breaking rewrite authority](plans/2026-08-09-runtime-hardening-rewrite.md).
 
 > Amended 2026-08-12: the bundle moved three times in three days and this file
 > tracked none of them. It read v1.9, root `c4760bb5…bfb6a966`, which was stale
