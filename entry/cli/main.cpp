@@ -6,6 +6,7 @@
 #include <cli/observe.hpp>
 #include <cli/ocr.hpp>
 #include <cli/open-project.hpp>
+#include <cli/reclaim.hpp>
 #include <cli/targets.hpp>
 
 #include <core/numeric/checked-cast.hpp>
@@ -138,6 +139,28 @@ namespace uf::cli
         }
 
         [[nodiscard]]
+        auto dispatchReclaim(std::span<std::string const> raw) -> ExitCode
+        {
+            auto const args = parseReclaimArguments(raw);
+            if (!args)
+            {
+                std::cerr << formatError(args.error()) << '\n';
+                std::cerr << reclaimUsageText();
+                return exitCodeForError(args.error(), false);
+            }
+
+            auto const reclaimed = reclaimProduct(*args);
+            if (!reclaimed)
+            {
+                std::cerr << formatError(reclaimed.error()) << '\n';
+                return exitCodeForError(reclaimed.error(), false);
+            }
+
+            std::cout << formatReclaimedRuntime(*reclaimed);
+            return ExitCode::Success;
+        }
+
+        [[nodiscard]]
         auto dispatchTargets(std::span<std::string const> raw) -> ExitCode
         {
             if (!raw.empty())
@@ -174,6 +197,7 @@ namespace uf::cli
             Command{"observe", &dispatchObserve},
             Command{"ocr", &dispatchOcr},
             Command{"open", &dispatchOpen},
+            Command{"reclaim", &dispatchReclaim},
             Command{"targets", &dispatchTargets},
         };
 

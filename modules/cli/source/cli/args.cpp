@@ -76,6 +76,8 @@ namespace uf::cli
 
         constexpr auto k_openProjectFlag = std::string_view{"--project"};
 
+        constexpr auto k_reclaimRuntimeFlag = std::string_view{"--runtime"};
+
         enum class ObserveFlag : uint8
         {
             Project,
@@ -504,6 +506,35 @@ namespace uf::cli
         return OpenArgs{.project = std::move(requiredProject)};
     }
 
+    auto parseReclaimArguments(
+        std::span<std::string const> raw
+    ) -> Result<ReclaimArgs>
+    {
+        auto runtime = std::optional<std::filesystem::path>{};
+
+        auto index = std::size_t{0};
+        while (index < raw.size())
+        {
+            auto const& name = raw[index];
+            if (name != k_reclaimRuntimeFlag)
+            {
+                return invalid(std::format("unknown argument \"{}\"", name));
+            }
+            if (index + 1U >= raw.size())
+            {
+                return invalid(std::format("missing value for {}", name));
+            }
+            runtime = std::filesystem::path{raw[index + 1U]};
+            index += 2U;
+        }
+
+        UF_TRY_VALUE(
+            requiredRuntime,
+            requirePath(std::move(runtime), k_reclaimRuntimeFlag)
+        );
+        return ReclaimArgs{.runtime = std::move(requiredRuntime)};
+    }
+
     auto parseObserveArguments(
         std::span<std::string const> raw
     ) -> Result<ObserveArgs>
@@ -796,6 +827,35 @@ namespace uf::cli
             "umbra-flow-observe-trace.jsonl\n";
     }
 
+    auto reclaimUsageText() noexcept -> std::string_view
+    {
+        return
+            "Usage:\n"
+            "  umbra-flow reclaim --runtime DIR\n"
+            "\n"
+            "Removes every RuntimeArtifact directory the Operator root at\n"
+            "--runtime no longer references, and every staging tree an\n"
+            "interrupted publication left behind. It prints how many of each it\n"
+            "removed.\n"
+            "\n"
+            "An artifact directory is unreferenced when no installed generation\n"
+            "and no active pin names it. A failed publication is the ordinary\n"
+            "way one appears: the bytes are content addressed, so the failing\n"
+            "publisher may not delete them -- a concurrent publisher may have\n"
+            "put the identical bytes there -- and only a pass that reads the\n"
+            "whole reference set at once may decide. This verb is that pass, and\n"
+            "it is the only way to run it.\n"
+            "\n"
+            "It refuses while anything else holds the root, because the Operator\n"
+            "admits one owner at a time. Run it when no session is running.\n"
+            "\n"
+            "Required:\n"
+            "  --runtime DIR                Operator production root to sweep\n"
+            "\n"
+            "Exits non-zero when the root cannot be opened or the sweep cannot\n"
+            "finish. Reclaiming nothing is a success, and reports zero.\n";
+    }
+
     auto targetsUsageText() noexcept -> std::string_view
     {
         return
@@ -818,6 +878,8 @@ namespace uf::cli
         text += ocrUsageText();
         text += '\n';
         text += openUsageText();
+        text += '\n';
+        text += reclaimUsageText();
         text += '\n';
         text += targetsUsageText();
         return text;

@@ -80,12 +80,16 @@ namespace uf::service
         task::UiObservationSnapshot      ui;
     };
 
-    // The sole production construction site for Operator. The exact published
+    // The production session over an Operator root. The exact published
     // Operator protocol schema has a production reader here: its catalog bytes
     // are pinned into SessionManifest and passed to OperatorPlanAuthority with
-    // deployment's production PlanProposal and StepIntent readers. No other
-    // production type constructs an OperatorCoordinator, so every lifecycle
-    // path below shares one persistence and recovery chain.
+    // deployment's production PlanProposal and StepIntent readers.
+    //
+    // This module holds the only two production calls that open an
+    // OperatorCoordinator -- start below, and reclaimRuntimeArtifacts after the
+    // class -- so both reach a root through OperatorCoordinator::open and both
+    // complete its recovery before doing anything else. No production type
+    // outside this module constructs one.
     class ProductLifecycle final
     {
         struct Impl;
@@ -139,6 +143,25 @@ namespace uf::service
 
         [[nodiscard]] auto shutdown() -> Status;
     };
+
+    // Runs the Operator root's reclamation pass over runtimeDirectory and
+    // reports what it removed.
+    //
+    // It opens a Coordinator of its own and closes it again, which is what
+    // makes the pass safe to offer: claimExclusiveOwnership refuses this call
+    // for as long as a session holds the root, so a sweep can never run beside
+    // the publication or the dispatch it would sweep out from under. That
+    // refusal is the whole concurrency argument -- there is no second one here.
+    //
+    // It is not folded into ProductLifecycle for two reasons the code states.
+    // The sweep removes directories, and every verb that starts a lifecycle --
+    // including the read-only observation path -- would then delete bytes from
+    // a root it was handed to read. And the two counts below are a result: a
+    // lifecycle hook has no caller to hand them to and would drop the only
+    // report the pass produces.
+    [[nodiscard]]
+    auto reclaimRuntimeArtifacts(std::filesystem::path const& runtimeDirectory)
+        -> Result<operator_runtime::ReclaimedRuntimeArtifacts>;
 
     // Which failure a caller is told about when the work and the close that
     // followed it both failed. The work's failure is the one a caller can act

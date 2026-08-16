@@ -91,7 +91,18 @@ RETIRED_COMMANDS = frozenset({"check", "replay", "run"})
 # rather than of the name -- it mints no Receipt, proposes no plan, and calls
 # no verb of the action sink it builds. tests/cli/test-observe.cpp holds it to
 # that against a recorded target that counts what it was asked to post.
-ALLOWED_COMMANDS = frozenset({"explore", "observe", "ocr", "open", "targets"})
+#
+# reclaim is on open's and ocr's terms: it names no target, opens no capture and
+# posts no input, so it cannot reach a window. What it does reach is an Operator
+# production root, where it runs the reclamation pass that had no production
+# entry point at all until 2026-08-17 -- the pass has to read the whole reference
+# set at once, so it can only be an explicit call, and a verb is the only
+# explicit call a person has. It is safe to offer because the Operator admits one
+# owner at a time: a sweep beside a live session is refused by
+# claimExclusiveOwnership rather than reasoned about here.
+ALLOWED_COMMANDS = frozenset(
+    {"explore", "observe", "ocr", "open", "reclaim", "targets"}
+)
 # Names that must not be bound in a project script's global table.
 #
 # WHAT THIS RULE READS AND WHAT IT DOES NOT. A project environment's globals are

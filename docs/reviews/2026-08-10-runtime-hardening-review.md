@@ -100,6 +100,42 @@ tree.
 > over the same 23 tables. See
 > [journal record binding](../archive/plans/2026-08-11-journal-record-binding.md).
 
+> **Corrected 2026-08-17: "reclaimable" was true, and reclamation never ran.**
+> The closure above ends on "a row nothing names, and that row is reclaimable",
+> and that is exactly as far as it went. `reclaimUnreferencedRuntimeArtifacts`
+> was declared, defined, and called by `tests/operator/test-ledger.cpp` and by
+> nothing under `modules/`, `entry/` or `tools/`. For seven days a failed CAS
+> left a row that could have been reclaimed and never was, on any machine, by
+> any binary this repository ships. A capability with no entry point closes a
+> finding about garbage no better than a comment does.
+>
+> The finding stays closed and the sentence that closes it changes: reclamation
+> is now reachable, as `umbra-flow reclaim --runtime DIR`. The verb calls
+> `service::reclaimRuntimeArtifacts`, which is the second production call that
+> opens an `OperatorCoordinator` — `ProductLifecycle::start` is the first — and
+> it prints the two counts the pass returns.
+>
+> It is a verb rather than a hook in the product lifecycle, and the reasons are
+> in the code rather than in taste. The sweep removes directories, so putting it
+> in `start` or `shutdown` would make every verb that opens a lifecycle delete
+> bytes from a root, including `umbra-flow observe`, whose whole contract is
+> that it reads one. `lifecycleAccessAfterRestart` can bring a lifecycle up
+> read-only with recoveries outstanding, and a read-only lifecycle that deletes
+> is a contradiction. A close hook would also put a filesystem sweep on the
+> failure path of every run through `reportAfterClose`, where a directory a
+> scanner happens to hold open would turn a successful observation into a failed
+> command. And `ReclaimedRuntimeArtifacts` is a *result*: a hook has nobody to
+> hand it to and would drop the only report the pass produces.
+>
+> `test-reclaim-cli` holds it, through the shipped binary rather than through a
+> library call — the shape of the defect was that a library call was the only
+> caller. It plants a staging tree under a root that does not exist yet, requires
+> the verb to report removing exactly one and to have created the ledger while
+> doing so, and requires a second sweep of the same root to report zero, so a
+> printed constant fails. Removing the call to
+> `reclaimUnreferencedRuntimeArtifacts` from `service::reclaimRuntimeArtifacts`
+> and leaving everything else standing makes it red.
+
 ## Accepted, with reasons
 
 **A-F8 — a failed installed-generation CAS leaves the published artifact

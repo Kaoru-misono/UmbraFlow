@@ -407,10 +407,16 @@ can run. Nothing here is owed.
 - [x] Implement lease/fence, opaque snapshots, idempotent commands, EffectivePlan,
       single-use approval, Operation transitions and reconciliation transaction.
 - [x] Run one conformance suite over two structurally different fixture plugins;
-      core must contain no game symbol or branch. Since 2026-08-10 that suite is
-      also the one a consumer runs: `cmake/conformance-suite.cmake` exports
-      `uf_add_conformance_suite()` and the two exemplars under
-      `conformance/exemplars/` reach it exactly as an outside repository would.
+      core must contain no game symbol or branch. The two fixture projects are
+      `examples/umbraflow` (deployments `alpha` + `foreign`) and
+      `examples/arcana-expedition` (`expedition` + `rival`), registered by
+      `cmake/conformance-run.cmake` and run in CI as `conformance-umbraflow` and
+      `conformance-arcana`. Corrected 2026-08-17: this line used to add that the
+      same suite was "also the one a consumer runs", naming
+      `cmake/conformance-suite.cmake` and `conformance/exemplars/`. Neither
+      path exists any more, and uf-chaos retired its own consumer-side fixture
+      project on 2026-08-17 as redundant with these two, so no consumer runs
+      this suite today. Nothing here changed; only the claim was false.
 - [x] Pass all local `contract-product-*`,
       `contract-state-*`, `contract-control-*` and `contract-agent-*`.
 

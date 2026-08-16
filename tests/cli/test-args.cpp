@@ -377,12 +377,19 @@ namespace uf::cli
         CHECK(foreign.error().message().contains("--hwnd"));
     }
 
+    // The name is the assertion: every command main.cpp dispatches must appear.
+    // It listed four of six until 2026-08-17 -- `observe` had been missing since
+    // it was added, and `reclaim` arrived the same day -- so a command could ship
+    // undocumented under a case that says it cannot. Adding one to main.cpp and
+    // not to usageText() reds here.
     TEST_CASE("public usage names every command this binary dispatches")
     {
         auto const usage = usageText();
         CHECK(usage.find("  umbra-flow explore ") != std::string::npos);
+        CHECK(usage.find("  umbra-flow observe ") != std::string::npos);
         CHECK(usage.find("  umbra-flow ocr ") != std::string::npos);
         CHECK(usage.find("  umbra-flow open ") != std::string::npos);
+        CHECK(usage.find("  umbra-flow reclaim ") != std::string::npos);
         CHECK(usage.find("  umbra-flow targets\n") != std::string::npos);
         CHECK(usage.find("  umbra-flow run ") == std::string::npos);
         CHECK(usage.find("  umbra-flow check ") == std::string::npos);

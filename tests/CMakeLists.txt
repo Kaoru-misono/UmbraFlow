@@ -783,6 +783,123 @@ set_tests_properties(test-project-cli PROPERTIES
     LABELS "CI"
 )
 
+# The reclamation pass, driven through the shipped binary rather than through a
+# library call. That is the point of the gate: reclaimUnreferencedRuntimeArtifacts
+# was implemented, tested and reachable from no production entry point at all
+# until `umbra-flow reclaim` was added on 2026-08-17, and a test that calls the
+# Coordinator directly is exactly the test that failed to notice.
+#
+# The driver is generated into the build tree rather than checked in beside
+# test-project-cli.cmake, the same way the task Luau runner below is: it is
+# produced by this file, and the alternative spelling is a second file that has
+# to be kept in step with the registration by hand. @ONLY, so the driver's own
+# ${} references survive configure and are read when CTest runs it.
+set(CLI_RECLAIM_DRIVER
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/test-reclaim-cli.cmake"
+)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(CONFIGURE
+    OUTPUT "${CLI_RECLAIM_DRIVER}"
+    @ONLY
+    CONTENT [=[
+cmake_minimum_required(VERSION 3.30)
+
+if(NOT EXISTS "${UF_CLI_EXECUTABLE}")
+    message(FATAL_ERROR
+        "umbra-flow executable does not exist: ${UF_CLI_EXECUTABLE}"
+    )
+endif()
+
+set(RECLAIM_ROOT "${UF_RECLAIM_TEST_ROOT}")
+set(RECLAIM_LEDGER "${RECLAIM_ROOT}/operator-runtime.sqlite")
+set(RECLAIM_STAGED
+    "${RECLAIM_ROOT}/runtime-artifacts/.staging/interrupted-publication"
+)
+
+# What an interrupted publication leaves: bytes under a name in the staging
+# tree, and no row anywhere naming them. The directory is planted before the
+# root exists, because opening the root is the verb's job and a fixture that
+# opened it first would be testing its own Coordinator.
+file(REMOVE_RECURSE "${RECLAIM_ROOT}")
+file(MAKE_DIRECTORY "${RECLAIM_STAGED}")
+file(WRITE "${RECLAIM_STAGED}/blob.bin" "bytes a publication staged and left\n")
+
+function(run_reclaim OUTPUT_VARIABLE)
+    execute_process(
+        COMMAND "${UF_CLI_EXECUTABLE}" reclaim --runtime "${RECLAIM_ROOT}"
+        OUTPUT_VARIABLE SWEPT
+        ERROR_VARIABLE SWEPT_ERROR
+        RESULT_VARIABLE SWEPT_STATUS
+    )
+    if(NOT SWEPT_STATUS EQUAL 0)
+        message(FATAL_ERROR
+            "umbra-flow reclaim failed (${SWEPT_STATUS}):\n${SWEPT}${SWEPT_ERROR}"
+        )
+    endif()
+    message("${SWEPT}")
+    set(${OUTPUT_VARIABLE} "${SWEPT}" PARENT_SCOPE)
+endfunction()
+
+# The count is read back out of the report rather than matched loosely, so a
+# report that prints a constant fails the second pass below.
+function(staging_count REPORT OUTPUT_VARIABLE)
+    if(NOT "${REPORT}" MATCHES "staging directories +([0-9]+)")
+        message(FATAL_ERROR "reclaim reported no staging count:\n${REPORT}")
+    endif()
+    set(${OUTPUT_VARIABLE} "${CMAKE_MATCH_1}" PARENT_SCOPE)
+endfunction()
+
+run_reclaim(FIRST_REPORT)
+
+# The verb reached the Operator rather than reporting over a root it never
+# opened: the ledger the Coordinator creates is the evidence.
+if(NOT EXISTS "${RECLAIM_LEDGER}")
+    message(FATAL_ERROR
+        "reclaim reported without opening an Operator ledger at ${RECLAIM_LEDGER}"
+    )
+endif()
+
+if(EXISTS "${RECLAIM_STAGED}")
+    message(FATAL_ERROR
+        "reclaim left the staged tree behind: ${RECLAIM_STAGED}"
+    )
+endif()
+
+staging_count("${FIRST_REPORT}" FIRST_STAGING)
+if(NOT FIRST_STAGING STREQUAL "1")
+    message(FATAL_ERROR
+        "reclaim removed the staged tree and reported ${FIRST_STAGING} of them"
+    )
+endif()
+
+# A second pass over the root it just swept. It reports nothing removed, which
+# is what separates a measured count from a printed one.
+run_reclaim(SECOND_REPORT)
+staging_count("${SECOND_REPORT}" SECOND_STAGING)
+if(NOT SECOND_STAGING STREQUAL "0")
+    message(FATAL_ERROR
+        "a second sweep of a swept root reported ${SECOND_STAGING} staging trees"
+    )
+endif()
+]=]
+    NEWLINE_STYLE LF
+)
+if(NOT EXISTS "${CLI_RECLAIM_DRIVER}")
+    message(FATAL_ERROR "failed to generate the reclaim CLI test driver")
+endif()
+
+add_test(
+    NAME test-reclaim-cli
+    COMMAND ${CMAKE_COMMAND}
+        -DUF_CLI_EXECUTABLE=$<TARGET_FILE:${PROJECT_NAME}>
+        -DUF_RECLAIM_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/reclaim-cli-fixture
+        -P "${CLI_RECLAIM_DRIVER}"
+)
+set_tests_properties(test-reclaim-cli PROPERTIES
+    TIMEOUT 60
+    LABELS "CI"
+)
+
 if(TARGET ${PROJECT_NAME}_script)
     cpp_add_test(
         NAME test-script
@@ -1166,7 +1283,7 @@ add_test(
     NAME test-check-safety
     COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/test-check-safety.py
 )
-# No gate registered here may read another repository. check-spec-bundle did
+# No gate registered here may REQUIRE another repository. check-spec-bundle did
 # until 2026-08-16 and carried the CI label, so this repository's gate could not
 # pass on a machine without that checkout. Ruling:
 # docs/plans/2026-08-09-runtime-hardening-rewrite.md.
@@ -1178,6 +1295,68 @@ set_tests_properties(
     PROPERTIES
     TIMEOUT 30
     LABELS "CI"
+)
+
+# The consumer's frozen interface lock, by absolute path, declared by whoever
+# configured this build:
+#
+#   cmake --preset x64-debug \
+#     -DUF_CONSUMER_INTERFACE_LOCK=<uf-chaos>/conformance/interface-lock/v1.18
+#
+# A cache entry and not an environment variable, for the reason CONTEXT.md gives
+# for `project --frames-root`: nothing in this repository reads the environment,
+# and a run whose outcome depends on ambient state has no record of what
+# produced it. CMakeCache.txt holds this one, so a red parity gate can be traced
+# to the checkout that reddened it. It is empty by default, and no default may
+# ever be added -- a path guessed here is the absolute-path dependency the
+# ruling above removed.
+set(UF_CONSUMER_INTERFACE_LOCK "" CACHE PATH
+    "Consumer interface-lock directory the parity gate reads; empty skips it"
+)
+
+# check-, not contract-: a script over two trees, owning no requirement id, the
+# sibling of check-modules above.
+#
+# Registered in both states rather than only when the lock is declared. An
+# unregistered gate is a name `ctest -N` never prints, and this capability sat
+# unregistered and therefore unrun from the day it was written until 2026-08-17.
+# Skipped is a third status beside passed and failed: a machine with no consumer
+# checkout reports the gate by name as not run, and never as agreement.
+#
+# Declared, it carries the CI label deliberately. What it compares is this
+# repository's producer schemas against the bytes the consumer froze, and the
+# rewrite authority's own rule is that implementation stops when the contract
+# disagrees -- a divergence report nobody is required to read is the defect a
+# missing registration already was. Declaring the lock is therefore opting in to
+# being stopped by it.
+if(UF_CONSUMER_INTERFACE_LOCK STREQUAL "")
+    add_test(
+        NAME check-interface-lock-parity
+        COMMAND ${CMAKE_COMMAND} -E echo
+            "SKIPPED check-interface-lock-parity: no consumer interface lock declared; configure with -DUF_CONSUMER_INTERFACE_LOCK=<checkout>/conformance/interface-lock/<version>"
+    )
+    set_tests_properties(check-interface-lock-parity PROPERTIES
+        SKIP_REGULAR_EXPRESSION "^SKIPPED check-interface-lock-parity"
+    )
+else()
+    # Declared and absent is a failure, never a skip: the reason to skip is that
+    # nobody named a lock, and a named lock that is not there is a wrong name.
+    if(NOT IS_DIRECTORY "${UF_CONSUMER_INTERFACE_LOCK}/vectors")
+        message(FATAL_ERROR
+            "UF_CONSUMER_INTERFACE_LOCK does not name an interface lock: "
+            "${UF_CONSUMER_INTERFACE_LOCK}/vectors does not exist"
+        )
+    endif()
+    add_test(
+        NAME check-interface-lock-parity
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/contracts/test_interface_lock_parity.py"
+            --lock-root "${UF_CONSUMER_INTERFACE_LOCK}"
+    )
+endif()
+set_tests_properties(check-interface-lock-parity PROPERTIES
+    TIMEOUT 60
+    LABELS "CI;PARITY"
 )
 
 # The authoring authority's only coverage. It ran in no gate at all until

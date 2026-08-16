@@ -550,6 +550,16 @@ namespace uf::service
         return result;
     }
 
+    auto reclaimRuntimeArtifacts(std::filesystem::path const& runtimeDirectory)
+        -> Result<operator_runtime::ReclaimedRuntimeArtifacts>
+    {
+        UF_TRY_VALUE(
+            coordinator,
+            operator_runtime::OperatorCoordinator::open(runtimeDirectory)
+        );
+        return coordinator.reclaimUnreferencedRuntimeArtifacts();
+    }
+
     auto ProductLifecycle::shutdown() -> Status
     {
         if (m_impl->shutdown)

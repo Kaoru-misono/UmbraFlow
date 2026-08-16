@@ -28,12 +28,17 @@ unity_build = false
 # already reachable through deployment, which is an accident of that edge and
 # not a declaration this module can rely on.
 #
-# operator and trace arrived with the observe verb and are declared for that
-# same reason. observe.cpp names OperatorCoordinator, because opening an
-# already installed RuntimeArtifact is the only production mint of an
-# activation authority, and it names TraceRecorder and FileTraceSink, because
-# an EngineSession has nowhere else to record what it saw. Neither appears in
-# observe.hpp: what the observation established is restated there as strings.
+# service is where both Operator-reaching verbs go through. observe.cpp starts
+# a ProductLifecycle and reclaim.cpp calls reclaimRuntimeArtifacts, and those
+# two functions hold the only production calls that open an OperatorCoordinator
+# -- no file in this module constructs one. operator is still declared because
+# reclaim.cpp names the ReclaimedRuntimeArtifacts that pass returns; it appears
+# in no header here, because reclaim.hpp restates the two counts, exactly as
+# open-project.hpp restates a load as strings.
+#
+# trace arrived with the observe verb: observe.cpp names TraceRecorder and
+# FileTraceSink because an EngineSession has nowhere else to record what it saw,
+# and neither appears in observe.hpp.
 [dependencies]
 public = engine task
 private = deployment image json operator service trace

@@ -167,6 +167,24 @@ namespace uf::cli
 
     [[nodiscard]] auto observeUsageText() noexcept -> std::string_view;
 
+    // The Operator production root to sweep, and nothing else. There is no
+    // project and no target: what the pass reads is the root's own reference
+    // set, and a project named here could only narrow a decision that is only
+    // correct when it is taken over the whole set at once.
+    struct ReclaimArgs final
+    {
+        std::filesystem::path runtime{};
+
+        auto operator==(ReclaimArgs const&) const -> bool = default;
+    };
+
+    [[nodiscard]]
+    auto parseReclaimArguments(
+        std::span<std::string const> raw
+    ) -> Result<ReclaimArgs>;
+
+    [[nodiscard]] auto reclaimUsageText() noexcept -> std::string_view;
+
     // The target listing takes no arguments because it discovers the handle
     // required by the privileged exploration entry point.
     [[nodiscard]] auto targetsUsageText() noexcept -> std::string_view;

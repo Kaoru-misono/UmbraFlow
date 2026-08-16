@@ -25,6 +25,38 @@ two byte strings differ.
   refusal of CRLF. Those bytes are read by a validator; the five documents are
   read by people.
 
+> **Amended 2026-08-17: the vector half of the residual risk below now has a
+> gate, and the gate is red.** `tests/contracts/test_interface_lock_parity.py`
+> was written to compare this repository's producer schemas against the bytes
+> the consumer froze, and it was registered in no CTest target: it had never run
+> outside a hand invocation. It is now `check-interface-lock-parity`.
+>
+> It takes the lock by path and this repository declares no default for it, so
+> the defect the ruling below removed does not come back. The path is a CMake
+> cache entry, `UF_CONSUMER_INTERFACE_LOCK`, and not an environment variable,
+> for the reason `CONTEXT.md` gives for `project --frames-root`: nothing here
+> reads the environment, and a run whose outcome depends on ambient state has no
+> record of what produced it. Undeclared, the gate is registered and reports
+> itself skipped by name; declared, it carries the CI label, because a
+> divergence report nobody is required to read is the defect an unregistered
+> test already was.
+>
+> **Measured 2026-08-17 against `v1.18`: four of the five vectors agree and
+> `single-step-tool.json` does not.** The frozen vector's `/valid/schema` is
+> `umbraflow-declarative-single-step-tool/v1`; this repository's producer
+> requires `umbraflow-declarative-workflow-tool/v1`. `/valid` is missing `states`
+> and `steps` and carries a stale `ui_action`; all six of `/valid/bounds` are
+> spelled differently — `max_dispatches`, `max_observations` and `timeout_ms`
+> against `maximum_dispatches`, `maximum_observations`, `maximum_elapsed_ms`,
+> `maximum_states`, `maximum_steps` and `maximum_waits`.
+>
+> Both repositories still call this contract v1.18 while disagreeing about the
+> declarative tool document, which is the disagreement the top of this section
+> says stops implementation. Nothing here rules on which side is right — that is
+> owed by whoever next revises the lock, and it is the same obligation the
+> residual-risk paragraph below already carries. What changed is that the
+> disagreement is now printed by a gate instead of being a thing nobody had run.
+
 > **Ruled 2026-08-16: the exact-byte bundle root pin is removed**, executing
 > Stage 1 of the hash management proposal. Three measurements decided it, and
 > each is checkable rather than a matter of taste.
