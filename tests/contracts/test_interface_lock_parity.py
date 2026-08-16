@@ -188,7 +188,7 @@ def validate_project_plugin_surface(
 def validate_workflow_vector(
     vectors: Path, schema_root: Path, registry: Registry
 ) -> None:
-    vector = load(vectors / "single-step-tool.json")["valid"]
+    vector = load(vectors / "workflow-tool.json")["valid"]
     workflow_schema = schema_root / "umbraflow-declarative-workflow-tool-v1.schema.json"
     workflow_validator = validator(workflow_schema, registry)
     if workflow_validator.is_valid(vector):
@@ -203,11 +203,35 @@ def validate_workflow_vector(
     missing_bounds = sorted(expected_bounds - actual_bounds)
     stale_bounds = sorted(actual_bounds - expected_bounds)
     raise ParityFailure(
-        "single-step-tool.json: /valid/schema is "
+        "workflow-tool.json: /valid/schema is "
         f"{vector.get('schema')!r}, current producer requires "
         "'umbraflow-declarative-workflow-tool/v1'; "
         f"/valid missing fields {missing}, stale fields {stale}; "
         f"/valid/bounds missing fields {missing_bounds}, stale fields {stale_bounds}"
+    )
+
+
+def validate_registration_vector(
+    vectors: Path, schema_root: Path, registry: Registry
+) -> None:
+    # Only the valid registration is checked here: the invalid cases name
+    # framework refusals that live in code rather than in the schema
+    # (unsorted hashes, format generation), so the producer schema is not
+    # the authority that decides them. The frozen schema is checked to
+    # accept what the vector says a registration may be.
+    vector = load(vectors / "registration.json")["valid"]
+    registration_schema = schema_root / "umbraflow-project-registration-v1.schema.json"
+    registration_validator = validator(registration_schema, registry)
+    if registration_validator.is_valid(vector):
+        return
+
+    expected_top = set(load(registration_schema)["required"])
+    actual_top = field_set(vector)
+    missing = sorted(expected_top - actual_top)
+    stale = sorted(actual_top - expected_top)
+    raise ParityFailure(
+        "registration.json: /valid disagrees with the current producer "
+        f"registration schema; missing fields {missing}, stale fields {stale}"
     )
 
 
@@ -237,8 +261,12 @@ def run(lock_root: Path, source_root: Path, schema_root: Path) -> list[str]:
             ),
         ),
         (
-            "single-step-tool.json",
+            "workflow-tool.json",
             lambda: validate_workflow_vector(vectors, schema_root, registry),
+        ),
+        (
+            "registration.json",
+            lambda: validate_registration_vector(vectors, schema_root, registry),
         ),
     )
     failures: list[str] = []
@@ -264,9 +292,9 @@ def main() -> int:
     schema_root = args.schema_root or args.source_root / "schema"
     failures = run(args.lock_root.resolve(), args.source_root.resolve(), schema_root.resolve())
     if failures:
-        print(f"PARITY: FAIL ({len(failures)}/5 vectors diverge)")
+        print(f"PARITY: FAIL ({len(failures)}/6 vectors diverge)")
         return 1
-    print("PARITY: PASS (5/5 vectors agree)")
+    print("PARITY: PASS (6/6 vectors agree)")
     return 0
 
 
