@@ -113,6 +113,25 @@ temporary instrumentation `[DEBUG-...]` and remove it before completion. When
 the user asked for a diagnosis only, do not implement the fix. For a failure
 only a human can trigger, adapt a copy of `scripts/hitl-loop.template.sh`.
 
+## Agent dispatch economy
+
+Measured 2026-08-17: large agents plus repeated full gates dominate token
+spend. These four rules are the levers:
+
+- An iterating agent runs targeted checks (`ctest --test-dir build/<preset> -R
+  <test>` on the failing test) until the failure set is empty; the full
+  `scripts/ci-local.ps1` gate runs exactly once, last, before the report.
+- Split a large batch into smaller agents by disjoint file paths. Smaller
+  contexts, shorter compile-fix loops, and a mid-batch death loses less work —
+  the working tree keeps the partial state and the same agent resumes by
+  message with its transcript intact.
+- The main loop verifies agent output by grepping for the property first and
+  reading a hunk only on a hit, never by re-reading whole files.
+- Do not arm a persistent Monitor for routine background work: completion
+  notifications already arrive, and a Monitor's quiet-alarm cannot
+  distinguish "read-only review running" from "hung". Arm one only for
+  external state the harness cannot notify about.
+
 ## Workflow red lines
 
 - Use the `manage-git-changes` skill for every Git mutation.
