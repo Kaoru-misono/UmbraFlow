@@ -1,4 +1,4 @@
-"""Canonical RuntimeModel v2 validation and TOML compilation.
+"""Canonical RuntimeModel v3 validation and TOML compilation.
 
 This module compiles runtime-model.toml and never reads one back. The only reader
 of that file is the trusted Luau parser in modules/task/runtime/project.luau; a
@@ -18,7 +18,7 @@ from typing import Any
 from .contracts import validate as validate_contract
 
 
-_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schema" / "umbraflow-runtime-v2.schema.json"
+_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schema" / "umbraflow-runtime-v3.schema.json"
 
 
 class SchemaIssue(ValueError):
@@ -31,7 +31,7 @@ class SchemaIssue(ValueError):
 def _schema_issues(value: Any) -> list[SchemaIssue]:
     return [
         SchemaIssue(error["message"], error["path"])
-        for error in validate_contract("umbraflow-runtime-v2.schema.json", value)
+        for error in validate_contract("umbraflow-runtime-v3.schema.json", value)
     ]
 
 
@@ -50,9 +50,11 @@ def _validate_detector(
     detector: dict[str, Any],
     path: str,
     locators: dict[str, dict[str, Any]],
-    readers: dict[str, dict[str, Any]],
     errors: list[SchemaIssue],
 ) -> None:
+    # Every predicate the schema admits here is a locator_predicate: text_equals
+    # never describes a Binding's identity (T-009), and the schema rejects it
+    # before this cross-reference pass runs.
     seen: set[str] = set()
     for branch in ("all", "any", "none"):
         for offset, predicate in enumerate(detector.get(branch, [])):
@@ -61,12 +63,8 @@ def _validate_detector(
             if key in seen:
                 errors.append(SchemaIssue("predicate is repeated across detector groups", predicate_path))
             seen.add(key)
-            if predicate.get("kind") == "locator_present":
-                if locators.get(predicate.get("locator")) is None:
-                    errors.append(SchemaIssue("predicate refers to a missing locator", f"{predicate_path}.locator"))
-            if predicate.get("kind") == "text_equals":
-                if readers.get(predicate.get("reader")) is None:
-                    errors.append(SchemaIssue("predicate refers to a missing reader", f"{predicate_path}.reader"))
+            if locators.get(predicate["locator"]) is None:
+                errors.append(SchemaIssue("predicate refers to a missing locator", f"{predicate_path}.locator"))
     if not detector.get("all") and not detector.get("any"):
         errors.append(SchemaIssue("needs at least one positive predicate in all/any", path))
 
@@ -223,7 +221,6 @@ def validate_runtime_model(model: dict[str, Any]) -> list[dict[str, str]]:
                 variant["detector"],
                 f"{variant_path}.detector",
                 locators,
-                readers,
                 errors,
             )
         target = targets.get(binding["ui_target"])
@@ -284,6 +281,20 @@ def validate_runtime_model(model: dict[str, Any]) -> list[dict[str, str]]:
             read_names.add(read["reader"])
             if read["reader"] not in readers:
                 errors.append(SchemaIssue("collection read refers to a missing reader", read_path))
+        predicate = collection.get("predicate")
+        if predicate is not None:
+            predicate_path = f"$.collections[{offset}].predicate"
+            if readers.get(predicate["reader"]) is None:
+                errors.append(
+                    SchemaIssue("collection predicate refers to a missing reader", f"{predicate_path}.reader")
+                )
+            elif predicate["reader"] not in read_names:
+                errors.append(
+                    SchemaIssue(
+                        "collection predicate reader must be declared in collection.reads",
+                        f"{predicate_path}.reader",
+                    )
+                )
     for offset, transition in enumerate(model["transitions"]):
         if not _valid_surface_stack(transition["from_surfaces"], surfaces):
             errors.append(SchemaIssue("from_surfaces is not a valid ordered surface stack", f"$.transitions[{offset}].from_surfaces"))

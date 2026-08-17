@@ -88,7 +88,7 @@ class AgentBackend:
 
     def schema_manifest(self) -> dict[str, Any]:
         annotation_schema = _SCHEMA_ROOT / "umbraflow-annotation-workspace-v2.schema.json"
-        runtime_schema = _SCHEMA_ROOT / "umbraflow-runtime-v2.schema.json"
+        runtime_schema = _SCHEMA_ROOT / "umbraflow-runtime-v3.schema.json"
         return {
             "annotation_schema_sha256": hashlib.sha256(annotation_schema.read_bytes()).hexdigest(),
             "capabilities": list(CAPABILITIES),

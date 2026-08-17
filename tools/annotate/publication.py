@@ -40,13 +40,13 @@ from .store import (
 
 _SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "schema"
 # The two generations a RuntimeArtifact manifest declares: the v1 in
-# umbraflow-runtime-artifact-v1.schema.json and the v2 in
-# umbraflow-runtime-v2.schema.json. The Host reads the same two numbers as
+# umbraflow-runtime-artifact-v1.schema.json and the v3 in
+# umbraflow-runtime-v3.schema.json. The Host reads the same two numbers as
 # k_runtimeArtifactFormat and k_runtimeModelFormat. They are generations rather
 # than digests of those two files so that editing either file's prose does not
 # refuse every artifact already published against it.
 RUNTIME_ARTIFACT_FORMAT = 1
-RUNTIME_MODEL_FORMAT = 2
+RUNTIME_MODEL_FORMAT = 3
 _MANIFEST_NAME = "runtime-artifact.manifest.json"
 _MODEL_NAME = "runtime-model.toml"
 _RELEASE_MANIFEST_NAME = "release.manifest.json"

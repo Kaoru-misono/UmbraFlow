@@ -131,6 +131,11 @@ def runtime_model(*, threshold: float = 0.9, with_asset: bool = True) -> dict:
         }
         actions = [{"id": "click", "kind": "click", "proof_locator": "confirm-template"}]
     else:
+        # The shape the compiler must refuse: a Binding detector that names
+        # text_equals. Text is evidence about what is on a Surface, never a
+        # Surface's identity (T-009), so this model is valid nowhere. The only
+        # legitimate home of a text_equals predicate is a Collection's
+        # predicate, exercised by test_collection_predicate_text_equals_*.
         locators = []
         readers = [
             {
@@ -149,7 +154,7 @@ def runtime_model(*, threshold: float = 0.9, with_asset: bool = True) -> dict:
         placement = {"kind": "fixed", "rect": [10, 20, 100, 40]}
         actions = []
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "base_resolution": [1920, 1080],
         "base_dpi": [96, 96],
         "ui_targets": [{"id": "confirm-button", "kind": "control"}],
@@ -505,7 +510,7 @@ def _shared_vector_lines() -> list[str]:
 
 class SchemaAndJcsTests(unittest.TestCase):
     def test_official_draft_202012_runtime_validation_matches_direct_validator(self) -> None:
-        schema_path = Path("schema/umbraflow-runtime-v2.schema.json")
+        schema_path = Path("schema/umbraflow-runtime-v3.schema.json")
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         direct = Draft202012Validator(schema)
         cases = [
@@ -516,7 +521,7 @@ class SchemaAndJcsTests(unittest.TestCase):
         ]
         for value in cases:
             with self.subTest(value=value):
-                official_errors = validate_contract("umbraflow-runtime-v2.schema.json", value)
+                official_errors = validate_contract("umbraflow-runtime-v3.schema.json", value)
                 self.assertEqual(bool(official_errors), not direct.is_valid(value))
         self.assertFalse(hasattr(model_file, "RuntimeSchema"))
 
@@ -524,7 +529,7 @@ class SchemaAndJcsTests(unittest.TestCase):
         # Two producers of one rule -- the published schema and the backend's
         # own checks -- held to the same eight answers. Neither is asked about
         # itself: the rows say what is legal, and both must agree with the rows.
-        schema_path = Path("schema/umbraflow-runtime-v2.schema.json")
+        schema_path = Path("schema/umbraflow-runtime-v3.schema.json")
         direct = Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
         click = {"id": "press", "kind": "click", "proof_locator": "confirm-template"}
         key = {
@@ -572,7 +577,7 @@ class SchemaAndJcsTests(unittest.TestCase):
                 self.assertTrue(model_file.validate_runtime_model(value))
 
     def test_collection_action_and_transition_have_one_owner(self) -> None:
-        schema_path = Path("schema/umbraflow-runtime-v2.schema.json")
+        schema_path = Path("schema/umbraflow-runtime-v3.schema.json")
         direct = Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
         value = runtime_model()
         value["readers"] = [
@@ -805,7 +810,7 @@ def _schema_registry() -> Registry:
     registry = Registry()
     for name in (
         "umbraflow-annotation-workspace-v2.schema.json",
-        "umbraflow-runtime-v2.schema.json",
+        "umbraflow-runtime-v3.schema.json",
         "umbraflow-runtime-artifact-v1.schema.json",
     ):
         schema = json.loads((Path("schema") / name).read_text(encoding="utf-8"))
@@ -1381,12 +1386,72 @@ class PublicationBoundaryTests(WorkspaceTestCase):
         self.assertNotIn("annotation_workspace_schema_hash", release)
         self.assertNotIn("workspace_sqlite_schema_hash", release)
 
-    def test_zero_asset_runtime_artifact_is_supported_end_to_end(self) -> None:
-        self.workspace.add_candidate(candidate_id="text-only", with_asset=False)
-        self.workspace.accept("text-only", 1)
-        ids, project_id = self.workspace.gates("text-only", 1)
-        publication = self.workspace.publisher().publish("text-only", 1, None, ids, project_id)
-        self.assertEqual(publication["runtime_manifest"]["assets"], [])
+    def test_detector_text_equals_is_rejected(self) -> None:
+        # T-009: text is evidence about what is on a Surface, never a
+        # Surface's identity. A Binding detector that names text_equals must
+        # be refused everywhere -- by the store and by the compiler -- so the
+        # compiler can never emit one.
+        with self.assertRaisesRegex(StoreError, "detector"):
+            self.workspace.add_candidate(candidate_id="text-only", with_asset=False)
+        errors = model_file.validate_runtime_model(runtime_model(with_asset=False))
+        self.assertTrue(errors)
+        self.assertIn("detector", errors[0]["path"])
+        with self.assertRaises(model_file.SchemaIssue):
+            compile_runtime_toml(runtime_model(with_asset=False))
+
+    def test_collection_predicate_text_equals_is_accepted_end_to_end(self) -> None:
+        # The same predicate is legal as a Collection's filter: it describes
+        # evidence about the items, not a Surface's identity. A model carrying
+        # one compiles and publishes, and its TOML names text_equals exactly
+        # once -- inside the [[collection]] record, never in a detector.
+        value = runtime_model()
+        value["readers"] = [
+            {
+                "id": "options-reader",
+                "kind": "text",
+                "confidence_floor": 0.8,
+                "layout": "block",
+                "normalization": "trim",
+            }
+        ]
+        value["collections"] = [
+            {
+                "id": "event-options",
+                "surface": "camp-scene",
+                "placement": {
+                    "kind": "detected",
+                    "search_rect": [100, 100, 600, 200],
+                    "reader": "options-reader",
+                    "order": "left_to_right",
+                    "slots": {"origin": 300, "pitch": 200, "tolerance": 2},
+                },
+                "actions": [],
+                "reads": [
+                    {"reader": "options-reader", "offset": [0, 0], "size": [400, 24]}
+                ],
+                "predicate": {
+                    "kind": "text_equals",
+                    "reader": "options-reader",
+                    "value": "Ready",
+                },
+            }
+        ]
+        self.assertEqual(model_file.validate_runtime_model(value), [])
+        compiled, _ = compile_runtime_toml(value)
+        text = compiled.decode("utf-8")
+        self.assertEqual(text.count("text_equals"), 1)
+        self.assertIn("predicate = { ", text)
+
+        self.workspace.add_candidate(candidate_id="options-model")
+        self.workspace.accept("options-model", 1)
+        ids, project_id = self.workspace.gates("options-model", 1)
+        publication = self.workspace.publisher().publish(
+            "options-model", 1, None, ids, project_id
+        )
+        self.assertEqual(
+            [row["path"] for row in publication["runtime_manifest"]["assets"]],
+            ["assets/templates/confirm.png"],
+        )
 
     def test_handoff_overlap_and_global_injection_are_rejected(self) -> None:
         dummy = self.workspace.base / "dummy-human-path"
