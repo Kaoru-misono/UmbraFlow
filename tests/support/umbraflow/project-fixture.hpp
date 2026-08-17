@@ -179,6 +179,12 @@ namespace uf::operator_runtime::test_support
         ProjectToolCatalogSchemaOwner toolCatalogSchemaOwner;
         ProjectReconcileSchemaOwner   reconcileSchemaOwner;
 
+        // The observed-instance identity authority every snapshot of this
+        // project is composed under. It is built once with the fixture because
+        // it is bound to the registration like the schema owners are: a
+        // snapshot cannot pick its own authority, and neither may a case.
+        ObservedInstanceIdentitySchemas observedInstanceIdentitySchemas;
+
         // The exact Tool Catalog bytes this registration pinned. A case that
         // builds a second catalog owner over the same registration needs them,
         // because such an owner is bound to their hash.
@@ -308,10 +314,19 @@ namespace uf::operator_runtime::test_support
         return limits;
     }
 
+    // The default UI-action intent every prepared store's plugin returns. The
+    // step's ui_target_id is the observed instance id the mint composed into
+    // the observation the envelope carries: since U2b a step names an instance
+    // the Operator minted, not a model target, and the U2c gate in
+    // mintNextStep resolves this very member. The envelope's first
+    // observed_instances entry is the one the default derive proposes, so the
+    // default fixture plugin spells one step that mints.
     inline auto const k_fixtureUiActionIntent = std::string{
         "{\n        action = { action_id = \"fixture.press\","
         " canonical_parameters = { value = 1 },"
-        " surface_id = \"fixture.surface\", ui_target_id = \"fixture.target\" },"
+        " surface_id = \"fixture.surface\","
+        " ui_target_id = input.project_observation.observed_instances[1]"
+        ".observed_instance_id },"
         "\n        binding_variant_constraints = {}, delivery_class = \"delivery_safe\","
         "\n        expected_ui_postconditions = {}, required_ui_preconditions = {},"
         "\n        step_key = \"fixture.step\","
@@ -338,14 +353,77 @@ namespace uf::operator_runtime::test_support
         return *result;
     }
 
+    // The one identity schema this fixture's deployments pin, by the $id its
+    // document declares and every instance proposal this fixture's plugins
+    // write names. Spelled once: the C++ validator, the registration closure
+    // and the proposal envelope in the plugin source all say the same string.
+    inline constexpr auto k_fixtureIdentitySchemaId = std::string_view{
+        "https://fixture.example/identity/overlay/v1"
+    };
+
+    // The observed-instance identity authority this fixture's registrations
+    // pin: one schema, the sha256 of k_observedIdentitySchema's bytes, and the
+    // hand-written validator that states that document's constraint in C++.
+    // It is shared by every case that composes or mints an observation, so the
+    // constraint is spelled once rather than once per test file.
+    [[nodiscard]]
+    inline auto observedInstanceIdentitySchemas(
+        VerifiedProjectRegistration const& registration
+    ) -> ObservedInstanceIdentitySchemas
+    {
+        auto schemas = ObservedInstanceIdentitySchemas::create(
+            registration,
+            {
+                ObservedInstanceIdentitySchema{
+                    .schemaId   = std::string{k_fixtureIdentitySchemaId},
+                    .schemaHash = schemaHash(k_observedIdentitySchema),
+                    .validate   = [](json::Value const& basis) -> Status
+                    {
+                        auto const nativeId = basis.find("native_id");
+                        auto const epoch    = basis.find("surface_epoch");
+                        if (
+                            basis.kind() != json::ValueKind::Object
+                            || basis.members().size() != 2U
+                            || nativeId == nullptr
+                            || nativeId->kind() != json::ValueKind::String
+                            || nativeId->string().empty()
+                            || epoch == nullptr
+                            || epoch->kind() != json::ValueKind::Number
+                            || !epoch->isInteger()
+                            || epoch->number() < 0.0
+                        )
+                        {
+                            return fail(
+                                AutomationErrorKind::InvalidResource,
+                                "fixture observed-instance basis violates its schema"
+                            );
+                        }
+                        return ok();
+                    },
+                },
+            }
+        );
+        REQUIRE(schemas.has_value());
+        return *std::move(schemas);
+    }
+
+    // `observationSchema` and `preconditionSchema` default to the exemplar's;
+    // a case that pins a laxer one -- e.g. a project whose derive output is
+    // refused only by the proposal reader, or whose tool arguments admit the
+    // observed_instance_id the submitCommand gate resolves -- states it
+    // explicitly. Every hash and every validator must see the same bytes.
     [[nodiscard]]
     inline auto makeProject(
         std::string pluginId,
-        std::string_view pluginBytes
+        std::string_view pluginBytes,
+        std::string_view observationSchema = k_projectObservationSchema,
+        std::string_view preconditionSchema = k_toolPreconditionSchema
     ) -> ProjectFixture
     {
         auto const bundle = DeploymentBundle{pluginId};
-        auto const deployed = deployment::ProjectDeployment::create(bundle.sources());
+        auto sources               = bundle.sources();
+        sources.projectObservation = observationSchema;
+        auto const deployed = deployment::ProjectDeployment::create(sources);
         {
             auto const why = deployed.has_value()
                 ? std::string{}
@@ -357,8 +435,8 @@ namespace uf::operator_runtime::test_support
         auto const pluginHash             = hashOf(pluginBytes);
         auto const toolCatalogHash        = hashOf(bundle.toolCatalog());
         auto const stateSchemaHash        = hashOf(k_projectStateSchema);
-        auto const observationSchemaHash  = hashOf(k_projectObservationSchema);
-        auto const preconditionSchemaHash = hashOf(k_toolPreconditionSchema);
+        auto const observationSchemaHash  = hashOf(observationSchema);
+        auto const preconditionSchemaHash = hashOf(preconditionSchema);
         auto const reconcileSchemaHash    = hashOf(bundle.reconcileManifest());
         auto const journalSchemaHash      = hashOf(bundle.journalEventManifest());
         auto const exactJcs = std::format(
@@ -429,8 +507,8 @@ namespace uf::operator_runtime::test_support
             *registration,
             ProjectDocumentSchemaBytes{
                 .projectState       = k_projectStateSchema,
-                .projectObservation = k_projectObservationSchema,
-                .toolPrecondition   = k_toolPreconditionSchema,
+                .projectObservation = observationSchema,
+                .toolPrecondition   = preconditionSchema,
             },
             deployment::canonicalJsonValidator(),
             // The deployment's own document validator, with the two envelopes
@@ -482,8 +560,11 @@ namespace uf::operator_runtime::test_support
             .journalSchemaOwner     = *journalSchemaOwner,
             .toolCatalogSchemaOwner = *toolCatalogSchemaOwner,
             .reconcileSchemaOwner   = *reconcileSchemaOwner,
-            .toolCatalogBytes       = bundle.toolCatalog(),
-            .documentInputLog       = std::move(documentInputLog),
+            .observedInstanceIdentitySchemas = observedInstanceIdentitySchemas(
+                *registration
+            ),
+            .toolCatalogBytes = bundle.toolCatalog(),
+            .documentInputLog = std::move(documentInputLog),
         };
     }
 
@@ -927,6 +1008,33 @@ identity = ["fixture.panel.anchor"]
         return conformance::observationRelease(root, umbraflowRuntimeArtifact());
     }
 
+    // The proposal envelope the default fixture derive answers: one observed
+    // instance whose semantic basis the identity schema above accepts. The
+    // mint composes the final observation from it, and the default next_step
+    // names the minted id back to the U2c gate, so a prepared store's first
+    // step already stands on the production observe path.
+    [[nodiscard]]
+    inline auto k_fixtureObservedProposalEnvelope() -> std::string
+    {
+        return "{ schema = \"umbraflow-project-observation-proposal/v1\","
+            " canonical_opaque_payload = {}, project_tool_preconditions = {},"
+            " observed_instance_proposals = { { local_ref = \"fixture.target\","
+            " kind = \"fixture.control\", identity_schema_id = \""
+            + std::string{k_fixtureIdentitySchemaId}
+            + "\", semantic_identity_basis = { native_id = \"fixture.target\","
+            " surface_epoch = 1 }, opaque_project_payload = {} } } }";
+    }
+
+    // The empty envelope in the proposal vocabulary: zero observed instances,
+    // zero tool preconditions, an empty opaque payload. A case that wants a
+    // snapshot to mint no instance names this explicitly rather than relying
+    // on the default above.
+    inline constexpr auto k_fixtureEmptyProposalEnvelope = std::string_view{
+        "{ schema = \"umbraflow-project-observation-proposal/v1\","
+        " canonical_opaque_payload = {}, project_tool_preconditions = {},"
+        " observed_instance_proposals = {} }"
+    };
+
     // The trusted plugin a prepared store registers. plugin_id must equal the
     // registration's, so the id is inserted rather than fixed.
     //
@@ -935,10 +1043,17 @@ identity = ["fixture.panel.anchor"]
     // registration -- one plugin_hash, one session -- reach the clamp, the
     // bound, the approval edge and the tool mismatch: a proposal chosen by the
     // suite instead would be a proposal no plugin produced.
+    //
+    // `derive` and `next_step` are expressions, not bodies, so a case can
+    // substitute a proposal envelope or a step intent without rewriting the
+    // module. The snapshot's mint reads what derive returns, and a case that
+    // wants the mint to see something proposes it here rather than through a
+    // second parser.
     [[nodiscard]]
     inline auto pluginSource(
         std::string_view pluginId,
-        std::string_view nextStepExpression = k_fixtureUiActionIntent
+        std::string_view nextStepExpression = k_fixtureUiActionIntent,
+        std::string_view deriveExpression = k_fixtureObservedProposalEnvelope()
     ) -> std::string
     {
         auto const ordinaryEffects = "{ " + fixtureEffect("alpha", "low") + ", "
@@ -1031,7 +1146,9 @@ identity = ["fixture.panel.anchor"]
         source += "}\n\nreturn {\n    plugin_id = \"";
         source += pluginId;
         source += R"LUAU(",
-    derive = function(_input) return canon.emptyObject end,
+    derive = function(_input) return )LUAU";
+        source += deriveExpression;
+        source += R"LUAU( end,
     plan = function(input)
         local proposal = proposals[input.tool_name]
         if proposal == nil then
@@ -1249,6 +1366,7 @@ identity = ["fixture.panel.anchor"]
             prepared.lease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             observeAgain(prepared)
         );
         REQUIRE(snapshot.has_value());
@@ -1259,7 +1377,8 @@ identity = ["fixture.panel.anchor"]
     inline auto prepareStore(
         std::filesystem::path const& path,
         std::string const& pluginId = "fixture.control",
-        std::string_view nextStepExpression = k_fixtureUiActionIntent
+        std::string_view nextStepExpression = k_fixtureUiActionIntent,
+        std::string_view deriveExpression = k_fixtureObservedProposalEnvelope()
     ) -> PreparedStore
     {
         auto const release = runtimeRelease(path / "session-handoff");
@@ -1276,7 +1395,11 @@ identity = ["fixture.panel.anchor"]
         REQUIRE(installed.has_value());
         auto const artifactRootHash    = installed->rootHash();
         auto const installedGeneration = installed->installedGeneration();
-        auto const source = pluginSource(pluginId, nextStepExpression);
+        auto const source = pluginSource(
+            pluginId,
+            nextStepExpression,
+            deriveExpression
+        );
         auto const project = makeProject(pluginId, source);
         auto const manifest = sessionManifest(
             project.registration,
@@ -1300,6 +1423,11 @@ identity = ["fixture.panel.anchor"]
                 ),
             }
         ).has_value());
+        auto const worldScope = ObservedInstanceWorldScope::run(
+            "target-1",
+            1
+        );
+        REQUIRE(worldScope.has_value());
         REQUIRE(store.pinSession(
             SessionPin{
                 .sessionId                 = "session-1",
@@ -1311,6 +1439,7 @@ identity = ["fixture.panel.anchor"]
                 .projectInstanceKey        = "instance-1",
                 .mode                      = SessionMode::Write,
                 .kind                      = ControllerKind::Script,
+                .worldScope                = *worldScope,
             },
             manifest,
             std::nullopt
@@ -1330,6 +1459,7 @@ identity = ["fixture.panel.anchor"]
             *lease,
             projectPlugin,
             project.toolCatalogSchemaOwner,
+            project.observedInstanceIdentitySchemas,
             reading
         );
         REQUIRE(snapshot.has_value());
@@ -1425,6 +1555,11 @@ identity = ["fixture.panel.anchor"]
             manifest = pinned.manifest;
             profile  = pinned.profile;
         }
+        auto const sessionWorldScope = ObservedInstanceWorldScope::run(
+            controlledTargetId,
+            1
+        );
+        REQUIRE(sessionWorldScope.has_value());
         REQUIRE(prepared.store.pinSession(
             SessionPin{
                 .sessionId                 = sessionId,
@@ -1436,6 +1571,7 @@ identity = ["fixture.panel.anchor"]
                 .projectInstanceKey        = projectInstanceKey,
                 .mode                      = mode,
                 .kind                      = kind,
+                .worldScope                = *sessionWorldScope,
             },
             manifest,
             profile

@@ -129,6 +129,16 @@ namespace uf::cli
             );
         }
 
+        // One observe process is one run over its target window, so the
+        // session observes in a fresh run scope named after that window.
+        auto const controlledTargetId = std::format("window-{}", args.windowHandle);
+        UF_TRY_VALUE(
+            worldScope,
+            operator_runtime::ObservedInstanceWorldScope::run(
+                controlledTargetId,
+                1
+            )
+        );
         UF_TRY_VALUE(
             lifecycle,
             service::ProductLifecycle::start(
@@ -137,10 +147,8 @@ namespace uf::cli
                     .runtimeDirectory          = args.runtime,
                     .authenticatedControllerId = std::string{k_observeControllerId},
                     .controllerCapabilities    = {},
-                    .controlledTargetId = std::format(
-                        "window-{}",
-                        args.windowHandle
-                    ),
+                    .controlledTargetId        = controlledTargetId,
+                    .worldScope                = worldScope,
                 }
             )
         );

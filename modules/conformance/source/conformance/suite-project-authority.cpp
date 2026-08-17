@@ -235,12 +235,21 @@ namespace uf::operator_runtime::conformance
     // carries no UI identifier and the ledger stores the intent bytes without
     // reading their surface_id or ui_target_id.
     //
+    // ui_target_id is deliberately not one of the rows: the U2c gates own it,
+    // and both of them precede this authority in every production path. An id
+    // a command's canonical arguments spell is resolved in submitCommand,
+    // before the operation row is created and therefore before this plan
+    // authority (or the plugin behind it) is consulted at all; the step's own
+    // ui_target_id is resolved again in mintNextStep, before the step row is
+    // written. So the agreement here covers surface and action and nothing
+    // else, and neither gate has been bypassed by the time it runs.
+    //
     // The disagreement is made on the run's side because the plan's side is out
     // of reach. A plugin's bytes are the project's and are pinned by the
     // registration's plugin_hash, so the suite cannot obtain one that answers
     // with a UIActionIntent of the suite's choosing, and a step minted under the
     // foreign project's plugin is refused for the registration it names long
-    // before any step is read. The check compares three pairs of strings and is
+    // before any step is read. The check compares two pairs of strings and is
     // indifferent to which side of a pair moved.
     TEST_CASE("a plan step must name the UI action the run agreed on")
     {
@@ -284,14 +293,6 @@ namespace uf::operator_runtime::conformance
                 .action = task::UiActionUnderTest{
                     .surface  = agreed.surface + "-elsewhere",
                     .uiTarget = agreed.uiTarget,
-                    .action   = agreed.action,
-                },
-            },
-            DisagreeingRun{
-                .field  = "ui_target_id",
-                .action = task::UiActionUnderTest{
-                    .surface  = agreed.surface,
-                    .uiTarget = agreed.uiTarget + "-elsewhere",
                     .action   = agreed.action,
                 },
             },

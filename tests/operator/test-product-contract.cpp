@@ -279,6 +279,7 @@ namespace uf::operator_runtime
             takeover->lease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
         );
         REQUIRE(humanSnapshot.has_value());
@@ -339,6 +340,11 @@ namespace uf::operator_runtime
             prepared,
             test_support::k_unconstrainedAgentBudget
         );
+        auto const worldScope = operator_runtime::ObservedInstanceWorldScope::run(
+            "target-3",
+            1
+        );
+        REQUIRE(worldScope.has_value());
         REQUIRE(prepared.store.pinSession(
             SessionPin{
                 .sessionId                 = "session-3",
@@ -352,6 +358,7 @@ namespace uf::operator_runtime
                 .projectInstanceKey = "instance-3",
                 .mode               = SessionMode::Read,
                 .kind               = ControllerKind::Agent,
+                .worldScope         = *worldScope,
             },
             pinnedAgent.manifest,
             pinnedAgent.profile
@@ -538,6 +545,7 @@ namespace uf::operator_runtime
             *agentLease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
         );
         REQUIRE(agentSnapshot.has_value());
@@ -556,6 +564,7 @@ namespace uf::operator_runtime
             *humanLease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
         );
         REQUIRE(humanSnapshot.has_value());
@@ -564,12 +573,9 @@ namespace uf::operator_runtime
         // a different failure from the refusals that follow: an Agent handed a
         // list naming raw-coordinate-click has already learned the machine
         // surface exists, whatever happens when it tries to use it. A test that
-        // only submitted would pass with no offer side at all.
-        auto const offeredToAgent = prepared.store.availableTools(
-            agent,
-            prepared.project.toolCatalogSchemaOwner
-        );
-        REQUIRE(offeredToAgent.has_value());
+        // only submitted would pass with no offer side at all. The composition
+        // of each snapshot is the only mint of the offered set, so the set is
+        // read off the snapshots above.
         auto const names = [](std::vector<OfferedTool> const& offered)
         {
             auto listed = std::vector<std::string>{};
@@ -580,7 +586,7 @@ namespace uf::operator_runtime
             }
             return listed;
         };
-        auto const agentNames = names(*offeredToAgent);
+        auto const agentNames = names(agentSnapshot->availableTools);
         CHECK_FALSE(std::ranges::contains(agentNames, "raw-coordinate-click"));
 
         // The offered set is not empty of everything, so the absence above is
@@ -593,15 +599,11 @@ namespace uf::operator_runtime
         // derivation are told apart.
         CHECK_FALSE(std::ranges::contains(agentNames, "capability-gated"));
 
-        // The same catalog, the same call, a controller whose profile is not
-        // restricted: the privileged tool is present. Without this the check
-        // above would pass over a derivation that offered nothing to anybody.
-        auto const offeredToHuman = prepared.store.availableTools(
-            human,
-            prepared.project.toolCatalogSchemaOwner
-        );
-        REQUIRE(offeredToHuman.has_value());
-        auto const humanNames = names(*offeredToHuman);
+        // The same catalog, the same composition, a controller whose profile
+        // is not restricted: the privileged tool is present. Without this the
+        // check above would pass over a derivation that offered nothing to
+        // anybody.
+        auto const humanNames = names(humanSnapshot->availableTools);
         CHECK(std::ranges::contains(humanNames, "raw-coordinate-click"));
         CHECK_FALSE(std::ranges::contains(humanNames, "capability-gated"));
 

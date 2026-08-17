@@ -1,0 +1,12 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://fixture.example/identity/overlay/v1",
+    "title": "umbraflow fixture observed instance identity basis",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["native_id", "surface_epoch"],
+    "properties": {
+        "native_id": {"type": "string", "minLength": 1},
+        "surface_epoch": {"type": "integer", "minimum": 0}
+    }
+}

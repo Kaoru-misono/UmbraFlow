@@ -156,6 +156,11 @@ namespace uf::service
             "no-baseline provisioning must reduce an empty Journal: ",
             provisionWhy
         );
+        auto const worldScope = operator_runtime::ObservedInstanceWorldScope::run(
+            "target-without-baseline",
+            1
+        );
+        REQUIRE(worldScope.has_value());
         REQUIRE(prepared.store.pinSession(
             SessionPin{
                 .sessionId                 = "session-without-baseline",
@@ -167,6 +172,7 @@ namespace uf::service
                 .projectInstanceKey        = "instance-without-baseline",
                 .mode                      = SessionMode::Write,
                 .kind                      = ControllerKind::Human,
+                .worldScope                = *worldScope,
             },
             prepared.manifest,
             std::nullopt
@@ -179,6 +185,7 @@ namespace uf::service
             *lease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             observeAgain(prepared)
         );
         CHECK(snapshot.has_value());
@@ -198,13 +205,20 @@ namespace uf::service
             k_unconstrainedAgentBudget
         );
 
-        auto const offered = offeredProductTools(
-            prepared.store,
-            agent,
-            prepared.project.toolCatalogSchemaOwner
+        // The composition of the snapshot is the only mint of the offered
+        // set: the U8 offer side is read off the observed world, not off a
+        // second list kept beside it.
+        auto const lease = prepared.store.acquireLease(agent);
+        REQUIRE(lease.has_value());
+        auto const snapshot = prepared.store.createSnapshot(
+            *lease,
+            prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
+            observeAgain(prepared)
         );
-        REQUIRE(offered.has_value());
-        REQUIRE_FALSE(offered->empty());
+        REQUIRE(snapshot.has_value());
+        REQUIRE_FALSE(snapshot->availableTools.empty());
 
         auto const privileged = prepared.project.toolCatalogSchemaOwner.describe(
             "raw-coordinate-click"
@@ -212,7 +226,7 @@ namespace uf::service
         REQUIRE(privileged.has_value());
         CHECK_MESSAGE(
             std::ranges::none_of(
-                *offered,
+                snapshot->availableTools,
                 [](operator_runtime::OfferedTool const& tool)
                 {
                     return tool.name == "raw-coordinate-click";

@@ -274,20 +274,23 @@ namespace uf::operator_runtime
         std::source_location location = std::source_location::current()
     ) -> std::unexpected<Error>;
 
-    // The ledger metadata for one stored derive result. This is deliberately a
-    // different type from the locked final ProjectObservation wire DTO above.
+    // The ledger metadata for one stored observation. It carries the final
+    // closed envelope the canonical mint produced, not the derive proposal
+    // bytes -- what the row stores is what this type holds, so its hash is the
+    // row's observation_hash and its payload is the row's
+    // canonical_observation.
     class StoredProjectObservation final
     {
         friend class OperatorCoordinator;
 
-        ContentHash       m_projectRegistrationHash;
-        ContentHash       m_pluginHash;
-        std::string       m_projectInstanceKey;
-        ContentHash       m_stateResolutionHash;
-        uint64            m_projectStateRevision;
-        ContentHash       m_projectStateHash;
-        uint64            m_revision;
-        ValidatedDocument m_payload;
+        ContentHash        m_projectRegistrationHash;
+        ContentHash        m_pluginHash;
+        std::string        m_projectInstanceKey;
+        ContentHash        m_stateResolutionHash;
+        uint64             m_projectStateRevision;
+        ContentHash        m_projectStateHash;
+        uint64             m_revision;
+        ProjectObservation m_payload;
 
         StoredProjectObservation(
             ContentHash projectRegistrationHash,
@@ -297,7 +300,7 @@ namespace uf::operator_runtime
             uint64 projectStateRevision,
             ContentHash projectStateHash,
             uint64 revision,
-            ValidatedDocument payload
+            ProjectObservation payload
         );
 
     public:
@@ -324,6 +327,6 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         auto payload() const noexcept UF_LIFETIME_BOUND
-            -> ValidatedDocument const&;
+            -> ProjectObservation const&;
     };
 }

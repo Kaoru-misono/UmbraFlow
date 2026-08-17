@@ -617,11 +617,15 @@ identity = ["panel.anchor"]
     // make the Host refuse, because acting still needs a Receipt the Host
     // itself minted.
     [[nodiscard]]
-    inline auto dispatchAuthority(ControlFence const& fence, GenerationId generation)
-        -> DispatchAuthority
+    inline auto dispatchAuthority(
+        ControlFence const& fence,
+        GenerationId generation,
+        std::string_view uiTarget = std::string_view{k_runtimeUiAction.uiTarget}
+    ) -> DispatchAuthority
     {
         return DispatchAuthority{
             .controlledTargetId  = fence.controlledTargetId,
+            .uiTarget            = std::string{uiTarget},
             .leaseId             = "lease-1",
             .operationId         = "operation-1",
             .authorityDecisionId = "authority-decision-1",

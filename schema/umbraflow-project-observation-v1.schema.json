@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://umbraflow.dev/schema/project-observation/v1",
+  "title": "Umbraflow Project Observation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "canonical_opaque_payload",
+    "project_tool_preconditions",
+    "observed_instances"
+  ],
+  "properties": {
+    "schema": {
+      "const": "umbraflow-project-observation/v1"
+    },
+    "canonical_opaque_payload": true,
+    "project_tool_preconditions": {
+      "type": "array",
+      "items": {
+        "$ref": "https://umbraflow.dev/schema/project-tool-precondition/v1"
+      }
+    },
+    "observed_instances": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "observed_instance_id",
+          "kind",
+          "opaque_project_payload"
+        ],
+        "properties": {
+          "observed_instance_id": {
+            "type": "string",
+            "pattern": "^oi1_[0-9a-f]{64}$"
+          },
+          "parent_observed_instance_id": {
+            "type": "string",
+            "pattern": "^oi1_[0-9a-f]{64}$"
+          },
+          "kind": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
+          },
+          "opaque_project_payload": true
+        }
+      }
+    }
+  }
+}

@@ -62,6 +62,13 @@ namespace uf::operator_runtime
         // controller cannot change what it is between two commands. Agent is
         // the default because it is the least privileged of the three.
         ControllerKind kind{ControllerKind::Agent};
+
+        // The observed-instance world this session's observations mint in. It
+        // is pinned with the rest of the immutable tuple and stored under the
+        // same three columns observed_instance_bindings carry, so every
+        // observation this session produces is bound to one scope and a later
+        // step can use only an ID that scope and fresh membership both admit.
+        ObservedInstanceWorldScope worldScope;
     };
 
     // The externally known facts that identify a prior session without
@@ -501,6 +508,18 @@ namespace uf::operator_runtime
         uint64      expectedProjectStateRevision{};
     };
 
+    // The registration, project instance and plugin facts one observed-instance
+    // operation re-reads from the active lease. It is the Operator's own
+    // vocabulary: no caller supplies one, and no proposal carries a field that
+    // could stand in for it.
+    struct ObservedInstanceContext final
+    {
+        std::string pluginId{};
+        std::string pluginHash{};
+        ContentHash projectRegistrationHash;
+        std::string projectInstanceKey{};
+    };
+
     // Trusted in-process control plane. This object is never installed in a
     // business VM or exposed through the project-plugin data boundary.
     class OperatorCoordinator final
@@ -512,6 +531,31 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         auto recoverUncertainDispatches() -> Result<uint64>;
+
+        // The transaction-neutral canonical mint: the ten ordered checks
+        // (shape, duplicate and parent-cycle relations, identity closure,
+        // basis, stable mint, collision, consistency, parent projection,
+        // canonicalization) that turn one proposal envelope into the final
+        // closed observation. publishProjectObservation and createSnapshot
+        // both call it inside their own transaction, so the production
+        // observe path and the public API mint under the same rules.
+        [[nodiscard]]
+        auto mintProjectObservation(
+            ObservedInstanceContext const& context,
+            ObservedInstanceWorldScope const& worldScope,
+            ObservedInstanceIdentitySchemas const& identitySchemas,
+            ProjectPluginHandle const& plugin,
+            ProjectObservationProposal const& proposal
+        ) -> Result<ProjectObservation>;
+
+        // Rebuilds the fresh observation a snapshot named from the exact bytes
+        // the row stores. Only the bytes persist; this is the one parse the
+        // Operator performs of a stored observation, and it happens so a step
+        // can be held to the fresh membership of the observation it was minted
+        // against.
+        [[nodiscard]]
+        auto restoreProjectObservation(std::string_view storedJcs)
+            -> Result<ProjectObservation>;
 
     public:
         OperatorCoordinator(OperatorCoordinator&&) noexcept;
@@ -722,15 +766,24 @@ namespace uf::operator_runtime
         //
         // There is no identity parameter and nothing replaces it: a caller that
         // supplied one could pin a snapshot to a world the ledger never held.
-        // The three values it does take cannot be fabricated either -- a
+        // The four values it does take cannot be fabricated either -- a
         // ProjectPluginHandle comes only from ProjectPluginRegistrar::findExact,
         // a ProjectToolCatalogSchemaOwner only from the registered catalog,
-        // and a UiObservationSnapshot only from TaskHost.
+        // ObservedInstanceIdentitySchemas only from the deployment that loaded
+        // the pinned registration, and a UiObservationSnapshot only from
+        // TaskHost.
+        //
+        // The derived observation is a proposal envelope and the observed
+        // instances it proposes are minted by the same canonical mint
+        // publishProjectObservation uses, under the session's pinned world
+        // scope and this identity-schema authority; the stored observation is
+        // the final closed envelope, not the proposal bytes.
         [[nodiscard]]
         auto createSnapshot(
             ControlLease const& lease,
             ProjectPluginHandle const& plugin,
             ProjectToolCatalogSchemaOwner const& catalog,
+            ObservedInstanceIdentitySchemas const& identitySchemas,
             task::UiObservationSnapshot const& observation
         ) -> Result<SnapshotRecord>;
 
@@ -777,25 +830,6 @@ namespace uf::operator_runtime
             CommandRequest const& request,
             ValidatedToolInvocation const& invocation
         ) -> Result<AcceptedCommand>;
-
-        // The p03 offer side: the tool set this binding may be told exists.
-        //
-        // It is here rather than on the catalog owner alone because who is
-        // asking is the ledger's fact and no caller's: the kind and the
-        // capability set both come from the live sessions row, re-read under
-        // the same rules every other entry point re-reads it under. The catalog
-        // owner must be bound to the registration this session pinned, so a
-        // foreign catalog cannot answer for it.
-        //
-        // A Privileged tool is absent from the result for an online Agent. That
-        // is a different fact from submitCommand's refusal of one, and neither
-        // stands in for the other: an Agent handed a list naming a tool it may
-        // not use has already been told something p03 says it must not learn.
-        [[nodiscard]]
-        auto availableTools(
-            ControllerBinding const& controller,
-            ProjectToolCatalogSchemaOwner const& catalog
-        ) -> Result<std::vector<OfferedTool>>;
 
         // Records that the world moved under us, which is what out-of-band
         // human input is. It is not an Operation and cannot become one: it

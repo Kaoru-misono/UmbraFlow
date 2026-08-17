@@ -319,6 +319,249 @@ namespace uf::operator_runtime
             database.execute("DROP TABLE release_capability_approvals");
         }
 
+        // sessions as it stood before the observed-instance world scope became
+        // part of the pinned tuple. SQLite stores a CREATE statement verbatim
+        // apart from leading whitespace and IF NOT EXISTS, so the indentation
+        // below is part of the historical identity and not formatting; the
+        // three world_scope columns the batch added are removed together with
+        // the comment that documents them.
+        auto removeSessionWorldScopeColumns(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            database.execute(
+                R"sql(
+                PRAGMA foreign_keys=OFF;
+                CREATE TABLE prior_sessions(
+                    session_id TEXT PRIMARY KEY,
+                    authenticated_controller_id TEXT NOT NULL,
+                    idempotency_namespace TEXT NOT NULL,
+                    manifest_hash TEXT NOT NULL,
+                    runtime_artifact_root_hash TEXT NOT NULL,
+                    installed_generation INTEGER NOT NULL,
+                    project_registration_hash TEXT NOT NULL,
+                    controller_capabilities TEXT NOT NULL,
+                    capability_profile_hash TEXT NOT NULL,
+                    session_epoch INTEGER NOT NULL,
+                    controlled_target_id TEXT NOT NULL,
+                    project_instance_key TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    controller_kind TEXT NOT NULL,
+                    active INTEGER NOT NULL
+                ) STRICT;
+                INSERT INTO prior_sessions SELECT session_id,
+                    authenticated_controller_id, idempotency_namespace,
+                    manifest_hash, runtime_artifact_root_hash,
+                    installed_generation, project_registration_hash,
+                    controller_capabilities, capability_profile_hash,
+                    session_epoch, controlled_target_id, project_instance_key,
+                    mode, controller_kind, active FROM sessions;
+                DROP TABLE sessions;
+                )sql"
+                "CREATE TABLE sessions(\n"
+                "                        session_id TEXT PRIMARY KEY,\n"
+                "                        authenticated_controller_id TEXT NOT NULL,\n"
+                "                        idempotency_namespace TEXT NOT NULL,\n"
+                "                        manifest_hash TEXT NOT NULL,\n"
+                "                        runtime_artifact_root_hash TEXT NOT NULL,\n"
+                "                        installed_generation INTEGER NOT NULL\n"
+                "                            CHECK(installed_generation > 0),\n"
+                "                        project_registration_hash TEXT NOT NULL\n"
+                "                            REFERENCES project_registrations(registration_hash),\n"
+                "                        -- The capability set this session holds, as the exact\n"
+                "                        -- JCS array capability_profile_hash is the sha256 of.\n"
+                "                        -- The hash alone was a caller field with no content\n"
+                "                        -- behind it, so a policy rule naming a required\n"
+                "                        -- capability had nothing to be judged against.\n"
+                "                        controller_capabilities TEXT NOT NULL,\n"
+                "                        capability_profile_hash TEXT NOT NULL,\n"
+                "                        session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),\n"
+                "                        controlled_target_id TEXT NOT NULL,\n"
+                "                        project_instance_key TEXT NOT NULL,\n"
+                "                        mode TEXT NOT NULL CHECK(mode IN ('read', 'write')),\n"
+                "                        -- Which of the three operators holds this session. It\n"
+                "                        -- is part of the immutable pinned tuple, so a\n"
+                "                        -- controller cannot become another kind between two\n"
+                "                        -- commands, and bindController reads it here rather\n"
+                "                        -- than accepting it.\n"
+                "                        controller_kind TEXT NOT NULL\n"
+                "                            CHECK(controller_kind IN ('script', 'agent', 'human')),\n"
+                "                        active INTEGER NOT NULL CHECK(active IN (0, 1)),\n"
+                "                        FOREIGN KEY(project_registration_hash, project_instance_key)\n"
+                "                            REFERENCES project_instances(\n"
+                "                                project_registration_hash,\n"
+                "                                project_instance_key\n"
+                "                            ),\n"
+                "                        FOREIGN KEY(installed_generation, runtime_artifact_root_hash)\n"
+                "                            REFERENCES runtime_installations(\n"
+                "                                installed_generation,\n"
+                "                                artifact_root_hash\n"
+                "                            )\n"
+                "                    ) STRICT;"
+                R"sql(
+                INSERT INTO sessions(session_id, authenticated_controller_id,
+                    idempotency_namespace, manifest_hash,
+                    runtime_artifact_root_hash, installed_generation,
+                    project_registration_hash, controller_capabilities,
+                    capability_profile_hash, session_epoch,
+                    controlled_target_id, project_instance_key, mode,
+                    controller_kind, active) SELECT session_id,
+                    authenticated_controller_id, idempotency_namespace,
+                    manifest_hash, runtime_artifact_root_hash,
+                    installed_generation, project_registration_hash,
+                    controller_capabilities, capability_profile_hash,
+                    session_epoch, controlled_target_id, project_instance_key,
+                    mode, controller_kind, active FROM prior_sessions;
+                DROP TABLE prior_sessions;
+                )sql"
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "one_active_write_session_per_instance\n"
+                "                    ON sessions(project_registration_hash, "
+                "project_instance_key)\n"
+                "                    WHERE mode='write' AND active=1;"
+                R"sql(
+                PRAGMA foreign_keys=ON;
+                )sql"
+            );
+        }
+
+        // observed_instance_bindings as it stood before reserveDispatch could
+        // resolve a step's ui_target_id to the model target the instance was
+        // observed at. The local_ref column the batch added is NOT NULL with
+        // no default, so the migration that adds it rebuilds the table, and
+        // these historical rebuilds must do the same in reverse: the identity
+        // below is over the stored DDL text, so a column the rebuild left in
+        // place would fail the pinned source-hash check even though no row is
+        // ever touched. The text is HEAD's, verbatim, comment included.
+        auto removeObservedInstanceBindingLocalRefColumn(
+            test_support::OperatorDatabaseProbe& database
+        ) -> void
+        {
+            database.execute(
+                R"sql(
+                PRAGMA foreign_keys=OFF;
+                CREATE TABLE prior_observed_instance_bindings(
+                    canonical_authority TEXT PRIMARY KEY,
+                    observed_instance_id TEXT NOT NULL UNIQUE
+                        CHECK(
+                            length(observed_instance_id) = 68
+                            AND substr(observed_instance_id, 1, 4) = 'oi1_'
+                            AND substr(observed_instance_id, 5)
+                                NOT GLOB '*[^0-9a-f]*'
+                        ),
+                    plugin_id TEXT NOT NULL,
+                    project_registration_hash TEXT NOT NULL,
+                    project_instance_key TEXT NOT NULL,
+                    world_scope_kind TEXT NOT NULL
+                        CHECK(world_scope_kind IN ('account', 'run')),
+                    world_scope_id TEXT NOT NULL,
+                    world_scope_generation TEXT NOT NULL
+                        CHECK(
+                            length(world_scope_generation) > 0
+                            AND world_scope_generation NOT GLOB '*[^0-9]*'
+                            AND (
+                                world_scope_kind = 'account'
+                                OR world_scope_generation != '0'
+                            )
+                        )
+                ) STRICT;
+                INSERT INTO prior_observed_instance_bindings(
+                    canonical_authority, observed_instance_id, plugin_id,
+                    project_registration_hash, project_instance_key,
+                    world_scope_kind, world_scope_id, world_scope_generation)
+                    SELECT canonical_authority, observed_instance_id, plugin_id,
+                        project_registration_hash, project_instance_key,
+                        world_scope_kind, world_scope_id, world_scope_generation
+                    FROM observed_instance_bindings;
+                DROP TABLE observed_instance_bindings;
+                )sql"
+                R"sql(
+                    -- The bidirectional Operator-private mint binding. It is
+                    -- independent of scope lifetime: no scope row owns it and
+                    -- no cascade can remove it. This schema implements no
+                    -- reference-expiry proof, so cleanup is forbidden rather
+                    -- than guessing whether a Journal, Operation, backup or
+                    -- audit record still resolves through the binding.
+                    CREATE TABLE IF NOT EXISTS observed_instance_bindings(
+                        canonical_authority TEXT PRIMARY KEY,
+                        observed_instance_id TEXT NOT NULL UNIQUE
+                            CHECK(
+                                length(observed_instance_id) = 68
+                                AND substr(observed_instance_id, 1, 4) = 'oi1_'
+                                AND substr(observed_instance_id, 5)
+                                    NOT GLOB '*[^0-9a-f]*'
+                            ),
+                        plugin_id TEXT NOT NULL,
+                        project_registration_hash TEXT NOT NULL,
+                        project_instance_key TEXT NOT NULL,
+                        world_scope_kind TEXT NOT NULL
+                            CHECK(world_scope_kind IN ('account', 'run')),
+                        world_scope_id TEXT NOT NULL,
+                        world_scope_generation TEXT NOT NULL
+                            CHECK(
+                                length(world_scope_generation) > 0
+                                AND world_scope_generation NOT GLOB '*[^0-9]*'
+                                AND (
+                                    world_scope_kind = 'account'
+                                    OR world_scope_generation != '0'
+                                )
+                            ),
+                        FOREIGN KEY(plugin_id, project_instance_key)
+                            REFERENCES project_instances(plugin_id, project_instance_key),
+                        FOREIGN KEY(project_registration_hash, project_instance_key)
+                            REFERENCES project_instances(
+                                project_registration_hash,
+                                project_instance_key
+                            )
+                    ) STRICT;
+
+                    CREATE TRIGGER forbid_observed_instance_binding_replacement
+                    BEFORE INSERT ON observed_instance_bindings
+                    WHEN EXISTS(
+                        SELECT 1 FROM observed_instance_bindings
+                        WHERE canonical_authority = new.canonical_authority
+                            OR observed_instance_id = new.observed_instance_id
+                    )
+                    BEGIN
+                        SELECT RAISE(
+                            ABORT,
+                            'observed instance bindings are immutable'
+                        );
+                    END;
+
+                    CREATE TRIGGER forbid_observed_instance_binding_mutation
+                    BEFORE UPDATE ON observed_instance_bindings
+                    BEGIN
+                        SELECT RAISE(
+                            ABORT,
+                            'observed instance bindings are immutable'
+                        );
+                    END;
+
+                    CREATE TRIGGER forbid_observed_instance_binding_cleanup
+                    BEFORE DELETE ON observed_instance_bindings
+                    BEGIN
+                        SELECT RAISE(
+                            ABORT,
+                            'observed instance binding cleanup requires a reference-expiry proof'
+                        );
+                    END;
+                )sql"
+                R"sql(
+                INSERT INTO observed_instance_bindings(
+                    canonical_authority, observed_instance_id, plugin_id,
+                    project_registration_hash, project_instance_key,
+                    world_scope_kind, world_scope_id, world_scope_generation)
+                    SELECT canonical_authority, observed_instance_id, plugin_id,
+                        project_registration_hash, project_instance_key,
+                        world_scope_kind, world_scope_id, world_scope_generation
+                    FROM prior_observed_instance_bindings;
+                DROP TABLE prior_observed_instance_bindings;
+                PRAGMA foreign_keys=ON;
+                )sql"
+            );
+        }
+
         using test_support::canonical;
         using test_support::hashOf;
         using test_support::journalEntry;
@@ -442,7 +685,8 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto prepareStore(
             std::filesystem::path const& path,
-            std::string_view pluginSource = k_pluginSource
+            std::string_view pluginSource = k_pluginSource,
+            std::string_view preconditionSchema = test_support::k_toolPreconditionSchema
         ) -> PreparedStore
         {
             auto const release = test_support::runtimeRelease(path / "session-handoff");
@@ -463,7 +707,12 @@ namespace uf::operator_runtime
             REQUIRE(installed.has_value());
             auto const artifactRootHash    = installed->rootHash();
             auto const installedGeneration = installed->installedGeneration();
-            auto const project = makeProject("fixture.alpha", pluginSource);
+            auto const project = makeProject(
+                "fixture.alpha",
+                pluginSource,
+                test_support::k_projectObservationSchema,
+                preconditionSchema
+            );
             auto const manifest = sessionManifest(
                 project.registration,
                 installed->rootHash(),
@@ -486,6 +735,11 @@ namespace uf::operator_runtime
                     ),
                 }
             ).has_value());
+            auto const sessionWorldScope = ObservedInstanceWorldScope::run(
+                "target-1",
+                1
+            );
+            REQUIRE(sessionWorldScope.has_value());
             REQUIRE(store.pinSession(
                 SessionPin{
                     .sessionId                 = "session-1",
@@ -497,6 +751,7 @@ namespace uf::operator_runtime
                     .projectInstanceKey        = "instance-1",
                     .mode                      = SessionMode::Write,
                     .kind                      = ControllerKind::Script,
+                    .worldScope                = *sessionWorldScope,
                 },
                 manifest,
                 std::nullopt
@@ -514,6 +769,7 @@ namespace uf::operator_runtime
                 *lease,
                 projectPlugin,
                 project.toolCatalogSchemaOwner,
+                project.observedInstanceIdentitySchemas,
                 conformance::observeOnce(observation)
             );
             REQUIRE(snapshot.has_value());
@@ -566,6 +822,11 @@ namespace uf::operator_runtime
             std::string sessionId
         ) -> SessionPin
         {
+            auto const worldScope = ObservedInstanceWorldScope::run(
+                "target-1",
+                1
+            );
+            REQUIRE(worldScope.has_value());
             return SessionPin{
                 .sessionId                 = std::move(sessionId),
                 .authenticatedControllerId = "upgrade-controller",
@@ -578,6 +839,7 @@ namespace uf::operator_runtime
                 .projectInstanceKey = "instance-1",
                 .mode               = SessionMode::Read,
                 .kind               = ControllerKind::Script,
+                .worldScope         = *worldScope,
             };
         }
 
@@ -599,14 +861,111 @@ namespace uf::operator_runtime
         [[nodiscard]]
         auto command(
             SnapshotRecord const& snapshot,
-            std::string clientRequestId
+            std::string clientRequestId,
+            std::string idempotencyNamespace
         ) -> CommandRequest
         {
             return CommandRequest{
                 .snapshotToken        = snapshot.token,
-                .idempotencyNamespace = "controller-1",
+                .idempotencyNamespace = std::move(idempotencyNamespace),
                 .clientRequestId      = std::move(clientRequestId),
             };
+        }
+
+        // A catalog owner over one tool entry whose argument validator accepts
+        // any canonical arguments. The fixture's tool argument schema admits
+        // exactly {"value": 1..8}, so no Operation whose canonical arguments
+        // name an observed instance id can be created through the prepared
+        // catalog -- and such arguments are the whole subject of the
+        // submitCommand gate cases. Entry name and descriptor source are both
+        // the case's choice, so a case can present an entry the fixture
+        // catalog never declared (the plan canary) under a descriptor the
+        // fixture catalog did declare.
+        [[nodiscard]]
+        auto catalogAcceptingAnyArguments(
+            PreparedStore const& prepared,
+            std::string entryName,
+            std::string descriptorSource
+        ) -> Result<ProjectToolCatalogSchemaOwner>
+        {
+            UF_TRY_VALUE(
+                descriptor,
+                prepared.project.toolCatalogSchemaOwner.describe(descriptorSource)
+            );
+            return ProjectToolCatalogSchemaOwner::create(
+                prepared.project.registration,
+                prepared.project.toolCatalogBytes,
+                [descriptor, entryName = std::move(entryName)]()
+                    -> Result<std::vector<ToolCatalogEntry>>
+                {
+                    return std::vector<ToolCatalogEntry>{
+                        ToolCatalogEntry{
+                            .name       = entryName,
+                            .descriptor = descriptor,
+                        },
+                    };
+                },
+                [](std::string_view, std::string_view) -> Status { return ok(); }
+            );
+        }
+
+        // An observed instance id minted under a second session on another
+        // target of the SAME registration: a real persistent binding, but one
+        // whose world scope no command of the prepared session may name. The
+        // mint reads the scope out of the pinned tuple, so the second
+        // createSnapshot derives a different canonical authority and mints a
+        // different id than the prepared snapshot's.
+        [[nodiscard]]
+        auto foreignObservedInstanceId(
+            PreparedStore& prepared
+        ) -> std::string
+        {
+            REQUIRE(prepared.store.provisionProjectInstance(
+                prepared.project.registration,
+                prepared.plugin,
+                ProjectInstanceBaseline{
+                    .projectInstanceKey  = "instance-2",
+                    .eventId             = "baseline-instance-2",
+                    .sessionManifestHash = prepared.manifest.hash(),
+                    .entry               = journalEntry(
+                        prepared.project,
+                        prepared.project.registration.baselineEventType(),
+                        "{\"kind\":\"baseline\"}"
+                    ),
+                }
+            ).has_value());
+            auto const secondScope = ObservedInstanceWorldScope::run("target-2", 1);
+            REQUIRE(secondScope.has_value());
+            REQUIRE(prepared.store.pinSession(
+                SessionPin{
+                    .sessionId                 = "session-2",
+                    .authenticatedControllerId = "controller-1",
+                    .idempotencyNamespace      = "controller-1",
+                    .projectRegistrationHash   = prepared.project.registration.hash(),
+                    .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
+                    .controlledTargetId        = "target-2",
+                    .projectInstanceKey        = "instance-2",
+                    .mode                      = SessionMode::Write,
+                    .kind                      = ControllerKind::Script,
+                    .worldScope                = *secondScope,
+                },
+                prepared.manifest,
+                std::nullopt
+            ).has_value());
+            auto second = prepared.store.bindController("session-2");
+            REQUIRE(second.has_value());
+            auto lease = prepared.store.acquireLease(*second);
+            REQUIRE(lease.has_value());
+            auto snapshot = prepared.store.createSnapshot(
+                *lease,
+                prepared.plugin,
+                prepared.project.toolCatalogSchemaOwner,
+                prepared.project.observedInstanceIdentitySchemas,
+                conformance::observeOnce(prepared.observation)
+            );
+            REQUIRE(snapshot.has_value());
+            return snapshot->observation.payload()
+                .observedInstances()[0].observedInstanceId.value();
         }
 
         [[nodiscard]]
@@ -618,7 +977,7 @@ namespace uf::operator_runtime
         {
             auto operation = prepared.store.submitCommand(
                 prepared.controller,
-                command(prepared.snapshot, std::move(clientRequestId)),
+                command(prepared.snapshot, std::move(clientRequestId), "controller-1"),
                 toolInvocation(prepared.project, std::string{toolName})
             );
             REQUIRE(operation.has_value());
@@ -928,49 +1287,6 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto observedInstanceIdentitySchemas(
-            VerifiedProjectRegistration const& registration
-        ) -> ObservedInstanceIdentitySchemas
-        {
-            auto schemas = ObservedInstanceIdentitySchemas::create(
-                registration,
-                {
-                    ObservedInstanceIdentitySchema{
-                        .schemaId   = "https://fixture.example/identity/overlay/v1",
-                        .schemaHash = test_support::schemaHash(
-                            test_support::k_observedIdentitySchema
-                        ),
-                        .validate   = [](json::Value const& basis) -> Status
-                        {
-                            auto const nativeId = basis.find("native_id");
-                            auto const epoch    = basis.find("surface_epoch");
-                            if (
-                                basis.kind() != json::ValueKind::Object
-                                || basis.members().size() != 2U
-                                || nativeId == nullptr
-                                || nativeId->kind() != json::ValueKind::String
-                                || nativeId->string().empty()
-                                || epoch == nullptr
-                                || epoch->kind() != json::ValueKind::Number
-                                || !epoch->isInteger()
-                                || epoch->number() < 0.0
-                            )
-                            {
-                                return fail(
-                                    AutomationErrorKind::InvalidResource,
-                                    "fixture observed-instance basis violates its schema"
-                                );
-                            }
-                            return ok();
-                        },
-                    },
-                }
-            );
-            REQUIRE(schemas.has_value());
-            return *std::move(schemas);
-        }
-
-        [[nodiscard]]
         auto semanticBasis(
             std::string nativeId,
             double surfaceEpoch,
@@ -1153,21 +1469,27 @@ namespace uf::operator_runtime
     // mint one, so reaching a reader at all needs a plugin.
     TEST_CASE("the operator protocol readers read a stamped document")
     {
-        auto const project = makeProject("fixture.alpha", k_pluginSource);
-        auto const plugin  = loadPlugin(project, k_pluginSource);
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto const project = prepared.project;
+        auto const plugin  = prepared.plugin;
 
         auto const proposal = plugin.plan(canonical(
             project.schemaOwner,
-            "{\"canonical_args\":{\"value\":1},\"project_observation\":{},"
-            "\"project_state\":{\"revision\":0},\"tool_name\":\"command-1\","
-            "\"tool_version\":\"1\"}"
+            "{\"canonical_args\":{\"value\":1},\"project_observation\":"
+                + prepared.snapshot.observation.payload().canonicalBytes()
+                + ",\"project_state\":{\"revision\":0},\"tool_name\":\"command-1\","
+                  "\"tool_version\":\"1\"}"
         ));
         REQUIRE(proposal.has_value());
+        // The stored final observation, exactly as mintNextStep hands it to the
+        // plugin: the default next_step names the minted id back out of it.
         auto const intent = plugin.nextStep(canonical(
             project.schemaOwner,
             "{\"frozen_plan_hash\":\"" + hashOf("plan").hex()
-                + "\",\"project_observation\":{},"
-                  "\"project_state\":{\"revision\":0},\"step_index\":1}"
+                + "\",\"project_observation\":"
+                + prepared.snapshot.observation.payload().canonicalBytes()
+                + ",\"project_state\":{\"revision\":0},\"step_index\":1}"
         ));
         REQUIRE(intent.has_value());
 
@@ -1197,7 +1519,12 @@ namespace uf::operator_runtime
         CHECK(step->kind == StepKind::UiAction);
         CHECK(step->stepKey == "fixture.step");
         CHECK(step->surfaceId == "fixture.surface");
-        CHECK(step->uiTargetId == "fixture.target");
+        CHECK(
+            step->uiTargetId
+            == prepared.snapshot.observation.payload().observedInstances()[0]
+                   .observedInstanceId
+                   .value()
+        );
         CHECK(step->actionId == "fixture.press");
         CHECK(step->canonicalParameters == "{\"value\":1}");
 
@@ -1248,9 +1575,7 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = test_support::prepareStore(temporary.path());
-        auto schemas = observedInstanceIdentitySchemas(
-            prepared.project.registration
-        );
+        auto schemas   = prepared.project.observedInstanceIdentitySchemas;
         auto const scope = runScope();
         auto first = prepared.store.publishProjectObservation(
             prepared.lease,
@@ -1420,9 +1745,7 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = test_support::prepareStore(temporary.path());
-        auto schemas = observedInstanceIdentitySchemas(
-            prepared.project.registration
-        );
+        auto schemas   = prepared.project.observedInstanceIdentitySchemas;
         auto const scope = runScope();
         auto invalidStatusAndName = observationProposal({});
         invalidStatusAndName.projectToolPreconditions.front().status =
@@ -1595,9 +1918,7 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = test_support::prepareStore(temporary.path());
-        auto schemas = observedInstanceIdentitySchemas(
-            prepared.project.registration
-        );
+        auto schemas   = prepared.project.observedInstanceIdentitySchemas;
         expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
@@ -1620,9 +1941,7 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = test_support::prepareStore(temporary.path());
-        auto schemas = observedInstanceIdentitySchemas(
-            prepared.project.registration
-        );
+        auto schemas   = prepared.project.observedInstanceIdentitySchemas;
         expectProjectObservationError(
             prepared.store.publishProjectObservation(
                 prepared.lease,
@@ -1645,9 +1964,7 @@ namespace uf::operator_runtime
         auto foreignSource = k_pluginSource;
         foreignSource += "\n-- exact registration variant\n";
         auto const foreign = makeProject("fixture.alpha", foreignSource);
-        auto foreignSchemas = observedInstanceIdentitySchemas(
-            foreign.registration
-        );
+        auto foreignSchemas = foreign.observedInstanceIdentitySchemas;
         REQUIRE(
             foreign.registration.hash()
             != prepared.project.registration.hash()
@@ -1684,9 +2001,7 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = test_support::prepareStore(temporary.path());
-        auto schemas = observedInstanceIdentitySchemas(
-            prepared.project.registration
-        );
+        auto schemas   = prepared.project.observedInstanceIdentitySchemas;
         auto const scope = runScope();
         auto first = prepared.store.publishProjectObservation(
             prepared.lease,
@@ -1713,9 +2028,7 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = test_support::prepareStore(temporary.path());
-        auto schemas = observedInstanceIdentitySchemas(
-            prepared.project.registration
-        );
+        auto schemas   = prepared.project.observedInstanceIdentitySchemas;
         auto const scope = runScope();
         auto first = prepared.store.publishProjectObservation(
             prepared.lease,
@@ -1743,9 +2056,7 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = test_support::prepareStore(temporary.path());
-        auto schemas = observedInstanceIdentitySchemas(
-            prepared.project.registration
-        );
+        auto schemas   = prepared.project.observedInstanceIdentitySchemas;
         auto const scope = runScope();
         auto first = prepared.store.publishProjectObservation(
             prepared.lease,
@@ -1807,9 +2118,7 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = test_support::prepareStore(temporary.path());
-        auto schemas = observedInstanceIdentitySchemas(
-            prepared.project.registration
-        );
+        auto schemas   = prepared.project.observedInstanceIdentitySchemas;
         auto const scope = runScope();
         auto first = prepared.store.publishProjectObservation(
             prepared.lease,
@@ -1849,9 +2158,7 @@ namespace uf::operator_runtime
         auto retained = [&temporary]()
         {
             auto prepared = test_support::prepareStore(temporary.path());
-            auto schemas = observedInstanceIdentitySchemas(
-                prepared.project.registration
-            );
+            auto schemas  = prepared.project.observedInstanceIdentitySchemas;
             auto first = prepared.store.publishProjectObservation(
                 prepared.lease,
                 prepared.plugin,
@@ -1878,6 +2185,11 @@ namespace uf::operator_runtime
         REQUIRE(reopenedResult.has_value());
         auto reopened = *std::move(reopenedResult);
         auto const& [project, plugin, manifest, firstId] = retained;
+        auto const reopenedScope = ObservedInstanceWorldScope::run(
+            "target-after-reopen",
+            1
+        );
+        REQUIRE(reopenedScope.has_value());
         REQUIRE(reopened.pinSession(
             SessionPin{
                 .sessionId                 = "session-after-reopen",
@@ -1891,6 +2203,7 @@ namespace uf::operator_runtime
                 .projectInstanceKey = "instance-1",
                 .mode               = SessionMode::Write,
                 .kind               = ControllerKind::Script,
+                .worldScope         = *reopenedScope,
             },
             manifest,
             std::nullopt
@@ -1899,7 +2212,7 @@ namespace uf::operator_runtime
         REQUIRE(controller.has_value());
         auto lease = reopened.acquireLease(*controller);
         REQUIRE(lease.has_value());
-        auto schemas = observedInstanceIdentitySchemas(project.registration);
+        auto schemas = project.observedInstanceIdentitySchemas;
         auto afterReopen = reopened.publishProjectObservation(
             *lease,
             plugin,
@@ -1933,9 +2246,7 @@ namespace uf::operator_runtime
         )
         {
             auto prepared = prepareStore(path, source);
-            auto schemas = observedInstanceIdentitySchemas(
-                prepared.project.registration
-            );
+            auto schemas  = prepared.project.observedInstanceIdentitySchemas;
             auto observation = prepared.store.publishProjectObservation(
                 prepared.lease,
                 prepared.plugin,
@@ -1982,11 +2293,16 @@ namespace uf::operator_runtime
         auto secondProbe = test_support::OperatorDatabaseProbe{
             secondDatabasePath,
         };
+        // prepareStore itself mints the fixture's snapshot observation, so the
+        // store already holds one binding; the row under test is the one the
+        // explicit publish minted, named by its minted id.
         auto const firstRows = firstProbe.readRows(
-            "SELECT canonical_authority FROM observed_instance_bindings"
+            "SELECT canonical_authority FROM observed_instance_bindings "
+            "WHERE observed_instance_id='" + firstObservedInstanceId + "'"
         );
         auto const secondRows = secondProbe.readRows(
-            "SELECT canonical_authority FROM observed_instance_bindings"
+            "SELECT canonical_authority FROM observed_instance_bindings "
+            "WHERE observed_instance_id='" + secondObservedInstanceId + "'"
         );
         REQUIRE(firstRows.size() == 1U);
         REQUIRE(firstRows.front().size() == 1U);
@@ -2116,9 +2432,7 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = test_support::prepareStore(temporary.path());
         auto const scope = runScope();
-        auto schemas = observedInstanceIdentitySchemas(
-            prepared.project.registration
-        );
+        auto schemas = prepared.project.observedInstanceIdentitySchemas;
         auto first = prepared.store.publishProjectObservation(
             prepared.lease,
             prepared.plugin,
@@ -2145,6 +2459,11 @@ namespace uf::operator_runtime
                 ),
             }
         ).has_value());
+        auto const projectScope = ObservedInstanceWorldScope::run(
+            "target-project-2",
+            1
+        );
+        REQUIRE(projectScope.has_value());
         REQUIRE(prepared.store.pinSession(
             SessionPin{
                 .sessionId                 = "session-project-2",
@@ -2159,6 +2478,7 @@ namespace uf::operator_runtime
                 .projectInstanceKey = "instance-2",
                 .mode               = SessionMode::Write,
                 .kind               = ControllerKind::Script,
+                .worldScope         = *projectScope,
             },
             prepared.manifest,
             std::nullopt
@@ -2219,6 +2539,11 @@ namespace uf::operator_runtime
                 ),
             }
         ).has_value());
+        auto const foreignScope = ObservedInstanceWorldScope::run(
+            "target-foreign",
+            1
+        );
+        REQUIRE(foreignScope.has_value());
         REQUIRE(prepared.store.pinSession(
             SessionPin{
                 .sessionId                 = "session-foreign",
@@ -2232,6 +2557,7 @@ namespace uf::operator_runtime
                 .projectInstanceKey = "instance-1",
                 .mode               = SessionMode::Write,
                 .kind               = ControllerKind::Script,
+                .worldScope         = *foreignScope,
             },
             foreignManifest,
             std::nullopt
@@ -2240,9 +2566,7 @@ namespace uf::operator_runtime
         REQUIRE(foreignController.has_value());
         auto foreignLease = prepared.store.acquireLease(*foreignController);
         REQUIRE(foreignLease.has_value());
-        auto foreignSchemas = observedInstanceIdentitySchemas(
-            foreignProject.registration
-        );
+        auto foreignSchemas = foreignProject.observedInstanceIdentitySchemas;
         auto foreignObservation = prepared.store.publishProjectObservation(
             *foreignLease,
             foreignPlugin,
@@ -2267,6 +2591,702 @@ namespace uf::operator_runtime
         expectProjectObservationError(
             crossRegistration,
             ProjectObservationErrorCode::ObservedInstanceScopeMismatch
+        );
+    }
+
+    // The refusals below drive createSnapshot themselves instead of going
+    // through prepareStore's own snapshot REQUIRE: the case under test is the
+    // mint refusing, so a fixture that demands the first mint succeed cannot
+    // host it. The world is assembled up to the pinned lease and nothing more.
+    struct PinnedSourceStore final
+    {
+        OperatorCoordinator          store;
+        ProjectPluginHandle          plugin;
+        test_support::ProjectFixture project;
+        ControlLease                 lease;
+        conformance::ObservationHost observation;
+    };
+
+    [[nodiscard]]
+    auto pinSourceStore(
+        std::filesystem::path const& path,
+        std::string pluginId,
+        std::string_view source,
+        std::string_view observationSchema = test_support::k_projectObservationSchema
+    ) -> PinnedSourceStore
+    {
+        auto const release = test_support::runtimeRelease(path / "session-handoff");
+        auto storeResult = OperatorCoordinator::open(path / "production");
+        REQUIRE(storeResult.has_value());
+        auto store = *std::move(storeResult);
+        auto installed = store.installRuntimeArtifact(
+            RuntimeArtifactInstallRequest{
+                .handoffRoot                 = release.handoffRoot,
+                .expectedReleaseManifestHash = release.releaseManifestHash,
+                .expectedInstalledGeneration = 0U,
+            }
+        );
+        REQUIRE(installed.has_value());
+        auto const project = makeProject(
+            std::move(pluginId),
+            source,
+            observationSchema
+        );
+        auto const manifest = sessionManifest(
+            project.registration,
+            installed->rootHash(),
+            hashOf("agent"),
+            test_support::policyArtifactBytes()
+        );
+        auto const plugin = loadPlugin(project, source);
+        REQUIRE(store.registerProject(project.registration).has_value());
+        REQUIRE(store.provisionProjectInstance(
+            project.registration,
+            plugin,
+            ProjectInstanceBaseline{
+                .projectInstanceKey  = "instance-1",
+                .eventId             = "baseline-1",
+                .sessionManifestHash = manifest.hash(),
+                .entry = journalEntry(
+                    project,
+                    project.registration.baselineEventType(),
+                    "{\"kind\":\"baseline\"}"
+                ),
+            }
+        ).has_value());
+        auto const worldScope = ObservedInstanceWorldScope::run(
+            "target-1",
+            1
+        );
+        REQUIRE(worldScope.has_value());
+        REQUIRE(store.pinSession(
+            SessionPin{
+                .sessionId                 = "session-1",
+                .authenticatedControllerId = "controller-1",
+                .idempotencyNamespace      = "controller-1",
+                .projectRegistrationHash   = project.registration.hash(),
+                .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
+                .controlledTargetId        = "target-1",
+                .projectInstanceKey        = "instance-1",
+                .mode                      = SessionMode::Write,
+                .kind                      = ControllerKind::Script,
+                .worldScope                = *worldScope,
+            },
+            manifest,
+            std::nullopt
+        ).has_value());
+        auto controller = store.bindController("session-1");
+        REQUIRE(controller.has_value());
+        auto lease = store.acquireLease(*controller);
+        REQUIRE(lease.has_value());
+        auto observation = conformance::activateObservationHost(
+            *std::move(installed),
+            test_support::umbraflowProbeFrame(),
+            FrameId{211}
+        );
+        auto const reading = conformance::observeOnce(observation);
+        conformance::requireResolvedSurface(reading, test_support::k_fixtureUiAction.surface);
+        return PinnedSourceStore{
+            .store       = std::move(store),
+            .plugin      = std::move(plugin),
+            .project     = std::move(project),
+            .lease       = *lease,
+            .observation = std::move(observation),
+        };
+    }
+
+    TEST_CASE("a derive envelope missing a required member is MalformedProposal, not a termination")
+    {
+        auto temporary = TemporaryDirectory{};
+        // The registration pins a permissive observation schema, so the derive
+        // output below is stamped -- a member the proposal contract requires is
+        // absent from a document that schema accepted. Only the proposal
+        // reader's defensive member check can refuse it; a contract check
+        // there would abort this test's process instead of returning.
+        auto const permissiveObservationSchema = std::string_view{
+            R"json({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://umbraflow.dev/schema/project/observation",
+            "type": "object"
+        })json"
+        };
+        auto const malformedDerive = std::string{
+            "{ schema = \"umbraflow-project-observation-proposal/v1\","
+            " project_tool_preconditions = {}, observed_instance_proposals = {} }"
+        };
+        auto const source = test_support::pluginSource(
+            "fixture.malformed",
+            test_support::k_fixtureUiActionIntent,
+            malformedDerive
+        );
+        auto pinned = pinSourceStore(
+            temporary.path(),
+            "fixture.malformed",
+            source,
+            permissiveObservationSchema
+        );
+        auto const refused = pinned.store.createSnapshot(
+            pinned.lease,
+            pinned.plugin,
+            pinned.project.toolCatalogSchemaOwner,
+            pinned.project.observedInstanceIdentitySchemas,
+            conformance::observeOnce(pinned.observation)
+        );
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(
+            projectObservationErrorCode(refused.error())
+            == ProjectObservationErrorCode::MalformedProposal
+        );
+        // The refusal names the missing member, and the case reached this line
+        // at all -- the refusal was a Result rather than an abort.
+        CHECK(refused.error().message().contains("canonical_opaque_payload"));
+    }
+
+    TEST_CASE("production mint is stable across an identical re-observation")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto const firstId = prepared.snapshot.observation.payload()
+            .observedInstances()[0].observedInstanceId.value();
+        CHECK(firstId.starts_with("oi1_"));
+
+        // The identical world through the identical derive: the mint answers
+        // with the same instance id because the canonical authority -- not a
+        // fresh random draw -- is what the id is minted from. Without the
+        // dedup a second observation would mint a second id and this fails.
+        auto const again = prepared.store.createSnapshot(
+            prepared.lease,
+            prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
+            conformance::observeOnce(prepared.observation)
+        );
+        REQUIRE(again.has_value());
+        REQUIRE(again->observation.payload().observedInstances().size() == 1U);
+        CHECK(
+            again->observation.payload().observedInstances()[0]
+                .observedInstanceId.value()
+            == firstId
+        );
+    }
+
+    TEST_CASE("production mint refuses a collision between two proposals")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto const shared = std::string{test_support::k_fixtureIdentitySchemaId};
+        auto const source = test_support::pluginSource(
+            "fixture.collision",
+            test_support::k_fixtureUiActionIntent,
+            "{ schema = \"umbraflow-project-observation-proposal/v1\","
+            " canonical_opaque_payload = {}, project_tool_preconditions = {},"
+            " observed_instance_proposals = {"
+            " { local_ref = \"first\", kind = \"fixture.control\","
+            " identity_schema_id = \"" + shared + "\","
+            " semantic_identity_basis = { native_id = \"same\", surface_epoch = 1 },"
+            " opaque_project_payload = {} },"
+            " { local_ref = \"second\", kind = \"fixture.control\","
+            " identity_schema_id = \"" + shared + "\","
+            " semantic_identity_basis = { native_id = \"same\", surface_epoch = 1 },"
+            " opaque_project_payload = {} } } }"
+        );
+        auto pinned = pinSourceStore(temporary.path(), "fixture.collision", source);
+        auto const refused = pinned.store.createSnapshot(
+            pinned.lease,
+            pinned.plugin,
+            pinned.project.toolCatalogSchemaOwner,
+            pinned.project.observedInstanceIdentitySchemas,
+            conformance::observeOnce(pinned.observation)
+        );
+        expectProjectObservationError(
+            refused,
+            ProjectObservationErrorCode::ObservedInstanceCollision
+        );
+    }
+
+    TEST_CASE("production mint refuses an identity schema outside the registration closure")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto const source = test_support::pluginSource(
+            "fixture.outside",
+            test_support::k_fixtureUiActionIntent,
+            "{ schema = \"umbraflow-project-observation-proposal/v1\","
+            " canonical_opaque_payload = {}, project_tool_preconditions = {},"
+            " observed_instance_proposals = {"
+            " { local_ref = \"outside\", kind = \"fixture.control\","
+            " identity_schema_id = \"https://other.example/identity/v1\","
+            " semantic_identity_basis = { native_id = \"outside\", surface_epoch = 1 },"
+            " opaque_project_payload = {} } } }"
+        );
+        auto pinned = pinSourceStore(temporary.path(), "fixture.outside", source);
+        auto const refused = pinned.store.createSnapshot(
+            pinned.lease,
+            pinned.plugin,
+            pinned.project.toolCatalogSchemaOwner,
+            pinned.project.observedInstanceIdentitySchemas,
+            conformance::observeOnce(pinned.observation)
+        );
+        expectProjectObservationError(
+            refused,
+            ProjectObservationErrorCode::ObservedInstanceIdentitySchemaNotRegistered
+        );
+    }
+
+    TEST_CASE("production mint refuses a proposal whose parents cycle")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto const shared = std::string{test_support::k_fixtureIdentitySchemaId};
+        auto const source = test_support::pluginSource(
+            "fixture.cycle",
+            test_support::k_fixtureUiActionIntent,
+            "{ schema = \"umbraflow-project-observation-proposal/v1\","
+            " canonical_opaque_payload = {}, project_tool_preconditions = {},"
+            " observed_instance_proposals = {"
+            " { local_ref = \"first\", parent_local_ref = \"second\","
+            " kind = \"fixture.control\", identity_schema_id = \"" + shared + "\","
+            " semantic_identity_basis = { native_id = \"first\", surface_epoch = 1 },"
+            " opaque_project_payload = {} },"
+            " { local_ref = \"second\", parent_local_ref = \"first\","
+            " kind = \"fixture.control\", identity_schema_id = \"" + shared + "\","
+            " semantic_identity_basis = { native_id = \"second\", surface_epoch = 1 },"
+            " opaque_project_payload = {} } } }"
+        );
+        auto pinned = pinSourceStore(temporary.path(), "fixture.cycle", source);
+        auto const refused = pinned.store.createSnapshot(
+            pinned.lease,
+            pinned.plugin,
+            pinned.project.toolCatalogSchemaOwner,
+            pinned.project.observedInstanceIdentitySchemas,
+            conformance::observeOnce(pinned.observation)
+        );
+        expectProjectObservationError(
+            refused,
+            ProjectObservationErrorCode::ObservedInstanceParentCycle
+        );
+    }
+
+    TEST_CASE("a step naming an instance minted in another scope is refused at the gate")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto const firstId = prepared.snapshot.observation.payload()
+            .observedInstances()[0].observedInstanceId.value();
+
+        // A second registration whose next_step names the FIRST session's
+        // minted id back to the gate: the only way the production path can
+        // name a foreign id at all is a plugin that spells it, so the plugin
+        // differs from the fixture's and the registration with it.
+        auto const crossScopeStep = std::string{
+            "{ action = { action_id = \"fixture.press\","
+            " canonical_parameters = { value = 1 },"
+            " surface_id = \"fixture.surface\", ui_target_id = \""
+            + firstId
+            + "\" }, binding_variant_constraints = {}, delivery_class = \"delivery_safe\","
+              " expected_ui_postconditions = {}, required_ui_preconditions = {},"
+              " step_key = \"fixture.step\","
+              " timeout_policy = { maximum_elapsed_ms = 5000, on_timeout = \"reobserve\" } }"
+        };
+        auto const foreignSource = test_support::pluginSource(
+            "fixture.other",
+            crossScopeStep
+        );
+        auto foreignProject = makeProject("fixture.other", foreignSource);
+        auto foreignPlugin  = loadPlugin(foreignProject, foreignSource);
+        auto foreignManifest = test_support::sessionManifest(
+            foreignProject.registration,
+            prepared.runtimeArtifactRootHash,
+            hashOf("agent"),
+            test_support::policyArtifactBytes()
+        );
+        REQUIRE(prepared.store.registerProject(
+            foreignProject.registration
+        ).has_value());
+        REQUIRE(prepared.store.provisionProjectInstance(
+            foreignProject.registration,
+            foreignPlugin,
+            ProjectInstanceBaseline{
+                .projectInstanceKey  = "instance-other",
+                .eventId             = "baseline-other",
+                .sessionManifestHash = foreignManifest.hash(),
+                .entry = journalEntry(
+                    foreignProject,
+                    foreignProject.registration.baselineEventType(),
+                    "{\"kind\":\"baseline\"}"
+                ),
+            }
+        ).has_value());
+        auto const otherScope = ObservedInstanceWorldScope::run(
+            "target-other",
+            1
+        );
+        REQUIRE(otherScope.has_value());
+        REQUIRE(prepared.store.pinSession(
+            SessionPin{
+                .sessionId                 = "session-other",
+                .authenticatedControllerId = "controller-other",
+                .idempotencyNamespace      = "controller-other",
+                .projectRegistrationHash   = foreignProject.registration.hash(),
+                .controllerCapabilities    = {
+                    std::string{conformance::k_operateCapability},
+                },
+                .controlledTargetId = "target-other",
+                .projectInstanceKey = "instance-other",
+                .mode               = SessionMode::Write,
+                .kind               = ControllerKind::Script,
+                .worldScope         = *otherScope,
+            },
+            foreignManifest,
+            std::nullopt
+        ).has_value());
+        auto otherController = prepared.store.bindController("session-other");
+        REQUIRE(otherController.has_value());
+        auto otherLease = prepared.store.acquireLease(*otherController);
+        REQUIRE(otherLease.has_value());
+
+        // The other session mints its own world first, so the refusal below
+        // is about the id the step names and not about the observation.
+        auto otherSnapshot = prepared.store.createSnapshot(
+            *otherLease,
+            foreignPlugin,
+            foreignProject.toolCatalogSchemaOwner,
+            foreignProject.observedInstanceIdentitySchemas,
+            conformance::observeOnce(prepared.observation)
+        );
+        REQUIRE(otherSnapshot.has_value());
+
+        auto const runtimeModel = prepared.observation.host->runtimeModelBinding(
+            prepared.observation.generation
+        );
+        REQUIRE(runtimeModel.has_value());
+        auto foreignAuthority = conformance::planAuthority(
+            foreignProject.registration,
+            foreignManifest,
+            *runtimeModel,
+            "operator",
+            test_support::policyArtifactBytes(),
+            test_support::k_fixtureUiAction
+        );
+        REQUIRE(foreignAuthority.has_value());
+
+        // A mutating tool: the scope check runs in mintNextStep, which a
+        // read-only Operation never reaches because it carries no frozen plan.
+        auto operation = prepared.store.submitCommand(
+            *otherController,
+            command(*otherSnapshot, "request-other", "controller-other"),
+            toolInvocation(foreignProject, "command-1")
+        );
+        REQUIRE(operation.has_value());
+        auto frozen = prepared.store.freezePlan(
+            operation->operation.operationId,
+            operation->operation.revision,
+            *otherLease,
+            foreignPlugin,
+            foreignProject.toolCatalogSchemaOwner,
+            *foreignAuthority
+        );
+        REQUIRE(frozen.has_value());
+        auto const refused = prepared.store.mintNextStep(
+            frozen->operation.operationId,
+            frozen->operation.revision,
+            *otherLease,
+            foreignPlugin,
+            foreignProject.toolCatalogSchemaOwner,
+            *foreignAuthority
+        );
+        expectProjectObservationError(
+            refused,
+            ProjectObservationErrorCode::ObservedInstanceScopeMismatch
+        );
+    }
+
+    // A read-only Operation never reaches mintNextStep, so the submitCommand
+    // gate is the ONLY place its canonical arguments' observed instance ids
+    // can be resolved. An id minted in another scope of the same registration
+    // must therefore be refused at submitCommand itself, before the read-only
+    // command is accepted at all.
+    TEST_CASE("a read-only command naming an instance minted in another scope is refused at submitCommand")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(
+            temporary.path(),
+            k_pluginSource,
+            test_support::k_toolPreconditionSchemaWithInstanceIds
+        );
+        auto const otherId = foreignObservedInstanceId(prepared);
+
+        auto catalog = catalogAcceptingAnyArguments(
+            prepared,
+            "observe-1",
+            "observe-1"
+        );
+        REQUIRE(catalog.has_value());
+        auto invocation = catalog->validate(
+            "observe-1",
+            canonical(
+                prepared.project.schemaOwner,
+                "{\"observed_instance_id\":\"" + otherId + "\",\"value\":1}"
+            )
+        );
+        REQUIRE(invocation.has_value());
+        auto const refused = prepared.store.submitCommand(
+            prepared.controller,
+            command(prepared.snapshot, "request-observe-foreign", "controller-1"),
+            *invocation
+        );
+        expectProjectObservationError(
+            refused,
+            ProjectObservationErrorCode::ObservedInstanceScopeMismatch
+        );
+    }
+
+    // The fixture plugin has a proposal for command-1 but none for command-9,
+    // so "command-9" is the canary entry: if the resolution ever moved out of
+    // submitCommand into the plan path, plugin.plan would be called for a tool
+    // it has no proposal for and fail with its own error. This case is green
+    // only because the gate refused the command before plan was ever invoked,
+    // and the mutating descriptor makes it the path the plan would actually
+    // run on.
+    TEST_CASE("a mutating command naming an instance minted in another scope is refused before plugin.plan")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(
+            temporary.path(),
+            k_pluginSource,
+            test_support::k_toolPreconditionSchemaWithInstanceIds
+        );
+        auto const otherId = foreignObservedInstanceId(prepared);
+
+        auto catalog = catalogAcceptingAnyArguments(
+            prepared,
+            "command-9",
+            "command-1"
+        );
+        REQUIRE(catalog.has_value());
+        auto invocation = catalog->validate(
+            "command-9",
+            canonical(
+                prepared.project.schemaOwner,
+                "{\"observed_instance_id\":\"" + otherId + "\",\"value\":1}"
+            )
+        );
+        REQUIRE(invocation.has_value());
+        auto const refused = prepared.store.submitCommand(
+            prepared.controller,
+            command(prepared.snapshot, "request-foreign-command", "controller-1"),
+            *invocation
+        );
+        expectProjectObservationError(
+            refused,
+            ProjectObservationErrorCode::ObservedInstanceScopeMismatch
+        );
+    }
+
+    // The deliver check compares the reserved step's resolved model target --
+    // the binding's local_ref -- with the target the Host's own runtime
+    // resolved for the receipt it mints. A plugin that observes two instances
+    // under one session drives both halves of the check on identical binding
+    // tables: the step naming the instance at the model's declared target
+    // delivers, and the step naming the other instance is refused at
+    // TaskHost::deliver, before the linearization point consumes anything.
+    TEST_CASE("deliver refuses a receipt whose model target the reserved step's instance lacks")
+    {
+        auto const twoInstanceDerive = std::string{
+            "{ schema = \"umbraflow-project-observation-proposal/v1\","
+            " canonical_opaque_payload = {}, project_tool_preconditions = {},"
+            " observed_instance_proposals = {"
+            " { local_ref = \"fixture.target\", kind = \"fixture.control\","
+            " identity_schema_id = \""
+            + std::string{test_support::k_fixtureIdentitySchemaId}
+            + "\", semantic_identity_basis = { native_id = \"fixture.target\","
+            " surface_epoch = 1 }, opaque_project_payload = {} },"
+            " { local_ref = \"target.B\", kind = \"fixture.control\","
+            " identity_schema_id = \""
+            + std::string{test_support::k_fixtureIdentitySchemaId}
+            + "\", semantic_identity_basis = { native_id = \"target.B\","
+            " surface_epoch = 1 }, opaque_project_payload = {} } } }"
+        };
+        auto const secondInstanceIntent = std::string{
+            "{\n        action = { action_id = \"fixture.press\","
+            " canonical_parameters = { value = 1 },"
+            " surface_id = \"fixture.surface\","
+            " ui_target_id = input.project_observation.observed_instances[2]"
+            ".observed_instance_id },"
+            "\n        binding_variant_constraints = {}, delivery_class = \"delivery_safe\","
+            "\n        expected_ui_postconditions = {}, required_ui_preconditions = {},"
+            "\n        step_key = \"fixture.step\","
+            "\n        timeout_policy = { maximum_elapsed_ms = 5000, on_timeout = \"reobserve\" },"
+            "\n    }"
+        };
+
+        // Positive control: the step names the instance whose local_ref is the
+        // model's declared target, so the reserved authority carries that
+        // target and the receipt the Host mints names it too.
+        {
+            auto temporary = TemporaryDirectory{};
+            auto prepared = prepareStore(
+                temporary.path(),
+                test_support::pluginSource(
+                    "fixture.alpha",
+                    test_support::k_fixtureUiActionIntent,
+                    twoInstanceDerive
+                )
+            );
+            auto host = deliveringHost(prepared);
+            auto const operation = createReadyOperation(
+                prepared,
+                "request-target-a",
+                "command-1"
+            );
+            auto const reserved = prepared.store.reserveDispatch(
+                operation.operationId,
+                operation.revision,
+                prepared.lease,
+                host->generation(),
+                AuthorityDecisionId{"authority-target-a"},
+                std::nullopt
+            );
+            REQUIRE(reserved.has_value());
+            CHECK(reserved->authority.uiTarget == "fixture.target");
+            REQUIRE(host->deliver(reserved->authority).has_value());
+        }
+
+        // The negative half: the step names the other instance, whose
+        // local_ref no receipt this model can mint carries. reserveDispatch
+        // resolves it all the way to a reservation, and the deliver check --
+        // not the ledger -- is the refusal that stops the Host from acting.
+        {
+            auto temporary = TemporaryDirectory{};
+            auto prepared = prepareStore(
+                temporary.path(),
+                test_support::pluginSource(
+                    "fixture.alpha",
+                    secondInstanceIntent,
+                    twoInstanceDerive
+                )
+            );
+            auto host = deliveringHost(prepared);
+            auto const operation = createReadyOperation(
+                prepared,
+                "request-target-b",
+                "command-1"
+            );
+            auto const reserved = prepared.store.reserveDispatch(
+                operation.operationId,
+                operation.revision,
+                prepared.lease,
+                host->generation(),
+                AuthorityDecisionId{"authority-target-b"},
+                std::nullopt
+            );
+            REQUIRE(reserved.has_value());
+            CHECK(reserved->authority.uiTarget == "target.B");
+            auto const refused = host->deliver(reserved->authority);
+            REQUIRE_FALSE(refused.has_value());
+            CHECK_MESSAGE(
+                automationErrorKind(refused.error()) == AutomationErrorKind::InvalidResource,
+                "a wrong model target is a Host-authority disagreement, not a "
+                "stale or foreign observation"
+            );
+            CHECK_MESSAGE(
+                refused.error().message().contains(
+                    "delivery receipt names a model target the reserved step's "
+                    "observed instance does not"
+                ),
+                "the refusal must name the target disagreement"
+            );
+        }
+    }
+
+    TEST_CASE("the pinned world scope is immutable and survives a restart")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+        auto const firstId = prepared.snapshot.observation.payload()
+            .observedInstances()[0].observedInstanceId.value();
+
+        // The scope is part of the immutable session tuple: the same session,
+        // the same manifest, a different generation on the same target is
+        // refused while the tuple stands. Without the stored columns this
+        // would be a silent re-pin.
+        auto const movedScope = ObservedInstanceWorldScope::run(
+            "target-1",
+            2
+        );
+        REQUIRE(movedScope.has_value());
+        auto const sameTuplePin = SessionPin{
+            .sessionId                 = "session-1",
+            .authenticatedControllerId = "controller-1",
+            .idempotencyNamespace      = "controller-1",
+            .projectRegistrationHash   = prepared.project.registration.hash(),
+            .controllerCapabilities    = {std::string{conformance::k_operateCapability}},
+            .controlledTargetId        = "target-1",
+            .projectInstanceKey        = "instance-1",
+            .mode                      = SessionMode::Write,
+            .kind                      = ControllerKind::Script,
+            .worldScope                = *movedScope,
+        };
+        auto const refused = prepared.store.pinSession(
+            sameTuplePin,
+            prepared.manifest,
+            std::nullopt
+        );
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(
+            refused.error().message().contains(
+                "already names a different immutable session tuple"
+            )
+        );
+
+        // Across a restart the columns the createSnapshot path restores still
+        // name the same scope: a session pinned on the same target with the
+        // same generation mints the same canonical id, because the mint reads
+        // the scope back out of the stored tuple and not out of the caller.
+        // The first coordinator holds the runtime directory exclusively, so
+        // it is released before the reopened door can take it.
+        {
+            auto releasedStore = std::move(prepared.store);
+        }
+        auto restarted = OperatorCoordinator::open(temporary.path() / "production");
+        REQUIRE(restarted.has_value());
+        auto const restoredScope = ObservedInstanceWorldScope::run(
+            "target-1",
+            1
+        );
+        REQUIRE(restoredScope.has_value());
+        REQUIRE(restarted->pinSession(
+            SessionPin{
+                .sessionId                 = "session-after-restart",
+                .authenticatedControllerId = "controller-after-restart",
+                .idempotencyNamespace      = "controller-after-restart",
+                .projectRegistrationHash   = prepared.project.registration.hash(),
+                .controllerCapabilities    = {
+                    std::string{conformance::k_operateCapability},
+                },
+                .controlledTargetId = "target-1",
+                .projectInstanceKey = "instance-1",
+                .mode               = SessionMode::Write,
+                .kind               = ControllerKind::Script,
+                .worldScope         = *restoredScope,
+            },
+            prepared.manifest,
+            std::nullopt
+        ).has_value());
+        auto afterRestartController = restarted->bindController("session-after-restart");
+        REQUIRE(afterRestartController.has_value());
+        auto afterRestartLease = restarted->acquireLease(*afterRestartController);
+        REQUIRE(afterRestartLease.has_value());
+        auto afterRestartSnapshot = restarted->createSnapshot(
+            *afterRestartLease,
+            prepared.plugin,
+            prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
+            conformance::observeOnce(prepared.observation)
+        );
+        REQUIRE(afterRestartSnapshot.has_value());
+        REQUIRE(afterRestartSnapshot->observation.payload().observedInstances().size() == 1U);
+        CHECK(
+            afterRestartSnapshot->observation.payload().observedInstances()[0]
+                .observedInstanceId.value()
+            == firstId
         );
     }
 
@@ -2317,6 +3337,8 @@ namespace uf::operator_runtime
             auto source = test_support::OperatorDatabaseProbe{databasePath};
             removeReleaseUpgradeEvidenceTables(source);
             restorePriorRegistrationStateSchemaHash(source);
+            removeSessionWorldScopeColumns(source);
+            removeObservedInstanceBindingLocalRefColumn(source);
             sourceIdentity = exactSchemaIdentity(source);
             replayBefore = source.readRows(
                 "SELECT sequence, event_id, namespaced_event_type, "
@@ -2365,6 +3387,278 @@ namespace uf::operator_runtime
         );
     }
 
+    // The pair for the observed-instance world scope joining the pinned
+    // session tuple. Pre-scope sessions cannot claim a world scope -- the
+    // ruling forbids inferring one -- so the backfill is the empty-account
+    // sentinel: the column CHECKs accept it and restoreSessionWorldScope
+    // refuses it, leaving the session unable to observe rather than minting
+    // under a scope it never claimed. Every other byte of the row survives.
+    // The refusal is exercised below through the resumed production observe
+    // path, not only asserted on the stored row.
+    TEST_CASE("the session world scope pair migrates pre-scope sessions fail-closed")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto prepared = prepareStore(temporary.path());
+        // The fixture store holds the runtime directory exclusively, so the
+        // reopened door below can only take it after this one is released.
+        { auto releasedStore = std::move(prepared.store); }
+
+        auto sourceIdentity = std::string{};
+        auto sessionRows    = std::vector<std::vector<std::string>>{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            removeSessionWorldScopeColumns(prior);
+            removeObservedInstanceBindingLocalRefColumn(prior);
+            sourceIdentity = exactSchemaIdentity(prior);
+            sessionRows = prior.readRows(
+                "SELECT session_id, controlled_target_id, active FROM sessions "
+                "ORDER BY session_id"
+            );
+        }
+        REQUIRE_FALSE(sessionRows.empty());
+        CHECK_MESSAGE(
+            sourceIdentity
+                == "sha256:035e04f2e066eb90c457a0af7440356274551be4abd6496b620879e9d4e3b133",
+            "the fixture must reproduce the exact identity this pair migrates from"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(
+                migrated.has_value(),
+                "the registered session-world-scope identity pair must migrate: ",
+                migrated.error().message()
+            );
+
+            // The sentinel must be what production observe actually meets,
+            // not a row only a probe can see. resumeSession re-activates the
+            // deactivated session in the current epoch and changes none of the
+            // pinned world-scope columns, so the next createSnapshot restores
+            // the sentinel and the scope factory refuses the empty scope id:
+            // the specific fail-closed refusal, before any observation work.
+            auto resumed = migrated->resumeSession(
+                SessionResume{
+                    .authenticatedControllerId = "controller-1",
+                    .controlledTargetId        = "target-1",
+                    .mode                      = SessionMode::Write,
+                    .kind                      = ControllerKind::Script,
+                },
+                prepared.manifest
+            );
+            REQUIRE(resumed.has_value());
+            auto lease = migrated->acquireLease(*resumed);
+            REQUIRE(lease.has_value());
+            auto const refused = migrated->createSnapshot(
+                *lease,
+                prepared.plugin,
+                prepared.project.toolCatalogSchemaOwner,
+                prepared.project.observedInstanceIdentitySchemas,
+                conformance::observeOnce(prepared.observation)
+            );
+            expectProjectObservationError(
+                refused,
+                ProjectObservationErrorCode::MalformedAuthorityInput
+            );
+            CHECK_MESSAGE(
+                refused.error().message().contains(
+                    "Observed instance world scope_id is outside its wire domain"
+                ),
+                "the refusal must be the empty sentinel scope, not a generic "
+                "open, resume or lease failure"
+            );
+        }
+
+        auto target = test_support::OperatorDatabaseProbe{databasePath};
+        auto const targetIdentity = exactSchemaIdentity(target);
+        CHECK(sourceIdentity != targetIdentity);
+        CHECK(
+            target.readRows(
+                "SELECT source_identity, target_identity "
+                "FROM schema_identity_transitions"
+            )
+            == std::vector<std::vector<std::string>>{
+                {sourceIdentity, targetIdentity},
+            }
+        );
+        // The walk above resumed the session into the current epoch, so
+        // active reads 1; the world-scope columns still read the sentinel the
+        // migration backfilled. resumeSession only matches active=0 rows, so
+        // the successful resume is itself the proof that the migration
+        // delivered the row deactivated, and the refusal above was the
+        // sentinel restore and not the epoch gate.
+        CHECK(
+            target.readRows(
+                "SELECT session_id, controlled_target_id, active, "
+                "world_scope_kind, world_scope_id, world_scope_generation "
+                "FROM sessions ORDER BY session_id"
+            )
+            == std::vector<std::vector<std::string>>{
+                {"session-1", "target-1", "1", "account", "", "0"},
+            }
+        );
+    }
+
+    // The pair for the local_ref the binding gained this batch, resolving a
+    // step's ui_target_id to the model target the instance was observed at.
+    // Pre-local_ref bindings cannot have their model target reconstructed --
+    // the ruling forbids inferring one -- so the backfill is the empty-string
+    // sentinel: the NOT NULL column accepts it and reserveDispatch refuses it,
+    // leaving the instance undeliverable rather than dispatching under a
+    // model target it never had. Every other byte of the row survives. The
+    // refusal is exercised below through the reserved production dispatch
+    // path, not only asserted on the stored row.
+    TEST_CASE("the binding local_ref column migrates pre-target bindings fail-closed")
+    {
+        auto temporary          = TemporaryDirectory{};
+        auto const production   = temporary.path() / "production";
+        auto const databasePath = production / "operator-runtime.sqlite";
+        auto prepared = prepareStore(temporary.path());
+        // The fixture store holds the runtime directory exclusively, so the
+        // reopened door below can only take it after this one is released.
+        { auto releasedStore = std::move(prepared.store); }
+
+        auto sourceIdentity = std::string{};
+        auto bindingRows    = std::vector<std::vector<std::string>>{};
+        {
+            auto prior = test_support::OperatorDatabaseProbe{databasePath};
+            removeObservedInstanceBindingLocalRefColumn(prior);
+            sourceIdentity = exactSchemaIdentity(prior);
+            bindingRows = prior.readRows(
+                "SELECT observed_instance_id FROM observed_instance_bindings "
+                "ORDER BY observed_instance_id"
+            );
+        }
+        REQUIRE_FALSE(bindingRows.empty());
+        CHECK_MESSAGE(
+            sourceIdentity
+                == "sha256:26a38c2fd4357f538a99cb1b54573f6c2998e19e9a09252e7e9792c45745cec9",
+            "the fixture must reproduce the exact identity this pair migrates from"
+        );
+
+        {
+            auto migrated = OperatorCoordinator::open(production);
+            REQUIRE_MESSAGE(
+                migrated.has_value(),
+                "the registered binding-local-ref identity pair must migrate: ",
+                migrated.error().message()
+            );
+
+            // The sentinel must be what production dispatch actually meets,
+            // not a row only a probe can see. resumeSession re-activates the
+            // deactivated session in the current epoch, and the pre-migration
+            // snapshot is fenced to the superseded lease, so the walk
+            // re-observes: the mint finds the migrated binding by its
+            // canonical authority and returns its id -- the local_ref is the
+            // empty sentinel -- and the step minted against that observation
+            // names the very binding reserveDispatch refuses, before any
+            // delivery is reserved.
+            auto resumed = migrated->resumeSession(
+                SessionResume{
+                    .authenticatedControllerId = "controller-1",
+                    .controlledTargetId        = "target-1",
+                    .mode                      = SessionMode::Write,
+                    .kind                      = ControllerKind::Script,
+                },
+                prepared.manifest
+            );
+            REQUIRE(resumed.has_value());
+            auto lease = migrated->acquireLease(*resumed);
+            REQUIRE(lease.has_value());
+            auto installed = migrated->openInstalledRuntimeArtifact(
+                prepared.installedGeneration,
+                prepared.runtimeArtifactRootHash
+            );
+            REQUIRE(installed.has_value());
+            auto observationHost = conformance::activateObservationHost(
+                *std::move(installed),
+                test_support::umbraflowProbeFrame(),
+                FrameId{709}
+            );
+            auto snapshot = migrated->createSnapshot(
+                *lease,
+                prepared.plugin,
+                prepared.project.toolCatalogSchemaOwner,
+                prepared.project.observedInstanceIdentitySchemas,
+                conformance::observeOnce(observationHost)
+            );
+            REQUIRE(snapshot.has_value());
+            auto operation = migrated->submitCommand(
+                *resumed,
+                command(*snapshot, "request-migrated-binding", "controller-1"),
+                toolInvocation(prepared.project, "command-1")
+            );
+            REQUIRE(operation.has_value());
+            auto frozen = migrated->freezePlan(
+                operation->operation.operationId,
+                operation->operation.revision,
+                *lease,
+                prepared.plugin,
+                prepared.project.toolCatalogSchemaOwner,
+                prepared.planAuthority
+            );
+            REQUIRE(frozen.has_value());
+            auto step = migrated->mintNextStep(
+                frozen->operation.operationId,
+                frozen->operation.revision,
+                *lease,
+                prepared.plugin,
+                prepared.project.toolCatalogSchemaOwner,
+                prepared.planAuthority
+            );
+            REQUIRE(step.has_value());
+            auto const refused = migrated->reserveDispatch(
+                step->operation.operationId,
+                step->operation.revision,
+                *lease,
+                prepared.observation.generation,
+                AuthorityDecisionId{"authority-migrated-binding"},
+                std::nullopt
+            );
+            REQUIRE_FALSE(refused.has_value());
+            CHECK_MESSAGE(
+                automationErrorKind(refused.error()) == AutomationErrorKind::ActionRejected,
+                "the refusal must be a normal authority rejection"
+            );
+            CHECK_MESSAGE(
+                refused.error().message().contains(
+                    "The step names a binding whose local_ref predates target resolution"
+                ),
+                "the refusal must be the empty-sentinel local_ref, not a "
+                "generic open, resume or dispatch failure"
+            );
+        }
+
+        auto target = test_support::OperatorDatabaseProbe{databasePath};
+        auto const targetIdentity = exactSchemaIdentity(target);
+        CHECK(sourceIdentity != targetIdentity);
+        CHECK(
+            target.readRows(
+                "SELECT source_identity, target_identity "
+                "FROM schema_identity_transitions"
+            )
+            == std::vector<std::vector<std::string>>{
+                {sourceIdentity, targetIdentity},
+            }
+        );
+        // The walk above minted a step against the migrated binding, so the
+        // row still exists; the backfill wrote the empty sentinel, which is
+        // the only local_ref a pre-target binding can honestly carry. The
+        // successful step mint itself proves the rest of the row survived:
+        // mintNextStep resolves the very binding reserveDispatch refused.
+        auto const migratedBindings = target.readRows(
+            "SELECT observed_instance_id, local_ref FROM observed_instance_bindings "
+            "ORDER BY observed_instance_id"
+        );
+        REQUIRE(migratedBindings.size() == bindingRows.size());
+        for (std::size_t index = 0; index < migratedBindings.size(); ++index)
+        {
+            CHECK(migratedBindings[index][0] == bindingRows[index][0]);
+            CHECK(migratedBindings[index][1].empty());
+        }
+    }
+
     // The pair for dropping project_registrations.project_state_schema_hash.
     // The registration rows must survive it: the column was a copy of a member
     // their canonical_manifest carries, and losing the row would lose the
@@ -2384,6 +3678,8 @@ namespace uf::operator_runtime
         {
             auto prior = test_support::OperatorDatabaseProbe{databasePath};
             restorePriorRegistrationStateSchemaHash(prior);
+            removeSessionWorldScopeColumns(prior);
+            removeObservedInstanceBindingLocalRefColumn(prior);
             sourceIdentity   = exactSchemaIdentity(prior);
             registrationRows = prior.readRows(
                 "SELECT registration_hash, plugin_id, plugin_hash, "
@@ -2444,6 +3740,8 @@ namespace uf::operator_runtime
             removeReleaseUpgradeEvidenceTables(prior);
             restorePriorSnapshotIdentityComment(prior);
             restorePriorRegistrationStateSchemaHash(prior);
+            removeSessionWorldScopeColumns(prior);
+            removeObservedInstanceBindingLocalRefColumn(prior);
             sourceIdentity = exactSchemaIdentity(prior);
         }
 
@@ -2559,6 +3857,8 @@ namespace uf::operator_runtime
             removeReleaseUpgradeEvidenceTables(priorSchema);
             restorePriorSnapshotIdentityComment(priorSchema);
             restorePriorRegistrationStateSchemaHash(priorSchema);
+            removeSessionWorldScopeColumns(priorSchema);
+            removeObservedInstanceBindingLocalRefColumn(priorSchema);
             sourceIdentity = exactSchemaIdentity(priorSchema);
         }
         CHECK_MESSAGE(
@@ -2675,6 +3975,11 @@ namespace uf::operator_runtime
         auto const pinRegistration      = hashOf("registration-pin-selects");
         auto const manifest =
             manifestNamingRegistration(artifactRootHash, manifestRegistration);
+        auto const mismatchScope = ObservedInstanceWorldScope::run(
+            "target-mismatch",
+            1
+        );
+        REQUIRE(mismatchScope.has_value());
 
         auto const disagreeing = store.pinSession(
             SessionPin{
@@ -2687,6 +3992,7 @@ namespace uf::operator_runtime
                 .projectInstanceKey        = "instance-mismatch",
                 .mode                      = SessionMode::Write,
                 .kind                      = ControllerKind::Script,
+                .worldScope                = *mismatchScope,
             },
             manifest,
             std::nullopt
@@ -3034,6 +4340,14 @@ namespace uf::operator_runtime
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
 
+        // The stored session pins worldScope run("target-1", 1), so the
+        // re-pin below must name the same immutable tuple column for the
+        // manifest to be the only variable.
+        auto const storedScope = ObservedInstanceWorldScope::run(
+            "target-1",
+            1
+        );
+        REQUIRE(storedScope.has_value());
         auto const samePin = SessionPin{
             .sessionId                 = "session-1",
             .authenticatedControllerId = "controller-1",
@@ -3044,6 +4358,7 @@ namespace uf::operator_runtime
             .projectInstanceKey        = "instance-1",
             .mode                      = SessionMode::Write,
             .kind                      = ControllerKind::Script,
+            .worldScope                = *storedScope,
         };
 
         // The positive control: the stored session accepts its own manifest,
@@ -3088,6 +4403,11 @@ namespace uf::operator_runtime
         auto const registrationHash = hashOf("registration-never-provisioned");
         auto const manifest =
             manifestNamingRegistration(artifactRootHash, registrationHash);
+        auto const missingScope = ObservedInstanceWorldScope::run(
+            "target-no-instance",
+            1
+        );
+        REQUIRE(missingScope.has_value());
 
         auto const missingInstance = store.pinSession(
             SessionPin{
@@ -3100,6 +4420,7 @@ namespace uf::operator_runtime
                 .projectInstanceKey        = "instance-never-provisioned",
                 .mode                      = SessionMode::Write,
                 .kind                      = ControllerKind::Script,
+                .worldScope                = *missingScope,
             },
             manifest,
             std::nullopt
@@ -3630,6 +4951,7 @@ namespace uf::operator_runtime
             prepared.lease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             conformance::observeOnce(prepared.observation)
         ).has_value());
     }
@@ -3638,7 +4960,7 @@ namespace uf::operator_runtime
     {
         auto temporary = TemporaryDirectory{};
         auto prepared  = prepareStore(temporary.path());
-        auto const request = command(prepared.snapshot, "request-1");
+        auto const request = command(prepared.snapshot, "request-1", "controller-1");
         auto first = prepared.store.submitCommand(
             prepared.controller,
             request,
@@ -3669,7 +4991,7 @@ namespace uf::operator_runtime
         ).has_value());
         CHECK_FALSE(prepared.store.submitCommand(
             prepared.controller,
-            command(prepared.snapshot, "request-2"),
+            command(prepared.snapshot, "request-2", "controller-1"),
             toolInvocation(prepared.project, "command-2")
         ).has_value());
 
@@ -3677,7 +4999,7 @@ namespace uf::operator_runtime
         // mutating Operation above is still live.
         CHECK(prepared.store.submitCommand(
             prepared.controller,
-            command(prepared.snapshot, "request-3"),
+            command(prepared.snapshot, "request-3", "controller-1"),
             toolInvocation(prepared.project, "observe-1")
         ).has_value());
 
@@ -3690,7 +5012,7 @@ namespace uf::operator_runtime
         CHECK(cancelled->state == OperationState::Cancelled);
         CHECK(prepared.store.submitCommand(
             prepared.controller,
-            command(prepared.snapshot, "request-2"),
+            command(prepared.snapshot, "request-2", "controller-1"),
             toolInvocation(prepared.project, "command-2")
         ).has_value());
     }
@@ -4187,6 +5509,7 @@ namespace uf::operator_runtime
                 *lease,
                 plugin,
                 project.toolCatalogSchemaOwner,
+                project.observedInstanceIdentitySchemas,
                 conformance::observeOnce(observationHost)
             );
             REQUIRE(snapshot.has_value());
@@ -4358,6 +5681,11 @@ namespace uf::operator_runtime
                     ),
                 }
             ).has_value());
+            auto const ambiguousScope = ObservedInstanceWorldScope::run(
+                "target-1",
+                1
+            );
+            REQUIRE(ambiguousScope.has_value());
             REQUIRE(prepared.store.pinSession(
                 SessionPin{
                     .sessionId                 = "session-ambiguous",
@@ -4372,6 +5700,7 @@ namespace uf::operator_runtime
                     .projectInstanceKey = "instance-ambiguous",
                     .mode               = SessionMode::Write,
                     .kind               = ControllerKind::Script,
+                    .worldScope         = *ambiguousScope,
                 },
                 manifest,
                 std::nullopt
@@ -4589,7 +5918,7 @@ namespace uf::operator_runtime
         CHECK_FALSE_MESSAGE(
             prepared.store.submitCommand(
                 prepared.controller,
-                command(prepared.snapshot, "request-stale-snapshot"),
+                command(prepared.snapshot, "request-stale-snapshot", "controller-1"),
                 toolInvocation(prepared.project, "command-2")
             ).has_value(),
             "both project-state clauses together must reject the stale snapshot"
@@ -4766,11 +6095,13 @@ namespace uf::operator_runtime
         CHECK(freezePlanFor(prepared, proposed).has_value());
     }
 
-    // A plan's surface_id, ui_target_id and action_id reach no Host: the
-    // Receipt's intent is minted by the trusted chunk out of the model, and
-    // task::DispatchAuthority carries no UI identifier. Until the step check
-    // below existed they were decoration, and a plan could name UI that exists
-    // in no RuntimeModel and still be dispatched.
+    // A plan's surface_id and action_id reach no Host: the Receipt's intent is
+    // minted by the trusted chunk out of the model, and task::DispatchAuthority
+    // carries no UI identifier. Until the step check below existed they were
+    // decoration, and a plan could name UI that exists in no RuntimeModel and
+    // still be dispatched. ui_target_id is deliberately absent from the pair:
+    // since U2b it is the minted observed instance id, whose judge is the
+    // observation gate in mintNextStep and not the model vocabulary.
     TEST_CASE("a step naming UI the installed RuntimeModel does not define is refused")
     {
         struct UndefinedUi final
@@ -4784,11 +6115,6 @@ namespace uf::operator_runtime
                 "surface_id",
                 R"(surface_id = "fixture.surface")",
                 R"(surface_id = "fixture.absent")",
-            },
-            UndefinedUi{
-                "ui_target_id",
-                R"(ui_target_id = "fixture.target")",
-                R"(ui_target_id = "fixture.absent")",
             },
             UndefinedUi{
                 "action_id",
@@ -4814,9 +6140,9 @@ namespace uf::operator_runtime
         }
     }
 
-    // The positive control the three refusals above are worthless without: the
+    // The positive control the two refusals above are worthless without: the
     // identical route, the identical authority, and the fixture's own plan,
-    // whose three identifiers this project's model does define.
+    // whose surface and action this project's model does define.
     TEST_CASE("a step naming UI the installed RuntimeModel defines is minted")
     {
         auto temporary = TemporaryDirectory{};

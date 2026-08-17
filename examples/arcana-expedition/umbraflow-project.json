@@ -28,8 +28,10 @@
       "effect_payload_schemas": [
         "schema/effect/expedition.march-v1.schema.json"
       ],
-      "$comment": "This deployment observes no instances, so its identity schema set is written empty rather than left out: an absent member would be read as a declaration gone missing, not as a set with no members.",
-      "observed_instance_identity_schemas": [],
+      "$comment": "The one observed instance this deployment mints is the expedition's target control, admitted by the identity schema it registers here.",
+      "observed_instance_identity_schemas": [
+        "schema/observed-identity-v1.schema.json"
+      ],
       "artifact_blobs": [
         {"name": "map", "path": "blob/map.blob"}
       ]
@@ -57,8 +59,10 @@
       "effect_payload_schemas": [
         "schema/effect/expedition.march-v1.schema.json"
       ],
-      "$comment": "This deployment observes no instances, so its identity schema set is written empty rather than left out: an absent member would be read as a declaration gone missing, not as a set with no members.",
-      "observed_instance_identity_schemas": [],
+      "$comment": "The one observed instance this deployment mints is the expedition's target control, admitted by the identity schema it registers here.",
+      "observed_instance_identity_schemas": [
+        "schema/observed-identity-v1.schema.json"
+      ],
       "artifact_blobs": [
         {"name": "map", "path": "blob/map.blob"}
       ]

@@ -28,8 +28,10 @@
       "effect_payload_schemas": [
         "schema/effect/fixture.write-v1.schema.json"
       ],
-      "$comment": "This deployment registers no artifact root and observes no instances: both members are written empty rather than left out, because an absent member would be read as a declaration gone missing.",
-      "observed_instance_identity_schemas": [],
+      "$comment": "This deployment registers no artifact root: the member is written empty rather than left out, because an absent member would be read as a declaration gone missing. It observes the one instance its plugin's derive proposes, under the identity schema this array names.",
+      "observed_instance_identity_schemas": [
+        "schema/observed-identity-v1.schema.json"
+      ],
       "artifact_blobs": []
     },
     {
@@ -55,8 +57,10 @@
       "effect_payload_schemas": [
         "schema/effect/fixture.write-v1.schema.json"
       ],
-      "$comment": "This deployment registers no artifact root and observes no instances: both members are written empty rather than left out, because an absent member would be read as a declaration gone missing.",
-      "observed_instance_identity_schemas": [],
+      "$comment": "This deployment registers no artifact root: the member is written empty rather than left out, because an absent member would be read as a declaration gone missing. It observes the one instance its plugin's derive proposes, under the identity schema this array names.",
+      "observed_instance_identity_schemas": [
+        "schema/observed-identity-v1.schema.json"
+      ],
       "artifact_blobs": []
     }
   ]

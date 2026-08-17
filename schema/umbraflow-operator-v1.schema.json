@@ -145,7 +145,8 @@
         "session_manifest_hash",
         "session_epoch",
         "mode",
-        "capability_profile_hash"
+        "capability_profile_hash",
+        "world_scope"
       ],
       "properties": {
         "session_id": { "$ref": "#/$defs/Identifier" },
@@ -156,7 +157,22 @@
         "session_manifest_hash": { "$ref": "#/$defs/Hash" },
         "session_epoch": { "$ref": "#/$defs/SessionEpoch" },
         "mode": { "enum": ["read", "write"] },
-        "capability_profile_hash": { "$ref": "#/$defs/Hash" }
+        "capability_profile_hash": { "$ref": "#/$defs/Hash" },
+        "world_scope": { "$ref": "#/$defs/WorldScope" }
+      }
+    },
+    "WorldScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "scope_id",
+        "generation"
+      ],
+      "properties": {
+        "kind": { "enum": ["account", "run"] },
+        "scope_id": { "type": "string", "minLength": 1 },
+        "generation": { "type": "integer", "minimum": 0 }
       }
     },
     "ControlLease": {

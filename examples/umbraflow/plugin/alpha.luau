@@ -41,24 +41,31 @@ local proposals = {
     ["observe-1"] = proposal("observe-1", ordinary, 8, 8),
     ["raw-coordinate-click"] = proposal("raw-coordinate-click", ordinary, 8, 8),
 }
-local step_intent = {
-    action = {
-        action_id = "fixture.press",
-        canonical_parameters = { value = 1 },
-        surface_id = "fixture.surface",
-        ui_target_id = "fixture.target",
-    },
-    binding_variant_constraints = {},
-    delivery_class = "delivery_safe",
-    expected_ui_postconditions = {},
-    required_ui_preconditions = {},
-    step_key = "fixture.step",
-    timeout_policy = { maximum_elapsed_ms = 5000, on_timeout = "reobserve" },
-}
-
 return {
     plugin_id = "fixture.alpha",
-    derive = function(_input) return canon.emptyObject end,
+    -- The one observed instance this deployment's identity schema admits.
+    -- The mint composes the final observation from this proposal, and
+    -- next_step names the minted id back to the U2c gate, so a step of this
+    -- plugin already stands on the production observe path.
+    derive = function(_input)
+        return {
+            schema = "umbraflow-project-observation-proposal/v1",
+            canonical_opaque_payload = {},
+            project_tool_preconditions = {},
+            observed_instance_proposals = {
+                {
+                    local_ref = "fixture.target",
+                    kind = "fixture.control",
+                    identity_schema_id = "https://fixture.example/identity/overlay/v1",
+                    semantic_identity_basis = {
+                        native_id = "fixture.target",
+                        surface_epoch = 1,
+                    },
+                    opaque_project_payload = {},
+                },
+            },
+        }
+    end,
     plan = function(input)
         local proposal = proposals[input.tool_name]
         if proposal == nil then
@@ -66,7 +73,22 @@ return {
         end
         return proposal
     end,
-    next_step = function(_input) return step_intent end,
+    next_step = function(input)
+        return {
+            action = {
+                action_id = "fixture.press",
+                canonical_parameters = { value = 1 },
+                surface_id = "fixture.surface",
+                ui_target_id = input.project_observation.observed_instances[1].observed_instance_id,
+            },
+            binding_variant_constraints = {},
+            delivery_class = "delivery_safe",
+            expected_ui_postconditions = {},
+            required_ui_preconditions = {},
+            step_key = "fixture.step",
+            timeout_policy = { maximum_elapsed_ms = 5000, on_timeout = "reobserve" },
+        }
+    end,
     reconcile = function(input) return input end,
     reduce = function(input)
         for _, event in ipairs(input.journal_events) do

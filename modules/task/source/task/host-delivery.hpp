@@ -56,10 +56,18 @@ namespace uf::task
     // names. runtimeGeneration is the Host's own GenerationId, so the Host can
     // and does compare it; targetGeneration is the domain TargetGeneration the
     // ledger records, which the Host cannot see and therefore only carries.
+    //
+    // uiTarget is the model target the reserved step's observed instance was
+    // observed at -- the binding's local_ref, resolved out of the step's
+    // ui_target_id by reserveDispatch. The receipt a Host mints names the
+    // target its own runtime resolved, so the ledger resolving one instance
+    // while the Host delivers to another is a disagreement TaskHost::deliver
+    // can and does refuse before it consumes anything.
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
     struct DispatchAuthority final
     {
         std::string      controlledTargetId{};
+        std::string      uiTarget{};
         std::string      leaseId{};
         std::string      operationId{};
         std::string      authorityDecisionId{};

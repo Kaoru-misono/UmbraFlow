@@ -35,25 +35,24 @@ namespace uf::operator_runtime
     // same reason that one exists.
     enum class OperatorPlanErrorCode : uint8
     {
-        // A UI-action step aims at a ui_target the frozen plan did not choose.
-        // The plan's canonical_args are the Operation's own command arguments,
-        // not the plugin's -- mintPlan refuses a proposal that restates them
-        // differently -- so this is the caller's chosen object outranking the
-        // plugin's later choice, and never one plugin statement outranking
+        // A UI-action step's canonical_parameters restate a member of the
+        // frozen plan's canonical_args with another value. The plan's
+        // canonical_args are the Operation's own command arguments, not the
+        // plugin's -- mintPlan refuses a proposal that restates them
+        // differently -- so this is the caller's stated choice outranking the
+        // plugin's later one, and never one plugin statement outranking
         // another.
-        PlannedUiTargetSubstituted,
-
-        // A UI-action step's canonical_parameters restate a member of those
-        // same arguments with another value.
         //
-        // It is a second code rather than a second use of the first because
-        // the act is different and so is what it refuses. The contradicted
-        // member need not hold a ui_target at all -- a quantity, a mode, any
-        // argument the caller stated -- so reporting it as a substituted
-        // target would name something the document does not say. Which member
-        // holds the target is a project-tier declaration that never reaches
-        // the Operator, which is exactly why this rule names no member and
-        // judges every one the step chose to restate.
+        // The contradicted member need not hold a ui_target at all -- a
+        // quantity, a mode, any argument the caller stated -- so the code
+        // names the act, not the member. Which member holds the target is a
+        // project-tier declaration that never reaches the Operator, which is
+        // exactly why this rule names no member and judges every one the step
+        // chose to restate. Since U2b the step's own ui_target_id is an
+        // observed instance id the plan cannot name (instances are minted
+        // after the plan freezes), so the caller's choice of object is
+        // enforced here, on the parameters that can carry a re-resolved
+        // object, and never on the step's target member.
         PlannedArgumentContradicted,
     };
 
@@ -107,9 +106,12 @@ namespace uf::operator_runtime
     // passing a membership test against nothing. A Wait names no UI and leaves
     // all three empty.
     //
-    // uiTargetId is held to a second rule beside the vocabulary one: where the
-    // frozen plan's canonical_args name declared ui_targets, it must be one of
-    // them, or the step is refused as PlannedUiTargetSubstituted.
+    // uiTargetId is not held to a vocabulary rule: since U2b it is the
+    // observed instance id the step acts on, minted by the Operator and
+    // resolved by the observation gate in mintNextStep, and the model's
+    // declared ui_targets are what a Host resolves a delivery against. The
+    // caller's choice of object is enforced on the parameters instead, which
+    // are the one member that can carry a re-resolved object.
     struct StepIntentClaims final
     {
         std::string stepKey{};

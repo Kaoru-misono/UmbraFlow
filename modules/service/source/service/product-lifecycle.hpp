@@ -32,13 +32,6 @@ namespace uf::service
         std::span<operator_runtime::RecoveredUncertainDispatch const> recoveries
     ) noexcept -> LifecycleAccess;
 
-    [[nodiscard]]
-    auto offeredProductTools(
-        operator_runtime::OperatorCoordinator& coordinator,
-        operator_runtime::ControllerBinding const& controller,
-        operator_runtime::ProjectToolCatalogSchemaOwner const& catalog
-    ) -> Result<std::vector<operator_runtime::OfferedTool>>;
-
     struct ProductStart final
     {
         std::filesystem::path    projectDirectory{};
@@ -46,6 +39,11 @@ namespace uf::service
         std::string              authenticatedControllerId{};
         std::vector<std::string> controllerCapabilities{};
         std::string              controlledTargetId{};
+
+        // The observed-instance world this session observes in. It is
+        // transferred into the session pin unchanged, so the observations this
+        // lifecycle produces are bound to one scope.
+        operator_runtime::ObservedInstanceWorldScope worldScope;
     };
 
     struct ProductExecution final
@@ -118,9 +116,6 @@ namespace uf::service
         [[nodiscard]]
         auto observe(task::TaskContext& context)
             -> Result<ProductObservation>;
-
-        [[nodiscard]]
-        auto offeredTools() -> Result<std::vector<operator_runtime::OfferedTool>>;
 
         [[nodiscard]]
         auto execute(

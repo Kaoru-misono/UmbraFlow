@@ -688,6 +688,15 @@ namespace uf::json
             std::string_view{"umbraflow-fact-v1.schema.json"};
         constexpr auto k_collectionFact =
             std::string_view{"umbraflow-collection-fact-v1.schema.json"};
+        // The two project envelopes ref the published tool precondition, so
+        // neither compiles alone.
+        constexpr auto k_observation =
+            std::string_view{"umbraflow-project-observation-v1.schema.json"};
+        constexpr auto k_observationProposal = std::string_view{
+            "umbraflow-project-observation-proposal-v1.schema.json"
+        };
+        constexpr auto k_toolPrecondition =
+            std::string_view{"umbraflow-project-tool-precondition-v1.schema.json"};
 
         auto const root = repositoryRoot(k_knownFile);
         REQUIRE_FALSE(root.empty());
@@ -705,8 +714,8 @@ namespace uf::json
             sources.emplace_back(entry.path().filename().string(), buffer.str());
         }
         REQUIRE_MESSAGE(
-            sources.size() == 13U,
-            "schema compile sweep must cover all 13 top-level schema/*.json sources"
+            sources.size() == 16U,
+            "schema compile sweep must cover all 16 top-level schema/*.json sources"
         );
 
         auto compiledCount = std::size_t{0};
@@ -723,6 +732,8 @@ namespace uf::json
                 || source.first == k_crossDocument
                 || source.first == k_fact
                 || source.first == k_collectionFact
+                || source.first == k_observation
+                || source.first == k_observationProposal
             )
             {
                 REQUIRE_FALSE(schema.has_value());
@@ -745,8 +756,8 @@ namespace uf::json
             ++compiledCount;
         }
         CHECK_MESSAGE(
-            compiledCount == 9U,
-            "nine repository schemas compile without an external reference set"
+            compiledCount == 10U,
+            "ten repository schemas compile without an external reference set"
         );
 
         // The cross-document schema compiles once its two siblings are in the
@@ -832,5 +843,61 @@ namespace uf::json
             : std::string{collection.error().message()};
         INFO(whyCollection);
         REQUIRE(collection.has_value());
+
+        // The project observation envelopes, closed over the published
+        // fragments they reference: both ref the tool precondition, so each
+        // compiles once it is in the set.
+        auto observationReferences = std::vector<Schema::Document>{};
+        auto proposalBytes         = std::string_view{};
+        auto observationBytes      = std::string_view{};
+        for (auto const& source : sources)
+        {
+            if (source.first == k_toolPrecondition)
+            {
+                observationReferences.emplace_back(Schema::Document{
+                    .label      = source.first,
+                    .exactBytes = source.second,
+                });
+            }
+            else if (source.first == k_observationProposal)
+            {
+                proposalBytes = source.second;
+            }
+            else if (source.first == k_observation)
+            {
+                observationBytes = source.second;
+            }
+        }
+        REQUIRE(observationReferences.size() == 1U);
+
+        auto const proposal = Schema::compile(
+            Schema::Document{
+                .label      = k_observationProposal,
+                .exactBytes = proposalBytes,
+            },
+            observationReferences
+        );
+        auto const whyProposal = proposal.has_value()
+            ? std::string{}
+            : std::string{proposal.error().message()};
+        INFO(whyProposal);
+        REQUIRE(proposal.has_value());
+
+        observationReferences.emplace_back(Schema::Document{
+            .label      = k_observationProposal,
+            .exactBytes = proposalBytes,
+        });
+        auto const observation = Schema::compile(
+            Schema::Document{
+                .label      = k_observation,
+                .exactBytes = observationBytes,
+            },
+            observationReferences
+        );
+        auto const whyObservation = observation.has_value()
+            ? std::string{}
+            : std::string{observation.error().message()};
+        INFO(whyObservation);
+        REQUIRE(observation.has_value());
     }
 }

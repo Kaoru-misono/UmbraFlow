@@ -228,10 +228,10 @@ namespace uf::deployment
             "items": {"$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Hash"}
         },
         "prior_project_observation": {
-            "$comment": "null before this instance has ever been derived.",
+            "$comment": "null before this instance has ever been derived. The stored observation is the Operator's minted final envelope, so its shape is the framework's, not the project's.",
             "oneOf": [
                 {"type": "null"},
-                {"$ref": "https://umbraflow.dev/schema/project/observation"}
+                {"$ref": "https://umbraflow.dev/schema/project-observation/v1"}
             ]
         },
         "project_state": {"$ref": "https://umbraflow.dev/schema/project/state"},
@@ -259,7 +259,7 @@ namespace uf::deployment
             "$comment": "Judged against the argument definition this project's Tool Catalog names for tool_name, which no single subschema can select."
         },
         "project_observation": {
-            "$ref": "https://umbraflow.dev/schema/project/observation"
+            "$ref": "https://umbraflow.dev/schema/project-observation/v1"
         },
         "project_state": {"$ref": "https://umbraflow.dev/schema/project/state"},
         "tool_name": {
@@ -288,7 +288,7 @@ namespace uf::deployment
             "$ref": "https://umbraflow.dev/schema/operator/common#/$defs/Hash"
         },
         "project_observation": {
-            "$ref": "https://umbraflow.dev/schema/project/observation"
+            "$ref": "https://umbraflow.dev/schema/project-observation/v1"
         },
         "project_state": {"$ref": "https://umbraflow.dev/schema/project/state"},
         "step_index": {

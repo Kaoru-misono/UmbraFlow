@@ -71,13 +71,22 @@ namespace uf::project
     }
 })json"};
 
+        // The proposal envelope, which is the derived ProjectObservation the
+        // deployment judges. The final envelope never reaches this schema: the
+        // Operator mints it, and the plan and step inputs pin it by $ref to the
+        // framework schema instead.
         constexpr auto k_projectObservationSchema = std::string_view{R"json({
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://umbraflow.dev/schema/project/observation",
     "title": "chaos.project overlay observation",
     "type": "object",
     "additionalProperties": false,
-    "required": ["canonical_opaque_payload"],
+    "required": [
+        "schema",
+        "canonical_opaque_payload",
+        "project_tool_preconditions",
+        "observed_instance_proposals"
+    ],
     "properties": {
         "schema": {"const": "umbraflow-project-observation-proposal/v1"},
         "canonical_opaque_payload": {
@@ -106,19 +115,27 @@ namespace uf::project
                 }
             }
         },
-        "observed_instances": {
+        "observed_instance_proposals": {
             "type": "array",
             "items": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["kind", "observed_instance_id"],
+                "required": [
+                    "local_ref",
+                    "kind",
+                    "identity_schema_id",
+                    "semantic_identity_basis",
+                    "opaque_project_payload"
+                ],
                 "properties": {
+                    "local_ref": {"type": "string", "minLength": 1},
                     "kind": {"type": "string", "minLength": 1},
-                    "observed_instance_id": {"type": "string", "minLength": 1}
+                    "identity_schema_id": {"type": "string", "minLength": 1},
+                    "semantic_identity_basis": {"type": "object"},
+                    "opaque_project_payload": true
                 }
             }
         },
-        "observed_instance_proposals": {"type": "array"},
         "project_tool_preconditions": {"type": "array"}
     }
 })json"};
@@ -174,8 +191,16 @@ namespace uf::project
                 "project_observation": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["canonical_opaque_payload"],
+                    "required": [
+                        "schema",
+                        "canonical_opaque_payload",
+                        "project_tool_preconditions",
+                        "observed_instances"
+                    ],
                     "properties": {
+                        "schema": {
+                            "const": "umbraflow-project-observation/v1"
+                        },
                         "canonical_opaque_payload": {
                             "type": "object",
                             "additionalProperties": false,
@@ -183,22 +208,30 @@ namespace uf::project
                             "properties": {
                                 "surface_observations": {
                                     "type": "array",
-                                    "items": {"$ref": "#/$defs/SurfaceObservation"}
+                                    "items": {
+                                        "$ref": "#/$defs/SurfaceObservation"
+                                    }
                                 }
                             }
                         },
+                        "project_tool_preconditions": {"type": "array"},
                         "observed_instances": {
                             "type": "array",
                             "items": {
                                 "type": "object",
                                 "additionalProperties": false,
-                                "required": ["kind", "observed_instance_id"],
+                                "required": [
+                                    "kind",
+                                    "observed_instance_id",
+                                    "opaque_project_payload"
+                                ],
                                 "properties": {
                                     "kind": {"type": "string", "minLength": 1},
                                     "observed_instance_id": {
                                         "type": "string",
                                         "minLength": 1
-                                    }
+                                    },
+                                    "opaque_project_payload": true
                                 }
                             }
                         }
@@ -832,6 +865,9 @@ return {
             );
         }
 
+        // The final envelope the Operator mints, which is what the plan and
+        // step inputs pin their project_observation to and what the twins read
+        // for their surface evidence and instance locating.
         [[nodiscard]]
         auto observationDocument(
             bool includesTarget,
@@ -839,8 +875,9 @@ return {
             bool surfaceIsFresh
         ) -> std::string
         {
-            auto text = std::string{R"json({"canonical_opaque_payload":)json"};
-            text += R"json({"surface_observations":[)json";
+            auto text = std::string{
+                R"json({"canonical_opaque_payload":{"surface_observations":[)json"
+            };
             if (includesSurface)
             {
                 text += R"json({"fresh":)json";
@@ -856,9 +893,10 @@ return {
                 text += k_instanceKind;
                 text += R"json(","observed_instance_id":")json";
                 text += k_targetInstance;
-                text += R"json("})json";
+                text += R"json(","opaque_project_payload":{}})json";
             }
-            text += "]}";
+            text += R"json(],"project_tool_preconditions":[],)json";
+            text += R"json("schema":"umbraflow-project-observation/v1"})json";
             return text;
         }
 

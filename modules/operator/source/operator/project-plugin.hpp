@@ -73,6 +73,10 @@ namespace uf::operator_runtime
 
     // A document accepted by the schema owner for one exact registration,
     // function, and direction. No schema hash label is exposed or accepted.
+    //
+    // The value the accepted bytes denote is exposed beside them: the owner
+    // already parsed once to validate, and the Operator consumes the proposal
+    // shape it stamped instead of parsing the same bytes a second time.
     class ValidatedDocument final
     {
         friend class ProjectSchemaOwner;
@@ -100,6 +104,9 @@ namespace uf::operator_runtime
 
         [[nodiscard]]
         auto bytes() const noexcept UF_LIFETIME_BOUND -> std::string const&;
+
+        [[nodiscard]]
+        auto value() const noexcept UF_LIFETIME_BOUND -> json::Value const&;
 
         auto operator==(ValidatedDocument const&) const -> bool = default;
     };

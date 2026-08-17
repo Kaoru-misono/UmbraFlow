@@ -257,6 +257,7 @@ namespace uf::operator_runtime
             prepared.lease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
         );
         REQUIRE(first.has_value());
@@ -299,6 +300,7 @@ namespace uf::operator_runtime
             prepared.lease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
         );
         REQUIRE(moved.has_value());
@@ -314,6 +316,7 @@ namespace uf::operator_runtime
             prepared.lease,
             foreignPlugin,
             foreignProject.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
         ).has_value());
 
@@ -355,6 +358,7 @@ namespace uf::operator_runtime
             prepared.lease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             otherReading
         ).has_value());
     }
@@ -458,6 +462,7 @@ namespace uf::operator_runtime
             prepared.lease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
         );
         REQUIRE(again.has_value());
@@ -496,6 +501,7 @@ namespace uf::operator_runtime
             prepared.lease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             unresolved
         );
         CAPTURE(different.has_value() ? std::string{} : different.error().message());
@@ -547,6 +553,7 @@ namespace uf::operator_runtime
             prepared.lease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
         );
         REQUIRE(afterCommit.has_value());
@@ -805,6 +812,11 @@ namespace uf::operator_runtime
 
         // A session may only pin a provisioned key, so naming a fresh one is
         // not a way to reach revision zero either.
+        auto const missingWorldScope = ObservedInstanceWorldScope::run(
+            "target-2",
+            1
+        );
+        REQUIRE(missingWorldScope.has_value());
         CHECK_FALSE(prepared.store.pinSession(
             SessionPin{
                 .sessionId                 = "session-missing-instance",
@@ -815,6 +827,7 @@ namespace uf::operator_runtime
                 .controlledTargetId        = "target-2",
                 .projectInstanceKey        = "instance-missing",
                 .mode                      = SessionMode::Write,
+                .worldScope                = *missingWorldScope,
             },
             prepared.manifest,
             std::nullopt
@@ -915,6 +928,7 @@ namespace uf::operator_runtime
             prepared.lease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
         );
         REQUIRE(after.has_value());
@@ -966,6 +980,7 @@ namespace uf::operator_runtime
             prepared.lease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
         );
         REQUIRE(moved.has_value());
@@ -1013,6 +1028,11 @@ namespace uf::operator_runtime
                     ),
                 }
             ).has_value());
+            auto const sessionWorldScope = ObservedInstanceWorldScope::run(
+                "target-1",
+                1
+            );
+            REQUIRE(sessionWorldScope.has_value());
             REQUIRE(availabilityStore.store.pinSession(
                 SessionPin{
                     .sessionId                 = sessionId,
@@ -1025,6 +1045,7 @@ namespace uf::operator_runtime
                     .projectInstanceKey     = instanceId,
                     .mode                   = SessionMode::Write,
                     .kind                   = ControllerKind::Script,
+                    .worldScope             = *sessionWorldScope,
                 },
                 policyManifest,
                 std::nullopt
@@ -1037,6 +1058,7 @@ namespace uf::operator_runtime
                 *lease,
                 availabilityStore.plugin,
                 availabilityStore.project.toolCatalogSchemaOwner,
+                availabilityStore.project.observedInstanceIdentitySchemas,
                 test_support::observeAgain(availabilityStore)
             );
             REQUIRE(snapshot.has_value());

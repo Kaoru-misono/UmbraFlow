@@ -52,17 +52,86 @@ namespace uf::operator_runtime::test_support
     }
 })json"};
 
-    // This project's derive reads nothing out of the world: it answers `{}` for
-    // every envelope, so the honest schema for its observation is the empty
-    // object and nothing more. It is a real constraint -- every non-empty
-    // document is refused -- and a weak one, and the weakness is the fixture's
-    // rather than the schema's.
+    // This project's derive answers the observation proposal envelope for every
+    // world, so the honest schema for its observation is that envelope's shape:
+    // the proposal boundary's members and nothing else. The shape mirrors
+    // schema/umbraflow-project-observation-proposal-v1.schema.json -- the same
+    // required members, the same wire words -- so a document this schema stamps
+    // is one proposalFromDerived can read. The basis stays unconstrained here
+    // exactly as the proposal contract leaves it: the identity schema's
+    // validator is the one authority that reads a basis (see
+    // k_observedIdentitySchema below), and this schema stating the same
+    // constraint again would be a second spelling of one rule.
     inline constexpr auto k_projectObservationSchema = std::string_view{R"json({
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://umbraflow.dev/schema/project/observation",
     "title": "umbraflow fixture ProjectObservation",
     "type": "object",
-    "additionalProperties": false
+    "additionalProperties": false,
+    "required": [
+        "schema",
+        "canonical_opaque_payload",
+        "project_tool_preconditions",
+        "observed_instance_proposals"
+    ],
+    "properties": {
+        "schema": {"const": "umbraflow-project-observation-proposal/v1"},
+        "canonical_opaque_payload": true,
+        "project_tool_preconditions": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/FixtureToolPrecondition"}
+        },
+        "observed_instance_proposals": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/FixtureObservedInstanceProposal"}
+        }
+    },
+    "$defs": {
+        "FixtureToolPrecondition": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "status"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
+                },
+                "status": {"enum": ["Known", "Unknown", "Stale", "Conflict"]}
+            }
+        },
+        "FixtureObservedInstanceProposal": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "local_ref",
+                "kind",
+                "identity_schema_id",
+                "semantic_identity_basis",
+                "opaque_project_payload"
+            ],
+            "properties": {
+                "local_ref": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+                },
+                "parent_local_ref": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+                },
+                "kind": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
+                },
+                "identity_schema_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                },
+                "semantic_identity_basis": {"type": "object"},
+                "opaque_project_payload": true
+            }
+        }
+    }
 })json"};
 
     // Every tool in this fixture's catalog takes the same one argument, so the
@@ -79,6 +148,32 @@ namespace uf::operator_runtime::test_support
             "required": ["value"],
             "properties": {
                 "value": {"type": "integer", "minimum": 1, "maximum": 8}
+            }
+        }
+    }
+})json"};
+
+    // The same argument shape, opened for the one member the submitCommand
+    // gate resolves: a canonical argument spelling an observed_instance_id
+    // minted elsewhere. The gate's whole subject is such arguments, and the
+    // strict fixture schema refuses them, so a case that feeds the gate
+    // admits the id explicitly and keeps everything else as strict as before.
+    inline constexpr auto k_toolPreconditionSchemaWithInstanceIds =
+        std::string_view{R"json({
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://umbraflow.dev/schema/project/tool-precondition-instance-ids",
+    "title": "umbraflow fixture tool arguments",
+    "$defs": {
+        "FixtureArguments": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value"],
+            "properties": {
+                "value": {"type": "integer", "minimum": 1, "maximum": 8},
+                "observed_instance_id": {
+                    "type": "string",
+                    "pattern": "^oi1_[0-9a-f]{64}$"
+                }
             }
         }
     }

@@ -3,5 +3,71 @@
     "$id": "https://umbraflow.dev/schema/project/observation",
     "title": "umbraflow fixture ProjectObservation",
     "type": "object",
-    "additionalProperties": false
+    "additionalProperties": false,
+    "required": [
+        "schema",
+        "canonical_opaque_payload",
+        "project_tool_preconditions",
+        "observed_instance_proposals"
+    ],
+    "properties": {
+        "schema": {"const": "umbraflow-project-observation-proposal/v1"},
+        "canonical_opaque_payload": true,
+        "project_tool_preconditions": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/FixtureToolPrecondition"}
+        },
+        "observed_instance_proposals": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/FixtureObservedInstanceProposal"}
+        }
+    },
+    "$defs": {
+        "FixtureToolPrecondition": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "status"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
+                },
+                "status": {"enum": ["Known", "Unknown", "Stale", "Conflict"]}
+            }
+        },
+        "FixtureObservedInstanceProposal": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "local_ref",
+                "kind",
+                "identity_schema_id",
+                "semantic_identity_basis",
+                "opaque_project_payload"
+            ],
+            "properties": {
+                "local_ref": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+                },
+                "parent_local_ref": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+                },
+                "kind": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z][A-Za-z0-9_-]*(?:\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$"
+                },
+                "identity_schema_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                },
+                "semantic_identity_basis": {
+                    "type": "object"
+                },
+                "opaque_project_payload": true
+            }
+        }
+    }
 }

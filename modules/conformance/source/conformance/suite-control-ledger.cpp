@@ -43,6 +43,10 @@ namespace uf::operator_runtime::conformance
                 prepared.project,
                 ProjectRole::UnderTest
             ).toolCatalogSchemaOwner,
+            deploymentFor(
+                prepared.project,
+                ProjectRole::UnderTest
+            ).observedInstanceIdentitySchemas,
             observeAgain(prepared)
         ).has_value());
     }

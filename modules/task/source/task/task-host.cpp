@@ -731,6 +731,14 @@ namespace uf::task
                 "delivery authority names another runtime generation"
             );
         }
+        if (authority.uiTarget != found->intent.uiTarget)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "delivery receipt names a model target the reserved step's "
+                "observed instance does not"
+            );
+        }
 
         // Linearization point: once valid Host authority presents a known token,
         // no later failure can make the same authorization deliverable again.

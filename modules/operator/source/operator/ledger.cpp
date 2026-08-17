@@ -476,7 +476,7 @@ namespace uf::operator_runtime
         // does not write it. docs/TODO.md "Delete-on-open has a deadline" owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
-            "sha256:035e04f2e066eb90c457a0af7440356274551be4abd6496b620879e9d4e3b133"
+            "sha256:b26344e031574f95020ed445e16e9de396f76442d98c5a3b758a91d84660237e"
         };
 
         // A transition row records the applied exact pair; neither the row nor
@@ -570,6 +570,170 @@ namespace uf::operator_runtime
             "PRIMARY KEY(plugin_id, project_instance_key),"
             "UNIQUE(project_registration_hash, project_instance_key)"
             ") STRICT"
+        };
+
+        // The session table and its one partial index, as the schema bundle
+        // above also stores them. The migration that adds the world-scope
+        // columns rebuilds the table from this exact text; SQLite strips only
+        // leading and trailing whitespace, so the column indentation below is
+        // part of schema identity and not formatting.
+        constexpr auto k_sessionsDdl = std::string_view{
+            R"sql(
+                    CREATE TABLE IF NOT EXISTS sessions(
+                        session_id TEXT PRIMARY KEY,
+                        authenticated_controller_id TEXT NOT NULL,
+                        idempotency_namespace TEXT NOT NULL,
+                        manifest_hash TEXT NOT NULL,
+                        runtime_artifact_root_hash TEXT NOT NULL,
+                        installed_generation INTEGER NOT NULL
+                            CHECK(installed_generation > 0),
+                        project_registration_hash TEXT NOT NULL
+                            REFERENCES project_registrations(registration_hash),
+                        -- The capability set this session holds, as the exact
+                        -- JCS array capability_profile_hash is the sha256 of.
+                        -- The hash alone was a caller field with no content
+                        -- behind it, so a policy rule naming a required
+                        -- capability had nothing to be judged against.
+                        controller_capabilities TEXT NOT NULL,
+                        capability_profile_hash TEXT NOT NULL,
+                        session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
+                        controlled_target_id TEXT NOT NULL,
+                        project_instance_key TEXT NOT NULL,
+                        mode TEXT NOT NULL CHECK(mode IN ('read', 'write')),
+                        -- Which of the three operators holds this session. It
+                        -- is part of the immutable pinned tuple, so a
+                        -- controller cannot become another kind between two
+                        -- commands, and bindController reads it here rather
+                        -- than accepting it.
+                        controller_kind TEXT NOT NULL
+                            CHECK(controller_kind IN ('script', 'agent', 'human')),
+                        -- The observed-instance world this session observes in,
+                        -- stored under the same three columns
+                        -- observed_instance_bindings carry so a snapshot can
+                        -- rebuild the scope that minted its observation
+                        -- without a second spelling. It is part of the
+                        -- immutable pinned tuple.
+                        world_scope_kind TEXT NOT NULL
+                            CHECK(world_scope_kind IN ('account', 'run')),
+                        world_scope_id TEXT NOT NULL,
+                        world_scope_generation TEXT NOT NULL
+                            CHECK(
+                                length(world_scope_generation) > 0
+                                AND world_scope_generation NOT GLOB '*[^0-9]*'
+                                AND (
+                                    world_scope_kind = 'account'
+                                    OR world_scope_generation != '0'
+                                )
+                            ),
+                        active INTEGER NOT NULL CHECK(active IN (0, 1)),
+                        FOREIGN KEY(project_registration_hash, project_instance_key)
+                            REFERENCES project_instances(
+                                project_registration_hash,
+                                project_instance_key
+                            ),
+                        FOREIGN KEY(installed_generation, runtime_artifact_root_hash)
+                            REFERENCES runtime_installations(
+                                installed_generation,
+                                artifact_root_hash
+                            )
+                    ) STRICT;
+            )sql"
+        };
+
+        // The mint binding and its three immutability triggers, as the schema
+        // bundle also stores them. local_ref is the model target the instance
+        // was observed at -- the name the proposal's local_ref carried at mint
+        // -- and the migration that adds the column backfills rows minted
+        // before it with the empty sentinel, which reserveDispatch refuses, so
+        // a migrated binding can never be resolved to a target it was never
+        // observed at.
+        constexpr auto k_observedInstanceBindingsDdl = std::string_view{
+            R"sql(
+                    -- The bidirectional Operator-private mint binding. It is
+                    -- independent of scope lifetime: no scope row owns it and
+                    -- no cascade can remove it. This schema implements no
+                    -- reference-expiry proof, so cleanup is forbidden rather
+                    -- than guessing whether a Journal, Operation, backup or
+                    -- audit record still resolves through the binding.
+                    CREATE TABLE IF NOT EXISTS observed_instance_bindings(
+                        canonical_authority TEXT PRIMARY KEY,
+                        observed_instance_id TEXT NOT NULL UNIQUE
+                            CHECK(
+                                length(observed_instance_id) = 68
+                                AND substr(observed_instance_id, 1, 4) = 'oi1_'
+                                AND substr(observed_instance_id, 5)
+                                    NOT GLOB '*[^0-9a-f]*'
+                            ),
+                        plugin_id TEXT NOT NULL,
+                        project_registration_hash TEXT NOT NULL,
+                        project_instance_key TEXT NOT NULL,
+                        world_scope_kind TEXT NOT NULL
+                            CHECK(world_scope_kind IN ('account', 'run')),
+                        world_scope_id TEXT NOT NULL,
+                        world_scope_generation TEXT NOT NULL
+                            CHECK(
+                                length(world_scope_generation) > 0
+                                AND world_scope_generation NOT GLOB '*[^0-9]*'
+                                AND (
+                                    world_scope_kind = 'account'
+                                    OR world_scope_generation != '0'
+                                )
+                            ),
+                        -- The model target the instance was observed at, as
+                        -- the proposal named it. It is part of the binding,
+                        -- not the world scope, because it answers "which
+                        -- target did this instance name" and the deliver path
+                        -- compares it with the receipt's own target.
+                        local_ref TEXT NOT NULL,
+                        FOREIGN KEY(plugin_id, project_instance_key)
+                            REFERENCES project_instances(plugin_id, project_instance_key),
+                        FOREIGN KEY(project_registration_hash, project_instance_key)
+                            REFERENCES project_instances(
+                                project_registration_hash,
+                                project_instance_key
+                            )
+                    ) STRICT;
+
+                    CREATE TRIGGER forbid_observed_instance_binding_replacement
+                    BEFORE INSERT ON observed_instance_bindings
+                    WHEN EXISTS(
+                        SELECT 1 FROM observed_instance_bindings
+                        WHERE canonical_authority = new.canonical_authority
+                            OR observed_instance_id = new.observed_instance_id
+                    )
+                    BEGIN
+                        SELECT RAISE(
+                            ABORT,
+                            'observed instance bindings are immutable'
+                        );
+                    END;
+
+                    CREATE TRIGGER forbid_observed_instance_binding_mutation
+                    BEFORE UPDATE ON observed_instance_bindings
+                    BEGIN
+                        SELECT RAISE(
+                            ABORT,
+                            'observed instance bindings are immutable'
+                        );
+                    END;
+
+                    CREATE TRIGGER forbid_observed_instance_binding_cleanup
+                    BEFORE DELETE ON observed_instance_bindings
+                    BEGIN
+                        SELECT RAISE(
+                            ABORT,
+                            'observed instance binding cleanup requires a reference-expiry proof'
+                        );
+                    END;
+            )sql"
+        };
+
+        constexpr auto k_oneActiveWriteSessionIndexDdl = std::string_view{
+            R"sql(
+                    CREATE UNIQUE INDEX IF NOT EXISTS one_active_write_session_per_instance
+                    ON sessions(project_registration_hash, project_instance_key)
+                    WHERE mode='write' AND active=1;
+            )sql"
         };
 
         // Retention is automatic at the write that creates each row. Snapshot
@@ -780,6 +944,139 @@ namespace uf::operator_runtime
             return execute(database, "PRAGMA writable_schema=OFF");
         }
 
+        // The three world-scope columns are NOT NULL with no default, so
+        // SQLite cannot ADD COLUMN them in place: the table is rebuilt from
+        // its exact final DDL. Pre-scope sessions (pinned before the columns
+        // existed) cannot claim a world scope -- the U2b/U2c ruling forbids
+        // inferring one -- so their rows are backfilled with the
+        // empty-account sentinel, which passes the column CHECKs and is
+        // refused by restoreSessionWorldScope. Such a session can no longer
+        // observe; every other row keeps its bytes.
+        [[nodiscard]]
+        auto addSessionWorldScopeColumns(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
+            UF_TRY(execute(
+                database,
+                "CREATE TABLE prior_sessions("
+                "session_id TEXT PRIMARY KEY,"
+                "authenticated_controller_id TEXT NOT NULL,"
+                "idempotency_namespace TEXT NOT NULL,"
+                "manifest_hash TEXT NOT NULL,"
+                "runtime_artifact_root_hash TEXT NOT NULL,"
+                "installed_generation INTEGER NOT NULL,"
+                "project_registration_hash TEXT NOT NULL,"
+                "controller_capabilities TEXT NOT NULL,"
+                "capability_profile_hash TEXT NOT NULL,"
+                "session_epoch INTEGER NOT NULL,"
+                "controlled_target_id TEXT NOT NULL,"
+                "project_instance_key TEXT NOT NULL,"
+                "mode TEXT NOT NULL,"
+                "controller_kind TEXT NOT NULL,"
+                "active INTEGER NOT NULL"
+                ") STRICT"
+            ));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO prior_sessions(session_id, authenticated_controller_id, "
+                "idempotency_namespace, manifest_hash, runtime_artifact_root_hash, "
+                "installed_generation, project_registration_hash, "
+                "controller_capabilities, capability_profile_hash, session_epoch, "
+                "controlled_target_id, project_instance_key, mode, controller_kind, "
+                "active) SELECT session_id, authenticated_controller_id, "
+                "idempotency_namespace, manifest_hash, runtime_artifact_root_hash, "
+                "installed_generation, project_registration_hash, "
+                "controller_capabilities, capability_profile_hash, session_epoch, "
+                "controlled_target_id, project_instance_key, mode, controller_kind, "
+                "active FROM sessions"
+            ));
+            UF_TRY(execute(database, "DROP TABLE sessions"));
+            UF_TRY(execute(database, k_sessionsDdl));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO sessions(session_id, authenticated_controller_id, "
+                "idempotency_namespace, manifest_hash, runtime_artifact_root_hash, "
+                "installed_generation, project_registration_hash, "
+                "controller_capabilities, capability_profile_hash, session_epoch, "
+                "controlled_target_id, project_instance_key, mode, controller_kind, "
+                "active, world_scope_kind, world_scope_id, world_scope_generation) "
+                "SELECT session_id, authenticated_controller_id, "
+                "idempotency_namespace, manifest_hash, runtime_artifact_root_hash, "
+                "installed_generation, project_registration_hash, "
+                "controller_capabilities, capability_profile_hash, session_epoch, "
+                "controlled_target_id, project_instance_key, mode, controller_kind, "
+                "active, 'account', '', '0' FROM prior_sessions"
+            ));
+            UF_TRY(execute(database, k_oneActiveWriteSessionIndexDdl));
+            return execute(database, "DROP TABLE prior_sessions");
+        }
+
+        // local_ref is NOT NULL with no default, so SQLite cannot ADD COLUMN it
+        // in place: the table is rebuilt from its exact final DDL, triggers
+        // included. Bindings minted before the column existed were never
+        // observed under a recorded target, so their rows are backfilled with
+        // the empty sentinel, which reserveDispatch refuses -- a migrated
+        // binding can never be resolved to a target it never claimed, the same
+        // fail-closed ruling the world-scope sentinel follows. Every other
+        // byte of every row survives.
+        [[nodiscard]]
+        auto addObservedInstanceBindingLocalRef(sqlite3* database) -> Status
+        {
+            UF_TRY(execute(database, "PRAGMA defer_foreign_keys=ON"));
+            UF_TRY(execute(
+                database,
+                "CREATE TABLE prior_observed_instance_bindings("
+                "canonical_authority TEXT PRIMARY KEY,"
+                "observed_instance_id TEXT NOT NULL UNIQUE,"
+                "plugin_id TEXT NOT NULL,"
+                "project_registration_hash TEXT NOT NULL,"
+                "project_instance_key TEXT NOT NULL,"
+                "world_scope_kind TEXT NOT NULL,"
+                "world_scope_id TEXT NOT NULL,"
+                "world_scope_generation TEXT NOT NULL"
+                ") STRICT"
+            ));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO prior_observed_instance_bindings("
+                "canonical_authority, observed_instance_id, plugin_id, "
+                "project_registration_hash, project_instance_key, "
+                "world_scope_kind, world_scope_id, world_scope_generation) "
+                "SELECT canonical_authority, observed_instance_id, plugin_id, "
+                "project_registration_hash, project_instance_key, "
+                "world_scope_kind, world_scope_id, world_scope_generation "
+                "FROM observed_instance_bindings"
+            ));
+            UF_TRY(execute(database, "DROP TABLE observed_instance_bindings"));
+            UF_TRY(execute(database, k_observedInstanceBindingsDdl));
+            UF_TRY(execute(
+                database,
+                "INSERT INTO observed_instance_bindings("
+                "canonical_authority, observed_instance_id, plugin_id, "
+                "project_registration_hash, project_instance_key, "
+                "world_scope_kind, world_scope_id, world_scope_generation, "
+                "local_ref) SELECT canonical_authority, observed_instance_id, "
+                "plugin_id, project_registration_hash, project_instance_key, "
+                "world_scope_kind, world_scope_id, world_scope_generation, '' "
+                "FROM prior_observed_instance_bindings"
+            ));
+            return execute(database, "DROP TABLE prior_observed_instance_bindings");
+        }
+
+        [[nodiscard]]
+        auto migrateSessionWorldScope(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(addSessionWorldScopeColumns(database));
+            UF_TRY(addObservedInstanceBindingLocalRef(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
         [[nodiscard]]
         auto migrateOperatorU9Schema(
             sqlite3* database,
@@ -810,6 +1107,8 @@ namespace uf::operator_runtime
             UF_TRY(makeProjectBaselineOptional(database));
             UF_TRY(addReleaseUpgradeEvidenceTables(database));
             UF_TRY(dropRegistrationStateSchemaHash(database));
+            UF_TRY(addSessionWorldScopeColumns(database));
+            UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
 
             // No migration commits under an identity other than the exact
@@ -830,6 +1129,8 @@ namespace uf::operator_runtime
             UF_TRY(makeProjectBaselineOptional(database));
             UF_TRY(addReleaseUpgradeEvidenceTables(database));
             UF_TRY(dropRegistrationStateSchemaHash(database));
+            UF_TRY(addSessionWorldScopeColumns(database));
+            UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -846,6 +1147,8 @@ namespace uf::operator_runtime
             UF_TRY(makeProjectBaselineOptional(database));
             UF_TRY(addReleaseUpgradeEvidenceTables(database));
             UF_TRY(dropRegistrationStateSchemaHash(database));
+            UF_TRY(addSessionWorldScopeColumns(database));
+            UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -861,6 +1164,8 @@ namespace uf::operator_runtime
             UF_TRY(makeProjectBaselineOptional(database));
             UF_TRY(addReleaseUpgradeEvidenceTables(database));
             UF_TRY(dropRegistrationStateSchemaHash(database));
+            UF_TRY(addSessionWorldScopeColumns(database));
+            UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -875,6 +1180,8 @@ namespace uf::operator_runtime
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(addReleaseUpgradeEvidenceTables(database));
             UF_TRY(dropRegistrationStateSchemaHash(database));
+            UF_TRY(addSessionWorldScopeColumns(database));
+            UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -888,6 +1195,21 @@ namespace uf::operator_runtime
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(dropRegistrationStateSchemaHash(database));
+            UF_TRY(addSessionWorldScopeColumns(database));
+            UF_TRY(addObservedInstanceBindingLocalRef(database));
+            UF_TRY(recordSchemaIdentityTransition(database, migration));
+            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
+            return transaction.commit();
+        }
+
+        [[nodiscard]]
+        auto migrateObservedInstanceBindingLocalRef(
+            sqlite3* database,
+            SchemaMigration const& migration
+        ) -> Status
+        {
+            UF_TRY_VALUE(transaction, Transaction::begin(database));
+            UF_TRY(addObservedInstanceBindingLocalRef(database));
             UF_TRY(recordSchemaIdentityTransition(database, migration));
             UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
             return transaction.commit();
@@ -947,6 +1269,18 @@ namespace uf::operator_runtime
                     "sha256:2a8fdd44c39346f1ee7d380b0c1cf0f51fa07b68db396a593446e3029421a23b",
                 .targetIdentity = k_operatorDatabaseSchemaIdentity,
                 .apply          = migrateOperatorU9Schema,
+            },
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:035e04f2e066eb90c457a0af7440356274551be4abd6496b620879e9d4e3b133",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateSessionWorldScope,
+            },
+            SchemaMigration{
+                .sourceIdentity =
+                    "sha256:26a38c2fd4357f538a99cb1b54573f6c2998e19e9a09252e7e9792c45745cec9",
+                .targetIdentity = k_operatorDatabaseSchemaIdentity,
+                .apply          = migrateObservedInstanceBindingLocalRef,
             },
         };
 
@@ -1354,14 +1688,6 @@ namespace uf::operator_runtime
             return columnText(statement.get(), 0);
         }
 
-        struct ObservedInstanceContext final
-        {
-            std::string pluginId{};
-            std::string pluginHash{};
-            ContentHash projectRegistrationHash;
-            std::string projectInstanceKey{};
-        };
-
         [[nodiscard]]
         auto isLocalReference(std::string_view value) -> bool
         {
@@ -1440,6 +1766,339 @@ namespace uf::operator_runtime
             return hasSeparator && !startsSegment;
         }
 
+        // A member the schema has already declared required, so its absence
+        // would be a defect in this reader rather than in the document. This
+        // is the reader for the Operator's OWN stored rows, whose bytes were
+        // validated before they were written; a stored envelope missing a
+        // member is an internal invariant, not an input to be refused.
+        [[nodiscard]]
+        auto member(
+            json::Value const& object UF_LIFETIME_BOUND,
+            std::string_view name
+        ) -> json::Value const&
+        {
+            auto const* const p_member = object.find(name);
+            UF_CHECK(p_member != nullptr);
+            return *p_member;
+        }
+
+        // A member the proposal contract requires, read out of the parsed
+        // derive output. The parsed value is authoritative for what was
+        // validated: a project may pin a permissive observation schema, so a
+        // member the contract requires can be absent from a document that
+        // schema stamped. Refusing with the member's name is what keeps that
+        // failure closed instead of terminating.
+        [[nodiscard]]
+        auto checkedMember(
+            json::Value const& object UF_LIFETIME_BOUND,
+            std::string_view name
+        ) -> Result<json::Value const*>
+        {
+            auto const* const p_member = object.find(name);
+            if (p_member == nullptr)
+            {
+                return fail(
+                    ProjectObservationErrorCode::MalformedProposal,
+                    "Derived observation output is missing member '"
+                        + std::string{name} + "'"
+                );
+            }
+            return p_member;
+        }
+
+        [[nodiscard]]
+        auto parseProjectToolPreconditionStatus(
+            json::Value const& statusValue
+        ) -> Result<ProjectToolPreconditionStatus>
+        {
+            static constexpr auto k_statuses = std::array{
+                std::pair{
+                    std::string_view{"Known"},
+                    ProjectToolPreconditionStatus::Known,
+                },
+                std::pair{
+                    std::string_view{"Unknown"},
+                    ProjectToolPreconditionStatus::Unknown,
+                },
+                std::pair{
+                    std::string_view{"Stale"},
+                    ProjectToolPreconditionStatus::Stale,
+                },
+                std::pair{
+                    std::string_view{"Conflict"},
+                    ProjectToolPreconditionStatus::Conflict,
+                },
+            };
+            if (statusValue.kind() != json::ValueKind::String)
+            {
+                return fail(
+                    ProjectObservationErrorCode::MalformedProposal,
+                    "Project tool precondition status is not a string"
+                );
+            }
+            auto const found = std::ranges::find(
+                k_statuses,
+                statusValue.string(),
+                &std::pair<std::string_view, ProjectToolPreconditionStatus>::first
+            );
+            if (found == k_statuses.end())
+            {
+                return fail(
+                    ProjectObservationErrorCode::MalformedProposal,
+                    "Project tool precondition status is outside its wire domain"
+                );
+            }
+            return found->second;
+        }
+
+        // The schema owner already parsed and validated the derive output once;
+        // this maps the value it retained to the proposal the Operator mints
+        // from, with no second parse of the bytes. A member missing from the
+        // output or of the wrong kind is a MalformedProposal, the same code the
+        // shape checks below report for a proposal that never fits the wire.
+        [[nodiscard]]
+        auto proposalFromDerived(json::Value const& document)
+            -> Result<ProjectObservationProposal>
+        {
+            if (document.kind() != json::ValueKind::Object)
+            {
+                return fail(
+                    ProjectObservationErrorCode::MalformedProposal,
+                    "Derived observation output is not an object"
+                );
+            }
+            auto const* const p_schema = document.find("schema");
+            if (
+                p_schema == nullptr
+                || p_schema->kind() != json::ValueKind::String
+                || p_schema->string() != "umbraflow-project-observation-proposal/v1"
+            )
+            {
+                return fail(
+                    ProjectObservationErrorCode::MalformedProposal,
+                    "Derived observation output is not a project observation proposal"
+                );
+            }
+
+            UF_TRY_VALUE(
+                p_preconditions,
+                checkedMember(document, "project_tool_preconditions")
+            );
+            auto const& preconditions = *p_preconditions;
+            if (preconditions.kind() != json::ValueKind::Array)
+            {
+                return fail(
+                    ProjectObservationErrorCode::MalformedProposal,
+                    "Project observation proposal tool preconditions are not an array"
+                );
+            }
+            auto projectToolPreconditions = std::vector<ProjectToolPrecondition>{};
+            projectToolPreconditions.reserve(preconditions.items().size());
+            for (auto const& precondition : preconditions.items())
+            {
+                if (precondition.kind() != json::ValueKind::Object)
+                {
+                    return fail(
+                        ProjectObservationErrorCode::MalformedProposal,
+                        "Project observation proposal tool precondition is not an object"
+                    );
+                }
+                UF_TRY_VALUE(p_name, checkedMember(precondition, "name"));
+                auto const& name = *p_name;
+                if (name.kind() != json::ValueKind::String)
+                {
+                    return fail(
+                        ProjectObservationErrorCode::MalformedProposal,
+                        "Project tool precondition name is not a string"
+                    );
+                }
+                UF_TRY_VALUE(
+                    p_status,
+                    checkedMember(precondition, "status")
+                );
+                UF_TRY_VALUE(
+                    status,
+                    parseProjectToolPreconditionStatus(*p_status)
+                );
+                projectToolPreconditions.emplace_back(
+                    ProjectToolPrecondition{
+                        .name   = std::string{name.string()},
+                        .status = status,
+                    }
+                );
+            }
+
+            UF_TRY_VALUE(
+                p_instances,
+                checkedMember(document, "observed_instance_proposals")
+            );
+            auto const& instances = *p_instances;
+            if (instances.kind() != json::ValueKind::Array)
+            {
+                return fail(
+                    ProjectObservationErrorCode::MalformedProposal,
+                    "Project observation proposal instances are not an array"
+                );
+            }
+            auto observedInstanceProposals = std::vector<ObservedInstanceProposal>{};
+            observedInstanceProposals.reserve(instances.items().size());
+            for (auto const& instance : instances.items())
+            {
+                if (instance.kind() != json::ValueKind::Object)
+                {
+                    return fail(
+                        ProjectObservationErrorCode::MalformedProposal,
+                        "Project observation proposal instance is not an object"
+                    );
+                }
+                auto proposal = ObservedInstanceProposal{};
+                UF_TRY_VALUE(p_localRef, checkedMember(instance, "local_ref"));
+                auto const& localRef = *p_localRef;
+                if (localRef.kind() != json::ValueKind::String)
+                {
+                    return fail(
+                        ProjectObservationErrorCode::MalformedProposal,
+                        "Observed instance local_ref is not a string"
+                    );
+                }
+                proposal.localRef = std::string{localRef.string()};
+                auto const* const p_parent = instance.find("parent_local_ref");
+                if (p_parent != nullptr)
+                {
+                    if (p_parent->kind() != json::ValueKind::String)
+                    {
+                        return fail(
+                            ProjectObservationErrorCode::MalformedProposal,
+                            "Observed instance parent_local_ref is not a string"
+                        );
+                    }
+                    proposal.parentLocalRef = std::string{p_parent->string()};
+                }
+                UF_TRY_VALUE(p_kind, checkedMember(instance, "kind"));
+                auto const& kind = *p_kind;
+                if (kind.kind() != json::ValueKind::String)
+                {
+                    return fail(
+                        ProjectObservationErrorCode::MalformedProposal,
+                        "Observed instance kind is not a string"
+                    );
+                }
+                proposal.kind = std::string{kind.string()};
+                UF_TRY_VALUE(
+                    p_schemaId,
+                    checkedMember(instance, "identity_schema_id")
+                );
+                auto const& schemaId = *p_schemaId;
+                if (schemaId.kind() != json::ValueKind::String)
+                {
+                    return fail(
+                        ProjectObservationErrorCode::MalformedProposal,
+                        "Observed instance identity_schema_id is not a string"
+                    );
+                }
+                proposal.identitySchemaId = std::string{schemaId.string()};
+                UF_TRY_VALUE(
+                    p_basis,
+                    checkedMember(instance, "semantic_identity_basis")
+                );
+                proposal.semanticIdentityBasis = *p_basis;
+                UF_TRY_VALUE(
+                    p_opaque,
+                    checkedMember(instance, "opaque_project_payload")
+                );
+                proposal.opaqueProjectPayload = *p_opaque;
+                observedInstanceProposals.emplace_back(std::move(proposal));
+            }
+
+            UF_TRY_VALUE(
+                p_canonicalPayload,
+                checkedMember(document, "canonical_opaque_payload")
+            );
+            return ProjectObservationProposal{
+                .schema                    = "umbraflow-project-observation-proposal/v1",
+                .canonicalOpaquePayload    = *p_canonicalPayload,
+                .projectToolPreconditions  = std::move(projectToolPreconditions),
+                .observedInstanceProposals = std::move(observedInstanceProposals),
+            };
+        }
+
+        // Rebuilds the scope a session was pinned under from its three stored
+        // columns. The DDL CHECK already guarantees the generation digits and
+        // the kind/zero pairing, so a failure here is a defect in the stored
+        // tuple rather than in a caller.
+        [[nodiscard]]
+        auto restoreWorldScopeKind(
+            std::string_view wire
+        ) -> std::optional<ObservedInstanceWorldScopeKind>
+        {
+            static constexpr auto k_kinds = std::array{
+                std::pair{
+                    std::string_view{"account"},
+                    ObservedInstanceWorldScopeKind::Account,
+                },
+                std::pair{
+                    std::string_view{"run"},
+                    ObservedInstanceWorldScopeKind::Run,
+                },
+            };
+            auto const found = std::ranges::find(
+                k_kinds,
+                wire,
+                &std::pair<std::string_view, ObservedInstanceWorldScopeKind>::first
+            );
+            if (found == k_kinds.end())
+            {
+                return std::nullopt;
+            }
+            return found->second;
+        }
+
+        [[nodiscard]]
+        auto restoreSessionWorldScope(
+            std::string_view kindWire,
+            std::string_view scopeId,
+            std::string_view generationText
+        ) -> Result<ObservedInstanceWorldScope>
+        {
+            auto const kind = restoreWorldScopeKind(kindWire);
+            if (!kind)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "Session world scope kind is outside its stored domain"
+                );
+            }
+            auto generation = uint64{};
+            auto const* const begin = std::to_address(generationText.begin());
+            auto const* const end   = std::to_address(generationText.end());
+            auto const parsed       = std::from_chars(begin, end, generation);
+            if (parsed.ec != std::errc{} || parsed.ptr != end)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "Session world scope generation is not a stored non-negative integer"
+                );
+            }
+            auto scopeIdText = std::string{scopeId};
+            switch (*kind)
+            {
+            case ObservedInstanceWorldScopeKind::Account:
+                return ObservedInstanceWorldScope::account(
+                    std::move(scopeIdText),
+                    generation
+                );
+            case ObservedInstanceWorldScopeKind::Run:
+                return ObservedInstanceWorldScope::run(
+                    std::move(scopeIdText),
+                    generation
+                );
+            }
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Session world scope kind is outside its stored domain"
+            );
+        }
+
         [[nodiscard]]
         auto validateProjectObservationProposalShape(
             ProjectObservationProposal const& proposal
@@ -1452,6 +2111,12 @@ namespace uf::operator_runtime
                     "Project observation proposal carries the wrong schema tag"
                 );
             }
+            // The empty name is forbidden, not merely odd: reserveDispatch
+            // resolves a step's ui_target_id to the binding's local_ref and the
+            // deliver check compares it with the receipt's own target, while
+            // the migration sentinel for pre-local_ref bindings is exactly the
+            // empty name -- a binding that names nothing could be mistaken for
+            // one that names a target.
             for (auto const& instance : proposal.observedInstanceProposals)
             {
                 if (
@@ -1607,6 +2272,45 @@ namespace uf::operator_runtime
             return ok();
         }
 
+        // Every observed instance id a command's canonical arguments spell,
+        // across every nesting level. The id format is the ledger's own
+        // ("oi1_" plus the random hex the mint drew), so a string carrying the
+        // prefix IS an instance id wherever the project put it; the scan is
+        // what lets the production entry gate resolve ids the framework does
+        // not parse out of project-shaped arguments.
+        auto collectObservedInstanceIds(
+            json::Value const& value,
+            std::vector<std::string>& ids
+        ) -> void
+        {
+            switch (value.kind())
+            {
+            case json::ValueKind::Object:
+                for (auto const& [name, member] : value.members())
+                {
+                    static_cast<void>(name);
+                    collectObservedInstanceIds(member, ids);
+                }
+                break;
+            case json::ValueKind::Array:
+                for (auto const& item : value.items())
+                {
+                    collectObservedInstanceIds(item, ids);
+                }
+                break;
+            case json::ValueKind::String:
+                if (value.string().starts_with("oi1_"))
+                {
+                    ids.emplace_back(value.string());
+                }
+                break;
+            case json::ValueKind::Null:
+            case json::ValueKind::Boolean:
+            case json::ValueKind::Number:
+                break;
+            }
+        }
+
         [[nodiscard]]
         auto observedInstanceAuthorityBytes(
             ObservedInstanceContext const& context,
@@ -1705,7 +2409,8 @@ namespace uf::operator_runtime
             sqlite3* database,
             ObservedInstanceContext const& context,
             ObservedInstanceWorldScope const& worldScope,
-            std::string const& canonicalAuthority
+            std::string const& canonicalAuthority,
+            std::string_view localRef
         ) -> Result<std::string>
         {
             UF_TRY_VALUE(
@@ -1747,8 +2452,9 @@ namespace uf::operator_runtime
                         "INSERT INTO observed_instance_bindings("
                         "canonical_authority, observed_instance_id, plugin_id, "
                         "project_registration_hash, project_instance_key, "
-                        "world_scope_kind, world_scope_id, world_scope_generation) "
-                        "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+                        "world_scope_kind, world_scope_id, world_scope_generation, "
+                        "local_ref) "
+                        "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
                     )
                 );
                 UF_TRY(bindText(database, insert.get(), 1, canonicalAuthority));
@@ -1774,6 +2480,7 @@ namespace uf::operator_runtime
                     8,
                     std::to_string(worldScope.generation())
                 ));
+                UF_TRY(bindText(database, insert.get(), 9, localRef));
                 UF_TRY(expectDone(database, insert.get()));
                 return observedInstanceId;
             }
@@ -1936,77 +2643,6 @@ namespace uf::operator_runtime
 )sql"
                 R"sql(
 
-                    -- The bidirectional Operator-private mint binding. It is
-                    -- independent of scope lifetime: no scope row owns it and
-                    -- no cascade can remove it. This schema implements no
-                    -- reference-expiry proof, so cleanup is forbidden rather
-                    -- than guessing whether a Journal, Operation, backup or
-                    -- audit record still resolves through the binding.
-                    CREATE TABLE IF NOT EXISTS observed_instance_bindings(
-                        canonical_authority TEXT PRIMARY KEY,
-                        observed_instance_id TEXT NOT NULL UNIQUE
-                            CHECK(
-                                length(observed_instance_id) = 68
-                                AND substr(observed_instance_id, 1, 4) = 'oi1_'
-                                AND substr(observed_instance_id, 5)
-                                    NOT GLOB '*[^0-9a-f]*'
-                            ),
-                        plugin_id TEXT NOT NULL,
-                        project_registration_hash TEXT NOT NULL,
-                        project_instance_key TEXT NOT NULL,
-                        world_scope_kind TEXT NOT NULL
-                            CHECK(world_scope_kind IN ('account', 'run')),
-                        world_scope_id TEXT NOT NULL,
-                        world_scope_generation TEXT NOT NULL
-                            CHECK(
-                                length(world_scope_generation) > 0
-                                AND world_scope_generation NOT GLOB '*[^0-9]*'
-                                AND (
-                                    world_scope_kind = 'account'
-                                    OR world_scope_generation != '0'
-                                )
-                            ),
-                        FOREIGN KEY(plugin_id, project_instance_key)
-                            REFERENCES project_instances(plugin_id, project_instance_key),
-                        FOREIGN KEY(project_registration_hash, project_instance_key)
-                            REFERENCES project_instances(
-                                project_registration_hash,
-                                project_instance_key
-                            )
-                    ) STRICT;
-
-                    CREATE TRIGGER forbid_observed_instance_binding_replacement
-                    BEFORE INSERT ON observed_instance_bindings
-                    WHEN EXISTS(
-                        SELECT 1 FROM observed_instance_bindings
-                        WHERE canonical_authority = new.canonical_authority
-                            OR observed_instance_id = new.observed_instance_id
-                    )
-                    BEGIN
-                        SELECT RAISE(
-                            ABORT,
-                            'observed instance bindings are immutable'
-                        );
-                    END;
-
-                    CREATE TRIGGER forbid_observed_instance_binding_mutation
-                    BEFORE UPDATE ON observed_instance_bindings
-                    BEGIN
-                        SELECT RAISE(
-                            ABORT,
-                            'observed instance bindings are immutable'
-                        );
-                    END;
-
-                    CREATE TRIGGER forbid_observed_instance_binding_cleanup
-                    BEFORE DELETE ON observed_instance_bindings
-                    BEGIN
-                        SELECT RAISE(
-                            ABORT,
-                            'observed instance binding cleanup requires a reference-expiry proof'
-                        );
-                    END;
-
                     -- One row per distinct reading a ProjectPlugin.derive
                     -- produced. Its revision is its own line: it advances when
                     -- any input the derive fingerprint covers moved and stays
@@ -2029,51 +2665,8 @@ namespace uf::operator_runtime
                         PRIMARY KEY(plugin_id, project_instance_key, revision)
                     ) STRICT;
 
-                    CREATE TABLE IF NOT EXISTS sessions(
-                        session_id TEXT PRIMARY KEY,
-                        authenticated_controller_id TEXT NOT NULL,
-                        idempotency_namespace TEXT NOT NULL,
-                        manifest_hash TEXT NOT NULL,
-                        runtime_artifact_root_hash TEXT NOT NULL,
-                        installed_generation INTEGER NOT NULL
-                            CHECK(installed_generation > 0),
-                        project_registration_hash TEXT NOT NULL
-                            REFERENCES project_registrations(registration_hash),
-                        -- The capability set this session holds, as the exact
-                        -- JCS array capability_profile_hash is the sha256 of.
-                        -- The hash alone was a caller field with no content
-                        -- behind it, so a policy rule naming a required
-                        -- capability had nothing to be judged against.
-                        controller_capabilities TEXT NOT NULL,
-                        capability_profile_hash TEXT NOT NULL,
-                        session_epoch INTEGER NOT NULL CHECK(session_epoch > 0),
-                        controlled_target_id TEXT NOT NULL,
-                        project_instance_key TEXT NOT NULL,
-                        mode TEXT NOT NULL CHECK(mode IN ('read', 'write')),
-                        -- Which of the three operators holds this session. It
-                        -- is part of the immutable pinned tuple, so a
-                        -- controller cannot become another kind between two
-                        -- commands, and bindController reads it here rather
-                        -- than accepting it.
-                        controller_kind TEXT NOT NULL
-                            CHECK(controller_kind IN ('script', 'agent', 'human')),
-                        active INTEGER NOT NULL CHECK(active IN (0, 1)),
-                        FOREIGN KEY(project_registration_hash, project_instance_key)
-                            REFERENCES project_instances(
-                                project_registration_hash,
-                                project_instance_key
-                            ),
-                        FOREIGN KEY(installed_generation, runtime_artifact_root_hash)
-                            REFERENCES runtime_installations(
-                                installed_generation,
-                                artifact_root_hash
-                            )
-                    ) STRICT;
-
-                    CREATE UNIQUE INDEX IF NOT EXISTS one_active_write_session_per_instance
-                    ON sessions(project_registration_hash, project_instance_key)
-                    WHERE mode='write' AND active=1;
-
+)sql"
+                R"sql(
                     CREATE TABLE IF NOT EXISTS fencing_high_water(
                         controlled_target_id TEXT PRIMARY KEY,
                         fencing_token INTEGER NOT NULL CHECK(fencing_token > 0)
@@ -2454,6 +3047,9 @@ namespace uf::operator_runtime
 
                 )sql"
             ));
+            UF_TRY(execute(database, k_observedInstanceBindingsDdl));
+            UF_TRY(execute(database, k_sessionsDdl));
+            UF_TRY(execute(database, k_oneActiveWriteSessionIndexDdl));
             UF_TRY(execute(database, k_projectRegistrationsDdl));
             UF_TRY(execute(database, k_projectInstancesDdl));
             UF_TRY(execute(database, k_ledgerEventsDdl));
@@ -4914,8 +5510,10 @@ namespace uf::operator_runtime
                 "project_registration_hash, controller_capabilities, "
                 "capability_profile_hash, session_epoch, "
                 "controlled_target_id, project_instance_key, mode, controller_kind, "
+                "world_scope_kind, world_scope_id, world_scope_generation, "
                 "active) "
-                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 1)"
+                "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, "
+                "?15, ?16, ?17, 1)"
             )
         );
         UF_TRY(bindText(m_impl->database.get(), insert.get(), 1, pin.sessionId));
@@ -4967,6 +5565,19 @@ namespace uf::operator_runtime
             14,
             controllerKindWireName(pin.kind)
         ));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            insert.get(),
+            15,
+            observedInstanceWorldScopeKindWireName(pin.worldScope.kind())
+        ));
+        UF_TRY(bindText(m_impl->database.get(), insert.get(), 16, pin.worldScope.scopeId()));
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            insert.get(),
+            17,
+            std::to_string(pin.worldScope.generation())
+        ));
         UF_TRY(expectDone(m_impl->database.get(), insert.get()));
 
         UF_TRY_VALUE(
@@ -4978,6 +5589,7 @@ namespace uf::operator_runtime
                 "project_registration_hash, controller_capabilities, "
                 "capability_profile_hash, session_epoch, "
                 "controlled_target_id, project_instance_key, mode, controller_kind, "
+                "world_scope_kind, world_scope_id, world_scope_generation, "
                 "active "
                 "FROM sessions WHERE session_id=?1"
             )
@@ -5002,7 +5614,11 @@ namespace uf::operator_runtime
             && columnText(query.get(), 10) == pin.projectInstanceKey
             && columnText(query.get(), 11) == sessionModeWireName(pin.mode)
             && columnText(query.get(), 12) == controllerKindWireName(pin.kind)
-            && sqlite3_column_int(query.get(), 13) == 1;
+            && columnText(query.get(), 13)
+                == observedInstanceWorldScopeKindWireName(pin.worldScope.kind())
+            && columnText(query.get(), 14) == pin.worldScope.scopeId()
+            && columnText(query.get(), 15) == std::to_string(pin.worldScope.generation())
+            && sqlite3_column_int(query.get(), 16) == 1;
         if (!matches)
         {
             return fail(
@@ -5781,6 +6397,7 @@ namespace uf::operator_runtime
         ControlLease const& lease,
         ProjectPluginHandle const& plugin,
         ProjectToolCatalogSchemaOwner const& catalog,
+        ObservedInstanceIdentitySchemas const& identitySchemas,
         task::UiObservationSnapshot const& observation
     ) -> Result<SnapshotRecord>
     {
@@ -5831,7 +6448,9 @@ namespace uf::operator_runtime
                 "session.controlled_target_id, session.runtime_artifact_root_hash, "
                 "registration.plugin_id, registration.plugin_hash, "
                 "session.project_registration_hash, session.controller_kind, "
-                "session.controller_capabilities, policy.policy_hash "
+                "session.controller_capabilities, policy.policy_hash, "
+                "session.world_scope_kind, session.world_scope_id, "
+                "session.world_scope_generation "
                 "FROM sessions session JOIN project_registrations registration "
                 "ON registration.registration_hash=session.project_registration_hash "
                 "JOIN session_policies policy ON policy.session_id=session.session_id "
@@ -5873,6 +6492,18 @@ namespace uf::operator_runtime
                 "Snapshot ProjectPlugin does not match the pinned session registration"
             );
         }
+
+        // The scope this session was pinned under, rebuilt from its stored
+        // tuple. It is the scope the observation's instances mint in: the
+        // plugin output carries no scope and cannot name one.
+        UF_TRY_VALUE(
+            worldScope,
+            restoreSessionWorldScope(
+                columnText(sessionQuery.get(), 10),
+                columnText(sessionQuery.get(), 11),
+                columnText(sessionQuery.get(), 12)
+            )
+        );
 
         // Without this a snapshot can be composed from a UI observation taken
         // through a RuntimeArtifact the session never pinned, and
@@ -6047,7 +6678,34 @@ namespace uf::operator_runtime
             );
         }
 
-        auto const observationHex     = derived.contentHash().hex();
+        // The schema owner already parsed and validated the derive output; the
+        // proposal is its retained value, not a second parse of its bytes.
+        UF_TRY_VALUE(proposal, proposalFromDerived(derived.value()));
+
+        // The context the mint re-checks its authorities against. The lease was
+        // validated at the top of this function and the session row read above,
+        // so the facts come from this same transaction's reads.
+        UF_TRY_VALUE(registrationHash, parseHashColumn(columnText(sessionQuery.get(), 6)));
+        UF_TRY_VALUE(
+            finalObservation,
+            mintProjectObservation(
+                ObservedInstanceContext{
+                    .pluginId                = pluginId,
+                    .pluginHash              = columnText(sessionQuery.get(), 5),
+                    .projectRegistrationHash = registrationHash,
+                    .projectInstanceKey      = projectInstanceKey,
+                },
+                worldScope,
+                identitySchemas,
+                plugin,
+                proposal
+            )
+        );
+
+        // The fingerprint names the final closed observation the canonical
+        // mint produced -- the bytes the row stores -- not the derive output
+        // that proposed it.
+        auto const observationHex     = finalObservation.hash().hex();
         auto const stateResolutionHex = observation.stateResolutionHash().hex();
         auto currentFingerprint       = stateResolutionHex;
         currentFingerprint += '\0';
@@ -6122,7 +6780,7 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 observationInsert.get(),
                 8,
-                derived.bytes()
+                finalObservation.canonicalBytes()
             ));
             UF_TRY(bindText(
                 m_impl->database.get(),
@@ -6138,7 +6796,8 @@ namespace uf::operator_runtime
 
         // StoredProjectObservation is minted here, in the member function body: its
         // single friend is OperatorCoordinator, which reaches its member
-        // functions and neither Impl nor the file-local helpers above.
+        // functions and neither Impl nor the file-local helpers above. Its
+        // payload is the final closed envelope, the bytes the row stores.
         auto projectObservation = StoredProjectObservation{
             plugin.projectRegistrationHash(),
             plugin.pluginHash(),
@@ -6147,7 +6806,7 @@ namespace uf::operator_runtime
             projectStateRevision,
             projectStateHash,
             observationRevision,
-            derived,
+            std::move(finalObservation),
         };
 
         UF_TRY_VALUE(
@@ -6403,11 +7062,11 @@ namespace uf::operator_runtime
         };
     }
 
-    auto OperatorCoordinator::publishProjectObservation(
-        ControlLease const& lease,
-        ProjectPluginHandle const& plugin,
+    auto OperatorCoordinator::mintProjectObservation(
+        ObservedInstanceContext const& context,
         ObservedInstanceWorldScope const& worldScope,
         ObservedInstanceIdentitySchemas const& identitySchemas,
+        ProjectPluginHandle const& plugin,
         ProjectObservationProposal const& proposal
     ) -> Result<ProjectObservation>
     {
@@ -6415,15 +7074,6 @@ namespace uf::operator_runtime
         // interface-lock registry.
         UF_TRY(validateProjectObservationProposalShape(proposal));
         UF_TRY(validateProjectObservationProposalRelations(proposal));
-
-        UF_TRY_VALUE(
-            derivedContext,
-            readObservedInstanceContext(
-                m_impl->database.get(),
-                m_impl->sessionEpoch,
-                lease
-            )
-        );
 
         // Registration closure membership is a whole-proposal pass and must
         // outrank every basis violation, collision and scope refusal,
@@ -6446,14 +7096,13 @@ namespace uf::operator_runtime
             ));
         }
 
-        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
         auto minted = std::vector<ObservedInstanceId>{};
         minted.reserve(proposal.observedInstanceProposals.size());
         auto localRefById = std::map<std::string, std::string>{};
         for (auto const& instance : proposal.observedInstanceProposals)
         {
             auto const authority = observedInstanceAuthorityBytes(
-                derivedContext,
+                context,
                 worldScope,
                 instance
             );
@@ -6461,9 +7110,10 @@ namespace uf::operator_runtime
                 observedInstanceId,
                 mintObservedInstanceBinding(
                     m_impl->database.get(),
-                    derivedContext,
+                    context,
                     worldScope,
-                    authority
+                    authority,
+                    instance.localRef
                 )
             );
             auto const [found, inserted] = localRefById.try_emplace(
@@ -6481,12 +7131,11 @@ namespace uf::operator_runtime
         }
 
         if (
-            plugin.pluginId() != derivedContext.pluginId
-            || plugin.pluginHash().hex() != derivedContext.pluginHash
-            || plugin.projectRegistrationHash()
-                != derivedContext.projectRegistrationHash
+            plugin.pluginId() != context.pluginId
+            || plugin.pluginHash().hex() != context.pluginHash
+            || plugin.projectRegistrationHash() != context.projectRegistrationHash
             || identitySchemas.projectRegistrationHash()
-                != derivedContext.projectRegistrationHash
+                != context.projectRegistrationHash
         )
         {
             return fail(
@@ -6539,7 +7188,6 @@ namespace uf::operator_runtime
             hash,
             sha256(std::as_bytes(std::span{canonicalBytes}))
         );
-        UF_TRY(transaction.commit());
         return ProjectObservation{
             proposal.canonicalOpaquePayload,
             proposal.projectToolPreconditions,
@@ -6547,6 +7195,37 @@ namespace uf::operator_runtime
             std::move(canonicalBytes),
             hash,
         };
+    }
+
+    auto OperatorCoordinator::publishProjectObservation(
+        ControlLease const& lease,
+        ProjectPluginHandle const& plugin,
+        ObservedInstanceWorldScope const& worldScope,
+        ObservedInstanceIdentitySchemas const& identitySchemas,
+        ProjectObservationProposal const& proposal
+    ) -> Result<ProjectObservation>
+    {
+        UF_TRY_VALUE(
+            derivedContext,
+            readObservedInstanceContext(
+                m_impl->database.get(),
+                m_impl->sessionEpoch,
+                lease
+            )
+        );
+        UF_TRY_VALUE(transaction, Transaction::begin(m_impl->database.get()));
+        UF_TRY_VALUE(
+            observation,
+            mintProjectObservation(
+                derivedContext,
+                worldScope,
+                identitySchemas,
+                plugin,
+                proposal
+            )
+        );
+        UF_TRY(transaction.commit());
+        return observation;
     }
 
     auto OperatorCoordinator::resolveObservedInstance(
@@ -6610,48 +7289,6 @@ namespace uf::operator_runtime
             );
         }
         return ObservedInstanceId{std::string{observedInstanceId}};
-    }
-
-    auto OperatorCoordinator::availableTools(
-        ControllerBinding const& controller,
-        ProjectToolCatalogSchemaOwner const& catalog
-    ) -> Result<std::vector<OfferedTool>>
-    {
-        UF_TRY_VALUE(
-            query,
-            prepare(
-                m_impl->database.get(),
-                "SELECT controller_kind, controller_capabilities, "
-                "project_registration_hash FROM sessions "
-                "WHERE session_id=?1 AND active=1 AND session_epoch=?2"
-            )
-        );
-        UF_TRY(bindText(m_impl->database.get(), query.get(), 1, controller.sessionId()));
-        UF_TRY(bindInteger(m_impl->database.get(), query.get(), 2, m_impl->sessionEpoch));
-        if (sqlite3_step(query.get()) != SQLITE_ROW)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "ControllerBinding names no active session of this epoch"
-            );
-        }
-        UF_TRY_VALUE(kind, parseControllerKind(columnText(query.get(), 0)));
-        if (kind != controller.kind())
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "ControllerBinding names a kind the session row no longer holds"
-            );
-        }
-        if (catalog.projectRegistrationHash().hex() != columnText(query.get(), 2))
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "Tool Catalog does not match the pinned session registration"
-            );
-        }
-        UF_TRY_VALUE(capabilities, readNameArray(columnText(query.get(), 1)));
-        return catalog.offeredTools(controllerProfile(kind), capabilities);
     }
 
     auto OperatorCoordinator::submitCommand(
@@ -6723,7 +7360,9 @@ namespace uf::operator_runtime
                 m_impl->database.get(),
                 "SELECT session.controlled_target_id, session.project_instance_key, "
                 "registration.plugin_id, session.idempotency_namespace, "
-                "session.project_registration_hash, session.controller_capabilities "
+                "session.project_registration_hash, session.controller_capabilities, "
+                "session.world_scope_kind, session.world_scope_id, "
+                "session.world_scope_generation "
                 "FROM sessions session JOIN project_registrations "
                 "registration ON registration.registration_hash="
                 "session.project_registration_hash "
@@ -6869,7 +7508,8 @@ namespace uf::operator_runtime
                 // revision is refused afterwards. The controller has to look
                 // again before it acts, which is the whole effect a finding is
                 // allowed to have.
-                "SELECT session.controlled_target_id, s.decision_basis_hash "
+                "SELECT session.controlled_target_id, s.decision_basis_hash, "
+                "obs.canonical_observation "
                 "FROM snapshots s JOIN sessions session "
                 "ON session.session_id=s.session_id JOIN control_leases lease "
                 "ON lease.controlled_target_id=session.controlled_target_id "
@@ -6913,6 +7553,100 @@ namespace uf::operator_runtime
             );
         }
         auto const stateFingerprint = columnText(snapshotQuery.get(), 1);
+
+        // U2c production entry gate. Every observed instance id the command's
+        // canonical arguments spell is resolved here, before the operation row
+        // is created -- which is before a read-only operation can complete and
+        // before plugin.plan can consume an id out of those arguments. A
+        // stale or foreign id therefore never reaches either consumer, and a
+        // mutating plan returning only Wait steps cannot carry one past the
+        // gate either. The plugin can still name an id no argument carried,
+        // which is why mintNextStep gates the step's ui_target_id again.
+        UF_TRY_VALUE(
+            sessionWorldScope,
+            restoreSessionWorldScope(
+                columnText(sessionQuery.get(), 6),
+                columnText(sessionQuery.get(), 7),
+                columnText(sessionQuery.get(), 8)
+            )
+        );
+        auto targetIds = std::vector<std::string>{};
+        {
+            UF_TRY_VALUE(argumentsValue, json::parse(canonicalArgs));
+            collectObservedInstanceIds(argumentsValue, targetIds);
+        }
+        if (!targetIds.empty())
+        {
+            std::ranges::sort(targetIds);
+            targetIds.erase(
+                std::unique(targetIds.begin(), targetIds.end()),
+                targetIds.end()
+            );
+            UF_TRY_VALUE(
+                freshObservation,
+                restoreProjectObservation(columnText(snapshotQuery.get(), 2))
+            );
+            for (auto const& targetId : targetIds)
+            {
+                UF_TRY_VALUE(
+                    bindingQuery,
+                    prepare(
+                        m_impl->database.get(),
+                        "SELECT plugin_id, project_registration_hash, "
+                        "project_instance_key, world_scope_kind, world_scope_id, "
+                        "world_scope_generation FROM observed_instance_bindings "
+                        "WHERE observed_instance_id=?1"
+                    )
+                );
+                UF_TRY(bindText(
+                    m_impl->database.get(),
+                    bindingQuery.get(),
+                    1,
+                    targetId
+                ));
+                if (sqlite3_step(bindingQuery.get()) != SQLITE_ROW)
+                {
+                    return fail(
+                        ProjectObservationErrorCode::ObservedInstanceStale,
+                        "Observed instance ID is not a known persistent binding"
+                    );
+                }
+                auto const scopeMatches =
+                    columnText(bindingQuery.get(), 0) == pluginId
+                    && columnText(bindingQuery.get(), 1)
+                        == columnText(sessionQuery.get(), 4)
+                    && columnText(bindingQuery.get(), 2) == projectInstanceKey
+                    && columnText(bindingQuery.get(), 3)
+                        == observedInstanceWorldScopeKindWireName(
+                            sessionWorldScope.kind()
+                        )
+                    && columnText(bindingQuery.get(), 4)
+                        == sessionWorldScope.scopeId()
+                    && columnText(bindingQuery.get(), 5)
+                        == std::to_string(sessionWorldScope.generation());
+                if (!scopeMatches)
+                {
+                    return fail(
+                        ProjectObservationErrorCode::ObservedInstanceScopeMismatch,
+                        "Observed instance ID belongs to another registration, project or scope"
+                    );
+                }
+                auto const fresh = std::ranges::any_of(
+                    freshObservation.observedInstances(),
+                    [&targetId](ObservedInstance const& instance)
+                    {
+                        return instance.observedInstanceId.value() == targetId;
+                    }
+                );
+                if (!fresh)
+                {
+                    return fail(
+                        ProjectObservationErrorCode::ObservedInstanceStale,
+                        "Observed instance ID is absent from the fresh observation"
+                    );
+                }
+            }
+        }
 
         if (mutating)
         {
@@ -7834,6 +8568,128 @@ namespace uf::operator_runtime
         };
     }
 
+    auto OperatorCoordinator::restoreProjectObservation(std::string_view storedJcs)
+        -> Result<ProjectObservation>
+    {
+        UF_TRY_VALUE(document, json::parse(storedJcs));
+        if (document.kind() != json::ValueKind::Object)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Stored observation is not an object"
+            );
+        }
+
+        auto const& preconditionValues = member(document, "project_tool_preconditions");
+        if (preconditionValues.kind() != json::ValueKind::Array)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Stored observation tool preconditions are not an array"
+            );
+        }
+        auto preconditions = std::vector<ProjectToolPrecondition>{};
+        preconditions.reserve(preconditionValues.items().size());
+        for (auto const& precondition : preconditionValues.items())
+        {
+            if (precondition.kind() != json::ValueKind::Object)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "Stored observation tool precondition is not an object"
+                );
+            }
+            auto const& name = member(precondition, "name");
+            if (name.kind() != json::ValueKind::String)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "Stored observation tool precondition name is not a string"
+                );
+            }
+            UF_TRY_VALUE(
+                status,
+                parseProjectToolPreconditionStatus(member(precondition, "status"))
+            );
+            preconditions.emplace_back(ProjectToolPrecondition{
+                .name   = std::string{name.string()},
+                .status = status,
+            });
+        }
+
+        auto const& instanceValues = member(document, "observed_instances");
+        if (instanceValues.kind() != json::ValueKind::Array)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "Stored observation instances are not an array"
+            );
+        }
+        auto instances = std::vector<ObservedInstance>{};
+        instances.reserve(instanceValues.items().size());
+        for (auto const& instance : instanceValues.items())
+        {
+            if (instance.kind() != json::ValueKind::Object)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "Stored observation instance is not an object"
+                );
+            }
+            auto const& idValue = member(instance, "observed_instance_id");
+            if (idValue.kind() != json::ValueKind::String)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "Stored observation instance id is not a string"
+                );
+            }
+            auto parent = std::optional<ObservedInstanceId>{};
+            auto const* const p_parent = instance.find("parent_observed_instance_id");
+            if (p_parent != nullptr)
+            {
+                if (p_parent->kind() != json::ValueKind::String)
+                {
+                    return fail(
+                        AutomationErrorKind::InternalInvariant,
+                        "Stored observation instance parent id is not a string"
+                    );
+                }
+                parent.emplace(ObservedInstanceId{std::string{p_parent->string()}});
+            }
+            auto const& kindValue = member(instance, "kind");
+            if (kindValue.kind() != json::ValueKind::String)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "Stored observation instance kind is not a string"
+                );
+            }
+            instances.emplace_back(ObservedInstance{
+                .observedInstanceId = ObservedInstanceId{
+                    std::string{idValue.string()}
+                },
+                .parentObservedInstanceId = std::move(parent),
+                .kind                     = std::string{kindValue.string()},
+                .opaqueProjectPayload     = member(instance, "opaque_project_payload"),
+            });
+        }
+
+        // The stored bytes are the final observation's own canonical bytes, so
+        // the restored hash is the sha256 of exactly what is stored.
+        UF_TRY_VALUE(
+            hash,
+            sha256(std::as_bytes(std::span{storedJcs}))
+        );
+        return ProjectObservation{
+            member(document, "canonical_opaque_payload"),
+            std::move(preconditions),
+            std::move(instances),
+            std::string{storedJcs},
+            hash,
+        };
+    }
+
     auto OperatorCoordinator::mintNextStep(
         std::string const& operationId,
         uint64 expectedRevision,
@@ -7860,7 +8716,9 @@ namespace uf::operator_runtime
                 "observation.canonical_observation, state.canonical_opaque_payload, "
                 "EXISTS(SELECT 1 FROM dispatches d "
                 "WHERE d.operation_id=o.operation_id), "
-                "session.runtime_artifact_root_hash, o.tool_name, o.tool_version "
+                "session.runtime_artifact_root_hash, o.tool_name, o.tool_version, "
+                "session.world_scope_kind, session.world_scope_id, "
+                "session.world_scope_generation "
                 "FROM operations o "
                 + std::string{k_liveControllerJoin}
                 + "JOIN project_registrations registration "
@@ -7999,6 +8857,42 @@ namespace uf::operator_runtime
                 .runtimeArtifactRootHash = sessionArtifactRoot,
             })
         );
+
+        if (step.kind() == StepKind::UiAction)
+        {
+            // U2c: a UI action names the observed instance it acts on, so the
+            // step is resolved through the same authorization gate as any
+            // other observed_instance_id use -- the persistent binding's scope
+            // is checked before fresh membership -- before the step row that
+            // commits it is written. The id is read off the same member the
+            // dispatch-side reader uses, so the step refused here is the step
+            // that would have been delivered. The scope is the session's
+            // pinned one, rebuilt from its stored tuple, which is the scope
+            // the observation's instances were minted in.
+            UF_TRY_VALUE(
+                sessionWorldScope,
+                restoreSessionWorldScope(
+                    columnText(query.get(), 19),
+                    columnText(query.get(), 20),
+                    columnText(query.get(), 21)
+                )
+            );
+            UF_TRY_VALUE(intentValue, json::parse(step.canonicalStep()));
+            auto const* const p_action = intentValue.find("action");
+            UF_CHECK(p_action != nullptr);
+            auto const* const p_uiTargetId = p_action->find("ui_target_id");
+            UF_CHECK(p_uiTargetId != nullptr);
+            UF_TRY_VALUE(
+                freshObservation,
+                restoreProjectObservation(observationJcs)
+            );
+            UF_TRY(resolveObservedInstance(
+                lease,
+                sessionWorldScope,
+                freshObservation,
+                p_uiTargetId->string()
+            ));
+        }
 
         UF_TRY_VALUE(
             insert,
@@ -8141,7 +9035,7 @@ namespace uf::operator_runtime
                 // is read here rather than accepted, because an authority
                 // naming a generation nobody observed would carry the Host's
                 // permission to act on a world the ledger never saw.
-                "snapshot.target_generation "
+                "snapshot.target_generation, step.canonical_step "
                 "FROM operations o "
                 "JOIN operation_plans plan ON plan.operation_id=o.operation_id "
                 "JOIN snapshots snapshot ON snapshot.token=o.snapshot_token "
@@ -8200,6 +9094,48 @@ namespace uf::operator_runtime
         auto const targetGeneration = TargetGeneration::fromValue(
             static_cast<uint64>(sqlite3_column_int64(query.get(), 13))
         );
+        // The step's canonical intent names the observed instance it acts on,
+        // and the deliver check needs the model target that instance was
+        // observed at. The binding is the ledger's own row, so the resolution
+        // cannot be handed to the authority: a step naming an instance with no
+        // persistent binding, or a binding whose local_ref is the migrated
+        // empty sentinel, is refused here rather than delivered. The id is
+        // read off the same member the mint-side gate uses, so the step that
+        // passed mintNextStep is exactly the step resolved here.
+        UF_TRY_VALUE(intentValue, json::parse(columnText(query.get(), 14)));
+        auto const* const p_action = intentValue.find("action");
+        UF_CHECK(p_action != nullptr);
+        auto const* const p_uiTargetId = p_action->find("ui_target_id");
+        UF_CHECK(p_uiTargetId != nullptr);
+        UF_TRY_VALUE(
+            bindingQuery,
+            prepare(
+                m_impl->database.get(),
+                "SELECT local_ref FROM observed_instance_bindings "
+                "WHERE observed_instance_id=?1"
+            )
+        );
+        UF_TRY(bindText(
+            m_impl->database.get(),
+            bindingQuery.get(),
+            1,
+            p_uiTargetId->string()
+        ));
+        if (sqlite3_step(bindingQuery.get()) != SQLITE_ROW)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "The step names an observed instance with no persistent binding"
+            );
+        }
+        auto bindingLocalRef = columnText(bindingQuery.get(), 0);
+        if (bindingLocalRef.empty())
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "The step names a binding whose local_ref predates target resolution"
+            );
+        }
         // Two counters because a wait step consumes a step and no dispatch.
         if (dispatchCount >= maximumDispatches)
         {
@@ -8430,6 +9366,7 @@ namespace uf::operator_runtime
         return DispatchReservation{
             .authority = task::DispatchAuthority{
                 .controlledTargetId  = lease.controlledTargetId,
+                .uiTarget            = std::move(bindingLocalRef),
                 .leaseId             = lease.leaseId,
                 .operationId         = operationId,
                 .authorityDecisionId = authorityDecisionId.value(),

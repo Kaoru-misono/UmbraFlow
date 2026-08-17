@@ -456,6 +456,7 @@ namespace uf::operator_runtime
             *elsewhereLease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             test_support::observeAgain(prepared)
         );
         REQUIRE(elsewhereSnapshot.has_value());
@@ -658,6 +659,11 @@ namespace uf::operator_runtime
             ControllerKind kind
         )
         {
+            auto const worldScope = ObservedInstanceWorldScope::run(
+                controlledTargetId,
+                1
+            );
+            REQUIRE(worldScope.has_value());
             return SessionPin{
                 .sessionId                 = std::move(sessionId),
                 .authenticatedControllerId = "controller-1",
@@ -668,6 +674,7 @@ namespace uf::operator_runtime
                 .projectInstanceKey        = std::move(projectInstanceKey),
                 .mode                      = SessionMode::Write,
                 .kind                      = kind,
+                .worldScope                = *worldScope,
             };
         };
 
@@ -754,6 +761,7 @@ namespace uf::operator_runtime
                 lease,
                 prepared.plugin,
                 prepared.project.toolCatalogSchemaOwner,
+                prepared.project.observedInstanceIdentitySchemas,
                 test_support::observeAgain(prepared)
             );
         };
@@ -1063,6 +1071,7 @@ namespace uf::operator_runtime
             stuckLease,
             prepared.plugin,
             prepared.project.toolCatalogSchemaOwner,
+            prepared.project.observedInstanceIdentitySchemas,
             conformance::observeOnce(unresolvedHost)
         );
         REQUIRE(moved.has_value());
@@ -1107,6 +1116,7 @@ namespace uf::operator_runtime
                 *lease,
                 prepared.plugin,
                 prepared.project.toolCatalogSchemaOwner,
+                prepared.project.observedInstanceIdentitySchemas,
                 test_support::observeAgain(prepared)
             );
             REQUIRE(snapshot.has_value());
@@ -1136,6 +1146,11 @@ namespace uf::operator_runtime
         // restart is not a way to refresh a spent budget in place.
         auto const pin = [&pinned](std::string sessionId)
         {
+            auto const worldScope = ObservedInstanceWorldScope::run(
+                "target-agent",
+                1
+            );
+            REQUIRE(worldScope.has_value());
             return SessionPin{
                 .sessionId                 = std::move(sessionId),
                 .authenticatedControllerId = "controller-1",
@@ -1146,6 +1161,7 @@ namespace uf::operator_runtime
                 .projectInstanceKey     = "instance-agent",
                 .mode                   = SessionMode::Write,
                 .kind                   = ControllerKind::Agent,
+                .worldScope             = *worldScope,
             };
         };
         CHECK_FALSE(restarted->pinSession(

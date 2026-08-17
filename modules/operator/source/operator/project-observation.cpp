@@ -505,7 +505,7 @@ namespace uf::operator_runtime
         uint64 projectStateRevision,
         ContentHash projectStateHash,
         uint64 revision,
-        ValidatedDocument payload
+        ProjectObservation payload
     )
         : m_projectRegistrationHash{projectRegistrationHash}
         , m_pluginHash{pluginHash}
@@ -556,11 +556,11 @@ namespace uf::operator_runtime
 
     auto StoredProjectObservation::hash() const -> ContentHash
     {
-        return m_payload.contentHash();
+        return m_payload.hash();
     }
 
     auto StoredProjectObservation::payload() const noexcept
-        -> ValidatedDocument const&
+        -> ProjectObservation const&
     {
         return m_payload;
     }

@@ -29,7 +29,6 @@ namespace uf::operator_runtime
     namespace
     {
         constexpr auto k_operatorPlanErrorCodes = std::array{
-            OperatorPlanErrorCode::PlannedUiTargetSubstituted,
             OperatorPlanErrorCode::PlannedArgumentContradicted,
         };
 
@@ -110,7 +109,7 @@ namespace uf::operator_runtime
         };
 
         // The whole of what the Operator asks about a RuntimeModel: whether
-        // three strings the plugin wrote are strings the trusted parser
+        // the identifiers the plugin wrote are identifiers the trusted parser
         // published. It reads no RuntimeModel field, knows nothing of what a
         // surface or an action is, and would answer identically if the model
         // were a list of colours -- which is why this is identity and not
@@ -120,6 +119,14 @@ namespace uf::operator_runtime
         // here too: an empty name is in no vocabulary, and a reader that never
         // filled these members therefore stops every UI-action step instead of
         // passing a test against nothing.
+        //
+        // ui_target_id is deliberately not among the checks: since U2b the
+        // target of a step is an observed instance id, minted by the Operator
+        // and resolved by the observation gate in mintNextStep
+        // (resolveObservedInstance), so its judge is that gate and not the
+        // model vocabulary. The surface and action a step names are still the
+        // model's to declare; the model's ui_targets remain what a Host
+        // resolves a delivery against.
         [[nodiscard]]
         auto requireDeclaredUi(
             task::RuntimeModelBinding const& runtimeModel,
@@ -138,11 +145,6 @@ namespace uf::operator_runtime
             auto const& declared = runtimeModel.declaredUi();
             auto const checks    = std::array{
                 DeclaredUiCheck{declared.surfaces, claims.surfaceId, "surface_id"},
-                DeclaredUiCheck{
-                    declared.uiTargets,
-                    claims.uiTargetId,
-                    "ui_target_id",
-                },
                 DeclaredUiCheck{declared.actions, claims.actionId, "action_id"},
             };
             for (auto const& check : checks)
@@ -414,70 +416,10 @@ namespace uf::operator_runtime
             return false;
         }
 
-        // Every declared ui_target this value names, at any depth, as a string
-        // it holds rather than as a member name it spells.
-        //
-        // This is the same question requireDeclaredUi asks, pointed at the
-        // other document: whether a string here is a string the trusted
-        // RuntimeModel parser published. It reads no project meaning out of
-        // canonical_args and cannot -- it does not know which argument is the
-        // target, and never asks. A member name is deliberately not a hit: a
-        // plan whose arguments are keyed by a ui_target has still not chosen
-        // one, and treating a key as a choice would let an unrelated shape
-        // widen what a step may aim at.
-        //
-        // Recursion is bounded because json::parse is: it refuses beyond 64
-        // levels, so no accepted document can drive this deeper than that.
-        [[nodiscard]]
-        auto declaredUiTargetsIn(
-            json::Value const& value,
-            std::span<std::string const> declared
-        ) -> std::vector<std::string>
-        {
-            auto named = std::vector<std::string>{};
-            switch (value.kind())
-            {
-            case json::ValueKind::Null:
-            case json::ValueKind::Boolean:
-            case json::ValueKind::Number:
-                return named;
-            case json::ValueKind::String:
-                if (std::ranges::contains(declared, value.string()))
-                {
-                    named.emplace_back(value.string());
-                }
-                return named;
-            case json::ValueKind::Array:
-                for (auto const& item : value.items())
-                {
-                    auto found = declaredUiTargetsIn(item, declared);
-                    named.insert(
-                        named.end(),
-                        std::make_move_iterator(found.begin()),
-                        std::make_move_iterator(found.end())
-                    );
-                }
-                return named;
-            case json::ValueKind::Object:
-                for (auto const& member : value.members())
-                {
-                    auto found = declaredUiTargetsIn(member.second, declared);
-                    named.insert(
-                        named.end(),
-                        std::make_move_iterator(found.begin()),
-                        std::make_move_iterator(found.end())
-                    );
-                }
-                return named;
-            }
-
-            UF_UNREACHABLE_MSG("Unknown json::ValueKind value");
-        }
-
         // The frozen plan's canonical_args, read out of the plan once because
-        // both rules below judge a step against them. The operator protocol
+        // the rule below judges a step against them. The operator protocol
         // types the member as any canonical JSON value, so this returns the
-        // value whatever kind it is and neither rule may assume an object.
+        // value whatever kind it is and the rule may not assume an object.
         [[nodiscard]]
         auto frozenPlanArguments(
             std::string_view canonicalPlan
@@ -493,59 +435,6 @@ namespace uf::operator_runtime
                 );
             }
             return *p_arguments;
-        }
-
-        // Whether this step may aim where it says it does.
-        //
-        // The frozen plan's canonical_args are the Operation's own command
-        // arguments; mintPlan refuses a proposal that restates them
-        // differently, so they are what the caller chose and not what the
-        // plugin later decided. Where they name UI targets the installed
-        // RuntimeModel declares, those are the objects this plan is about, and
-        // a step aiming outside them is acting on something nobody planned --
-        // which the reconciliation afterwards would then judge against the
-        // planned object rather than the touched one.
-        //
-        // A plan whose arguments name no declared ui_target chose no object,
-        // so there is nothing here to contradict and the step's target is
-        // bounded by the RuntimeModel vocabulary alone. That is a real case
-        // and not a relaxation, but it is also the limit of what this rule can
-        // decide: which argument holds the target is declared per tool on the
-        // project side and never crosses into the Operator, so a plan naming
-        // two objects leaves a step free to aim at either.
-        //
-        // This rule owns action.ui_target_id, and requirePlannedArgumentValues
-        // below owns action.canonical_parameters. They are two obligations and
-        // not two spellings of one, because the two members are not the same
-        // kind of statement: a ui_target_id is a bare identifier carrying no
-        // member name, so nothing can match it against the plan except the
-        // plan's VALUES, while canonical_parameters carries member names and is
-        // therefore matched BY MEMBER. Neither comparison can be run on the
-        // other member, and neither rule can see what the other sees: this one
-        // cannot notice a contradicted argument, and that one is silent
-        // whenever the step restates no planned member at all -- silence the
-        // same plugin whose choice is in question can help itself to, by
-        // restating nothing, and silence that is structural whenever the plan's
-        // canonical_args are not an object.
-        [[nodiscard]]
-        auto requirePlannedUiTarget(
-            json::Value const& plannedArguments,
-            std::span<std::string const> declaredUiTargets,
-            std::string_view uiTargetId
-        ) -> Status
-        {
-            auto const planned = declaredUiTargetsIn(
-                plannedArguments,
-                declaredUiTargets
-            );
-            if (planned.empty() || std::ranges::contains(planned, uiTargetId))
-            {
-                return ok();
-            }
-            return fail(
-                OperatorPlanErrorCode::PlannedUiTargetSubstituted,
-                "UIActionIntent aims at a ui_target the frozen plan did not choose"
-            );
         }
 
         // Whether this step's own parameters agree with the plan they belong
@@ -657,8 +546,6 @@ namespace uf::operator_runtime
     {
         switch (code)
         {
-        case OperatorPlanErrorCode::PlannedUiTargetSubstituted:
-            return "PlannedUiTargetSubstituted";
         case OperatorPlanErrorCode::PlannedArgumentContradicted:
             return "PlannedArgumentContradicted";
         }
@@ -1183,22 +1070,19 @@ namespace uf::operator_runtime
                 "action canonical_parameters"
             ));
 
-            // After the vocabulary and not before it: a name outside the
-            // installed model is refused for being outside it, so this
-            // refusal only ever means the step named a real ui_target that
-            // is not the one the plan chose.
-            //
-            // The aim is judged before the parameters so that each refusal
-            // keeps one meaning: a step that both aims elsewhere and restates
-            // the caller's argument as that other object is reported as the
-            // substituted target it is, and PlannedArgumentContradicted is
-            // only ever seen where the aim was the planned one.
+            // The step's target is not judged here: since U2b it is an
+            // observed instance id minted by the Operator, so the vocabulary
+            // side of the aim was already decided by requireDeclaredUi above
+            // (surface and action) and the observation side is decided by the
+            // U2c gate in mintNextStep. The plan can name no instance -- they
+            // do not exist when the plan freezes -- so the caller's stated
+            // choice outranking the plugin's later one is enforced on the one
+            // member that can carry the re-resolved object: the parameters the
+            // step restates must carry the values the plan's canonical_args
+            // gave them. A plugin that re-resolves the target into the
+            // declared target argument is therefore contradicted by this rule
+            // when it lands on another object.
             UF_TRY_VALUE(planned, frozenPlanArguments(inputs.canonicalPlan));
-            UF_TRY(requirePlannedUiTarget(
-                planned,
-                m_runtimeModel.declaredUi().uiTargets,
-                claims.uiTargetId
-            ));
             UF_TRY(requirePlannedArgumentValues(
                 planned,
                 claims.canonicalParameters

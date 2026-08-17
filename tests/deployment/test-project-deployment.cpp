@@ -272,10 +272,18 @@ namespace uf::deployment
         [[nodiscard]]
         auto planEnvelope(std::string_view canonicalArgs) -> std::string
         {
+            // The plan input's project_observation is pinned to the framework's
+            // final envelope, so an empty object would be refused before the
+            // argument a case is about ever reached its definition. The member
+            // order is RFC 8785 canonical, as the raw-validator case below
+            // feeds this same string back into requireExactCanonical.
             auto envelope = std::string{"{\"canonical_args\":"};
             envelope += canonicalArgs;
-            envelope += ",\"project_observation\":{},\"project_state\":{\"revision\":0},"
-                        "\"tool_name\":\"command-1\",\"tool_version\":\"1\"}";
+            envelope += ",\"project_observation\":{\"canonical_opaque_payload\":{},"
+                        "\"observed_instances\":[],\"project_tool_preconditions\":[],"
+                        "\"schema\":\"umbraflow-project-observation/v1\"},"
+                        "\"project_state\":{\"revision\":0},\"tool_name\":\"command-1\","
+                        "\"tool_version\":\"1\"}";
             return envelope;
         }
 
@@ -550,13 +558,18 @@ namespace uf::deployment
         // The envelope's own shape, isolated from everything nested in it: a
         // member the Operator never puts in a plan input, with a tool name and
         // arguments this project's catalog does accept. Only the envelope
-        // schema can refuse this one.
+        // schema can refuse this one -- so the observation it carries is the
+        // same valid envelope planEnvelope embeds, and "extra" is the one
+        // clause that can refuse.
         CHECK_FALSE(validate(
             ProjectPluginFunction::Plan,
             ProjectDocumentDirection::Input,
             "{\"canonical_args\":{\"value\":1},\"extra\":1,"
-            "\"project_observation\":{},\"project_state\":{\"revision\":0},"
-            "\"tool_name\":\"command-1\",\"tool_version\":\"1\"}"
+            "\"project_observation\":{\"canonical_opaque_payload\":{},"
+            "\"observed_instances\":[],\"project_tool_preconditions\":[],"
+            "\"schema\":\"umbraflow-project-observation/v1\"},"
+            "\"project_state\":{\"revision\":0},\"tool_name\":\"command-1\","
+            "\"tool_version\":\"1\"}"
         ).has_value());
 
         auto const arcanaBundle = arcana::DeploymentBundle{"arcana.expedition"};
@@ -1298,8 +1311,8 @@ namespace uf::deployment
     {
         auto const catalog = framework_schema::frameworkSchemaCatalog();
         CHECK_MESSAGE(
-            catalog.size() == 9U,
-            "framework schema catalog must contain exactly nine declared sources"
+            catalog.size() == 12U,
+            "framework schema catalog must contain exactly twelve declared sources"
         );
 
         auto const collectionFact = framework_schema::findFrameworkSchema(

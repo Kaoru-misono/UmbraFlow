@@ -911,7 +911,11 @@ identity = ["screen.anchor"]
         auto const generation = loadedKeyRuntime(host, directory);
         auto const fence = controlFence(7);
         REQUIRE(TaskHostTestAccess::adoptControlFence(host, fence).has_value());
-        auto const authority = dispatchAuthority(fence, generation);
+        auto const authority = dispatchAuthority(
+            fence,
+            generation,
+            k_runtimeKeyAction.uiTarget
+        );
         auto runtime = RuntimeContext{
             frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{41}),
             1'000
@@ -1023,7 +1027,11 @@ identity = ["screen.anchor"]
         auto const generation = loadedKeyRuntime(host, directory);
         auto const fence = controlFence(7);
         REQUIRE(TaskHostTestAccess::adoptControlFence(host, fence).has_value());
-        auto const authority = dispatchAuthority(fence, generation);
+        auto const authority = dispatchAuthority(
+            fence,
+            generation,
+            k_runtimeKeyAction.uiTarget
+        );
         auto runtime = RuntimeContext{
             frame({std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}}, FrameId{42}),
             1'000

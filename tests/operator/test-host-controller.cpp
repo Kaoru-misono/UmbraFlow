@@ -37,6 +37,11 @@ namespace uf::operator_runtime
                     ),
                 }
             ).has_value());
+            auto const worldScope = ObservedInstanceWorldScope::run(
+                "target-2",
+                1
+            );
+            REQUIRE(worldScope.has_value());
             auto pinned = prepared.store.pinSession(
                 SessionPin{
                     .sessionId                 = "session-2",
@@ -50,6 +55,7 @@ namespace uf::operator_runtime
                     .projectInstanceKey = "instance-2",
                     .mode               = SessionMode::Write,
                     .kind               = ControllerKind::Script,
+                    .worldScope         = *worldScope,
                 },
                 prepared.manifest,
                 std::nullopt

@@ -215,6 +215,11 @@ namespace uf::operator_runtime
         return m_canonicalJson.bytes();
     }
 
+    auto ValidatedDocument::value() const noexcept -> json::Value const&
+    {
+        return m_canonicalJson.value();
+    }
+
     ProjectSchemaOwner::ProjectSchemaOwner(std::shared_ptr<State const> p_state) noexcept
         : m_state{std::move(p_state)}
     {

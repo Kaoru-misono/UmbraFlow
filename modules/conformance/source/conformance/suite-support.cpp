@@ -323,6 +323,11 @@ namespace uf::operator_runtime::conformance
                 ),
             }
         ).has_value());
+        auto const sessionWorldScope = ObservedInstanceWorldScope::run(
+            "target-1",
+            1
+        );
+        REQUIRE(sessionWorldScope.has_value());
         REQUIRE(store.pinSession(
             SessionPin{
                 .sessionId                 = "session-1",
@@ -334,6 +339,7 @@ namespace uf::operator_runtime::conformance
                 .projectInstanceKey        = "instance-1",
                 .mode                      = SessionMode::Write,
                 .kind                      = ControllerKind::Script,
+                .worldScope                = *sessionWorldScope,
             },
             manifest,
             std::nullopt
@@ -365,6 +371,7 @@ namespace uf::operator_runtime::conformance
             *lease,
             plugin,
             deploymentFor(project, ProjectRole::UnderTest).toolCatalogSchemaOwner,
+            deploymentFor(project, ProjectRole::UnderTest).observedInstanceIdentitySchemas,
             reading
         );
         REQUIRE(snapshot.has_value());
@@ -446,6 +453,10 @@ namespace uf::operator_runtime::conformance
                 prepared.project,
                 ProjectRole::UnderTest
             ).toolCatalogSchemaOwner,
+            deploymentFor(
+                prepared.project,
+                ProjectRole::UnderTest
+            ).observedInstanceIdentitySchemas,
             observeAgain(prepared)
         );
         REQUIRE(snapshot.has_value());

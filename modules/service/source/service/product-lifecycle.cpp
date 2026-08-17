@@ -177,15 +177,6 @@ namespace uf::service
             : LifecycleAccess::ReadOnly;
     }
 
-    auto offeredProductTools(
-        operator_runtime::OperatorCoordinator& coordinator,
-        operator_runtime::ControllerBinding const& controller,
-        operator_runtime::ProjectToolCatalogSchemaOwner const& catalog
-    ) -> Result<std::vector<operator_runtime::OfferedTool>>
-    {
-        return coordinator.availableTools(controller, catalog);
-    }
-
     auto ProductLifecycle::start(ProductStart const& start)
         -> Result<ProductLifecycle>
     {
@@ -310,7 +301,8 @@ namespace uf::service
                 .mode = access == LifecycleAccess::Writable
                     ? operator_runtime::SessionMode::Write
                     : operator_runtime::SessionMode::Read,
-                .kind = operator_runtime::ControllerKind::Human,
+                .kind       = operator_runtime::ControllerKind::Human,
+                .worldScope = start.worldScope,
             },
             sessionManifest,
             std::nullopt
@@ -387,26 +379,17 @@ namespace uf::service
         UF_TRY_VALUE(
             snapshot,
             m_impl->operatorHost.coordinator().createSnapshot(
-            m_impl->lease,
-            m_impl->plugin,
-            m_impl->deployment().toolCatalogSchemaOwner,
-            observation
+                m_impl->lease,
+                m_impl->plugin,
+                m_impl->deployment().toolCatalogSchemaOwner,
+                m_impl->deployment().observedInstanceIdentitySchemas,
+                observation
             )
         );
         return ProductObservation{
             .snapshot = std::move(snapshot),
             .ui       = std::move(observation),
         };
-    }
-
-    auto ProductLifecycle::offeredTools()
-        -> Result<std::vector<operator_runtime::OfferedTool>>
-    {
-        return offeredProductTools(
-            m_impl->operatorHost.coordinator(),
-            m_impl->controller,
-            m_impl->deployment().toolCatalogSchemaOwner
-        );
     }
 
     auto ProductLifecycle::execute(

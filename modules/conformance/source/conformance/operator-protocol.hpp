@@ -96,13 +96,18 @@ namespace uf::operator_runtime::conformance
     // is a ProjectVocabulary and never a JSON reader.
     //
     // What the suite adds is one refusal of its own: the step reader below also
-    // refuses a UI-action step naming anything but `uiAction`. A contract run
-    // drives exactly one UI action -- the one the project's ProjectVocabulary
-    // names -- so a plan that named another would be telling the suite two
-    // different things about what this Operation does. That refusal is the
-    // suite's and is about agreement with the run; the Operator's own refusal,
-    // against the installed model, is in mintStep and holds for production
-    // callers that never see this file.
+    // refuses a UI-action step whose surface or action is not `uiAction`'s. A
+    // contract run drives exactly one UI action -- the one the project's
+    // ProjectVocabulary names -- so a plan that named another would be telling
+    // the suite two different things about what this Operation does. The step's
+    // ui_target_id is not part of the agreement: since U2b it is the observed
+    // instance id the step acts on, minted by the Operator at observe time and
+    // resolved by the Operator's own gates -- an id a command's canonical
+    // arguments spell is refused at submitCommand before this authority (or
+    // any plugin) sees it, and the step's own ui_target_id is refused in
+    // mintNextStep. Either refusal comes first in the code path that reaches
+    // it, which is what makes the plan authority's surface/action comparison
+    // the third and last word rather than the first.
     [[nodiscard]]
     inline auto planAuthority(
         VerifiedProjectRegistration const& registration,
@@ -134,7 +139,6 @@ namespace uf::operator_runtime::conformance
                 }
                 if (
                     claims.surfaceId != uiAction.surface
-                    || claims.uiTargetId != uiAction.uiTarget
                     || claims.actionId != uiAction.action
                 )
                 {

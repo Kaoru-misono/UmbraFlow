@@ -185,6 +185,7 @@ namespace uf::operator_runtime
                 prepared.lease,
                 prepared.plugin,
                 prepared.project.toolCatalogSchemaOwner,
+                prepared.project.observedInstanceIdentitySchemas,
                 test_support::observeAgain(prepared)
             ).has_value());
             heldLease   = prepared.lease;
@@ -205,6 +206,11 @@ namespace uf::operator_runtime
         auto const registrationHash = project->registration.hash();
         auto const pin = [&registrationHash](std::string sessionId)
         {
+            auto const worldScope = operator_runtime::ObservedInstanceWorldScope::run(
+                "target-1",
+                1
+            );
+            REQUIRE(worldScope.has_value());
             return SessionPin{
                 .sessionId                 = std::move(sessionId),
                 .authenticatedControllerId = "controller-1",
@@ -215,6 +221,7 @@ namespace uf::operator_runtime
                 .projectInstanceKey        = "instance-1",
                 .mode                      = SessionMode::Write,
                 .kind                      = ControllerKind::Script,
+                .worldScope                = *worldScope,
             };
         };
         CHECK_FALSE(
@@ -229,6 +236,7 @@ namespace uf::operator_runtime
             *heldLease,
             *heldPlugin,
             project->toolCatalogSchemaOwner,
+            project->observedInstanceIdentitySchemas,
             *heldReading
         ).has_value());
 
