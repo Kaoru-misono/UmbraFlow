@@ -110,7 +110,7 @@ Never an annotation screenshot bundle.
 **RuntimeModel** — the schema-owned tree inside `runtime-model.toml`. Its nouns are
 `ui_target`, `locator`, `reader`, `binding`, `surface` and `transition`, and its
 top level also carries `schema_version`, `base_resolution` and `base_dpi`.
-`$defs.runtime_model` in `schema/umbraflow-runtime-v2.schema.json`; built,
+`$defs.runtime_model` in `schema/umbraflow-runtime-v3.schema.json`; built,
 checked and frozen by `model.compile` in `modules/task/runtime/model.luau`.
 
 **UiTarget** — semantic identity alone: no pixels, no placement, no page. Spelled
@@ -317,11 +317,11 @@ _Avoid_: executable conformance resolution.
 (`modules/trace/source/trace/event.cpp`), it is `k_traceSchema` in
 `event.hpp`, and `schema/umbraflow-trace-v2.schema.json` pins it as a `const`.
 
-**The RuntimeModel id does not travel.** `umbraflow-runtime/v2` occurs exactly
+**The RuntimeModel id does not travel.** `umbraflow-runtime/v3` occurs exactly
 twice in the tree, as `model.schema` and `project.schema` in
 `modules/task/runtime/{model,project}.luau`, and nothing reads either back. What
 actually travels in `runtime-model.toml` and is validated is the integer
-`schema_version`, required to be `2` by `model.luau` and by
+`schema_version`, required to be `3` by `model.luau` and by
 `$defs.runtime_model` alike.
 
 `umbraflow-external/v1` names an external-payload manifest, pinned as
@@ -334,7 +334,7 @@ in-band id. The `$id`s are not uniform, so read the file rather than guessing:
 `trace-v2` are short ids under `https://umbraflow.local/schema/`, while
 `umbraflow-annotation-workspace-v2.schema.json`,
 `umbraflow-runtime-artifact-v1.schema.json` and
-`umbraflow-runtime-v2.schema.json` spell the full file name under
+`umbraflow-runtime-v3.schema.json` spell the full file name under
 `https://umbraflow.dev/schema/`.
 
 **No schema digest is pinned outside its schema file.** Editing any document
@@ -624,7 +624,7 @@ of these is a type anywhere in the tree:
 - **`Appearance` / `model.Appearance` / `appearance`** — renamed to `variant`.
   This direction has been recorded backwards before: `variant` is the live word
   (three uses in `model.luau`, six in
-  `schema/umbraflow-runtime-v2.schema.json`) and `appearance` occurs nowhere in
+  `schema/umbraflow-runtime-v3.schema.json`) and `appearance` occurs nowhere in
   the runtime model or its schema. `std::variant` and the UUID variant field keep
   their own names and are unrelated.
 - `navigation.Edge`, `navigation.stack_new`, `walk_edge`, `rect_override`, and

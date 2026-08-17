@@ -798,7 +798,7 @@ namespace uf::operator_runtime::test_support
     [[nodiscard]]
     inline auto umbraflowRuntimeModel() -> std::string
     {
-        return R"toml(schema_version = 2
+        return R"toml(schema_version = 3
 base_resolution = [3, 1]
 base_dpi = [96, 96]
 

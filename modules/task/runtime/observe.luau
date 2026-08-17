@@ -163,43 +163,7 @@ local function measurePredicate(state: any, binding: any, predicate: any): any
     local key = model.measurement_key(binding.id, predicate)
     local cached = state.predicate_records[key]
     if cached ~= nil then return cached end
-    local record
-    if predicate.kind == "locator_present" then
-        record = measureLocator(state, binding, predicate.locator)
-    else
-        local reading = readText(
-            state,
-            model.reading_key(binding.id, predicate.reader),
-            predicate.reader,
-            binding.placement.rect
-        )
-        local source = { kind = "text", binding = binding.id, reader = predicate.reader }
-        if reading.kind == "unknown" then
-            record = evidence.unknown(
-                state.evidence_cycle,
-                reading.reason,
-                source,
-                reading.confidence
-            )
-        elseif reading.kind == "absent" then
-            record = evidence.absent(state.evidence_cycle, source)
-        -- One line, equal to the value.  `text_equals` asks whether the text in
-        -- this rectangle IS the value, and a set of several lines is not equal
-        -- to one string under any reading that does not invent a separator.  A
-        -- single_line Reader always answers one line, so this is that Reader's
-        -- behaviour unchanged; a block Reader over a rectangle holding two
-        -- lines measures absent, which is the conservative half.
-        elseif #reading.lines == 1 and reading.lines[1].text == predicate.value then
-            record = evidence.present(
-                state.evidence_cycle,
-                source,
-                { reader = predicate.reader, matched = true },
-                reading.confidence
-            )
-        else
-            record = evidence.absent(state.evidence_cycle, source)
-        end
-    end
+    local record = measureLocator(state, binding, predicate.locator)
     state.predicate_records[key] = record
     return record
 end
@@ -219,7 +183,7 @@ local function requireCycle(cycle: any): any
 end
 
 function observe.open(runtimeModel: any): any
-    if not model.is_runtime_model(runtimeModel) then error("observe.open needs RuntimeModel v2", 2) end
+    if not model.is_runtime_model(runtimeModel) then error("observe.open needs RuntimeModel v3", 2) end
     local hostBinding = project.host_binding(runtimeModel)
     if hostBinding == nil then error("observe.open only accepts project.load_project() output", 2) end
     local ticket = requireNative("runtime_cycle_open")(hostBinding)

@@ -29,7 +29,7 @@
 // TaskHost declares `friend struct TaskHostTestAccess` once, so uf::task holds
 // exactly one type of that name and it is defined here rather than beside each
 // caller: two definitions would be two spellings of the same privilege, and a
-// program that saw both would be ill-formed. Both the Runtime v2 fixture under
+// program that saw both would be ill-formed. Both the Runtime v3 fixture under
 // tests/support/ and the Operator's delivery fixture include this file.
 //
 // It is deliberately NOT a friend of HostDeliveryReport. It can reach TaskHost's

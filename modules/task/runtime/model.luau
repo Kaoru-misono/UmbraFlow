@@ -1,18 +1,18 @@
 --!strict
--- Immutable RuntimeModel v2 compiler.
+-- Immutable RuntimeModel v3 compiler.
 --
 -- UiTarget is semantic identity only. Every pixel coordinate belongs to one
 -- Binding, and that Binding owns every visual variant sharing the coordinate.
 -- A Binding still needs positive measured evidence: placement is never evidence.
 
 local model = {}
-model.schema = "umbraflow-runtime/v2"
+model.schema = "umbraflow-runtime/v3"
 -- The RuntimeModel generation this parser reads, handed to the Host at
--- finalize. It is the v2 in model.schema, and the Host refuses an artifact
+-- finalize. It is the v3 in model.schema, and the Host refuses an artifact
 -- that states a different one -- so this and k_runtimeModelFormat in
 -- modules/task/source/task/runtime-model-file.hpp move together or no
 -- artifact activates.
-model.format = 2
+model.format = 3
 
 local runtimeModels: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 local semanticBytes: { [any]: string } = setmetatable({}, { __mode = "k" }) :: any
@@ -229,11 +229,7 @@ function model.predicate_key(value: any): string
     if source.kind == "locator_present" then
         return "locator:" .. identifier("predicate.locator", source.locator)
     end
-    if source.kind == "text_equals" then
-        if type(source.value) ~= "string" then fail("predicate.value", "must be a string") end
-        return "text:" .. identifier("predicate.reader", source.reader) .. ":" .. source.value
-    end
-    fail("predicate.kind", "must be locator_present or text_equals")
+    fail("predicate.kind", "must be locator_present")
 end
 
 function model.measurement_key(bindingId: any, value: any): string
@@ -242,8 +238,8 @@ end
 
 -- The key one reported reading is cached and looked up under.  It shares the
 -- `binding:` prefix with measurement_key and can never collide with one: a
--- measurement key continues with `locator:` or `text:`, a reading key with
--- `read:`, and neither is a legal identifier so no id can spell the other.
+-- measurement key continues with `locator:`, a reading key with `read:`, and
+-- neither is a legal identifier so no id can spell the other.
 function model.reading_key(bindingId: any, readerId: any): string
     return "binding:"
         .. identifier("binding_id", bindingId)
@@ -283,16 +279,7 @@ local function predicate(what: string, value: any): any
             locator = identifier(what .. ".locator", source.locator),
         })
     end
-    if source.kind == "text_equals" then
-        only(what, source, { kind = true, reader = true, value = true })
-        if type(source.value) ~= "string" then fail(what .. ".value", "must be a string") end
-        return table.freeze({
-            kind = "text_equals",
-            reader = identifier(what .. ".reader", source.reader),
-            value = source.value,
-        })
-    end
-    fail(what .. ".kind", "must be locator_present or text_equals")
+    fail(what .. ".kind", "must be locator_present")
 end
 
 local function predicates(what: string, value: any, seen: { [string]: boolean }): { any }
@@ -735,25 +722,16 @@ local function stitchedMap(what: string, value: any): any
     })
 end
 
-local function detectorRefs(
-    what: string,
-    value: any,
-    locators: { [string]: any },
-    readers: { [string]: any }
-)
+local function detectorRefs(what: string, value: any, locators: { [string]: any })
     for _, group in { value.all, value.any, value.none } do
         for _, item in group do
-            if item.kind == "locator_present" then
-                requireRef(what, locators, item.locator)
-            else
-                requireRef(what, readers, item.reader)
-            end
+            requireRef(what, locators, item.locator)
         end
     end
 end
 
 function model.surface_covers(runtimeModel: any, upperId: string, lowerId: string): boolean
-    if not runtimeModels[runtimeModel] then fail("surface_covers", "needs RuntimeModel v2") end
+    if not runtimeModels[runtimeModel] then fail("surface_covers", "needs RuntimeModel v3") end
     local visited: { [string]: boolean } = {}
     local function visit(id: string): boolean
         if id == lowerId then return true end
@@ -805,7 +783,7 @@ function model.compile(value: any): any
         surfaces = true,
         transitions = true,
     })
-    if source.schema_version ~= 2 then fail("RuntimeModel.schema_version", "must be 2") end
+    if source.schema_version ~= 3 then fail("RuntimeModel.schema_version", "must be 3") end
 
     local baseResolution = size("RuntimeModel.base_resolution", source.base_resolution)
     local baseDpi = size("RuntimeModel.base_dpi", source.base_dpi)
@@ -889,8 +867,7 @@ function model.compile(value: any): any
             detectorRefs(
                 "binding '" .. valueBinding.id .. "' variant '" .. valueVariant.name .. "' detector",
                 valueVariant.detector,
-                locatorById,
-                readerById
+                locatorById
             )
         end
         for _, readerId in valueBinding.reads do
@@ -903,9 +880,7 @@ function model.compile(value: any): any
             local positiveLocators: { [string]: boolean } = {}
             for _, group in { valueVariant.detector.all, valueVariant.detector.any } do
                 for _, valuePredicate in group do
-                    if valuePredicate.kind == "locator_present" then
-                        positiveLocators[valuePredicate.locator] = true
-                    end
+                    positiveLocators[valuePredicate.locator] = true
                 end
             end
             for _, valueAction in valueBinding.actions do
@@ -1009,7 +984,7 @@ function model.compile(value: any): any
     for _, valueSurface in surfaces do visitSurface(valueSurface.id) end
 
     local semanticModel = table.freeze({
-        schema_version = 2,
+        schema_version = 3,
         base_resolution = baseResolution,
         base_dpi = baseDpi,
         ui_targets = uiTargets,
@@ -1094,7 +1069,7 @@ end
 
 function model.canonical_bytes(value: any): string
     local bytes = semanticBytes[value]
-    if bytes == nil then fail("canonical_bytes", "needs RuntimeModel v2") end
+    if bytes == nil then fail("canonical_bytes", "needs RuntimeModel v3") end
     return bytes
 end
 

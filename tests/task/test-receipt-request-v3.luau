@@ -11,7 +11,7 @@ local function variants(name: string, value: any): any
 end
 
 local runtime = model.compile({
-    schema_version = 2,
+    schema_version = 3,
     base_resolution = { 800, 600 },
     base_dpi = { 96, 96 },
     ui_targets = {

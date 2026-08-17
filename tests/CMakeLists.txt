@@ -936,7 +936,7 @@ if(TARGET ${PROJECT_NAME}_task)
     cpp_add_contract_suite(
         TARGET test-contract-runtime
         SOURCES
-            task/test-runtime-v2-contract.cpp
+            task/test-runtime-v3-contract.cpp
         LIBS
             ${PROJECT_NAME}_task
             ${PROJECT_NAME}_image
@@ -1111,9 +1111,9 @@ auto main(int argumentCount, char const* const* p_arguments) -> int
     # to it, which is how tests/task/test-jcs.luau ran in no gate on 2026-08-10.
     set(TASK_LUAU_TESTS
         "test-jcs-luau|task/test-jcs.luau"
-        "test-runtime-model-v2-luau|task/test-runtime-model-v2.luau"
-        "test-resolution-v2-luau|task/test-resolution-v2.luau"
-        "test-receipt-request-v2-luau|task/test-receipt-request-v2.luau"
+        "test-runtime-model-v3-luau|task/test-runtime-model-v3.luau"
+        "test-resolution-v3-luau|task/test-resolution-v3.luau"
+        "test-receipt-request-v3-luau|task/test-receipt-request-v3.luau"
     )
     file(GLOB TASK_LUAU_PRESENT
         RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"

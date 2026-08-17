@@ -1,11 +1,11 @@
 --!strict
--- The only RuntimeModel v2 TOML parser and Host artifact binding boundary.
+-- The only RuntimeModel v3 TOML parser and Host artifact binding boundary.
 
 local native = ...
 local model = model
 
 local project = {}
-project.schema = "umbraflow-runtime/v2"
+project.schema = "umbraflow-runtime/v3"
 project.file_name = "runtime-model.toml"
 
 local hostBindings: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any

@@ -1,12 +1,12 @@
 --!strict
--- Unique TOML parser and immutable RuntimeModel v2 field contract.
+-- Unique TOML parser and immutable RuntimeModel v3 field contract.
 
 local function rejects(action: () -> any, message: string?)
     assert(not pcall(action), message)
 end
 
 local valid = [==[
-schema_version = 2
+schema_version = 3
 base_resolution = [1920, 1080]
 base_dpi = [96, 96]
 
@@ -55,10 +55,7 @@ placement = {
 variants = [{
   name = "default",
   detector = {
-    all = [
-      { kind = "locator_present", locator = "header.template" },
-      { kind = "text_equals", reader = "header.text", value = "Settings" },
-    ],
+    all = [{ kind = "locator_present", locator = "header.template" }],
     any = [],
     none = [],
   },
@@ -123,7 +120,7 @@ assert(type(model.canonical_bytes(runtime)) == "string")
 assert(#model.canonical_bytes(runtime) > 0)
 local reformatted = project.parse("# canonical formatting must not matter\n" .. valid .. "\n")
 assert(model.canonical_bytes(reformatted) == model.canonical_bytes(runtime))
-assert(runtime.schema_version == 2)
+assert(runtime.schema_version == 3)
 assert(runtime.ui_target_by_id.save_button.kind == "control")
 assert(runtime.ui_target_by_id.save_button.placement == nil)
 assert(runtime.ui_target_by_id.save_button.variant == nil)
@@ -149,6 +146,18 @@ assert(runtime.collection_by_id.options.reads[1].offset[2] == -40)
 assert(runtime.collection_by_id.options.reads[1].size[1] == 320)
 assert(runtime.collection_by_id.options.reads[1].size[2] == 40)
 assert(runtime.collection_by_id.options.predicate.value == "Enabled")
+
+-- T-009: text is evidence about a Surface, never its identity. The only legal
+-- home of a text predicate is a Collection's filter, exercised above; a
+-- Binding detector naming text_equals must fail to parse rather than let a
+-- model put text on the identity path.
+rejects(function()
+    project.parse(string.gsub(
+        valid,
+        '{ kind = "locator_present", locator = "header.template" }',
+        '{ kind = "locator_present", locator = "header.template" }, { kind = "text_equals", reader = "header.text", value = "Settings" }'
+    ))
+end, "T-009 a Binding detector must not name text_equals")
 assert(runtime.stitched_map_by_id.route.collection == "options")
 assert(runtime.stitched_map_by_id.route.colour_key.red == 184)
 assert(runtime.stitched_map_by_id.route.minimum_ratio == 0.75)
@@ -173,7 +182,7 @@ rejects(function() runtime.ui_targets[1].kind = "control" end)
 -- No second document builder or caller identity attachment is accepted.
 assert(project.build == nil)
 rejects(function() project.parse(valid .. "\n[[forged_section]]\nid = \"forged\"\n") end)
-rejects(function() project.parse(string.gsub(valid, "schema_version = 2", "schema_version = 1")) end)
+rejects(function() project.parse(string.gsub(valid, "schema_version = 3", "schema_version = 1")) end)
 
 -- Hash and placement have one authority each: Artifact owns hashes, Binding
 -- owns all placement. Unsupported spellings fail instead of falling back.

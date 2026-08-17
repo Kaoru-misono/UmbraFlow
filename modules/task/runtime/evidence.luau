@@ -117,7 +117,7 @@ function evidence.host_proof_of(record: any, cycle: any): any?
     return entry.host_proof
 end
 
--- The projection `umbraflow-runtime-v2.schema.json` fixes as `evidence_summary`:
+-- The projection `umbraflow-runtime-v3.schema.json` fixes as `evidence_summary`:
 -- present/absent/unknown are `additionalProperties: false` there and none of the
 -- three declares `value`, so widening this widens a hash-pinned schema.
 --

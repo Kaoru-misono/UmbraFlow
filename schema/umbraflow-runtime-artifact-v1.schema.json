@@ -17,7 +17,7 @@
       "$ref": "#/$defs/format"
     },
     "runtime_model_format": {
-      "$comment": "The generation of umbraflow-runtime-v2.schema.json the trusted parser must understand to read runtime-model.toml. modules/task/runtime/model.luau states the same number as model.format, and the Host refuses an artifact whose parser answers with a different one.",
+      "$comment": "The generation of umbraflow-runtime-v3.schema.json the trusted parser must understand to read runtime-model.toml. modules/task/runtime/model.luau states the same number as model.format, and the Host refuses an artifact whose parser answers with a different one.",
       "$ref": "#/$defs/format"
     },
     "page_model": { "$ref": "#/$defs/page_model_file" },

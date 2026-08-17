@@ -1,5 +1,5 @@
 --!strict
--- Two-stage, same-cycle RuntimeModel v2 resolver.
+-- Two-stage, same-cycle RuntimeModel v3 resolver.
 
 local model = model
 local evidence = evidence
@@ -287,7 +287,7 @@ function resolution.resolve_state(
     recordsByKey: any,
     expectedStack: { any }?
 ): any
-    if not model.is_runtime_model(runtimeModel) then error("resolve_state needs RuntimeModel v2", 2) end
+    if not model.is_runtime_model(runtimeModel) then error("resolve_state needs RuntimeModel v3", 2) end
     if not evidence.is_cycle_live(cycle) then error("resolve_state needs a live framework cycle", 2) end
     if expectedStack ~= nil then
         if not model.valid_surface_stack(runtimeModel, expectedStack) then
@@ -939,7 +939,7 @@ function resolution.resolve_binding(
     bindingId: any?,
     recordsByKey: any
 ): any
-    if not model.is_runtime_model(runtimeModel) then error("resolve_binding needs RuntimeModel v2", 2) end
+    if not model.is_runtime_model(runtimeModel) then error("resolve_binding needs RuntimeModel v3", 2) end
     if type(uiTarget) ~= "string" or runtimeModel.ui_target_by_id[uiTarget] == nil then
         error("resolve_binding needs a declared UiTarget", 2)
     end

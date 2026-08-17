@@ -93,7 +93,7 @@ namespace uf::task
             static auto sequence = std::atomic<uint64>{1};
             m_path = std::filesystem::temp_directory_path()
                 / std::format(
-                    "umbraflow-runtime-v2-{}-{}",
+                    "umbraflow-runtime-v3-{}-{}",
                     std::chrono::steady_clock::now().time_since_epoch().count(),
                     sequence.fetch_add(1, std::memory_order_relaxed)
                 );
@@ -179,7 +179,7 @@ namespace uf::task
     [[nodiscard]] inline auto templatePng(uint8 gray) -> std::vector<std::byte>
     {
         auto encoded = image::encodeRgbaPng(
-            "runtime-v2-template.png",
+            "runtime-v3-template.png",
             1,
             1,
             std::vector<std::byte>{
@@ -195,7 +195,7 @@ namespace uf::task
 
     [[nodiscard]] inline auto runtimeModel() -> std::string
     {
-        return R"toml(schema_version = 2
+        return R"toml(schema_version = 3
 base_resolution = [3, 1]
 base_dpi = [96, 96]
 
@@ -552,9 +552,9 @@ identity = ["panel.anchor"]
             auto recorder = trace::TraceRecorder::create(
                 std::make_unique<TraceSink>(),
                 trace::TraceStreamSpec{
-                    .sessionId           = "runtime-v2-contract",
-                    .sessionManifestHash = hash("runtime-v2-contract-manifest"),
-                    .producer            = "runtime-v2-test",
+                    .sessionId           = "runtime-v3-contract",
+                    .sessionManifestHash = hash("runtime-v3-contract-manifest"),
+                    .producer            = "runtime-v3-test",
                 }
             );
             REQUIRE(recorder.has_value());

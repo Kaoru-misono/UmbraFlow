@@ -1,4 +1,4 @@
-#include "../support/runtime-v2-fixture.hpp"
+#include "../support/runtime-v3-fixture.hpp"
 
 #include <task/exploration-session.hpp>
 #include <task/host-delivery.hpp>
@@ -241,7 +241,7 @@ namespace uf::task
         auto readingRuntimeModel(std::string_view titleLayout = "single_line")
             -> std::string
         {
-            return R"toml(schema_version = 2
+            return R"toml(schema_version = 3
 base_resolution = [3, 1]
 base_dpi = [96, 96]
 
@@ -299,19 +299,33 @@ identity = ["screen.anchor"]
 )toml";
         }
 
-        // A real Reader sits in the Surface identity path: its OCR result is
-        // consumed as detector evidence rather than inserted as a fixture
-        // literal. This is the narrow model T05 needs to distinguish silence,
-        // readable garbage, and a score below the Reader's floor.
-        [[nodiscard]] auto ocrIdentityRuntimeModel() -> std::string
+        // T-009's falsifier. A detector is positive evidence that a visual
+        // element is present; text_equals asserts what text a rectangle holds,
+        // which is evidence about what a Surface shows and never a Surface's
+        // identity -- its only legal home is a Collection filter, over members a
+        // locator has already found. This shape, a Binding detector naming
+        // text_equals, must fail to parse and refuse the whole artifact.
+        //
+        // The detector line is the whole difference from the activating control:
+        // swapping it for the locator_present over the declared title.mark (same
+        // body, same asset, same manifest) must activate, so the refusal is about
+        // the predicate kind and not about anything else in the model.
+        [[nodiscard]] auto textIdentityRuntimeModel(std::string_view detector)
+            -> std::string
         {
-            return R"toml(schema_version = 2
+            return std::string{R"toml(schema_version = 3
 base_resolution = [3, 1]
 base_dpi = [96, 96]
 
 [[ui_target]]
 id = "title"
 kind = "region"
+
+[[locator]]
+id = "title.mark"
+kind = "template"
+asset_path = "assets/title.png"
+threshold = 1
 
 [[reader]]
 id = "title.reader"
@@ -325,7 +339,9 @@ id = "title.identity"
 surface = "screen"
 ui_target = "title"
 placement = { kind = "fixed", rect = [0, 0, 1, 1] }
-variants = [{ name = "default", detector = { all = [{ kind = "text_equals", reader = "title.reader", value = "Settings" }], any = [], none = [] } }]
+variants = [{ name = "default", detector = { all = [)toml"}
+                + std::string{detector}
+                + R"toml(], any = [], none = [] } }]
 actions = []
 
 [[surface]]
@@ -421,7 +437,7 @@ reads = ["subtitle.reader"]
         // while the anchor still resolves the Surface.
         [[nodiscard]] auto keyRuntimeModel() -> std::string
         {
-            return R"toml(schema_version = 2
+            return R"toml(schema_version = 3
 base_resolution = [3, 1]
 base_dpi = [96, 96]
 
@@ -550,7 +566,7 @@ identity = ["screen.anchor"]
             auto const fixture = runtimeModel();
             auto const body    = fixture.find("\n\n[[ui_target]]");
             REQUIRE(body != std::string::npos);
-            return "schema_version = 2\n" + std::string{geometry}
+            return "schema_version = 3\n" + std::string{geometry}
                 + fixture.substr(body);
         }
 
@@ -595,7 +611,7 @@ identity = ["screen.anchor"]
         CHECK(*modelBytes == bytes(runtimeModel()));
 
         auto const invalidDirectory = TemporaryDirectory{};
-        auto const invalidModel = std::string{"schema_version = 2\n"};
+        auto const invalidModel = std::string{"schema_version = 3\n"};
         auto const invalidRoot = publish(invalidDirectory.path(), invalidModel, {});
         auto invalidHost = TaskHost{};
         CHECK_FALSE(
@@ -2024,41 +2040,97 @@ identity = ["screen.anchor"]
         );
     }
 
-    // T-004 / T05. Each case crosses the real EngineSession Reader boundary and
-    // feeds the OCR result into a Surface identity predicate. Silence and
-    // readable garbage are negative evidence; a line below the declared floor
-    // is Unknown evidence. All three leave the Surface unresolved and make a
-    // Binding non-actionable.
-    TEST_CASE("T-004 T05 real OCR failures leave Surface identity unresolved")
+    // T-009's direct falsifier. A detector is positive evidence that a visual
+    // element is present, and text_equals asserts what text a rectangle holds:
+    // evidence about a Surface, never a Surface's identity. A Binding detector
+    // naming text_equals must therefore fail to parse and refuse the whole
+    // artifact. The acceptance half -- the same predicate as a Collection's
+    // filter, acting on members a locator has already found -- is exercised by
+    // test-runtime-model-v3.luau, whose valid model carries
+    // predicate = { kind = "text_equals", ... } on a Collection and compiles.
+    TEST_CASE("T-009 a Binding detector naming text_equals cannot activate")
+    {
+        auto constexpr textPredicate =
+            R"({ kind = "text_equals", reader = "title.reader", value = "Settings" })";
+        auto constexpr locatorPredicate =
+            R"({ kind = "locator_present", locator = "title.mark" })";
+        auto const titleAsset = std::vector<ArtifactFile>{
+            ArtifactFile{.path = "assets/title.png", .bytes = templatePng(k_anchorGray)},
+        };
+
+        auto const directory = TemporaryDirectory{};
+        auto host = TaskHost{};
+        auto const rootHash = publish(
+            directory.path(),
+            textIdentityRuntimeModel(textPredicate),
+            titleAsset
+        );
+        auto const generation = TaskHostTestAccess::activate(
+            host,
+            directory.path(),
+            rootHash
+        );
+        REQUIRE_FALSE(generation.has_value());
+
+        // The control shares the model's body, asset and manifest: only the
+        // detector line differs, and it must activate. If this stopped
+        // activating the refusal above would be about the world rather than
+        // about the predicate kind, and the falsifier would be green by
+        // accident.
+        auto const controlDirectory = TemporaryDirectory{};
+        auto controlHost = TaskHost{};
+        auto const controlRoot = publish(
+            controlDirectory.path(),
+            textIdentityRuntimeModel(locatorPredicate),
+            titleAsset
+        );
+        auto const control = TaskHostTestAccess::activate(
+            controlHost,
+            controlDirectory.path(),
+            controlRoot
+        );
+        REQUIRE(control.has_value());
+    }
+
+    // T-004 / T05. Three Reader boundary cases through the real EngineSession
+    // boundary, on one model whose Surface identity is locator-only: absent, a
+    // read carrying the raw text, and unknown carrying low_confidence. The
+    // Surface resolves in every case -- text never decides identity -- and the
+    // three outcomes reach the plugin distinguishable, each case's assertions
+    // going red if its outcome is reported as either of the other two.
+    TEST_CASE("T-004 T05 Reader outcomes stay distinguishable under a resolved Surface")
     {
         struct Case final
         {
             std::string_view name{};
             std::string_view text{};
-            std::string_view reason{};
             uint32           confidenceBp{};
             bool             silent{};
+            std::string_view expectedReading{};
         };
 
         auto constexpr cases = std::array{
             Case{
-                .name   = "nothing",
-                .reason = "no_scene_candidate",
+                .name   = "absent",
                 .silent = true,
+                .expectedReading =
+                    R"({"kind":"absent","reader":"title.reader","ui_target":"title"})",
             },
             Case{
-                .name   = "garbage",
-                .text   = "not settings",
-                .reason = "no_scene_candidate",
-
-                .confidenceBp = 9'000,
+                .name = "read",
+                .text = "Settings",
+                .confidenceBp  = 9'000,
+                .expectedReading =
+                    R"({"kind":"read","lines":[{"rect":[1,0,1,1],"text":"Settings"}],)"
+                    R"("reader":"title.reader","ui_target":"title"})",
             },
             Case{
-                .name   = "below floor",
-                .text   = "Settings",
-                .reason = "unknown_scene_competitor",
-
-                .confidenceBp = 1'000,
+                .name = "unknown",
+                .text = "Settings",
+                .confidenceBp  = 1'000,
+                .expectedReading =
+                    R"({"kind":"unknown","reader":"title.reader",)"
+                    R"("reason":"low_confidence","ui_target":"title"})",
             },
         };
 
@@ -2069,8 +2141,8 @@ identity = ["screen.anchor"]
             auto host = TaskHost{};
             auto const rootHash = publish(
                 directory.path(),
-                ocrIdentityRuntimeModel(),
-                std::vector<ArtifactFile>{}
+                readingRuntimeModel(),
+                runtimeAssets()
             );
             auto const generation = TaskHostTestAccess::activate(
                 host,
@@ -2079,44 +2151,84 @@ identity = ["screen.anchor"]
             );
             REQUIRE(generation.has_value());
 
+            // The concrete type stays reachable across the type-erasing move so
+            // the engine's call counter can be asserted through it, as the
+            // dedicated Reader tests in this file do.
             auto reader = std::unique_ptr<ocr::IOcrEngine>{};
+            SilentReader* p_silent = nullptr;
+            ScriptedReader* p_scripted = nullptr;
             if (testCase.silent)
             {
-                reader = std::make_unique<SilentReader>();
+                auto concrete = std::make_unique<SilentReader>();
+                p_silent      = concrete.get();
+                reader        = std::move(concrete);
             }
             else
             {
-                reader = std::make_unique<ScriptedReader>(
+                auto concrete = std::make_unique<ScriptedReader>(
                     std::string{testCase.text},
                     testCase.confidenceBp
                 );
+                p_scripted = concrete.get();
+                reader     = std::move(concrete);
             }
             auto runtime = RuntimeContext{
-                frame({std::byte{42}, std::byte{42}, std::byte{42}}, FrameId{55}),
+                frame(
+                    {std::byte{k_anchorGray}, std::byte{k_actionGray}, std::byte{0}},
+                    FrameId{55}
+                ),
                 1'000,
                 std::move(reader)
             };
-            auto const actual = runText(
-                host,
-                *generation,
-                runtime,
-                R"lua(
-                    local cycle = observe.open(project.load_project())
-                    local state = cycle:resolve_state({ "screen" })
-                    local binding = cycle:resolve_binding(state, "title")
-                    local request, reason = cycle:authorize(binding, "activate")
-                    cycle:close()
-                    return tostring(state.kind) .. ":" .. tostring(state.reason) .. ":"
-                        .. tostring(binding.kind) .. ":" .. tostring(reason) .. ":"
-                        .. tostring(request == nil)
-                )lua"
-            );
-            auto const expected = "unknown_state:" + std::string{testCase.reason}
-                + ":unknown_binding:binding_not_actionable:true";
+            auto const observed = host.observe(*generation, runtime.context());
+            REQUIRE(observed.has_value());
+
+            // The Surface resolves whatever the Reader reported: the identity
+            // is the locator's judgement, so the reading can move without the
+            // decision basis' first member moving with it.
+            auto const expected = std::string{
+                R"({"kind":"resolved_state","ordered_surface_stack":["screen"],)"
+                R"("readings":[)"}
+                + std::string{testCase.expectedReading} + "]}";
             CHECK_MESSAGE(
-                actual == expected,
-                "T-004 T05 real OCR failures must leave Surface identity unresolved"
+                observed->canonicalJcs() == expected,
+                "T-004 T05 each Reader outcome must reach the plugin as itself"
             );
+            CHECK(observed->stateResolutionHash() == hash(observed->canonicalJcs()));
+
+            // The outcome is what crossed the Host boundary, not a default the
+            // Host painted in.
+            REQUIRE(
+                (testCase.silent ? p_silent->calls() : p_scripted->calls()) == 1U
+            );
+
+            if (testCase.silent)
+            {
+                // Absent is not unknown: no reason attaches to a rectangle that
+                // was read and held nothing. A mutation merging absence into
+                // the unknown path would carry low_confidence here and go red.
+                CHECK(observed->canonicalJcs().find(R"("reason")") == std::string::npos);
+            }
+            else if (testCase.confidenceBp >= 5'000)
+            {
+                // A read travels with the raw text: the Reader's answer, not a
+                // summary of it. A mutation withholding the text -- or
+                // normalizing it past recognition -- goes red.
+                CHECK(observed->canonicalJcs().find("Settings") != std::string::npos);
+            }
+            else
+            {
+                // Below the floor is the Reader's judgement, not a text: the
+                // reason travels and the rejected text -- and the score that
+                // rejected it -- stay behind. A mutation reporting the
+                // below-floor answer as a read, or carrying the score, goes red.
+                CHECK(
+                    observed->canonicalJcs().find(R"("reason":"low_confidence")")
+                    != std::string::npos
+                );
+                CHECK(observed->canonicalJcs().find("Settings") == std::string::npos);
+                CHECK(observed->canonicalJcs().find(R"("confidence")") == std::string::npos);
+            }
         }
     }
 

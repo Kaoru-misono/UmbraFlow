@@ -87,7 +87,7 @@ namespace uf::task
         // The layouts a Reader may declare, spelled as the model spells them.
         // A table for k_receiptActionKinds' reason, and the only place the two
         // vocabularies are joined: the enumerator is the Host's, the string is
-        // schema/umbraflow-runtime-v2.schema.json's reader.layout.
+        // schema/umbraflow-runtime-v3.schema.json's reader.layout.
         constexpr auto k_readerLayouts = std::array{
             std::pair{std::string_view{"single_line"}, ocr::TextLayout::SingleLine},
             std::pair{std::string_view{"block"}, ocr::TextLayout::Block},

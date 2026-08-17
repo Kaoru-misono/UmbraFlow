@@ -22,8 +22,8 @@ superseded and measurement-only plans live under
   bundle's exact-byte pin on 2026-08-16.
 - [Runtime model contract](2026-08-09-runtime-model-contract.md) — field-level
   prose beside the normative
-  [`umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json).
-  Its body was rewritten against the current Runtime v2 schema on 2026-08-14.
+  [`umbraflow-runtime-v3.schema.json`](../../schema/umbraflow-runtime-v3.schema.json).
+  Its body was rewritten against the current Runtime v3 schema on 2026-08-14.
 - [Runtime migration report](2026-08-09-runtime-migration-report.md) — the
   requirement-to-owner/schema/CTest map, with its baseline and disposition
   manifests. It is an execution record, not an unfinished-work list.

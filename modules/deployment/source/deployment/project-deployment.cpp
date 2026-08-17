@@ -37,7 +37,7 @@ namespace uf::deployment
         // Every definition here is copied from the repository's own published
         // schemas -- schema/umbraflow-operator-v1.schema.json,
         // schema/umbraflow-journal-v1.schema.json and, for StateResolution's
-        // readings, schema/umbraflow-runtime-v2.schema.json -- so a document
+        // readings, schema/umbraflow-runtime-v3.schema.json -- so a document
         // this module accepts is a document those accept.
         //
         // These bytes are compiled in and read no file: a Host that judges a

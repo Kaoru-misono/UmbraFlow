@@ -7,7 +7,7 @@ plans explain how a decision was reached but do not open additional work.
 
 - [Runtime v2 and game-operator breaking authority](plans/2026-08-09-runtime-hardening-rewrite.md)
   — the frozen upstream implementation authority and consumer bundle pin.
-- [`schema/umbraflow-runtime-v2.schema.json`](../schema/umbraflow-runtime-v2.schema.json)
+- [`schema/umbraflow-runtime-v3.schema.json`](../schema/umbraflow-runtime-v3.schema.json)
   — normative runtime-model shape, with the
   [runtime model contract](plans/2026-08-09-runtime-model-contract.md) as prose.
 - [Architecture](ARCHITECTURE.md) — module ownership and deliberate absences.

@@ -67,7 +67,7 @@ REQUIRED_SAFE_PATHS = (
     "schema/umbraflow-policy-v1.schema.json",
     "schema/umbraflow-project-registration-v1.schema.json",
     "schema/umbraflow-runtime-artifact-v1.schema.json",
-    "schema/umbraflow-runtime-v2.schema.json",
+    "schema/umbraflow-runtime-v3.schema.json",
     "schema/umbraflow-trace-v2.schema.json",
     "tests/cli/test-args.cpp",
     "tests/cli/test-explore-protocol.cpp",
@@ -238,7 +238,7 @@ REQUIRED_CHECK_TARGETS = frozenset({"check-repository-surface"})
 # One shape, written twice, because the boundary between the two writings may
 # not be crossed by a file read.
 #
-# schema/umbraflow-runtime-v2.schema.json is the source: `state_readings` is
+# schema/umbraflow-runtime-v3.schema.json is the source: `state_readings` is
 # what the trusted Luau resolver serializes. The Operator cannot read that
 # file. k_commonSchema is a compiled constant precisely so a Host
 # validating a plugin's derive input depends on no file a project could swap,
@@ -251,7 +251,7 @@ REQUIRED_CHECK_TARGETS = frozenset({"check-repository-surface"})
 # both had to be edited by hand -- 2cb070b did edit both -- and nothing would
 # have noticed the half that was forgotten until every ProjectPlugin.derive
 # call refused.
-READINGS_SOURCE_SCHEMA = "schema/umbraflow-runtime-v2.schema.json"
+READINGS_SOURCE_SCHEMA = "schema/umbraflow-runtime-v3.schema.json"
 READINGS_SOURCE_DEFINITION = "state_readings"
 READINGS_EMBEDDED_SOURCE = (
     "modules/deployment/source/deployment/project-deployment.cpp"
@@ -357,7 +357,7 @@ LUAU_RUNTIME_PARSER_PATTERN = re.compile(
     r"[A-Za-z0-9_]*\s*\("
 )
 RUNTIME_MODEL_PARSER_SOURCE = "modules/task/runtime/project.luau"
-RUNTIME_MODEL_SCHEMA = "schema/umbraflow-runtime-v2.schema.json"
+RUNTIME_MODEL_SCHEMA = "schema/umbraflow-runtime-v3.schema.json"
 STATE_RESOLUTION_SOURCE = "modules/task/runtime/resolution.luau"
 
 # The declaration of the Snapshot Coordinator's entry point, in the one header
@@ -711,7 +711,7 @@ def trusted_parser_errors(root: Path) -> list[str]:
                 relative for _ in LUAU_RUNTIME_PARSER_PATTERN.finditer(text)
             )
 
-    runtime_schema = root / "schema/umbraflow-runtime-v2.schema.json"
+    runtime_schema = root / "schema/umbraflow-runtime-v3.schema.json"
     expected_count = 1 if runtime_schema.is_file() else 0
     if len(luau_parsers) != expected_count:
         errors.append(

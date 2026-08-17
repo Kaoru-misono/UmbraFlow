@@ -1606,7 +1606,7 @@ namespace uf::deployment
         ).has_value());
 
         // The framework's Unknown-reason vocabulary is spelled three times --
-        // schema/umbraflow-runtime-v2.schema.json, modules/task/runtime/
+        // schema/umbraflow-runtime-v3.schema.json, modules/task/runtime/
         // evidence.luau, and this module's own StateResolution definition --
         // and nothing else holds the three together. budget_exhausted is what
         // TaskHost::observe reports when a cycle stops reading, so a deployment

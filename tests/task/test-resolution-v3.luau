@@ -22,7 +22,7 @@ local function placement(x: number, y: number, actionable: boolean): any
 end
 
 local runtime = model.compile({
-    schema_version = 2,
+    schema_version = 3,
     base_resolution = { 1280, 720 },
     base_dpi = { 96, 96 },
     ui_targets = {
@@ -397,7 +397,7 @@ end
 
 -- Reported readings: what a resolved state says it read, and what it will not.
 local reading = model.compile({
-    schema_version = 2,
+    schema_version = 3,
     base_resolution = { 1280, 720 },
     base_dpi = { 96, 96 },
     ui_targets = {
@@ -518,7 +518,7 @@ local reading = model.compile({
 -- A Reader named in reads must be one the model declares.
 assert(not pcall(function()
     return model.compile({
-        schema_version = 2,
+        schema_version = 3,
         base_resolution = { 1280, 720 },
         base_dpi = { 96, 96 },
         ui_targets = { { id = "scene_anchor", kind = "region" } },

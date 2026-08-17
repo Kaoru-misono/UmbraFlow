@@ -41,7 +41,7 @@ namespace uf::task
     // refuses an artifact whose parser answers with a different number, so a
     // drift between the two cannot activate.
     inline constexpr auto k_runtimeArtifactFormat = uint64{1U};
-    inline constexpr auto k_runtimeModelFormat    = uint64{2U};
+    inline constexpr auto k_runtimeModelFormat    = uint64{3U};
 
     // Each ceiling multiplies in std::size_t rather than widening a 32-bit
     // product: an unsigned product wraps silently, so a larger factor here would

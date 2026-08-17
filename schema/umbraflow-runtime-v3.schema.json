@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://umbraflow.dev/schema/umbraflow-runtime-v2.schema.json",
-  "title": "Umbraflow RuntimeModel v2",
+  "$id": "https://umbraflow.dev/schema/umbraflow-runtime-v3.schema.json",
+  "title": "Umbraflow RuntimeModel v3",
   "description": "Field shapes for the trusted RuntimeModel parser and its two-stage results. Cross-reference, coverage, placement and same-cycle authority rules are enforced by the trusted Luau compiler/resolver.",
   "$ref": "#/$defs/runtime_model",
   "$defs": {
@@ -99,12 +99,6 @@
         "value": { "type": "string" }
       }
     },
-    "predicate": {
-      "oneOf": [
-        { "$ref": "#/$defs/locator_predicate" },
-        { "$ref": "#/$defs/text_predicate" }
-      ]
-    },
     "detector": {
       "type": "object",
       "additionalProperties": false,
@@ -112,15 +106,15 @@
       "properties": {
         "all": {
           "type": "array",
-          "items": { "$ref": "#/$defs/predicate" }
+          "items": { "$ref": "#/$defs/locator_predicate" }
         },
         "any": {
           "type": "array",
-          "items": { "$ref": "#/$defs/predicate" }
+          "items": { "$ref": "#/$defs/locator_predicate" }
         },
         "none": {
           "type": "array",
-          "items": { "$ref": "#/$defs/predicate" }
+          "items": { "$ref": "#/$defs/locator_predicate" }
         }
       },
       "anyOf": [
@@ -499,7 +493,7 @@
         "transitions"
       ],
       "properties": {
-        "schema_version": { "const": 2 },
+        "schema_version": { "const": 3 },
         "base_resolution": { "$ref": "#/$defs/size" },
         "base_dpi": { "$ref": "#/$defs/size" },
         "ui_targets": {
@@ -549,16 +543,6 @@
         "locator": { "$ref": "#/$defs/identifier" }
       }
     },
-    "text_evidence_source": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["kind", "binding", "reader"],
-      "properties": {
-        "kind": { "const": "text" },
-        "binding": { "$ref": "#/$defs/identifier" },
-        "reader": { "$ref": "#/$defs/identifier" }
-      }
-    },
     "missing_evidence_source": {
       "type": "object",
       "additionalProperties": false,
@@ -572,7 +556,6 @@
     "evidence_source": {
       "oneOf": [
         { "$ref": "#/$defs/template_evidence_source" },
-        { "$ref": "#/$defs/text_evidence_source" },
         { "$ref": "#/$defs/missing_evidence_source" }
       ]
     },

@@ -43,7 +43,7 @@
 // holds and refuse rather than answer when the host cannot measure, and that no
 // other environment can reach any of them.
 //
-// It builds its own world rather than including tests/support/runtime-v2-
+// It builds its own world rather than including tests/support/runtime-v3-
 // fixture.hpp, which reaches TaskHostTestAccess through a conformance header
 // and would carry that Host privilege into test-task for cases that activate no
 // artifact and mint no Receipt. What is needed here is three pixels and a sink

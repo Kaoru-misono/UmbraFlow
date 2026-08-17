@@ -153,7 +153,7 @@
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/RuntimeAssetRef" }
         },
-        "runtime_model": { "$ref": "umbraflow-runtime-v2.schema.json" },
+        "runtime_model": { "$ref": "umbraflow-runtime-v3.schema.json" },
         "open_issues": {
           "type": "array",
           "uniqueItems": true,

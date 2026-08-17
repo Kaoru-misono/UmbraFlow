@@ -771,7 +771,7 @@ namespace uf::json
                 primary = source.second;
                 continue;
             }
-            if (source.first == "umbraflow-runtime-v2.schema.json"
+            if (source.first == "umbraflow-runtime-v3.schema.json"
                 || source.first == "umbraflow-runtime-artifact-v1.schema.json")
             {
                 referenced.emplace_back(Schema::Document{

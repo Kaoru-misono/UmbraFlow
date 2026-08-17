@@ -1,4 +1,4 @@
-schema_version = 2
+schema_version = 3
 base_resolution = [3, 1]
 base_dpi = [96, 96]
 
