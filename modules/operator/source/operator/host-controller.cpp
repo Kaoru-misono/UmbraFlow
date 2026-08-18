@@ -93,8 +93,29 @@ namespace uf::operator_runtime
         UF_TRY(requireControlledTarget(controller.controlledTargetId()));
         auto lock = std::scoped_lock{m_impl->targetSerialization};
         UF_TRY_VALUE(lease, m_impl->coordinator.acquireLease(controller));
-        UF_TRY(m_impl->host.adoptControlFence(controlFence(lease)));
+        auto adopted = m_impl->host.adoptControlFence(controlFence(lease));
+        if (!adopted.has_value())
+        {
+            auto released = m_impl->coordinator.releaseLease(lease);
+            auto error    = std::move(adopted).error();
+            if (!released.has_value())
+            {
+                error.addContext(
+                    "rolling back the acquired control lease also failed: "
+                    + std::string{released.error().message()}
+                );
+            }
+            return std::unexpected{std::move(error)};
+        }
         return lease;
+    }
+
+    auto OperatorTaskHost::releaseLease(ControlLease const& lease) -> Status
+    {
+        UF_TRY(requireControlledTarget(lease.controlledTargetId));
+        auto lock = std::scoped_lock{m_impl->targetSerialization};
+        UF_TRY(m_impl->coordinator.releaseLease(lease));
+        return ok();
     }
 
     auto OperatorTaskHost::takeoverLease(

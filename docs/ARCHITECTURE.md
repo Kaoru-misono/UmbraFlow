@@ -160,6 +160,43 @@ two runs of the suite rather than its home.
 | the Operator contract a consumer must satisfy, as runnable cases | `conformance` |
 | game semantics and payload schemas | external ProjectPlugin consumer |
 
+### Runtime lifetime boundaries
+
+> Added 2026-08-17 after the lifecycle-ownership review. This hardens the
+> current explicit composition; it does not approve the archived
+> [HostPlugin proposal](archive/reviews/2026-08-14-host-plugin-architecture-proposal.md).
+
+- `service::ProductLifecycle` exclusively owns the production
+  `OperatorTaskHost`, control lease, controller binding, runtime generation and
+  plan authority. All recoverable setup that can refuse is completed before the
+  lease is acquired. Its heap-resident `Impl` is constructed first and stores
+  the acquired lease directly as optional active state, so acquisition leaves
+  no fallible ownership transfer. `shutdown()` is idempotent and remains the
+  reporting path; `cli::observeProject` calls it unconditionally and combines
+  its failure with the work result through `reportAfterClose`.
+- A live `ProductLifecycle` is move-constructible but not move-assignable: move
+  assignment could overwrite an active lease without a return channel for a
+  close failure. `ProductLifecycle::Impl` releases any remaining active lease
+  as a last-resort RAII fallback. A destructor cannot report that failure, so it
+  does not replace the explicit close path. `OperatorTaskHost` serializes lease
+  acquire/release/takeover with dispatch, and rolls acquisition back if the Host
+  cannot adopt its fence. The next Operator open invalidates process-local lease
+  state, but a failed fallback can still omit the expected release transition
+  from the audit trail.
+- `TaskHost` owns every Runtime or Annotation generation. `cancel()` requests
+  stop; there is no generation-retirement/quiescence operation yet. That is
+  sufficient while the Host dies with one `ProductLifecycle`, not for a future
+  resident Host that reloads generations in place.
+- `EngineSession` owns its frame, action and optional OCR providers but borrows
+  one stable `TraceRecorder`. `ExplorationSession` makes that relation safe by
+  owning the recorder before the context/VM, keeping it behind `unique_ptr` and
+  forbidding moves. Other composition roots must preserve the documented
+  declaration order until a single aggregate owns this relationship.
+- `ExplorationSession::finish()` is the reporting close for `run.finished`; its
+  destructor is currently only structural cleanup. The sole production loop
+  reaches `finish()` on one exit path, but the type does not yet enforce that
+  protocol if another caller is added.
+
 Host delivery is one trusted call chain:
 
 ```text

@@ -651,6 +651,10 @@ cpp_add_test(
         # under test is handed on a real desktop.
         ${PROJECT_NAME}_operator
         ${PROJECT_NAME}_image
+        # test-observe.cpp starts ProductLifecycle directly to prove that its
+        # Impl destructor is a last-resort lease owner, independently of the
+        # CLI's explicit close path.
+        ${PROJECT_NAME}_service
         # Whether observe left the Operator holding a control lease is ledger
         # state and reaches no verb result, so test-observe.cpp reads the
         # control transitions out of the database the Operator created. The
@@ -761,6 +765,7 @@ add_custom_target(generate-example-projects ALL
     VERBATIM
 )
 add_dependencies(test-deployment generate-example-projects)
+add_dependencies(test-cli generate-example-projects)
 if(TARGET umbra-flow-conformance)
     add_dependencies(umbra-flow-conformance generate-example-projects)
 endif()

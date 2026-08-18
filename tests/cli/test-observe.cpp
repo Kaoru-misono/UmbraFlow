@@ -19,6 +19,8 @@
 
 #include <operator/ledger.hpp>
 
+#include <service/product-lifecycle.hpp>
+
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
@@ -655,6 +657,67 @@ namespace uf::cli
             "a failure after start must still drop the lease start took: ",
             transitions.size()
         );
+        CHECK(transitions[0].transition == "acquire");
+        CHECK(transitions[1].transition == "release");
+    }
+
+    TEST_CASE("destroying an unclosed lifecycle drops the lease it took")
+    {
+        auto const world = RecordedWorld{};
+        auto const args  = world.args("unused.jsonl");
+
+        {
+            auto lifecycle = service::ProductLifecycle::start(
+                service::ProductStart{
+                    .projectDirectory          = args.project,
+                    .runtimeDirectory          = args.runtime,
+                    .authenticatedControllerId = "destructor-fallback",
+                    .controllerCapabilities    = {},
+                    .controlledTargetId        = "recorded-target",
+                }
+            );
+            CAPTURE(
+                lifecycle.has_value()
+                    ? std::string{}
+                    : lifecycle.error().message()
+            );
+            REQUIRE(lifecycle.has_value());
+        }
+
+        auto const transitions = world.controlTransitions();
+        REQUIRE(transitions.size() == 2U);
+        CHECK(transitions[0].transition == "acquire");
+        CHECK(transitions[1].transition == "release");
+        CHECK(transitions[0].sessionId == transitions[1].sessionId);
+    }
+
+    TEST_CASE("explicit lifecycle shutdown is reporting and idempotent")
+    {
+        auto const world = RecordedWorld{};
+        auto const args  = world.args("unused.jsonl");
+
+        {
+            auto lifecycle = service::ProductLifecycle::start(
+                service::ProductStart{
+                    .projectDirectory          = args.project,
+                    .runtimeDirectory          = args.runtime,
+                    .authenticatedControllerId = "explicit-shutdown",
+                    .controllerCapabilities    = {},
+                    .controlledTargetId        = "recorded-target",
+                }
+            );
+            CAPTURE(
+                lifecycle.has_value()
+                    ? std::string{}
+                    : lifecycle.error().message()
+            );
+            REQUIRE(lifecycle.has_value());
+            CHECK(lifecycle->shutdown().has_value());
+            CHECK(lifecycle->shutdown().has_value());
+        }
+
+        auto const transitions = world.controlTransitions();
+        REQUIRE(transitions.size() == 2U);
         CHECK(transitions[0].transition == "acquire");
         CHECK(transitions[1].transition == "release");
     }

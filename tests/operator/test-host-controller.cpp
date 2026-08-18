@@ -68,6 +68,32 @@ namespace uf::operator_runtime
         }
     }
 
+    TEST_CASE("production host controller joins lease acquire and release")
+    {
+        auto temporary = TemporaryDirectory{};
+        auto prepared  = prepareStore(temporary.path());
+
+        REQUIRE(prepared.store.releaseLease(prepared.lease).has_value());
+        auto owner = OperatorTaskHost::create(
+            std::move(prepared.store),
+            "target-1"
+        );
+        REQUIRE(owner.has_value());
+
+        auto lease = owner->acquireLease(prepared.controller);
+        REQUIRE(lease.has_value());
+        CHECK(
+            task::TaskHostTestAccess::fence(owner->host()).fencingToken
+            == lease->fencingToken
+        );
+        CHECK(owner->releaseLease(*lease).has_value());
+
+        auto reacquired = owner->acquireLease(prepared.controller);
+        REQUIRE(reacquired.has_value());
+        CHECK(reacquired->fencingToken > lease->fencingToken);
+        CHECK(owner->releaseLease(*reacquired).has_value());
+    }
+
     TEST_CASE("production host controller advances the Host fence with takeover")
     {
         auto temporary = TemporaryDirectory{};

@@ -14,6 +14,7 @@
 
 #include <schema/framework-schema-catalog.hpp>
 
+#include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
 
 #include <domain/content-hash.hpp>
@@ -23,8 +24,10 @@
 #include <atomic>
 #include <chrono>
 #include <format>
+#include <optional>
 #include <span>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
 namespace uf::service
@@ -123,7 +126,7 @@ namespace uf::service
     struct ProductLifecycle::Impl final
     {
         deployment::LoadedProject loaded;
-        std::size_t               deploymentIndex{};
+        std::size_t               deploymentIndex;
 
         // The registrar is NOT held. registerPlugin returns the handle by value
         // and the handle owns its own state through a shared_ptr, so keeping the
@@ -137,18 +140,96 @@ namespace uf::service
         operator_runtime::OperatorTaskHost      operatorHost;
         operator_runtime::OperatorPlanAuthority planAuthority;
         operator_runtime::ControllerBinding     controller;
-        operator_runtime::ControlLease          lease;
+        static_assert(
+            std::is_nothrow_move_constructible_v<
+                operator_runtime::ControlLease
+            >,
+            "ControlLease must transfer into its RAII owner without failure"
+        );
+        std::optional<operator_runtime::ControlLease> activeLease{};
 
         GenerationId              generation;
-        LifecycleAccess           access{LifecycleAccess::ReadOnly};
+        LifecycleAccess           access;
         task::RuntimeModelBinding runtimeModel;
-        uint64                    installedGeneration{};
-        std::string               sessionId{};
+        uint64                    installedGeneration;
+        std::string               sessionId;
         ContentHash               sessionManifestHash;
 
-        std::vector<operator_runtime::RecoveredUncertainDispatch> recoveries{};
+        std::vector<operator_runtime::RecoveredUncertainDispatch> recoveries;
 
-        bool shutdown{};
+        Impl(
+            deployment::LoadedProject ownedLoaded,
+            std::size_t ownedDeploymentIndex,
+            operator_runtime::ProjectPluginHandle ownedPlugin,
+            operator_runtime::OperatorTaskHost ownedOperatorHost,
+            operator_runtime::OperatorPlanAuthority ownedPlanAuthority,
+            operator_runtime::ControllerBinding ownedController,
+            GenerationId ownedGeneration,
+            LifecycleAccess ownedAccess,
+            task::RuntimeModelBinding ownedRuntimeModel,
+            uint64 ownedInstalledGeneration,
+            std::string ownedSessionId,
+            ContentHash ownedSessionManifestHash,
+            std::vector<operator_runtime::RecoveredUncertainDispatch> ownedRecoveries
+        )
+            : loaded{std::move(ownedLoaded)}
+            , deploymentIndex{ownedDeploymentIndex}
+            , plugin{std::move(ownedPlugin)}
+            , operatorHost{std::move(ownedOperatorHost)}
+            , planAuthority{std::move(ownedPlanAuthority)}
+            , controller{std::move(ownedController)}
+            , generation{ownedGeneration}
+            , access{ownedAccess}
+            , runtimeModel{std::move(ownedRuntimeModel)}
+            , installedGeneration{ownedInstalledGeneration}
+            , sessionId{std::move(ownedSessionId)}
+            , sessionManifestHash{ownedSessionManifestHash}
+            , recoveries{std::move(ownedRecoveries)}
+        {
+        }
+
+        Impl(Impl const&) = delete;
+        auto operator=(Impl const&) -> Impl& = delete;
+        Impl(Impl&&) = delete;
+        auto operator=(Impl&&) -> Impl& = delete;
+
+        ~Impl() noexcept
+        {
+            try
+            {
+                static_cast<void>(releaseControl());
+            }
+            catch (...)
+            {
+            }
+        }
+
+        [[nodiscard]] auto acquireControl() -> Status
+        {
+            UF_CHECK(!activeLease.has_value());
+            UF_TRY_VALUE(lease, operatorHost.acquireLease(controller));
+            activeLease.emplace(std::move(lease));
+            return ok();
+        }
+
+        [[nodiscard]] auto releaseControl() -> Status
+        {
+            if (!activeLease.has_value())
+            {
+                return ok();
+            }
+            UF_TRY(operatorHost.releaseLease(*activeLease));
+            activeLease.reset();
+            access = LifecycleAccess::ReadOnly;
+            return ok();
+        }
+
+        [[nodiscard]] auto controlLease() const
+            -> operator_runtime::ControlLease const&
+        {
+            UF_CHECK(activeLease.has_value());
+            return *activeLease;
+        }
 
         [[nodiscard]] auto deployment() -> deployment::LoadedDeployment&
         {
@@ -162,9 +243,6 @@ namespace uf::service
     }
 
     ProductLifecycle::ProductLifecycle(ProductLifecycle&&) noexcept = default;
-
-    auto ProductLifecycle::operator=(ProductLifecycle&&) noexcept
-        -> ProductLifecycle& = default;
 
     ProductLifecycle::~ProductLifecycle() = default;
 
@@ -262,6 +340,18 @@ namespace uf::service
                 }
             )
         );
+        UF_TRY_VALUE(
+            planAuthority,
+            operator_runtime::OperatorPlanAuthority::create(
+                selected.registration,
+                sessionManifest,
+                binding,
+                operatorSchema.exactBytes,
+                policyBytes,
+                deployment::readPlanProposal,
+                deployment::readStepIntent
+            )
+        );
         auto& store = operatorHost.coordinator();
         UF_TRY(store.registerProject(selected.registration));
         UF_TRY_VALUE(
@@ -308,37 +398,25 @@ namespace uf::service
             std::nullopt
         ));
         UF_TRY_VALUE(controller, store.bindController(sessionId));
-        UF_TRY_VALUE(lease, operatorHost.acquireLease(controller));
-        UF_TRY_VALUE(
-            planAuthority,
-            operator_runtime::OperatorPlanAuthority::create(
-                selected.registration,
-                sessionManifest,
-                binding,
-                operatorSchema.exactBytes,
-                policyBytes,
-                deployment::readPlanProposal,
-                deployment::readStepIntent
-            )
-        );
 
-        auto implementation = std::make_unique<Impl>(Impl{
-            .loaded              = std::move(loaded),
-            .deploymentIndex     = deploymentIndex,
-            .plugin              = std::move(plugin),
-            .operatorHost        = std::move(operatorHost),
-            .planAuthority       = std::move(planAuthority),
-            .controller          = std::move(controller),
-            .lease               = std::move(lease),
-            .generation          = generation,
-            .access              = access,
-            .runtimeModel        = binding,
-            .installedGeneration = installedGeneration,
-            .sessionId           = std::move(sessionId),
-            .sessionManifestHash = sessionManifest.hash(),
-            .recoveries          = std::move(recoveries),
-            .shutdown            = false,
-        });
+        // Allocate and fully construct the RAII owner before taking control.
+        // Once acquireControl succeeds, no fallible ownership transfer remains.
+        auto implementation = std::make_unique<Impl>(
+            std::move(loaded),
+            deploymentIndex,
+            std::move(plugin),
+            std::move(operatorHost),
+            std::move(planAuthority),
+            std::move(controller),
+            generation,
+            access,
+            binding,
+            installedGeneration,
+            std::move(sessionId),
+            sessionManifest.hash(),
+            std::move(recoveries)
+        );
+        UF_TRY(implementation->acquireControl());
         return ProductLifecycle{std::move(implementation)};
     }
 
@@ -379,7 +457,7 @@ namespace uf::service
         UF_TRY_VALUE(
             snapshot,
             m_impl->operatorHost.coordinator().createSnapshot(
-                m_impl->lease,
+                m_impl->controlLease(),
                 m_impl->plugin,
                 m_impl->deployment().toolCatalogSchemaOwner,
                 m_impl->deployment().observedInstanceIdentitySchemas,
@@ -453,7 +531,7 @@ namespace uf::service
             m_impl->operatorHost.coordinator().freezePlan(
                 accepted.operation.operationId,
                 accepted.operation.revision,
-                m_impl->lease,
+                m_impl->controlLease(),
                 m_impl->plugin,
                 deployed.toolCatalogSchemaOwner,
                 m_impl->planAuthority
@@ -468,7 +546,7 @@ namespace uf::service
             m_impl->operatorHost.coordinator().mintNextStep(
                 frozen.operation.operationId,
                 frozen.operation.revision,
-                m_impl->lease,
+                m_impl->controlLease(),
                 m_impl->plugin,
                 deployed.toolCatalogSchemaOwner,
                 m_impl->planAuthority
@@ -486,7 +564,7 @@ namespace uf::service
             m_impl->operatorHost.dispatch(
                 step.operation.operationId,
                 step.operation.revision,
-                m_impl->lease,
+                m_impl->controlLease(),
                 m_impl->generation,
                 authority,
                 std::nullopt,
@@ -545,13 +623,6 @@ namespace uf::service
 
     auto ProductLifecycle::shutdown() -> Status
     {
-        if (m_impl->shutdown)
-        {
-            return ok();
-        }
-        UF_TRY(m_impl->operatorHost.coordinator().releaseLease(m_impl->lease));
-        m_impl->shutdown = true;
-        m_impl->access   = LifecycleAccess::ReadOnly;
-        return ok();
+        return m_impl->releaseControl();
     }
 }

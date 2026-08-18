@@ -97,7 +97,7 @@ namespace uf::service
 
     public:
         ProductLifecycle(ProductLifecycle&&) noexcept;
-        auto operator=(ProductLifecycle&&) noexcept -> ProductLifecycle&;
+        auto operator=(ProductLifecycle&&) noexcept -> ProductLifecycle& = delete;
         ProductLifecycle(ProductLifecycle const&) = delete;
         auto operator=(ProductLifecycle const&) -> ProductLifecycle& = delete;
         ~ProductLifecycle();

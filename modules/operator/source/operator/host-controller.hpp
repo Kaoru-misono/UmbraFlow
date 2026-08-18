@@ -13,10 +13,10 @@
 namespace uf::operator_runtime
 {
     // The production join between the Operator ledger and Host delivery for
-    // one controlled target. Control takeover and a complete dispatch share
-    // m_targetSerialization inside the implementation, so a displaced fence
-    // cannot enter reserveDispatch after takeover returns or move between a
-    // successful reservation and TaskHost::deliver.
+    // one controlled target. Lease acquire/release/takeover and a complete
+    // dispatch share m_targetSerialization inside the implementation, so a
+    // displaced fence cannot enter reserveDispatch after takeover returns or
+    // move between a successful reservation and TaskHost::deliver.
     class OperatorTaskHost final
     {
         struct Impl;
@@ -63,6 +63,9 @@ namespace uf::operator_runtime
         auto acquireLease(
             ControllerBinding const& controller
         ) -> Result<ControlLease>;
+
+        [[nodiscard]]
+        auto releaseLease(ControlLease const& lease) -> Status;
 
         [[nodiscard]]
         auto takeoverLease(

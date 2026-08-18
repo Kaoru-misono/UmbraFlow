@@ -76,6 +76,15 @@ caller.
 changing them, inspect the discovered test list in addition to running the
 aggregate; a passing aggregate with a missing child is the defining false green.
 
+A focused test build must also build the fixtures that test opens at runtime.
+`test-cli` used to compile successfully on its own while the staged UmbraFlow
+project still lacked the generated Tool Catalog; every observation case then
+failed in setup with "does not hold" even though the full default build passed.
+The test target now depends on `generate-example-projects`. Regress it with
+`cmake --build --preset x64-debug --target test-cli` from a build tree whose
+staged example has not already been generated, then run `test-cli` through its
+registered CTest working directory.
+
 State that the runtime erases at startup cannot be asserted by looking for its
 absence afterwards. A control lease that `ProductLifecycle::shutdown` failed to
 release leaves no trace any later reader can find: `OperatorCoordinator::open`

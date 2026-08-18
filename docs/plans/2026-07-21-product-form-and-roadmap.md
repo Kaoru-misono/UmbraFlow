@@ -199,6 +199,18 @@ fail-closed 严格门防止误点,但从第一天保留统一坐标变换接缝;
   把 `modules/cli/source/cli/platform/` 提为共享模块(一到两天的搬移),**那一天"要不要一个统一装载壳"
   才第一次有事实可答**。在那之前不建壳:一个组织单实现工厂函数的壳,会撞上它自己的停止条件。
 
+- **常驻宿主前的生命周期门槛**(2026-08-17 生命周期归属复核;当前契约见
+  [`ARCHITECTURE.md`](../ARCHITECTURE.md#runtime-lifetime-boundaries))。一次性 `observe` 已由
+  `ProductLifecycle` RAII 兜底和显式 `shutdown()` runner 覆盖,不为此引入 HostPlugin kernel。
+  P2 常驻宿主或第二个真实组装根出现前,必须逐项裁决并测试:
+  1. 为 `TaskHost` 增加 generation 的 stop → quiesce → retire 边界,明确超时、残留回调与失败后的状态;
+  2. 让新调用者不能绕过 `ExplorationSession::finish()` 丢失 `run.finished`,同时保留 close 失败的报告通道;
+  3. 若 `EngineSession`/`TaskContext` 的 `TraceRecorder&` 组合在第二处出现,用一个不可移动 owner aggregate
+     固化构造与逆序销毁,不继续复制声明顺序约定;
+  4. 收窄 `OperatorTaskHost::coordinator()` / `host()` 的通用可变访问,让生产 control/delivery 只能经过
+     已串行化并更新 fence 的联合操作。
+  这些是生命周期和 authority 债务,不是采用通用 Context、运行时依赖图或 effect 系统的理由。
+
 - **三个专属输入**(解锁 P0/P1 定形):~~第一条真实日常任务、目标游戏~~ **已定:目标游戏 = 卡厄斯梦境,
   首个日常 = 完成每日任务**(旧 DESIGN 里卡厄斯梦境本为最后的 M2 通用性验证游戏,现提为第一位)。
   仍待:每日任务的具体流程分解、脚本接管起点、运行分辨率、关键页面截图与易混淆/负例样本
