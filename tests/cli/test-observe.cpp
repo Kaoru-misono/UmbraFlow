@@ -18,6 +18,7 @@
 #include <conformance/observation-fixture.hpp>
 
 #include <operator/ledger.hpp>
+#include <operator/project-observation.hpp>
 
 #include <service/product-lifecycle.hpp>
 
@@ -667,6 +668,11 @@ namespace uf::cli
         auto const args  = world.args("unused.jsonl");
 
         {
+            auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+                "recorded-target",
+                1
+            );
+            REQUIRE(scope.has_value());
             auto lifecycle = service::ProductLifecycle::start(
                 service::ProductStart{
                     .projectDirectory          = args.project,
@@ -674,6 +680,7 @@ namespace uf::cli
                     .authenticatedControllerId = "destructor-fallback",
                     .controllerCapabilities    = {},
                     .controlledTargetId        = "recorded-target",
+                    .worldScope                = *scope,
                 }
             );
             CAPTURE(
@@ -697,6 +704,11 @@ namespace uf::cli
         auto const args  = world.args("unused.jsonl");
 
         {
+            auto const scope = operator_runtime::ObservedInstanceWorldScope::run(
+                "recorded-target",
+                1
+            );
+            REQUIRE(scope.has_value());
             auto lifecycle = service::ProductLifecycle::start(
                 service::ProductStart{
                     .projectDirectory          = args.project,
@@ -704,6 +716,7 @@ namespace uf::cli
                     .authenticatedControllerId = "explicit-shutdown",
                     .controllerCapabilities    = {},
                     .controlledTargetId        = "recorded-target",
+                    .worldScope                = *scope,
                 }
             );
             CAPTURE(
