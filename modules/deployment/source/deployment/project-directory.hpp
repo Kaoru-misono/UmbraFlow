@@ -243,4 +243,33 @@ namespace uf::deployment
         std::filesystem::path const& directory,
         std::span<ExpectedRegistration const> expected
     ) -> Result<ConformanceProject>;
+
+    // One file the offline project check's completion condition names, as the
+    // build records it and the check verifies it: the manifest-relative path a
+    // deployment declaration states, and the digest and size of the bytes this
+    // loader opened at that path.
+    struct DeclaredProjectFile final
+    {
+        std::string path{};
+        ContentHash digest;
+        std::size_t size{};
+    };
+
+    // The narrowest read of umbraflow-project.json that still opens files:
+    // every deployment's eight document members -- the tool catalog source,
+    // the four project schemas, the two manifests and the journal payload
+    // schemas -- opened with the same confinement, spelling rules and size
+    // bounds as the full load, and hashed. No deployment is constructed: no
+    // schema is compiled and no registration is derived, so a caller that only
+    // needs the declared files can ask for them without the load.
+    //
+    // The members a deployment can also name but this read does not open --
+    // the plugin, the effect payload schemas, the identity schemas and the
+    // artifact blobs -- are outside the file set the check's completion
+    // condition enumerates, and a read that opened them would be more than the
+    // check's caller asked for.
+    [[nodiscard]]
+    auto readDeclaredProjectFiles(
+        std::filesystem::path const& directory
+    ) -> Result<std::vector<DeclaredProjectFile>>;
 }

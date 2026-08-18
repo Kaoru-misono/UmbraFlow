@@ -1604,4 +1604,83 @@ namespace uf::deployment
 
         return project;
     }
+
+    auto readDeclaredProjectFiles(
+        std::filesystem::path const& directory
+    ) -> Result<std::vector<DeclaredProjectFile>>
+    {
+        UF_TRY_VALUE(root, openRoot(directory));
+        UF_TRY_VALUE(
+            projectBytes,
+            readRootDocument(
+                root,
+                directory,
+                k_projectManifestFileName,
+                "reading a project's declared files"
+            )
+        );
+        UF_TRY_VALUE(publishedProject, publishedSchema(k_projectSchemaPath));
+        UF_TRY_VALUE(
+            projectSchema,
+            compile(publishedProject.relativePath, publishedProject.exactBytes)
+        );
+        UF_TRY_VALUE(
+            manifest,
+            readValidated(projectSchema, k_projectManifestFileName, projectBytes)
+        );
+
+        auto rows = std::vector<DeclaredProjectFile>{};
+        for (auto const& block : member(manifest, "deployments").items())
+        {
+            for (auto const& name : std::array{
+                     "project_state_schema",
+                     "project_observation_schema",
+                     "tool_precondition_schema",
+                     "reconcile_schema",
+                     "tool_catalog",
+                     "journal_event_schema_manifest",
+                     "reconcile_manifest",
+                 })
+            {
+                auto const declaredPath = std::string{
+                    member(block, name).string()
+                };
+                UF_TRY_VALUE(
+                    bytes,
+                    readFile(
+                        root,
+                        std::format("a deployment's {}", name),
+                        declaredPath,
+                        k_maximumDocumentBytes
+                    )
+                );
+                UF_TRY_VALUE(digest, hashOf(bytes));
+                rows.emplace_back(DeclaredProjectFile{
+                    .path   = std::move(declaredPath),
+                    .digest = digest,
+                    .size   = bytes.size(),
+                });
+            }
+            for (auto const& declaredPath :
+                 member(block, "journal_payload_schemas").items())
+            {
+                UF_TRY_VALUE(
+                    bytes,
+                    readFile(
+                        root,
+                        "a deployment's journal_payload_schemas entry",
+                        declaredPath.string(),
+                        k_maximumDocumentBytes
+                    )
+                );
+                UF_TRY_VALUE(digest, hashOf(bytes));
+                rows.emplace_back(DeclaredProjectFile{
+                    .path   = std::string{declaredPath.string()},
+                    .digest = digest,
+                    .size   = bytes.size(),
+                });
+            }
+        }
+        return rows;
+    }
 }

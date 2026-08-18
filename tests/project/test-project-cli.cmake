@@ -81,6 +81,7 @@ file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
 file(MAKE_DIRECTORY
     "${SOURCE_DIRECTORY}/generated/tool-catalogs/chaos.project"
     "${SOURCE_DIRECTORY}/content"
+    "${SOURCE_DIRECTORY}/schema"
 )
 file(WRITE "${DECLARED_CATALOG}" [=[{
   "schema": "umbraflow-tool-catalog/v1",
@@ -111,6 +112,32 @@ file(WRITE "${DECLARED_CATALOG}" [=[{
       }
     }
   ]
+}]=])
+
+# The deployment declaration's other named files: the four schemas, the two
+# manifests and the journal payload schema. The declared-file read pins their
+# bytes without validating their content, so these documents are minimal;
+# what they must be is stable from build to check.
+file(WRITE "${SOURCE_DIRECTORY}/schema/state.json" [=[{
+  "type": "object"
+}]=])
+file(WRITE "${SOURCE_DIRECTORY}/schema/observation.json" [=[{
+  "type": "object"
+}]=])
+file(WRITE "${SOURCE_DIRECTORY}/schema/precondition.json" [=[{
+  "type": "object"
+}]=])
+file(WRITE "${SOURCE_DIRECTORY}/schema/reconcile.json" [=[{
+  "type": "object"
+}]=])
+file(WRITE "${SOURCE_DIRECTORY}/schema/journal-manifest.json" [=[{
+  "schema": "umbraflow-journal-event-schema-manifest/v1"
+}]=])
+file(WRITE "${SOURCE_DIRECTORY}/schema/reconcile-manifest.json" [=[{
+  "schema": "umbraflow-reconcile-manifest/v1"
+}]=])
+file(WRITE "${SOURCE_DIRECTORY}/schema/journal-0.json" [=[{
+  "type": "object"
 }]=])
 file(WRITE "${SOURCE_DIRECTORY}/content/facts.txt" "declared facts\n")
 file(WRITE "${DECLARATIVE_PATH}" [=[{
@@ -499,6 +526,85 @@ if(NOT CATALOG_SOURCE_RESTORE_RESULT EQUAL 0)
     )
 endif()
 
+# ----------------------------------------------------------------------------
+# The declared-file half of build and check, end to end through the command
+# line.
+#
+# Every deployment declaration names eight documents the build pins by
+# digest -- the tool catalog source, the four schemas, the two manifests and
+# the journal payload schemas -- and check holds the tree against that
+# record, because the kit's own check only re-derives the generated artifacts
+# and can say nothing about the schemas and manifests it never reads. The
+# refusals below name the exact file, not the manifest that names it.
+# ----------------------------------------------------------------------------
+
+# H1. A declared schema the tree does not hold is refused by name.
+file(REMOVE "${SOURCE_DIRECTORY}/schema/state.json")
+run_project(MISSING_STATE_RESULT MISSING_STATE_DIAGNOSTIC check
+    --source "${SOURCE_DIRECTORY}"
+    --build "${BUILD_DIRECTORY}"
+)
+if(MISSING_STATE_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project check must refuse a declared schema the tree does not hold"
+    )
+endif()
+require_contains("the missing-schema refusal"
+    "${MISSING_STATE_DIAGNOSTIC}" "schema/state.json")
+file(WRITE "${SOURCE_DIRECTORY}/schema/state.json" [=[{
+  "type": "object"
+}]=])
+
+# H2. A declared schema whose bytes differ from what the build recorded is
+# refused by name. The declared read opens the files in the declaration's
+# order, so the fixture must be whole before the altered one can be reached.
+file(APPEND "${SOURCE_DIRECTORY}/schema/observation.json" "\n")
+run_project(ALTERED_SCHEMA_RESULT ALTERED_SCHEMA_DIAGNOSTIC check
+    --source "${SOURCE_DIRECTORY}"
+    --build "${BUILD_DIRECTORY}"
+)
+if(ALTERED_SCHEMA_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project check must refuse a declared schema whose bytes have moved"
+    )
+endif()
+require_contains("the altered-schema refusal"
+    "${ALTERED_SCHEMA_DIAGNOSTIC}" "schema/observation.json")
+
+# H3. The positive control: with the altered file restored, check accepts
+# the tree the build recorded.
+file(WRITE "${SOURCE_DIRECTORY}/schema/observation.json" [=[{
+  "type": "object"
+}]=])
+run_project(RESTORED_SCHEMAS_RESULT RESTORED_SCHEMAS_DIAGNOSTIC check
+    --source "${SOURCE_DIRECTORY}"
+    --build "${BUILD_DIRECTORY}"
+)
+if(NOT RESTORED_SCHEMAS_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project check must accept a declared-file set that matches the "
+        "build's record; diagnostic=[${RESTORED_SCHEMAS_DIAGNOSTIC}]"
+    )
+endif()
+
+# H4. A whitespace-only alteration of the declared tool catalog source is
+# refused by name, where the kit's own check passes: it re-derives the
+# generated catalog from the parsed document, and JSON ignores the trailing
+# newline, so only the digest record can see the moved bytes.
+file(APPEND "${DECLARED_CATALOG}" "\n")
+run_project(WHITESPACED_CATALOG_RESULT WHITESPACED_CATALOG_DIAGNOSTIC check
+    --source "${SOURCE_DIRECTORY}"
+    --build "${BUILD_DIRECTORY}"
+)
+if(WHITESPACED_CATALOG_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project check must refuse a declared tool catalog source whose "
+        "bytes differ, even when they parse to the same catalog"
+    )
+endif()
+require_contains("the whitespaced-catalog refusal"
+    "${WHITESPACED_CATALOG_DIAGNOSTIC}" "${GENERATED_CATALOG_NAME}")
+
 set(CUT_ROOT "${UF_PROJECT_TEST_ROOT}/template-cut")
 set(CUT_SOURCE "${CUT_ROOT}/source")
 set(CUT_BUILD "${CUT_ROOT}/build")
@@ -600,6 +706,30 @@ file(WRITE "${CUT_SOURCE}/schema/catalog.json" [=[{
       }
     }
   ]
+}]=])
+
+# The declaration's other named files, so the build can record them and F1's
+# check stays green; minimal documents, exactly as in the main fixture.
+file(WRITE "${CUT_SOURCE}/schema/state.json" [=[{
+  "type": "object"
+}]=])
+file(WRITE "${CUT_SOURCE}/schema/observation.json" [=[{
+  "type": "object"
+}]=])
+file(WRITE "${CUT_SOURCE}/schema/precondition.json" [=[{
+  "type": "object"
+}]=])
+file(WRITE "${CUT_SOURCE}/schema/reconcile.json" [=[{
+  "type": "object"
+}]=])
+file(WRITE "${CUT_SOURCE}/schema/journal-manifest.json" [=[{
+  "schema": "umbraflow-journal-event-schema-manifest/v1"
+}]=])
+file(WRITE "${CUT_SOURCE}/schema/reconcile-manifest.json" [=[{
+  "schema": "umbraflow-reconcile-manifest/v1"
+}]=])
+file(WRITE "${CUT_SOURCE}/schema/journal-0.json" [=[{
+  "type": "object"
 }]=])
 
 foreach(CUT_BUILD_DIRECTORY

@@ -24,10 +24,14 @@ target_include_directories(${PROJECT_NAME} PRIVATE "${APPLICATION_INFO_DIRECTORY
 target_link_libraries(${PROJECT_NAME} PRIVATE uf::cli uf::core)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 
+# The declared-file half of `project build` and `project check` lives here
+# rather than in uf::project, because uf::project cannot link the runtime
+# loader: the executable wires the kit's check to the loader's confined read of
+# the files a deployment declaration names, and the module graph stays intact.
 add_executable(project project/main.cpp)
 cpp_apply_safety_profile(project)
 cpp_apply_utf8_encoding(project)
-target_link_libraries(project PRIVATE uf::project uf::core)
+target_link_libraries(project PRIVATE uf::project uf::deployment uf::core)
 target_compile_features(project PRIVATE cxx_std_23)
 
 # cli links engine publicly, and engine links ocr publicly, so this executable

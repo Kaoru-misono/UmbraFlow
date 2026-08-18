@@ -695,6 +695,18 @@ namespace uf::project
         };
     }
 
+    auto parseProjectDirectories(
+        std::span<std::string const> raw,
+        std::string_view action
+    ) -> Result<ProjectDirectories>
+    {
+        UF_TRY_VALUE(parsed, parseProjectBuildSpec(raw, action));
+        return ProjectDirectories{
+            .sourceDirectory = std::move(parsed.spec.sourceDirectory),
+            .buildDirectory  = std::move(parsed.spec.buildDirectory),
+        };
+    }
+
     auto runProjectCommand(
         std::span<std::string const> raw
     ) -> ProjectExitCode
@@ -756,6 +768,12 @@ namespace uf::project
             "closure those blobs declare. Nothing states a registration\n"
             "separately: a project that named its own artifact roots could name\n"
             "roots that disagree with its own closure.\n"
+            "\n"
+            "build also records every other file a deployment declaration\n"
+            "names -- the four project schemas, the two manifests and the\n"
+            "journal payload schemas -- by digest, and check holds each against\n"
+            "that record: a declared file the tree does not hold, or whose\n"
+            "bytes differ from what the build recorded, is refused by name.\n"
             "\n"
             "Its template_cuts declare the Locator templates the build cuts\n"
             "into generated/templates/, naming each source image by sha256 and\n"
