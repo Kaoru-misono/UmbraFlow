@@ -21,6 +21,27 @@ set(GENERATED_ADAPTER
 set(GENERATED_ADAPTER_NAME
     "generated/adapters/chaos.project/dismiss-known-overlay.luau"
 )
+set(DECLARED_CATALOG
+    "${SOURCE_DIRECTORY}/generated/tool-catalogs/chaos.project/tool-catalog-v1.json"
+)
+set(GENERATED_CATALOG
+    "${BUILD_DIRECTORY}/generated/tool-catalogs/chaos.project/tool-catalog-v1.json"
+)
+set(GENERATED_CATALOG_NAME
+    "generated/tool-catalogs/chaos.project/tool-catalog-v1.json"
+)
+set(GENERATED_BLOB
+    "${BUILD_DIRECTORY}/generated/artifact-blobs/facts.blob"
+)
+set(GENERATED_BLOB_NAME
+    "generated/artifact-blobs/facts.blob"
+)
+set(GENERATED_REGISTRATION
+    "${BUILD_DIRECTORY}/generated/registrations/artifact-roots-v1.json"
+)
+set(GENERATED_REGISTRATION_NAME
+    "generated/registrations/artifact-roots-v1.json"
+)
 
 file(REMOVE_RECURSE "${UF_PROJECT_TEST_ROOT}")
 file(MAKE_DIRECTORY "${SOURCE_DIRECTORY}" "${DECLARATIVE_DIRECTORY}")
@@ -51,10 +72,47 @@ file(WRITE "${SOURCE_DIRECTORY}/umbraflow-project.json" [=[{
       "journal_payload_schemas": ["schema/journal-0.json"],
       "effect_payload_schemas": [],
       "observed_instance_identity_schemas": [],
-      "artifact_blobs": []
+      "artifact_blobs": [
+        {"name": "facts", "path": "content/facts.txt"}
+      ]
     }
   ]
 }]=])
+file(MAKE_DIRECTORY
+    "${SOURCE_DIRECTORY}/generated/tool-catalogs/chaos.project"
+    "${SOURCE_DIRECTORY}/content"
+)
+file(WRITE "${DECLARED_CATALOG}" [=[{
+  "schema": "umbraflow-tool-catalog/v1",
+  "plugin_id": "chaos.project",
+  "tool_precondition_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "effect_payload_sha256s": [],
+  "tools": [
+    {
+      "name": "chaos.dismiss_known_overlay",
+      "argument_schema": "observed_instance_id",
+      "version": "1.0.0",
+      "mutability": "read_only",
+      "surface": "semantic",
+      "idempotency": "delivery_safe",
+      "required_capabilities": [],
+      "ui_action_bounds": [],
+      "effect_bounds": [],
+      "timeout_policy": {
+        "maximum_elapsed_ms": 3000,
+        "on_timeout": "stop"
+      },
+      "workflow_limits": {
+        "maximum_steps": 2,
+        "maximum_dispatches": 1,
+        "maximum_observations": 2,
+        "maximum_waits": 1,
+        "maximum_elapsed_ms": 3000
+      }
+    }
+  ]
+}]=])
+file(WRITE "${SOURCE_DIRECTORY}/content/facts.txt" "declared facts\n")
 file(WRITE "${DECLARATIVE_PATH}" [=[{
   "schema": "umbraflow-declarative-workflow-tool/v1",
   "tool_name": "chaos.dismiss_known_overlay",
@@ -102,6 +160,7 @@ execute_process(
         --build "${BUILD_DIRECTORY}"
         --input declared.txt
         --input declarative-tools/chaos.project/dismiss-known-overlay.json
+        --input content/facts.txt
     RESULT_VARIABLE INIT_RESULT
     OUTPUT_VARIABLE INIT_OUTPUT
     ERROR_VARIABLE INIT_ERROR
@@ -162,6 +221,24 @@ endif()
 if(NOT EXISTS "${GENERATED_ADAPTER}")
     message(FATAL_ERROR
         "project build must generate ${GENERATED_ADAPTER_NAME}"
+    )
+endif()
+if(NOT EXISTS "${GENERATED_CATALOG}")
+    message(FATAL_ERROR
+        "project build must generate ${GENERATED_CATALOG_NAME} from the "
+        "deployment's declared tool catalog source"
+    )
+endif()
+if(NOT EXISTS "${GENERATED_BLOB}")
+    message(FATAL_ERROR
+        "project build must generate ${GENERATED_BLOB_NAME} from the "
+        "deployment's declared artifact blob"
+    )
+endif()
+if(NOT EXISTS "${GENERATED_REGISTRATION}")
+    message(FATAL_ERROR
+        "project build must generate ${GENERATED_REGISTRATION_NAME} from the "
+        "declared artifact closure"
     )
 endif()
 file(WRITE "${GENERATED_ADAPTER}" "hand edited\n")
@@ -261,6 +338,167 @@ function(require_contains LABEL HAYSTACK NEEDLE)
     endif()
 endfunction()
 
+# ----------------------------------------------------------------------------
+# The deployment declaration's tool catalog and artifact closure, end to end.
+#
+# Every deployment names its declared tool catalog source and its artifact
+# blobs. build reads the first back into generated/tool-catalogs/ and the
+# second back into generated/artifact-blobs/, with
+# generated/registrations/artifact-roots-v1.json stating exactly the closure
+# those blobs declare. Nothing states a registration separately, so the only
+# way a registration can disagree with the closure is a hand edit -- and
+# check must name it like every other generated artifact.
+#
+# The last build above happened before declared.txt was removed, so the tree
+# still holds every generated artifact; this section restores the declared
+# input and then mutates one generated artifact at a time, checking that the
+# command names the exact file or blob and that a build replaces it.
+# ----------------------------------------------------------------------------
+file(WRITE "${INPUT_PATH}" "declared input\n")
+
+# G1. A hand-edited generated Tool Catalog is refused by name, and a rebuild
+# replaces it.
+file(WRITE "${GENERATED_CATALOG}" "hand edited\n")
+run_project(EDITED_CATALOG_RESULT EDITED_CATALOG_DIAGNOSTIC check
+    --source "${SOURCE_DIRECTORY}"
+    --build "${BUILD_DIRECTORY}"
+)
+if(EDITED_CATALOG_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project check must reject a hand-edited generated Tool Catalog"
+    )
+endif()
+require_contains("the edited-catalog refusal"
+    "${EDITED_CATALOG_DIAGNOSTIC}"
+    "generated project artifact \"${GENERATED_CATALOG_NAME}\" does not match its declared source")
+run_project(EDITED_CATALOG_RESTORE_RESULT EDITED_CATALOG_RESTORE_DIAGNOSTIC build
+    --source "${SOURCE_DIRECTORY}"
+    --build "${BUILD_DIRECTORY}"
+)
+if(NOT EDITED_CATALOG_RESTORE_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project build must replace a hand-edited generated Tool Catalog; "
+        "diagnostic=[${EDITED_CATALOG_RESTORE_DIAGNOSTIC}]"
+    )
+endif()
+
+# G2. A deleted generated artifact blob is refused by name.
+file(REMOVE "${GENERATED_BLOB}")
+run_project(MISSING_BLOB_RESULT MISSING_BLOB_DIAGNOSTIC check
+    --source "${SOURCE_DIRECTORY}"
+    --build "${BUILD_DIRECTORY}"
+)
+if(MISSING_BLOB_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project check must reject a deleted generated artifact blob"
+    )
+endif()
+require_contains("the missing-blob refusal" "${MISSING_BLOB_DIAGNOSTIC}"
+    "generated project artifact \"${GENERATED_BLOB_NAME}\" is missing")
+run_project(MISSING_BLOB_RESTORE_RESULT MISSING_BLOB_RESTORE_DIAGNOSTIC build
+    --source "${SOURCE_DIRECTORY}"
+    --build "${BUILD_DIRECTORY}"
+)
+if(NOT MISSING_BLOB_RESTORE_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project build must restore a deleted generated artifact blob; "
+        "diagnostic=[${MISSING_BLOB_RESTORE_DIAGNOSTIC}]"
+    )
+endif()
+
+# G3. The artifact-roots registration names a blob the closure does not
+# declare; check refuses the registration file byte for byte.
+file(WRITE "${GENERATED_REGISTRATION}" [=[{
+  "artifact_roots": [
+    {
+      "name": "other",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "schema": "umbraflow-project-kit-artifact-registration/v1"
+}]=])
+run_project(EDITED_REGISTRATION_RESULT EDITED_REGISTRATION_DIAGNOSTIC check
+    --source "${SOURCE_DIRECTORY}"
+    --build "${BUILD_DIRECTORY}"
+)
+if(EDITED_REGISTRATION_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project check must reject an artifact-roots registration that "
+        "disagrees with the declared closure"
+    )
+endif()
+require_contains("the edited-registration refusal"
+    "${EDITED_REGISTRATION_DIAGNOSTIC}"
+    "generated project artifact \"${GENERATED_REGISTRATION_NAME}\" does not match its declared source")
+run_project(EDITED_REGISTRATION_RESTORE_RESULT EDITED_REGISTRATION_RESTORE_DIAGNOSTIC build
+    --source "${SOURCE_DIRECTORY}"
+    --build "${BUILD_DIRECTORY}"
+)
+if(NOT EDITED_REGISTRATION_RESTORE_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project build must replace an edited artifact-roots registration; "
+        "diagnostic=[${EDITED_REGISTRATION_RESTORE_DIAGNOSTIC}]"
+    )
+endif()
+
+# G4. A declared tool catalog source the tree does not hold is refused by
+# name at build time, like a declared cut's missing corpus.
+file(REMOVE "${DECLARED_CATALOG}")
+run_project(MISSING_CATALOG_SOURCE_RESULT MISSING_CATALOG_SOURCE_DIAGNOSTIC build
+    --source "${SOURCE_DIRECTORY}"
+    --build "${BUILD_DIRECTORY}"
+)
+if(MISSING_CATALOG_SOURCE_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project build must refuse a declared tool catalog source the tree "
+        "does not hold"
+    )
+endif()
+require_contains("the missing-catalog-source refusal"
+    "${MISSING_CATALOG_SOURCE_DIAGNOSTIC}" "tool catalog source")
+require_contains("the missing-catalog-source refusal"
+    "${MISSING_CATALOG_SOURCE_DIAGNOSTIC}" "${GENERATED_CATALOG_NAME}")
+file(WRITE "${DECLARED_CATALOG}" [=[{
+  "schema": "umbraflow-tool-catalog/v1",
+  "plugin_id": "chaos.project",
+  "tool_precondition_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "effect_payload_sha256s": [],
+  "tools": [
+    {
+      "name": "chaos.dismiss_known_overlay",
+      "argument_schema": "observed_instance_id",
+      "version": "1.0.0",
+      "mutability": "read_only",
+      "surface": "semantic",
+      "idempotency": "delivery_safe",
+      "required_capabilities": [],
+      "ui_action_bounds": [],
+      "effect_bounds": [],
+      "timeout_policy": {
+        "maximum_elapsed_ms": 3000,
+        "on_timeout": "stop"
+      },
+      "workflow_limits": {
+        "maximum_steps": 2,
+        "maximum_dispatches": 1,
+        "maximum_observations": 2,
+        "maximum_waits": 1,
+        "maximum_elapsed_ms": 3000
+      }
+    }
+  ]
+}]=])
+run_project(CATALOG_SOURCE_RESTORE_RESULT CATALOG_SOURCE_RESTORE_DIAGNOSTIC build
+    --source "${SOURCE_DIRECTORY}"
+    --build "${BUILD_DIRECTORY}"
+)
+if(NOT CATALOG_SOURCE_RESTORE_RESULT EQUAL 0)
+    message(FATAL_ERROR
+        "project build must accept a restored declared tool catalog source; "
+        "diagnostic=[${CATALOG_SOURCE_RESTORE_DIAGNOSTIC}]"
+    )
+endif()
+
 set(CUT_ROOT "${UF_PROJECT_TEST_ROOT}/template-cut")
 set(CUT_SOURCE "${CUT_ROOT}/source")
 set(CUT_BUILD "${CUT_ROOT}/build")
@@ -333,6 +571,36 @@ file(WRITE "${CUT_SOURCE}/umbraflow-project.json" "{
   ]
 }
 ")
+file(WRITE "${CUT_SOURCE}/schema/catalog.json" [=[{
+  "schema": "umbraflow-tool-catalog/v1",
+  "plugin_id": "chaos.dream",
+  "tool_precondition_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "effect_payload_sha256s": [],
+  "tools": [
+    {
+      "name": "chaos.dismiss_known_overlay",
+      "argument_schema": "observed_instance_id",
+      "version": "1.0.0",
+      "mutability": "read_only",
+      "surface": "semantic",
+      "idempotency": "delivery_safe",
+      "required_capabilities": [],
+      "ui_action_bounds": [],
+      "effect_bounds": [],
+      "timeout_policy": {
+        "maximum_elapsed_ms": 3000,
+        "on_timeout": "stop"
+      },
+      "workflow_limits": {
+        "maximum_steps": 2,
+        "maximum_dispatches": 1,
+        "maximum_observations": 2,
+        "maximum_waits": 1,
+        "maximum_elapsed_ms": 3000
+      }
+    }
+  ]
+}]=])
 
 foreach(CUT_BUILD_DIRECTORY
     "${CUT_BUILD}"

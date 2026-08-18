@@ -2091,10 +2091,43 @@ class ProjectAuthoringFrontTests(unittest.TestCase):
         self.assertEqual(run.call_args_list[0].args[0][1], "init")
         self.assertIn(candidate["declaration"]["path"], run.call_args_list[0].args[0])
         self.assertEqual(run.call_args_list[1].args[0][1], "build")
+        self.assertNotIn("--frames-root", run.call_args_list[1].args[0])
         self.assertEqual(run.call_args_list[2].args[0], list(plan.replay_command))
         self.assertEqual(result.build_stdout, "built\n")
         self.assertEqual(result.replay_stdout, "replayed\n")
         self.assertEqual(result.declaration.read_text(), "declared accepted\n")
+
+    def test_accepted_candidate_passes_plan_frames_root_to_project_build(self) -> None:
+        # A candidate project that declares template_cuts can only be built
+        # with the corpus root on the command line; the plan's frames_root is
+        # that root, and the build step must carry it.
+        candidate = self.proposals([self.hint("accepted")])[0]
+        plan = AcceptancePlan(
+            project_executable=self.root / "bin" / "project",
+            source_root=self.root / "project-source",
+            build_root=self.root / "project-build",
+            project_inputs=("existing.txt",),
+            replay_command=("trusted-replay", "--fixed-corpus"),
+            frames_root=self.root / "corpus",
+        )
+        plan.source_root.mkdir()
+        completed = [
+            subprocess.CompletedProcess([], 0, "initialized\n", ""),
+            subprocess.CompletedProcess([], 0, "built\n", ""),
+            subprocess.CompletedProcess([], 0, "replayed\n", ""),
+        ]
+
+        with unittest.mock.patch(
+            "tools.annotate.evidence.subprocess.run", side_effect=completed
+        ) as run:
+            accept_candidate(candidate, plan)
+
+        build_command = run.call_args_list[1].args[0]
+        self.assertIn("--frames-root", build_command)
+        self.assertEqual(
+            build_command[build_command.index("--frames-root") + 1],
+            str(plan.frames_root.absolute()),
+        )
 
     def test_project_build_failure_names_the_candidate_that_caused_it(self) -> None:
         candidate = self.proposals([self.hint("broken")])[0]

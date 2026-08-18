@@ -6,6 +6,8 @@
 #include <domain/error.hpp>
 
 #include <algorithm>
+#include <array>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -26,6 +28,23 @@ namespace uf::operator_runtime
         UF_UNREACHABLE_MSG("Unknown Risk value");
     }
 
+    auto parseRisk(std::string_view wire) noexcept -> std::optional<Risk>
+    {
+        constexpr auto k_risks = std::array{
+            Risk::ReadOnly,
+            Risk::Low,
+            Risk::Medium,
+            Risk::High,
+            Risk::Critical,
+        };
+        auto const found = std::ranges::find(k_risks, wire, riskWireName);
+        if (found == k_risks.end())
+        {
+            return std::nullopt;
+        }
+        return *found;
+    }
+
     auto toolMutabilityWireName(ToolMutability mutability) noexcept
         -> std::string_view
     {
@@ -38,6 +57,25 @@ namespace uf::operator_runtime
         UF_UNREACHABLE_MSG("Unknown ToolMutability value");
     }
 
+    auto parseToolMutability(std::string_view wire) noexcept
+        -> std::optional<ToolMutability>
+    {
+        constexpr auto k_mutabilities = std::array{
+            ToolMutability::ReadOnly,
+            ToolMutability::Mutating,
+        };
+        auto const found = std::ranges::find(
+            k_mutabilities,
+            wire,
+            toolMutabilityWireName
+        );
+        if (found == k_mutabilities.end())
+        {
+            return std::nullopt;
+        }
+        return *found;
+    }
+
     auto toolSurfaceWireName(ToolSurface surface) noexcept -> std::string_view
     {
         switch (surface)
@@ -47,6 +85,21 @@ namespace uf::operator_runtime
         }
 
         UF_UNREACHABLE_MSG("Unknown ToolSurface value");
+    }
+
+    auto parseToolSurface(std::string_view wire) noexcept
+        -> std::optional<ToolSurface>
+    {
+        constexpr auto k_surfaces = std::array{
+            ToolSurface::Semantic,
+            ToolSurface::Privileged,
+        };
+        auto const found = std::ranges::find(k_surfaces, wire, toolSurfaceWireName);
+        if (found == k_surfaces.end())
+        {
+            return std::nullopt;
+        }
+        return *found;
     }
 
     auto toolIdempotencyWireName(ToolIdempotency idempotency) noexcept
@@ -63,6 +116,27 @@ namespace uf::operator_runtime
         UF_UNREACHABLE_MSG("Unknown ToolIdempotency value");
     }
 
+    auto parseToolIdempotency(std::string_view wire) noexcept
+        -> std::optional<ToolIdempotency>
+    {
+        constexpr auto k_idempotencies = std::array{
+            ToolIdempotency::ReadSafe,
+            ToolIdempotency::DeliverySafe,
+            ToolIdempotency::KeyedExternal,
+            ToolIdempotency::NonIdempotent,
+        };
+        auto const found = std::ranges::find(
+            k_idempotencies,
+            wire,
+            toolIdempotencyWireName
+        );
+        if (found == k_idempotencies.end())
+        {
+            return std::nullopt;
+        }
+        return *found;
+    }
+
     auto timeoutActionWireName(TimeoutAction action) noexcept -> std::string_view
     {
         switch (action)
@@ -73,6 +147,26 @@ namespace uf::operator_runtime
         }
 
         UF_UNREACHABLE_MSG("Unknown TimeoutAction value");
+    }
+
+    auto parseTimeoutAction(std::string_view wire) noexcept
+        -> std::optional<TimeoutAction>
+    {
+        constexpr auto k_timeoutActions = std::array{
+            TimeoutAction::Reobserve,
+            TimeoutAction::Reconcile,
+            TimeoutAction::Stop,
+        };
+        auto const found = std::ranges::find(
+            k_timeoutActions,
+            wire,
+            timeoutActionWireName
+        );
+        if (found == k_timeoutActions.end())
+        {
+            return std::nullopt;
+        }
+        return *found;
     }
 
     auto deliveryClassWithin(

@@ -52,6 +52,7 @@ class AcceptancePlan:
     build_root: Path
     project_inputs: tuple[str, ...]
     replay_command: tuple[str, ...]
+    frames_root: Path | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -521,17 +522,24 @@ def accept_candidate(
         initialization_command,
         source_root,
     )
+    # A candidate project that declares template_cuts needs the corpus root on
+    # the command line, the same way any other invocation of `project build`
+    # does; a plan whose acceptance flow owns one passes it through. The root
+    # is deliberately optional: a project that cuts nothing must not need one.
+    build_command = [
+        str(plan.project_executable),
+        "build",
+        "--source",
+        str(source_root),
+        "--build",
+        str(plan.build_root.absolute()),
+    ]
+    if plan.frames_root is not None:
+        build_command.extend(("--frames-root", str(plan.frames_root.absolute())))
     build = _run_candidate_step(
         candidate_id,
         "project build",
-        (
-            str(plan.project_executable),
-            "build",
-            "--source",
-            str(source_root),
-            "--build",
-            str(plan.build_root.absolute()),
-        ),
+        build_command,
         source_root,
     )
     replay = _run_candidate_step(

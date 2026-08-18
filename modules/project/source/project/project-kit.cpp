@@ -56,19 +56,6 @@ namespace uf::project
         constexpr auto k_declarativeToolDirectory = std::string_view{
             "declarative-tools"
         };
-        // The one document a project directory holds at its root, and the one
-        // statement of its shape. The kit cannot link the runtime loader --
-        // uf::deployment reaches uf::task, and the `project` executable links
-        // uf::project and uf::core alone -- so the shape lives in neither of
-        // them: it is published under schema/ and reaches both through the
-        // framework schema catalog this module already embeds. There is no
-        // second, narrower reading of this document here.
-        constexpr auto k_projectManifestName = std::string_view{
-            "umbraflow-project.json"
-        };
-        constexpr auto k_projectSchemaPath = std::string_view{
-            "schema/umbraflow-project-v1.schema.json"
-        };
         constexpr auto k_generatedDirectory = std::string_view{"generated"};
         constexpr auto k_generatedAdapterDirectory = std::string_view{
             "adapters"
@@ -624,129 +611,14 @@ namespace uf::project
             return cuts;
         }
 
-        // The project's root document, judged by the one published statement of
-        // its shape, and then read for the one thing the offline kit acts on.
-        //
-        // It is read from the source tree unconditionally. The declared-input
-        // list is the author's, so a gate that ran only when the author had
-        // listed umbraflow-project.json was one the author could switch off by
-        // not listing it, while the tree still held the document the runtime
-        // loader would later read.
-        //
-        // Reading `template_cuts` out of the value validate() just accepted is
-        // not a second reading of this document: it is the same parse, and the
-        // shape it is allowed to have was decided by the published schema and
-        // nowhere else. What would be a second reading -- and is the defect
-        // this file already carries the scar of -- is any caller opening this
-        // file to pull members out before the schema has judged them.
-        //
-        // schema/umbraflow-project-v1.schema.json
-        // states every rule, including the direct-plugin tier's admission gate:
-        // a deployment whose plugin_authoring is "hand-written" must carry a
-        // plugin_justification naming the member or semantic of
-        // umbraflow-declarative-workflow-tool/v1 that cannot express it, and
-        // one whose plugin_authoring is "generated" must carry none, because a
-        // generated adapter IS that tier and has nothing to justify.
-        // uf::deployment's loader compiles the same published bytes, so the two
-        // readers cannot reach two verdicts.
-        //
-        // THAT GATE CHECKS PRESENCE, NOT TRUTH. It cannot tell whether a stated
-        // reason is correct, and does not try: judging that would require
-        // deciding whether a Luau module is equivalent to some declaration,
-        // which is program equivalence. A justification that names the wrong
-        // member is a review finding at plugin acceptance -- see
-        // docs/pitfalls/checks-that-cannot-fail.md.
+        // The one thing the offline kit acts on, read out of the value
+        // readProjectRootDocument just let the schema judge.
         [[nodiscard]]
         auto readProjectManifest(
             std::filesystem::path const& sourceDirectory
         ) -> Result<std::vector<ProjectTemplateCutSpec>>
         {
-            auto const manifestPath = (
-                sourceDirectory / std::filesystem::path{k_projectManifestName}
-            );
-            auto error        = std::error_code{};
-            auto const status = std::filesystem::status(manifestPath, error);
-            if (
-                error == std::errc::no_such_file_or_directory
-                || status.type() == std::filesystem::file_type::not_found
-            )
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "a project needs {} at the root of its source "
-                        "directory, and \"{}\" holds none",
-                        k_projectManifestName,
-                        sourceDirectory.string()
-                    )
-                );
-            }
-            if (error)
-            {
-                return fail(
-                    AutomationErrorKind::IoFailure,
-                    std::format(
-                        "cannot inspect project root document \"{}\": {}",
-                        manifestPath.string(),
-                        error.message()
-                    )
-                );
-            }
-            if (!std::filesystem::is_regular_file(status))
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "project root document is not a regular file: \"{}\"",
-                        manifestPath.string()
-                    )
-                );
-            }
-            UF_TRY_VALUE(bytes, readText(manifestPath, "root document"));
-
-            auto const published = framework_schema::findFrameworkSchema(
-                k_projectSchemaPath
-            );
-            if (!published.has_value())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "generated framework schema catalog is missing "
-                        + std::string{k_projectSchemaPath}
-                );
-            }
-            auto const compiled = json::Schema::compile(json::Schema::Document{
-                .label      = published->relativePath,
-                .exactBytes = published->exactBytes,
-            });
-            if (!compiled.has_value())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "{} is not a schema this kit can apply: {}",
-                        published->relativePath,
-                        compiled.error().message()
-                    )
-                );
-            }
-            UF_TRY_VALUE_CONTEXT(
-                document,
-                json::parse(bytes),
-                std::format("reading {}", k_projectManifestName)
-            );
-            auto const judged = compiled->validate(document);
-            if (!judged.has_value())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "{}: {}",
-                        k_projectManifestName,
-                        judged.error().message()
-                    )
-                );
-            }
+            UF_TRY_VALUE(document, readProjectRootDocument(sourceDirectory));
             return declaredTemplateCuts(document);
         }
 
@@ -2142,6 +2014,133 @@ namespace uf::project
             }
             return ok();
         }
+    }
+
+    // The project's root document, judged by the one published statement of
+    // its shape before any reader pulls a member out of it.
+    //
+    // It is read from the source tree unconditionally. The declared-input
+    // list is the author's, so a gate that ran only when the author had
+    // listed umbraflow-project.json was one the author could switch off by
+    // not listing it, while the tree still held the document the runtime
+    // loader would later read.
+    //
+    // Reading a member out of the value validate() just accepted is not a
+    // second reading of this document: it is the same parse, and the shape it
+    // is allowed to have was decided by the published schema and nowhere
+    // else. What would be a second reading -- and is the defect this file
+    // already carries the scar of -- is any caller opening this file to pull
+    // members out before the schema has judged them. This function is the
+    // read every extraction is allowed to follow: template_cuts in
+    // readProjectManifest, and the deployment declarations in command.cpp.
+    //
+    // schema/umbraflow-project-v1.schema.json
+    // states every rule, including the direct-plugin tier's admission gate:
+    // a deployment whose plugin_authoring is "hand-written" must carry a
+    // plugin_justification naming the member or semantic of
+    // umbraflow-declarative-workflow-tool/v1 that cannot express it, and
+    // one whose plugin_authoring is "generated" must carry none, because a
+    // generated adapter IS that tier and has nothing to justify.
+    // uf::deployment's loader compiles the same published bytes, so the two
+    // readers cannot reach two verdicts.
+    //
+    // THAT GATE CHECKS PRESENCE, NOT TRUTH. It cannot tell whether a stated
+    // reason is correct, and does not try: judging that would require
+    // deciding whether a Luau module is equivalent to some declaration,
+    // which is program equivalence. A justification that names the wrong
+    // member is a review finding at plugin acceptance -- see
+    // docs/pitfalls/checks-that-cannot-fail.md.
+    auto readProjectRootDocument(
+        std::filesystem::path const& sourceDirectory
+    ) -> Result<json::Value>
+    {
+        auto const manifestPath = (
+            sourceDirectory / std::filesystem::path{k_projectManifestName}
+        );
+        auto error        = std::error_code{};
+        auto const status = std::filesystem::status(manifestPath, error);
+        if (
+            error == std::errc::no_such_file_or_directory
+            || status.type() == std::filesystem::file_type::not_found
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "a project needs {} at the root of its source "
+                    "directory, and \"{}\" holds none",
+                    k_projectManifestName,
+                    sourceDirectory.string()
+                )
+            );
+        }
+        if (error)
+        {
+            return fail(
+                AutomationErrorKind::IoFailure,
+                std::format(
+                    "cannot inspect project root document \"{}\": {}",
+                    manifestPath.string(),
+                    error.message()
+                )
+            );
+        }
+        if (!std::filesystem::is_regular_file(status))
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "project root document is not a regular file: \"{}\"",
+                    manifestPath.string()
+                )
+            );
+        }
+        UF_TRY_VALUE(bytes, readText(manifestPath, "root document"));
+
+        auto const published = framework_schema::findFrameworkSchema(
+            k_projectSchemaPath
+        );
+        if (!published.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "generated framework schema catalog is missing "
+                    + std::string{k_projectSchemaPath}
+            );
+        }
+        auto const compiled = json::Schema::compile(json::Schema::Document{
+            .label      = published->relativePath,
+            .exactBytes = published->exactBytes,
+        });
+        if (!compiled.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "{} is not a schema this kit can apply: {}",
+                    published->relativePath,
+                    compiled.error().message()
+                )
+            );
+        }
+        UF_TRY_VALUE_CONTEXT(
+            document,
+            json::parse(bytes),
+            std::format("reading {}", k_projectManifestName)
+        );
+        auto const judged = compiled->validate(document);
+        if (!judged.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "{}: {}",
+                    k_projectManifestName,
+                    judged.error().message()
+                )
+            );
+        }
+        return document;
     }
 
     auto initProject(ProjectInitSpec const& spec) -> Status

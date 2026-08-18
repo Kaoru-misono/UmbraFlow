@@ -4,6 +4,8 @@
 
 #include <domain/content-hash.hpp>
 
+#include <json/value.hpp>
+
 #include <operator/tool-descriptor.hpp>
 
 #include <string>
@@ -33,4 +35,18 @@ namespace uf::project
     auto generateToolCatalog(
         ToolCatalogDeclaration const& declaration
     ) -> Result<std::string>;
+
+    // The inverse of generateToolCatalog, for the reader a declared tool
+    // catalog source is: one document judged member by member back into the
+    // declaration the generator renders. The shape authority is the deployment
+    // loader's embedded schema, which this module cannot compile, so the rules
+    // that document states are stated here in C++ -- closed objects, required
+    // members, the wire names, the numeric bounds -- and whatever the schema
+    // leaves to the generator (duplicate tools, empty names, a bound set that
+    // does not close over the effect payload hashes) is left to
+    // generateToolCatalog, which refuses it one call later.
+    [[nodiscard]]
+    auto parseToolCatalogDeclaration(
+        json::Value const& document
+    ) -> Result<ToolCatalogDeclaration>;
 }

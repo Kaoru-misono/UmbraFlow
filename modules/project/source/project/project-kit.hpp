@@ -6,6 +6,8 @@
 
 #include <domain/content-hash.hpp>
 
+#include <json/value.hpp>
+
 #include <cstddef>
 #include <filesystem>
 #include <functional>
@@ -23,6 +25,20 @@ namespace uf::project
     };
     inline constexpr auto k_artifactManifestName = std::string_view{
         "project-kit.artifacts.json"
+    };
+
+    // The one document a project directory holds at its root, and the one
+    // statement of its shape. The kit cannot link the runtime loader --
+    // uf::deployment reaches uf::task, and the `project` executable links
+    // uf::project and uf::core alone -- so the shape lives in neither of
+    // them: it is published under schema/ and reaches both through the
+    // framework schema catalog this module already embeds. There is no
+    // second, narrower reading of this document here.
+    inline constexpr auto k_projectManifestName = std::string_view{
+        "umbraflow-project.json"
+    };
+    inline constexpr auto k_projectSchemaPath = std::string_view{
+        "schema/umbraflow-project-v1.schema.json"
     };
 
     struct ProjectArtifactBlobSpec final
@@ -74,6 +90,19 @@ namespace uf::project
         ProjectBuildSpec      candidate{};
         std::filesystem::path releaseRoot{};
     };
+
+    // The project's root document, read unconditionally and judged by the one
+    // published statement of its shape. The kit's own build reads it again
+    // through this function for template_cuts; the `project` command line
+    // reads it for the deployment declarations the kit cannot see. Every
+    // reader compiles the same published schema bytes out of the framework
+    // schema catalog, so no reader can accept a document another refuses --
+    // and no caller is allowed to pull members out of the document before
+    // this function has let the schema judge them.
+    [[nodiscard]]
+    auto readProjectRootDocument(
+        std::filesystem::path const& sourceDirectory
+    ) -> Result<json::Value>;
 
     [[nodiscard]]
     auto initProject(ProjectInitSpec const& spec) -> Status;

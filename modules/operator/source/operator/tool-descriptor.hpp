@@ -5,6 +5,7 @@
 
 #include <domain/content-hash.hpp>
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -25,6 +26,16 @@ namespace uf::operator_runtime
 
     [[nodiscard]] auto riskWireName(Risk risk) noexcept -> std::string_view;
 
+    // The inverse of riskWireName, for a reader that must turn a document's
+    // enum member back into the domain it was rendered from. std::nullopt is
+    // "no enumerator is spelled this way", which is the one verdict every
+    // schema that constrains the member and every reader that does not share
+    // that schema can agree on. The mapping is the forward function's and is
+    // never restated: the enumerators are listed, the projection is the
+    // spelling, so a name that drifts drifts in the one place it was written.
+    [[nodiscard]]
+    auto parseRisk(std::string_view wire) noexcept -> std::optional<Risk>;
+
     // Whether a tool changes anything outside the Operator. It is a property of
     // the Tool Catalog descriptor and never of a request, because the whole
     // point of the mutation chain is that it cannot be opted out of.
@@ -37,6 +48,10 @@ namespace uf::operator_runtime
     [[nodiscard]]
     auto toolMutabilityWireName(ToolMutability mutability) noexcept
         -> std::string_view;
+
+    [[nodiscard]]
+    auto parseToolMutability(std::string_view wire) noexcept
+        -> std::optional<ToolMutability>;
 
     // Whether a tool's arguments and results are stated in the project's own
     // vocabulary, or in the machine's -- coordinates, pixels, key codes,
@@ -61,6 +76,10 @@ namespace uf::operator_runtime
     [[nodiscard]]
     auto toolSurfaceWireName(ToolSurface surface) noexcept -> std::string_view;
 
+    [[nodiscard]]
+    auto parseToolSurface(std::string_view wire) noexcept
+        -> std::optional<ToolSurface>;
+
     // What redelivering one call of this tool would cost, declared strongest
     // first. The order is the whole of the type's meaning: a step may claim at
     // most the safety its tool declares, and `<=` on the enumerator is that
@@ -76,6 +95,10 @@ namespace uf::operator_runtime
     [[nodiscard]]
     auto toolIdempotencyWireName(ToolIdempotency idempotency) noexcept
         -> std::string_view;
+
+    [[nodiscard]]
+    auto parseToolIdempotency(std::string_view wire) noexcept
+        -> std::optional<ToolIdempotency>;
 
     // OP:`UIActionIntent`.delivery_class, in the same strongest-first order.
     // There is no ReadSafe: a step that is delivered is not a read.
@@ -107,6 +130,10 @@ namespace uf::operator_runtime
 
     [[nodiscard]]
     auto timeoutActionWireName(TimeoutAction action) noexcept -> std::string_view;
+
+    [[nodiscard]]
+    auto parseTimeoutAction(std::string_view wire) noexcept
+        -> std::optional<TimeoutAction>;
 
     // OP:`TimeoutPolicy`.
     struct TimeoutPolicy final

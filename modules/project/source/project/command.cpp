@@ -2,12 +2,18 @@
 
 #include "project-kit.hpp"
 
+#include <core/error/contracts.hpp>
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
+
+#include <json/schema.hpp>
+#include <json/value.hpp>
+
+#include <schema/framework-schema-catalog.hpp>
 
 #include <algorithm>
 #include <array>
@@ -19,6 +25,7 @@
 #include <iostream>
 #include <iterator>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -232,6 +239,135 @@ namespace uf::project
             };
         }
 
+        // One member of an object the published project schema has already
+        // judged. Total by construction, the same way the kit's helper is
+        // (project-kit.cpp): every member read through it is required in
+        // schema/umbraflow-project-v1.schema.json and of the type stated
+        // there, so the extraction below happens only on the value
+        // readProjectRootDocument let the schema judge.
+        [[nodiscard]]
+        auto member(json::Value const& object, std::string_view name)
+            -> json::Value const&
+        {
+            auto const* const p_member = object.find(name);
+            UF_CHECK(p_member != nullptr);
+            return *p_member;
+        }
+
+        // One declared tool catalog source: the path a deployment declaration
+        // names, resolved against the source tree the way the runtime loader
+        // resolves every member it reads, and read back into the declaration
+        // the generator renders. A declared source the tree does not hold is
+        // refused by name -- the same rule a declared cut's missing source
+        // obeys -- and never quietly skipped.
+        [[nodiscard]]
+        auto declaredToolCatalog(
+            std::filesystem::path const& sourceDirectory,
+            json::Value const& deployment
+        ) -> Result<ToolCatalogDeclaration>
+        {
+            auto const declaredPath = std::filesystem::path{
+                member(deployment, "tool_catalog").string()
+            };
+            auto const path = sourceDirectory / declaredPath;
+            auto stream     = std::ifstream{path, std::ios::binary};
+            if (!stream.is_open())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "the deployment declaration names tool catalog source "
+                        "\"{}\", which \"{}\" does not hold",
+                        declaredPath.string(),
+                        sourceDirectory.string()
+                    )
+                );
+            }
+
+            auto const text = std::string{
+                std::istreambuf_iterator<char>{stream},
+                std::istreambuf_iterator<char>{}
+            };
+            if (stream.bad())
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format(
+                        "cannot read declared tool catalog source \"{}\"",
+                        path.string()
+                    )
+                );
+            }
+            UF_TRY_VALUE_CONTEXT(
+                document,
+                json::parse(text),
+                std::format(
+                    "reading declared tool catalog source \"{}\"",
+                    path.string()
+                )
+            );
+            UF_TRY_VALUE_CONTEXT(
+                declaration,
+                parseToolCatalogDeclaration(document),
+                std::format(
+                    "reading declared tool catalog source \"{}\"",
+                    path.string()
+                )
+            );
+            return declaration;
+        }
+
+        // What the deployment declaration contributes to the spec the kit is
+        // given: every deployment names its declared tool catalog source and
+        // its artifact blobs, and the artifact-roots registration is exactly
+        // the closure those blobs state. The registration is derived, never
+        // declared: a project that stated its own artifact roots could state
+        // roots that disagree with its own closure.
+        [[nodiscard]]
+        auto attachDeploymentDeclarations(ProjectBuildSpec& spec) -> Status
+        {
+            UF_TRY_VALUE(document, readProjectRootDocument(spec.sourceDirectory));
+            auto toolCatalogs  = std::vector<ToolCatalogDeclaration>{};
+            auto artifactBlobs = std::vector<ProjectArtifactBlobSpec>{};
+            auto blobNames     = std::set<std::string>{};
+            for (auto const& deployment : member(document, "deployments").items())
+            {
+                UF_TRY_VALUE(
+                    catalog,
+                    declaredToolCatalog(spec.sourceDirectory, deployment)
+                );
+                toolCatalogs.emplace_back(std::move(catalog));
+                for (auto const& blob : member(deployment, "artifact_blobs").items())
+                {
+                    auto const name = std::string{member(blob, "name").string()};
+                    if (!blobNames.emplace(name).second)
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "the deployment declarations name the artifact "
+                                "root {} more than once",
+                                name
+                            )
+                        );
+                    }
+                    artifactBlobs.emplace_back(ProjectArtifactBlobSpec{
+                        .name        = std::move(name),
+                        .sourceInput = std::filesystem::path{
+                            member(blob, "path").string()
+                        },
+                    });
+                }
+            }
+            spec.toolCatalogs  = std::move(toolCatalogs);
+            spec.artifactBlobs = std::move(artifactBlobs);
+            spec.registration.artifactBlobNames.assign(
+                blobNames.begin(),
+                blobNames.end()
+            );
+            return ok();
+        }
+
         [[nodiscard]]
         auto parseProjectInit(
             std::span<std::string const> raw
@@ -416,12 +552,18 @@ namespace uf::project
             std::span<std::string const> raw
         ) -> ProjectExitCode
         {
-            auto const parsed = parseProjectBuildSpec(raw, "build");
+            auto parsed = parseProjectBuildSpec(raw, "build");
             if (!parsed)
             {
                 std::cerr << parsed.error().message() << '\n';
                 std::cerr << projectUsageText();
                 return ProjectExitCode::Failure;
+            }
+
+            auto const attached = attachDeploymentDeclarations(parsed->spec);
+            if (!attached)
+            {
+                return reportProjectError(attached.error());
             }
 
             auto const built = buildProject(
@@ -444,12 +586,18 @@ namespace uf::project
             std::span<std::string const> raw
         ) -> ProjectExitCode
         {
-            auto const parsed = parseProjectBuildSpec(raw, "check");
+            auto parsed = parseProjectBuildSpec(raw, "check");
             if (!parsed)
             {
                 std::cerr << parsed.error().message() << '\n';
                 std::cerr << projectUsageText();
                 return ProjectExitCode::Failure;
+            }
+
+            auto const attached = attachDeploymentDeclarations(parsed->spec);
+            if (!attached)
+            {
+                return reportProjectError(attached.error());
             }
 
             auto const checked = checkProject(
@@ -473,12 +621,18 @@ namespace uf::project
             std::span<std::string const> raw
         ) -> ProjectExitCode
         {
-            auto const parsed = parseProjectFreeze(raw);
+            auto parsed = parseProjectFreeze(raw);
             if (!parsed)
             {
                 std::cerr << parsed.error().message() << '\n';
                 std::cerr << projectUsageText();
                 return ProjectExitCode::Failure;
+            }
+
+            auto const attached = attachDeploymentDeclarations(parsed->spec.candidate);
+            if (!attached)
+            {
+                return reportProjectError(attached.error());
             }
 
             auto const release = freezeProject(
@@ -592,6 +746,16 @@ namespace uf::project
             "requires a plugin_justification of every deployment whose\n"
             "plugin_authoring is hand-written and refuses one from every\n"
             "deployment whose plugin_authoring is generated.\n"
+            "\n"
+            "Every deployment also names its declared tool catalog source and\n"
+            "its artifact blobs. build and check read the first as the Tool\n"
+            "Catalog document it declares -- a source the tree does not hold is\n"
+            "refused by name, like a declared cut's missing corpus -- and read\n"
+            "the second back into generated/artifact-blobs/, with\n"
+            "generated/registrations/artifact-roots-v1.json stating exactly the\n"
+            "closure those blobs declare. Nothing states a registration\n"
+            "separately: a project that named its own artifact roots could name\n"
+            "roots that disagree with its own closure.\n"
             "\n"
             "Its template_cuts declare the Locator templates the build cuts\n"
             "into generated/templates/, naming each source image by sha256 and\n"
