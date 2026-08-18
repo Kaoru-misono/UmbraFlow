@@ -1118,25 +1118,6 @@ namespace uf::operator_runtime
         }
 
         [[nodiscard]]
-        auto migrateTransitionTableOnly(
-            sqlite3* database,
-            SchemaMigration const& migration
-        ) -> Status
-        {
-            UF_TRY_VALUE(transaction, Transaction::begin(database));
-            UF_TRY(execute(database, k_schemaIdentityTransitionsDdl));
-            UF_TRY(rewriteSnapshotIdentityComment(database));
-            UF_TRY(makeProjectBaselineOptional(database));
-            UF_TRY(addReleaseUpgradeEvidenceTables(database));
-            UF_TRY(dropRegistrationStateSchemaHash(database));
-            UF_TRY(addSessionWorldScopeColumns(database));
-            UF_TRY(addObservedInstanceBindingLocalRef(database));
-            UF_TRY(recordSchemaIdentityTransition(database, migration));
-            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
-            return transaction.commit();
-        }
-
-        [[nodiscard]]
         auto migrateSnapshotIdentityComment(
             sqlite3* database,
             SchemaMigration const& migration
@@ -1144,23 +1125,6 @@ namespace uf::operator_runtime
         {
             UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(rewriteSnapshotIdentityComment(database));
-            UF_TRY(makeProjectBaselineOptional(database));
-            UF_TRY(addReleaseUpgradeEvidenceTables(database));
-            UF_TRY(dropRegistrationStateSchemaHash(database));
-            UF_TRY(addSessionWorldScopeColumns(database));
-            UF_TRY(addObservedInstanceBindingLocalRef(database));
-            UF_TRY(recordSchemaIdentityTransition(database, migration));
-            UF_TRY(verifyExactDatabaseSchema(database, migration.targetIdentity));
-            return transaction.commit();
-        }
-
-        [[nodiscard]]
-        auto migrateProjectBaselineOptional(
-            sqlite3* database,
-            SchemaMigration const& migration
-        ) -> Status
-        {
-            UF_TRY_VALUE(transaction, Transaction::begin(database));
             UF_TRY(makeProjectBaselineOptional(database));
             UF_TRY(addReleaseUpgradeEvidenceTables(database));
             UF_TRY(dropRegistrationStateSchemaHash(database));
@@ -1215,6 +1179,11 @@ namespace uf::operator_runtime
             return transaction.commit();
         }
 
+        // A registered pair must have a reproducible fixture that constructs
+        // its source identity and proves the migration runs and lands on the
+        // target. A pair that cannot be reproduced must be deleted, not kept:
+        // a guard nothing can reach is the mirror of a guard production does
+        // not reach.
         constexpr auto k_schemaMigrations = std::array{
             SchemaMigration{
                 .sourceIdentity =
@@ -1227,36 +1196,6 @@ namespace uf::operator_runtime
                     "sha256:d96860862dc25fb6efb21d09f59dcc99e3eed9508a5b6a6766937a15b3186eb9",
                 .targetIdentity = k_operatorDatabaseSchemaIdentity,
                 .apply          = migrateReleaseUpgradeEvidence,
-            },
-            SchemaMigration{
-                .sourceIdentity =
-                    "sha256:584ba6c3f25069a91978c32bc3cf2d1d8a20d1fb1da0e4265b441f7a1d27cd67",
-                .targetIdentity = k_operatorDatabaseSchemaIdentity,
-                .apply          = migrateOperatorU9Schema,
-            },
-            SchemaMigration{
-                .sourceIdentity =
-                    "sha256:96c4ef8ffb88bcb8ce85889d42426905ee3cad5cc2d65c7f498fbb2b7b9c4f71",
-                .targetIdentity = k_operatorDatabaseSchemaIdentity,
-                .apply          = migrateOperatorU9Schema,
-            },
-            SchemaMigration{
-                .sourceIdentity =
-                    "sha256:d4b8588784db487b928ef99e98e3adeff81f13530ea20375bd25a54a052d3968",
-                .targetIdentity = k_operatorDatabaseSchemaIdentity,
-                .apply          = migrateTransitionTableOnly,
-            },
-            SchemaMigration{
-                .sourceIdentity =
-                    "sha256:1c6c1d2002646293e63aa90d258b64270ac35708485f68a35aee0066a527addb",
-                .targetIdentity = k_operatorDatabaseSchemaIdentity,
-                .apply          = migrateSnapshotIdentityComment,
-            },
-            SchemaMigration{
-                .sourceIdentity =
-                    "sha256:4acadc866e4214f480492df68dd883af708700b8a4dc0cbc9db6f91b3a7315bf",
-                .targetIdentity = k_operatorDatabaseSchemaIdentity,
-                .apply          = migrateProjectBaselineOptional,
             },
             SchemaMigration{
                 .sourceIdentity =
