@@ -134,6 +134,15 @@ What production loses by never calling it:
   that cannot fail in production, of the kind
   [checks that cannot fail](pitfalls/checks-that-cannot-fail.md) names. Its own
   comment claims it is "what makes out-of-band human input stop the automation".
+  **Corrected 2026-08-18: the clause itself is live, not dead.** A falsification
+  attempt that removed it made `contract-product-p02` red immediately (the old
+  snapshot token was accepted at `test-product-contract.cpp:465`), proving the
+  clause excludes whenever a committed finding row exists — `recordExternalInput`
+  and `submitCommand` run in separate transactions, so the premise "the writer's
+  row is invisible to the clause" does not match the code. The defect is one of
+  the unwired-entry family (like `U6`): the mechanism works and is pinned by its
+  test, and production simply has no caller for `recordExternalInput`. The fix is
+  a production entry for the report, not a repair of the clause.
 - No `ExternalInputDetected` event is ever appended, so the reason `subscribe`
   reads other controllers' events cannot be exercised in production.
 - `ExternalInputAction::FreezeAndReobserve` and `FreezeAndReconcile` have no
