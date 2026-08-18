@@ -905,6 +905,262 @@ set_tests_properties(test-reclaim-cli PROPERTIES
     LABELS "CI"
 )
 
+# The release upgrade and its capability approval, driven through the shipped
+# binary rather than through a library call. That is the point of the gate:
+# upgradeRuntimeArtifactAndPinSession and approveReleaseCapabilities were
+# implemented, tested on a seven-row matrix and reachable from no production
+# entry point at all until `umbra-flow upgrade` and `umbra-flow approve` were
+# added on 2026-08-18, and a test that calls the Coordinator directly is
+# exactly the test that failed to notice.
+#
+# The sequence is the whole U6 story through the real executable: a bootstrap
+# upgrade on a fresh root, a second release whose expanded capability set is
+# refused for want of an approval, the approval, and the third upgrade that
+# lands it. The generation arithmetic is load-bearing: the refused upgrade
+# rolls the root back at attempted+1, so the third upgrade can only land at
+# generation 4 (1 installed, 1 attempted, 1 rollback, 1 final) and the driver
+# asserts exactly that.
+#
+# The driver is generated into the build tree rather than checked in beside
+# test-project-cli.cmake, the same way the reclaim driver above is: it is
+# produced by this file, and the alternative spelling is a second file that has
+# to be kept in step with the registration by hand. @ONLY, so the driver's own
+# ${} references survive configure and are read when CTest runs it.
+set(CLI_UPGRADE_DRIVER
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/test-upgrade-cli.cmake"
+)
+file(CONFIGURE
+    OUTPUT "${CLI_UPGRADE_DRIVER}"
+    @ONLY
+    CONTENT [=[
+cmake_minimum_required(VERSION 3.30)
+
+if(NOT EXISTS "${UF_CLI_EXECUTABLE}")
+    message(FATAL_ERROR
+        "umbra-flow executable does not exist: ${UF_CLI_EXECUTABLE}"
+    )
+endif()
+if(NOT EXISTS "${UF_UPGRADE_PROJECT_FIXTURE}/umbraflow-project.json")
+    message(FATAL_ERROR
+        "upgrade project fixture does not exist: ${UF_UPGRADE_PROJECT_FIXTURE}"
+    )
+endif()
+
+set(UPGRADE_FIXTURE "${UF_UPGRADE_TEST_ROOT}")
+set(UPGRADE_PROJECT "${UPGRADE_FIXTURE}/project")
+set(UPGRADE_RUNTIME "${UPGRADE_FIXTURE}/runtime")
+set(UPGRADE_HANDOFF_1 "${UPGRADE_FIXTURE}/handoff-1")
+set(UPGRADE_HANDOFF_2 "${UPGRADE_FIXTURE}/handoff-2")
+set(UPGRADE_LEDGER "${UPGRADE_RUNTIME}/operator-runtime.sqlite")
+
+# The project fixture is the shipped exemplar, copied so the Operator root the
+# verb creates is a fixture file rather than bytes in the source tree.
+file(REMOVE_RECURSE "${UPGRADE_FIXTURE}")
+file(MAKE_DIRECTORY "${UPGRADE_FIXTURE}")
+file(COPY "${UF_UPGRADE_PROJECT_FIXTURE}/" DESTINATION "${UPGRADE_PROJECT}")
+
+# Handoff 1 is the exemplar's own artifact, byte for byte: its root hash is
+# this binary's arithmetic over the manifest it carries, and the release
+# manifest is written here with the exact canonical field order the trusted
+# reader consumes.
+file(COPY
+    "${UPGRADE_PROJECT}/runtime/artifact/"
+    DESTINATION "${UPGRADE_HANDOFF_1}/runtime-artifact"
+)
+file(SHA256
+    "${UPGRADE_HANDOFF_1}/runtime-artifact/runtime-artifact.manifest.json"
+    ARTIFACT_MANIFEST_HASH_1
+)
+
+function(write_release_manifest HANDOFF ROOT_HASH)
+    file(WRITE "${HANDOFF}/release.manifest.json"
+        "{\"annotation_workspace_format\":2,\"candidate_id\":\"cli-fixture\","
+        "\"candidate_revision\":1,\"generation\":1,"
+        "\"predecessor_publication_id\":null,"
+        "\"replay_gate_hash\":\"${UF_UPGRADE_REPLAY_GATE_HASH}\","
+        "\"runtime_artifact_root_hash\":\"${ROOT_HASH}\","
+        "\"workspace_sqlite_revision\":2}")
+endfunction()
+
+write_release_manifest("${UPGRADE_HANDOFF_1}" "${ARTIFACT_MANIFEST_HASH_1}")
+file(SHA256 "${UPGRADE_HANDOFF_1}/release.manifest.json" RELEASE_MANIFEST_HASH_1)
+
+# Handoff 2 is a second release over a changed model: the model bytes differ,
+# so the page_model entry and the artifact root hash differ. The rest of the
+# artifact is copied unchanged, which is exactly what a compatible upgrade is.
+file(COPY
+    "${UPGRADE_HANDOFF_1}/runtime-artifact/"
+    DESTINATION "${UPGRADE_HANDOFF_2}/runtime-artifact"
+)
+file(APPEND "${UPGRADE_HANDOFF_2}/runtime-artifact/runtime-model.toml"
+    "# second release of the fixture model\n"
+)
+file(SHA256
+    "${UPGRADE_HANDOFF_2}/runtime-artifact/runtime-model.toml"
+    MODEL_HASH_2
+)
+file(SIZE
+    "${UPGRADE_HANDOFF_2}/runtime-artifact/runtime-model.toml"
+    MODEL_SIZE_2
+)
+file(READ
+    "${UPGRADE_HANDOFF_2}/runtime-artifact/runtime-artifact.manifest.json"
+    ARTIFACT_MANIFEST_2
+)
+string(REGEX REPLACE
+    "\"path\":\"runtime-model.toml\",\"sha256\":\"[0-9a-f]+\",\"size\":[0-9]+"
+    "\"path\":\"runtime-model.toml\",\"sha256\":\"${MODEL_HASH_2}\",\"size\":${MODEL_SIZE_2}"
+    ARTIFACT_MANIFEST_2_REVISED "${ARTIFACT_MANIFEST_2}"
+)
+file(WRITE
+    "${UPGRADE_HANDOFF_2}/runtime-artifact/runtime-artifact.manifest.json"
+    "${ARTIFACT_MANIFEST_2_REVISED}"
+)
+file(SHA256
+    "${UPGRADE_HANDOFF_2}/runtime-artifact/runtime-artifact.manifest.json"
+    ARTIFACT_MANIFEST_HASH_2
+)
+write_release_manifest("${UPGRADE_HANDOFF_2}" "${ARTIFACT_MANIFEST_HASH_2}")
+file(SHA256 "${UPGRADE_HANDOFF_2}/release.manifest.json" RELEASE_MANIFEST_HASH_2)
+
+function(run_upgrade OUTPUT_VARIABLE HANDOFF ROOT_HASH RELEASE_HASH)
+    execute_process(
+        COMMAND "${UF_CLI_EXECUTABLE}" upgrade
+            --project "${UPGRADE_PROJECT}" --runtime "${UPGRADE_RUNTIME}"
+            --handoff "${HANDOFF}"
+            --release-manifest-hash "sha256:${RELEASE_HASH}"
+            --artifact-root-hash "sha256:${ROOT_HASH}"
+            ${ARGN}
+        OUTPUT_VARIABLE UPGRADED
+        ERROR_VARIABLE UPGRADED_ERROR
+        RESULT_VARIABLE UPGRADED_STATUS
+    )
+    if(NOT UPGRADED_STATUS EQUAL 0)
+        message(FATAL_ERROR
+            "umbra-flow upgrade failed (${UPGRADED_STATUS}):\n${UPGRADED}${UPGRADED_ERROR}"
+        )
+    endif()
+    message("${UPGRADED}")
+    set(${OUTPUT_VARIABLE} "${UPGRADED}" PARENT_SCOPE)
+endfunction()
+
+function(installed_generation REPORT OUTPUT_VARIABLE)
+    if(NOT "${REPORT}" MATCHES "installed generation +([0-9]+)")
+        message(FATAL_ERROR "upgrade reported no installed generation:\n${REPORT}")
+    endif()
+    set(${OUTPUT_VARIABLE} "${CMAKE_MATCH_1}" PARENT_SCOPE)
+endfunction()
+
+# The bootstrap upgrade on a fresh root. The ledger the Coordinator creates is
+# the evidence the verb reached the Operator rather than reporting over a root
+# it never opened.
+run_upgrade(
+    FIRST_REPORT
+    "${UPGRADE_HANDOFF_1}" "${ARTIFACT_MANIFEST_HASH_1}" "${RELEASE_MANIFEST_HASH_1}"
+)
+if(NOT EXISTS "${UPGRADE_LEDGER}")
+    message(FATAL_ERROR
+        "upgrade reported without opening an Operator ledger at ${UPGRADE_LEDGER}"
+    )
+endif()
+installed_generation("${FIRST_REPORT}" FIRST_GENERATION)
+if(NOT FIRST_GENERATION STREQUAL "1")
+    message(FATAL_ERROR
+        "the first upgrade on a fresh root installed generation ${FIRST_GENERATION}"
+    )
+endif()
+
+# A second release whose session pins a wider capability set is refused until
+# the expansion is approved, and the refusal rolls the root back.
+execute_process(
+    COMMAND "${UF_CLI_EXECUTABLE}" upgrade
+        --project "${UPGRADE_PROJECT}" --runtime "${UPGRADE_RUNTIME}"
+        --handoff "${UPGRADE_HANDOFF_2}"
+        --release-manifest-hash "sha256:${RELEASE_MANIFEST_HASH_2}"
+        --artifact-root-hash "sha256:${ARTIFACT_MANIFEST_HASH_2}"
+        --capability operate
+    OUTPUT_VARIABLE REFUSED_OUTPUT
+    ERROR_VARIABLE REFUSED_ERROR
+    RESULT_VARIABLE REFUSED_STATUS
+)
+if(REFUSED_STATUS EQUAL 0)
+    message(FATAL_ERROR
+        "an upgrade that expands capabilities was accepted without approval:\n${REFUSED_OUTPUT}"
+    )
+endif()
+string(FIND "${REFUSED_ERROR}" "capability expansion" EXPANSION_REFUSAL)
+if(EXPANSION_REFUSAL EQUAL -1)
+    message(FATAL_ERROR
+        "the refused upgrade did not name the capability expansion:\n${REFUSED_ERROR}"
+    )
+endif()
+
+# The approval that makes the expansion legal, recorded on the release the
+# refused pin targeted.
+execute_process(
+    COMMAND "${UF_CLI_EXECUTABLE}" approve
+        --runtime "${UPGRADE_RUNTIME}"
+        --artifact-root-hash "sha256:${ARTIFACT_MANIFEST_HASH_2}"
+        --evidence-hash "sha256:${UF_UPGRADE_EVIDENCE_HASH}"
+        --capability operate
+    OUTPUT_VARIABLE APPROVED_OUTPUT
+    ERROR_VARIABLE APPROVED_ERROR
+    RESULT_VARIABLE APPROVED_STATUS
+)
+if(NOT APPROVED_STATUS EQUAL 0)
+    message(FATAL_ERROR
+        "umbra-flow approve failed (${APPROVED_STATUS}):\n${APPROVED_OUTPUT}${APPROVED_ERROR}"
+    )
+endif()
+string(FIND "${APPROVED_OUTPUT}" "${ARTIFACT_MANIFEST_HASH_2}" APPROVED_ROOT_NAMED)
+if(APPROVED_ROOT_NAMED EQUAL -1)
+    message(FATAL_ERROR
+        "the approval report did not name the approved artifact root:\n${APPROVED_OUTPUT}"
+    )
+endif()
+
+# The refused upgrade rolled the root back at attempted+1, so the approved
+# upgrade installs at generation 4: 1 bootstrap, 1 attempted, 1 rollback, and
+# this one. A CAS that compared against a stale generation would red here.
+run_upgrade(
+    THIRD_REPORT
+    "${UPGRADE_HANDOFF_2}" "${ARTIFACT_MANIFEST_HASH_2}" "${RELEASE_MANIFEST_HASH_2}"
+    --capability operate
+)
+installed_generation("${THIRD_REPORT}" THIRD_GENERATION)
+if(NOT THIRD_GENERATION STREQUAL "4")
+    message(FATAL_ERROR
+        "the approved upgrade installed generation ${THIRD_GENERATION}, expected 4"
+    )
+endif()
+string(FIND "${THIRD_REPORT}" "${ARTIFACT_MANIFEST_HASH_2}" THIRD_ROOT_NAMED)
+if(THIRD_ROOT_NAMED EQUAL -1)
+    message(FATAL_ERROR
+        "the approved upgrade did not report the installed artifact root:\n${THIRD_REPORT}"
+    )
+endif()
+]=]
+    NEWLINE_STYLE LF
+)
+if(NOT EXISTS "${CLI_UPGRADE_DRIVER}")
+    message(FATAL_ERROR "failed to generate the upgrade CLI test driver")
+endif()
+
+add_test(
+    NAME test-upgrade-cli
+    COMMAND ${CMAKE_COMMAND}
+        -DUF_CLI_EXECUTABLE=$<TARGET_FILE:${PROJECT_NAME}>
+        -DUF_UPGRADE_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/upgrade-cli-fixture
+        -DUF_UPGRADE_PROJECT_FIXTURE=${UF_STAGED_UMBRAFLOW_PROJECT}
+        -DUF_UPGRADE_REPLAY_GATE_HASH=000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+        -DUF_UPGRADE_EVIDENCE_HASH=00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+        -P "${CLI_UPGRADE_DRIVER}"
+)
+set_tests_properties(test-upgrade-cli PROPERTIES
+    TIMEOUT 120
+    LABELS "CI"
+)
+
 if(TARGET ${PROJECT_NAME}_script)
     cpp_add_test(
         NAME test-script

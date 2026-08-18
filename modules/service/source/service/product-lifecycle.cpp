@@ -39,6 +39,16 @@ namespace uf::service
         };
         constexpr auto k_noAgentProfile = std::string_view{"null"};
 
+        // The controller identity an upgrade authenticates as, and the target
+        // every upgrade session binds. The target id is stable across upgrades
+        // so the chain of upgrade sessions shares one project instance key,
+        // which is what makes a later pin an upgrade of an earlier one rather
+        // than a stranger -- the ledger's release-upgrade guard keys on exactly
+        // that pair. A per-run target id would silently forfeit the quiescence
+        // and approval checks.
+        constexpr auto k_upgradeControllerId = std::string_view{"umbra-flow-upgrade"};
+        constexpr auto k_upgradeTargetId     = std::string_view{"runtime-artifact"};
+
         [[nodiscard]]
         auto hashOf(std::string_view bytes) -> Result<ContentHash>
         {
@@ -619,6 +629,165 @@ namespace uf::service
             operator_runtime::OperatorCoordinator::open(runtimeDirectory)
         );
         return coordinator.reclaimUnreferencedRuntimeArtifacts();
+    }
+
+    auto upgradeRuntimeArtifactAndPinSession(RuntimeUpgradeStart const& upgrade)
+        -> Result<RuntimeUpgradeResult>
+    {
+        UF_TRY_VALUE(
+            loaded,
+            deployment::loadProductionProject(upgrade.projectDirectory, {})
+        );
+        auto const deploymentIterator = std::ranges::find(
+            loaded.deployments,
+            loaded.primaryDeployment,
+            &deployment::LoadedDeployment::name
+        );
+        if (deploymentIterator == loaded.deployments.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "primary deployment disappeared after production validation"
+            );
+        }
+        auto const deploymentIndex = static_cast<std::size_t>(
+            std::distance(loaded.deployments.begin(), deploymentIterator)
+        );
+        auto& selected = loaded.deployments[deploymentIndex];
+
+        UF_TRY_VALUE(
+            coordinator,
+            operator_runtime::OperatorCoordinator::open(upgrade.runtimeDirectory)
+        );
+
+        // The generation the install compare-and-swaps against.
+        // activeRuntimeArtifactPin fails exactly when no release is active,
+        // and that absence is the bootstrap case the schema spells as
+        // generation 0 -- the same reading the ledger's own first-install
+        // tests use.
+        auto const active = coordinator.activeRuntimeArtifactPin();
+        auto const expectedInstalledGeneration = (
+            active ? active->installedGeneration : uint64{0}
+        );
+
+        auto registrar = operator_runtime::ProjectPluginRegistrar{};
+        UF_TRY_VALUE(
+            plugin,
+            registrar.registerPlugin(
+                selected.registration,
+                selected.pluginBytes,
+                selected.artifactBlobs,
+                selected.schemaOwner
+            )
+        );
+
+        UF_TRY_VALUE(operatorSchema, publishedSchema(k_operatorSchemaPath));
+        UF_TRY_VALUE(operatorSchemaHash, hashOf(operatorSchema.exactBytes));
+        auto policyBytes = loaded.policyArtifactBytes.value_or(
+            operator_runtime::denyAllPolicyArtifact(operatorSchemaHash)
+        );
+        UF_TRY_VALUE(policyHash, hashOf(policyBytes));
+        UF_TRY_VALUE(noAgentProfileHash, hashOf(k_noAgentProfile));
+
+        UF_TRY_VALUE(
+            sessionManifest,
+            operator_runtime::SessionManifest::create(
+                operator_runtime::SessionManifestSpec{
+                    .runtimeModelArtifactRootHash = upgrade.artifactRootHash,
+                    .operatorProtocolSchemaHash   = operatorSchemaHash,
+                    .projectRegistrationHash      = selected.registration.hash(),
+                    .policyArtifactHash           = policyHash,
+                    .agentProfileHash             = noAgentProfileHash,
+                }
+            )
+        );
+        UF_TRY(coordinator.registerProject(selected.registration));
+        UF_TRY_VALUE(
+            projectInstanceKey,
+            internalProjectInstanceKey(
+                selected.registration.hash(),
+                k_upgradeTargetId
+            )
+        );
+        UF_TRY(coordinator.provisionProjectInstance(
+            selected.registration,
+            plugin,
+            operator_runtime::ProjectInstanceBaseline{
+                .projectInstanceKey  = projectInstanceKey,
+                .eventId             = {},
+                .sessionManifestHash = sessionManifest.hash(),
+                .entry               = std::nullopt,
+            }
+        ));
+        UF_TRY_VALUE(
+            sessionId,
+            internalSessionId(
+                sessionManifest.hash(),
+                k_upgradeControllerId,
+                k_upgradeTargetId
+            )
+        );
+        UF_TRY_VALUE(
+            worldScope,
+            operator_runtime::ObservedInstanceWorldScope::run(
+                std::string{k_upgradeTargetId},
+                1
+            )
+        );
+        auto const installation = operator_runtime::RuntimeArtifactInstallRequest{
+            .handoffRoot                 = upgrade.handoffRoot,
+            .expectedReleaseManifestHash = upgrade.expectedReleaseManifestHash,
+            .expectedInstalledGeneration = expectedInstalledGeneration,
+        };
+        auto const pin = operator_runtime::SessionPin{
+            .sessionId                 = sessionId,
+            .authenticatedControllerId = std::string{k_upgradeControllerId},
+            .idempotencyNamespace      = std::string{k_upgradeControllerId},
+            .projectRegistrationHash   = selected.registration.hash(),
+            .controllerCapabilities    = upgrade.controllerCapabilities,
+            .controlledTargetId        = std::string{k_upgradeTargetId},
+            .projectInstanceKey        = projectInstanceKey,
+            .mode                      = operator_runtime::SessionMode::Read,
+            .kind                      = operator_runtime::ControllerKind::Human,
+            .worldScope                = worldScope,
+        };
+        if (active)
+        {
+            UF_TRY(coordinator.upgradeRuntimeArtifactAndPinSession(
+                installation,
+                pin,
+                sessionManifest,
+                std::nullopt
+            ));
+        }
+        else
+        {
+            // A root with no release is the bootstrap: there is no predecessor
+            // for the ledger's refusal rollback to restore, so the first
+            // install goes through the same two public doors the ledger's own
+            // first-install tests use. A pin refusal leaves the install active
+            // and no session; re-running the verb then takes the upgrade path.
+            UF_TRY(coordinator.installRuntimeArtifact(installation));
+            UF_TRY(coordinator.pinSession(pin, sessionManifest, std::nullopt));
+        }
+        UF_TRY_VALUE(installed, coordinator.activeRuntimeArtifactPin());
+        return RuntimeUpgradeResult{
+            .installedGeneration = installed.installedGeneration,
+            .artifactRootHash    = installed.artifactRootHash,
+            .sessionId           = std::move(sessionId),
+        };
+    }
+
+    auto approveReleaseCapabilities(
+        std::filesystem::path const& runtimeDirectory,
+        operator_runtime::ReleaseCapabilityApproval const& approval
+    ) -> Status
+    {
+        UF_TRY_VALUE(
+            coordinator,
+            operator_runtime::OperatorCoordinator::open(runtimeDirectory)
+        );
+        return coordinator.approveReleaseCapabilities(approval);
     }
 
     auto ProductLifecycle::shutdown() -> Status

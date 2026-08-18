@@ -1,5 +1,6 @@
 #include "application-info.hpp"
 
+#include <cli/approve.hpp>
 #include <cli/args.hpp>
 #include <cli/cli-result.hpp>
 #include <cli/explore.hpp>
@@ -8,6 +9,7 @@
 #include <cli/open-project.hpp>
 #include <cli/reclaim.hpp>
 #include <cli/targets.hpp>
+#include <cli/upgrade.hpp>
 
 #include <core/numeric/checked-cast.hpp>
 #include <core/safety/annotations.hpp>
@@ -184,6 +186,50 @@ namespace uf::cli
             return ExitCode::Success;
         }
 
+        [[nodiscard]]
+        auto dispatchUpgrade(std::span<std::string const> raw) -> ExitCode
+        {
+            auto const args = parseUpgradeArguments(raw);
+            if (!args)
+            {
+                std::cerr << formatError(args.error()) << '\n';
+                std::cerr << upgradeUsageText();
+                return exitCodeForError(args.error(), false);
+            }
+
+            auto const upgraded = upgradeProduct(*args);
+            if (!upgraded)
+            {
+                std::cerr << formatError(upgraded.error()) << '\n';
+                return exitCodeForError(upgraded.error(), false);
+            }
+
+            std::cout << formatUpgradedRuntime(*upgraded);
+            return ExitCode::Success;
+        }
+
+        [[nodiscard]]
+        auto dispatchApprove(std::span<std::string const> raw) -> ExitCode
+        {
+            auto const args = parseApproveArguments(raw);
+            if (!args)
+            {
+                std::cerr << formatError(args.error()) << '\n';
+                std::cerr << approveUsageText();
+                return exitCodeForError(args.error(), false);
+            }
+
+            auto const approved = approveProduct(*args);
+            if (!approved)
+            {
+                std::cerr << formatError(approved.error()) << '\n';
+                return exitCodeForError(approved.error(), false);
+            }
+
+            std::cout << formatApprovedRelease(*approved);
+            return ExitCode::Success;
+        }
+
         using CommandHandler = ExitCode (*)(std::span<std::string const>);
 
         struct Command final
@@ -193,12 +239,14 @@ namespace uf::cli
         };
 
         constexpr auto k_commands = std::array{
+            Command{"approve", &dispatchApprove},
             Command{"explore", &dispatchExplore},
             Command{"observe", &dispatchObserve},
             Command{"ocr", &dispatchOcr},
             Command{"open", &dispatchOpen},
             Command{"reclaim", &dispatchReclaim},
             Command{"targets", &dispatchTargets},
+            Command{"upgrade", &dispatchUpgrade},
         };
 
         [[nodiscard]]

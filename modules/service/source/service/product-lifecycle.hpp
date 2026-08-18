@@ -83,11 +83,12 @@ namespace uf::service
     // are pinned into SessionManifest and passed to OperatorPlanAuthority with
     // deployment's production PlanProposal and StepIntent readers.
     //
-    // This module holds the only two production calls that open an
-    // OperatorCoordinator -- start below, and reclaimRuntimeArtifacts after the
-    // class -- so both reach a root through OperatorCoordinator::open and both
-    // complete its recovery before doing anything else. No production type
-    // outside this module constructs one.
+    // This module holds the only production calls that open an
+    // OperatorCoordinator -- start below, and reclaimRuntimeArtifacts,
+    // upgradeRuntimeArtifactAndPinSession and approveReleaseCapabilities after
+    // the class -- so every one reaches a root through
+    // OperatorCoordinator::open and completes its recovery before doing
+    // anything else. No production type outside this module constructs one.
     class ProductLifecycle final
     {
         struct Impl;
@@ -157,6 +158,63 @@ namespace uf::service
     [[nodiscard]]
     auto reclaimRuntimeArtifacts(std::filesystem::path const& runtimeDirectory)
         -> Result<operator_runtime::ReclaimedRuntimeArtifacts>;
+
+    // The production door for a RuntimeArtifact release upgrade: what a caller
+    // states, in the order the ledger consumes it.
+    //
+    // The two hashes are both stated because the ledger's two reads cannot be
+    // derived from one another from this module's side of the boundary.
+    // expectedReleaseManifestHash is what installRuntimeArtifact compares the
+    // handoff's release.manifest.json against, and artifactRootHash is the root
+    // that manifest declares -- which is what the session the upgrade pins
+    // binds its SessionManifest to. The ledger itself proves them consistent:
+    // the pin is refused unless the manifest's root is the installed one, and
+    // the installed root is the one the trusted release manifest named.
+    struct RuntimeUpgradeStart final
+    {
+        std::filesystem::path    projectDirectory{};
+        std::filesystem::path    runtimeDirectory{};
+        std::filesystem::path    handoffRoot{};
+        ContentHash              expectedReleaseManifestHash;
+        ContentHash              artifactRootHash;
+        std::vector<std::string> controllerCapabilities{};
+    };
+
+    struct RuntimeUpgradeResult final
+    {
+        uint64      installedGeneration{};
+        ContentHash artifactRootHash;
+        std::string sessionId{};
+    };
+
+    // Publishes the handoff into the Operator root at runtimeDirectory and
+    // pins the session that records the release. The project at
+    // projectDirectory names the deployment the upgrade session registers and
+    // pins itself to, and the SessionManifest is derived exactly as
+    // ProductLifecycle::start derives it -- same published schema, same policy
+    // bytes, same agent profile -- with the candidate artifactRootHash where
+    // start would put the installed root's.
+    //
+    // The generation the install compare-and-swaps against is read from the
+    // root's active pin, and a root with no active release is the bootstrap
+    // case: there is nothing to compare against but the absence of anything,
+    // which is what generation 0 spells (the schema's first installation
+    // starts at 1).
+    [[nodiscard]]
+    auto upgradeRuntimeArtifactAndPinSession(RuntimeUpgradeStart const& upgrade)
+        -> Result<RuntimeUpgradeResult>;
+
+    // Records the evidence that expanding a session's capability set onto
+    // artifactRootHash was authorised, in the Operator root at
+    // runtimeDirectory. The approval is recorded before the pin that needs
+    // it, which is the ledger's whole rule: a pin that expands capabilities
+    // without a recorded approval is refused, and this is the only production
+    // door that records one.
+    [[nodiscard]]
+    auto approveReleaseCapabilities(
+        std::filesystem::path const& runtimeDirectory,
+        operator_runtime::ReleaseCapabilityApproval const& approval
+    ) -> Status;
 
     // Which failure a caller is told about when the work and the close that
     // followed it both failed. The work's failure is the one a caller can act

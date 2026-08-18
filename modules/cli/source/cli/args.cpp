@@ -78,6 +78,83 @@ namespace uf::cli
 
         constexpr auto k_reclaimRuntimeFlag = std::string_view{"--runtime"};
 
+        enum class UpgradeFlag : uint8
+        {
+            Project,
+            Runtime,
+            Handoff,
+            ReleaseManifestHash,
+            ArtifactRootHash,
+            Capability,
+        };
+
+        struct UpgradeFlagSpec final
+        {
+            std::string_view name{};
+            UpgradeFlag      flag{UpgradeFlag::Project};
+        };
+
+        constexpr auto k_upgradeFlags = std::array{
+            UpgradeFlagSpec{"--project", UpgradeFlag::Project},
+            UpgradeFlagSpec{"--runtime", UpgradeFlag::Runtime},
+            UpgradeFlagSpec{"--handoff", UpgradeFlag::Handoff},
+            UpgradeFlagSpec{
+                "--release-manifest-hash",
+                UpgradeFlag::ReleaseManifestHash,
+            },
+            UpgradeFlagSpec{"--artifact-root-hash", UpgradeFlag::ArtifactRootHash},
+            UpgradeFlagSpec{"--capability", UpgradeFlag::Capability},
+        };
+
+        [[nodiscard]]
+        auto findUpgradeFlag(
+            std::string_view name
+        ) noexcept -> std::optional<UpgradeFlag>
+        {
+            auto const found = std::ranges::find(
+                k_upgradeFlags,
+                name,
+                &UpgradeFlagSpec::name
+            );
+            if (found == k_upgradeFlags.end()) return std::nullopt;
+            return found->flag;
+        }
+
+        enum class ApproveFlag : uint8
+        {
+            Runtime,
+            ArtifactRootHash,
+            EvidenceHash,
+            Capability,
+        };
+
+        struct ApproveFlagSpec final
+        {
+            std::string_view name{};
+            ApproveFlag      flag{ApproveFlag::Runtime};
+        };
+
+        constexpr auto k_approveFlags = std::array{
+            ApproveFlagSpec{"--runtime", ApproveFlag::Runtime},
+            ApproveFlagSpec{"--artifact-root-hash", ApproveFlag::ArtifactRootHash},
+            ApproveFlagSpec{"--evidence-hash", ApproveFlag::EvidenceHash},
+            ApproveFlagSpec{"--capability", ApproveFlag::Capability},
+        };
+
+        [[nodiscard]]
+        auto findApproveFlag(
+            std::string_view name
+        ) noexcept -> std::optional<ApproveFlag>
+        {
+            auto const found = std::ranges::find(
+                k_approveFlags,
+                name,
+                &ApproveFlagSpec::name
+            );
+            if (found == k_approveFlags.end()) return std::nullopt;
+            return found->flag;
+        }
+
         enum class ObserveFlag : uint8
         {
             Project,
@@ -274,6 +351,29 @@ namespace uf::cli
                 return invalid(std::format("missing required argument {}", flag));
             }
             return *std::move(value);
+        }
+
+        // The canonical content-hash spelling, or a refusal naming the flag:
+        // a caller who saw ContentHash's own message would be told the format
+        // but not which word was wrong.
+        [[nodiscard]]
+        auto parseContentHash(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<ContentHash>
+        {
+            auto parsed = ContentHash::parse(value);
+            if (!parsed)
+            {
+                return invalid(
+                    std::format(
+                        "{} expects a canonical content hash, got \"{}\"",
+                        flag,
+                        value
+                    )
+                );
+            }
+            return *parsed;
         }
 
         [[nodiscard]]
@@ -533,6 +633,162 @@ namespace uf::cli
             requirePath(std::move(runtime), k_reclaimRuntimeFlag)
         );
         return ReclaimArgs{.runtime = std::move(requiredRuntime)};
+    }
+
+    auto parseUpgradeArguments(
+        std::span<std::string const> raw
+    ) -> Result<UpgradeArgs>
+    {
+        auto project             = std::optional<std::filesystem::path>{};
+        auto runtime             = std::optional<std::filesystem::path>{};
+        auto handoff             = std::optional<std::filesystem::path>{};
+        auto releaseManifestHash = std::optional<ContentHash>{};
+        auto artifactRootHash    = std::optional<ContentHash>{};
+        auto capabilities        = std::vector<std::string>{};
+
+        auto index = std::size_t{0};
+        while (index < raw.size())
+        {
+            auto const& name = raw[index];
+            auto const flag  = findUpgradeFlag(name);
+            if (!flag)
+            {
+                return invalid(std::format("unknown argument \"{}\"", name));
+            }
+            if (index + 1U >= raw.size())
+            {
+                return invalid(std::format("missing value for {}", name));
+            }
+            auto const& value = raw[index + 1U];
+
+            switch (*flag)
+            {
+            case UpgradeFlag::Project:
+                project = std::filesystem::path{value};
+                break;
+            case UpgradeFlag::Runtime:
+                runtime = std::filesystem::path{value};
+                break;
+            case UpgradeFlag::Handoff:
+                handoff = std::filesystem::path{value};
+                break;
+            case UpgradeFlag::ReleaseManifestHash:
+            {
+                UF_TRY_VALUE(
+                    parsed,
+                    parseContentHash(value, name)
+                );
+                releaseManifestHash = parsed;
+                break;
+            }
+            case UpgradeFlag::ArtifactRootHash:
+            {
+                UF_TRY_VALUE(
+                    parsed,
+                    parseContentHash(value, name)
+                );
+                artifactRootHash = parsed;
+                break;
+            }
+            case UpgradeFlag::Capability:
+                capabilities.emplace_back(value);
+                break;
+            }
+            index += 2U;
+        }
+
+        UF_TRY_VALUE(requiredProject, requirePath(std::move(project), "--project"));
+        UF_TRY_VALUE(requiredRuntime, requirePath(std::move(runtime), "--runtime"));
+        UF_TRY_VALUE(requiredHandoff, requirePath(std::move(handoff), "--handoff"));
+        if (!releaseManifestHash)
+        {
+            return invalid("missing required argument --release-manifest-hash");
+        }
+        if (!artifactRootHash)
+        {
+            return invalid("missing required argument --artifact-root-hash");
+        }
+
+        return UpgradeArgs{
+            .project             = std::move(requiredProject),
+            .runtime             = std::move(requiredRuntime),
+            .handoff             = std::move(requiredHandoff),
+            .releaseManifestHash = *releaseManifestHash,
+            .artifactRootHash    = *artifactRootHash,
+            .capabilities        = std::move(capabilities),
+        };
+    }
+
+    auto parseApproveArguments(
+        std::span<std::string const> raw
+    ) -> Result<ApproveArgs>
+    {
+        auto runtime          = std::optional<std::filesystem::path>{};
+        auto artifactRootHash = std::optional<ContentHash>{};
+        auto evidenceHash     = std::optional<ContentHash>{};
+        auto capabilities     = std::vector<std::string>{};
+
+        auto index = std::size_t{0};
+        while (index < raw.size())
+        {
+            auto const& name = raw[index];
+            auto const flag  = findApproveFlag(name);
+            if (!flag)
+            {
+                return invalid(std::format("unknown argument \"{}\"", name));
+            }
+            if (index + 1U >= raw.size())
+            {
+                return invalid(std::format("missing value for {}", name));
+            }
+            auto const& value = raw[index + 1U];
+
+            switch (*flag)
+            {
+            case ApproveFlag::Runtime:
+                runtime = std::filesystem::path{value};
+                break;
+            case ApproveFlag::ArtifactRootHash:
+            {
+                UF_TRY_VALUE(
+                    parsed,
+                    parseContentHash(value, name)
+                );
+                artifactRootHash = parsed;
+                break;
+            }
+            case ApproveFlag::EvidenceHash:
+            {
+                UF_TRY_VALUE(
+                    parsed,
+                    parseContentHash(value, name)
+                );
+                evidenceHash = parsed;
+                break;
+            }
+            case ApproveFlag::Capability:
+                capabilities.emplace_back(value);
+                break;
+            }
+            index += 2U;
+        }
+
+        UF_TRY_VALUE(requiredRuntime, requirePath(std::move(runtime), "--runtime"));
+        if (!artifactRootHash)
+        {
+            return invalid("missing required argument --artifact-root-hash");
+        }
+        if (!evidenceHash)
+        {
+            return invalid("missing required argument --evidence-hash");
+        }
+
+        return ApproveArgs{
+            .runtime          = std::move(requiredRuntime),
+            .artifactRootHash = *artifactRootHash,
+            .evidenceHash     = *evidenceHash,
+            .capabilities     = std::move(capabilities),
+        };
     }
 
     auto parseObserveArguments(
@@ -869,6 +1125,94 @@ namespace uf::cli
             "This command takes no arguments.\n";
     }
 
+    auto upgradeUsageText() noexcept -> std::string_view
+    {
+        return
+            "Usage:\n"
+            "  umbra-flow upgrade --project DIR --runtime DIR --handoff DIR\n"
+            "                     --release-manifest-hash HASH\n"
+            "                     --artifact-root-hash HASH "
+            "[--capability NAME]...\n"
+            "\n"
+            "Publishes a RuntimeArtifact release handoff into the Operator\n"
+            "production root at --runtime and pins the session that records\n"
+            "the release. It loads the project at --project, registers its\n"
+            "primary deployment, and derives the SessionManifest the same way\n"
+            "the production session path does, with the candidate\n"
+            "--artifact-root-hash where the installed root would go.\n"
+            "\n"
+            "The handoff at --handoff must hold exactly release.manifest.json\n"
+            "and runtime-artifact/, and --release-manifest-hash must be the\n"
+            "sha256 digest of that manifest. The ledger refuses to pin a\n"
+            "session whose manifest names an artifact root that was not\n"
+            "installed, which is what proves the two hashes agree.\n"
+            "\n"
+            "A first release installs at generation 1. A later upgrade whose\n"
+            "session pins a wider --capability set than the release it\n"
+            "replaces is refused until `umbra-flow approve` records the\n"
+            "expansion for this artifact root and capability set.\n"
+            "\n"
+            "It refuses while anything else holds the root, because the\n"
+            "Operator admits one owner at a time. Run it when no session is\n"
+            "running.\n"
+            "\n"
+            "Required:\n"
+            "  --project DIR                Project directory holding\n"
+            "                               umbraflow-project.json\n"
+            "  --runtime DIR                Operator production root receiving\n"
+            "                               the release\n"
+            "  --handoff DIR                Release handoff holding\n"
+            "                               release.manifest.json and\n"
+            "                               runtime-artifact/\n"
+            "  --release-manifest-hash HASH sha256: followed by 64 lowercase\n"
+            "                               hex digits, the digest of the\n"
+            "                               handoff's release.manifest.json\n"
+            "  --artifact-root-hash HASH    sha256: followed by 64 lowercase\n"
+            "                               hex digits, the artifact root the\n"
+            "                               release manifest declares\n"
+            "\n"
+            "Options:\n"
+            "  --capability NAME            Capability of the pinned session;\n"
+            "                               repeatable\n";
+    }
+
+    auto approveUsageText() noexcept -> std::string_view
+    {
+        return
+            "Usage:\n"
+            "  umbra-flow approve --runtime DIR --artifact-root-hash HASH\n"
+            "                     --evidence-hash HASH [--capability NAME]...\n"
+            "\n"
+            "Records in the Operator root at --runtime that the evidence whose\n"
+            "digest is --evidence-hash authorised pinning --capability onto\n"
+            "the release whose artifact root is --artifact-root-hash.\n"
+            "\n"
+            "The approval is the ledger's whole rule for capability\n"
+            "expansion: a release upgrade whose session pins a wider\n"
+            "capability set than the release it replaces is refused until an\n"
+            "approval naming this artifact root and this capability set is\n"
+            "recorded. Approve exactly what the refused `umbra-flow upgrade`\n"
+            "stated, then run that upgrade again.\n"
+            "\n"
+            "It refuses while anything else holds the root, because the\n"
+            "Operator admits one owner at a time.\n"
+            "\n"
+            "Required:\n"
+            "  --runtime DIR                Operator production root holding\n"
+            "                               the approval\n"
+            "  --artifact-root-hash HASH    sha256: followed by 64 lowercase\n"
+            "                               hex digits, the artifact root the\n"
+            "                               expansion targets\n"
+            "  --evidence-hash HASH         sha256: followed by 64 lowercase\n"
+            "                               hex digits, the digest of the\n"
+            "                               evidence the authorisation was\n"
+            "                               recorded against\n"
+            "\n"
+            "Options:\n"
+            "  --capability NAME            Capability being approved;\n"
+            "                               repeatable\n";
+    }
+
     auto usageText() -> std::string
     {
         auto text = std::string{exploreUsageText()};
@@ -880,6 +1224,10 @@ namespace uf::cli
         text += openUsageText();
         text += '\n';
         text += reclaimUsageText();
+        text += '\n';
+        text += approveUsageText();
+        text += '\n';
+        text += upgradeUsageText();
         text += '\n';
         text += targetsUsageText();
         return text;

@@ -377,6 +377,140 @@ namespace uf::cli
         CHECK(foreign.error().message().contains("--hwnd"));
     }
 
+    TEST_CASE("parseUpgradeArguments accepts the complete upgrade shape")
+    {
+        auto const result = parseUpgradeArguments(
+            std::vector<std::string>{
+                "--project",
+                "project-root",
+                "--runtime",
+                "runtime-root",
+                "--handoff",
+                "handoff-root",
+                "--release-manifest-hash",
+                "sha256:" + std::string(64, 'a'),
+                "--artifact-root-hash",
+                "sha256:" + std::string(64, 'b'),
+                "--capability",
+                "operate",
+                "--capability",
+                "reobserve",
+            }
+        );
+        REQUIRE(result.has_value());
+        CHECK(result->project == std::filesystem::path{"project-root"});
+        CHECK(result->runtime == std::filesystem::path{"runtime-root"});
+        CHECK(result->handoff == std::filesystem::path{"handoff-root"});
+        CHECK(result->releaseManifestHash.hex() == std::string(64, 'a'));
+        CHECK(result->artifactRootHash.hex() == std::string(64, 'b'));
+        REQUIRE(result->capabilities.size() == 2U);
+        CHECK(result->capabilities[0] == "operate");
+        CHECK(result->capabilities[1] == "reobserve");
+    }
+
+    TEST_CASE("parseUpgradeArguments requires every authority-bearing locator")
+    {
+        auto const noHandoff = parseUpgradeArguments(
+            std::vector<std::string>{
+                "--project", "p", "--runtime", "r",
+                "--release-manifest-hash", "sha256:" + std::string(64, 'a'),
+                "--artifact-root-hash", "sha256:" + std::string(64, 'b'),
+            }
+        );
+        REQUIRE_FALSE(noHandoff.has_value());
+        CHECK(noHandoff.error().message().contains("--handoff"));
+
+        // A hash the ledger could never match is refused at the boundary,
+        // naming the flag that was wrong rather than the format alone.
+        auto const badHash = parseUpgradeArguments(
+            std::vector<std::string>{
+                "--project", "p", "--runtime", "r", "--handoff", "h",
+                "--release-manifest-hash", "not-a-hash",
+                "--artifact-root-hash", "sha256:" + std::string(64, 'b'),
+            }
+        );
+        REQUIRE_FALSE(badHash.has_value());
+        CHECK(badHash.error().message().contains("--release-manifest-hash"));
+
+        auto const missingHash = parseUpgradeArguments(
+            std::vector<std::string>{
+                "--project", "p", "--runtime", "r", "--handoff", "h",
+                "--artifact-root-hash", "sha256:" + std::string(64, 'b'),
+            }
+        );
+        REQUIRE_FALSE(missingHash.has_value());
+        CHECK(missingHash.error().message().contains("--release-manifest-hash"));
+
+        // A flag `explore` takes, refused rather than accepted and ignored:
+        // this verb binds no window, so a caller that named one is running the
+        // wrong command.
+        auto const foreign = parseUpgradeArguments(
+            std::vector<std::string>{
+                "--project", "p", "--runtime", "r", "--handoff", "h",
+                "--release-manifest-hash", "sha256:" + std::string(64, 'a'),
+                "--artifact-root-hash", "sha256:" + std::string(64, 'b'),
+                "--hwnd", "0x20",
+            }
+        );
+        REQUIRE_FALSE(foreign.has_value());
+        CHECK(foreign.error().message().contains("--hwnd"));
+    }
+
+    TEST_CASE("parseApproveArguments accepts the complete approval shape")
+    {
+        auto const result = parseApproveArguments(
+            std::vector<std::string>{
+                "--runtime",
+                "runtime-root",
+                "--artifact-root-hash",
+                "sha256:" + std::string(64, 'c'),
+                "--evidence-hash",
+                "sha256:" + std::string(64, 'd'),
+                "--capability",
+                "operate",
+            }
+        );
+        REQUIRE(result.has_value());
+        CHECK(result->runtime == std::filesystem::path{"runtime-root"});
+        CHECK(result->artifactRootHash.hex() == std::string(64, 'c'));
+        CHECK(result->evidenceHash.hex() == std::string(64, 'd'));
+        REQUIRE(result->capabilities.size() == 1U);
+        CHECK(result->capabilities[0] == "operate");
+    }
+
+    TEST_CASE("parseApproveArguments requires the root and both hashes")
+    {
+        auto const noEvidence = parseApproveArguments(
+            std::vector<std::string>{
+                "--runtime", "r",
+                "--artifact-root-hash", "sha256:" + std::string(64, 'c'),
+            }
+        );
+        REQUIRE_FALSE(noEvidence.has_value());
+        CHECK(noEvidence.error().message().contains("--evidence-hash"));
+
+        auto const badHash = parseApproveArguments(
+            std::vector<std::string>{
+                "--runtime", "r",
+                "--artifact-root-hash", "sha256:" + std::string(64, 'c'),
+                "--evidence-hash", "evidence",
+            }
+        );
+        REQUIRE_FALSE(badHash.has_value());
+        CHECK(badHash.error().message().contains("--evidence-hash"));
+
+        auto const foreign = parseApproveArguments(
+            std::vector<std::string>{
+                "--runtime", "r",
+                "--artifact-root-hash", "sha256:" + std::string(64, 'c'),
+                "--evidence-hash", "sha256:" + std::string(64, 'd'),
+                "--project", "p",
+            }
+        );
+        REQUIRE_FALSE(foreign.has_value());
+        CHECK(foreign.error().message().contains("--project"));
+    }
+
     // The name is the assertion: every command main.cpp dispatches must appear.
     // It listed four of six until 2026-08-17 -- `observe` had been missing since
     // it was added, and `reclaim` arrived the same day -- so a command could ship
@@ -385,12 +519,14 @@ namespace uf::cli
     TEST_CASE("public usage names every command this binary dispatches")
     {
         auto const usage = usageText();
+        CHECK(usage.find("  umbra-flow approve ") != std::string::npos);
         CHECK(usage.find("  umbra-flow explore ") != std::string::npos);
         CHECK(usage.find("  umbra-flow observe ") != std::string::npos);
         CHECK(usage.find("  umbra-flow ocr ") != std::string::npos);
         CHECK(usage.find("  umbra-flow open ") != std::string::npos);
         CHECK(usage.find("  umbra-flow reclaim ") != std::string::npos);
         CHECK(usage.find("  umbra-flow targets\n") != std::string::npos);
+        CHECK(usage.find("  umbra-flow upgrade ") != std::string::npos);
         CHECK(usage.find("  umbra-flow run ") == std::string::npos);
         CHECK(usage.find("  umbra-flow check ") == std::string::npos);
         CHECK(usage.find("  umbra-flow replay ") == std::string::npos);

@@ -100,8 +100,19 @@ RETIRED_COMMANDS = frozenset({"check", "replay", "run"})
 # explicit call a person has. It is safe to offer because the Operator admits one
 # owner at a time: a sweep beside a live session is refused by
 # claimExclusiveOwnership rather than reasoned about here.
+#
+# upgrade and approve are on reclaim's terms: they name no target, open no
+# capture and post no input, so they cannot reach a window. What they reach is
+# the RuntimeArtifact release door the ledger publishes and the approval
+# evidence row it keys by root hash -- the production entry points U6 demanded
+# and that had none until 2026-08-18. upgrade publishes a handoff release and
+# pins the session that records it, and the ledger itself bounds the blast:
+# install compare-and-swaps against the active generation, a pin refusal
+# restores the predecessor at a new monotonic generation, and the whole
+# sequence is refused while any other session owns the root. approve records
+# an evidence-backed capability expansion and writes nothing else.
 ALLOWED_COMMANDS = frozenset(
-    {"explore", "observe", "ocr", "open", "reclaim", "targets"}
+    {"approve", "explore", "observe", "ocr", "open", "reclaim", "targets", "upgrade"}
 )
 # Names that must not be bound in a project script's global table.
 #
