@@ -1,91 +1,48 @@
 # Documentation Index
 
-Read the current contract first, then the one unfinished-work plan. Historical
-plans explain how a decision was reached but do not open additional work.
+Pointers only. This file holds no version, no status, no digest and no measured
+count: those are facts something else owns and verifies, and a copy of one here
+could only be kept true by hand.
 
-## 1. Current contract
+## Contract and design
 
-- [Runtime/game-operator breaking authority](plans/2026-08-09-runtime-hardening-rewrite.md)
-  — the frozen upstream implementation authority and semantic contract-version
-  ruling; its RuntimeModel field authority has since moved to v3.
-- [`schema/umbraflow-runtime-v3.schema.json`](../schema/umbraflow-runtime-v3.schema.json)
-  — normative runtime-model shape, with the
-  [runtime model contract](plans/2026-08-09-runtime-model-contract.md) as prose.
-- [Architecture](ARCHITECTURE.md) — module ownership and deliberate absences.
+- [`schema/`](../schema/) — the normative document shapes. The files are the
+  authority; no prose here restates them.
+- [`docs/design/`](design/) — what things currently *are*. The
+  [runtime model contract](design/2026-08-09-runtime-model-contract.md) explains
+  `schema/umbraflow-runtime-v3.schema.json`.
+- [Architecture](ARCHITECTURE.md) — module ownership, dependency direction, and
+  the deliberate absences.
 - [Domain glossary](../CONTEXT.md) — terminology authority.
-- [Product form and roadmap](plans/2026-07-21-product-form-and-roadmap.md) —
-  product direction, not current execution status.
 
-The project-directory decision and its measurements are complete historical
-records:
-[project as data](archive/plans/2026-08-11-project-as-data.md) and
-[its inventory](archive/plans/2026-08-11-project-as-data-inventory.md).
+## Decisions
 
-## 2. Current work
+- [`docs/decisions/`](decisions/README.md) — dated rulings, one per file, frozen.
+  A changed mind writes a new file; the old one keeps its bytes. Read
+  [the README](decisions/README.md) for why this is not the retired `docs/adr/`.
 
-- The consumer repository's `docs/architecture/parallel-implementation-plan.md`
-  is the only canonical list of unfinished work. It contains current blockers,
-  upstream correctness debt, Runtime behaviour, plugin/schema work, read-only
-  consumer obligations and documentation cleanup. Its predecessor is archived at
-  [`docs/archive/plans/2026-08-12-outstanding-work.md`](archive/plans/2026-08-12-outstanding-work.md),
-  which names where every row went.
-- The [upstream execution checklist](archive/plans/2026-08-19-upstream-execution-checklist.md)
-  is archived without rewriting its historical checkboxes; current status lives
-  only in the consumer execution authority.
-- [Plans index](plans/README.md) lists current authorities and every archived
-  plan.
+## Plans
 
-## 3. Architecture proposals
+- [`docs/plans/`](plans/README.md) — live work and product direction. A plan
+  holds work, not rulings; a ruling that turns up inside one moves to
+  `docs/decisions/`.
 
-- [HostPlugin architecture proposal](archive/reviews/2026-08-14-host-plugin-architecture-proposal.md)
-  — **ruled on and archived 2026-08-15.** Option A was approved, widened by a
-  second identity defect, and is implemented; option B was refused because the
-  evidence it was sold to purchase can be read today; option C was not
-  considered. `ARCHITECTURE.md`'s deliberate-absence sentence stands unchanged.
-  The one obligation that outlived it — hoist `modules/cli/source/cli/platform/`
-  into a shared module when a second real assembly root exists — is owned by
-  [the product roadmap](plans/2026-07-21-product-form-and-roadmap.md).
-- [Hash management simplification proposal](2026-08-14-hash-management-simplification-proposal.md)
-  — proposes zero developer-authored digests, removal of bundle/schema pins
-  used as compatibility versions, and retention only of automatically produced
-  aggregate content identity at real immutable-byte boundaries.
+## Published outward
 
-The HostPlugin document is a ruled historical review. The hash document remains
-a proposal except for its explicitly approved and executed Stage 1. Neither is
-current contract or a second unfinished-work list.
+- [`docs/PUBLIC-CONTRACT.md`](PUBLIC-CONTRACT.md) — generated, and the only
+  document a consuming repository reads.
 
-## 4. Current blockers
+## Two rules about the consumer repository
 
-The exact dependency order and acceptance criteria live only in the consumer
-repository's `docs/architecture/parallel-implementation-plan.md`. Do not copy
-its changing status rows here. The completed 2026-08-13 documentation audits
-are [archived and indexed](plans/README.md); they point every surviving
-divergence back to that single execution authority.
+Neither direction of reference is allowed, and the symmetry is the point.
 
-The real dual-game attestation remains external and cannot be moved by fixtures.
-
-## 5. Migration and evidence
-
-- [Framework capability survey](archive/reviews/2026-08-14-framework-capability-survey.md)
-  — archived implementation-symbol-to-test measurement through 2026-08-17;
-  Runtime v3 and later production wiring supersede its locators.
-- [Runtime migration report](plans/2026-08-09-runtime-migration-report.md) —
-  inherited baseline, dispositions and requirement-to-gate map. Verify it
-  against current paths before relying on an old locator.
-- Operator database identity and mismatch handling are governed by the current
-  implementation and the consumer execution authority. The 2026-08-12
-  development-only delete-on-open description is historical; `O-007` landed on
-  2026-08-13.
-- A consumer writes a project directory and runs
-  `umbra-flow-conformance --project <directory>`; it compiles no Umbraflow C++.
-- The committed consumer bundle is at contract version v1.18 and holds five
-  documents. The implementation plan is deliberately outside it.
-  **The exact-byte root pin was removed on 2026-08-16**; the version is
-  semantic, and the bytes that code consumes are pinned by the consumer's own
-  `conformance/interface-lock/<version>/manifest.json` and checked by its
-  `tests/contracts/test_interface_lock.py`. The ruling and the three
-  measurements behind it are in the
-  [rewrite authority](plans/2026-08-09-runtime-hardening-rewrite.md).
+- This repository does **not** copy the consumer's status, versions, blockers or
+  acceptance criteria. That ledger is the consumer's; a copy here is stale from
+  the moment work continues, and it drifts silently because nothing here can
+  check it.
+- This repository does **not** reference the consumer's internal documents
+  either — not by path, not by section. What the consumer needs from us is in
+  `docs/PUBLIC-CONTRACT.md`, which is generated from bytes in this repository.
 
 ## Before investigating a failure
 
@@ -95,7 +52,6 @@ not evidence unless its failure mode was observed.
 
 ## History
 
-`archive/plans/` and `archive/reviews/` retain completed, superseded and
-measurement-only documents. Each plan moved in the 2026-08-12 consolidation
-states at its top whether nothing remains owed or which consolidated row owns
-what survived.
+[`archive/plans/`](archive/plans/) and [`archive/reviews/`](archive/reviews/)
+retain completed, superseded and measurement-only documents, frozen. Nothing
+there is current, and nothing there is edited.

@@ -1,11 +1,10 @@
 # Runtime model contract
 
-> Rewritten 2026-08-19 for Runtime v3 after `2e781ec` and `27b4034`. The
-> normative field authority is
-> [`schema/umbraflow-runtime-v3.schema.json`](../../schema/umbraflow-runtime-v3.schema.json);
-> this document explains that schema and the behavior implemented by the trusted
-> compiler and resolver. It defines no compatibility spelling for an earlier
-> model.
+The normative field authority is
+[`schema/umbraflow-runtime-v3.schema.json`](../../schema/umbraflow-runtime-v3.schema.json).
+This document explains that schema and the behavior implemented by the trusted
+compiler and resolver. It defines no compatibility spelling for an earlier
+model.
 
 ## Authority and boundary
 
@@ -57,10 +56,10 @@ not a Surface identity language.
 whose existence and rectangles a block Reader has already detected, but it
 cannot establish a Binding or Surface identity.
 
-#### T-009 and T-010 ruled and landed 2026-08-18
+#### Text evidence does not establish surface identity
 
-`T-009` asked for a predicate meaning "this Reader found text here", motivated
-by variable event-card titles. The ruling is that detected Collections already
+The rejected alternative was a predicate meaning "this Reader found text here",
+motivated by variable event-card titles. Detected Collections already
 answer that question: line detection establishes the members and their
 rectangles, then an optional text predicate filters those already-existing
 members. Text is evidence about a Surface, never the identity of one.
@@ -69,11 +68,10 @@ Runtime v3 makes that ruling mechanical. `detector.all`, `detector.any`, and
 `detector.none` refer directly to `locator_predicate`; a Binding detector that
 spells `text_equals` is rejected, while the same predicate remains valid under
 a Collection. The former OCR identity fixture was not retained as an exception.
-`T-010` rebuilt its three Reader-boundary cases so the Surface resolves from
-locator evidence first, after which `absent`, `read` carrying the original text,
-and `unknown` carrying `low_confidence` remain separately observable. The
-schema, parser, fixtures, examples and annotation compiler moved together in
-`2e781ec` and `27b4034` with no Runtime v2 reader or spelling left.
+The Reader boundary keeps three outcomes after the Surface resolves from locator
+evidence: `absent`, `read` carrying the original text, and `unknown` carrying
+`low_confidence`. The schema, parser, fixtures, examples and annotation compiler
+have one spelling; there is no Runtime v2 reader or OCR-identity exception.
 
 ### Binding
 
@@ -200,26 +198,18 @@ reading is `read`, `absent`, or `unknown`; only `read` has `lines`, and only
 after the Reader's floor has judged it, but retain line rectangles because
 geometry participates in the decision basis.
 
-## Landed behavior packages
+### Confirmation and recognition
 
-The consumer execution authority records these packages as landed. They remain
-listed here only to preserve the contract provenance, not to open work.
+The one `resolve_state` operation first confirms a caller-supplied expected
+Surface stack. It returns that stack only when every member confirms present
+with no Unknown or ambiguity; otherwise the same operation escalates to full
+Surface resolution. There is no fallback API, interrupt-only escalation path,
+or second recognition entry point.
 
-- `T-005` owns confirmation versus recognition. The one `resolve_state` API
-  confirms a caller-supplied expected Surface stack first. It returns that
-  stack only when every member confirms present with no Unknown or ambiguity;
-  otherwise the same call escalates to full Surface resolution. There is no
-  fallback API, interrupt-only escalation path, or second recognition entry
-  point. The behavior landed in `c3ee416`.
-- `T-006` owns the runtime map verbs: atomic `drag(start, offset)`,
-  connectivity reading with stitched-map evaluation, and conditional
-  same-kind enumeration, each with its runtime and conformance gate. They landed
-  in `1d274ec`.
-- `T-007` owns the remaining map rulings: wheel authorization, drag duration,
-  colour-key ownership, and the conditional-enumeration falsifier. They landed
-  with `T-006` in `1d274ec`.
-- `T-009` ruled out a second text-existence capability in `ae211f3`; `T-010`
-  made that ruling enforceable in Runtime v3 through `2e781ec` and `27b4034`.
+### Map operations
 
-The consumer repository's execution plan remains the only unfinished-work
-ledger. Nothing in this section is a duplicate work row.
+Runtime map operations have one spelling each: atomic `drag(start, offset)`,
+connectivity reading with stitched-map evaluation, and conditional same-kind
+enumeration. Wheel input requires authorization, drag duration is part of the
+authorized operation, colour keys remain owned by the model, and conditional
+enumeration fails closed when its condition cannot be established.

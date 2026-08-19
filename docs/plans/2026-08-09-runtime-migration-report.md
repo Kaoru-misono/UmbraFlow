@@ -1,38 +1,26 @@
 # Runtime upstream migration report
 
-Status: G0 execution map
 Date: 2026-08-09
 Scope: `umbraflow-cpp` only; no consumer-project writes
 
-> Amended 2026-08-19: RuntimeModel moved from v2 to v3 in `2e781ec` and
-> `27b4034`. The current execution map below names the v3 schema and tests. The
-> baseline and disposition manifests remain byte-for-byte historical evidence
-> of the inherited v2 path; they are not current path inventories.
+The requirement-to-owner/schema/gate map for the
+[breaking rewrite](2026-08-09-runtime-hardening-rewrite.md). It is an execution
+record, not an unfinished-work list and not a closure ledger: the authority for
+which gates exist is `UF_REQUIRED_DOCTEST_CONTRACTS` in `tests/CMakeLists.txt`,
+and this file states no gate count — see
+[2026-08-11](../decisions/2026-08-11-test-registrations-are-the-authority.md).
 
-This report binds spec contract version v1.18 to the inherited upstream baseline
-rooted at
+It names no consumer contract version. The baseline root below identifies a
+manifest this repository generates and re-verifies, which is a different job from
+using a document digest as a compatibility version.
+
+Inherited upstream baseline root:
 `55444b02a8ace9fe7493e5175618ef0a67d87402087874b7972187ac71ed8ac7`.
 
-> Amended 2026-08-16: the spec root digest that stood in the first clause is
-> gone with the bundle pin; the baseline root above stays, because it identifies
-> a manifest this repository generates and re-verifies, which is a different job
-> from using a document digest as a compatibility version.
-
-> Amended 2026-08-12: written against v1.9, root `c4760bb5…bfb6a966`, and
-> re-bound here because G0 in the requirements matrix passes only on a migration
-> report bound to the *current* bundle root. The bundle moved on 2026-08-12
-> through v1.10, v1.11 and v1.12 to v1.13; no requirement row, owner, schema
-> path or CTest ID below changed with it. v1.13 records the consumer's
-> product/conformance split and follows two evidence records into `legacy/`.
->
-> Amended 2026-08-13: the committed bundle is v1.18 at the root above. The full
-> bundle gate verified five pinned documents plus the manifest root. Numeric
-> CTest totals below were removed because later work added gates; the named IDs,
-> not a copied count, are the contract.
-
-The executable specification resolutions derived from the product bundle are
-fixed by
-[`2026-08-09-runtime-hardening-rewrite.md`](2026-08-09-runtime-hardening-rewrite.md).
+RuntimeModel moved from v2 to v3 in `2e781ec` and `27b4034`; the map below names
+the v3 schema and tests. The baseline and disposition manifests remain
+byte-for-byte historical evidence of the inherited v2 path and are not current
+path inventories.
 
 ## Executable schema locations
 
@@ -55,112 +43,6 @@ Verification IDs marked `CTEST` are exact local CTest names. One executable
 may serve multiple IDs, but `ctest -N` must list each of those IDs separately.
 IDs marked `EXTERNAL` are consumer or cross-repository attestations; local
 fixtures cannot satisfy them.
-
-> **Amended 2026-08-10: gates carry two prefixes, and this map was rebuilt from
-> the registrations.** `dcc43b5` split the vocabulary — `contract-<area>-<id>`
-> exercises the code and goes red when the behaviour is removed;
-> `schema-<area>-<id>` only reads a `schema/*.json` file and asserts a
-> definition exists with certain members, so it passes whether or not the
-> behaviour does. Fourteen rows below moved to the `schema-` spelling. Five more
-> requirements, `C-09` through `C-13`, kept a `contract-` gate — it moved into
-> the exported suite with the store behaviour it names — and gained a `schema-`
-> gate beside it in `tests/operator/`, which is why 42 requirements carried 47
-> gates on that date: 28 `contract-*` under label `CI;CONTRACT` and 19
-> `schema-*` under `CI;SCHEMA`. (Five more requirements joined them by
-> 2026-08-11; see the amendment below for the current totals.)
-> `dcc43b5` did not update this report and `5bb281d` edited it
-> without correcting the rows; the drift was found by
-> [the third adversarial round](../archive/reviews/2026-08-10-third-round-review.md),
-> R3-F3. The registrations are the authority:
-> `UF_REQUIRED_DOCTEST_CONTRACTS` in `tests/CMakeLists.txt` and the `CASES`
-> lists in `tests/CMakeLists.txt` and
-> `conformance/exemplars/umbraflow/CMakeLists.txt`.
-
-> **Amended 2026-08-11: five requirements gained a `contract-` gate, so the
-> totals are 52 gates over 42 requirements — 33 `contract-*` and 19
-> `schema-*`.** The deciding artifact is `UF_REQUIRED_DOCTEST_CONTRACTS` in
-> `tests/CMakeLists.txt`, which is machine-checked and was correct throughout;
-> this report is the human authority and no gate reads it, which is why it is
-> the side that drifted. `4b955de` added `contract-state-s01` and
-> `contract-state-s02` with the Snapshot Coordinator; `848e390` added
-> `contract-control-c05`, `contract-control-c08` and `contract-state-s04` with
-> the EffectivePlan. Neither commit updated the rows below, which is the same
-> violation of stop condition 2 that R3-F3 found in `dcc43b5`, and the second
-> time the order "report first, then `tests/CMakeLists.txt`" was inverted. The
-> five requirements now own one gate of each kind, for the reason `C-09`
-> through `C-13` already do: the behaviour and the schema shape are different
-> things to guard.
-
-> **Amended 2026-08-11: the block closed, and seven more requirements gained a
-> `contract-` gate. The totals are 59 gates over 42 requirements — 40
-> `contract-*` and 19 `schema-*`.** The deciding artifact is again
-> `UF_REQUIRED_DOCTEST_CONTRACTS` in `tests/CMakeLists.txt`. `25f57f9` (W4)
-> added `contract-control-c03` and `contract-agent-a07`; `93698b4` (W6) added
-> `contract-product-p01`, `p02` and `p03`; `c23efd3` (W7) added
-> `contract-agent-a01` and `contract-agent-a02`. Their rows below are updated to
-> name both gates, as the twelve before them are.
->
-> **Corrected 2026-08-11 (`07abc3e`): the gate totals stand, the closure count
-> does not.** 59 gates over 42 requirements is right, and all 40 `contract-*`
-> gates are registered and green. What the paragraph below asserts and should
-> not is that a `contract-` gate per requirement means the requirement is
-> closed. `contract-agent-a07` proves one of `A-07`'s two acceptance clauses —
-> an in-flight dispatch is explicitly reported — and nothing implements the
-> other. So **39 requirements own a behavioural gate that closes them, not 40**,
-> and `A-07` is reopened; its row below says so. This table maps requirements to
-> gates and is correct as such. It is not a closure ledger, and reading it as one
-> is how the row stayed unqualified. See
-> [the archived next-block record](../archive/plans/2026-08-10-next-block.md) §2 and §6.1.
-
-> **Corrected again 2026-08-11 (`bed456f`): the correction above also misread
-> the acceptance text.** The frozen bundle's row places both consequences
-> inside `A-07`'s 验收 — "takeover 返回后旧 fence 不可开始新 dispatch；在途
-> dispatch 被明确报告" — not one in its 需求 and one in its 验收. The first
-> clause is `reserveDispatch`'s live-lease predicate, `requireLiveLease`, which
-> already ran inside the same `BEGIN IMMEDIATE` serialization `takeoverLease`
-> commits in, before the reopening; what was missing was a test that ran the
-> schedule, not a call edge. `contract-agent-a07` was extended, not joined by a
-> second case, and both clauses are now falsified by mutation. **All 40
-> `contract-*` gates close their requirement in full, and 42 of 42 requirements
-> are closed by a behavioural gate.** `A-07`'s row below is corrected to match.
-> See [the archived next-block record](../archive/plans/2026-08-10-next-block.md) §2.
-
-> **Forty of the forty-two requirements now own a behavioural gate, and the two
-> that do not are not open work.** `A-03` and `A-05` are implemented — the
-> Replay Bundle closure and both publication gates landed in `25520a3` on the
-> Python side — and they are gated, by the aggregate CTest
-> `test-annotate-backend`. What they lack is a *per-requirement CTest ID* for
-> the behavioural half, not a gate and not the behaviour. A reader who sees
-> "40 of 42" and concludes two requirements are unimplemented has the wrong
-> conclusion; `UF_SCHEMA_ONLY_REQUIREMENTS` names exactly those two and CMake
-> refuses to let the set drift.
->
-> **Every commit that has ever registered a gate inverted this report's stop
-> condition 2, and that is now the rule's whole history.** `dcc43b5` (found by
-> R3-F3), then `4b955de` and `848e390`, then `25f57f9`, `93698b4` and
-> `c23efd3`: six commits, one direction, no counter-example. (`e64c143`, W4's
-> additive half, registered no gate and owed this report nothing.) The cause is
-> structural rather than individual. `tests/CMakeLists.txt` is machine-checked and refuses to disagree
-> with itself; **no gate reads this file**, so the ordering "report first" is
-> enforced by nothing and the report is always the side that drifts. Stating it
-> here rather than only in each landing's message: if this keeps recurring, the
-> answer is a check that reads the rows below, not a stricter reading of stop
-> condition 2.
-
-> **Amended 2026-08-11: the nine `attest-consumer-dNN` IDs now have a
-> specification.** Until that date the `D-01`-`D-09` rows below were the only
-> occurrence of those strings anywhere in the tree, and nothing said what a
-> consumer produces, who signs it, where it is recorded, or what refuses it.
-> [Consumer attestation](../archive/plans/2026-08-11-consumer-attestation.md) settles all four:
-> one exact JCS `ProjectAttestationSet` inlining nine content-addressed
-> attestations, carried as the `attestations` entry of
-> `project_artifact_roots` — which is why the `Schema location` column of those
-> rows is correct as written and needs no change. The rows stay `EXTERNAL`, and
-> that document deliberately adds no upstream gate, because a local fixture
-> could satisfy any gate it added. It also records two matrix facts this report
-> does not carry: `D-09` is `PHASED` rather than `PROJECT_CONTRACT`, and `C-11`
-> and `A-04` carry `PROJECT_CONTRACT` beside `REQUIRED_CORE`, so the consumer's
-> obligation list is eleven requirements rather than these nine.
 
 ## Requirement ownership and test map
 
@@ -215,22 +97,8 @@ fixtures cannot satisfy them.
 | A-04 | Reconciliation coordinator | JR:`JournalEvent` | CTEST `contract-agent-a04` — since 2026-08-11 it also binds the `journal_events` column set to `JR:JournalEvent`'s `required` list and drives six provenance documents that each violate one rule of the fixed `JR:JournalProvenance`, which the framework now enforces itself; see [the journal record binding](../archive/plans/2026-08-11-journal-record-binding.md) |
 | A-05 | Publication gates | AW:`ReplayGate` + PR:`plugin_hash` | CTEST `schema-agent-a05`; behaviour under the aggregate CTEST `test-annotate-backend`, with no per-requirement ID |
 | A-06 | Deployment boundary | AW:`AuthoringCapabilityRoot` + RA | CTEST `contract-agent-a06` |
-| A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `contract-agent-a07` and CTEST `schema-agent-a07` — **closed**: `contract-agent-a07` proves both acceptance clauses — the displaced lease is refused a reservation the live lease is then granted, and a second Host still carrying the displaced fence cannot deliver it — after being extended 2026-08-11 (`bed456f`) to run the schedule the first clause needed. Reopened earlier the same day (`07abc3e`) on a misreading that substituted the 需求 sentence for the first 验收 clause. See [the archived next-block record](../archive/plans/2026-08-10-next-block.md) §2 |
+| A-07 | Host control ledger | OP:`ControlTransition/DeliveryAuthority` | CTEST `contract-agent-a07` and CTEST `schema-agent-a07` — `contract-agent-a07` falsifies both acceptance clauses by mutation: the displaced lease is refused a reservation the live lease is then granted, and a second Host still carrying the displaced fence cannot deliver it |
 | A-08 | Operator recovery | OP:`ExternalInputFinding/OperationState` | CTEST `contract-agent-a08` |
-
-> Amended 2026-08-15: `U-02` named `OP:RuntimeModelBindingRef` alongside
-> `RA:RuntimeArtifactManifest`. That `$defs` entry was reached by no `$ref` and
-> named by no source — `contract-runtime-u02` never read it — and Stage H5 of
-> [the framework hash cleanup](../archive/plans/2026-08-14-framework-hash-cleanup.md)
-> deleted it. The Host binding shape the row is about is
-> `RA:RuntimeArtifactManifest`, which is what the CTest checks.
-
-> Amended 2026-08-17 (`U11c`): `D-08` named `OP:ExpectedEffect`. The Operator
-> protocol defines no such record — the effect a plan declares is
-> `OP:EffectEnvelope`, which is the name the consumer specification uses for it
-> and which `684008f` restored. `ExpectedEffect` is the consumer's own
-> project-layer record, the pole `D-08` forbids merging with `ObservedOutcome`,
-> so it reaches this row through `CP` and not through `OP`.
 
 Where the named requirement gates were declared as of 2026-08-11:
 
@@ -348,14 +216,16 @@ Implementation stops if:
 
 1. the consumer bundle's contract version changes, or an interface-lock vector
    changes without a version moving with it;
-2. a schema path or test ID changes without updating this report first;
+2. a schema path or test ID changes without updating this report first — a rule
+   no gate enforces, which is why it has been inverted every time; see
+   [2026-08-11](../decisions/2026-08-11-test-registrations-are-the-authority.md);
 3. any consumer-specific symbol enters generic C++/Luau/SQLite schemas;
 4. any old reader, alias, fallback, direct action entry point, or screenshot
    dependency is retained for compatibility;
 5. baseline and disposition manifests differ in path set/order, or any entry
    lacks exactly one explicit disposition.
 
-The real dual-game gate is currently `NOT_RUN`: this upstream-only worktree
-does not own two real consumer registrations and records no fabricated
-`project_registration_hash`. That status blocks consumer production mutation,
-not completion of the generic upstream framework.
+The real dual-game gate is `EXTERNAL` and cannot be satisfied here: this
+repository owns no two real consumer registrations and records no fabricated
+`project_registration_hash`. See
+[consumer examples never become core contracts](../decisions/2026-08-09-consumer-examples-never-become-core-contracts.md).

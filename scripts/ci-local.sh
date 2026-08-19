@@ -33,6 +33,7 @@ cd "$REPO_ROOT"
 "$PYTHON" scripts/check_cpp_format.py
 "$PYTHON" scripts/check_modules.py
 "$PYTHON" scripts/check_safety.py
+"$PYTHON" scripts/generate_public_contract.py --check
 cmake --preset "$PRESET"
 
 if [[ -n "$TARGET" ]]; then

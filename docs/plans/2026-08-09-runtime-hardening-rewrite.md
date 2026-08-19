@@ -1,249 +1,66 @@
-# Runtime v2 and game-operator breaking rewrite
+# Runtime and game-operator breaking rewrite
 
-Status: frozen upstream implementation authority
 Decision date: 2026-08-09
 Compatibility: intentionally breaking; no v1 compatibility code
 Scope: `umbraflow-cpp` only; consumer projects are read-only
 
-> Amended 2026-08-19: the RuntimeModel portion of this 2026-08-09 rewrite moved
-> to Runtime v3 in `2e781ec` and `27b4034`. The current field and behavior
-> authority is the [runtime model contract](2026-08-09-runtime-model-contract.md)
-> beside `schema/umbraflow-runtime-v3.schema.json`. The title, disposition table
-> and numbered implementation sequence below retain "Runtime v2" because they
-> record the breaking rewrite that created the boundary; they do not authorize
-> a v2 reader or spelling. The current local consumer checkout is
-> `E:/github/uf-chaos`; the 2026-08-12 path measurements remain historical.
+This is the upstream execution profile of the breaking rewrite: what it broke,
+in what order, and what the result may not do. It states no contract version, no
+digest and no progress. The rulings it once carried inline are frozen in
+[`docs/decisions/`](../decisions/README.md) and are linked below; what this
+repository publishes outward is
+[`docs/PUBLIC-CONTRACT.md`](../PUBLIC-CONTRACT.md).
 
-## Frozen product authority
+The RuntimeModel portion of this rewrite has since moved to Runtime v3. The
+current field and behavior authority is the
+[runtime model contract](../design/2026-08-09-runtime-model-contract.md) beside
+`schema/umbraflow-runtime-v3.schema.json`. The disposition table and numbered
+sequence below retain "Runtime v2" where they describe the rewrite that created
+the boundary; they do not authorize a v2 reader or spelling.
 
-The normative product input is the consumer's specification bundle at **contract
-version v1.18**. That is a semantic version, not a digest: two repositories agree
-when they implement the same contract version, and a digest can only report that
-two byte strings differ.
+## Product authority
 
-- The consumer repository is `github.com/Kaoru-misono/uf-chaos`; the bundle
-  documents live under its `docs/architecture/`.
-- Five documents are in it: the main design, the project-layer design, the
-  requirements matrix, the failure/recovery audit and the interface contract
-  lock. `parallel-implementation-plan.md` is deliberately outside — it is an
-  execution schedule, and pinning a status column is pinning progress.
-- **What is checked mechanically is the part code consumes**, not the prose:
-  `conformance/interface-lock/v1.18/` in that repository carries its own
-  manifest pinning every schema and vector by byte size and SHA-256, and the
-  consumer's `tests/contracts/test_interface_lock.py` verifies it — including a
-  refusal of CRLF. Those bytes are read by a validator; the five documents are
-  read by people.
+The normative product input is the consumer's specification bundle, identified by
+a semantic contract version. That version is not stated here: it is the
+consumer's, and a copy of it in this repository can only be kept true by hand —
+see
+[2026-08-19 — a document holds no fact that something else verifies](../decisions/2026-08-19-documents-hold-no-foreign-facts.md).
 
-> **Amended 2026-08-17: the vector half of the residual risk below now has a
-> gate, and the gate is red.** `tests/contracts/test_interface_lock_parity.py`
-> was written to compare this repository's producer schemas against the bytes
-> the consumer froze, and it was registered in no CTest target: it had never run
-> outside a hand invocation. It is now `check-interface-lock-parity`.
->
-> It takes the lock by path and this repository declares no default for it, so
-> the defect the ruling below removed does not come back. The path is a CMake
-> cache entry, `UF_CONSUMER_INTERFACE_LOCK`, and not an environment variable,
-> for the reason `CONTEXT.md` gives for `project --frames-root`: nothing here
-> reads the environment, and a run whose outcome depends on ambient state has no
-> record of what produced it. Undeclared, the gate is registered and reports
-> itself skipped by name; declared, it carries the CI label, because a
-> divergence report nobody is required to read is the defect an unregistered
-> test already was.
->
-> **Measured 2026-08-17 against `v1.18`: four of the five vectors agree and
-> `single-step-tool.json` does not.** The frozen vector's `/valid/schema` is
-> `umbraflow-declarative-single-step-tool/v1`; this repository's producer
-> requires `umbraflow-declarative-workflow-tool/v1`. `/valid` is missing `states`
-> and `steps` and carries a stale `ui_action`; all six of `/valid/bounds` are
-> spelled differently — `max_dispatches`, `max_observations` and `timeout_ms`
-> against `maximum_dispatches`, `maximum_observations`, `maximum_elapsed_ms`,
-> `maximum_states`, `maximum_steps` and `maximum_waits`.
->
-> Both repositories still call this contract v1.18 while disagreeing about the
-> declarative tool document, which is the disagreement the top of this section
-> says stops implementation. Nothing here rules on which side is right — that is
-> owed by whoever next revises the lock, and it is the same obligation the
-> residual-risk paragraph below already carries. What changed is that the
-> disagreement is now printed by a gate instead of being a thing nobody had run.
+What is checked mechanically is the part code consumes, not the prose. The
+consumer's interface lock carries its own manifest pinning every schema and
+vector by byte size and SHA-256, verified by the consumer's own suite. The
+bundle's design documents are read by people.
 
-> **Ruled 2026-08-16: the exact-byte bundle root pin is removed**, executing
-> Stage 1 of the hash management proposal. Three measurements decided it, and
-> each is checkable rather than a matter of taste.
->
-> **It was a CI-labelled test that depended on another repository's absolute
-> path.** `check-spec-bundle` carried `LABELS "CI"` in `tests/CMakeLists.txt`,
-> so it ran inside `ctest -L CI` and therefore inside `GATE: PASS` — the sentence
-> claiming it stayed out of `ci-local` was wrong, and the archived hash-cleanup
-> plan had already caught that. It found the bundle by regex-matching an absolute
-> path out of the prose above. On any machine without `E:/umbraflow-projects/uf-chaos`,
-> this repository's own gate could not pass. A reusable project foundation cannot
-> have that.
->
-> **Half of it never fired.** The digest printed here was only ever used to
-> locate the checkout; the value actually compared was the constant inside the
-> script. Mutating this document's root to a different digest left the gate green
-> and printing `VERIFIED`. That was recorded as a live divergence owned by
-> `U12d`, and it disappears with the pin rather than needing a repair.
->
-> **What it guarded is guarded better elsewhere.** The interface lock's normative
-> content — schemas and vectors — is byte-pinned by the consumer's own
-> interface-lock manifest, in the consumer's own automated suite. Pinning the
-> Markdown on top of that was a second spelling of one thing. The other four
-> documents are design prose, and nine known textual divergences sit inside them:
-> every one was blocked from repair by the pin, and repairing prose was never
-> what byte equality was for.
->
-> The residual risk is stated rather than hidden: outside what the interface-lock
-> vectors cover, there is no longer a mechanical check that both repositories
-> read the same contract version. Closing that is a review obligation on the
-> version number above, and the coverage question — which of the lock's prose
-> conventions must be mechanically held and which are left to review — is owed
-> by whoever next revises the lock.
-
-> Amended 2026-08-12 (v1.18). Three things moved together.
->
-> The **location** stated here was wrong. A v1.13 amendment claimed the
-> `E:/umbraflow-projects/uf-chaos/` checkout was deleted and moved the pin to
-> `E:/github/uf-chaos/`. The opposite is true: measured on 2026-08-12,
-> `E:/github/uf-chaos/` does not exist and `E:/umbraflow-projects/uf-chaos/` is
-> the live checkout, clean and pushed to `github.com/Kaoru-misono/uf-chaos`. The
-> full check therefore could not run at all, and the CTest registration then
-> read no consumer bytes, so nothing noticed for three bundle versions.
->
-> The **membership** changed. `interface-contract-lock.md` joins as a pinned
-> member: it is the wire contract two repositories implement against in parallel,
-> so this framework's correctness does depend on its exact bytes.
-> `parallel-implementation-plan.md` is deliberately *not* pinned. It is an
-> execution schedule; its status columns move as work proceeds, and pinning it
-> would red this gate on every increment of progress until nobody read it again.
-> The consumer's G0 was rewritten from six documents to five in the same change.
->
-> The **contents** changed: v1.14 through v1.16 froze the agent-first baseline and
-> the wave-zero interface; v1.17 fixed seven contract defects found by review and
-> measurement; v1.18 fixed five more, the largest being that the rejection-to-code
-> map was neither total nor deterministic, so two conforming implementations could
-> refuse the same document with different normative codes. See the interface
-> lock's own change record.
+- This repository states no exact-byte pin on that bundle:
+  [2026-08-16](../decisions/2026-08-16-no-exact-byte-consumer-bundle-pin.md).
+- Parity between our producer schemas and the frozen lock is a registered gate
+  that takes the lock by path:
+  [2026-08-17](../decisions/2026-08-17-interface-lock-parity-gate.md).
+- The execution schedule is deliberately outside the bundle: pinning a status
+  column is pinning progress.
 
 If the contract version disagrees, implementation stops; if an interface-lock
 vector's bytes disagree, the consumer's own gate stops it. Umbraflow does not
-modify that consumer repository. This file is the upstream execution profile and records
-four executable specification resolutions derived from explicit v1.9 clauses; it
-does not add product behavior or import consumer-specific schemas into core.
+modify that consumer repository.
 
 ## Executable specification resolutions
 
-> Renamed 2026-08-11 from "executable conformance resolutions". `conformance`
-> now names one thing in this repository, the exported suite under
-> `conformance/`, and a word given both to a test suite and to a class of
-> specification fork is the defect that rename exists to remove. The suite took
-> the word because every future consumer reads its name while this term is read
-> by this repository's maintainers, and because a resolution of a contradiction
-> inside a frozen specification is what these four are. Nothing about their
-> content changed. Deciding artifact: the conformance rename of 2026-08-11; the
-> term is recorded in `CONTEXT.md`.
+Four places where this repository picked one side of a contradiction inside the
+frozen specification and froze the choice upstream. They are not a second product
+authority; each closes an explicit requirement of the consumer's design, and
+checked-in upstream schemas only make the existing contract executable. Changing
+any product field, disposition or ownership requires a new contract version, not
+an edit here.
 
-These are not a second product authority:
+The four are frozen rulings and live in `docs/decisions/`:
 
-- the post-dispatch edge closes the main design §8.4 requirement that
-  cancel/deadline/lease loss after dispatch enters reconciliation;
-- the manifest schemas implement the main design §12 and Phase 0 requirement
-  for canonical, language-independent registration/session roots;
-- Operator-owned policy follows main design §5.3's pure plugin capability list
-  and policy order;
-- consumer-example exclusion follows main design §6's explicit project
-  ownership boundary.
+1. [post-dispatch approval wait is recoverable](../decisions/2026-08-09-post-dispatch-approval-wait-is-recoverable.md);
+2. [project and session roots have exact bytes](../decisions/2026-08-09-project-and-session-roots-have-exact-bytes.md);
+3. [policy is Operator-owned](../decisions/2026-08-09-policy-is-operator-owned.md);
+4. [consumer examples never become core contracts](../decisions/2026-08-09-consumer-examples-never-become-core-contracts.md).
 
-Changing any product field, disposition or ownership still requires a new
-consumer bundle root. Checked-in upstream schemas only make the existing
-contract executable.
-
-### 1. Post-dispatch approval wait is recoverable
-
-The unique Operation transition table gains this fail-closed edge:
-
-```text
-awaiting_approval (plan_frozen_at != null) -> reconciling
-  guard: cancel, deadline, lease loss, restart epoch change, or approval can no longer be obtained
-  effect: freeze further input; retain frozen plan and mutation-chain lock
-```
-
-It never transitions directly to cancelled/expired or releases the mutation
-chain. Reconciliation alone may establish a business terminal disposition.
-
-### 2. Project and session roots have exact bytes
-
-`ProjectRegistrationManifest` has exactly these fields:
-
-```text
-project_registration_format
-plugin_id
-plugin_hash
-tool_catalog_hash
-project_state_schema_hash
-project_observation_schema_hash
-project_tool_precondition_schema_hash
-reconcile_payload_schema_manifest_hash
-journal_event_schema_manifest_hash
-baseline_event_type
-project_artifact_roots[] { name, root_hash }
-```
-
-`project_registration_format` is a generation, not the digest of the
-registration schema file. The digest it replaced compared a value with itself —
-the loader derived it once and handed the same local to the document and to the
-schema owner judging the document — while moving every registration root on any
-cosmetic edit to `schema/umbraflow-project-registration-v1.schema.json`.
-
-`plugin_id` and every field above participate in the root. Artifact-root names
-are non-empty, unique, and sorted by UTF-8 bytes. The manifest bytes are RFC
-8785 JCS UTF-8 with no BOM or trailing newline.
-`project_registration_hash = sha256(exact manifest bytes)`. There is no second
-`project_artifact_roots_manifest_hash` shape.
-
-`SessionManifest` has exactly these fields:
-
-```text
-host_protocol_schema_hash
-runtime_model_schema_hash
-runtime_model_artifact_root_hash
-operator_protocol_schema_hash
-project_registration_hash
-policy_artifact_hash
-agent_profile_hash
-```
-
-> Amended 2026-08-15: `journal_envelope_schema_hash` was removed from
-> `SessionManifest` — it was written and serialized but had no accessor, no
-> reader and no refusal. See Stage H5 of
-> [the framework hash cleanup](../archive/plans/2026-08-14-framework-hash-cleanup.md).
-
-It uses the same JCS byte rule and
-`session_manifest_hash = sha256(exact manifest bytes)`. Version labels are
-diagnostic only.
-
-### 3. Policy is Operator-owned
-
-Projects may supply a content-addressed policy artifact as deployment input.
-Only Operator parses and evaluates it. ProjectPlugin receives no policy
-capability or hidden policy input; plugin determinism is therefore bounded by
-its explicit arguments and pinned ProjectRegistration.
-
-### 4. Consumer examples never become core contracts
-
-The upstream core does not implement `chaos.*` tool names, ChaosSession,
-Chaos Journal event names, Chaos content states, or any other game entity.
-The main design's consumer examples are non-normative for upstream source.
-Likewise, generic structs repeated in the consumer document do not create a
-second wire schema: the checked-in upstream schemas are the sole executable
-shape, and consumer payloads remain schema-validated opaque data.
-
-Two structurally different upstream fixture plugins are the local framework
-gate only. They do not satisfy the real dual-game gate. That later cross-repo
-attestation must run the same conformance suite against two real, independently
-owned registrations, record both exact `project_registration_hash` values,
-and pass before either consumer opens production mutation. It is deliberately
-not claimed or executed by this worktree.
+The term itself was ruled on separately:
+[2026-08-11 — `conformance` names the suite](../decisions/2026-08-11-conformance-names-the-suite.md).
 
 ## Non-negotiable boundaries
 
