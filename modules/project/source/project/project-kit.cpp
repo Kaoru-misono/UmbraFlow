@@ -242,13 +242,13 @@ namespace uf::project
                 resolvedPath(spec.buildDirectory, "build")
             );
 
-            if (isWithinOrEqual(build, source) || isWithinOrEqual(source, build))
+            if (isWithinOrEqual(source, build))
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     std::format(
-                        "project source and build directories must be separate: "
-                        "source=\"{}\", build=\"{}\"",
+                        "project source directory must not be inside the build "
+                        "directory: source=\"{}\", build=\"{}\"",
                         source.string(),
                         build.string()
                     )

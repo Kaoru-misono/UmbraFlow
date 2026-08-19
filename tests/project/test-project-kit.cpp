@@ -1664,8 +1664,11 @@ namespace uf::project
         );
     }
 
-    TEST_CASE("project build refuses a build directory inside the source tree")
+    TEST_CASE("project build accepts a build directory inside the source tree")
     {
+        // The pin domain is the declared file set read by path, never a
+        // directory scan, so a build tree nested under the source cannot leak
+        // into the hashed input; the C++-shaped layout is legal.
         auto const workspace   = TemporaryWorkspace{"uf-project-overlap"};
         auto const initialized = initializedWorkspace(workspace);
         REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
@@ -1689,18 +1692,41 @@ namespace uf::project
             },
             {}
         );
-
-        REQUIRE_FALSE_MESSAGE(
+        REQUIRE_MESSAGE(
             built.has_value(),
-            "project build must reject a build directory inside the source tree"
+            "project build must accept a build directory inside the source "
+            "tree"
         );
         CHECK_MESSAGE(
-            messageOf(built).find("must be separate") != std::string::npos,
-            "overlap diagnostic must name the source/build separation rule"
-        );
-        CHECK_FALSE_MESSAGE(
             std::filesystem::exists(nestedBuild / k_buildReceiptName),
-            "overlap refusal must happen before a source-side receipt is written"
+            "a nested build must receive the build receipt"
+        );
+    }
+
+    TEST_CASE("project build refuses a source directory inside the build tree")
+    {
+        // The other direction stays refused: a build directory that contains
+        // the source has no use.
+        auto const workspace   = TemporaryWorkspace{"uf-project-overlap"};
+        auto const initialized = initializedWorkspace(workspace);
+        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+
+        auto const built = buildProject(
+            ProjectBuildSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.source().parent_path(),
+                .toolCatalogs    = {},
+            },
+            {}
+        );
+        REQUIRE_FALSE_MESSAGE(
+            built.has_value(),
+            "project build must reject a build directory that contains the "
+            "source tree"
+        );
+        CHECK_MESSAGE(
+            messageOf(built).find("source directory must not be inside") != std::string::npos,
+            "containment diagnostic must name the source/build rule"
         );
     }
 

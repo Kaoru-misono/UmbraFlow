@@ -375,7 +375,7 @@ cannot inspect project {} directory "{}": {}
 project {} directory does not exist: "{}"
 cannot resolve project {} path "{}": {}
 cannot canonicalize project {} path "{}": {}
-project source and build directories must be separate: source="{}", build="{}"
+project source directory must not be inside the build directory: source="{}", build="{}"
 cannot inspect project build directory "{}": {}
 project build path is not a directory: "{}"
 cannot create project build directory "{}": {}
