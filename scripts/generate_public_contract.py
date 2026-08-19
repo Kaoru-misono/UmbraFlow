@@ -567,6 +567,9 @@ def release_manifest_facts(root: Path) -> dict[str, object]:
             source, "RELEASE_MANIFEST_CONTRACT_VERSIONS"
         ),
         "binaries": python_string_tuple(source, "RELEASE_BINARIES"),
+        "payload_patterns": python_string_tuple(
+            source, "RELEASE_PAYLOAD_PATTERNS"
+        ),
     }
 
 
@@ -937,6 +940,7 @@ def render(root: Path) -> str:
         "platform": "`windows`, `linux` or `macos`",
         "arch": "`x64` or `arm64`",
         "path": "canonical `'/'`-only path relative to the release root",
+        "asset": "the flat asset name a GitHub release carries it under",
         "sha256": "lowercase hex content digest, no prefix",
     }
     lines.extend(
@@ -986,7 +990,12 @@ def render(root: Path) -> str:
             )
             + "; the shipped binaries are "
             + ", ".join(f"`{value}`" for value in release_facts["binaries"])
-            + ".",
+            + ". The release also carries the runtime payload "
+            + ", ".join(
+                f"`{value}`" for value in release_facts["payload_patterns"]
+            )
+            + ", each matched file one artifact row whose path the downloader "
+            + "restores beside the binaries.",
             "",
         ]
     )

@@ -51,11 +51,26 @@ RELEASE_MANIFEST_CONTRACT_VERSIONS = (
 # The generator reads these exact tuples into the public contract, so a member
 # added here must also gain a meaning in scripts/generate_public_contract.py.
 RELEASE_MANIFEST_MEMBERS = ("schema", "release", "contract_versions", "artifacts")
-RELEASE_ARTIFACT_MEMBERS = ("name", "platform", "arch", "path", "sha256")
+RELEASE_ARTIFACT_MEMBERS = (
+    "name",
+    "platform",
+    "arch",
+    "path",
+    "asset",
+    "sha256",
+)
 
 # The binaries a release carries, by logical name. The platform executable
 # suffix is derived, not stored here.
 RELEASE_BINARIES = ("project", "umbra-flow", "umbra-flow-conformance")
+
+# Runtime payload patterns relative to the release root (the bin directory).
+# The DLLs must sit beside the executables, because Windows loads a DLL from
+# the executable's own directory, and the OCR models under models/ the way
+# umbra-flow answers `--ocr-models <bin>/models`. Each matched file becomes
+# one artifact row; the path in the manifest is the file's path relative to
+# the release root, which is what the downloader restores.
+RELEASE_PAYLOAD_PATTERNS = ("onnxruntime*.dll", "models/**/*")
 
 PLATFORMS = ("windows", "linux", "macos")
 ARCHES = ("x64", "arm64")
@@ -114,10 +129,29 @@ def artifact_rows(
                 "name": name,
                 "platform": platform_name,
                 "arch": arch,
-                "path": f"{platform_name}/{arch}/{filename}",
+                "path": filename,
+                "asset": filename,
                 "sha256": digest_of(path),
             }
         )
+    for pattern in RELEASE_PAYLOAD_PATTERNS:
+        for path in sorted(bin_dir.glob(pattern)):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(bin_dir).as_posix()
+            rows.append(
+                {
+                    "name": relative,
+                    "platform": platform_name,
+                    "arch": arch,
+                    "path": relative,
+                    # GitHub release assets are flat, so a nested payload file
+                    # is uploaded under a name without '/'; the downloader
+                    # restores it at its path, not its asset name.
+                    "asset": relative.replace("/", "-"),
+                    "sha256": digest_of(path),
+                }
+            )
     return rows
 
 

@@ -57,6 +57,23 @@ def make_bin_dir(root: Path, platform_name: str) -> Path:
         (bin_dir / f"{name}{suffix}").write_bytes(
             f"fake {name} bytes for {platform_name}".encode("utf-8")
         )
+    # The runtime payload: the DLLs beside the executables and the OCR models
+    # under models/, the layout a fetched umbra-flow answers `--ocr-models
+    # <bin>/models` with.
+    if platform_name == "windows":
+        (bin_dir / "onnxruntime.dll").write_bytes(b"fake onnxruntime dll")
+        (bin_dir / "onnxruntime_providers_shared.dll").write_bytes(
+            b"fake providers dll"
+        )
+    for model in ("ppocr-v6-small-rec", "ppocr-v6-small-det"):
+        directory = bin_dir / "models" / model
+        directory.mkdir(parents=True)
+        (directory / "inference.onnx").write_bytes(
+            f"fake {model} onnx".encode("utf-8")
+        )
+        (directory / "inference.yml").write_bytes(
+            f"fake {model} yml".encode("utf-8")
+        )
     return bin_dir
 
 
@@ -113,23 +130,29 @@ def main() -> int:
             rows = manifest["artifacts"]
             check(
                 errors,
-                [row["name"] for row in rows]
+                [row["name"] for row in rows[:3]]
                 == list(publisher.RELEASE_BINARIES),
-                f"{platform_name}: artifact names differ from the shipped set",
+                f"{platform_name}: binary names differ from the shipped set",
             )
             suffix = ".exe" if platform_name == "windows" else ""
             for row in rows:
                 check(
                     errors,
-                    row["path"] == f"{platform_name}/x64/{row['name']}{suffix}",
-                    f"{platform_name}: unexpected artifact path {row['path']}",
+                    "\\" not in row["path"]
+                    and not row["path"].startswith("/")
+                    and ".." not in row["path"].split("/")
+                    and row["path"],
+                    f"{platform_name}: artifact path violates the '/' discipline",
                 )
                 check(
                     errors,
-                    "\\" not in row["path"]
-                    and not row["path"].startswith("/")
-                    and ".." not in row["path"].split("/"),
-                    f"{platform_name}: artifact path violates the '/' discipline",
+                    row["asset"] == str(row["path"]).replace("/", "-"),
+                    f"{platform_name}: asset name does not flatten the path",
+                )
+                check(
+                    errors,
+                    "/" not in row["asset"],
+                    f"{platform_name}: asset name must be flat for GitHub Releases",
                 )
                 check(
                     errors,
@@ -137,13 +160,39 @@ def main() -> int:
                     f"{platform_name}: sha256 is not bare lowercase hex",
                 )
                 expected = hashlib.sha256(
-                    (bin_dir / f"{row['name']}{suffix}").read_bytes()
+                    (bin_dir / row["path"]).read_bytes()
                 ).hexdigest()
                 check(
                     errors,
                     row["sha256"] == expected,
                     f"{platform_name}: sha256 does not match the artifact bytes",
                 )
+            check(
+                errors,
+                any(
+                    row["path"] == "onnxruntime.dll"
+                    for row in rows
+                )
+                == (platform_name == "windows"),
+                f"{platform_name}: the onnxruntime payload row is wrong",
+            )
+            check(
+                errors,
+                any(
+                    row["path"]
+                    == "models/ppocr-v6-small-rec/inference.onnx"
+                    for row in rows
+                ),
+                f"{platform_name}: the OCR model payload row is missing",
+            )
+            check(
+                errors,
+                all(
+                    row["path"] == row["name"] + suffix
+                    for row in rows[:3]
+                ),
+                f"{platform_name}: binary rows must name their release-root path",
+            )
 
             # The manifest is deterministic: the same inputs produce the same
             # canonical bytes, and therefore the same release id.

@@ -121,9 +121,10 @@ rather than stored.
 | `platform` | `windows`, `linux` or `macos` |
 | `arch` | `x64` or `arm64` |
 | `path` | canonical `'/'`-only path relative to the release root |
+| `asset` | the flat asset name a GitHub release carries it under |
 | `sha256` | lowercase hex content digest, no prefix |
 
-`contract_versions` carries `umbraflow-project/v1`, `umbraflow-project-kit-artifact-manifest/v1`; the shipped binaries are `project`, `umbra-flow`, `umbra-flow-conformance`.
+`contract_versions` carries `umbraflow-project/v1`, `umbraflow-project-kit-artifact-manifest/v1`; the shipped binaries are `project`, `umbra-flow`, `umbra-flow-conformance`. The release also carries the runtime payload `onnxruntime*.dll`, `models/**/*`, each matched file one artifact row whose path the downloader restores beside the binaries.
 
 
 ## 2. What a consumer must declare
