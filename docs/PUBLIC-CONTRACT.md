@@ -96,7 +96,35 @@ statement.
 | `umbraflow-project-kit-artifact-manifest/v1` |
 | `umbraflow-project-kit-artifact-registration/v1` |
 | `umbraflow-reconcile-manifest/v1` |
+| `umbraflow-release/v1` |
 | `umbraflow-tool-catalog/v1` |
+
+### 1.5 The Project Kit release manifest
+
+A release bundle ships an immutable manifest tagged `umbraflow-release/v1`,
+written by `scripts/publish_release.py` and never authored by hand. A
+template's downloader parses it, selects the artifact for the host
+platform and arch, and refuses a mismatch on the declared sha256. The
+release id is the sha256 of the manifest's canonical bytes, derived
+rather than stored.
+
+| Top-level member | Meaning |
+| --- | --- |
+| `schema` | the manifest's own wire tag |
+| `release` | milestone name, e.g. `m0-acceptance` |
+| `contract_versions` | the format versions this release's tooling understands |
+| `artifacts` | one row per shipped binary |
+
+| Artifact-row member | Meaning |
+| --- | --- |
+| `name` | logical binary name |
+| `platform` | `windows`, `linux` or `macos` |
+| `arch` | `x64` or `arm64` |
+| `path` | canonical `'/'`-only path relative to the release root |
+| `sha256` | lowercase hex content digest, no prefix |
+
+`contract_versions` carries `umbraflow-project/v1`, `umbraflow-project-kit-artifact-manifest/v1`; the shipped binaries are `project`, `umbra-flow`, `umbra-flow-conformance`.
+
 
 ## 2. What a consumer must declare
 

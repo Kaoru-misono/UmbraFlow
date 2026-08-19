@@ -73,6 +73,11 @@ AUTHORITY_BYTES_FUNCTION = "observedInstanceAuthorityBytes"
 OBSERVATION_PROPOSAL_SCHEMA = "schema/umbraflow-project-observation-proposal-v1.schema.json"
 OBSERVATION_SCHEMA = "schema/umbraflow-project-observation-v1.schema.json"
 
+# The publisher script that writes the release manifest a consumer's downloader
+# parses. Its constants are the shape authority; the generator extracts the
+# wire tag and the member tuples from these bytes rather than restating them.
+RELEASE_SOURCE = "scripts/publish_release.py"
+
 # Exit-code enumerations, each the whole convention for one executable.
 EXIT_CODE_ENUMS = (
     ("umbra-flow", "modules/cli/source/cli/cli-result.hpp", "ExitCode"),
@@ -520,9 +525,49 @@ def written_wire_tags(root: Path) -> set[str]:
             tags.update(WIRE_TAG.findall(path.read_text(encoding="utf-8")))
     for path in sorted((root / SCHEMA_DIRECTORY).glob("*.json")):
         tags.update(WIRE_TAG.findall(path.read_text(encoding="utf-8")))
+    # A tag only the publisher spells is still a tag the consumer's downloader
+    # sees, on the same terms as a tag only an entry executable spells.
+    tags.update(WIRE_TAG.findall(read(root, RELEASE_SOURCE)))
     if not tags:
         raise SystemExit("no source writes an umbraflow-<name>/v<n> tag any more")
     return tags
+
+
+def python_string_tuple(source: str, name: str) -> tuple[str, ...]:
+    """Every string literal in a flat ``NAME = ("a", "b")`` tuple."""
+    start = source.index(f"{name} = (")
+    end = source.index(")", start)
+    return tuple(re.findall(r'"([^"]+)"', source[start:end]))
+
+
+def python_string_constant(source: str, name: str) -> str:
+    """The value of a plain ``NAME = "value"`` string constant."""
+    match = re.search(rf'{name}\s*=\s*"([^"]+)"', source)
+    if match is None:
+        raise SystemExit(f"{RELEASE_SOURCE} must define {name}")
+    return match.group(1)
+
+
+def release_manifest_facts(root: Path) -> dict[str, object]:
+    """The release manifest's tag, members and vocabulary, read out of the
+    publisher script's bytes."""
+    source = read(root, RELEASE_SOURCE)
+    tag = python_string_constant(source, "RELEASE_MANIFEST_SCHEMA")
+    if tag not in WIRE_TAG.findall(source):
+        raise SystemExit(
+            f"{RELEASE_SOURCE} must write the release tag its schema constant pins"
+        )
+    return {
+        "tag": tag,
+        "members": python_string_tuple(source, "RELEASE_MANIFEST_MEMBERS"),
+        "artifact_members": python_string_tuple(
+            source, "RELEASE_ARTIFACT_MEMBERS"
+        ),
+        "contract_versions": python_string_tuple(
+            source, "RELEASE_MANIFEST_CONTRACT_VERSIONS"
+        ),
+        "binaries": python_string_tuple(source, "RELEASE_BINARIES"),
+    }
 
 
 def compile_labels(root: Path) -> dict[str, str]:
@@ -733,6 +778,7 @@ def render(root: Path) -> str:
     targets = reference_targets(root)
     tags = written_wire_tags(root)
     pinned_tags = {identity.wire_tag for identity in published if identity.wire_tag}
+    release_facts = release_manifest_facts(root)
     directory_schema = json.loads(read(root, PROJECT_DIRECTORY_SCHEMA))
     deployment_definition = definition(directory_schema, "Deployment")
     authorities = deployment_authorities(root)
@@ -878,6 +924,71 @@ def render(root: Path) -> str:
             ["Wire tag"],
             [[f"`{tag}`"] for tag in unpinned],
         )
+    )
+
+    release_member_meanings = {
+        "schema": "the manifest's own wire tag",
+        "release": "milestone name, e.g. `m0-acceptance`",
+        "contract_versions": "the format versions this release's tooling understands",
+        "artifacts": "one row per shipped binary",
+    }
+    artifact_member_meanings = {
+        "name": "logical binary name",
+        "platform": "`windows`, `linux` or `macos`",
+        "arch": "`x64` or `arm64`",
+        "path": "canonical `'/'`-only path relative to the release root",
+        "sha256": "lowercase hex content digest, no prefix",
+    }
+    lines.extend(
+        [
+            "",
+            "### 1.5 The Project Kit release manifest",
+            "",
+            f"A release bundle ships an immutable manifest tagged `{release_facts['tag']}`,",
+            f"written by `{RELEASE_SOURCE}` and never authored by hand. A",
+            "template's downloader parses it, selects the artifact for the host",
+            "platform and arch, and refuses a mismatch on the declared sha256. The",
+            "release id is the sha256 of the manifest's canonical bytes, derived",
+            "rather than stored.",
+            "",
+        ]
+    )
+    for headings, members, meanings in (
+        (
+            ["Top-level member", "Meaning"],
+            release_facts["members"],
+            release_member_meanings,
+        ),
+        (
+            ["Artifact-row member", "Meaning"],
+            release_facts["artifact_members"],
+            artifact_member_meanings,
+        ),
+    ):
+        unknown = [member for member in members if member not in meanings]
+        if unknown:
+            raise SystemExit(
+                f"{RELEASE_SOURCE} gained members with no meaning in "
+                f"{GENERATOR_RELATIVE_PATH}: {unknown}"
+            )
+        lines.extend(
+            table(
+                headings,
+                [[f"`{member}`", meanings[member]] for member in members],
+            )
+        )
+        lines.append("")
+    lines.extend(
+        [
+            "`contract_versions` carries "
+            + ", ".join(
+                f"`{value}`" for value in release_facts["contract_versions"]
+            )
+            + "; the shipped binaries are "
+            + ", ".join(f"`{value}`" for value in release_facts["binaries"])
+            + ".",
+            "",
+        ]
     )
 
     lines.extend(

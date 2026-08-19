@@ -1544,6 +1544,13 @@ add_test(
     NAME test-check-safety
     COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/test-check-safety.py
 )
+# The release manifest publisher is the only writer of the document a consumer's
+# downloader parses, so its shape, determinism and refusals are pinned like the
+# other tree-level checks rather than left to the release day.
+add_test(
+    NAME test-publish-release
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/test-publish-release.py
+)
 # No gate registered here may REQUIRE another repository. check-spec-bundle did
 # until 2026-08-16 and carried the CI label, so this repository's gate could not
 # pass on a machine without that checkout. Ruling:
@@ -1553,6 +1560,7 @@ set_tests_properties(
     check-modules
     check-safety
     test-check-safety
+    test-publish-release
     PROPERTIES
     TIMEOUT 30
     LABELS "CI"
