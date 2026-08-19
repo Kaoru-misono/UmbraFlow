@@ -13,7 +13,7 @@
 #include <vector>
 
 // The adversarial suite for the script substrate: the places §11 of
-// docs/plans/2026-07-29-three-layer-task-system.md says guarantees historically
+// docs/archive/plans/2026-07-29-three-layer-task-system.md says guarantees historically
 // break. test-veto-suite.cpp covers the two non-yieldable frames the P0 gate named
 // (table.sort, string.gsub) against a naive runaway; this adds the rest of §11's
 // matrix and the ceilings against a script that actively tries to outlive them.

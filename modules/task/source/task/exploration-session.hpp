@@ -30,7 +30,7 @@ namespace uf::task
     //
     // A third front-end rather than a mode of the other two, because an agent
     // sends CODE chunk by chunk and reads what came back before writing the next
-    // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 3).
+    // (docs/archive/plans/2026-08-01-three-layers-and-agent-operator.md 3).
     //
     // The second environment lives here. The VM this owns is booted with the
     // authoring private surface and publishes only the `explore` framework

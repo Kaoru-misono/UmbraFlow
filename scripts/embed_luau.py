@@ -3,7 +3,7 @@
 
 The generated file is written into the build tree and is never committed, so
 the .luau files under the module remain the single source of truth for the
-trusted framework bundle (docs/plans/2026-07-29-three-layer-task-system.md 14).
+trusted framework bundle (docs/archive/plans/2026-07-29-three-layer-task-system.md 14).
 
 Determinism is a hard requirement: the same inputs always produce a
 byte-identical output file.  Sources are ordered by their POSIX-normalized

@@ -65,7 +65,7 @@ migrated.
 > nothing and is not written, and a database whose identity differs is refused
 > and left untouched rather than deleted. The ruling and what it obliges a
 > migration author to name
-> are in [the execution checklist](docs/TODO.md), under the delete-on-open
+> are in [the archived execution checklist](docs/archive/plans/2026-08-19-upstream-execution-checklist.md), under the delete-on-open
 > deadline. It moved because
 > `journal_events` and `project_state` — both journal records — were made to
 > carry their schema definitions' member names. **These four are now the one
@@ -729,7 +729,7 @@ word once meant and why it moved — never as a description of the tree.
 > [runtime hardening rewrite](docs/plans/2026-08-09-runtime-hardening-rewrite.md).
 
 Older design notes whose *reasoning* still holds, though their rosters do not:
-`docs/plans/2026-07-29-three-layer-task-system.md` §4 (why the observation cycle
+`docs/archive/plans/2026-07-29-three-layer-task-system.md` §4 (why the observation cycle
 and the ticket are shaped this way), §5 (the four invariants of the private
 capability surface — its twelve-primitive roster is the 2026-07-29 draft, not
 today's two tables) and §12 (why the trace validator exists at all — its event

@@ -17,13 +17,13 @@ superseded and measurement-only plans live under
 
 ## Current authority
 
-- [Runtime v2 and game-operator breaking rewrite](2026-08-09-runtime-hardening-rewrite.md)
+- [Runtime/game-operator breaking rewrite](2026-08-09-runtime-hardening-rewrite.md)
   — frozen implementation authority, and the ruling that removed the consumer
   bundle's exact-byte pin on 2026-08-16.
 - [Runtime model contract](2026-08-09-runtime-model-contract.md) — field-level
   prose beside the normative
   [`umbraflow-runtime-v3.schema.json`](../../schema/umbraflow-runtime-v3.schema.json).
-  Its body was rewritten against the current Runtime v3 schema on 2026-08-14.
+  Its body was rewritten against the current Runtime v3 schema on 2026-08-19.
 - [Runtime migration report](2026-08-09-runtime-migration-report.md) — the
   requirement-to-owner/schema/CTest map, with its baseline and disposition
   manifests. It is an execution record, not an unfinished-work list.
@@ -31,26 +31,29 @@ superseded and measurement-only plans live under
   direction and milestone intent. Current execution status comes from the
   consumer execution authority, not its old phase prose.
 
-## Retained pre-v2 records
+## Archived on 2026-08-19
 
-- [Three-layer task system](2026-07-29-three-layer-task-system.md) and
-  [three layers with the Agent operator](2026-08-01-three-layers-and-agent-operator.md)
-  preserve dated layer-design history. They are not current runtime-model
-  authorities; Runtime v2 supersedes their record shapes and vocabulary. The
-  script-owned page-model predecessor was
-  [archived on 2026-08-14](../archive/plans/2026-07-31-script-owned-page-model.md)
-  after its surviving `T-005` obligation moved into the live runtime contract.
-  Still-open behavior remains owned only by the consumer execution authority.
-
-## Completed current audits
-
-- [Carried-debt re-audit](../2026-08-13-carried-debt-reaudit.md) — D-004
-  dispositions measured against current code and mapped to the one execution
-  authority.
-- [Cross-repository v1.18 audit](../2026-08-13-cross-repository-audit.md)
-  — D-005, superseding the v1.9 report.
-- [Retroactive core admission review](../2026-08-13-core-admission-review.md)
-  — O-005 rulings for all fifteen imported files.
+- [Upstream execution checklist](../archive/plans/2026-08-19-upstream-execution-checklist.md)
+  — frozen without rewriting its final historical checkbox; consumer-plan
+  `O-003` records the later two-region review PASS, and remaining release work
+  stays in that consumer plan.
+- [Three-layer task system](../archive/plans/2026-07-29-three-layer-task-system.md)
+  and [three layers with the Agent operator](../archive/plans/2026-08-01-three-layers-and-agent-operator.md)
+  — dated pre-v2 layer-design history; Runtime v3 and the live runtime contract
+  own the current shape.
+- [Carried-debt re-audit](../archive/reviews/2026-08-13-carried-debt-reaudit.md)
+  — completed D-004 dispositions, with every survivor lifted to the consumer
+  execution authority.
+- [Cross-repository v1.18 audit](../archive/reviews/2026-08-13-cross-repository-audit.md)
+  — completed D-005 evidence, superseding the v1.9 report.
+- [Retroactive core admission review](../archive/reviews/2026-08-13-core-admission-review.md)
+  — completed O-005 rulings for all fifteen imported files.
+- [Framework capability survey](../archive/reviews/2026-08-14-framework-capability-survey.md)
+  — measurement through 2026-08-17, superseded by Runtime v3 and later
+  production wiring.
+- [Runtime hardening review](../archive/reviews/2026-08-10-runtime-hardening-review.md)
+  — every finding closed or accepted; consumer-plan `O-003` recorded the later
+  final PASS rather than rewriting this earlier outcome record.
 
 The two JSON files beside the migration report are its machine-readable
 baseline and disposition data, not separate plans.
@@ -68,9 +71,8 @@ baseline and disposition data, not separate plans.
 ## Archived on 2026-08-14
 
 - [Script-owned page model](../archive/plans/2026-07-31-script-owned-page-model.md)
-  — superseded by Runtime v2; surviving confirmation/recognition behavior is
-  deposited as `T-005` in the live runtime model contract and remains owned by
-  the consumer execution authority.
+  — superseded by the runtime rewrite; its surviving confirmation/recognition
+  behavior landed as `T-005` and is recorded in the live runtime model contract.
 
 ## Archived on 2026-08-12 in the consolidation pass
 

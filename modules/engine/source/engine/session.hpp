@@ -70,7 +70,8 @@ namespace uf::engine
     // stall is transient in practice -- the same frame that stalled a task run
     // came back on the next attempt in an exploration session -- so treating the
     // first one as the end of the generation ended a run that had already
-    // delivered 57 actions (docs/TODO.md, 2026-08-03). Riding it out is the
+    // delivered 57 actions (docs/archive/plans/2026-08-19-upstream-execution-checklist.md,
+    // 2026-08-03). Riding it out is the
     // developer's ruling of the same date.
     //
     // Bounded because the other reading of a stall is real: a window that was
@@ -192,7 +193,7 @@ namespace uf::engine
     // One rectangle of one frame's pixels, copied out of the observation that
     // held them; the primitive above it is loaded in the exploration
     // environment only, never for a business script
-    // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
+    // (docs/archive/plans/2026-08-01-three-layers-and-agent-operator.md 2).
     //
     // The pixels are BGRA8, packed, no row padding: stride is width * 4. A Gray8
     // frame is widened rather than refused -- a capture format the caller did not
@@ -530,7 +531,7 @@ namespace uf::engine
         // RuntimeModel identity reaches this layer. Naming a bare coordinate is
         // the trusted framework's privilege and never a business script's --
         // modules/task/runtime/observe.luau enforces "only click what this page
-        // authorises" (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
+        // authorises" (docs/archive/plans/2026-08-01-three-layers-and-agent-operator.md 2).
         [[nodiscard]]
         auto clickPoint(
             Observation&& observation,

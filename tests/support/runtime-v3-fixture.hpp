@@ -49,7 +49,7 @@
 #include <utility>
 #include <vector>
 
-// One Runtime v2 world: the RuntimeArtifact bytes and their asset closure, the
+// One Runtime v3 world: the RuntimeArtifact bytes and their asset closure, the
 // EngineSession over a synthetic frame that the resolver matches them against,
 // and the TaskHost that activates the two.
 //

@@ -130,7 +130,7 @@ namespace uf::cli::platform
         // none, and only this layer knows the live client rectangle. The centre is
         // the "no anchor was named" answer -- it addresses the window itself and no
         // annotated region, leaving open question 5 of
-        // docs/plans/2026-08-01-three-layers-and-agent-operator.md open -- and it is
+        // docs/archive/plans/2026-08-01-three-layers-and-agent-operator.md open -- and it is
         // always inside the rectangle, since DeliveryTarget::create refuses an empty
         // one.
         auto const centre = Point<ClientSpace>{

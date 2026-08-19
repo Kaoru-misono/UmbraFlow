@@ -5,8 +5,9 @@ plans explain how a decision was reached but do not open additional work.
 
 ## 1. Current contract
 
-- [Runtime v2 and game-operator breaking authority](plans/2026-08-09-runtime-hardening-rewrite.md)
-  — the frozen upstream implementation authority and consumer bundle pin.
+- [Runtime/game-operator breaking authority](plans/2026-08-09-runtime-hardening-rewrite.md)
+  — the frozen upstream implementation authority and semantic contract-version
+  ruling; its RuntimeModel field authority has since moved to v3.
 - [`schema/umbraflow-runtime-v3.schema.json`](../schema/umbraflow-runtime-v3.schema.json)
   — normative runtime-model shape, with the
   [runtime model contract](plans/2026-08-09-runtime-model-contract.md) as prose.
@@ -28,8 +29,9 @@ records:
   consumer obligations and documentation cleanup. Its predecessor is archived at
   [`docs/archive/plans/2026-08-12-outstanding-work.md`](archive/plans/2026-08-12-outstanding-work.md),
   which names where every row went.
-- [Current execution checklist](TODO.md) retains useful release-gate checkboxes.
-  It is not a second complete work inventory.
+- The [upstream execution checklist](archive/plans/2026-08-19-upstream-execution-checklist.md)
+  is archived without rewriting its historical checkboxes; current status lives
+  only in the consumer execution authority.
 - [Plans index](plans/README.md) lists current authorities and every archived
   plan.
 
@@ -48,25 +50,25 @@ records:
   used as compatibility versions, and retention only of automatically produced
   aggregate content identity at real immutable-byte boundaries.
 
-Both are proposals, not current contract or a second unfinished-work list,
-until explicitly approved and admitted to the canonical execution plan.
+The HostPlugin document is a ruled historical review. The hash document remains
+a proposal except for its explicitly approved and executed Stage 1. Neither is
+current contract or a second unfinished-work list.
 
 ## 4. Current blockers
 
 The exact dependency order and acceptance criteria live only in the consumer
 repository's `docs/architecture/parallel-implementation-plan.md`. Do not copy
-its changing status rows here. The 2026-08-13 documentation audits are
-[indexed with the current plans](plans/README.md); they report completed review
-evidence and point every surviving divergence back to that single execution
-authority.
+its changing status rows here. The completed 2026-08-13 documentation audits
+are [archived and indexed](plans/README.md); they point every surviving
+divergence back to that single execution authority.
 
 The real dual-game attestation remains external and cannot be moved by fixtures.
 
 ## 5. Migration and evidence
 
-- [Framework capability survey](2026-08-14-framework-capability-survey.md) —
-  measured implementation-symbol-to-test map; it is not an unfinished-work
-  ledger.
+- [Framework capability survey](archive/reviews/2026-08-14-framework-capability-survey.md)
+  — archived implementation-symbol-to-test measurement through 2026-08-17;
+  Runtime v3 and later production wiring supersede its locators.
 - [Runtime migration report](plans/2026-08-09-runtime-migration-report.md) —
   inherited baseline, dispositions and requirement-to-gate map. Verify it
   against current paths before relying on an old locator.

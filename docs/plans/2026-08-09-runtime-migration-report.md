@@ -1,8 +1,13 @@
-# Runtime v2 upstream migration report
+# Runtime upstream migration report
 
 Status: G0 execution map
 Date: 2026-08-09
 Scope: `umbraflow-cpp` only; no consumer-project writes
+
+> Amended 2026-08-19: RuntimeModel moved from v2 to v3 in `2e781ec` and
+> `27b4034`. The current execution map below names the v3 schema and tests. The
+> baseline and disposition manifests remain byte-for-byte historical evidence
+> of the inherited v2 path; they are not current path inventories.
 
 This report binds spec contract version v1.18 to the inherited upstream baseline
 rooted at
@@ -37,7 +42,7 @@ complete:
 | Code | Checked-in authority |
 |---|---|
 | RA | `schema/umbraflow-runtime-artifact-v1.schema.json` |
-| RM | `schema/umbraflow-runtime-v2.schema.json` |
+| RM | `schema/umbraflow-runtime-v3.schema.json` |
 | PR | `schema/umbraflow-project-registration-v1.schema.json` |
 | OP | `schema/umbraflow-operator-v1.schema.json` |
 | PL | `schema/umbraflow-policy-v1.schema.json` |
@@ -234,7 +239,7 @@ Where the named requirement gates were declared as of 2026-08-11:
 - `tests/operator/test-project-plugin-contract.cpp` —
   `contract-product-p05-fixtures`, plus the generic opaque-payload isolation
   cases, which carry prose names and run only under the aggregate;
-- `tests/task/test-runtime-v2-contract.cpp` plus trusted Luau fixtures —
+- `tests/task/test-runtime-v3-contract.cpp` plus trusted Luau fixtures —
   `contract-runtime-u01`-`u08`, plus the Host delivery and fence cases, which
   carry prose names and run only under the aggregate;
 - `tests/operator/test-state-contract.cpp` — `schema-state-s01`, `s02`, `s04`
@@ -320,8 +325,8 @@ The retained regression binaries own these capabilities:
 | generic Trace recorder/sink/event ordering | KEEP | restore generic tests; do not restore obsolete runtime replay semantics |
 | `entry/cli/check*`, `run*`, `replay*`, file-frame source | DELETE | remove declarations, dispatch, CMake registration, and tests tied to old semantics |
 | v1/UFR/envelope schemas | DELETE | keep deleted; no reader, alias, optional fallback, or dual spelling |
-| old `ctx/hits/navigation/mint/oracle/recognition/replay/regress` runtime semantics | DELETE | remove files and framework exports; rebuild only named v2 modules |
-| current Runtime v2 schema/model/evidence/observe/resolution/project | REWRITE | implement RA/RM ownership, unique parser, UiTarget/Binding split, Host binding |
+| old `ctx/hits/navigation/mint/oracle/recognition/replay/regress` runtime semantics | DELETE | remove files and framework exports; rebuild only the named runtime modules |
+| current Runtime v3 schema/model/evidence/observe/resolution/project | REWRITE | implement RA/RM ownership, unique parser, UiTarget/Binding split, Host binding |
 | current page-model interception and public manifest acceptance | REWRITE | exact root `runtime-model.toml`, confinement first, private finalize capability |
 | current Receipt/click FFI | REWRITE | opaque Host ledger and one `Host.deliver`; no raw coordinate mint API |
 | `tools/annotate/store.py` and `publication.py` | REWRITE | minimal AW SQLite, immutable release, replay gate, separate deployment activation |

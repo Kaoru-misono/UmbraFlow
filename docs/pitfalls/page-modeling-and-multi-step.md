@@ -85,7 +85,7 @@ unambiguous?" question with a measurement instead of a guess — they did not.
 > `umbra-flow run` invocations"). The shell chain this entry originally described
 > no longer exists: `--page` / `--action` and the single-step smoke flow they
 > drove were deleted
-> (`docs/plans/2026-07-29-three-layer-task-system.md` section 16, commit
+> (`docs/archive/plans/2026-07-29-three-layer-task-system.md` section 16, commit
 > `e387453`), and `--timeout` / `--poll` went with the wait loop (`d1a0685`) —
 > all four are now refused as unknown arguments. A multi-step flow is one
 > `--task NAME` Luau script. **The lesson is unchanged and is why the entry is

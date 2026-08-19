@@ -449,7 +449,7 @@ This file records toolchain pitfalls: window selection, capture, delivery,
 build. How a **particular game** behaves — how long until it hides its HUD, how
 long its UI takes to fade in, which rectangles never hold still — belongs to
 that project and is written in the project's own directory, for example
-`E:\umbraflow-projects\uf-chaos\PITFALLS.md`.
+`E:\github\uf-chaos\PITFALLS.md` (checkout path corrected 2026-08-19).
 
 This repository is a reusable foundation. Knowledge that stops being true when
 the target changes costs every future reader context it cannot repay.

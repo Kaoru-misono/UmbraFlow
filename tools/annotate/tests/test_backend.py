@@ -950,7 +950,7 @@ class CapabilitySecurityTests(WorkspaceTestCase):
         # POSIX: the replacement succeeds and the identity re-check in
         # _descriptor_document catches it. Removing that comparison turns this
         # red on POSIX only -- it has no positive control on Windows, which is
-        # recorded in docs/reviews/2026-08-10-runtime-hardening-review.md.
+        # recorded in docs/archive/reviews/2026-08-10-runtime-hardening-review.md.
         other = self.workspace.base / "other-capability.json"
         write_jcs(other, capability_document("human-review", "human:mallory"))
         try:

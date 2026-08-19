@@ -1,6 +1,6 @@
 # Architecture
 
-> Amended 2026-08-13: the Runtime v2 spec bundle and
+> Amended 2026-08-19: the Runtime v3 schema and
 > [breaking rewrite authority](plans/2026-08-09-runtime-hardening-rewrite.md)
 > replace the former Context/Page/Target runtime description. This file now
 > records module ownership only and deliberately does not duplicate wire
@@ -138,7 +138,8 @@ two runs of the suite rather than its home.
 > `scripts/check_modules.py` reached through a `DECLARED_SOURCE_TREES` list.
 > Both are gone: nothing carries a manifest outside `modules/` now, the check
 > is back to a single root, and the three C++ fixtures moved to `tests/support/`.
-> See [TODO](TODO.md), "Build-system shape". `tests/support/` declares no
+> See the [archived upstream execution checklist](archive/plans/2026-08-19-upstream-execution-checklist.md),
+> "Build-system shape". `tests/support/` declares no
 > manifest and is still outside the graph.
 
 ## Ownership

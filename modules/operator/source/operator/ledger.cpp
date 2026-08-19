@@ -473,7 +473,8 @@ namespace uf::operator_runtime
         // recomputation cannot ship green.
         //
         // PRAGMA user_version has no identity and no upgrade role, so the DDL
-        // does not write it. docs/TODO.md "Delete-on-open has a deadline" owns
+        // does not write it. The archived upstream execution checklist's
+        // "Delete-on-open has a deadline" section owns
         // the exact-pair migration policy.
         constexpr auto k_operatorDatabaseSchemaIdentity = std::string_view{
             "sha256:b26344e031574f95020ed445e16e9de396f76442d98c5a3b758a91d84660237e"

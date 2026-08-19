@@ -1,9 +1,18 @@
 # Runtime v2 and game-operator breaking rewrite
 
-Status: active upstream implementation authority
+Status: frozen upstream implementation authority
 Decision date: 2026-08-09
 Compatibility: intentionally breaking; no v1 compatibility code
 Scope: `umbraflow-cpp` only; consumer projects are read-only
+
+> Amended 2026-08-19: the RuntimeModel portion of this 2026-08-09 rewrite moved
+> to Runtime v3 in `2e781ec` and `27b4034`. The current field and behavior
+> authority is the [runtime model contract](2026-08-09-runtime-model-contract.md)
+> beside `schema/umbraflow-runtime-v3.schema.json`. The title, disposition table
+> and numbered implementation sequence below retain "Runtime v2" because they
+> record the breaking rewrite that created the boundary; they do not authorize
+> a v2 reader or spelling. The current local consumer checkout is
+> `E:/github/uf-chaos`; the 2026-08-12 path measurements remain historical.
 
 ## Frozen product authority
 
@@ -207,7 +216,7 @@ agent_profile_hash
 > Amended 2026-08-15: `journal_envelope_schema_hash` was removed from
 > `SessionManifest` — it was written and serialized but had no accessor, no
 > reader and no refusal. See Stage H5 of
-> [the framework hash cleanup](2026-08-14-framework-hash-cleanup.md).
+> [the framework hash cleanup](../archive/plans/2026-08-14-framework-hash-cleanup.md).
 
 It uses the same JCS byte rule and
 `session_manifest_hash = sha256(exact manifest bytes)`. Version labels are
@@ -238,7 +247,7 @@ not claimed or executed by this worktree.
 
 ## Non-negotiable boundaries
 
-- Runtime v2 is pure UI semantics. Surface resolution and named
+- Runtime v3 is pure UI semantics. Surface resolution and named
   UiTarget/Binding resolution are separate and fail closed on Unknown.
 - UiTarget is semantic identity only. Binding owns every actionable placement
   and variant, including a fixed placement.

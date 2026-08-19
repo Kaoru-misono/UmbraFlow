@@ -1,7 +1,8 @@
 # Runtime model contract
 
-> Rewritten 2026-08-14 for Runtime v2. The normative field authority is
-> [`schema/umbraflow-runtime-v2.schema.json`](../../schema/umbraflow-runtime-v2.schema.json);
+> Rewritten 2026-08-19 for Runtime v3 after `2e781ec` and `27b4034`. The
+> normative field authority is
+> [`schema/umbraflow-runtime-v3.schema.json`](../../schema/umbraflow-runtime-v3.schema.json);
 > this document explains that schema and the behavior implemented by the trusted
 > compiler and resolver. It defines no compatibility spelling for an earlier
 > model.
@@ -21,7 +22,7 @@ from one live cycle.
 Every object is closed. Identifiers use the schema's one canonical spelling,
 asset paths live below `assets/`, rectangles are `[x, y, width, height]`, points
 are `[x, y]`, and sizes are `[width, height]`. The model declares
-`schema_version = 2`, `base_resolution`, `base_dpi`, and the collections of
+`schema_version = 3`, `base_resolution`, `base_dpi`, and the collections of
 UiTargets, Locators, Readers, Bindings, optional Collections, Surfaces and
 Transitions.
 
@@ -47,66 +48,32 @@ There is no inferred or default layout. `normalization` is `raw`, `trim`, or
 
 ### Predicates and detectors
 
-A detector predicate is either `locator_present` naming one Locator or
-`text_equals` naming one Reader and an exact value. A detector has the three
-lists `all`, `any`, and `none`; at least `all` or `any` is non-empty. These
-three lists belong to a Binding variant's detector. They are not a Surface
-identity language.
+A detector predicate is only `locator_present` naming one Locator. A detector
+has the three lists `all`, `any`, and `none`; at least `all` or `any` is
+non-empty. These three lists belong to a Binding variant's detector. They are
+not a Surface identity language.
 
-#### T-009 ruled 2026-08-14: no existence-by-text predicate, and `text_equals` leaves the detector
+`text_equals` remains a Collection filter only. It can select among members
+whose existence and rectangles a block Reader has already detected, but it
+cannot establish a Binding or Surface identity.
 
-`T-009` asked for a predicate meaning "this Reader found text here", so that an
-element with variable content could be declared present. It is ruled NOT NEEDED,
-and stronger than that: as posed it must not be built. Two independent reasons,
-and one finding that follows.
+#### T-009 and T-010 ruled and landed 2026-08-18
 
-The case that motivated it is already answered. It came from event option cards,
-whose titles differ every time, so `text_equals` could not say "a card is here".
-A detected Collection now runs a block Reader over a search rectangle and returns
-one item per detected line, each carrying its own rectangle — that IS existence
-established by detection rather than by comparison — and `completeness` says
-whether the set is whole. Nothing is left for a Binding-level predicate to add.
+`T-009` asked for a predicate meaning "this Reader found text here", motivated
+by variable event-card titles. The ruling is that detected Collections already
+answer that question: line detection establishes the members and their
+rectangles, then an optional text predicate filters those already-existing
+members. Text is evidence about a Surface, never the identity of one.
 
-What it asked for is barred by this model's own rule. A Binding's detector
-decides identity, because a Surface identity is a list of required Bindings. The
-rule is that text is evidence about what is on a Surface and never the identity
-of one. An existence-by-text predicate at detector level is exactly text
-deciding identity.
-
-The finding: `text_equals` is reachable from a detector TODAY, through the
-`predicate` union, which permits precisely what that rule forbids. Measured on
-2026-08-14, it has no caller — no model, fixture, example or consumer artifact
-uses it in a detector; only the parser knows the spelling. So the union
-collapses to `locator_present`, and `text_equals` survives only where it
-filters rather than decides: a Collection's `predicate`, which selects among
-members already found and never establishes that any of them is there.
-
-> **Corrected 2026-08-17: "it has no caller" is false, and the collapse this
-> paragraph prescribes cannot be done as written.** Attempting it found the
-> caller immediately. `ocrIdentityRuntimeModel()` in
-> `tests/task/test-runtime-v2-contract.cpp` declares a Binding `title.identity`
-> whose detector is `text_equals` over `title.reader`, and that Binding is the
-> whole of surface `screen`'s `identity` list — a text predicate deciding a
-> Surface identity, which is exactly the shape the rule above forbids.
->
-> It is there on purpose. That fixture serves `T-004`'s T05 case,
-> "T-004 T05 real OCR failures must leave Surface identity unresolved", whose
-> three sub-cases — a silent Reader, readable garbage, and a score below the
-> Reader's floor — all prove their point *through* that detector: the OCR fails,
-> the detector is unsatisfied, and the identity does not resolve. The fixture's
-> own comment states the intent: a real Reader sits in the Surface identity path
-> so its result is consumed as detector evidence rather than inserted as a
-> fixture literal.
->
-> So two landed rulings disagree. `T-009` says text may never decide identity;
-> `T-004` T05 demonstrates its property by having text decide identity and then
-> fail. Collapsing the union deletes T05's mechanism, and T05 is a closed row.
-> **The disposition is a ruling, not an edit**, and it belongs to whoever owns
-> the conflict: either T05 is rebuilt to prove the unknown paths without a text
-> detector, or the rule admits a stated exception, which this repository's
-> no-second-spelling rule makes expensive. Tracked as `T-010` in the consumer
-> execution authority. Nothing in the tree was changed on 2026-08-17; the
-> attempt was reverted when the premise failed.
+Runtime v3 makes that ruling mechanical. `detector.all`, `detector.any`, and
+`detector.none` refer directly to `locator_predicate`; a Binding detector that
+spells `text_equals` is rejected, while the same predicate remains valid under
+a Collection. The former OCR identity fixture was not retained as an exception.
+`T-010` rebuilt its three Reader-boundary cases so the Surface resolves from
+locator evidence first, after which `absent`, `read` carrying the original text,
+and `unknown` carrying `low_confidence` remain separately observable. The
+schema, parser, fixtures, examples and annotation compiler moved together in
+`2e781ec` and `27b4034` with no Runtime v2 reader or spelling left.
 
 ### Binding
 
@@ -233,29 +200,26 @@ reading is `read`, `absent`, or `unknown`; only `read` has `lines`, and only
 after the Reader's floor has judged it, but retain line rectangles because
 geometry participates in the decision basis.
 
-## Confirmation and still-open behavior packages
+## Landed behavior packages
 
-This document records current ownership; describing a package here does not
-close it.
+The consumer execution authority records these packages as landed. They remain
+listed here only to preserve the contract provenance, not to open work.
 
 - `T-005` owns confirmation versus recognition. The one `resolve_state` API
   confirms a caller-supplied expected Surface stack first. It returns that
   stack only when every member confirms present with no Unknown or ambiguity;
   otherwise the same call escalates to full Surface resolution. There is no
   fallback API, interrupt-only escalation path, or second recognition entry
-  point. `T-005` remains owned by the consumer repository's canonical
-  execution plan.
-- `T-006` owns the Runtime v2 map verbs: atomic `drag(start, offset)`,
+  point. The behavior landed in `c3ee416`.
+- `T-006` owns the runtime map verbs: atomic `drag(start, offset)`,
   connectivity reading with stitched-map evaluation, and conditional
-  same-kind enumeration, each with its runtime and conformance gate. This prose
-  does not claim those verbs are complete.
+  same-kind enumeration, each with its runtime and conformance gate. They landed
+  in `1d274ec`.
 - `T-007` owns the remaining map rulings: wheel authorization, drag duration,
-  colour-key ownership, and the conditional-enumeration falsifier. This prose
-  does not choose those answers.
-- `T-009` owns whether a distinct “there is text here” capability is still
-  required now that Readers and reading outcomes exist. This document does not
-  infer that capability from `text_equals`, `read`, or `absent` and does not
-  close the question.
+  colour-key ownership, and the conditional-enumeration falsifier. They landed
+  with `T-006` in `1d274ec`.
+- `T-009` ruled out a second text-existence capability in `ae211f3`; `T-010`
+  made that ruling enforceable in Runtime v3 through `2e781ec` and `27b4034`.
 
-The consumer repository's execution plan is the only unfinished-work ledger.
-The packages above are pointers to that owner, not duplicate work rows here.
+The consumer repository's execution plan remains the only unfinished-work
+ledger. Nothing in this section is a duplicate work row.

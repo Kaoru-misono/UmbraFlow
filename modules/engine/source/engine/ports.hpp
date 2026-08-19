@@ -134,7 +134,7 @@ namespace uf::engine
         //
         // A wheel is authorized only by an exploration observation cycle. It
         // aims at the bound target itself and is not a Runtime Receipt action:
-        // Runtime v2 has no declared semantic hover container to authorize.
+        // Runtime v3 has no declared semantic hover container to authorize.
         // No new gate is needed for this ruling because the closed Runtime
         // action vocabulary structurally rejects `scroll`, while the existing
         // exploration verb already exercises observation-cycle delivery.

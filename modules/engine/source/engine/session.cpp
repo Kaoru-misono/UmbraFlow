@@ -1018,9 +1018,9 @@ namespace uf::engine
         auto const identity = observation.m_frameIdentity;
 
         // What survives of coordinate authorization after semantic identity
-        // moved to Runtime v2: geometry must still be what the project authored
-        // against, and the frame must remain within its lease. Both refuse here,
-        // before any sink call.
+        // moved to the RuntimeModel: geometry must still be what the project
+        // authored against, and the frame must remain within its lease. Both
+        // refuse here, before any sink call.
         if (m_config.liveFingerprint != m_config.projectFingerprint)
         {
             auto mismatch = fail(

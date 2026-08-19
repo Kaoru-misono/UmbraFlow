@@ -31,7 +31,7 @@ namespace uf::cli
     // A line carries a chunk rather than one command because an agent's smallest
     // useful act is already a composition, and splitting it across lines would put
     // the framework's control flow in the queue file, where nothing can check it
-    // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 3). The id is
+    // (docs/archive/plans/2026-08-01-three-layers-and-agent-operator.md 3). The id is
     // required because a session answers every line, including one it refuses.
     struct ExploreChunk final
     {

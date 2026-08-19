@@ -383,7 +383,7 @@ namespace uf::task
         // the script layer, and a business script holding pixels could decide
         // something no trace evidence could falsify. It is not installed on a run
         // VM's private surface at all, which makes the rule structural
-        // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
+        // (docs/archive/plans/2026-08-01-three-layers-and-agent-operator.md 2).
         // cycleCensusGrid is on the same shelf for a sharper reason than its
         // counts-only answer suggests; see its declaration.
         //

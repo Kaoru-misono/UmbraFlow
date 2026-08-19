@@ -7,7 +7,8 @@ failure of that session had a single shape, and it is the first entry below.
 
 Instances that stop being true when the target changes — which of *that game's*
 rectangles never hold still, how long *its* UI fades in — live with the project
-that observed them, in `E:\umbraflow-projects\uf-chaos\PITFALLS.md`. What
+that observed them, in `E:\github\uf-chaos\PITFALLS.md` (checkout path corrected
+2026-08-19). What
 belongs here is the rule those instances taught.
 
 Related: [colour-key annotation](colour-key-annotation.md) is the same physics
@@ -195,7 +196,8 @@ count. The rule that transfers:
 Note the tension this creates with the model's own ruling that mutually exclusive
 states on one rectangle are ONE element with a named appearance list. That ruling
 is affordable exactly while the search region is small. It is recorded as an open
-cost in `docs/TODO.md`.
+cost in the archived upstream execution checklist
+(`docs/archive/plans/2026-08-19-upstream-execution-checklist.md`).
 
 ### Regression check
 

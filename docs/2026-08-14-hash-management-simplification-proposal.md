@@ -124,7 +124,7 @@ The following are current manual copies of schema or database identity:
 - `detail::k_workspaceSqliteSchemaHash`.
 
 > Amended 2026-08-15: `trace::k_traceSchemaHash` is gone — Stage H1 of
-> [the framework hash cleanup](plans/2026-08-14-framework-hash-cleanup.md)
+> [the framework hash cleanup](archive/plans/2026-08-14-framework-hash-cleanup.md)
 > deleted it together with the trace envelope's `payload.schema_hash`, because
 > `k_traceSchema = "umbraflow-trace/v2"` already names the format in the same
 > envelope. The other five are as listed.
