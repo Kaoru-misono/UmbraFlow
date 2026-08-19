@@ -11,6 +11,7 @@ rulings, consumer status or facts copied from code. Rulings live under
 - [Runtime and game-operator breaking rewrite](2026-08-09-runtime-hardening-rewrite.md)
 - [Runtime migration report](2026-08-09-runtime-migration-report.md)
 - [Framework verification gaps](2026-08-19-framework-verification-gaps.md)
+- [Project Kit release manifest](2026-08-19-project-kit-release-manifest.md)
 
 The two JSON manifests beside the migration report are its machine-readable
 baseline and disposition data.
