@@ -70,6 +70,7 @@ cpp_embed_framework_schemas(
     umbraflow-journal-v1.schema.json
     umbraflow-operator-v1.schema.json
     umbraflow-policy-v1.schema.json
+    umbraflow-project-attestation-v1.schema.json
     umbraflow-project-observation-v1.schema.json
     umbraflow-project-observation-proposal-v1.schema.json
     umbraflow-project-registration-v1.schema.json

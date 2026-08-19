@@ -1311,8 +1311,8 @@ namespace uf::deployment
     {
         auto const catalog = framework_schema::frameworkSchemaCatalog();
         CHECK_MESSAGE(
-            catalog.size() == 12U,
-            "framework schema catalog must contain exactly twelve declared sources"
+            catalog.size() == 13U,
+            "framework schema catalog must contain exactly thirteen declared sources"
         );
 
         auto const collectionFact = framework_schema::findFrameworkSchema(
