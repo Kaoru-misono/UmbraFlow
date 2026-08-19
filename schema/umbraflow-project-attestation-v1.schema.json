@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://umbraflow.dev/schema/project-attestation/v1",
-  "$comment": "The consumer attestation set, published by the framework per the V1a ruling so the consumer does not invent a shape the framework may not recognize. It is a producer contract, NOT an Operator admission gate, and nothing here proves the nine claims are true: the Operator verifies the blob's name, closure and hash mechanically, and the consumer's own semantic layer verifies self-hashes, cross-member equality and the registration join. No framework reader compiles against this document.",
+  "$comment": "The generic attestation set shape, published by the framework per the V1a ruling so the consumer does not invent a shape the framework may not recognize. It is a producer contract, NOT an Operator admission gate: the Operator verifies the blob's name, closure and hash mechanically, and the consumer's own semantic layer verifies self-hashes, cross-member equality and the registration join. This document deliberately knows nothing about any project's requirements -- the number of attestations, their identifiers and their per-slot pinning are the consumer's own specialization, on the same terms as the project/observation schema. No framework reader compiles against this document.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -19,28 +19,26 @@
     "predecessor_set_id": {
       "$comment": "The direct predecessor set's SHA-256 as 64 lowercase hex, or null for the first set. The chain rule itself (null only on first provision, non-null sets name the previous set's exact root hash) is enforced by the consumer generator and by the independent review, not by this schema.",
       "anyOf": [
-        { "type": "null" },
-        { "$ref": "#/$defs/hash64" }
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/hash64"
+        }
       ]
     },
-    "bundle_root_hash": { "$ref": "#/$defs/hash64" },
-    "plugin_id": { "$ref": "#/$defs/namespaced_name" },
+    "bundle_root_hash": {
+      "$ref": "#/$defs/hash64"
+    },
+    "plugin_id": {
+      "$ref": "#/$defs/namespaced_name"
+    },
     "attestations": {
       "type": "array",
-      "maxItems": 9,
-      "$comment": "Nine attestations pinned by position to D-01 through D-09; a tenth item or a position whose requirement_id does not match its slot is refused.",
-      "prefixItems": [
-        { "$ref": "#/$defs/attestation_D01" },
-        { "$ref": "#/$defs/attestation_D02" },
-        { "$ref": "#/$defs/attestation_D03" },
-        { "$ref": "#/$defs/attestation_D04" },
-        { "$ref": "#/$defs/attestation_D05" },
-        { "$ref": "#/$defs/attestation_D06" },
-        { "$ref": "#/$defs/attestation_D07" },
-        { "$ref": "#/$defs/attestation_D08" },
-        { "$ref": "#/$defs/attestation_D09" }
-      ],
-      "items": false
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/attestation"
+      }
     }
   },
   "$defs": {
@@ -55,7 +53,7 @@
       "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)+$"
     },
     "attestation": {
-      "$comment": "One ProjectAttestation. The semantic layer recomputes attestation_id as the exact-JCS self-hash and verifies the common bundle_root_hash, plugin_id and pack/build coordinates across all nine; this schema can state neither. Each slot def below pins requirement_id to its D-0X position.",
+      "$comment": "One ProjectAttestation. The semantic layer recomputes attestation_id as the exact-JCS self-hash and verifies the common bundle_root_hash, plugin_id and pack/build coordinates across the set; this schema can state neither.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -75,87 +73,54 @@
         "created_at"
       ],
       "properties": {
-        "attestation_id": { "$ref": "#/$defs/hash64" },
-        "requirement_id": {
-          "type": "string",
-          "pattern": "^D-0[1-9]$"
+        "attestation_id": {
+          "$ref": "#/$defs/hash64"
         },
-        "bundle_root_hash": { "$ref": "#/$defs/hash64" },
-        "plugin_id": { "$ref": "#/$defs/namespaced_name" },
-        "plugin_hash": { "$ref": "#/$defs/hash64" },
-        "content_pack_hash": { "$ref": "#/$defs/hash64" },
-        "recognition_pack_hash": { "$ref": "#/$defs/hash64" },
-        "source_snapshot_hash": { "$ref": "#/$defs/hash64" },
-        "build_recipe_hash": { "$ref": "#/$defs/hash64" },
+        "requirement_id": {
+          "$comment": "The requirement this attestation answers, named in the consumer's own taxonomy; the framework reads it as an opaque non-empty string and pins no particular spelling.",
+          "type": "string",
+          "minLength": 1
+        },
+        "bundle_root_hash": {
+          "$ref": "#/$defs/hash64"
+        },
+        "plugin_id": {
+          "$ref": "#/$defs/namespaced_name"
+        },
+        "plugin_hash": {
+          "$ref": "#/$defs/hash64"
+        },
+        "content_pack_hash": {
+          "$ref": "#/$defs/hash64"
+        },
+        "recognition_pack_hash": {
+          "$ref": "#/$defs/hash64"
+        },
+        "source_snapshot_hash": {
+          "$ref": "#/$defs/hash64"
+        },
+        "build_recipe_hash": {
+          "$ref": "#/$defs/hash64"
+        },
         "passed": {
           "const": true
         },
-        "report_hash": { "$ref": "#/$defs/hash64" },
+        "report_hash": {
+          "$ref": "#/$defs/hash64"
+        },
         "attestor_principal": {
           "type": "string",
           "minLength": 1
         },
-        "capability_hash": { "$ref": "#/$defs/hash64" },
+        "capability_hash": {
+          "$ref": "#/$defs/hash64"
+        },
         "created_at": {
           "$comment": "RFC 3339 timestamp; the precise shape is the producer's contract detail the semantic layer reads.",
           "type": "string",
           "minLength": 1
         }
       }
-    },
-    "attestation_D01": {
-      "allOf": [
-        { "$ref": "#/$defs/attestation" },
-        { "properties": { "requirement_id": { "const": "D-01" } } }
-      ]
-    },
-    "attestation_D02": {
-      "allOf": [
-        { "$ref": "#/$defs/attestation" },
-        { "properties": { "requirement_id": { "const": "D-02" } } }
-      ]
-    },
-    "attestation_D03": {
-      "allOf": [
-        { "$ref": "#/$defs/attestation" },
-        { "properties": { "requirement_id": { "const": "D-03" } } }
-      ]
-    },
-    "attestation_D04": {
-      "allOf": [
-        { "$ref": "#/$defs/attestation" },
-        { "properties": { "requirement_id": { "const": "D-04" } } }
-      ]
-    },
-    "attestation_D05": {
-      "allOf": [
-        { "$ref": "#/$defs/attestation" },
-        { "properties": { "requirement_id": { "const": "D-05" } } }
-      ]
-    },
-    "attestation_D06": {
-      "allOf": [
-        { "$ref": "#/$defs/attestation" },
-        { "properties": { "requirement_id": { "const": "D-06" } } }
-      ]
-    },
-    "attestation_D07": {
-      "allOf": [
-        { "$ref": "#/$defs/attestation" },
-        { "properties": { "requirement_id": { "const": "D-07" } } }
-      ]
-    },
-    "attestation_D08": {
-      "allOf": [
-        { "$ref": "#/$defs/attestation" },
-        { "properties": { "requirement_id": { "const": "D-08" } } }
-      ]
-    },
-    "attestation_D09": {
-      "allOf": [
-        { "$ref": "#/$defs/attestation" },
-        { "properties": { "requirement_id": { "const": "D-09" } } }
-      ]
     }
   }
 }
