@@ -28,6 +28,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -42,6 +43,8 @@ namespace uf::project
             Input,
             Release,
             FramesRoot,
+            Plugin,
+            PluginId,
         };
 
         struct ProjectFlagDefinition final
@@ -57,6 +60,8 @@ namespace uf::project
             std::optional<std::filesystem::path> release{};
             std::optional<std::filesystem::path> framesRoot{};
             std::vector<std::filesystem::path>   inputs{};
+            std::optional<std::string>           plugin{};
+            std::optional<std::string>           pluginId{};
         };
 
         constexpr auto k_projectFlags = std::array{
@@ -65,6 +70,8 @@ namespace uf::project
             ProjectFlagDefinition{"--input", ProjectFlag::Input},
             ProjectFlagDefinition{"--release", ProjectFlag::Release},
             ProjectFlagDefinition{"--frames-root", ProjectFlag::FramesRoot},
+            ProjectFlagDefinition{"--plugin", ProjectFlag::Plugin},
+            ProjectFlagDefinition{"--plugin-id", ProjectFlag::PluginId},
         };
 
         [[nodiscard]]
@@ -148,9 +155,64 @@ namespace uf::project
                     }
                     parsed.framesRoot = std::filesystem::path{value};
                     break;
+                case ProjectFlag::Plugin:
+                    if (parsed.plugin)
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            "project argument \"--plugin\" appears more than once"
+                        );
+                    }
+                    parsed.plugin = value;
+                    break;
+                case ProjectFlag::PluginId:
+                    if (parsed.pluginId)
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            "project argument \"--plugin-id\" appears more than once"
+                        );
+                    }
+                    parsed.pluginId = value;
+                    break;
                 }
             }
             return parsed;
+        }
+
+        [[nodiscard]]
+        auto projectDirectories(
+            ParsedProjectFlags const& parsed
+        ) -> Result<ProjectDirectories>
+        {
+            auto source = std::filesystem::path{};
+            if (parsed.source)
+            {
+                source = *parsed.source;
+            }
+            else
+            {
+                auto error = std::error_code{};
+                source     = std::filesystem::current_path(error);
+                if (error)
+                {
+                    return fail(
+                        AutomationErrorKind::IoFailure,
+                        std::format(
+                            "cannot resolve the current project source "
+                            "directory: {}",
+                            error.message()
+                        )
+                    );
+                }
+            }
+            auto const build = parsed.build
+                ? *parsed.build
+                : source / "work" / "build";
+            return ProjectDirectories{
+                .sourceDirectory = std::move(source),
+                .buildDirectory  = build,
+            };
         }
 
         // The corpus one template source is resolved in, and the only place
@@ -338,37 +400,79 @@ namespace uf::project
             return ok();
         }
 
+        struct ParsedProjectInit final
+        {
+            ProjectInitSpec                    spec{};
+            std::optional<ProjectScaffoldSpec> scaffold{};
+        };
+
+        struct ProjectPluginFormDefinition final
+        {
+            std::string_view  name{};
+            ProjectPluginForm form{};
+        };
+
+        constexpr auto k_projectPluginForms = std::array{
+            ProjectPluginFormDefinition{
+                "generated",
+                ProjectPluginForm::Generated,
+            },
+            ProjectPluginFormDefinition{
+                "hand-written",
+                ProjectPluginForm::HandWritten,
+            },
+        };
+
         [[nodiscard]]
         auto parseProjectInit(
             std::span<std::string const> raw
-        ) -> Result<ProjectInitSpec>
+        ) -> Result<ParsedProjectInit>
         {
             UF_TRY_VALUE(parsed, parseProjectFlags(raw));
-            if (!parsed.source || !parsed.build)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "project init requires --source PATH and --build PATH"
-                );
-            }
-            if (parsed.inputs.empty())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "project init requires at least one --input RELATIVE_PATH"
-                );
-            }
             if (parsed.release || parsed.framesRoot)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "project init accepts only --source, --build and --input"
+                    "project init does not accept --release or --frames-root"
                 );
             }
-            return ProjectInitSpec{
-                .sourceDirectory = std::move(*parsed.source),
-                .buildDirectory  = std::move(*parsed.build),
-                .inputs          = std::move(parsed.inputs),
+            if (parsed.plugin.has_value() != parsed.pluginId.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "a starter Project requires --plugin and --plugin-id together"
+                );
+            }
+            UF_TRY_VALUE(directories, projectDirectories(parsed));
+
+            auto scaffold = std::optional<ProjectScaffoldSpec>{};
+            if (parsed.plugin)
+            {
+                auto const form = std::ranges::find(
+                    k_projectPluginForms,
+                    *parsed.plugin,
+                    &ProjectPluginFormDefinition::name
+                );
+                if (form == k_projectPluginForms.end())
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "project --plugin must be generated or hand-written"
+                    );
+                }
+                scaffold.emplace(ProjectScaffoldSpec{
+                    .sourceDirectory = directories.sourceDirectory,
+                    .pluginId        = std::move(*parsed.pluginId),
+                    .pluginForm      = form->form,
+                });
+            }
+            return ParsedProjectInit{
+                .spec = ProjectInitSpec{
+                    .sourceDirectory = std::move(directories.sourceDirectory),
+                    .buildDirectory  = std::move(directories.buildDirectory),
+                    .inputs          = std::move(parsed.inputs),
+                },
+                .scaffold = std::move(scaffold),
             };
         }
 
@@ -396,17 +500,12 @@ namespace uf::project
         ) -> Result<ParsedProjectBuild>
         {
             UF_TRY_VALUE(parsed, parseProjectFlags(raw));
-            if (!parsed.source || !parsed.build)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "project {} requires --source PATH and --build PATH",
-                        action
-                    )
-                );
-            }
-            if (!parsed.inputs.empty() || parsed.release)
+            if (
+                !parsed.inputs.empty()
+                || parsed.release
+                || parsed.plugin
+                || parsed.pluginId
+            )
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
@@ -417,10 +516,11 @@ namespace uf::project
                     )
                 );
             }
+            UF_TRY_VALUE(directories, projectDirectories(parsed));
             return ParsedProjectBuild{
                 .spec = ProjectBuildSpec{
-                    .sourceDirectory = std::move(*parsed.source),
-                    .buildDirectory  = std::move(*parsed.build),
+                    .sourceDirectory = std::move(directories.sourceDirectory),
+                    .buildDirectory  = std::move(directories.buildDirectory),
                     .toolCatalogs    = {},
                 },
                 .framesRoot = std::move(parsed.framesRoot),
@@ -433,29 +533,30 @@ namespace uf::project
         ) -> Result<ParsedProjectFreeze>
         {
             UF_TRY_VALUE(parsed, parseProjectFlags(raw));
-            if (!parsed.source || !parsed.build || !parsed.release)
+            if (
+                !parsed.inputs.empty()
+                || parsed.plugin
+                || parsed.pluginId
+            )
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "project freeze requires --source PATH, --build PATH and "
-                    "--release PATH"
+                    "project freeze does not accept --input, --plugin or "
+                    "--plugin-id"
                 );
             }
-            if (!parsed.inputs.empty())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "project freeze does not accept --input"
-                );
-            }
+            UF_TRY_VALUE(directories, projectDirectories(parsed));
+            auto release = parsed.release
+                ? std::move(*parsed.release)
+                : directories.sourceDirectory / "work" / "release";
             return ParsedProjectFreeze{
                 .spec = ProjectFreezeSpec{
                     .candidate = ProjectBuildSpec{
-                        .sourceDirectory = std::move(*parsed.source),
-                        .buildDirectory  = std::move(*parsed.build),
+                        .sourceDirectory = std::move(directories.sourceDirectory),
+                        .buildDirectory  = std::move(directories.buildDirectory),
                         .toolCatalogs    = {},
                     },
-                    .releaseRoot = std::move(*parsed.release),
+                    .releaseRoot = std::move(release),
                 },
                 .framesRoot = std::move(parsed.framesRoot),
             };
@@ -473,6 +574,8 @@ namespace uf::project
                 || parsed.build
                 || parsed.framesRoot
                 || !parsed.inputs.empty()
+                || parsed.plugin
+                || parsed.pluginId
             )
             {
                 return fail(
@@ -495,24 +598,32 @@ namespace uf::project
             std::span<std::string const> raw
         ) -> ProjectExitCode
         {
-            auto const spec = parseProjectInit(raw);
-            if (!spec)
+            auto const parsed = parseProjectInit(raw);
+            if (!parsed)
             {
-                std::cerr << spec.error().message() << '\n';
+                std::cerr << parsed.error().message() << '\n';
                 std::cerr << projectUsageText();
                 return ProjectExitCode::Failure;
             }
 
-            auto const initialized = initProject(*spec);
+            if (parsed->scaffold)
+            {
+                auto const scaffolded = scaffoldProject(*parsed->scaffold);
+                if (!scaffolded)
+                {
+                    return reportProjectError(scaffolded.error());
+                }
+            }
+
+            auto const initialized = initProject(parsed->spec);
             if (!initialized)
             {
                 return reportProjectError(initialized.error());
             }
             std::cout << std::format(
-                "project init: source=\"{}\" build=\"{}\" inputs={}\n",
-                spec->sourceDirectory.string(),
-                spec->buildDirectory.string(),
-                spec->inputs.size()
+                "project init: source=\"{}\" build=\"{}\"\n",
+                parsed->spec.sourceDirectory.string(),
+                parsed->spec.buildDirectory.string()
             );
             return ProjectExitCode::Success;
         }
@@ -670,6 +781,14 @@ namespace uf::project
         std::string_view action
     ) -> Result<ProjectDirectories>
     {
+        if (action == "init")
+        {
+            UF_TRY_VALUE(parsed, parseProjectInit(raw));
+            return ProjectDirectories{
+                .sourceDirectory = std::move(parsed.spec.sourceDirectory),
+                .buildDirectory  = std::move(parsed.spec.buildDirectory),
+            };
+        }
         UF_TRY_VALUE(parsed, parseProjectBuildSpec(raw, action));
         return ProjectDirectories{
             .sourceDirectory = std::move(parsed.spec.sourceDirectory),
@@ -708,22 +827,32 @@ namespace uf::project
     {
         return
             "Usage:\n"
-            "  project init --source PATH --build PATH --input RELATIVE_PATH "
+            "  project init [--source PATH] [--build PATH] "
+            "[--plugin generated|hand-written --plugin-id NAME] "
             "[--input RELATIVE_PATH ...]\n"
-            "  project build --source PATH --build PATH "
+            "  project build [--source PATH] [--build PATH] "
             "[--frames-root PATH]\n"
-            "  project check --source PATH --build PATH "
+            "  project check [--source PATH] [--build PATH] "
             "[--frames-root PATH]\n"
-            "  project freeze --source PATH --build PATH --release PATH "
+            "  project freeze [--source PATH] [--build PATH] [--release PATH] "
             "[--frames-root PATH]\n"
             "  project run --release RELEASE_DIRECTORY\n"
             "\n"
-            "Initializes the declared source inputs, builds only into the build\n"
-            "directory, checks the candidate, freezes a content-addressed\n"
-            "read-only release, and runs only a verified immutable release.\n"
-            "A declared declarative-tools/PLUGIN_ID/NAME.json input generates\n"
+            "init creates a starter Project when umbraflow-project.json is\n"
+            "absent, then derives its ordinary inputs from that document.\n"
+            "--plugin and --plugin-id are required together only for that first\n"
+            "init; --input adds an authoring-generator source that the runtime\n"
+            "declaration does not carry. Source defaults to the current\n"
+            "directory, build to <source>/work/build and release to\n"
+            "<source>/work/release. When umbraflow-kit.json is present, init\n"
+            "installs and verifies its release under <source>/umbraflow-bin; a\n"
+            "later init verifies that immutable local bundle without following\n"
+            "a newer release. build materializes generated artifacts, check\n"
+            "judges them, freeze publishes a content-addressed read-only\n"
+            "release, and run accepts only a verified immutable release.\n"
+            "A derived declarative-tools/PLUGIN_ID/NAME.json input generates\n"
             "generated/adapters/PLUGIN_ID/NAME.luau. The source directory must\n"
-            "hold umbraflow-project.json at its root, declared or not; build\n"
+            "hold umbraflow-project.json after init; build\n"
             "and check judge it against the published project schema, which\n"
             "requires a plugin_justification of every deployment whose\n"
             "plugin_authoring is hand-written and refuses one from every\n"

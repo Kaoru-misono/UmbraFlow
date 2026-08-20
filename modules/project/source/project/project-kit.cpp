@@ -161,6 +161,368 @@ namespace uf::project
             std::vector<ManifestRow> artifacts{};
         };
 
+        struct ScaffoldFile final
+        {
+            std::filesystem::path relativePath{};
+            std::string           bytes{};
+        };
+
+        [[nodiscard]]
+        auto jsonDocument(json::Value const& value) -> std::string
+        {
+            auto bytes = json::canonicalBytes(value);
+            bytes.push_back('\n');
+            return bytes;
+        }
+
+        [[nodiscard]]
+        auto scaffoldPlugin(
+            std::string const& pluginId,
+            ProjectPluginForm form
+        ) -> json::Value
+        {
+            auto modules = std::vector<json::Value>{};
+            switch (form)
+            {
+            case ProjectPluginForm::Generated:
+                modules.emplace_back(json::Value::ofObject({
+                    {"name", json::Value::ofString("main")},
+                    {
+                        "path",
+                        json::Value::ofString(
+                            "generated/adapters/" + pluginId
+                            + "/scaffold.luau"
+                        ),
+                    },
+                }));
+                break;
+            case ProjectPluginForm::HandWritten:
+                modules.emplace_back(json::Value::ofObject({
+                    {"name", json::Value::ofString("main")},
+                    {"path", json::Value::ofString("plugin/main.luau")},
+                }));
+                modules.emplace_back(json::Value::ofObject({
+                    {"name", json::Value::ofString("support")},
+                    {"path", json::Value::ofString("plugin/support.luau")},
+                }));
+                break;
+            }
+            return json::Value::ofObject({
+                {"entry", json::Value::ofString("main")},
+                {"modules", json::Value::ofArray(std::move(modules))},
+            });
+        }
+
+        [[nodiscard]]
+        auto scaffoldProjectDocument(
+            ProjectScaffoldSpec const& spec
+        ) -> json::Value
+        {
+            auto deployment = std::vector<json::Member>{
+                {
+                    "baseline_event_type",
+                    json::Value::ofString(
+                        spec.pluginId + ".baseline_created"
+                    ),
+                },
+                {
+                    "effect_payload_schemas",
+                    json::Value::ofArray({}),
+                },
+                {
+                    "journal_event_schema_manifest",
+                    json::Value::ofString(
+                        "schemas/" + spec.pluginId
+                        + "/journal-manifest-v1.json"
+                    ),
+                },
+                {
+                    "journal_payload_schemas",
+                    json::Value::ofArray({json::Value::ofString(
+                        "schemas/" + spec.pluginId
+                        + "/journal-0-v1.schema.json"
+                    )}),
+                },
+                {"name", json::Value::ofString("main")},
+                {
+                    "observed_instance_identity_schemas",
+                    json::Value::ofArray({}),
+                },
+                {
+                    "plugin",
+                    scaffoldPlugin(spec.pluginId, spec.pluginForm),
+                },
+                {
+                    "plugin_authoring",
+                    json::Value::ofString(
+                        spec.pluginForm == ProjectPluginForm::Generated
+                            ? "generated"
+                            : "hand-written"
+                    ),
+                },
+                {"plugin_id", json::Value::ofString(spec.pluginId)},
+                {
+                    "project_observation_schema",
+                    json::Value::ofString(
+                        "schemas/" + spec.pluginId
+                        + "/project-observation-v1.schema.json"
+                    ),
+                },
+                {
+                    "project_state_schema",
+                    json::Value::ofString(
+                        "schemas/" + spec.pluginId
+                        + "/project-state-v1.schema.json"
+                    ),
+                },
+                {
+                    "reconcile_manifest",
+                    json::Value::ofString(
+                        "schemas/" + spec.pluginId
+                        + "/reconcile-manifest-v1.json"
+                    ),
+                },
+                {
+                    "reconcile_schema",
+                    json::Value::ofString(
+                        "schemas/" + spec.pluginId
+                        + "/reconcile-v1.schema.json"
+                    ),
+                },
+                {
+                    "resources",
+                    json::Value::ofArray({json::Value::ofObject({
+                        {"kind", json::Value::ofString("utf8")},
+                        {"name", json::Value::ofString("facts")},
+                        {
+                            "path",
+                            json::Value::ofString("content/placeholder.txt"),
+                        },
+                    })}),
+                },
+                {
+                    "tool_catalog",
+                    json::Value::ofString(
+                        "schemas/" + spec.pluginId
+                        + "/tool-catalog-v1.json"
+                    ),
+                },
+                {
+                    "tool_precondition_schema",
+                    json::Value::ofString(
+                        "schemas/" + spec.pluginId
+                        + "/precondition-v1.schema.json"
+                    ),
+                },
+            };
+            if (spec.pluginForm == ProjectPluginForm::HandWritten)
+            {
+                deployment.emplace_back(
+                    "plugin_justification",
+                    json::Value::ofString(
+                        "Replace this scaffold explanation with the member or "
+                        "semantic that umbraflow-declarative-workflow-tool/v1 "
+                        "cannot express."
+                    )
+                );
+            }
+            return json::Value::ofObject({
+                {
+                    "deployments",
+                    json::Value::ofArray({
+                        json::Value::ofObject(std::move(deployment)),
+                    }),
+                },
+                {"primary_deployment", json::Value::ofString("main")},
+                {"runtime_artifact", json::Value::ofString("runtime/artifact")},
+                {
+                    "schema",
+                    json::Value::ofString(std::string{k_projectContractVersion}),
+                },
+                {"template_cuts", json::Value::ofArray({})},
+            });
+        }
+
+        [[nodiscard]]
+        auto scaffoldToolCatalog(
+            std::string const& pluginId,
+            ContentHash const& preconditionHash
+        ) -> json::Value
+        {
+            return json::Value::ofObject({
+                {
+                    "effect_payload_sha256s",
+                    json::Value::ofArray({}),
+                },
+                {"plugin_id", json::Value::ofString(pluginId)},
+                {"schema", json::Value::ofString("umbraflow-tool-catalog/v1")},
+                {
+                    "tool_precondition_sha256",
+                    json::Value::ofString(preconditionHash.hex()),
+                },
+                {
+                    "tools",
+                    json::Value::ofArray({json::Value::ofObject({
+                        {
+                            "argument_schema",
+                            json::Value::ofString("observed_instance_id"),
+                        },
+                        {
+                            "effect_bounds",
+                            json::Value::ofArray({}),
+                        },
+                        {
+                            "idempotency",
+                            json::Value::ofString("delivery_safe"),
+                        },
+                        {
+                            "mutability",
+                            json::Value::ofString("read_only"),
+                        },
+                        {
+                            "name",
+                            json::Value::ofString(pluginId + ".scaffold"),
+                        },
+                        {
+                            "required_capabilities",
+                            json::Value::ofArray({}),
+                        },
+                        {"surface", json::Value::ofString("semantic")},
+                        {
+                            "timeout_policy",
+                            json::Value::ofObject({
+                                {
+                                    "maximum_elapsed_ms",
+                                    json::Value::ofNumber(3000),
+                                },
+                                {
+                                    "on_timeout",
+                                    json::Value::ofString("stop"),
+                                },
+                            }),
+                        },
+                        {
+                            "ui_action_bounds",
+                            json::Value::ofArray({}),
+                        },
+                        {"version", json::Value::ofString("1.0.0")},
+                        {
+                            "workflow_limits",
+                            json::Value::ofObject({
+                                {
+                                    "maximum_dispatches",
+                                    json::Value::ofNumber(1),
+                                },
+                                {
+                                    "maximum_elapsed_ms",
+                                    json::Value::ofNumber(3000),
+                                },
+                                {
+                                    "maximum_observations",
+                                    json::Value::ofNumber(1),
+                                },
+                                {
+                                    "maximum_steps",
+                                    json::Value::ofNumber(1),
+                                },
+                                {
+                                    "maximum_waits",
+                                    json::Value::ofNumber(1),
+                                },
+                            }),
+                        },
+                    })}),
+                },
+            });
+        }
+
+        [[nodiscard]]
+        auto scaffoldDeclarativeTool(
+            std::string const& pluginId
+        ) -> json::Value
+        {
+            return json::Value::ofObject({
+                {
+                    "allowed_instance_kinds",
+                    json::Value::ofArray({
+                        json::Value::ofString(pluginId + ".target"),
+                    }),
+                },
+                {
+                    "bounds",
+                    json::Value::ofObject({
+                        {
+                            "maximum_dispatches",
+                            json::Value::ofNumber(1),
+                        },
+                        {
+                            "maximum_elapsed_ms",
+                            json::Value::ofNumber(3000),
+                        },
+                        {
+                            "maximum_observations",
+                            json::Value::ofNumber(1),
+                        },
+                        {
+                            "maximum_states",
+                            json::Value::ofNumber(1),
+                        },
+                        {"maximum_steps", json::Value::ofNumber(1)},
+                        {"maximum_waits", json::Value::ofNumber(1)},
+                    }),
+                },
+                {
+                    "fresh_observation",
+                    json::Value::ofObject({
+                        {
+                            "required_surface",
+                            json::Value::ofString(pluginId + ".surface"),
+                        },
+                        {
+                            "require_unambiguous",
+                            json::Value::ofBoolean(true),
+                        },
+                    }),
+                },
+                {
+                    "schema",
+                    json::Value::ofString(
+                        "umbraflow-declarative-workflow-tool/v1"
+                    ),
+                },
+                {
+                    "states",
+                    json::Value::ofArray({json::Value::ofObject({
+                        {"kind", json::Value::ofString("wait")},
+                        {"observation_budget", json::Value::ofNumber(1)},
+                        {"state_key", json::Value::ofString("observe")},
+                        {"timeout_ms", json::Value::ofNumber(2000)},
+                    })}),
+                },
+                {
+                    "steps",
+                    json::Value::ofArray({json::Value::ofString("observe")}),
+                },
+                {
+                    "target_argument",
+                    json::Value::ofString("observed_instance_id"),
+                },
+                {
+                    "tool_name",
+                    json::Value::ofString(pluginId + ".scaffold"),
+                },
+                {
+                    "ui_finding",
+                    json::Value::ofObject({
+                        {
+                            "kind",
+                            json::Value::ofString("observed_instance_absent"),
+                        },
+                    }),
+                },
+            });
+        }
+
         [[nodiscard]]
         auto requireDirectory(
             std::filesystem::path const& directory,
@@ -390,6 +752,38 @@ namespace uf::project
         }
 
         [[nodiscard]]
+        auto declarativeInputForGeneratedModule(
+            std::string_view modulePath
+        ) -> Result<std::string>
+        {
+            constexpr auto prefix = std::string_view{"generated/adapters/"};
+            constexpr auto suffix = std::string_view{".luau"};
+            if (
+                !modulePath.starts_with(prefix)
+                || !modulePath.ends_with(suffix)
+                || modulePath.size() == prefix.size() + suffix.size()
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "generated Project module \"{}\" must map to "
+                        "generated/adapters/<plugin>/<tool>.luau",
+                        modulePath
+                    )
+                );
+            }
+            auto relative = std::string{
+                modulePath.substr(
+                    prefix.size(),
+                    modulePath.size() - prefix.size() - suffix.size()
+                )
+            };
+            return std::string{k_declarativeToolDirectory}
+                + "/" + relative + ".json";
+        }
+
+        [[nodiscard]]
         auto validateDeclaredInput(
             std::filesystem::path const& sourceDirectory,
             std::string_view input
@@ -458,14 +852,6 @@ namespace uf::project
             ProjectInitSpec const& spec
         ) -> Result<std::vector<std::string>>
         {
-            if (spec.inputs.empty())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "project init requires at least one declared input"
-                );
-            }
-
             auto inputs = std::vector<std::string>{};
             inputs.reserve(spec.inputs.size());
             for (auto const& input : spec.inputs)
@@ -570,7 +956,7 @@ namespace uf::project
             -> json::Value const&;
 
         [[nodiscard]]
-        auto writeStarterModuleIfMissing(
+        auto writeProjectFileIfMissing(
             std::filesystem::path const& path,
             std::string_view bytes
         ) -> Status
@@ -583,7 +969,7 @@ namespace uf::project
                 return fail(
                     AutomationErrorKind::IoFailure,
                     std::format(
-                        "cannot inspect starter Project module \"{}\": {}",
+                        "cannot inspect starter Project file \"{}\": {}",
                         path.string(),
                         error.message()
                     )
@@ -595,27 +981,20 @@ namespace uf::project
                 return fail(
                     AutomationErrorKind::IoFailure,
                     std::format(
-                        "cannot create starter Project module directory \"{}\": {}",
+                        "cannot create starter Project file directory \"{}\": {}",
                         path.parent_path().string(),
                         error.message()
                     )
                 );
             }
-            return writeText(path, bytes, "starter Project module");
+            return writeText(path, bytes, "starter Project file");
         }
 
         [[nodiscard]]
         auto initializedInputs(ProjectInitSpec const& spec)
             -> Result<std::vector<std::string>>
         {
-            auto const projectDocument = readProjectRootDocument(spec.sourceDirectory);
-            if (!projectDocument.has_value())
-            {
-                // init remains able to establish its input ledger before a
-                // draft manifest is valid; build/check own the schema verdict.
-                return canonicalInputs(spec);
-            }
-            auto const& document = *projectDocument;
+            UF_TRY_VALUE(document, readProjectRootDocument(spec.sourceDirectory));
             auto inputs = std::set<std::string>{};
             for (auto const& input : spec.inputs)
             {
@@ -624,13 +1003,13 @@ namespace uf::project
             }
             inputs.emplace(std::string{k_projectManifestName});
 
-            auto const primaryName = member(document, "primary_deployment").string();
             for (auto const& deployment : member(document, "deployments").items())
             {
                 auto const& plugin = member(deployment, "plugin");
-                auto const isPrimary = member(deployment, "name").string() == primaryName;
-                auto declaresStarterMain    = false;
-                auto declaresStarterSupport = false;
+                auto const isGenerated = (
+                    member(deployment, "plugin_authoring").string()
+                    == "generated"
+                );
                 for (auto const& module : member(plugin, "modules").items())
                 {
                     UF_TRY_VALUE(
@@ -639,14 +1018,18 @@ namespace uf::project
                             std::filesystem::path{member(module, "path").string()}
                         )
                     );
-                    if (!std::string_view{normalized}.starts_with("generated/"))
+                    if (isGenerated)
+                    {
+                        UF_TRY_VALUE(
+                            declaration,
+                            declarativeInputForGeneratedModule(normalized)
+                        );
+                        inputs.emplace(std::move(declaration));
+                    }
+                    else
+                    {
                         inputs.emplace(normalized);
-                    if (isPrimary && member(module, "name").string() == "main"
-                        && normalized == "plugin/main.luau")
-                        declaresStarterMain = true;
-                    if (isPrimary && member(module, "name").string() == "support"
-                        && normalized == "plugin/support.luau")
-                        declaresStarterSupport = true;
+                    }
                 }
                 for (auto const& resource : member(deployment, "resources").items())
                 {
@@ -657,38 +1040,6 @@ namespace uf::project
                         )
                     );
                     inputs.emplace(std::move(normalized));
-                }
-
-                if (isPrimary && declaresStarterMain && declaresStarterSupport)
-                {
-                    auto const pluginId = member(deployment, "plugin_id").string();
-                    auto const mainBytes = std::string{
-                        "local support = require(\"./support\")\n\n"
-                        "return {\n"
-                        "    plugin_id = \""
-                    } + std::string{pluginId}
-                        + "\",\n"
-                          "    derive = support.identity,\n"
-                          "    plan = support.identity,\n"
-                          "    next_step = support.identity,\n"
-                          "    reconcile = support.identity,\n"
-                          "    reduce = support.identity,\n"
-                          "}\n";
-                    constexpr auto supportBytes = std::string_view{
-                        "return {\n"
-                        "    identity = function(value)\n"
-                        "        return value\n"
-                        "    end,\n"
-                        "}\n"
-                    };
-                    UF_TRY(writeStarterModuleIfMissing(
-                        spec.sourceDirectory / "plugin" / "support.luau",
-                        supportBytes
-                    ));
-                    UF_TRY(writeStarterModuleIfMissing(
-                        spec.sourceDirectory / "plugin" / "main.luau",
-                        mainBytes
-                    ));
                 }
             }
 
@@ -2450,6 +2801,57 @@ namespace uf::project
             }
             return ok();
         }
+
+        [[nodiscard]]
+        auto validatedProjectDocument(
+            std::string_view bytes
+        ) -> Result<json::Value>
+        {
+            auto const published = framework_schema::findFrameworkSchema(
+                k_projectSchemaPath
+            );
+            if (!published.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "generated framework schema catalog is missing "
+                        + std::string{k_projectSchemaPath}
+                );
+            }
+            auto const compiled = json::Schema::compile(json::Schema::Document{
+                .label      = published->relativePath,
+                .exactBytes = published->exactBytes,
+            });
+            if (!compiled.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "{} is not a schema this kit can apply: {}",
+                        published->relativePath,
+                        compiled.error().message()
+                    )
+                );
+            }
+            UF_TRY_VALUE_CONTEXT(
+                document,
+                json::parse(bytes),
+                std::format("reading {}", k_projectManifestName)
+            );
+            auto const judged = compiled->validate(document);
+            if (!judged.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "{}: {}",
+                        k_projectManifestName,
+                        judged.error().message()
+                    )
+                );
+            }
+            return document;
+        }
     }
 
     // The project's root document, judged by the one published statement of
@@ -2533,50 +2935,407 @@ namespace uf::project
         }
         UF_TRY_VALUE(bytes, readText(manifestPath, "root document"));
 
-        auto const published = framework_schema::findFrameworkSchema(
-            k_projectSchemaPath
-        );
-        if (!published.has_value())
+        return validatedProjectDocument(bytes);
+    }
+
+    auto scaffoldProject(ProjectScaffoldSpec const& spec) -> Status
+    {
+        UF_TRY(requireDirectory(spec.sourceDirectory, "source"));
+
+        auto const objectSchema = [](std::string_view id)
         {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "generated framework schema catalog is missing "
-                    + std::string{k_projectSchemaPath}
-            );
+            return jsonDocument(json::Value::ofObject({
+                {"$id", json::Value::ofString(std::string{id})},
+                {
+                    "$schema",
+                    json::Value::ofString(
+                        "https://json-schema.org/draft/2020-12/schema"
+                    ),
+                },
+                {"type", json::Value::ofString("object")},
+            }));
+        };
+        auto const projectStateSchema = objectSchema(
+            "https://umbraflow.dev/schema/project/state"
+        );
+        auto const projectObservationSchema = objectSchema(
+            "https://umbraflow.dev/schema/project/observation"
+        );
+        auto const preconditionSchema = jsonDocument(json::Value::ofObject({
+            {
+                "$defs",
+                json::Value::ofObject({
+                    {
+                        "observed_instance_id",
+                        json::Value::ofObject({
+                            {"type", json::Value::ofString("string")},
+                        }),
+                    },
+                }),
+            },
+            {
+                "$id",
+                json::Value::ofString(
+                    "https://umbraflow.dev/schema/project/tool-precondition"
+                ),
+            },
+            {
+                "$schema",
+                json::Value::ofString(
+                    "https://json-schema.org/draft/2020-12/schema"
+                ),
+            },
+            {"type", json::Value::ofString("object")},
+        }));
+        auto const journalPayloadSchema = objectSchema(
+            "https://umbraflow.dev/schema/project/scaffold/journal-payload"
+        );
+        auto const reconcileSchema = jsonDocument(json::Value::ofObject({
+            {
+                "$defs",
+                json::Value::ofObject({
+                    {
+                        "request",
+                        json::Value::ofObject({
+                            {"type", json::Value::ofString("object")},
+                        }),
+                    },
+                    {
+                        "verdict",
+                        json::Value::ofObject({
+                            {
+                                "additionalProperties",
+                                json::Value::ofBoolean(false),
+                            },
+                            {
+                                "properties",
+                                json::Value::ofObject({
+                                    {
+                                        "disposition",
+                                        json::Value::ofObject({
+                                            {
+                                                "enum",
+                                                json::Value::ofArray({
+                                                    json::Value::ofString(
+                                                        "Continue"
+                                                    ),
+                                                    json::Value::ofString(
+                                                        "Confirmed"
+                                                    ),
+                                                    json::Value::ofString(
+                                                        "Rejected"
+                                                    ),
+                                                    json::Value::ofString(
+                                                        "Ambiguous"
+                                                    ),
+                                                    json::Value::ofString(
+                                                        "Diverged"
+                                                    ),
+                                                }),
+                                            },
+                                        }),
+                                    },
+                                }),
+                            },
+                            {
+                                "required",
+                                json::Value::ofArray({
+                                    json::Value::ofString("disposition"),
+                                }),
+                            },
+                            {"type", json::Value::ofString("object")},
+                        }),
+                    },
+                }),
+            },
+            {
+                "$id",
+                json::Value::ofString(
+                    "https://umbraflow.dev/schema/project/reconcile"
+                ),
+            },
+            {
+                "$schema",
+                json::Value::ofString(
+                    "https://json-schema.org/draft/2020-12/schema"
+                ),
+            },
+        }));
+        UF_TRY_VALUE(
+            preconditionHash,
+            sha256(std::as_bytes(std::span{preconditionSchema}))
+        );
+        UF_TRY_VALUE(
+            journalPayloadHash,
+            sha256(std::as_bytes(std::span{journalPayloadSchema}))
+        );
+        UF_TRY_VALUE(
+            reconcileHash,
+            sha256(std::as_bytes(std::span{reconcileSchema}))
+        );
+
+        auto const projectDocument = scaffoldProjectDocument(spec);
+        auto const projectBytes    = jsonDocument(projectDocument);
+        UF_TRY(validatedProjectDocument(projectBytes));
+
+        auto const toolCatalog = scaffoldToolCatalog(
+            spec.pluginId,
+            preconditionHash
+        );
+        UF_TRY_VALUE(
+            toolDeclaration,
+            parseToolCatalogDeclaration(toolCatalog)
+        );
+        UF_TRY(generateToolCatalog(toolDeclaration));
+
+        auto files = std::vector<ScaffoldFile>{
+            {
+                .relativePath = std::filesystem::path{
+                    "schemas"
+                } / spec.pluginId / "precondition-v1.schema.json",
+                .bytes = preconditionSchema,
+            },
+            {
+                .relativePath = std::filesystem::path{
+                    "schemas"
+                } / spec.pluginId / "project-state-v1.schema.json",
+                .bytes = projectStateSchema,
+            },
+            {
+                .relativePath = std::filesystem::path{
+                    "schemas"
+                } / spec.pluginId / "project-observation-v1.schema.json",
+                .bytes = projectObservationSchema,
+            },
+            {
+                .relativePath = std::filesystem::path{
+                    "schemas"
+                } / spec.pluginId / "reconcile-v1.schema.json",
+                .bytes = reconcileSchema,
+            },
+            {
+                .relativePath = std::filesystem::path{
+                    "schemas"
+                } / spec.pluginId / "journal-0-v1.schema.json",
+                .bytes = journalPayloadSchema,
+            },
+            {
+                .relativePath = std::filesystem::path{
+                    "schemas"
+                } / spec.pluginId / "journal-manifest-v1.json",
+                .bytes = jsonDocument(json::Value::ofObject({
+                    {"plugin_id", json::Value::ofString(spec.pluginId)},
+                    {
+                        "payload_schemas",
+                        json::Value::ofArray({json::Value::ofObject({
+                            {
+                                "namespaced_event_type",
+                                json::Value::ofString(
+                                    spec.pluginId + ".baseline_created"
+                                ),
+                            },
+                            {
+                                "sha256",
+                                json::Value::ofString(
+                                    journalPayloadHash.hex()
+                                ),
+                            },
+                        })}),
+                    },
+                    {
+                        "schema",
+                        json::Value::ofString(
+                            "umbraflow-journal-event-schema-manifest/v1"
+                        ),
+                    },
+                })),
+            },
+            {
+                .relativePath = std::filesystem::path{
+                    "schemas"
+                } / spec.pluginId / "reconcile-manifest-v1.json",
+                .bytes = jsonDocument(json::Value::ofObject({
+                    {
+                        "dispositions",
+                        json::Value::ofArray({
+                            json::Value::ofObject({
+                                {
+                                    "disposition",
+                                    json::Value::ofString("continue"),
+                                },
+                                {"value", json::Value::ofString("Continue")},
+                            }),
+                            json::Value::ofObject({
+                                {
+                                    "disposition",
+                                    json::Value::ofString("confirmed"),
+                                },
+                                {"value", json::Value::ofString("Confirmed")},
+                            }),
+                            json::Value::ofObject({
+                                {
+                                    "disposition",
+                                    json::Value::ofString("rejected"),
+                                },
+                                {"value", json::Value::ofString("Rejected")},
+                            }),
+                            json::Value::ofObject({
+                                {
+                                    "disposition",
+                                    json::Value::ofString("ambiguous"),
+                                },
+                                {"value", json::Value::ofString("Ambiguous")},
+                            }),
+                            json::Value::ofObject({
+                                {
+                                    "disposition",
+                                    json::Value::ofString("diverged"),
+                                },
+                                {"value", json::Value::ofString("Diverged")},
+                            }),
+                        }),
+                    },
+                    {"plugin_id", json::Value::ofString(spec.pluginId)},
+                    {
+                        "reconcile_schema_sha256",
+                        json::Value::ofString(reconcileHash.hex()),
+                    },
+                    {
+                        "request_definition",
+                        json::Value::ofString("request"),
+                    },
+                    {
+                        "schema",
+                        json::Value::ofString(
+                            "umbraflow-reconcile-manifest/v1"
+                        ),
+                    },
+                    {
+                        "verdict_definition",
+                        json::Value::ofString("verdict"),
+                    },
+                    {
+                        "verdict_member",
+                        json::Value::ofString("disposition"),
+                    },
+                })),
+            },
+            {
+                .relativePath = std::filesystem::path{
+                    "schemas"
+                } / spec.pluginId / "tool-catalog-v1.json",
+                .bytes = jsonDocument(toolCatalog),
+            },
+            {
+                .relativePath = "content/placeholder.txt",
+                .bytes        = "replace this runtime resource\n",
+            },
+        };
+
+        switch (spec.pluginForm)
+        {
+        case ProjectPluginForm::Generated:
+        {
+            auto const declaration = scaffoldDeclarativeTool(spec.pluginId);
+            UF_TRY(generateDeclarativeWorkflowAdapter(
+                spec.pluginId,
+                jsonDocument(declaration)
+            ));
+            files.emplace_back(ScaffoldFile{
+                .relativePath = std::filesystem::path{
+                    "declarative-tools"
+                } / spec.pluginId / "scaffold.json",
+                .bytes = jsonDocument(declaration),
+            });
+            break;
         }
-        auto const compiled = json::Schema::compile(json::Schema::Document{
-            .label      = published->relativePath,
-            .exactBytes = published->exactBytes,
+        case ProjectPluginForm::HandWritten:
+            files.emplace_back(ScaffoldFile{
+                .relativePath = "plugin/support.luau",
+                .bytes = (
+                    "return {\n"
+                    "    identity = function(value)\n"
+                    "        return value\n"
+                    "    end,\n"
+                    "}\n"
+                ),
+            });
+            files.emplace_back(ScaffoldFile{
+                .relativePath = "plugin/main.luau",
+                .bytes = (
+                    "local support = require(\"./support\")\n\n"
+                    "return {\n"
+                    "    plugin_id = \"" + spec.pluginId + "\",\n"
+                    "    derive = support.identity,\n"
+                    "    plan = support.identity,\n"
+                    "    next_step = support.identity,\n"
+                    "    reconcile = support.identity,\n"
+                    "    reduce = support.identity,\n"
+                    "}\n"
+                ),
+            });
+            break;
+        }
+        files.emplace_back(ScaffoldFile{
+            .relativePath = std::filesystem::path{k_projectManifestName},
+            .bytes        = projectBytes,
         });
-        if (!compiled.has_value())
+
+        UF_TRY_VALUE(sourceRoot, resolvedPath(spec.sourceDirectory, "source"));
+        for (auto const& file : files)
         {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "{} is not a schema this kit can apply: {}",
-                    published->relativePath,
-                    compiled.error().message()
-                )
-            );
+            auto const target = spec.sourceDirectory / file.relativePath;
+            UF_TRY_VALUE(resolvedTarget, resolvedPath(target, "scaffold target"));
+            if (!isWithinOrEqual(resolvedTarget, sourceRoot))
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "starter Project file leaves the source tree: \"{}\"",
+                        file.relativePath.generic_string()
+                    )
+                );
+            }
+
+            auto error        = std::error_code{};
+            auto const status = std::filesystem::symlink_status(target, error);
+            if (
+                error
+                && error != std::errc::no_such_file_or_directory
+            )
+            {
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    std::format(
+                        "cannot inspect starter Project file \"{}\": {}",
+                        target.string(),
+                        error.message()
+                    )
+                );
+            }
+            if (
+                !error
+                && status.type() != std::filesystem::file_type::not_found
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "starter Project file already exists: \"{}\"",
+                        target.string()
+                    )
+                );
+            }
         }
-        UF_TRY_VALUE_CONTEXT(
-            document,
-            json::parse(bytes),
-            std::format("reading {}", k_projectManifestName)
-        );
-        auto const judged = compiled->validate(document);
-        if (!judged.has_value())
+
+        for (auto const& file : files)
         {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "{}: {}",
-                    k_projectManifestName,
-                    judged.error().message()
-                )
-            );
+            UF_TRY(writeProjectFileIfMissing(
+                spec.sourceDirectory / file.relativePath,
+                file.bytes
+            ));
         }
-        return document;
+        return ok();
     }
 
     auto initProject(ProjectInitSpec const& spec) -> Status

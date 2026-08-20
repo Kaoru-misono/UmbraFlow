@@ -796,6 +796,18 @@ set_tests_properties(test-project-cli PROPERTIES
     LABELS "CI"
 )
 
+add_test(
+    NAME test-project-init-release
+    COMMAND ${CMAKE_COMMAND}
+        -DUF_PROJECT_EXECUTABLE=$<TARGET_FILE:project>
+        -DUF_PROJECT_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/project-init-release-fixture
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/project/test-project-init-release.cmake
+)
+set_tests_properties(test-project-init-release PROPERTIES
+    TIMEOUT 30
+    LABELS "CI"
+)
+
 # The reclamation pass, driven through the shipped binary rather than through a
 # library call. That is the point of the gate: reclaimUnreferencedRuntimeArtifacts
 # was implemented, tested and reachable from no production entry point at all
@@ -1553,7 +1565,7 @@ add_test(
     COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/test-check-safety.py
 )
 # The release manifest publisher is the only writer of the document a consumer's
-# downloader parses, so its shape, determinism and refusals are pinned like the
+# project init parses, so its shape, determinism and refusals are pinned like the
 # other tree-level checks rather than left to the release day.
 add_test(
     NAME test-publish-release

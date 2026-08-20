@@ -1,11 +1,15 @@
 #include <project/command.hpp>
 
+#include "release-bootstrap.hpp"
+
 #include <deployment/project-directory.hpp>
 
+#include <core/error/contracts.hpp>
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/safety/annotations.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
 #include <domain/error.hpp>
@@ -13,6 +17,7 @@
 #include <json/value.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <exception>
 #include <filesystem>
@@ -314,13 +319,25 @@ namespace uf::project_entry
             return ok();
         }
 
-        // The kit's table owns the whole command vocabulary; this executable
-        // owes two of its actions a second half the kit cannot link, because
-        // uf::project cannot link uf::deployment. build records the declared
-        // files after the kit's build; check verifies them after the kit's
-        // check. Every other action is the kit's alone, and a command added to
-        // the kit's table needs no branch here until the executable owes it a
-        // second half too.
+        enum class ProjectWiring : uint8
+        {
+            Init,
+            Build,
+            Check,
+        };
+
+        struct ProjectWiringDefinition final
+        {
+            std::string_view name{};
+            ProjectWiring    wiring{};
+        };
+
+        constexpr auto k_projectWiring = std::array{
+            ProjectWiringDefinition{"init", ProjectWiring::Init},
+            ProjectWiringDefinition{"build", ProjectWiring::Build},
+            ProjectWiringDefinition{"check", ProjectWiring::Check},
+        };
+
         [[nodiscard]]
         auto runWired(std::span<std::string const> raw) -> uf::project::ProjectExitCode
         {
@@ -328,7 +345,41 @@ namespace uf::project_entry
             {
                 return uf::project::runProjectCommand(raw);
             }
-            if (raw.front() == "build")
+
+            auto const definition = std::ranges::find(
+                k_projectWiring,
+                raw.front(),
+                &ProjectWiringDefinition::name
+            );
+            if (definition == k_projectWiring.end())
+            {
+                return uf::project::runProjectCommand(raw);
+            }
+
+            switch (definition->wiring)
+            {
+            case ProjectWiring::Init:
+            {
+                auto const directories = uf::project::parseProjectDirectories(
+                    raw.subspan(1),
+                    "init"
+                );
+                if (!directories)
+                {
+                    std::cerr << directories.error().message() << '\n';
+                    return uf::project::ProjectExitCode::Failure;
+                }
+                auto const prepared = prepareReleaseBundle(
+                    directories->sourceDirectory
+                );
+                if (!prepared)
+                {
+                    std::cerr << prepared.error().message() << '\n';
+                    return uf::project::ProjectExitCode::Failure;
+                }
+                return uf::project::runProjectCommand(raw);
+            }
+            case ProjectWiring::Build:
             {
                 auto const built = uf::project::runProjectCommand(raw);
                 if (built != uf::project::ProjectExitCode::Success)
@@ -343,7 +394,7 @@ namespace uf::project_entry
                 }
                 return uf::project::ProjectExitCode::Success;
             }
-            if (raw.front() == "check")
+            case ProjectWiring::Check:
             {
                 auto const checked = uf::project::runProjectCommand(raw);
                 if (checked != uf::project::ProjectExitCode::Success)
@@ -358,7 +409,8 @@ namespace uf::project_entry
                 }
                 return uf::project::ProjectExitCode::Success;
             }
-            return uf::project::runProjectCommand(raw);
+            }
+            UF_UNREACHABLE_MSG("Unknown ProjectWiring value");
         }
     }
 }

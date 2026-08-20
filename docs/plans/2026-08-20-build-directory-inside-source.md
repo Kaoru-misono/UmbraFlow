@@ -2,15 +2,15 @@
 
 Date: 2026-08-20
 Scope: `umbraflow-cpp` plus the project template and consumer projects
-Status: **proposal** — evaluation of relaxing the project kit's separate-directory
-constraint; not yet a ruling.
+Status: **implemented**. Bootstrap ownership was subsequently centralized by
+[`2026-08-20-project-init-owns-bootstrap.md`](../decisions/2026-08-20-project-init-owns-bootstrap.md).
 
 ## Background
 
 A consumer asked why `project build` output and `project freeze` releases live
 outside the project repository (a sibling `<repo>-work/` directory) instead of
 a gitignored `build/` inside it, the way a C++ project keeps its build tree.
-The kit today rejects either directory containing the other:
+The kit previously rejected either directory containing the other:
 
 ```text
 project source and build directories must be separate:
@@ -47,9 +47,9 @@ Minimal change list:
    listing; it must compare the declared files' digests instead (the kit's
    own `check` already compares exactly those). Other tests assuming an
    outside build get the same sweep.
-3. Template downloader: `work_directory()` defaults to `<source>/build` and
-   `<source>/release`.
-4. Template `.gitignore`: gain `build/`, `release/`.
+3. `project` defaults its generated state to `<source>/work/build` and
+   `<source>/work/release`; `project init` also installs the release bundle.
+4. Consumer repositories ignore `work/` and `umbraflow-bin/`.
 5. Public contract §3 and the template README restate the directory
    relationship and the refusal text.
 
@@ -76,9 +76,9 @@ the repository.
 - Removes the one remaining "why is this outside?" friction in the template
   flow.
 
-## Recommendation
+## Outcome
 
-**Approve the relaxation.** The pin domain is a fixed declared file set, so
+The relaxation was approved. The pin domain is a fixed declared file set, so
 the structural guarantee the separate-directory rule appeared to provide is
 already enforced by the pin domain itself, not by directory topology. The
 change is small, testable, and the consumer's existing sibling `-work/`

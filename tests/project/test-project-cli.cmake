@@ -917,13 +917,11 @@ if(FROZEN_TEMPLATES STREQUAL "")
     )
 endif()
 
-# F5. A clean source checkout whose v2 manifest declares the starter closure
-# bootstraps entirely through the shipped command: init writes main + support,
-# then build/check/freeze consume the same exact closure.
+# F5. An authored manifest is not a scaffold request. If its declared module
+# closure is incomplete, init refuses by path and leaves the source unchanged.
 set(BOOTSTRAP_ROOT "${UF_PROJECT_TEST_ROOT}/clean-bootstrap")
 set(BOOTSTRAP_SOURCE "${BOOTSTRAP_ROOT}/source")
 set(BOOTSTRAP_BUILD "${BOOTSTRAP_ROOT}/build")
-set(BOOTSTRAP_RELEASE "${BOOTSTRAP_ROOT}/release")
 file(MAKE_DIRECTORY "${BOOTSTRAP_SOURCE}")
 file(COPY "${CUT_SOURCE}/" DESTINATION "${BOOTSTRAP_SOURCE}")
 file(REMOVE_RECURSE "${BOOTSTRAP_SOURCE}/plugin")
@@ -935,43 +933,94 @@ string(REPLACE
     "${BOOTSTRAP_MANIFEST}"
 )
 file(WRITE "${BOOTSTRAP_SOURCE}/umbraflow-project.json" "${BOOTSTRAP_MANIFEST}")
+file(GLOB_RECURSE BOOTSTRAP_BEFORE
+    RELATIVE "${BOOTSTRAP_SOURCE}"
+    "${BOOTSTRAP_SOURCE}/*"
+)
 
 run_project(BOOTSTRAP_INIT_RESULT BOOTSTRAP_INIT_DIAGNOSTIC init
     --source "${BOOTSTRAP_SOURCE}"
     --build "${BOOTSTRAP_BUILD}"
     --input declared.txt
 )
-if(NOT BOOTSTRAP_INIT_RESULT EQUAL 0)
+if(BOOTSTRAP_INIT_RESULT EQUAL 0)
     message(FATAL_ERROR
-        "clean Project Kit init must succeed; diagnostic=[${BOOTSTRAP_INIT_DIAGNOSTIC}]"
+        "project init must refuse an incomplete authored module closure"
     )
 endif()
-if(NOT EXISTS "${BOOTSTRAP_SOURCE}/plugin/main.luau"
-   OR NOT EXISTS "${BOOTSTRAP_SOURCE}/plugin/support.luau")
-    message(FATAL_ERROR "clean Project Kit init must write main and support modules")
+require_contains("the incomplete authored closure refusal"
+    "${BOOTSTRAP_INIT_DIAGNOSTIC}" "plugin/main.luau")
+if(EXISTS "${BOOTSTRAP_SOURCE}/plugin/main.luau"
+   OR EXISTS "${BOOTSTRAP_SOURCE}/plugin/support.luau")
+    message(FATAL_ERROR "project init must not fill an authored module closure")
+endif()
+file(GLOB_RECURSE BOOTSTRAP_AFTER
+    RELATIVE "${BOOTSTRAP_SOURCE}"
+    "${BOOTSTRAP_SOURCE}/*"
+)
+if(NOT BOOTSTRAP_BEFORE STREQUAL BOOTSTRAP_AFTER)
+    message(FATAL_ERROR "a refused authored init must not change the source tree")
 endif()
 
-foreach(BOOTSTRAP_ACTION IN ITEMS build check)
-    run_project(BOOTSTRAP_RESULT BOOTSTRAP_DIAGNOSTIC ${BOOTSTRAP_ACTION}
-        --source "${BOOTSTRAP_SOURCE}"
-        --build "${BOOTSTRAP_BUILD}"
-        --frames-root "${CUT_CORPUS}"
+# F6. An empty directory needs no copied manifest or Python scaffolder. init
+# writes either authoring form, derives its inputs from that declaration, and
+# the default work/build path is the path every later command consumes.
+foreach(SCAFFOLD_FORM IN ITEMS generated hand-written)
+    set(SCAFFOLD_SOURCE
+        "${UF_PROJECT_TEST_ROOT}/scaffold-${SCAFFOLD_FORM}"
     )
-    if(NOT BOOTSTRAP_RESULT EQUAL 0)
+    file(MAKE_DIRECTORY "${SCAFFOLD_SOURCE}")
+    run_project(SCAFFOLD_INIT_RESULT SCAFFOLD_INIT_DIAGNOSTIC init
+        --source "${SCAFFOLD_SOURCE}"
+        --plugin "${SCAFFOLD_FORM}"
+        --plugin-id chaos.project
+    )
+    if(NOT SCAFFOLD_INIT_RESULT EQUAL 0)
         message(FATAL_ERROR
-            "clean Project Kit ${BOOTSTRAP_ACTION} must succeed; "
-            "diagnostic=[${BOOTSTRAP_DIAGNOSTIC}]"
+            "project init must scaffold ${SCAFFOLD_FORM}; "
+            "diagnostic=[${SCAFFOLD_INIT_DIAGNOSTIC}]"
         )
     endif()
-endforeach()
-run_project(BOOTSTRAP_FREEZE_RESULT BOOTSTRAP_FREEZE_DIAGNOSTIC freeze
-    --source "${BOOTSTRAP_SOURCE}"
-    --build "${BOOTSTRAP_BUILD}"
-    --release "${BOOTSTRAP_RELEASE}"
-    --frames-root "${CUT_CORPUS}"
-)
-if(NOT BOOTSTRAP_FREEZE_RESULT EQUAL 0)
-    message(FATAL_ERROR
-        "clean Project Kit freeze must succeed; diagnostic=[${BOOTSTRAP_FREEZE_DIAGNOSTIC}]"
+
+    foreach(SCAFFOLD_ACTION IN ITEMS build check)
+        run_project(SCAFFOLD_RESULT SCAFFOLD_DIAGNOSTIC
+            ${SCAFFOLD_ACTION} --source "${SCAFFOLD_SOURCE}"
+        )
+        if(NOT SCAFFOLD_RESULT EQUAL 0)
+            message(FATAL_ERROR
+                "scaffolded ${SCAFFOLD_FORM} project must ${SCAFFOLD_ACTION}; "
+                "diagnostic=[${SCAFFOLD_DIAGNOSTIC}]"
+            )
+        endif()
+    endforeach()
+    if(NOT EXISTS "${SCAFFOLD_SOURCE}/work/build/project-kit.inputs")
+        message(FATAL_ERROR
+            "scaffolded ${SCAFFOLD_FORM} project must use source/work/build"
+        )
+    endif()
+
+    file(GLOB_RECURSE SCAFFOLD_BEFORE
+        RELATIVE "${SCAFFOLD_SOURCE}"
+        "${SCAFFOLD_SOURCE}/*"
     )
-endif()
+    run_project(SCAFFOLD_REPEAT_RESULT SCAFFOLD_REPEAT_DIAGNOSTIC init
+        --source "${SCAFFOLD_SOURCE}"
+        --plugin "${SCAFFOLD_FORM}"
+        --plugin-id chaos.project
+    )
+    if(SCAFFOLD_REPEAT_RESULT EQUAL 0)
+        message(FATAL_ERROR
+            "project init must refuse to overwrite a scaffold; "
+            "diagnostic=[${SCAFFOLD_REPEAT_DIAGNOSTIC}]"
+        )
+    endif()
+    require_contains("the scaffold overwrite refusal"
+        "${SCAFFOLD_REPEAT_DIAGNOSTIC}" "already exists")
+    file(GLOB_RECURSE SCAFFOLD_AFTER
+        RELATIVE "${SCAFFOLD_SOURCE}"
+        "${SCAFFOLD_SOURCE}/*"
+    )
+    if(NOT SCAFFOLD_BEFORE STREQUAL SCAFFOLD_AFTER)
+        message(FATAL_ERROR "a refused scaffold must not change the source tree")
+    endif()
+endforeach()

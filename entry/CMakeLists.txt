@@ -28,7 +28,21 @@ target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 # rather than in uf::project, because uf::project cannot link the runtime
 # loader: the executable wires the kit's check to the loader's confined read of
 # the files a deployment declaration names, and the module graph stays intact.
-add_executable(project project/main.cpp)
+set(PROJECT_COMMAND_SOURCES
+    project/main.cpp
+    project/release-bootstrap.cpp
+)
+if(WIN32)
+    list(APPEND PROJECT_COMMAND_SOURCES
+        project/platform/curl-download-windows.cpp
+    )
+else()
+    list(APPEND PROJECT_COMMAND_SOURCES
+        project/platform/curl-download-posix.cpp
+    )
+endif()
+
+add_executable(project ${PROJECT_COMMAND_SOURCES})
 cpp_apply_safety_profile(project)
 cpp_apply_utf8_encoding(project)
 target_link_libraries(project PRIVATE uf::project uf::deployment uf::core)

@@ -20,6 +20,8 @@
 
 #include <deployment/project-directory.hpp>
 
+#include <project/project-kit.hpp>
+
 #include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
@@ -78,6 +80,51 @@ namespace uf::deployment
             stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
             REQUIRE(stream.good());
         }
+
+        [[nodiscard]]
+        auto readText(std::filesystem::path const& path) -> std::string
+        {
+            auto stream = std::ifstream{path, std::ios::binary};
+            REQUIRE(stream.is_open());
+            return std::string{
+                std::istreambuf_iterator<char>{stream},
+                std::istreambuf_iterator<char>{}
+            };
+        }
+
+        class TemporaryScaffold final
+        {
+            std::filesystem::path m_root;
+
+        public:
+            TemporaryScaffold()
+                : m_root{
+                    std::filesystem::temp_directory_path()
+                    / ("uf-project-scaffold-"
+                       + std::to_string(std::random_device{}()))
+                }
+            {
+                auto error = std::error_code{};
+                std::filesystem::remove_all(m_root, error);
+                REQUIRE(std::filesystem::create_directories(m_root, error));
+            }
+
+            TemporaryScaffold(TemporaryScaffold const&)                    = delete;
+            TemporaryScaffold(TemporaryScaffold&&)                         = delete;
+            auto operator=(TemporaryScaffold const&) -> TemporaryScaffold& = delete;
+            auto operator=(TemporaryScaffold&&) -> TemporaryScaffold&      = delete;
+
+            ~TemporaryScaffold()
+            {
+                auto error = std::error_code{};
+                std::filesystem::remove_all(m_root, error);
+            }
+
+            [[nodiscard]] auto path() const -> std::filesystem::path const&
+            {
+                return m_root;
+            }
+        };
 
         // The fixture's probe frame, encoded by the framework's own PNG writer.
         // R9 decodes what probe_frame names, so the eight signature bytes this
@@ -459,6 +506,72 @@ namespace uf::deployment
             REQUIRE(installed.has_value());
             CHECK_FALSE(installed->assetPaths().empty());
         }
+    }
+
+    TEST_CASE("project scaffold schemas form one runtime deployment authority")
+    {
+        auto const workspace = TemporaryScaffold{};
+        auto const scaffolded = project::scaffoldProject(
+            project::ProjectScaffoldSpec{
+                .sourceDirectory = workspace.path(),
+                .pluginId        = "scaffold.project",
+                .pluginForm      = project::ProjectPluginForm::Generated,
+            }
+        );
+        auto const scaffoldDiagnostic = scaffolded.has_value()
+            ? std::string{}
+            : std::string{scaffolded.error().message()};
+        INFO(scaffoldDiagnostic);
+        REQUIRE(scaffolded.has_value());
+
+        auto const schemaRoot = workspace.path() / "schemas/scaffold.project";
+        auto const projectState = readText(
+            schemaRoot / "project-state-v1.schema.json"
+        );
+        auto const projectObservation = readText(
+            schemaRoot / "project-observation-v1.schema.json"
+        );
+        auto const toolPrecondition = readText(
+            schemaRoot / "precondition-v1.schema.json"
+        );
+        auto const reconcile = readText(
+            schemaRoot / "reconcile-v1.schema.json"
+        );
+        auto const toolCatalog = readText(
+            schemaRoot / "tool-catalog-v1.json"
+        );
+        auto const journalManifest = readText(
+            schemaRoot / "journal-manifest-v1.json"
+        );
+        auto const reconcileManifest = readText(
+            schemaRoot / "reconcile-manifest-v1.json"
+        );
+        auto const journalPayload = readText(
+            schemaRoot / "journal-0-v1.schema.json"
+        );
+        auto const journalPayloads = std::array{
+            std::string_view{journalPayload},
+        };
+        auto const deployed = ProjectDeployment::create(
+            ProjectDeploymentSources{
+                .pluginId                        = "scaffold.project",
+                .projectState                    = projectState,
+                .projectObservation              = projectObservation,
+                .toolPrecondition                = toolPrecondition,
+                .reconcile                       = reconcile,
+                .toolCatalog                     = toolCatalog,
+                .journalEventManifest            = journalManifest,
+                .reconcileManifest               = reconcileManifest,
+                .journalPayloadSchemas           = journalPayloads,
+                .effectPayloadSchemas            = {},
+                .observedInstanceIdentitySchemas = {},
+            }
+        );
+        auto const deploymentDiagnostic = deployed.has_value()
+            ? std::string{}
+            : std::string{deployed.error().message()};
+        INFO(deploymentDiagnostic);
+        REQUIRE(deployed.has_value());
     }
 
     // Everything below breaks one thing in this directory, so this case is what

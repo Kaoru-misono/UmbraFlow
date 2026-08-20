@@ -3,6 +3,7 @@
 #include "tool-catalog.hpp"
 
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
 
@@ -39,6 +40,22 @@ namespace uf::project
     };
     inline constexpr auto k_projectSchemaPath = std::string_view{
         "schema/umbraflow-project-v2.schema.json"
+    };
+    inline constexpr auto k_projectContractVersion = std::string_view{
+        "umbraflow-project/v2"
+    };
+
+    enum class ProjectPluginForm : uint8
+    {
+        Generated,
+        HandWritten,
+    };
+
+    struct ProjectScaffoldSpec final
+    {
+        std::filesystem::path sourceDirectory{};
+        std::string           pluginId{};
+        ProjectPluginForm     pluginForm{};
     };
 
     // The bytes behind one content hash, obtained however the caller obtains
@@ -90,6 +107,9 @@ namespace uf::project
     auto readProjectRootDocument(
         std::filesystem::path const& sourceDirectory
     ) -> Result<json::Value>;
+
+    [[nodiscard]]
+    auto scaffoldProject(ProjectScaffoldSpec const& spec) -> Status;
 
     [[nodiscard]]
     auto initProject(ProjectInitSpec const& spec) -> Status;

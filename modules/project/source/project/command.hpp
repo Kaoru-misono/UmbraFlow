@@ -16,11 +16,11 @@ namespace uf::project
         Failure = 1,
     };
 
-    // The two directories the `project` executable's declared-file wiring
-    // opens: the source tree the deployment declaration names its files in,
-    // and the build tree whose record of them the build wrote. Parsed under
-    // the same flag rules as the command itself, so the executable wires the
-    // loader without spelling the command line a second time.
+    // The two directories the `project` executable's composition wiring opens:
+    // the source tree init may acquire into and the deployment declaration
+    // names its files in, plus the build tree whose record build/check own.
+    // Parsed under the action's own flag rules, so the executable does not
+    // spell the command line a second time.
     struct ProjectDirectories final
     {
         std::filesystem::path sourceDirectory{};

@@ -641,7 +641,7 @@ namespace uf::project
         );
     }
 
-    TEST_CASE("project init writes a main module with a real dependency")
+    TEST_CASE("project init never fills a missing authored module closure")
     {
         auto const workspace = TemporaryWorkspace{"uf-project-init-modules"};
         auto manifest = replacedOnce(
@@ -656,20 +656,85 @@ namespace uf::project
             .buildDirectory  = workspace.build(),
             .inputs          = {std::filesystem::path{k_deploymentManifestInput}},
         });
-        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+        REQUIRE_FALSE(initialized.has_value());
+        CHECK(messageOf(initialized).contains("plugin/main.luau"));
 
         auto const source = snapshotTree(workspace.source());
-        REQUIRE(source.contains("plugin/main.luau"));
-        REQUIRE(source.contains("plugin/support.luau"));
-        CHECK(source.at("plugin/main.luau").contains("require(\"./support\")"));
-        CHECK(source.at("plugin/main.luau").contains("plugin_id = \"chaos.dream\""));
-        CHECK(source.at("plugin/support.luau").contains("identity = function"));
+        CHECK_FALSE(source.contains("plugin/main.luau"));
+        CHECK_FALSE(source.contains("plugin/support.luau"));
+        CHECK_FALSE(std::filesystem::exists(
+            workspace.build() / k_inputManifestName
+        ));
+    }
 
-        auto const inputManifest = snapshotTree(workspace.build()).at(
-            std::string{k_inputManifestName}
-        );
-        CHECK(inputManifest.contains("plugin/main.luau\n"));
-        CHECK(inputManifest.contains("plugin/support.luau\n"));
+    TEST_CASE("project scaffold creates buildable generated and hand-written projects")
+    {
+        constexpr auto forms = std::array{
+            ProjectPluginForm::Generated,
+            ProjectPluginForm::HandWritten,
+        };
+        for (auto const form : forms)
+        {
+            auto const label = (
+                form == ProjectPluginForm::Generated
+                    ? "uf-project-scaffold-generated"
+                    : "uf-project-scaffold-hand-written"
+            );
+            auto const workspace = TemporaryWorkspace{label};
+            auto const scaffolded = scaffoldProject(ProjectScaffoldSpec{
+                .sourceDirectory = workspace.source(),
+                .pluginId        = "chaos.project",
+                .pluginForm      = form,
+            });
+            REQUIRE_MESSAGE(scaffolded.has_value(), messageOf(scaffolded));
+
+            auto const initialized = initProject(ProjectInitSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.build(),
+            });
+            REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+
+            auto const spec = ProjectBuildSpec{
+                .sourceDirectory = workspace.source(),
+                .buildDirectory  = workspace.build(),
+            };
+            auto const built = buildProject(spec, {});
+            REQUIRE_MESSAGE(built.has_value(), messageOf(built));
+            auto const checked = checkProject(spec, {});
+            REQUIRE_MESSAGE(checked.has_value(), messageOf(checked));
+
+            auto const source = snapshotTree(workspace.source());
+            CHECK(source.contains("umbraflow-project.json"));
+            CHECK(source.contains("schemas/chaos.project/tool-catalog-v1.json"));
+            CHECK(source.contains("content/placeholder.txt"));
+            if (form == ProjectPluginForm::Generated)
+            {
+                CHECK(source.contains(
+                    "declarative-tools/chaos.project/scaffold.json"
+                ));
+            }
+            else
+            {
+                CHECK(source.contains("plugin/main.luau"));
+                CHECK(source.contains("plugin/support.luau"));
+            }
+        }
+    }
+
+    TEST_CASE("project scaffold refuses conflicts without changing the source tree")
+    {
+        auto const workspace = TemporaryWorkspace{"uf-project-scaffold-conflict"};
+        writeFile(workspace.source() / "content/placeholder.txt", "owned\n");
+        auto const before = snapshotTree(workspace.source());
+
+        auto const scaffolded = scaffoldProject(ProjectScaffoldSpec{
+            .sourceDirectory = workspace.source(),
+            .pluginId        = "chaos.project",
+            .pluginForm      = ProjectPluginForm::Generated,
+        });
+        REQUIRE_FALSE(scaffolded.has_value());
+        CHECK(messageOf(scaffolded).contains("already exists"));
+        CHECK(snapshotTree(workspace.source()) == before);
     }
 
     TEST_CASE("project build records exact module resource and environment identities")
@@ -1510,11 +1575,20 @@ namespace uf::project
             std::string const& manifest
         )
         {
+            auto const validManifest = manifest.contains(k_generatedPlugin)
+                ? deploymentManifest(
+                    k_generatedPlugin,
+                    k_generatedAuthoring,
+                    "",
+                    "[]"
+                )
+                : acceptedDeploymentManifest();
             auto const initialized = initializedDeploymentWorkspace(
                 workspace,
-                manifest
+                validManifest
             );
             REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+            writeRootManifest(workspace, manifest);
             return ProjectBuildSpec{
                 .sourceDirectory = workspace.source(),
                 .buildDirectory  = workspace.build(),
@@ -1662,15 +1736,9 @@ namespace uf::project
         }
     }
 
-    // The root document is what makes a source tree a project, so the kit reads
-    // it whether or not the author declared it as an input. Before 2026-08-14
-    // the gate ran only over the declared input list, which is the author's
-    // own: a source directory holding an unjustified hand-written plugin
-    // declaration passed both build and check as long as the manifest was left
-    // out of `project init`. The runtime loader still refused the directory, so
-    // nothing shipped broken -- but the two commands claimed a gate they did
-    // not have.
-    TEST_CASE("project check judges the root document the author did not declare")
+    // The root document is what makes a source tree a project, so init reads and
+    // derives it whether or not the author repeats it as an explicit input.
+    TEST_CASE("project init judges the root document without an explicit input")
     {
         auto const workspace = TemporaryWorkspace{"uf-project-manifest-undeclared"};
         writeFile(workspace.source() / "dummy.txt", "dummy\n");
@@ -1692,27 +1760,13 @@ namespace uf::project
                 .inputs          = {std::filesystem::path{"dummy.txt"}},
             }
         );
-        REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
-        auto const spec = ProjectBuildSpec{
-            .sourceDirectory = workspace.source(),
-            .buildDirectory  = workspace.build(),
-            .toolCatalogs    = {},
-        };
-
-        auto const built = buildProject(spec, {});
         CHECK_FALSE_MESSAGE(
-            built.has_value(),
-            "project build must judge umbraflow-project.json even when the "
-            "declared inputs do not name it"
-        );
-        auto const checked = checkProject(spec, {});
-        REQUIRE_FALSE_MESSAGE(
-            checked.has_value(),
-            "project check must judge umbraflow-project.json even when the "
-            "declared inputs do not name it"
+            initialized.has_value(),
+            "project init must judge umbraflow-project.json even when --input "
+            "does not name it"
         );
         CHECK_MESSAGE(
-            messageOf(checked).find("plugin_justification") != std::string::npos,
+            messageOf(initialized).find("plugin_justification") != std::string::npos,
             "the refusal must be the justification gate rather than an "
             "unrelated failure"
         );
@@ -1728,21 +1782,12 @@ namespace uf::project
                 .inputs          = {std::filesystem::path{"dummy.txt"}},
             }
         );
-        REQUIRE_MESSAGE(bareInit.has_value(), messageOf(bareInit));
-        auto const bareBuilt = buildProject(
-            ProjectBuildSpec{
-                .sourceDirectory = bare.source(),
-                .buildDirectory  = bare.build(),
-                .toolCatalogs    = {},
-            },
-            {}
-        );
         REQUIRE_FALSE_MESSAGE(
-            bareBuilt.has_value(),
+            bareInit.has_value(),
             "a source tree with no umbraflow-project.json is not a project"
         );
         CHECK_MESSAGE(
-            messageOf(bareBuilt).find(k_deploymentManifestInput)
+            messageOf(bareInit).find(k_deploymentManifestInput)
                 != std::string::npos,
             "the refusal must name the document the tree lacks"
         );

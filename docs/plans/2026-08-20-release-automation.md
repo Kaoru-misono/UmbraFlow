@@ -7,16 +7,18 @@ This plan owns the release-day step the Project Kit distribution plan left
 unautomated: uploading a built release bundle to GitHub Releases. Lifted from
 the archived
 [`2026-08-19-project-kit-release-manifest.md`](../archive/plans/2026-08-19-project-kit-release-manifest.md),
-which delivered the publisher, the manifest and the downloader but not the
-upload.
+which delivered the publisher, the manifest and the original template
+consumer but not the upload. Release consumption now belongs to `project init`
+under
+[`2026-08-20-project-init-owns-bootstrap.md`](../decisions/2026-08-20-project-init-owns-bootstrap.md).
 
 ## R-01 — Automated tag-driven release
 
 A `git tag v*` push must run the full local gate, build the `x64-release`
 preset, generate the manifest with the tag as the release name, and publish
 the release and its assets. The version has one source: the tag, which must
-equal the manifest's `release` member and the GitHub release tag, because the
-template downloader builds asset URLs from that member.
+equal the manifest's `release` member and the GitHub release tag, because
+`project init` builds asset URLs from that member.
 
 Design notes for the implementation:
 
@@ -33,4 +35,5 @@ Design notes for the implementation:
 1. Pushing a `v*` tag creates a GitHub release whose tag, manifest `release`
    member and asset names all agree.
 2. A failing gate aborts the release.
-3. A clean machine still fetches that release through the template downloader.
+3. A clean project directory fetches and verifies that release through
+   `project init` after the user obtains the first `project` executable.

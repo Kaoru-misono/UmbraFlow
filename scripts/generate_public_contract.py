@@ -76,8 +76,8 @@ AUTHORITY_BYTES_FUNCTION = "observedInstanceAuthorityBytes"
 OBSERVATION_PROPOSAL_SCHEMA = "schema/umbraflow-project-observation-proposal-v1.schema.json"
 OBSERVATION_SCHEMA = "schema/umbraflow-project-observation-v1.schema.json"
 
-# The publisher script that writes the release manifest a consumer's downloader
-# parses. Its constants are the shape authority; the generator extracts the
+# The publisher script that writes the release manifest project init parses.
+# Its constants are the shape authority; the generator extracts the
 # wire tag and the member tuples from these bytes rather than restating them.
 RELEASE_SOURCE = "scripts/publish_release.py"
 
@@ -108,6 +108,21 @@ CLI_SURFACE_SOURCES = (
         (),
     ),
     ("project", "modules/project/source/project/command.cpp", ()),
+    (
+        "project (release bootstrap)",
+        "entry/project/release-bootstrap.cpp",
+        (),
+    ),
+    (
+        "project (release transport on Windows)",
+        "entry/project/platform/curl-download-windows.cpp",
+        (),
+    ),
+    (
+        "project (release transport on POSIX)",
+        "entry/project/platform/curl-download-posix.cpp",
+        (),
+    ),
     ("project (declared files)", "entry/project/main.cpp", ()),
     (
         "project directory loader",
@@ -528,8 +543,8 @@ def written_wire_tags(root: Path) -> set[str]:
             tags.update(WIRE_TAG.findall(path.read_text(encoding="utf-8")))
     for path in sorted((root / SCHEMA_DIRECTORY).glob("*.json")):
         tags.update(WIRE_TAG.findall(path.read_text(encoding="utf-8")))
-    # A tag only the publisher spells is still a tag the consumer's downloader
-    # sees, on the same terms as a tag only an entry executable spells.
+    # A tag only the publisher spells is still a tag project init sees, on the
+    # same terms as a tag only an entry executable spells.
     tags.update(WIRE_TAG.findall(read(root, RELEASE_SOURCE)))
     if not tags:
         raise SystemExit("no source writes an umbraflow-<name>/v<n> tag any more")
@@ -1078,7 +1093,7 @@ def render(root: Path) -> str:
         "schema": "the manifest's own wire tag",
         "release": "milestone name, e.g. `m0-acceptance`",
         "contract_versions": "the format versions this release's tooling understands",
-        "artifacts": "one row per shipped binary",
+        "artifacts": "one row per shipped binary or runtime payload file",
     }
     artifact_member_meanings = {
         "name": "logical binary name",
@@ -1094,8 +1109,8 @@ def render(root: Path) -> str:
             "### 1.5 The Project Kit release manifest",
             "",
             f"A release bundle ships an immutable manifest tagged `{release_facts['tag']}`,",
-            f"written by `{RELEASE_SOURCE}` and never authored by hand. A",
-            "template's downloader parses it, selects the artifact for the host",
+            f"written by `{RELEASE_SOURCE}` and never authored by hand.",
+            "`project init` parses it, selects the artifact for the host",
             "platform and arch, and refuses a mismatch on the declared sha256. The",
             "release id is the sha256 of the manifest's canonical bytes, derived",
             "rather than stored.",
@@ -1139,7 +1154,7 @@ def render(root: Path) -> str:
             + ", ".join(
                 f"`{value}`" for value in release_facts["payload_patterns"]
             )
-            + ", each matched file one artifact row whose path the downloader "
+            + ", each matched file one artifact row whose path `project init` "
             + "restores beside the binaries.",
             "",
         ]

@@ -261,7 +261,10 @@ namespace uf::project
                 .buildDirectory  = build,
                 .inputs          = std::move(inputs),
             });
-            REQUIRE_MESSAGE(initialized.has_value(), messageOf(initialized));
+            if (!initialized)
+            {
+                return messageOf(initialized);
+            }
 
             auto const spec = ProjectBuildSpec{
                 .sourceDirectory = source,

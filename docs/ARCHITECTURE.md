@@ -71,6 +71,11 @@ its home.
 verifies every hash itself; neither `project` nor `image` resolves a source
 location.
 
+The `project` library is offline. The `project` executable's composition root
+alone may acquire the release bundle during `init`; the transport returns files
+to the entry, and the library receives only the local project and build paths.
+No build, check, freeze or run path reaches the transport.
+
 ### Runtime lifetime boundaries
 
 - `service::ProductLifecycle` exclusively owns the production `OperatorTaskHost`,

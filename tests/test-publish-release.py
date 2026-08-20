@@ -2,7 +2,7 @@
 """Verify scripts/publish_release.py: shape, determinism, refusals.
 
 The publisher is the only writer of the release manifest, so its output is the
-contract the template's downloader will parse. This test pins the parts that
+contract ``project init`` parses. This test pins the parts that
 matter across a download: the exact member set and canonical spelling, the
 release id as a function of the manifest bytes on disk, and the fail-closed
 refusals.

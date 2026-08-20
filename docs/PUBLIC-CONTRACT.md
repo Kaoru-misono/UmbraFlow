@@ -102,8 +102,8 @@ statement.
 ### 1.5 The Project Kit release manifest
 
 A release bundle ships an immutable manifest tagged `umbraflow-release/v1`,
-written by `scripts/publish_release.py` and never authored by hand. A
-template's downloader parses it, selects the artifact for the host
+written by `scripts/publish_release.py` and never authored by hand.
+`project init` parses it, selects the artifact for the host
 platform and arch, and refuses a mismatch on the declared sha256. The
 release id is the sha256 of the manifest's canonical bytes, derived
 rather than stored.
@@ -113,7 +113,7 @@ rather than stored.
 | `schema` | the manifest's own wire tag |
 | `release` | milestone name, e.g. `m0-acceptance` |
 | `contract_versions` | the format versions this release's tooling understands |
-| `artifacts` | one row per shipped binary |
+| `artifacts` | one row per shipped binary or runtime payload file |
 
 | Artifact-row member | Meaning |
 | --- | --- |
@@ -124,7 +124,7 @@ rather than stored.
 | `asset` | the flat asset name a GitHub release carries it under |
 | `sha256` | lowercase hex content digest, no prefix |
 
-`contract_versions` carries `umbraflow-project/v2`, `umbraflow-project-kit-artifact-manifest/v1`; the shipped binaries are `project`, `umbra-flow`, `umbra-flow-conformance`. The release also carries the runtime payload `onnxruntime*.dll`, `models/**/*`, each matched file one artifact row whose path the downloader restores beside the binaries.
+`contract_versions` carries `umbraflow-project/v2`, `umbraflow-project-kit-artifact-manifest/v1`; the shipped binaries are `project`, `umbra-flow`, `umbra-flow-conformance`. The release also carries the runtime payload `onnxruntime*.dll`, `models/**/*`, each matched file one artifact row whose path `project init` restores beside the binaries.
 
 
 ## 2. What a consumer must declare
@@ -218,10 +218,10 @@ umbra-flow-conformance --project <directory> [doctest arguments]
 ```
 
 ```
-project init --source PATH --build PATH --input RELATIVE_PATH [--input RELATIVE_PATH ...]
-project build --source PATH --build PATH [--frames-root PATH]
-project check --source PATH --build PATH [--frames-root PATH]
-project freeze --source PATH --build PATH --release PATH [--frames-root PATH]
+project init [--source PATH] [--build PATH] [--plugin generated|hand-written --plugin-id NAME] [--input RELATIVE_PATH ...]
+project build [--source PATH] [--build PATH] [--frames-root PATH]
+project check [--source PATH] [--build PATH] [--frames-root PATH]
+project freeze [--source PATH] [--build PATH] [--release PATH] [--frames-root PATH]
 project run --release RELEASE_DIRECTORY
 ```
 
@@ -280,20 +280,91 @@ project argument "--source" appears more than once
 project argument "--build" appears more than once
 project argument "--release" appears more than once
 project argument "--frames-root" appears more than once
+project argument "--plugin" appears more than once
+project argument "--plugin-id" appears more than once
+cannot resolve the current project source directory: {}
 no template source corpus was given: pass --frames-root PATH naming a directory that holds "{}"
 template source corpus "{}" holds no "{}"
 cannot read template source "{}"
 the deployment declaration names tool catalog source "{}", which "{}" does not hold
 cannot read declared tool catalog source "{}"
-project init requires --source PATH and --build PATH
-project init requires at least one --input RELATIVE_PATH
-project init accepts only --source, --build and --input
-project {} requires --source PATH and --build PATH
+project init does not accept --release or --frames-root
+a starter Project requires --plugin and --plugin-id together
+project --plugin must be generated or hand-written
 project {} accepts only --source, --build and --frames-root
-project freeze requires --source PATH, --build PATH and --release PATH
-project freeze does not accept --input
+project freeze does not accept --input, --plugin or --plugin-id
 project run requires only --release PATH
 unknown project action "{}"
+```
+
+#### project (release bootstrap)
+
+`entry/project/release-bootstrap.cpp`
+
+```text
+cannot inspect {} "{}": {}
+{} "{}" is too large: {} bytes exceeds {}
+{} "{}" cannot be represented in memory
+cannot open {} "{}"
+cannot read {} "{}"
+{} must carry a non-empty "{}"
+cannot resolve {} path "{}": {}
+cannot canonicalize {} path "{}": {}
+release artifact path is not canonical: "{}"
+cannot inspect {} at "{}": {}
+{} is not a regular file
+{} has the wrong member set
+{} host must be an https:// or file:// URL
+{} host must not end with '/'
+{} manifest must be one canonical asset name
+release manifest has the wrong top-level member set
+release manifest schema is not {}
+release manifest carries a non-canonical release name
+release manifest contract_versions must be a string array
+release does not carry required contract {}
+release manifest must carry 1..128 artifacts
+release artifact has the wrong member set
+release artifact {} has a non-canonical asset name
+release artifact path appears more than once: {}
+release must carry exactly one {} artifact for {}/{}
+release artifact {} leaves the bundle
+cannot inspect release artifact {}: {}
+release artifact {} is not a regular file
+release artifact {} has sha256 {}, not {}
+release bundle exceeds {} bytes
+cannot inspect cached release manifest: {}
+cached release manifest is not a regular file
+release artifact path collides with its manifest
+release bundle path leaves the project source tree
+release bundle path is not a directory: "{}"
+cannot inspect release bundle "{}": {}
+release staging path leaves the project source tree
+release staging path already exists: "{}"
+cannot inspect release staging path "{}": {}
+cannot create release staging path "{}": {}
+cannot create release artifact directory "{}": {}
+cannot install release bundle at "{}": {}
+```
+
+#### project (release transport on Windows)
+
+`entry/project/platform/curl-download-windows.cpp`
+
+```text
+release URL exceeds the Windows process argument limit
+cannot convert a release URL from UTF-8
+cannot start curl while acquiring the UmbraFlow release
+curl refused release URL "{}" with exit code {}
+```
+
+#### project (release transport on POSIX)
+
+`entry/project/platform/curl-download-posix.cpp`
+
+```text
+cannot start curl while acquiring the UmbraFlow release
+cannot wait for curl while acquiring the UmbraFlow release
+curl refused release URL "{}" with exit code {}
 ```
 
 #### project (declared files)
@@ -400,18 +471,18 @@ project build path is not a directory: "{}"
 cannot create project build directory "{}": {}
 declared project input must be a relative file path: "{}"
 declared project input leaves the source tree: "{}"
+generated Project module "{}" must map to generated/adapters/<plugin>/<tool>.luau
 declared project input "{}" is missing at "{}"
 cannot inspect declared project input "{}" at "{}": {}
 declared project input "{}" is not a regular file at "{}"
 declared project input "{}" resolves outside the source tree at "{}"
-project init requires at least one declared input
 declared project input appears more than once: "{}"
 cannot open project {} "{}"
 cannot read project {} "{}"
 cannot open project {} "{}" for writing
 cannot write project {} "{}"
-cannot inspect starter Project module "{}": {}
-cannot create starter Project module directory "{}": {}
+cannot inspect starter Project file "{}": {}
+cannot create starter Project file directory "{}": {}
 declared workflow tool input must be declarative-tools/<plugin-id>/<name>.json: "{}"
 generated Tool Catalog declared plugin {} more than once
 generated template path must be relative: "{}"
@@ -461,11 +532,13 @@ project input manifest path is not canonical: "{}"
 project input manifest "{}" declares no inputs
 project input manifest "{}" is not sorted
 project input manifest repeats "{}"
+generated framework schema catalog is missing
+{} is not a schema this kit can apply: {}
 a project needs {} at the root of its source directory, and "{}" holds none
 cannot inspect project root document "{}": {}
 project root document is not a regular file: "{}"
-generated framework schema catalog is missing
-{} is not a schema this kit can apply: {}
+starter Project file leaves the source tree: "{}"
+starter Project file already exists: "{}"
 project build receipt does not match declared inputs: "{}"
 project artifact manifest does not match the complete input pins and RuntimeArtifact closure: "{}"
 cannot create project release "{}": {}
