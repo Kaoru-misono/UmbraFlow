@@ -26,6 +26,13 @@ namespace uf::script
 
         // High-water mark of `used` across the VM's life. Diagnostic only.
         std::size_t peak{0};
+
+        // Sticky evidence that this allocator refused a growth specifically
+        // because it crossed limitBytes. Ordinary Engine programs may observe
+        // Luau's catchable LUA_ERRMEM behavior; stricter hosts such as the pure
+        // project boundary use this fact to make a quota breach terminal even
+        // when plugin pcall caught the Luau error.
+        bool ceilingRefused{false};
     };
 
     // Create a lua_State whose allocator charges every allocation against

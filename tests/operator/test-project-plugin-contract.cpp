@@ -369,13 +369,17 @@ return {
         }
     }
 
-    TEST_CASE("ProjectPlugin wrapper survives initialization pollution")
+    TEST_CASE("ProjectPlugin refuses initialization pollution and retains its whitelist")
     {
         auto const source = std::string{R"LUAU(
-type = function() return "poisoned" end
-error = function() return nil end
-pairs = function() return function() return nil end end
-ipairs = function() return function() return nil end end
+local type_write = pcall(function() type = function() return "poisoned" end end)
+local error_write = pcall(function() error = function() return nil end end)
+local pairs_write = pcall(function()
+    pairs = function() return function() return nil end end
+end)
+local ipairs_write = pcall(function()
+    ipairs = function() return function() return nil end end
+end)
 
 return {
     plugin_id = "fixture.pollution",
@@ -389,14 +393,18 @@ return {
         -- held whether or not the whitelist existed, so those disjuncts said
         -- nothing and are gone. setmetatable and the raw* family ARE published
         -- on purpose (k_pureGlobals), so asserting their absence would fail a
-        -- correct VM.
-        local forbidden = require ~= nil or load ~= nil or loadfile ~= nil
-            or loadstring ~= nil or dofile ~= nil or debug ~= nil or _G ~= nil
+        -- correct VM. require is also published now, but resolves only the
+        -- registration-pinned module closure and therefore is not ambient
+        -- package or filesystem authority.
+        local forbidden = load ~= nil or loadfile ~= nil or loadstring ~= nil
+            or dofile ~= nil or debug ~= nil or _G ~= nil
             or os ~= nil or io ~= nil or coroutine ~= nil or newproxy ~= nil
             or collectgarbage ~= nil or string.dump ~= nil
             or math.random ~= nil or math.randomseed ~= nil
             or getfenv ~= nil or setfenv ~= nil
-        if forbidden then return { safe = false } end
+        if forbidden or type_write or error_write or pairs_write or ipairs_write then
+            return { safe = false }
+        end
         return { safe = true }
     end,
     plan = function(input) return input end,
@@ -409,10 +417,16 @@ return {
         auto fixture   = registrationFixture("fixture.pollution", source);
         auto const plugin =
             registrar.registerPlugin(fixture.registration, source, {}, fixture.schemaOwner);
-        REQUIRE(plugin.has_value());
+        auto const pluginMessage = plugin.has_value()
+                                       ? std::string{}
+                                       : std::string{plugin.error().message()};
+        REQUIRE_MESSAGE(plugin.has_value(), pluginMessage);
 
         auto const result = plugin->derive(inputFor(fixture.schemaOwner));
-        REQUIRE(result.has_value());
+        auto const resultMessage = result.has_value()
+                                     ? std::string{}
+                                     : std::string{result.error().message()};
+        REQUIRE_MESSAGE(result.has_value(), resultMessage);
         CHECK(result->bytes() == "{\"safe\":true}");
     }
 
@@ -681,11 +695,11 @@ return {
         SUBCASE("initialization and calls read immutable blobs in fresh VMs")
         {
             // Each function returns the artifact's own value, so the assertions
-            // below are red if what artifact.read hands over is anything but
+            // below are red if what resource.readJson hands over is anything but
             // the decoded document -- a byte string would canonicalize to a
             // quoted JSON string rather than to the object itself.
             auto const source = std::string{R"LUAU(
-local initialized = artifact.read("initial")
+local initialized = resource.readJson("initial")
 local count = 0
 return {
     plugin_id = "fixture.artifacts",
@@ -694,7 +708,7 @@ return {
         if count ~= 1 then return canon.emptyObject end
         return initialized
     end,
-    plan = function(_input) return artifact.read("runtime") end,
+    plan = function(_input) return resource.readJson("runtime") end,
     next_step = function(input) return input end,
     reconcile = function(input) return input end,
     reduce = function(input) return input end,
@@ -734,7 +748,7 @@ return {
             auto const source = std::string{R"LUAU(
 return {
     plugin_id = "fixture.unknown-artifact",
-    derive = function(_input) return artifact.read("../unknown") end,
+    derive = function(_input) return resource.readJson("../unknown") end,
     plan = function(input) return input end,
     next_step = function(input) return input end,
     reconcile = function(input) return input end,
@@ -756,10 +770,10 @@ return {
             // array instead; a value that is merely immutable-by-type would
             // satisfy the first and not these.
             auto const source = std::string{R"LUAU(
-local reader = artifact
-local value = reader.read("payload")
+local reader = resource
+local value = reader.readJson("payload")
 local assign_ok = pcall(function()
-    reader.read = function() return {} end
+    reader.readJson = function() return {} end
 end)
 local rawset_ok = pcall(function()
     rawset(reader, "payload", {})
@@ -777,17 +791,19 @@ local leaked_root = false
 for key in pairs(reader) do
     if key == "payload" then leaked_root = true end
 end
-artifact = {}
+local replace_ok = pcall(function()
+    resource = {}
+end)
 
 return {
     plugin_id = "fixture.frozen-artifact",
     derive = function(_input)
         local safe = not assign_ok and not rawset_ok and not value_write_ok
             and not value_rawset_ok and not nested_write_ok
-            and not leaked_root
+            and not leaked_root and not replace_ok
             and type(value) == "table" and value.safe == true
             and value.nested[1] == 1
-            and rawequal(reader.read("payload"), value)
+            and rawequal(reader.readJson("payload"), value)
         if safe then return { safe = true } end
         return canon.emptyObject
     end,
@@ -806,7 +822,10 @@ return {
                                          source,
                                          {artifactBlob("payload", std::string{k_payloadBlob})},
                                          fixture.schemaOwner);
-            REQUIRE(plugin.has_value());
+            auto const pluginMessage = plugin.has_value()
+                                           ? std::string{}
+                                           : std::string{plugin.error().message()};
+            REQUIRE_MESSAGE(plugin.has_value(), pluginMessage);
             auto const result = plugin->derive(inputFor(fixture.schemaOwner));
             REQUIRE(result.has_value());
             CHECK(result->bytes() == "{\"safe\":true}");
@@ -968,7 +987,7 @@ return {
             auto const source = std::string{R"LUAU(
 return {
     plugin_id = "fixture.large",
-    derive = function(_input) return artifact.read("large") end,
+    derive = function(_input) return resource.readJson("large") end,
     plan = function(input) return input end,
     next_step = function(input) return input end,
     reconcile = function(input) return input end,

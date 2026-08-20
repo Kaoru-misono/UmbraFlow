@@ -77,6 +77,7 @@ namespace uf::script
                 {
                     // Over quota: return null so Luau raises a catchable
                     // LUA_ERRMEM. The old block, if any, is left intact.
+                    quota->ceilingRefused = true;
                     return nullptr;
                 }
             }

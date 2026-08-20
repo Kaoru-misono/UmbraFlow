@@ -1392,7 +1392,10 @@ identity = ["fixture.panel.anchor"]
                 .expectedInstalledGeneration = 0U,
             }
         );
-        REQUIRE(installed.has_value());
+        auto const installMessage = installed.has_value()
+                                      ? std::string{}
+                                      : std::string{installed.error().message()};
+        REQUIRE_MESSAGE(installed.has_value(), installMessage);
         auto const artifactRootHash    = installed->rootHash();
         auto const installedGeneration = installed->installedGeneration();
         auto const source = pluginSource(

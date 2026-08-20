@@ -480,7 +480,13 @@ namespace uf::project
             );
             auto compiled = script::PureDataProgram::compile(
                 "chaos.project",
-                *generated,
+                "main",
+                {
+                    script::PureDataProgram::Module{
+                        .name   = "main",
+                        .source = *generated,
+                    },
+                },
                 k_workflowEntryPoints,
                 {}
             );
@@ -1852,7 +1858,13 @@ namespace uf::project
 
         auto compiled = script::PureDataProgram::compile(
             "chaos.project",
-            *generated,
+            "main",
+            {
+                script::PureDataProgram::Module{
+                    .name   = "main",
+                    .source = *generated,
+                },
+            },
             k_workflowEntryPoints,
             {}
         );

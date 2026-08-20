@@ -170,6 +170,14 @@ the framework can compute).
 (`Derive | Plan | NextStep | Reconcile | Reduce`) in
 `modules/operator/source/operator/project-plugin.hpp`; the pinned registration is
 `VerifiedProjectRegistration` in `modules/operator/source/operator/manifest.hpp`.
+The production registration generation still supplies one Luau source file as
+a one-module closure. The script kernel beneath it already accepts a pinned
+multi-module closure plus a separately pinned execution environment, with
+host-owned closed `require`; it does not concatenate sources. Project-directory,
+registration and release readers do not expose that kernel yet, so the
+replacement is not production-readable until the atomic module/resource cut in
+[`2026-08-20-project-luau-module-vfs-capabilities.md`](docs/plans/2026-08-20-project-luau-module-vfs-capabilities.md)
+lands.
 
 **Operator protocol** — the session, lease, snapshot, operation and journal
 vocabulary. It exists **only** as JSON `$defs` in
@@ -212,19 +220,22 @@ deployment's block and the digests of the files it read, then builds all five
 authorities from them. One deployment is enough and no tool has to be mutating.
 
 **plugin_authoring** — the deployment-block member that says which of the two
-authoring paths wrote the Luau module `plugin` names: `generated` for an adapter
+authoring paths wrote the behavior `plugin` names: `generated` for an adapter
 the project kit produced from an `umbraflow-declarative-workflow-tool/v1`
-declaration, `hand-written` for a whole five-function module. The author states
-it because only the author knows it: nothing in the module's bytes carries it,
-and a path convention would be a rule the kit could apply and the runtime loader
-could not, which is how two readers of one document drift apart.
+declaration, `hand-written` for author-owned ProjectPlugin behavior. The current
+directory generation represents that behavior as one Luau module; the accepted
+next generation represents it as an entry plus a closed module set. The author
+states the tier because only the author knows it: neither source bytes nor a path
+convention proves how the behavior was authored, and a rule the kit could apply
+but the runtime loader could not would make the two readers drift apart.
 
 **plugin_justification** — the deployment-block member stating which member or
 semantic of `umbraflow-declarative-workflow-tool/v1` cannot express this
 hand-written plugin. Required of a deployment whose `plugin_authoring` is
 `hand-written` and refused from one whose `plugin_authoring` is `generated`: the
-declarative tier is the default and the whole five-function Luau module is the
-exception, and demanding a reason from the default is demanding a false one.
+declarative tier is the default and hand-written behavior is the exception,
+whether that behavior occupies one module or a module closure; demanding a
+reason from the default is demanding a false one.
 Both `project check` and `loadProductionProject` refuse an absent or blank one,
 and neither judges whether the stated reason is true — that stays a review
 obligation at plugin acceptance
@@ -245,6 +256,11 @@ published bytes through the framework schema catalog. The two readers are
 `uf::project` and `uf::core` alone. The kit reads the document from the source
 root whether or not the author declared it as an input, and a source tree
 holding none is not a project.
+
+This is the implemented generation. The accepted module/resource cut replaces
+it with `umbraflow-project/v2` and registration format 3 in one release; no
+reader accepts a half-migrated single-file/module-closure hybrid.
+
 _Avoid_: `k_projectSchema` inside
 `modules/deployment/source/deployment/project-directory.cpp`, and
 `validatePluginJustifications` inside

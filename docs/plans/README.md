@@ -13,6 +13,7 @@ rulings, consumer status or facts copied from code. Rulings live under
 - [Framework verification gaps](2026-08-19-framework-verification-gaps.md)
 - [Release automation](2026-08-20-release-automation.md)
 - [Build and release inside the source tree](2026-08-20-build-directory-inside-source.md)
+- [Project Luau modules, resources, locked packages, and explicit capabilities](2026-08-20-project-luau-module-vfs-capabilities.md)
 
 The two JSON manifests beside the migration report are its machine-readable
 baseline and disposition data.

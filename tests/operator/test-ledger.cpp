@@ -704,7 +704,10 @@ namespace uf::operator_runtime
                     .expectedInstalledGeneration = 0U,
                 }
             );
-            REQUIRE(installed.has_value());
+            auto const installedMessage = installed.has_value()
+                                              ? std::string{}
+                                              : std::string{installed.error().message()};
+            REQUIRE_MESSAGE(installed.has_value(), installedMessage);
             auto const artifactRootHash    = installed->rootHash();
             auto const installedGeneration = installed->installedGeneration();
             auto const project = makeProject(

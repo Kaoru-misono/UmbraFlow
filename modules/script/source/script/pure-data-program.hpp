@@ -3,6 +3,7 @@
 #include <json/value.hpp>
 
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/content-hash.hpp>
 
@@ -15,48 +16,54 @@
 
 namespace uf::script
 {
-    // Immutable Luau bytecode for one pure, data-only module. Compilation and
-    // exact export validation happen once in compile(); invoke() loads those
-    // bytes into a fresh quota-bound VM and passes one decoded JSON value in
-    // and one decoded JSON value out. The boundary is a value rather than
-    // bytes: the host has already parsed the document, so a plugin that
-    // received bytes would re-derive structure the caller already holds, and a
-    // plugin that returned bytes could emit a non-canonical serialization of a
-    // value the host is about to canonicalize anyway.
+    // Immutable Luau bytecode for one closed pure module graph. Compilation and
+    // exact entry-export validation happen once in compile(); invoke() loads
+    // the graph into a fresh quota-bound VM and passes one decoded JSON value
+    // in and one decoded JSON value out. A host-owned require resolves only
+    // canonical logical names inside the supplied graph, caches one module
+    // value per VM, and never observes a filesystem or package search path.
     //
-    // A frozen artifact.read(name) reader answers with the decoded, frozen
-    // value of a registered artifact, for the same reason and one step
-    // further: the environment publishes no JSON decoder and a consuming
-    // project ships no C++, so bytes carrying JSON were a capability no plugin
-    // could express. compile() parses every artifact once -- the bytes are
-    // pinned by the artifact root hash, so their value is a fact about the
-    // registration rather than about any one call -- and each call builds the
-    // Luau value for an artifact at most once, so two reads answer with the
-    // same object. No host installer or native capability seam is part of this
-    // API.
+    // Typed resource readers expose only the immutable resource closure passed
+    // to compile(). JSON is decoded and frozen, UTF-8 is admitted before the
+    // program is built, and bytes remain a Luau byte string. No host installer
+    // or native capability seam is part of this API.
     class PureDataProgram final
     {
     public:
-        static constexpr auto k_maximumArtifactCount = std::size_t{64U};
-        static constexpr auto k_maximumArtifactBytes = std::size_t{4U} * 1024U * 1024U;
-        static constexpr auto k_maximumArtifactClosureBytes =
+        static constexpr auto k_maximumModuleCount = std::size_t{64U};
+        static constexpr auto k_maximumModuleSourceBytes =
+            std::size_t{256U} * 1024U;
+        static constexpr auto k_maximumModuleClosureSourceBytes =
+            std::size_t{4U} * 1024U * 1024U;
+        static constexpr auto k_maximumModuleBytecodeBytes =
+            std::size_t{1024U} * 1024U;
+        static constexpr auto k_maximumModuleClosureBytecodeBytes =
+            std::size_t{16U} * 1024U * 1024U;
+        static constexpr auto k_maximumResourceCount = std::size_t{64U};
+        static constexpr auto k_maximumResourceBytes =
+            std::size_t{4U} * 1024U * 1024U;
+        static constexpr auto k_maximumResourceClosureBytes =
             std::size_t{16U} * 1024U * 1024U;
         static constexpr auto k_memoryQuotaBytes = std::size_t{16U} * 1024U * 1024U;
 
-        // Artifact ceilings bound registered serialized input. The memory quota
-        // separately bounds one fresh VM's decoded live heap: JSON can expand
-        // while materializing, and several admitted artifacts can coexist in a
-        // call. Their equal 16 MiB values are therefore separate policies, not
-        // aliases or a promise that closure bytes fit in the VM.
-
-        // The exact bytes one artifact root pins. They are an input to
-        // compile() and are not retained: what a call reaches is the value
-        // they denote, and no plugin can observe the serialization it came
-        // from.
-        struct Artifact final
+        struct Module final
         {
             std::string name{};
-            std::string bytes{};
+            std::string source{};
+        };
+
+        enum class ResourceKind : uint8
+        {
+            Json,
+            Utf8,
+            Bytes,
+        };
+
+        struct Resource final
+        {
+            ResourceKind kind{ResourceKind::Json};
+            std::string  name{};
+            std::string  bytes{};
         };
 
     private:
@@ -75,10 +82,11 @@ namespace uf::script
 
         [[nodiscard]]
         static auto compile(
-            std::string_view moduleId,
-            std::string_view source,
+            std::string_view pluginId,
+            std::string_view entryModule,
+            std::vector<Module> modules,
             std::span<std::string_view const> entryPoints,
-            std::vector<Artifact> artifacts
+            std::vector<Resource> resources
         ) -> Result<PureDataProgram>;
 
         [[nodiscard]]

@@ -40,6 +40,8 @@ jobs:
         run: python scripts/check_modules.py
       - name: Check safe C++ boundaries
         run: python scripts/check_safety.py
+      - name: Check Luau environment identity
+        run: python scripts/check_luau_identity.py
 
   build:
     name: ${{ matrix.name }}

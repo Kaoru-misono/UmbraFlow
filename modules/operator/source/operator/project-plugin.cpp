@@ -69,11 +69,13 @@ namespace uf::operator_runtime
             VerifiedProjectRegistration const& registration,
             std::vector<ProjectPluginRegistrar::ArtifactBlob> exactBlobs
         )
-            -> Result<std::vector<script::PureDataProgram::Artifact>>
+            -> Result<std::vector<script::PureDataProgram::Resource>>
         {
             auto const& roots = registration.projectArtifactRoots();
-            if (roots.size() > script::PureDataProgram::k_maximumArtifactCount
-                || exactBlobs.size() > script::PureDataProgram::k_maximumArtifactCount)
+            if (
+                roots.size() > script::PureDataProgram::k_maximumResourceCount
+                || exactBlobs.size() > script::PureDataProgram::k_maximumResourceCount
+            )
             {
                 return refuse("ProjectPlugin artifact root count exceeds its ceiling");
             }
@@ -82,11 +84,15 @@ namespace uf::operator_runtime
             auto totalBytes = std::size_t{0};
             for (auto& blob : exactBlobs)
             {
-                if (blob.bytes.size() > script::PureDataProgram::k_maximumArtifactBytes)
+                if (blob.bytes.size() > script::PureDataProgram::k_maximumResourceBytes)
                 {
                     return refuse("ProjectPlugin artifact exceeds its byte ceiling");
                 }
-                if (totalBytes > script::PureDataProgram::k_maximumArtifactClosureBytes - blob.bytes.size())
+                if (
+                    totalBytes
+                    > script::PureDataProgram::k_maximumResourceClosureBytes
+                        - blob.bytes.size()
+                )
                 {
                     return refuse("ProjectPlugin artifacts exceed their total ceiling");
                 }
@@ -107,7 +113,7 @@ namespace uf::operator_runtime
                     return refuse("ProjectPlugin received an unregistered artifact blob");
                 }
             }
-            auto verified = std::vector<script::PureDataProgram::Artifact>{};
+            auto verified = std::vector<script::PureDataProgram::Resource>{};
             verified.reserve(roots.size());
             for (auto const& root : roots)
             {
@@ -126,7 +132,8 @@ namespace uf::operator_runtime
                 {
                     return refuse("ProjectPlugin artifact bytes do not match their verified root");
                 }
-                verified.emplace_back(script::PureDataProgram::Artifact{
+                verified.emplace_back(script::PureDataProgram::Resource{
+                    .kind = script::PureDataProgram::ResourceKind::Json,
                     .name = root.name,
                     .bytes = std::move(found->second),
                 });
@@ -471,7 +478,13 @@ namespace uf::operator_runtime
             program,
             script::PureDataProgram::compile(
                 registration.pluginId(),
-                exactPluginBytes,
+                "main",
+                {
+                    script::PureDataProgram::Module{
+                        .name   = "main",
+                        .source = std::move(exactPluginBytes),
+                    },
+                },
                 k_entryPoints,
                 std::move(verifiedArtifacts)
             ),

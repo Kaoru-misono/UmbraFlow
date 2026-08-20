@@ -153,8 +153,11 @@ part of this file that cannot be recovered from anywhere else.
 - no consumer-specific branch in Host, Runtime or Operator;
 - no game entity, tool name, state field, Journal event or content schema in
   this repository's generic core;
-- no policy capability or hidden policy input reaching ProjectPlugin, which is a
-  five-function data boundary;
+- no ambient policy, filesystem, network, package-search or hidden input
+  reaching ProjectPlugin, which is a five-function data boundary. Closed module
+  resolution and registration-pinned read-only resources grant no ambient
+  authority; separately granted capability programs return durable evidence
+  through the Operator rather than entering a pure call;
 - no gate registered here that requires another repository to be present;
 - no developer-authored digest: a hash exists only where an automatically
   produced content identity sits at a real immutable-byte boundary and something
