@@ -10,6 +10,9 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
 - [Checks that cannot fail](checks-that-cannot-fail.md) — a taxonomy of the
   false-green shapes, the detector appropriate to each one, and the
   falsification rule that a red must land at the assertion naming the property.
+- [Project Kit is not production project admission](project-kit-is-not-production-admission.md)
+  — why `project build/check/freeze/run` can be green while production open
+  rejects a cross-document schema or RuntimeArtifact inconsistency.
 - [Concurrent agent builds in one worktree](concurrent-agent-builds.md)
 - [Running the repository's own tooling](repository-tooling-invocation.md) — a
   repo-wide formatter rewrites files another agent owns, and the documented
