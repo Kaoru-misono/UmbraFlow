@@ -170,14 +170,12 @@ the framework can compute).
 (`Derive | Plan | NextStep | Reconcile | Reduce`) in
 `modules/operator/source/operator/project-plugin.hpp`; the pinned registration is
 `VerifiedProjectRegistration` in `modules/operator/source/operator/manifest.hpp`.
-The production registration generation still supplies one Luau source file as
-a one-module closure. The script kernel beneath it already accepts a pinned
-multi-module closure plus a separately pinned execution environment, with
-host-owned closed `require`; it does not concatenate sources. Project-directory,
-registration and release readers do not expose that kernel yet, so the
-replacement is not production-readable until the atomic module/resource cut in
-[`2026-08-20-project-luau-module-vfs-capabilities.md`](docs/plans/2026-08-20-project-luau-module-vfs-capabilities.md)
-lands.
+A production registration supplies one entry plus a closed Luau module set and
+separately pinned typed resources. The entry alone returns the ProjectPlugin
+table; dependency modules carry no plugin authority. The host-owned `require`
+resolver executes exact registered bytes without concatenation, filesystem,
+package search or network fallback, and the registration separately pins the
+observable execution environment.
 
 **Operator protocol** — the session, lease, snapshot, operation and journal
 vocabulary. It exists **only** as JSON `$defs` in
